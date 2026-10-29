@@ -181,6 +181,7 @@ from app.schemas.product import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, AppException
 from app.services.company_scope import stamp_lookup_companies
+from app.services.contact_brand_scope import product_in_scope_clauses
 from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
@@ -239,6 +240,30 @@ class ProductService:
     # `_build_list_query` returns this instead of a Query so callers short-circuit
     # to an empty result without hitting the DB.
     _EMPTY_RESULT = object()
+
+    def _resolve_category_filter(self, category_id: Optional[str]) -> Optional[list[str]]:
+        """Category ids for ``category_id``, one value or several comma-joined (OR-ed).
+
+        Each value resolves on its own (id, code or name) and the results are unioned, the
+        categories themselves with no subtree expansion. ``None`` is "no filter", ``[]`` is
+        "definitively no rows", as :func:`resolve_identifier` answers.
+        """
+        tokens = [t.strip() for t in (category_id or "").split(",") if t.strip()]
+        if len(tokens) <= 1:
+            return resolve_identifier(
+                self.db, category_id, ProductCategory, code_fields=("category_code", "category_name")
+            )
+        resolved: list[str] = []
+        picked = False
+        for token in tokens:
+            ids = resolve_identifier(
+                self.db, token, ProductCategory, code_fields=("category_code", "category_name")
+            )
+            if ids is None:  # "all"
+                continue
+            picked = True
+            resolved.extend(i for i in ids if i not in resolved)
+        return resolved if picked else None
 
     def _resolve_brand_filter(self, brand_id: Optional[str]) -> Optional[list[str]]:
         """Brand ids for the ``brand_id`` filter, which accepts a comma-separated list.
@@ -350,12 +375,7 @@ class ProductService:
             lowered = [c.lower() for c in entity_buckets.product_codes]
             filters.append(_func.lower(Product.product_code).in_(lowered))
 
-        category_ids = resolve_identifier(
-            self.db,
-            category_id,
-            ProductCategory,
-            code_fields=("category_code", "category_name"),
-        )
+        category_ids = self._resolve_category_filter(category_id)
         if category_ids is not None:
             if not category_ids:
                 return self._EMPTY_RESULT
@@ -1232,6 +1252,7 @@ class ProductService:
         """Delete a product."""
         product = self.get_product(product_id)
         self._reject_if_companion_rule_dependency(product_id)
+        self._reject_if_new_product_application_link(product_id)
         # Capture children BEFORE delete so we can re-anchor them to the next
         # existing ancestor afterwards (DB ondelete=SET NULL orphans them).
         ex_children = self._variant_child_ids(product_id)
@@ -1240,6 +1261,30 @@ class ProductService:
         for child_id in ex_children:
             self._reconcile_variant_links(child_id)
         return {"message": "Product deleted successfully"}
+
+    def _reject_if_new_product_application_link(self, product_id: str) -> None:
+        """A new product application line opened as this product holds it (RESTRICT, so the
+        link purchasing made is never silently undone); answer with a 409 naming the
+        application instead of the bare IntegrityError's 500."""
+        from app.models.new_product_application import (
+            NewProductApplication,
+            NewProductApplicationLine,
+        )
+
+        row = (
+            self.db.query(NewProductApplication.application_no)
+            .join(
+                NewProductApplicationLine,
+                NewProductApplicationLine.application_id == NewProductApplication.id,
+            )
+            .filter(NewProductApplicationLine.opened_product_id == product_id)
+            .first()
+        )
+        if row is not None:
+            raise handle_conflict(
+                f"This product was opened for new product application {row[0]}. "
+                "Undo that line first."
+            )
 
     def _reject_if_companion_rule_dependency(self, product_id: str) -> None:
         """RESTRICT is real at the DB level (migration 495), but a bare
@@ -1547,7 +1592,6 @@ class ProductService:
         """
         if not touched:
             return
-        from app.models.embeddings import EmbeddingQueue
         from app.services.queue_service import enqueue_job
         from app.services.embedding_service import _get_embedding_worker
         from app.config import settings as _settings
@@ -1587,8 +1631,12 @@ class ProductService:
             })
             enqueue_payload.append(queue_id)
 
+        from app.services.embedding_change_listener import enqueue_pending
+
         try:
-            self.db.bulk_insert_mappings(EmbeddingQueue, rows)
+            # A product with a row already pending gets no second one (EMBED-QUEUE-DEDUPE).
+            inserted = {row["id"] for row in enqueue_pending(self.db, rows)}
+            enqueue_payload = [q_id for q_id in enqueue_payload if q_id in inserted]
             self.db.commit()
         except Exception:
             self.db.rollback()
@@ -2526,6 +2574,14 @@ class BrandService:
             .all()
         )
         count_by_brand = {str(bid): c for bid, c in counts}
+        from app.models.company import Company
+
+        dealer_ids = {b.dealer_company_id for b in brands if b.dealer_company_id}
+        dealer_names = (
+            {str(i): n for i, n in self.db.query(Company.id, Company.name).filter(Company.id.in_(dealer_ids))}
+            if dealer_ids
+            else {}
+        )
         data = []
         for b in brands:
             row = {
@@ -2543,6 +2599,8 @@ class BrandService:
                 "flows_to_purchasing": b.flows_to_purchasing,
                 "chatbot_weight": float(b.chatbot_weight or 0),
                 "is_searchable": b.is_searchable,
+                "dealer_company_id": b.dealer_company_id,
+                "dealer_company_name": dealer_names.get(str(b.dealer_company_id)) if b.dealer_company_id else None,
                 "created_at": b.created_at,
                 "updated_at": b.updated_at,
                 "created_by": str(b.created_by) if b.created_by else None,
@@ -2576,6 +2634,7 @@ class BrandService:
         if existing:
             raise handle_conflict("Brand code already exists.")
         
+        self._assert_dealer_company(brand_data.dealer_company_id)
         brand = Brand(**brand_data.model_dump())
         self.db.add(brand)
         self.db.commit()
@@ -2587,12 +2646,26 @@ class BrandService:
         brand = self.get_brand(brand_id)
         
         update_data = brand_data.model_dump(exclude_unset=True)
+        self._assert_dealer_company(update_data.get("dealer_company_id"))
         for key, value in update_data.items():
             setattr(brand, key, value)
         
         self.db.commit()
         self.db.refresh(brand)
         return brand
+
+    def _assert_dealer_company(self, company_id):
+        """An unknown dealer group is a 422 (a missing or null one is fine)."""
+        if company_id is None:
+            return
+        from app.models.company import Company
+        from app.services.error_handler import handle_unprocessable
+        from app.services.identifier_resolver import is_uuid
+
+        if not is_uuid(company_id):
+            raise handle_unprocessable("Dealer group company not found.")
+        if self.db.query(Company.id).filter(Company.id == company_id).first() is None:
+            raise handle_unprocessable("Dealer group company not found.")
 
     def delete_brand(self, brand_id: str):
         """Delete a brand. Products using this brand have their brand_id set to null (brand is optional)."""
@@ -2868,6 +2941,9 @@ class ProductAttachmentService:
             # get_product_attachments_by_product. Without this, "Move to Trash"d
             # files keep showing in product-attachment listings.
             ProductAttachment.attachment.has(Attachment.is_deleted == False),
+            # A brand-scoped session lists only in-brand products' rows: the brand rule sits
+            # on Product, which the joinedload LEFT JOIN does not filter on.
+            *product_in_scope_clauses(self.db, ProductAttachment.product_id),
         )
 
         if entity_buckets is not None and entity_buckets.product_codes:

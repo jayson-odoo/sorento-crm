@@ -158,21 +158,11 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
             "crm_order_management_orders_list",
             "crm_order_management_orders_by_product_list",
             "crm_master_customers_list",
-            "crm_outstanding_report",
-            # PLAN-chatbot-sales-report.md S4 wiring point 3: an allow-list member only
-            # (`fetch.CHATBOT_READ_ONLY_TOOLS` is this seed's own union), NEVER
-            # `tools[0]` - the pick is an override in
-            # `lanes/business/__init__.py::run_fetch`, beside the outstanding one.
-            "crm_sales_report",
-            # PLAN-chatbot-top-x-hot-selling-24sep.md S3 (AC-1941): same rule, an
-            # allow-list member only; migration `chatbot_top_selling_tool`.
-            "crm_top_selling_report",
-            # PLAN-retail-sales-reports-26sep S1: an allow-list member only, picked by
-            # the `sales_analysis` override in `run_fetch`, never `tools[0]`. Migration
-            # `sales_s1_reports_module` adds it to a seeded database.
-            "crm_sales_analysis",
-            # REPORT-ENGINE slice 1b: an allow-list member only, picked by the
-            # `sales_ranking` override in `run_fetch`, never `tools[0]`.
+            # REPORT-ENGINE slice 1b: an allow-list member only (`fetch.CHATBOT_READ_ONLY_TOOLS` is
+            # this seed's own union), picked by the `sales_ranking` override in `run_fetch`, never
+            # `tools[0]`. REPORT-UNIFY: it is also every sales total, breakdown and outstanding ask;
+            # `crm_sales_report`, `crm_outstanding_report` and `crm_sales_analysis` left this row
+            # (migration `report_unify_0001_retire`).
             "crm_report_ask",
         ],
         escalation_team_code="customer_service",
@@ -330,13 +320,15 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
     # PLAN-prompt-dynamic-30sep D9 (owner, 30 Sep 2026: "better own sales domain otherwise
     # jumble up with order"). Paired with migration `pdyn_0001_status_words_sales`, which
     # appends the same row last (so here too) with the `order` row's narrowing copied.
-    # `tools[0]` is never the pick for a sales status: `run_fetch`'s three overrides are.
-    # The `order` row keeps the three tools as well; dropping them there is out of scope.
+    # `crm_report_ask` is `tools[0]` here (the one sales tool); every sales status settles its args in a `run_fetch`
+    # override, and `run_fetch` refuses to send the tool unsettled (REPORT-UNIFY R2).
+    # R4b: `crm_top_selling_report` is on no row any more; this row gains `crm_report_ask`.
     dict(
         name="sales",
         label="sales",
         intents=["check_sales"],
-        tools=["crm_sales_report", "crm_sales_analysis", "crm_top_selling_report"],
+        # `crm_report_ask` is the row's only tool (R4b; migration `or_r4b_top_selling_off`); `run_fetch` settles its args.
+        tools=["crm_report_ask"],
         escalation_team_code="customer_service",
         switch_words=["sales", "sales report", "top selling", "sales analysis", "best selling"],
         narrowing={
@@ -381,11 +373,7 @@ DATE_PARAM_TOOLS: set[str] = {
     "crm_resource_attachments_catalogue",
     "crm_sla_conversation_event_logs_list",
     "crm_procurement_po_placed_list",
-    "crm_outstanding_report",
-    "crm_sales_report",
     "crm_low_stock_report",
-    "crm_top_selling_report",
-    "crm_sales_analysis",
 }
 
 # --------------------------------------------------------------------------- #

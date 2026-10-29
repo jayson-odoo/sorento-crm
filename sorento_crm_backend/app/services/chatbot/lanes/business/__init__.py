@@ -35,6 +35,7 @@ from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import chat_report
 from app.services.chatbot.lanes.business import report_ask
+from app.services.chatbot.lanes.business import sales_basis_ask, sales_company_ask
 from app.services.chatbot.lanes.business import ranking_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
@@ -74,6 +75,10 @@ _OUTSTANDING_SO_GRANT = "sales_orders.outstanding"
 # here - the report has nothing partial to answer with, so its absence refuses the
 # WHOLE ask before any fetch, with one line and nothing else.
 _SALES_REPORT_GRANT = "sales_orders.sales_report"
+#: SALES-TARGET-CHAT: the whole target tool is per contact. `answer.STATUS_GRANT_REQUIRED` maps
+#: the `sales_target` status to it, so the domain grant gate asks for this key, not the report's.
+_SALES_TARGET_GRANT = "sales.sales_target"
+_SALES_TARGET_TOOL = "crm_sales_target_progress"
 #: The one sentence a contact without that key sees, verbatim (AC-1651) - the sibling
 #: of `fetch.SO_NOT_ENABLED_MESSAGE` / `LOW_STOCK_NOT_ENABLED_MESSAGE` above, a
 #: literal for the same reason: one wording, in one place.
@@ -81,24 +86,8 @@ SALES_REPORT_NOT_ENABLED_MESSAGE = "Sales report is not enabled for your account
 #: PLAN-retail-sales-reports-26sep S1: the sales analysis tool, gated by the SAME key.
 _SALES_ANALYSIS_TOOL = "crm_sales_analysis"
 
-#: PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)". The ranking's tool, and
-#: the fixed lines the lane sends BEFORE any fetch when the ask is not settled yet
-#: (owner rulings 26 Sep 2026: no default metric, never assume the grain or the basis).
-#: The MCP presenter declares the same three literals for its goldens; the backend keeps
-#: its own copy because its container does not ship `sorento_crm_mcp`, and
-#: `tests/chatbot/test_top_selling_lane.py` pins the two equal.
-TOP_SELLING_TOOL = "crm_top_selling_report"
-TOP_SELLING_ASK_METRIC = ranking_ask.METRIC_LINE
-TOP_SELLING_ASK_GROUP = (
-    "Do you want the top items inside one category, or the categories ranked against each other?"
-)
-TOP_SELLING_ASK_BASIS = ranking_ask.TOP_SELLING_BASIS_LINE
 #: The sales ranking's own basis question (`report_ask`), three bases.
 SALES_RANKING_ASK_BASIS = ranking_ask.RANKING_BASIS_LINE
-TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
-#: Owner retest of round 4 (27 Sep 2026, R8): one short question in words when a message
-#: inside a ranking cannot be placed.
-TOP_SELLING_UNCLEAR = "Sorry, I didn't get that. What would you like to change in the ranking?"
 
 #: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
 #: default tool pick, the tool it picks, and the per-contact key that gates it - all three
@@ -492,52 +481,16 @@ def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str
     }
 
 
-def top_selling_ceiling_note(slot: dict[str, Any]) -> str | None:
-    """The line said above a ranking whose named N passed the shared safety ceiling
-    (owner, 30 Sep 2026: no 100 cap, and no silent clamp either). `fetch.py` asks the
-    route for the ceiling; this says so. None for every N at or under it, and for a
-    detail pick, which lists no ranking."""
-    from app.services.sales_report_service import TOP_SELLING_N_CEILING
-
-    top_n = slot.get("top_n")
-    if slot.get("detail_code") or isinstance(top_n, bool) or not isinstance(top_n, (int, float)):
-        return None
-    if int(top_n) <= TOP_SELLING_N_CEILING:
-        return None
-    # Promises no count: fewer items than the ceiling may have sold.
-    return f"I can list at most the top {TOP_SELLING_N_CEILING:,} in one reply."
-
-
-def _top_selling_question(slot: dict[str, Any]) -> tuple[str, str] | None:
-    """S4 point 8a: the one question an unsettled top selling ask gets, in this order:
-    the grain when the parser could not tell a category filter from a category ranking,
-    the metric when none was named, the basis when none was named or it is not delivered or
-    ordered (`ranking_ask.next_question`, shared with the sales ranking). None once
-    the ask is settled. A picked row (`detail_code`) is never asked about: the ranking
-    it came from already ran. Returns `(axis, line)`: the axis is what the reply records
-    as asked (`top_selling_asked`), so the next message is read as its answer only if it
-    answers that axis (`turn/apply._top_selling_waiting`, reviewer B2 on PR #1273)."""
-    if slot.get("detail_code"):
-        return None
-    if slot.get("rank_group") == "unclear":
-        return "group", TOP_SELLING_ASK_GROUP
-    return ranking_ask.next_question(
-        metric_settled=slot.get("rank_by") in ("quantity", "amount"),
-        basis_settled=slot.get("basis") in ("delivered", "ordered"),
-        basis_line=TOP_SELLING_ASK_BASIS,
-    )
-
-
 def _top_selling_category_ids(
     slot: dict[str, Any], *, db: Any
 ) -> tuple[list[str], bool, list[str], list[str]]:
-    """The category filter a top selling ask carries, as ids: a picked category row's
-    exact code (`category_code`), else the category words the messages named
+    """The category filter a ranking's category word carries, as ids (the one definition,
+    read by `report_ask._word_filters`): an exact code (`category_code`), else the words
     (`category_words`). Returns `(ids, named, ambiguous, unknown)`. `ambiguous` is what
     ONE word matched when it matched several (category codes, or class labels): the lane
     asks which (reviewer S1, PR #1273), it never takes them all. `unknown` is every word
-    that matched nothing: the lane says so and keeps the ranking (owner retest, 27 Sep
-    2026), never a miss and never a silent widening said nowhere.
+    that matched nothing: the lane says so (owner retest, 27 Sep 2026), never a miss and
+    never a silent widening said nowhere.
 
     A word matching no category code or name goes through the catalogue's class
     vocabulary (`services.resolve_category_class`, the stock ask's own words): category
@@ -559,30 +512,17 @@ def _top_selling_category_ids(
             found, labels = business_services.resolve_category_class(db, token)
             if not found and len(labels) > 1:
                 return [], True, labels, []
+            if len(labels) == 1:
+                found = business_services.class_member_ids(db, labels)
+        elif found and not code and business_services.unclassed_ids(db, found):
+            # EEM-CATEGORY-PICK: a generic code no class owns ("wc") means the one class the shared rule gives it.
+            found = [*found, *business_services.classless_hit_class(db, matched)]
         if not found:
             unknown.append(token)
         for category_id in found:
             if category_id not in ids:
                 ids.append(category_id)
     return ids, True, [], unknown
-
-
-def _top_selling_ask_who(who: dict[str, Any]) -> str:
-    """Owner retest (27 Sep 2026): a word naming a customer AND a sales agent is asked
-    about in one short question; "1" takes the customer, "2" the agent."""
-    word = jsc.js_string(who.get("word") or "").strip()
-    customer = jsc.js_string(who.get("customer_label") or "").strip()
-    customer_part = f"customer {customer}" if customer else f"a customer named '{word}'"
-    agent = jsc.js_string(who.get("agent_label") or "").strip() or word
-    return (
-        f"Do you mean {customer_part} or sales agent {agent}? "
-        "Reply 1 for the customer, 2 for the sales agent."
-    )
-
-
-def _top_selling_ask_category(codes: list[str]) -> str:
-    """The category question: the codes only (owner, 26 Sep ~07:40Z, code only)."""
-    return f"Which category do you mean? Reply with one code: {', '.join(codes)}"
 
 
 def _nothing_live_of_kind(
@@ -605,15 +545,64 @@ def _nothing_live_of_kind(
     return {**_fixed_reply(text), "kind_none": True} if text else None
 
 
+#: V1-DOC-SCOPE: the tools that list customer documents (DOs, and SOs on the report).
+_DOC_TOOLS: frozenset[str] = fetch_mod.ORDER_TOOLS | {"crm_outstanding_report"}
+
+
+def _scope_refusal(customer_scope: dict[str, Any]) -> str:
+    """The contact's scope refusal line; a contact with no links (no scope read at all) gets
+    the same line over no names ("I can only check on your own account")."""
+    from app.services import contact_customer_scope as scope_mod
+
+    return str(customer_scope.get("refusal") or "") or scope_mod.refusal_line(
+        scope_mod.ContactCustomerScope(linked=(), staff=False)
+    )
+
+
+def _ref_page_fragment(db: Any, ref_status: Any, carry: dict[str, Any]) -> dict[str, Any] | None:
+    """CHAT-COMPOSER Lists L3: the page a "more" asks of a cut PO / PR card, with its "more" line and
+    the carry for the next one. None when the card is gone."""
+    from app.services.chatbot.composers import sets as composers_sets
+
+    cards = carry.get("ref_cards") or []
+    now = carry
+    if int(now.get("shown") or 0) >= int(now.get("total") or 0):
+        # This card is done: go on to the next cut card (from its line 10), else say the end.
+        now = ref_status.next_ref(now)
+    index = int(now.get("card") or 0)
+    if index >= len(cards):
+        return None
+    shown, total = int(now.get("shown") or 0), int(now.get("total") or 0)
+    text = ref_status.card_page(db, cards[index], shown)
+    if text is None:
+        return None
+    after, left = now, 0
+    if shown < total:
+        after = ref_status.next_ref(now)
+        ahead = after if int(after["shown"]) < int(after["total"]) else ref_status.next_ref(after)
+        left = composers_sets.next_count(int(ahead["total"]), 0, int(ahead["shown"]), ref_status.MAX_LINES)
+        if left:
+            text += "\n\n" + composers_sets.more_line(left)
+    fragment = _fixed_reply(text)
+    fragment["fetch"]["so_status"] = True
+    fragment["fetch"]["set_window"] = {
+        "first": min(shown + 1, total),
+        "last": min(shown + ref_status.MAX_LINES, total),
+        "total": total,
+        "next": left,
+        "carry": after,
+    }
+    return fragment
+
+
 def _fixed_reply(
     text: str,
     *,
-    top_selling_asked: str | None = None,
     required_ask: dict[str, Any] | None = None,
     refused: bool = False,
 ) -> dict[str, Any]:
-    """One fixed line and nothing else, before any fetch: the refusal and the top
-    selling questions. `has_result: True` and no `outstanding_ask` keep it OFF the miss
+    """One fixed line and nothing else, before any fetch: a refusal or a question.
+    `has_result: True` and no `outstanding_ask` keep it OFF the miss
     lane (no escalate offer) and arm nothing; the carried `focus.status` is what makes
     the next message land on the same ask. `outstanding_report` skips the generic
     search-scope header. `refused` marks a refusal (grant, scope, audience): the envelope carries
@@ -632,9 +621,6 @@ def _fixed_reply(
         "requested_attributes": [],
         "keys_served": False,
         "outstanding_report": True,
-        # The top selling question this line asks, if any (`_top_selling_question`'s
-        # axis); `engine.py` records it on the slot for the next turn to read.
-        "top_selling_asked": top_selling_asked,
         # LOWSTOCK-FILTER-ASK: the `required_fields` slot this line leaves open, if any.
         "required_ask": required_ask,
     }
@@ -658,7 +644,7 @@ def _so_list_reply(text: str) -> dict[str, Any]:
     return fragment
 
 
-def _sales_report_not_enabled() -> dict[str, Any]:
+def _sales_report_not_enabled(parse_output: dict[str, Any] | None = None) -> dict[str, Any]:
     """S4 wiring point 4 (AC-1651): refuse a sales-report ask BEFORE any fetch, with
     ONE line and nothing else.
 
@@ -668,7 +654,7 @@ def _sales_report_not_enabled() -> dict[str, Any]:
     keeps this OFF the miss lane entirely: no escalate offer, nothing armed.
     """
     structured: dict[str, Any] = {
-        "response": SALES_REPORT_NOT_ENABLED_MESSAGE,
+        "response": report_ask.not_enabled_line(parse_output or {}),
         "answers": [],
         "attachments": [],
         "action_links": [],
@@ -725,14 +711,107 @@ def _which_customer_ask() -> dict[str, Any]:
     }
 
 
+def sales_analysis_company_reply(verdict: Any, pending: Any) -> dict[str, Any] | None:
+    """Engine seam, chat fix PR-B S7 (AC-B9): the reply to the sales analysis's company
+    question ("Sorento or Mocha?") re-runs the asked analysis for the company it picked. The
+    pick is the PARSER's: its `open_question_answer` (one position, or one item naming a
+    position or an option) or one `reference_positions`; nothing else answers it, so a new
+    ask is read as itself. None when the turn is not that reply."""
+    if getattr(pending, "kind", None) != fetch_mod.SALES_ANALYSIS_COMPANY_KIND or not isinstance(verdict, dict):
+        return None
+    options = {
+        o["position"]: jsc.js_string(o.get("label") or "").strip()
+        for o in getattr(pending, "options", None) or []
+        if isinstance(o, dict) and isinstance(o.get("position"), int)
+    }
+    position: Any = None
+    reply = verdict.get("open_question_answer")
+    if isinstance(reply, dict) and reply.get("mode") not in (None, "cancel", "no"):
+        picked = [p for p in jsc.array(reply.get("picked")) if isinstance(p, int) and not isinstance(p, bool)]
+        items = [i for i in jsc.array(reply.get("items")) if isinstance(i, dict)]
+        if len(picked) == 1:
+            position = picked[0]
+        elif len(items) == 1:
+            item = items[0]
+            named = jsc.js_string(item.get("code") or item.get("label") or "").strip().casefold()
+            position = item.get("position") if item.get("position") in options else next(
+                (p for p, label in options.items() if named and label.casefold() == named), None
+            )
+    if position is None:
+        positions = [p for p in jsc.array(verdict.get("reference_positions")) if isinstance(p, int) and not isinstance(p, bool)]
+        position = positions[0] if len(positions) == 1 else None
+    if not options.get(position):
+        return None
+    payload = dict(getattr(pending, "payload", None) or {})
+    held = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    return {
+        **verdict,
+        **{key: held.get(key) for key in fetch_mod.SALES_ANALYSIS_HELD_KEYS},
+        "message_type": "business_query",
+        "domain_hint": payload.get("domain") or "sales",
+        "intent_hint": "check_order",
+        "order_status": "sales_analysis",
+        "sales_company": options[position],
+        "status": None,
+        "document": None,
+        "entities": [],
+        "reference_positions": [],
+        "open_question_answer": None,
+        "is_affirmative": None,
+        "topic_reset": False,
+    }
+
+
+def sales_figure_decision(
+    db: Any, contact_respond_id: Any, space_id: Any, *, order_status: str, granted: bool,
+    parse_output: dict[str, Any] | None = None,
+) -> str:
+    """`granted`, `salesperson_book` or `not_granted` for a sales figure ask. The ONE rule
+    (`contact_asker.may_ask_sales_ranking`) applies only to a verdict that runs on the report-ask
+    tool (`sales_ranking`, the parser's `top_selling` label included); every other sales figure ask
+    (sales report, the sales analysis tool) needs the grant, as before. The contact is the one the
+    seam already resolves."""
+    if granted:
+        return "granted"
+    if order_status == "top_selling" and isinstance(parse_output, dict):
+        # REPORT-SMART-L R1: a top_selling verdict that skipped `by_capability` is the sales ranking it becomes.
+        parse_output, order_status = report_ask.from_top_selling(parse_output), report_ask.ASK_NAME
+    if order_status in report_ask.SALES_STATUSES:
+        # Owner 28 Oct 08:40: a sales total passes like a ranking, but only when the verdict WILL run on the report ask
+        # (`by_capability` reroutes it); the Yearly comparison and the other sales analysis files do not.
+        routed = report_ask.by_capability(parse_output, seam=False) if isinstance(parse_output, dict) else {}
+        order_status = routed.get("order_status") or order_status
+    if order_status != report_ask.ASK_NAME or db is None or not contact_respond_id or not str(contact_respond_id).strip():
+        return "not_granted"
+    from app.services import contact_asker
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    resolved = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
+    )
+    decision = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=False)[0]
+    return decision
+
+
+def _office_staff(db: Any, contact_respond_id: Any, space_id: Any) -> bool:
+    """Is the turn's contact office staff (an active office access type,
+    `contact_customer_scope.is_office_staff`)? False when it resolves to no one (fail closed)."""
+    from app.services.contact_customer_scope import is_office_staff
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    if db is None or not contact_respond_id or not str(contact_respond_id).strip():
+        return False
+    contact_id = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
+    )
+    return bool(contact_id) and is_office_staff(db, str(contact_id))
+
+
 def _sales_analysis_axis_unsupported(group_by: str) -> dict[str, Any]:
     """A sales analysis asked by an axis it cannot draw (customer, product, ...): ONE line
     naming the axes it can, no figure and no fetch (`_sales_report_not_enabled`'s shape)."""
     structured: dict[str, Any] = {
-        "response": (
-            f"I can't break sales down by {group_by} yet. "
-            "I can show them by month, by year or by channel."
-        ),
+        "response": report_ask.UNSUPPORTED_AXIS_LINE.format(axis=group_by),
         "answers": [],
         "attachments": [],
         "action_links": [],
@@ -958,7 +1037,7 @@ def _fetch_semantic_input(
             if isinstance(parse_output.get("access_levels"), list)
             else []
         )
-    return {
+    semantic = {
         "message_type": parse_output.get("message_type"),
         "intent_hint": parse_output.get("intent_hint"),
         "domain_hint": parse_output.get("domain_hint"),
@@ -1015,9 +1094,6 @@ def _fetch_semantic_input(
         # 'all dates'" - `broaden_axis` lives on the full parser output, not this
         # object's other twelve fields, so it has to be named explicitly here too.
         "broaden_axis": parse_output.get("broaden_axis"),
-        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 8: the top selling ask's own
-        # axes (`turn_runtime.lane_parse_output` projects them off the focus).
-        "top_selling": parse_output.get("top_selling"),
         # PLAN-po-spo-warehouse-29sep S6: the PO/SPO sort axis (the parser's own, or the
         # focus's carried one projected by `turn_runtime.lane_parse_output`). Named here
         # for the same reason `group_by`/`top_n` are: `entity_ids_transformer` reads
@@ -1034,6 +1110,12 @@ def _fetch_semantic_input(
         # the map could never reach the tool.
         "requested_quantities": parse_output.get("requested_quantities"),
     }
+    from app.services.chatbot import composers
+
+    if composers.enabled():
+        # CHAT-COMPOSER Lists L2: the report's group page start.
+        semantic["outstanding_group_offset"] = parse_output.get("outstanding_group_offset")
+    return semantic
 
 
 def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any]:
@@ -1414,7 +1496,7 @@ def run_fetch(
     picked = bool((tier_gate or {}).get("tier_pick"))
     narrow = {
         **{k: v for k, v in (parse_output.get("promo_filter") or {}).items() if v and picked},
-        **{k: v for k, v in _turn_runtime.promo_filter(parse_output, db, gate).items() if v},
+        **{k: v for k, v in _turn_runtime.promo_filter(parse_output, db, gate, tier_pick=picked).items() if v},
     }
     for key, values in narrow.items():
         semantic_input[key] = list(values)
@@ -1466,7 +1548,16 @@ def run_fetch(
         if db is not None:
             from app.services.chatbot import so_status
 
-            linked = list(customer_scope.get("linked") or []) if customer_scope.get("enforced") else None
+            # V1-DOC-SCOPE: an enforced contact is held to its links first (as the resolver's
+            # `engine._reference_scope` holds it, whatever its tier); otherwise only staff
+            # (`doc_staff`: the tier, an office access type or a staff CRM user) are unscoped, and an unlinked
+            # non-staff contact is held to its (empty) links, so every SO is refused.
+            # V1-DOC-SCOPE-SALES: a linked staff CRM user is enforced yet document staff (the
+            # scope's `staff`), so it is not held to its links here.
+            if customer_scope.get("enforced") and customer_scope.get("staff") is not True:
+                linked = list(customer_scope.get("linked") or [])
+            else:
+                linked = None if parse_output.get("doc_staff") is True else list(customer_scope.get("linked") or [])
             looked = so_status.lookup(db, so_numbers, linked=linked)
             if trace is not None:
                 trace.add(
@@ -1481,9 +1572,11 @@ def run_fetch(
             fragment = _fixed_reply(
                 so_status.reply_text(
                     looked,
-                    refusal=str(customer_scope.get("refusal") or ""),
+                    refusal=_scope_refusal(customer_scope),
                     kind_word="Sales order" if parse_output.get("so_placed") is True else None,
-                )
+                ),
+                # A reply that is nothing but the scope refusal is sent as it is (AC-23).
+                refused=looked.refused and not looked.cards and not looked.missing,
             )
             # The reply names its own missing numbers, so the resolver's own `not_found`
             # exit (nothing placed the SO words) is not a second miss to compose
@@ -1510,7 +1603,12 @@ def run_fetch(
             from app.services.chatbot import so_status
 
             # REF-PROBES: staff carry no customer links and no enforced scope (`ref_staff`).
-            linked = None if parse_output.get("ref_staff") is True else list(customer_scope.get("linked") or [])
+            # V1-DOC-SCOPE: an enforced contact is held to its links whatever its tier, as in
+            # the SO number arm above.
+            if customer_scope.get("enforced"):
+                linked = list(customer_scope.get("linked") or [])
+            else:
+                linked = None if parse_output.get("ref_staff") is True else list(customer_scope.get("linked") or [])
             looked = so_status.lookup_po_refs(db, po_refs, linked=linked)
             if trace is not None:
                 trace.add(
@@ -1534,23 +1632,57 @@ def run_fetch(
     # resolver never probes these kinds for anyone else, so this is the second lock.
     po_numbers = [w for w in jsc.array(parse_output.get("po_numbers")) if isinstance(w, str) and w.strip()]
     pr_numbers = [w for w in jsc.array(parse_output.get("pr_numbers")) if isinstance(w, str) and w.strip()]
-    if (po_numbers or pr_numbers) and db is not None and parse_output.get("ref_staff") is True:
+    from app.services.chatbot import composers
+
+    ref_page = parse_output.get("ref_page") if composers.enabled() else None
+    if isinstance(ref_page, dict) and db is None:
+        return _error_fragment("reference page refused", outcome="not_found")
+    if (po_numbers or pr_numbers or isinstance(ref_page, dict)) and db is not None and (
+        parse_output.get("ref_staff") is True or isinstance(ref_page, dict)
+    ):
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if isinstance(ref_page, dict):
+            # CHAT-COMPOSER Lists L3: a later page of a cut card. Audience and grant are checked again on
+            # every page, and a refused page never falls through to the domain tool (no entity rides it).
+            if parse_output.get("ref_staff") is not True or "purchase_orders.placed" not in granted:
+                return _error_fragment("reference page refused", outcome="not_found")
+            from app.services.chatbot import ref_status
+
+            page = _ref_page_fragment(db, ref_status, ref_page)
+            return page or _error_fragment("reference page refused", outcome="not_found")
         if "purchase_orders.placed" in granted:
             from app.services.chatbot import ref_status
 
             cards: list[str] = []
+            cut: list[dict[str, Any]] = []
             if po_numbers:
-                cards += ref_status.lookup_purchase_orders(db, po_numbers).cards
+                looked = ref_status.lookup_purchase_orders(db, po_numbers)
+                cards += looked.cards
+                cut += looked.cut
             if pr_numbers:
-                cards += ref_status.lookup_purchase_requests(db, pr_numbers).cards
+                looked = ref_status.lookup_purchase_requests(db, pr_numbers)
+                cards += looked.cards
+                cut += looked.cut
             if trace is not None:
                 trace.add("ref_status", {"po": po_numbers, "pr": pr_numbers, "cards": len(cards)})
             if cards:
-                fragment = _fixed_reply("\n\n".join(cards))
+                text = "\n\n".join(cards)
+                carry = None
+                if composers.enabled() and cut:
+                    from app.services.chatbot.composers import sets as composers_sets
+
+                    total = int(cut[0]["lines"])
+                    carry = {"ref_cards": cut, "card": 0, "shown": ref_status.MAX_LINES, "total": total}
+                    more = composers_sets.next_count(total, 0, ref_status.MAX_LINES, ref_status.MAX_LINES)
+                    text += "\n\n" + composers_sets.more_line(more)
+                fragment = _fixed_reply(text)
                 fragment["fetch"]["so_status"] = True
+                if carry is not None:
+                    fragment["fetch"]["set_window"] = {
+                        "first": 1, "last": ref_status.MAX_LINES, "total": total, "next": more, "carry": carry,
+                    }
                 return fragment
     # SO-NUMBER-ASK, the SO list ("all my sales orders"): the customers in scope (the
     # links on a scoped or "my" turn, a resolved customer otherwise), behind the same SO
@@ -1571,6 +1703,12 @@ def run_fetch(
             own = {str(i) for i in customer_scope["ids"]}
             customer_ids = [u for u in customer_ids if str(u) in own] or list(customer_scope["ids"])
     if parse_output.get("so_list") is True and parse_output.get("domain_hint") == "order" and customer_ids and db is not None:
+        if parse_output.get("doc_staff") is not True and not customer_scope.get("ids"):
+            # V1-DOC-SCOPE: a non-staff contact with no links owns no sales order; a customer
+            # it named is another customer.
+            if trace is not None:
+                trace.add("so_list", {"refused": "no_links"})
+            return _fixed_reply(_scope_refusal(customer_scope), refused=True)
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
@@ -1706,6 +1844,7 @@ def run_fetch(
         )
         if db is not None:
             collected["live_brands"] = _turn_runtime.active_brands(db)  # for the menu's brand echo
+            collected["live_promotion_kinds"] = _turn_runtime.promotion_kind_rows(db)  # and the kind's name
         seen = collected.get("tier_availability")
         if isinstance(seen, dict) and seen and not any(seen.values()) and not collected.get("tier_probe_failed"):
             none_live = _nothing_live_of_kind(semantic_input, db, services, collected)
@@ -1725,6 +1864,26 @@ def run_fetch(
     # turns in the 7 Sep 2026 prod copy, the vector search this replaced chose the domain's
     # first-listed tool on every one of them.
     domain = parse_output.get("domain_hint") or (tier_gate or {}).get("tier_pick_domain")
+    order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
+    if order_status_raw == "top_selling" and domain in contracts.ORDER_OR_SALES_DOMAINS:
+        # REPORT-SMART-L R1 (safety net for a live session that never passed `by_capability`, converted before any grant gate reads its status): an item or
+        # category ranking is the sales ranking on the report engine, never `crm_top_selling_report`.
+        parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
+        order_status_raw = report_ask.ASK_NAME
+    _company_answer = isinstance(parse_output.get("required_ask"), dict) and (
+        parse_output["required_ask"].get("ask") in (sales_company_ask.ASK_NAME, sales_basis_ask.ASK_NAME)
+    )  # the reply to the Yearly comparison's company question re-runs THAT ask: never retyped here
+    if (
+        domain in contracts.ORDER_OR_SALES_DOMAINS
+        and order_status_raw not in (report_ask.ASK_NAME, "top_selling")
+        and not _company_answer
+    ):
+        # REPORT-UNIFY (Q1): every sales total or breakdown and every outstanding ask that holds a filter or an
+        # axis is the report ask. The engine seam (`report_ask.by_capability`) converts it before grounding; this is
+        # the same conversion for a verdict that skipped it (a live session, a direct call).
+        routed = report_ask.by_capability(parse_output, subject=bool(entities), seam=False)
+        if routed.get("order_status") == report_ask.ASK_NAME:
+            parse_output, order_status_raw = report_ask.take_words(routed, ""), report_ask.ASK_NAME
 
     # -- whole-domain grant gate (D6, PLAN-chatbot-last-purchase-cost.md) --------
     # A domain in `DOMAIN_GRANT_REQUIRED` is refused OUTRIGHT without the grant, before
@@ -1735,22 +1894,43 @@ def run_fetch(
     # read differently on the trace an operator sees.
     from app.services.chatbot.lanes.business import answer as answer_mod
 
-    need = answer_mod.DOMAIN_GRANT_REQUIRED.get(jsc.js_string(domain) if domain else "")
+    # SALES-TARGET-CHAT: a status with a grant of its own takes that one, else the domain's.
+    need = answer_mod.STATUS_GRANT_REQUIRED.get(order_status_raw) or answer_mod.DOMAIN_GRANT_REQUIRED.get(
+        jsc.js_string(domain) if domain else ""
+    )
+    sales_need = need == _SALES_REPORT_GRANT
+    if sales_need:
+        # Owner Q6: an outstanding kind is read under the Outstanding reveal, not the Sales report one.
+        need = report_ask.grant_key(parse_output)
     if need:
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
-        if need not in granted:
+        decision = (
+            sales_figure_decision(
+                db, contact_id, space_id, granted=False,
+                order_status=jsc.js_string(parse_output.get("order_status") or "").strip(),
+                parse_output=parse_output,
+            )
+            if sales_need and need not in granted
+            else "granted" if need in granted else "not_granted"
+        )
+        if decision == "salesperson_book":
+            if trace is not None:
+                trace.add("domain_grant", {"domain": domain, "decision": decision, "needs": need})
+        elif need not in granted:
             if trace is not None:
                 trace.add("domain_grant", {"domain": domain, "skipped": "not_granted", "needs": need})
             if need == chat_report.GRANT:
                 # CA-3: a contact without the Chat analytics reveal is turned away in one line
                 # before any call (the route refuses again, `chat_analytics_not_enabled`).
                 return _fixed_reply(chat_report.NOT_ENABLED, refused=True)
-            if need == _SALES_REPORT_GRANT:
+            if need == _SALES_TARGET_GRANT:
+                return _fixed_reply(fetch_mod.SALES_TARGET_NOT_ENABLED_MESSAGE, refused=True)
+            if sales_need:
                 # R7 (PLAN-prompt-dynamic-30sep D9): the `sales` domain is refused in the
                 # words every sales figure ask was refused in under `order`.
-                return _sales_report_not_enabled()
+                return _sales_report_not_enabled(parse_output)
             return _error_fragment(
                 f"{domain} needs the {need} grant, which this contact does not hold",
                 outcome="access_denied",
@@ -1922,236 +2102,73 @@ def run_fetch(
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
-        if _SALES_REPORT_GRANT not in granted:
+        decision = sales_figure_decision(
+            db, contact_id, space_id, order_status=order_status_raw,
+            granted=report_ask.grant_key(parse_output) in granted,
+            parse_output=parse_output,
+        )
+        if decision == "not_granted":
             if trace is not None:
                 trace.add(
                     "domain_grant",
                     {"domain": domain, "skipped": "not_granted", "needs": _SALES_REPORT_GRANT},
                 )
-            return _sales_report_not_enabled()
+            return _sales_report_not_enabled(parse_output)
+        if decision == "salesperson_book" and trace is not None:
+            trace.add("domain_grant", {"domain": domain, "decision": decision, "needs": _SALES_REPORT_GRANT})
+        if order_status_raw != report_ask.ASK_NAME and report_ask.unreadable_period(parse_output):
+            # REPORT-SMART-1021 step 5: a period in words is asked, never run or echoed (the
+            # sales ranking asks it through its own required fields).
+            if trace is not None:
+                trace.add("report_period", {"unreadable": True, "order_status": order_status_raw})
+            return _fixed_reply(report_ask.UNREADABLE_PERIOD_LINE)
 
-    has_customer = (
-        any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities)
-        if isinstance(entities, list)
-        else False
-    )
-    # #1262 slice 9 (F1a), AC-S9-4: a brand alone is a valid subject for the
-    # outstanding report. Resolved here (not merely hinted): SF4 (review round, 26
-    # Sep 2026) - "brand XYZ" naming an unlisted word must never count as a subject,
-    # so this must test the RESOLVED `outstanding_brand_ids` (the SAME live lookup
-    # `_resolve_report_product_and_location` performs, called early here so its
-    # result is ready before the subject gate below reads it), never any
-    # brand-hinted entity regardless of whether it matched a live brand.
-    _resolve_outstanding_brand_ids(parse_output, semantic_input, db=db)
-    has_brand = bool(semantic_input.get("outstanding_brand_ids"))
-    # #1262 slice 2 (F1c): a carried customer id is a subject only when it is a real
-    # uuid - a kind-pick's printed label ("Sorento (customer)") riding on this same
-    # key is not a resolved customer, and must never count as one here either.
-    raw_carried_customer_ids = jsc.array(parse_output.get("outstanding_carried_customer_ids"))
-    carried_customer_ids = [u for u in raw_carried_customer_ids if fetch_mod.is_uuid(u)]
-    carried_customer_unusable = bool(raw_carried_customer_ids) and not carried_customer_ids
-    # R13: on an ANSWERING turn the subject is whatever the stored filters carry - the
-    # product code, the customer ids, or both - and neither needs resolving again: they
-    # were resolved on the turn that asked.
-    carried_subject = (
-        bool(jsc.truthy(parse_output.get("outstanding_carried_product_code")))
-        or bool(jsc.array(parse_output.get("outstanding_carried_product_codes")))
-        or bool(carried_customer_ids)
-    )
+    slot_open = parse_output.get("required_ask") if isinstance(parse_output.get("required_ask"), dict) else {}
+    answering_basis = slot_open.get("ask") == sales_basis_ask.ASK_NAME
     if (
-        domain == "order"
-        and not (has_product or has_customer or has_brand or carried_subject)
-        and carried_customer_unusable
-        and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
+        slot_open.get("ask") != sales_company_ask.ASK_NAME
+        and (
+            answering_basis
+            or (
+                order_status_raw == report_ask.ASK_NAME
+                and parse_output.get("capability_from") == "sales_analysis"
+                and jsc.js_string(parse_output.get("group_by") or "") in ("", "year")
+            )
+        )
     ):
-        # AC-S2-3: the ONLY subject this turn has is an unusable stored customer (the
-        # label, never re-typed) - never run the report over no customer at all
-        # ("Customer: all"); ask, with no tool call.
-        return _which_customer_ask()
-    if (
-        domain == "order"
-        and (has_product or has_customer or has_brand or carried_subject)
-        and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
-    ):
-        tool_name = "crm_outstanding_report"
-        tool_item = {"name": tool_name, "_tool_pick": {"source": "outstanding_override"}}
-
-        # -- AC-1119/S4c/D5/R17 (ruling 3): product-code + location resolution, the
-        # ONE seam shared with `crm_sales_report` below. --------------------------- #
-        _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
-
-        # -- R19: the NAMES for the question's own `Customer:` line ------------ #
-        # Worked out once, here, and stored on both filter builders. The ids are uuids
-        # and a uuid never reaches a customer's screen, so the question has to carry the
-        # names the resolution already produced - this turn's, when the gate resolved a
-        # customer, and otherwise the ones the CARRIED entities still hold (an answering
-        # or refining turn resolves nothing of its own; the report's own header is built
-        # from the ids by the route, which has the `customers` table to read).
-
-        # -- D13: the sales_orders.outstanding field-reveal gate, before any fetch -- #
-        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
-        granted_raw = access_ctx.get("attributes")
-        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
-        has_so_grant = _OUTSTANDING_SO_GRANT in granted
-
-        # S4 point 3 (AC-1130): bare "outstanding" + the grant arms the scope
-        # question instead of fetching. `outstanding_scope_ask_candidate` is a
-        # PURELY SYNTACTIC flag `head/output_exchange.py::_post_process` sets
-        # BEFORE resolve+gate even runs (domain/product/bare-order_status, no
-        # grant knowledge there) - the grant check happens HERE, the only place
-        # that already reads `ctx.access`, so a direct `run_fetch` call (this
-        # module's own tests) that never went through that step just fetches,
-        # which is what `TestToolPick` pins.
-        if (
-            order_status_raw == "outstanding"
-            and jsc.truthy(parse_output.get("outstanding_scope_ask_candidate"))
-            and has_so_grant
-        ):
-            return _outstanding_scope_ask(entities, semantic_input, db=db)
-
-        scope = fetch_mod.ORDER_STATUS_TO_SCOPE.get(order_status_raw, "both")
-        so_refused = False
-        if scope in ("so", "both") and not has_so_grant:
-            scope = "do"
-            # AC-1140 vs AC-1141: a BARE "outstanding" silently redirects to `do` (no
-            # question was ever asked, so there is nothing to refuse); an EXPLICIT SO
-            # ask ("so_outstanding" / "outstanding_both") gets the refusal line.
-            so_refused = order_status_raw != "outstanding"
-        semantic_input["outstanding_scope"] = scope
-        semantic_input["outstanding_so_refused"] = so_refused
-    elif order_status_raw == "sales_analysis" and not has_own_accounts:
-        # PLAN-retail-sales-reports-26sep S1: a sales ANALYSIS (a company's sales by
-        # month, by year, by channel) is the reports kernel's own query, answered as the
-        # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
-        # Q2). An override like the two reports beside it, never `tools[0]`; the grant
-        # was checked above, before anything was fetched.
-        group_by = jsc.js_string(parse_output.get("group_by") or "")
-        if group_by and group_by not in fetch_mod.SALES_ANALYSIS_GROUP_BY:
-            # Review round 2 S1: "sales by customer" is not answered with a by-channel
-            # table and no word that the ask was changed; it is said, and nothing fetched.
-            return _sales_analysis_axis_unsupported(group_by)
-        tool_name = _SALES_ANALYSIS_TOOL
-        tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_analysis_override"}}
-    elif (
-        domain in contracts.ORDER_OR_SALES_DOMAINS
-        and (has_product or has_customer or carried_subject)
-        and order_status_raw == "sales_report"
-    ) or (order_status_raw == "sales_analysis" and has_own_accounts):
-        # S4 wiring point 3 (AC-1650): domain "order" + a resolved product OR
-        # customer + `order_status: "sales_report"` picks THIS tool - one more
-        # branch beside the outstanding override above, never `tools[0]`. R7
-        # (PLAN-prompt-dynamic-30sep D9): the `sales` domain is the same ask.
-        #
-        # CHATBOT-SELFREF-SCOPE B2 (production, 30 Sep 2026): a CUSTOMER-SCOPED contact
-        # asking for "my sales this month" is parsed as a sales ANALYSIS, but that is a
-        # company's own totals (`/api/v1/sales/analysis` refuses any contact linked to a
-        # customer account, AC-S1-23), so the ask went out as `crm_sales_analysis` and
-        # came back with nothing. Its sales figures are its linked customers' (parent
-        # plan Q6a, Q8a): the customer-facing report, over the links, the way every
-        # other sales ask of a scoped contact runs. Its reply is TEXT (the presenter's
-        # month blocks), never a file.
-        tool_name = "crm_sales_report"
-        if order_status_raw == "sales_analysis":
-            tool_item = {"name": tool_name, "_tool_pick": {"source": "customer_scope_sales_report"}}
-            # A linked STAFF contact is not forced by the engine (not enforced), so its
-            # links may not have been handed over as entities ("sales this month" with no
-            # "my" resolves no customer at all): the links are the report's subject either
-            # way, or the route answers 422 `subject_required`.
-            if not any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities):
-                entities = [
-                    *[e for e in entities if isinstance(e, dict)],
-                    *[
-                        {"uuid": cid, "entity_type": "customer", "code": code or name, "display_name": name, "scope": True}
-                        for cid, name, code in (customer_scope.get("linked") or [])
-                    ],
-                ]
+        # SALES-TOTAL-ASK (#1931, owner ruling 27 Oct): a company sales total (and the Yearly comparison, axis year) naming
+        # no basis is asked "Invoiced, delivered, ordered or outstanding?" before anything runs, answered ONLY by the
+        # parser's declared answer; never defaulted. The answer runs the first message's own ask on the REPORT ASK
+        # (no chat path calls `crm_sales_analysis`): one total layout for every basis, outstanding included.
+        settled = sales_basis_ask.settle(db, parse_output)
+        if settled is not None:
             if trace is not None:
-                trace.add(
-                    "customer_scope",
-                    {
-                        "decision": "sales_analysis_answered_as_sales_report",
-                        "reason": "company_sales_analysis_is_not_a_linked_contacts_figure",
-                        "ids": list(customer_scope["ids"]),
-                    },
-                )
-        else:
-            tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_report_override"}}
-
-        # -- S4 wiring point 4 (AC-1651): the gate, BEFORE any fetch. There is no
-        # fallback scope here (unlike D13's SO/DO redirect above), so the absence
-        # of the grant refuses the WHOLE ask, with no fetch and nothing armed. -- #
-        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
-        granted_raw = access_ctx.get("attributes")
-        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
-        if _SALES_REPORT_GRANT not in granted:
-            return _sales_report_not_enabled()
-
-        # -- AC-1119/S4c/D5/R17 (ruling 3): the SAME product-code + location
-        # resolution the outstanding override above uses, fixed once at this one
-        # seam for both tools. --------------------------------------------------- #
-        _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
-    elif domain in contracts.ORDER_OR_SALES_DOMAINS and order_status_raw == "top_selling":
-        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 5 (AC-1950): the ranking needs
-        # no subject, so no subject rule; never `tools[0]`. Gated on the sales report's
-        # own key (owner ruling 26 Sep: no new key), checked above for every sales
-        # figure status, before anything below can fetch.
-        tool_name = TOP_SELLING_TOOL
-        tool_item = {"name": tool_name, "_tool_pick": {"source": "top_selling_override"}}
-        slot = semantic_input.get("top_selling")
-        slot = slot if isinstance(slot, dict) else {}
-        if slot.get("dealer_refused"):
-            # Reviewer S2 (PR #1273): a linked dealer named a customer outside its own
-            # ledgers (`engine._top_selling_dealer_scope`). No picker, no fetch.
-            if trace is not None:
-                trace.add("top_selling", {"refused": "customer_not_permitted"})
-            return _fixed_reply(TOP_SELLING_REFUSED_OTHER_CUSTOMER, refused=True)
-        if slot.get("unclear"):
-            # Owner retest of round 4 (27 Sep 2026, R6/R8): a message inside a ranking
-            # the parser could not place is asked about in one short line, never sent to
-            # the out of scope lane or the customer service routing.
-            if trace is not None:
-                trace.add("top_selling", {"asked": "unclear"})
-            return _fixed_reply(TOP_SELLING_UNCLEAR)
-        who = slot.get("who")
-        if isinstance(who, dict):
-            if trace is not None:
-                trace.add("top_selling", {"asked": "who", "word": who.get("word")})
-            return _fixed_reply(_top_selling_ask_who(who), top_selling_asked="who")
-        question = _top_selling_question(slot)
-        if question is not None:
-            axis, line = question
-            if trace is not None:
-                trace.add("top_selling", {"asked": line})
-            # A word this message named that the ranking cannot narrow by is said above
-            # the question too, once (PR #1273 round 7: "by william" asked the metric and
-            # the unknown agent was never said).
-            unknown = [
-                f"I don't know '{word}' as a {kind}." if kind else f"I don't know '{word}'."
-                for kind, word in (slot.get("unknown") or [])
-                if jsc.truthy(word)
-            ]
-            return _fixed_reply("\n\n".join([" ".join(unknown), line]) if unknown else line, top_selling_asked=axis)
-        category_ids, _category_named, ambiguous, unknown = _top_selling_category_ids(slot, db=db)
-        if ambiguous:
-            if trace is not None:
-                trace.add("top_selling", {"asked": "category", "codes": ambiguous})
-            return _fixed_reply(_top_selling_ask_category(ambiguous), top_selling_asked="category")
-        # Owner retest (27 Sep 2026): a word the ranking cannot narrow by is said in one
-        # line above the ranking, which runs without it; the category word is then
-        # forgotten (`top_selling_drop`), the brand and agent words were never kept.
-        notes = [
-            f"I don't know '{word}' as a {kind}." if kind else f"I don't know '{word}'."
-            for kind, word in (slot.get("unknown") or [])
-            if jsc.truthy(word)
-        ]
-        notes += [f"I don't know '{word}' as a category." for word in unknown]
-        ceiling_note = top_selling_ceiling_note(slot)
-        if ceiling_note:
-            notes.append(ceiling_note)
-        if unknown:
-            semantic_input["top_selling_drop"] = ["category_words", "category_code"]
-        semantic_input["top_selling_notes"] = notes
-        semantic_input["top_selling_category_ids"] = category_ids
+                trace.add("required_ask", {"ask": sales_basis_ask.ASK_NAME, "done": settled.done, "values": settled.values})
+            if not settled.done:
+                return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            answered = sales_basis_ask.run_input(settled)
+            parse_output = {
+                **{k: v for k, v in parse_output.items() if k != "by_words"},
+                # The carried axis was validated on the asking turn: the reply's own `by_words` (null on a bare answer)
+                # must not drop it (`report_ask.typed_group_by`).
+                **answered, "required_ask": None, "order_status": "sales_analysis",
+                "basis": answered.get("sales_basis"),  # the declared answer wins over a stray `basis` key
+            }
+        if parse_output.get("order_status") == "sales_analysis":
+            parse_output = report_ask.take_words(report_ask.by_capability(parse_output, seam=False), "")
+        order_status_raw = report_ask.ASK_NAME
+    if order_status_raw == contracts.SALES_TARGET_STATUS and domain in contracts.ORDER_OR_SALES_DOMAINS:
+        # SALES-TARGET-CHAT: the target ask has its own tool; the route scopes the contact
+        # (its links or its agents) and the grant was checked above, before any pick.
+        tool_name = _SALES_TARGET_TOOL
+        # The injected scope links are not a named customer: only one the person named goes.
+        entities = [e for e in entities if not (isinstance(e, dict) and e.get("scope"))]
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_target_override"}}
+    elif order_status_raw == "sales_analysis" and jsc.js_string(parse_output.get("group_by") or ""):
+        # REPORT-UNIFY: `report_ask.by_capability` turned every sales total and every axis the report ask draws (the
+        # Yearly comparison, axis year, included) into the report ask; what is left names an axis it cannot draw. Said,
+        # never answered with another table, and nothing is fetched. No chat path calls `crm_sales_analysis` any more.
+        return _sales_analysis_axis_unsupported(jsc.js_string(parse_output.get("group_by") or ""))
     elif domain == chat_report.DOMAIN and chat_report.is_chat_report(parse_output):
         # CA-3 (PLAN-chat-analytics-ca3-chat-dataset-10oct.md slice 5): what customers ask
         # the bot, `crm_report_ask` with `dataset=chat`. The reveal was checked above; every
@@ -2185,13 +2202,19 @@ def run_fetch(
         # totalled by one dimension, `crm_report_ask`. The grant was checked above for
         # every sales figure status; every other gate (audience, company, location) is
         # the route's, from `contact_id`. Nothing runs until the period, and how many for
-        # a ranking, are settled (`required_fields`, asked one per reply).
+        # a ranking, are settled (`required_fields`; every missing one in one numbered
+        # reply, chat fix PR-B S1).
         tool_name = report_ask.TOOL
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_ranking_override"}}
         # 1b fix round F1: a customer-scoped (dealer) turn is refused a staff breakdown
         # before any agent or location word is resolved.
+        # Security S3: a contact the route refuses the agent dimension (no reveal for this basis: a salesperson narrowed to
+        # their own book) is never offered the list of agents to pick from.
+        _attrs = (ctx.get("access") or {}).get("attributes") if isinstance(ctx.get("access"), dict) else None
+        _agent_filter = report_ask.grant_key(parse_output) in set(_attrs) if isinstance(_attrs, (list, tuple, set, frozenset)) else False
         settled, line = report_ask.settle(
-            db, parse_output, entities, dealer=bool(customer_scope.get("enforced"))
+            db, parse_output, entities, dealer=bool(customer_scope.get("enforced")), agent_filter=_agent_filter,
+            companies=sales_company_ask._companies(db, contact_id, space_id),
         )
         if trace is not None:
             trace.add(
@@ -2204,8 +2227,24 @@ def run_fetch(
         if not settled.done:
             return _fixed_reply(settled.reply or "", required_ask=settled.slot)
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
+        location_line = report_ask.invoiced_location_line(semantic_input["report_ask_args"])
+        if location_line:
+            return _fixed_reply(location_line)
+        unapplied = [
+            *report_ask.unapplied_words(parse_output, semantic_input["report_ask_args"]),
+            *[str(w) for w in settled.extras.get("not_applied") or []],  # a brand / category / agent word that bound to nothing
+        ]
+        if unapplied:
+            sole = report_ask.sole_unapplied_question(unapplied, semantic_input["report_ask_args"])
+            if sole:
+                return _fixed_reply(sole)
+            semantic_input["report_ask_not_applied"] = unapplied
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
+        if settled.extras.get("detail"):
+            semantic_input["report_ask_detail"] = True  # R3c: a row's detail leaves the ranking on screen
+            if settled.extras.get("detail_second"):
+                semantic_input["report_ask_second_group"] = settled.extras["detail_second"]
         # The args carry every id the ask settled (an answering turn's came off the slot);
         # nothing the session carried rides beside them.
         entities = []
@@ -2224,6 +2263,19 @@ def run_fetch(
             semantic_input["order_status"] = "outstanding"
             semantic_input["so_bucket_refused"] = True
 
+    # V1-DOC-SCOPE (owner rule: unlinked != customer): a non-staff contact with no customer
+    # links owns no delivery order, so an orders read (or the outstanding report, whose rows
+    # carry DO / SO numbers and customer names) would only ever list other customers'.
+    # Refused before any fetch; the routes themselves scope only an enforced contact.
+    if (
+        tool_name in _DOC_TOOLS
+        and parse_output.get("doc_staff") is not True
+        and not customer_scope.get("ids")
+    ):
+        if trace is not None:
+            trace.add("customer_scope", {"refused": "no_links", "tool": tool_name})
+        return _fixed_reply(_scope_refusal(customer_scope), refused=True)
+
     # DO-ASK-SIMPLIFY security S1 (PR #1433): a transporter named on a DO list ask would
     # filter the rows by it, telling the contact who carried each one. Without the
     # `delivery_orders.transporter` reveal the ask is refused before any fetch (review S5:
@@ -2233,6 +2285,12 @@ def run_fetch(
             if trace is not None:
                 trace.add("field_reveal", {"refused": "transporter_filter", "tool": tool_name})
             return _fixed_reply(do_ask.TRANSPORTER_REFUSED, refused=True)
+
+    if tool_name == report_ask.TOOL and not isinstance(semantic_input.get("report_ask_args"), dict):
+        # REPORT-UNIFY (phase 3, R2): the default pick of the sales row is this tool, and only an override settles its
+        # args. An ask that reached it unsettled (an axis it cannot draw) would send a bare call: say the axis instead.
+        axis = jsc.js_string(parse_output.get("group_by") or "").strip()
+        return _sales_analysis_axis_unsupported(axis) if axis else _fixed_reply(report_ask.CATALOGUE_LINE)
 
     trigger = {
         "tool": tool_name,
@@ -2257,6 +2315,15 @@ def run_fetch(
         # stay byte-inert for every non-HAS turn.
         "predicate": gate.get("predicate"),
     }
+    set_by_code = {
+        str(e.get("code")).casefold(): [str(c) for c in (e.get("set_codes") or [e["set_code"]])]
+        for e in entities
+        if isinstance(e, dict) and e.get("set_code") and e.get("code")
+    }
+    if set_by_code:
+        # CHAT-CODE-LOOKUP R2: member rows of a product set the customer typed; the reply
+        # groups them under their set and prints no price (`output_structurer`).
+        trigger["set_by_code"] = set_by_code
     if tool_name == "crm_portal_link_get":
         # DEV-FAILURES RC-B: the intro names the form the link opens, in the reply language.
         templates = reply_copy.resolve(db) if db is not None else reply_copy.fallback_copy()
@@ -2265,6 +2332,17 @@ def run_fetch(
             getattr(ctx.get("localizer"), "language", None),
         )
     predicate = gate.get("predicate")
+    if (
+        tool_name == fetch_mod.TIER_PROBE_TOOL
+        and semantic_input.get("brand_subject")
+        and isinstance(predicate, dict)
+        and set((predicate.get("require") or {}).keys()) <= {"promotion"}
+    ):
+        # CHAT-PROMO-BRAND-FLYER: "Sorento A3 flyer" reads as the described set "Sorento
+        # products that have a promotion", which IS the question the promotions read answers
+        # by brand and kind (`promo_filter`): not a filter, and its count is not the answer.
+        predicate = None
+        trigger["predicate"] = None
     if isinstance(predicate, dict) and not predicate.get("qualifying_total"):
         # Reviewer B2 on PR #833: a described set with nothing in it has no product to
         # send, and the tool called without one answers about every product. The miss
@@ -2360,6 +2438,19 @@ def run_fetch(
     envelope = brand_guard.guard_result(
         tool_name, fetch_mod.parse_mcp_content(raw), semantic_input.get("scope_brand_ids"), db
     )
+    second_group = semantic_input.get("report_ask_second_group") if tool_name == report_ask.TOOL else None
+    if second_group and isinstance(envelope, dict) and envelope.get("response"):
+        # REPORT-SMART-L R3c: an item's detail is two runs of the same ask (by customer, then by month),
+        # shown together; the second never changes the first's envelope.
+        try:
+            raw2 = fetch_mod.call_tool(tool_name, {**args, "group_by": second_group}, mcp=_McpSeam(services.mcp_call))
+            env2 = brand_guard.guard_result(
+                tool_name, fetch_mod.parse_mcp_content(raw2), semantic_input.get("scope_brand_ids"), db
+            )
+            if isinstance(env2, dict) and env2.get("response"):
+                envelope = {**envelope, "response": f"{envelope['response']}\n\n{env2['response']}"}
+        except Exception:  # noqa: BLE001 - the first run's answer stands alone
+            logger.warning("chatbot: item detail second run failed", exc_info=True)
     if tool_name == fetch_mod.TIER_PROBE_TOOL and semantic_input.get("promotion_types"):
         # A kind ask is served by the same serving rule as every promotion (AC-22).
         if (
@@ -2428,6 +2519,8 @@ def run_fetch(
         # REPORT-ENGINE slice 1b: the route's own refusal (the audience check is the
         # route's) is said as its message, a 404 as one line.
         refusal = report_ask.error_line(envelope) if tool_name == report_ask.TOOL else None
+        if tool_name == _SALES_TARGET_TOOL:
+            refusal = fetch_mod.sales_target_refusal(envelope)
         if refusal:
             if trace is not None:
                 trace.add("report_ask", {"refused": envelope.get("status_code")})

@@ -72,6 +72,11 @@ const LANE_WORDS: Record<BranchKind, string> = {
   business_query: 'Business query',
   media_denied: 'Media refused',
   ai_not_allowed: 'AI not allowed',
+  log_opportunity: 'Logging a sales opportunity',
+  phone_ask: 'Asked for a phone number',
+  phone_linked: 'Phone linked',
+  phone_ignored: 'Phone card ignored',
+  phone_handoff: 'Phone handed to staff',
 };
 
 export function laneWords(branchKind: BranchKind | null): string {
@@ -113,6 +118,14 @@ export function turnHeadline(turn: ChatbotTurn): TurnHeadline {
       return { word: 'Escalation declined', tone: 'ok' };
     case 'ai_not_allowed':
       return { word: 'Not allowed', tone: 'ok' };
+    case 'phone_ask':
+      return { word: 'Asked', tone: 'ok' };
+    case 'phone_linked':
+      return { word: 'Linked', tone: 'ok' };
+    case 'phone_ignored':
+      return { word: 'No reply', tone: 'ok' };
+    case 'phone_handoff':
+      return { word: 'Handed to staff', tone: 'ok' };
     case 'access_denied':
     case 'stock_denied':
     case 'not_supported':
@@ -144,6 +157,27 @@ export function formatMs(ms: number): string {
  */
 export function shortTurnId(id: string): string {
   return id.replace(/-/g, '').slice(0, 4);
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A nested fact value: a UUID (and any `turn_id`) reads shortened, never in full. */
+function nestedText(key: string, value: unknown): string {
+  if (value !== null && typeof value === 'object') return JSON.stringify(value);
+  const text = String(value);
+  return key === 'turn_id' || UUID_RE.test(text) ? shortTurnId(text) : text;
+}
+
+/** A stage fact as readable text: a plain object (the `received` stage's
+ * `quoted_turn`) reads as "key: value" pairs, never "[object Object]"; everything
+ * else keeps its `String` form. Shared by the inline stage row and the drawer. */
+export function factText(value: unknown): string {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => `${k}: ${nestedText(k, v)}`)
+      .join(', ');
+  }
+  return String(value);
 }
 
 export type TimelineRow =

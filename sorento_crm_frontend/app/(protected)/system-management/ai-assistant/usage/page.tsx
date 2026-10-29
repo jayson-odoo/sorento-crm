@@ -19,7 +19,8 @@ import {
 } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
@@ -36,9 +37,7 @@ import {
 import type { RecentQueryItem } from '../services/aiUsageService';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
-const FEATURE_ALL = 'all';
 const FEATURE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: FEATURE_ALL, label: 'All AI usage' },
   { value: 'ai_assistant', label: 'AI Assistant (chat)' },
   { value: 'ai_extract', label: 'AI Extract (portal forms)' },
   { value: 'ai_document_extract', label: 'Document reading (PO, delivery schedule)' },
@@ -101,11 +100,11 @@ export default function AIUsagePage() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>(defaultRange());
   const [pendingRange, setPendingRange] = useState<DateRange | undefined>(dateRange);
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
-  const [featureFilter, setFeatureFilter] = useState<string>(FEATURE_ALL);
+  const [featureFilter, setFeatureFilter] = useState('');
 
   const from = dateRange?.from;
   const to = dateRange?.to;
-  const featureForApi = featureFilter === FEATURE_ALL ? undefined : featureFilter;
+  const featureForApi = featureFilter || undefined;
 
   const summaryQuery = useUsageSummary(from, to, featureForApi);
   const byDayQuery = useUsageByDay(from, to, featureForApi);
@@ -210,12 +209,13 @@ export default function AIUsagePage() {
             </PopoverContent>
           </Popover>
           <div className="w-full sm:w-auto" data-testid="ai-usage-feature-filter">
-            <SearchableSelect
-              value={featureFilter}
-              onChange={setFeatureFilter}
+            <SearchableMultiSelect
+              value={splitMulti(featureFilter)}
+              onChange={(v) => setFeatureFilter(joinMulti(v))}
               options={FEATURE_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
               placeholder="All AI usage"
               triggerClassName="w-full sm:w-60"
+              clearable
             />
           </div>
         </div>

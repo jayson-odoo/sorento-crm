@@ -6,13 +6,14 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.services.audit_actor_label import actor_label as _actor_label
-from app.services.audit_service import list_audit_logs
+from app.services.audit_service import _is_uuid, list_audit_logs
 from app.schemas.audit import AuditLogResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.models.user import User
 from app.models.access import RespondContact
 from app.services.user_service import UserPermissionService
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_uuids, multi_values
 from app.models.base import get_company_scope
 
 router = APIRouter()
@@ -28,8 +29,12 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     "stock_inquiry": "procurement.stock_inquiries.view",
     "purchase_request": "procurement.purchase_requests.view",
     "product": "master_data.products.view",
+    "project_sample_requests": "projects.sample_requests.view",
+    "new_product_application": "procurement.new_product_applications.view",
     # Packing List detail, Timeline tab (usePackingLists.ts, R17).
     "inbound_shipments": "procurement.packing_lists.view",
+    # Product Specifications record page, History tab.
+    "product_spec_registry": "master_data.spec_registry.view",
 }
 
 
@@ -133,11 +138,38 @@ def _integration_names(db: Session, integration_ids: list[str]) -> dict[str, str
 
 # Human-readable one-liner for a status transition, e.g. "status: pending → approved".
 # Derived at serialize time from the JSONB diff - no schema/storage change.
-def _derive_description(it) -> Optional[str]:
+def _status_labels(db: Session, items) -> dict[str, str]:
+    """Labels for every status-engine `status_id` an UPDATE row moved between, in one query,
+    so the trail reads "Status: Draft -> Submitted" instead of two raw ids."""
+    ids = set()
+    for it in items:
+        for values in (it.old_values or {}, it.new_values or {}):
+            value = values.get("status_id")
+            # Only real ids reach the query: one legacy or hand-written value must not turn
+            # the whole trail into a 500.
+            if value and _is_uuid(str(value)):
+                ids.add(str(value))
+    if not ids:
+        return {}
+    from app.models.status import Status
+
+    rows = db.query(Status.id, Status.label).filter(Status.id.in_(list(ids))).all()
+    return {str(r.id): r.label for r in rows}
+
+
+def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> Optional[str]:
     if it.description:
         return it.description
     old = it.old_values or {}
     new = it.new_values or {}
+    if status_labels and new.get("status_id") and new.get("status_id") != old.get("status_id"):
+        to = status_labels.get(str(new.get("status_id")))
+        if to:
+            if not old.get("status_id"):
+                return f"Status: ∅ → {to}"
+            frm = status_labels.get(str(old.get("status_id")))
+            # An old status that no longer exists is not "no status".
+            return f"Status: {frm} → {to}" if frm else f"Status changed to {to}"
     # Attachment upload activity: surface the filename + what happened.
     if it.entity_type == "attachment":
         fname = new.get("original_filename") or old.get("original_filename")
@@ -159,33 +191,103 @@ def _derive_description(it) -> Optional[str]:
     return None
 
 
+# A child row on its record's trail (a complaint's product line) is named by its own
+# identifying field, never its id: "Product line CWCY604".
+_CHILD_IDENT_FIELDS = ("product_code", "item_code", "code", "name", "title", "original_filename")
+
+
+def _child_kind(child_type: str, parent_type: str) -> str:
+    """`complaint_product_lines` under `complaint` -> "Product line"."""
+    stem = child_type[len(parent_type) + 1:] if child_type.startswith(f"{parent_type}_") else child_type
+    if stem.endswith("ies"):
+        stem = stem[:-3] + "y"
+    elif stem.endswith("s") and not stem.endswith("ss"):
+        stem = stem[:-1]
+    return stem.replace("_", " ").strip().capitalize()
+
+
+def _ident_from(values: Optional[dict]) -> Optional[str]:
+    for key in _CHILD_IDENT_FIELDS:
+        value = (values or {}).get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _child_labels(db: Session, items, entity_type: str, entity_id: str) -> dict[str, str]:
+    """Audit row id -> label for every row on the page that belongs to a child of the record.
+
+    An UPDATE carries only the fields it changed, so the identifier comes from the newest
+    row of the same child that carries one, else from the live child row."""
+    children = [it for it in items if (it.entity_type, str(it.entity_id)) != (entity_type, entity_id)]
+    if not children:
+        return {}
+    idents: dict[tuple[str, str], str] = {}
+    for it in children:  # newest first, so the current code wins
+        key = (it.entity_type, str(it.entity_id))
+        if key not in idents:
+            ident = _ident_from(it.new_values) or _ident_from(it.old_values)
+            if ident:
+                idents[key] = ident
+    missing: dict[str, set[str]] = {}
+    for it in children:
+        if (it.entity_type, str(it.entity_id)) not in idents and _is_uuid(str(it.entity_id)):
+            missing.setdefault(it.entity_type, set()).add(str(it.entity_id))
+    if missing:
+        from app.database import Base
+        from app.services.audit_service import _audit_entity_type
+
+        for mapper in Base.registry.mappers:
+            cls = mapper.class_
+            ids = missing.get(_audit_entity_type(cls))
+            if not ids or "id" not in mapper.columns:
+                continue
+            for rec in db.query(cls).filter(mapper.columns["id"].in_(list(ids))).all():
+                ident = _ident_from({k: getattr(rec, k, None) for k in _CHILD_IDENT_FIELDS})
+                if ident:
+                    idents[(_audit_entity_type(cls), str(rec.id))] = ident
+    out: dict[str, str] = {}
+    for it in children:
+        kind = _child_kind(it.entity_type, entity_type)
+        ident = idents.get((it.entity_type, str(it.entity_id)))
+        out[str(it.id)] = f"{kind} {ident}" if ident else kind
+    return out
+
+
 @router.get("/", response_model=ListResponse[AuditLogResponse])
-async def get_audit_logs(
-    entity_type: Optional[str] = Query(None, description="Filter by entity type (e.g. complaint, stock_inquiry, purchase_request)"),
+def get_audit_logs(
+    entity_type: Optional[list[str]] = Query(None, description="Filter by entity type(s) (e.g. complaint, stock_inquiry, purchase_request)"),
     entity_id: Optional[str] = Query(None, description="Filter by entity id"),
-    user_id: Optional[str] = Query(None),
-    action: Optional[str] = Query(None, description="INSERT, UPDATE, or DELETE"),
+    user_id: Optional[list[str]] = Query(None),
+    action: Optional[list[str]] = Query(None, description="INSERT, UPDATE, or DELETE"),
     trace_id: Optional[str] = Query(None, description="Filter by request correlation id (groups a multi-row change)"),
     changed_from: Optional[datetime] = Query(None, description="Filter changed_at >= (ISO); e.g. a day bar drill-down"),
     changed_to: Optional[datetime] = Query(None, description="Filter changed_at <= (ISO)"),
+    include_children: bool = Query(
+        False,
+        description="With entity_type + entity_id: also the record's child rows (e.g. a complaint's product lines)",
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """List audit log entries, optionally filtered by entity_type and entity_id (for per-record history)."""
-    _authorize_log_read(db, current_user, entity_type, entity_id)
+    entity_types = multi_values(entity_type)
+    user_ids = multi_uuids(user_id, "User")
+    _authorize_log_read(db, current_user, entity_types[0] if entity_types and len(entity_types) == 1 else None, entity_id)
     items, total = list_audit_logs(
         db,
-        entity_type=entity_type,
+        entity_type=entity_types,
         entity_id=entity_id,
-        user_id=user_id,
-        action=action,
+        user_id=user_ids,
+        action=multi_values(action),
         trace_id=trace_id,
         changed_from=changed_from,
         changed_to=changed_to,
         page=page,
         limit=limit,
+        include_children=include_children,
     )
     user_ids = list(
         {str(it.user_id) for it in items if it.user_id is not None}
@@ -205,6 +307,9 @@ async def get_audit_logs(
     from app.services.activity_service import entity_labels
 
     record_labels = entity_labels(db, items)
+    status_labels = _status_labels(db, items)
+    if include_children and entity_types and len(entity_types) == 1 and entity_id:
+        record_labels.update(_child_labels(db, items, entity_types[0], entity_id))
     data = []
     for it in items:
         payload = AuditLogResponse.model_validate(it).model_dump()
@@ -222,7 +327,7 @@ async def get_audit_logs(
             it, user_names, contact_names, integration_names, payload["user_display_name"],
             scheduled_names=scheduled_names,
         )
-        payload["description"] = _derive_description(it)
+        payload["description"] = _derive_description(it, status_labels)
         payload["entity_label"] = record_labels.get(str(it.id))
         data.append(AuditLogResponse(**payload))
     return {

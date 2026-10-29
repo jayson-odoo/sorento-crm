@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional
 from decimal import Decimal
 
+from app.utils.multi_value import multi_values
 from app.utils.product_display import code_with_name
 from app.services import promotion_serving, promotion_window
 from app.models.marketing import (
@@ -252,6 +253,11 @@ def _load_attachments_by_promotion_ids(
             _joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
         .filter(PromotionAttachment.promotion_id.in_(promotion_ids))
+        # A soft-deleted file is never served (owner run 21 Oct: a flyer deleted in July was
+        # still sent). The admin detail tab reads `get_promotion_attachments_by_promotion`, unfiltered, to unlink it.
+        .filter(
+            PromotionAttachment.attachment.has(Attachment.is_deleted.is_(False))
+        )
         .order_by(
             PromotionAttachment.sort_order.asc().nulls_last(),
             PromotionAttachment.created_at.asc(),
@@ -309,6 +315,43 @@ def clamp_discount_percent_for_db(value: Optional[float]) -> Optional[float]:
     v = max(-_MAX_DISCOUNT_PERCENT, min(_MAX_DISCOUNT_PERCENT, v))
     return round(v, 2)
 
+
+ATTACHMENT_STATES = ("unlinked", "linked_to_trashed", "unlinked_or_trashed")
+
+
+def validated_attachment_states(raw):
+    """The Promotions cleanup filter's states from a param (comma-joined, repeated or one),
+    each checked: an unknown one is a 422 on every path (list, search, export)."""
+    from app.services.error_handler import handle_unprocessable
+    from app.utils.multi_value import multi_values
+
+    states = multi_values(raw)
+    if states and any(s not in ATTACHMENT_STATES for s in states):
+        raise handle_unprocessable(f"Attachment state: expected one of {', '.join(ATTACHMENT_STATES)}")
+    return states
+
+
+def attachment_state_clause(attachment_state):
+    """The Promotions cleanup filter as one clause: one state, or several OR-ed (the set of
+    promotions in any of them). None when no known state is given."""
+    if not attachment_state:
+        return None
+    states = [attachment_state] if isinstance(attachment_state, str) else attachment_state
+    has_any_link = exists().where(PromotionAttachment.promotion_id == Promotion.id)
+    linked_to_trashed = exists().where(
+        and_(
+            PromotionAttachment.promotion_id == Promotion.id,
+            PromotionAttachment.attachment_id == Attachment.id,
+            Attachment.is_deleted.is_(True),
+        )
+    )
+    by_state = {
+        "unlinked": ~has_any_link,
+        "linked_to_trashed": linked_to_trashed,
+        "unlinked_or_trashed": or_(~has_any_link, linked_to_trashed),
+    }
+    clauses = [by_state[s] for s in states if s in by_state]
+    return or_(*clauses) if clauses else None
 
 class PromotionService:
     """Service for promotion operations."""
@@ -376,7 +419,7 @@ class PromotionService:
     def _build_promotions_ordered_query(
         self,
         *,
-        user_type: Optional[str] = None,
+        user_type: Optional[list[str] | str] = None,
         contact_access_codes: Optional[list[str]] = None,
         query: Optional[str] = None,
         active: Optional[bool] = None,
@@ -390,7 +433,7 @@ class PromotionService:
         entity_promotion_ids: Optional[list[str]] = None,
         promotion_ids: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
-        attachment_state: Optional[str] = None,
+        attachment_state: Optional[list[str] | str] = None,
         expiry_notify_batch_id: Optional[str] = None,
         subject_clause: Optional[Any] = None,
     ):
@@ -475,7 +518,9 @@ class PromotionService:
                     )
                 )
             if user_type:
-                q = q.filter(Promotion.access_levels.contains([user_type]))
+                # Several access levels: a promotion for ANY of them.
+                levels = [user_type] if isinstance(user_type, str) else list(user_type)
+                q = q.filter(or_(*[Promotion.access_levels.contains([lv]) for lv in levels]))
             if contact_access_codes is not None:
                 # Empty access_levels (=[]) is invisible to any contact (no overlap possible).
                 # Empty contact_access_codes (contact has no assigned types) returns nothing.
@@ -534,24 +579,9 @@ class PromotionService:
                 q = q.filter(advanced_filter_clause)
             if subject_clause is not None:
                 q = q.filter(subject_clause)
-            if attachment_state:
-                from sqlalchemy import exists as _sa_exists, and_ as _sa_and, or_ as _sa_or2
-                has_any_link = _sa_exists().where(
-                    PromotionAttachment.promotion_id == Promotion.id
-                )
-                linked_to_trashed = _sa_exists().where(
-                    _sa_and(
-                        PromotionAttachment.promotion_id == Promotion.id,
-                        PromotionAttachment.attachment_id == Attachment.id,
-                        Attachment.is_deleted.is_(True),
-                    )
-                )
-                if attachment_state == "unlinked":
-                    q = q.filter(~has_any_link)
-                elif attachment_state == "linked_to_trashed":
-                    q = q.filter(linked_to_trashed)
-                elif attachment_state == "unlinked_or_trashed":
-                    q = q.filter(_sa_or2(~has_any_link, linked_to_trashed))
+            clause = attachment_state_clause(attachment_state)
+            if clause is not None:
+                q = q.filter(clause)
             return q
 
         sort_key = (sort_field or "created_at").strip() or "created_at"
@@ -601,7 +631,7 @@ class PromotionService:
         self,
         page: int = 1,
         limit: int = 50,
-        user_type: Optional[str] = None,
+        user_type: Optional[list[str] | str] = None,
         contact_access_codes: Optional[list[str]] = None,
         query: Optional[str] = None,
         status: Optional[str] = None,
@@ -615,7 +645,7 @@ class PromotionService:
         entities: Optional[list[str]] = None,
         promotion_ids: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
-        attachment_state: Optional[str] = None,
+        attachment_state: Optional[list[str] | str] = None,
         expiry_notify_batch_id: Optional[str] = None,
         serving_policy: bool = False,
         scope_terms: Optional[list[str]] = None,
@@ -2074,7 +2104,7 @@ class MarketingCampaignService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_campaigns(self, page: int = 1, limit: int = 50, status: str | None = None):
+    def list_campaigns(self, page: int = 1, limit: int = 50, status: list[str] | str | None = None):
         """List marketing campaigns, optionally filtered by status.
 
         Status is normalised to canonical LOWERCASE (matching the DB CHECK
@@ -2083,8 +2113,9 @@ class MarketingCampaignService:
         """
         q = self.db.query(MarketingCampaign).order_by(MarketingCampaign.created_at.desc())
 
-        if status and status.strip().lower() != "all":
-            q = q.filter(MarketingCampaign.status == status.strip().lower())
+        statuses = [s.lower() for s in (multi_values(status) or []) if s.lower() != "all"]
+        if statuses:
+            q = q.filter(MarketingCampaign.status.in_(statuses))
 
         total = q.count()
         offset = (page - 1) * limit
@@ -2200,6 +2231,8 @@ class PromotionAttachmentService:
             joinedload(PromotionAttachment.promotion),
             joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
+        # The same rule as `_load_attachments_by_promotion_ids`: a soft-deleted file is not served.
+        q = q.filter(PromotionAttachment.attachment.has(Attachment.is_deleted.is_(False)))
 
         if contact_access_codes is not None:
             if not contact_access_codes:

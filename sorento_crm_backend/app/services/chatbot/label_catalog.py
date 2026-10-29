@@ -259,6 +259,8 @@ LABELS: dict[str, dict[str, str]] = {
     "Categories with no sale in this period are not ranked.": {"ms": "Kategori tanpa jualan dalam tempoh ini tidak disenaraikan.", "zh": "此期间没有销售的类别不参与排名。"},
     "Reply with a rank number to see that category's top items.": {"ms": "Balas dengan nombor kedudukan untuk melihat item teratas kategori itu.", "zh": "回复排名数字查看该类别的热销项目。"},
     "Reply with a rank number to see that item's customers and months.": {"ms": "Balas dengan nombor kedudukan untuk melihat pelanggan dan bulan bagi item itu.", "zh": "回复排名数字查看该项目的客户和月份。"},
+    "Reply with a rank number to see that sales agent's customers and months.": {"ms": "Balas dengan nombor kedudukan untuk melihat pelanggan dan bulan bagi ejen jualan itu.", "zh": "回复排名数字查看该销售代理的客户和月份。"},
+    "Reply with a rank number to see that customer's products and months.": {"ms": "Balas dengan nombor kedudukan untuk melihat produk dan bulan bagi pelanggan itu.", "zh": "回复排名数字查看该客户的产品和月份。"},
     "Sales report is not enabled for your account.": {"ms": "Laporan jualan tidak diaktifkan untuk akaun anda.", "zh": "您的账户未开通销售报告。"},
     "Note: only {pct}% of sales orders in this period carry a sales agent.": {"ms": "Nota: hanya {pct}% pesanan jualan dalam tempoh ini mempunyai ejen jualan.", "zh": "注：此期间只有 {pct}% 的销售订单带有销售代理。"},
     "Top {n} selling items": {"ms": "{n} item paling laris", "zh": "最畅销的 {n} 个项目"},
@@ -277,6 +279,45 @@ LABELS: dict[str, dict[str, str]] = {
     "Top {n} selling category": {"ms": "{n} kategori paling laris", "zh": "最畅销的 {n} 个类别"},
     "Bottom {n} selling item": {"ms": "{n} item paling kurang laris", "zh": "最滞销的 {n} 个项目"},
     "Bottom {n} selling category": {"ms": "{n} kategori paling kurang laris", "zh": "最滞销的 {n} 个类别"},
+    # REPORT-SMART-L R3d: the sales ranking's head, miss and number-shape lines (`presenters._report_ask`),
+    # said in the contact's language. Their vocabulary tokens translate only from the words below.
+    "Top {top_n} {rank_noun} by {basis}": {"ms": "{top_n} {rank_noun} teratas mengikut {basis}", "zh": "按{basis}排名前 {top_n} 位的{rank_noun}"},
+    "Top {top_n} of {of_total} {rank_noun} by {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} teratas mengikut {basis}", "zh": "按{basis}排名前 {top_n} 位（共 {of_total} 个{rank_noun}）"},
+    "Top {top_n} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} {rank_noun} teratas mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名前 {top_n} 位的{rank_noun}"},
+    "Top {top_n} of {of_total} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} teratas mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名前 {top_n} 位（共 {of_total} 个{rank_noun}）"},
+    "Bottom {top_n} {rank_noun} by {basis}": {"ms": "{top_n} {rank_noun} terbawah mengikut {basis}", "zh": "按{basis}排名后 {top_n} 位的{rank_noun}"},
+    "Bottom {top_n} of {of_total} {rank_noun} by {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} terbawah mengikut {basis}", "zh": "按{basis}排名后 {top_n} 位（共 {of_total} 个{rank_noun}）"},
+    "Bottom {top_n} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} {rank_noun} terbawah mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名后 {top_n} 位的{rank_noun}"},
+    "Bottom {top_n} of {of_total} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} terbawah mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名后 {top_n} 位（共 {of_total} 个{rank_noun}）"},
+    "Sales by {basis}": {"ms": "Jualan mengikut {basis}", "zh": "按{basis}统计的销售"},
+    "No {basis} found": {"ms": "Tiada {basis} ditemui", "zh": "未找到{basis}"},
+    "delivered sales": {"ms": "jualan dihantar", "zh": "已送货销售"},
+    "ordered sales": {"ms": "jualan dipesan", "zh": "已订购销售"},
+    "invoiced sales": {"ms": "jualan diinvois", "zh": "已开票销售"},
+    "outstanding orders": {"ms": "pesanan tertunggak", "zh": "未交货订单"},
+    "products": {"ms": "produk", "zh": "产品"},
+    "product": {"ms": "produk", "zh": "产品"},
+    "categories": {"ms": "kategori", "zh": "类别"},
+    "category": {"ms": "kategori", "zh": "类别"},
+    "customers": {"ms": "pelanggan", "zh": "客户"},
+    "customer": {"ms": "pelanggan", "zh": "客户"},
+    "brands": {"ms": "jenama", "zh": "品牌"},
+    "brand": {"ms": "jenama", "zh": "品牌"},
+    "sales agents": {"ms": "ejen jualan", "zh": "销售代理"},
+    "sales agent": {"ms": "ejen jualan", "zh": "销售代理"},
+    "locations": {"ms": "lokasi", "zh": "位置"},
+    "location": {"ms": "lokasi", "zh": "位置"},
+    "channels": {"ms": "saluran", "zh": "渠道"},
+    "channel": {"ms": "saluran", "zh": "渠道"},
+    "months": {"ms": "bulan", "zh": "月份"},
+    "month": {"ms": "bulan", "zh": "月份"},
+    "You can only see sales for your own account.": {"ms": "Anda hanya boleh melihat jualan untuk akaun anda sendiri.", "zh": "您只能查看自己账户的销售数据。"},
+    "That breakdown is not available for your account.": {"ms": "Pecahan itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法查看该细分数据。"},
+    "You can only see orders for your own account.": {"ms": "Anda hanya boleh melihat pesanan untuk akaun anda sendiri.", "zh": "您只能查看自己账户的订单。"},
+    "Compared with": {"ms": "Berbanding dengan", "zh": "对比期间"},
+    "customers (count)": {"ms": "bilangan pelanggan", "zh": "客户数"},
+    "orders (count)": {"ms": "bilangan pesanan", "zh": "订单数"},
+    "products (count)": {"ms": "bilangan produk", "zh": "产品数"},
     # Slice 4: the final reply pass (composer sentences, escalate offer, canned copy, dealer
     # questions) and the domain label words. Sentences are listed in INLINE below.
     REFER_TO_SALESMAN: {"ms": "Sila rujuk jurujual anda.", "zh": "请联系您的销售员。"},
@@ -317,7 +358,6 @@ LABELS: dict[str, dict[str, str]] = {
     'Which list would you like?': {"ms": 'Senarai mana yang anda mahu?', "zh": '您要哪个列表？'},
     'Which one do you mean?': {"ms": 'Yang mana satu anda maksudkan?', "zh": '您指的是哪一个？'},
     'Which kind of file do you need?': {"ms": 'Jenis fail apa yang anda perlukan?', "zh": '您需要哪种文件？'},
-    'Which item do you mean? Reply with a rank number from 1 to {count}.': {"ms": 'Item mana yang anda maksudkan? Balas dengan nombor kedudukan dari 1 hingga {count}.', "zh": '您指的是哪个项目？请回复 1 到 {count} 之间的排名数字。'},
     'Please reply with a number from {min} to {max}.': {"ms": 'Sila balas dengan nombor dari {min} hingga {max}.', "zh": '请回复 {min} 到 {max} 之间的数字。'},
     'How many units for each?': {"ms": 'Berapa unit untuk setiap satu?', "zh": '每个需要多少件？'},
     'How many units of {code}?': {"ms": 'Berapa unit {code}?', "zh": '{code} 需要多少件？'},
@@ -332,12 +372,13 @@ LABELS: dict[str, dict[str, str]] = {
     'Okay, noted.': {"ms": 'Baik, dicatat.', "zh": '好的，已记录。'},
     'Escalation declined.': {"ms": 'Rujukan dibatalkan.', "zh": '已取消转交。'},
     'Sorry, I ran into a problem understanding that. Please try again in a moment.': {"ms": 'Maaf, saya menghadapi masalah memahami mesej itu. Sila cuba lagi sebentar lagi.', "zh": '抱歉，我暂时无法理解您的信息，请稍后再试。'},
-    "Sorry, I didn't get that. What would you like to change in the ranking?": {"ms": 'Maaf, saya tidak faham. Apa yang anda mahu ubah dalam senarai kedudukan?', "zh": '抱歉，我没听明白。您想如何调整排名？'},
     'Low stock report is not enabled for your account.': {"ms": 'Laporan stok rendah tidak diaktifkan untuk akaun anda.', "zh": '您的账户未开通低库存报告。'},
     'Could not run the low stock report right now.': {"ms": 'Laporan stok rendah tidak dapat dijalankan sekarang.', "zh": '暂时无法生成低库存报告。'},
+    # REPORT-SMART-1021 step 5: a report failure is a plain sentence.
+    "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.": {"ms": "Saya belum dapat membandingkan pecahan bulan demi bulan. Minta jumlah keseluruhan, atau pecahkan mengikut dimensi lain.", "zh": "暂时无法对比逐月明细。请查看总计，或按其他维度拆分。"},
+    "I couldn't read that period. Which period? For example this month, September, 2026, or 1 to 15 Sep.": {"ms": "Saya tidak dapat membaca tempoh itu. Tempoh yang mana? Contohnya bulan ini, September, 2026, atau 1 hingga 15 Sep.", "zh": "我无法识别该时间段。请问是哪个时间段？例如本月、九月、2026 年，或 9 月 1 日至 15 日。"},
     'Both': {"ms": 'Kedua-duanya', "zh": '两者'},
     'Which customer is this outstanding report for?': {"ms": 'Laporan tertunggak ini untuk pelanggan mana?', "zh": '这份未完成报告是哪个客户的？'},
-    'Which category do you mean? Reply with one code: {codes}': {"ms": 'Kategori mana yang anda maksudkan? Balas dengan satu kod: {codes}', "zh": '您指的是哪个类别？请回复一个代码：{codes}'},
     'I could not match any product code in that photo.': {"ms": 'Saya tidak dapat memadankan sebarang kod produk dalam gambar itu.', "zh": '我无法在那张照片中匹配到任何产品代码。'},
     'What would you like me to do with it?': {"ms": 'Apa yang anda mahu saya lakukan dengannya?', "zh": '您希望我怎么处理？'},
     'Ask again with the correct code.': {"ms": 'Sila tanya semula dengan kod yang betul.', "zh": '请用正确的代码再问一次。'},
@@ -354,7 +395,6 @@ LABELS: dict[str, dict[str, str]] = {
     # Slice 4 fix round: escalation lane copy, short questions, entities-only copy, top selling who-ask.
     # WA-MSG-TRIM (owner, 3 Oct 2026): the escalation lane's ONE customer message.
     'Routed to your PIC, they will reply shortly.': {"ms": 'Telah diserahkan kepada PIC anda, mereka akan membalas tidak lama lagi.', "zh": '已转交给您的负责人（PIC），他们会尽快回复。'},
-    '{header} I found {count}, please type a little more of the name.': {"ms": '{header} Saya menemui {count}, sila taip lebih sedikit daripada nama itu.', "zh": '{header}我找到 {count} 个，请多输入一些名称。'},
     'and {n} others, reply with the full code.': {"ms": 'dan {n} lagi, balas dengan kod penuh.', "zh": '还有 {n} 个，请回复完整代码。'},
     "Couldn't find {names}.": {"ms": 'Tidak dapat menemui {names}.', "zh": '找不到 {names}。'},
     'I have {names}.': {"ms": 'Saya ada {names}.', "zh": '我已记下 {names}。'},
@@ -426,7 +466,8 @@ LABELS: dict[str, dict[str, str]] = {
     "I don't know '{word}' as a brand.": {"ms": "Saya tidak mengenali '{word}' sebagai jenama.", "zh": "我不认识 '{word}' 这个品牌。"},
     "I don't know '{word}' as a sales agent.": {"ms": "Saya tidak mengenali '{word}' sebagai ejen jualan.", "zh": "我不认识 '{word}' 这个业务员。"},
     "I don't know '{word}' as a location.": {"ms": "Saya tidak mengenali '{word}' sebagai lokasi.", "zh": "我不认识 '{word}' 这个地点。"},
-    "Delivered, ordered or outstanding?": {"ms": "Dihantar, dipesan atau tertunggak?", "zh": "按已送货、已订购还是未交货统计？"},
+    "Invoiced, delivered, ordered or outstanding?": {"ms": "Diinvois, dihantar, dipesan atau tertunggak?", "zh": "按已开票、已送货、已订购还是未交货统计？"},
+    "Sales by location are for delivered or ordered sales only.": {"ms": "Jualan mengikut lokasi hanya untuk jualan dihantar atau dipesan.", "zh": "按地点统计仅适用于已送货或已订购销售。"},
     "I don't know '{word}' as a period.": {"ms": "Saya tidak mengenali '{word}' sebagai tempoh.", "zh": "我看不懂 '{word}' 这个时间段。"},
     "I don't know '{word}' as a basis.": {"ms": "Saya tidak mengenali '{word}' sebagai asas.", "zh": "我不认识 '{word}' 这个统计基准。"},
     "I don't know '{word}' as a number.": {"ms": "Saya tidak mengenali '{word}' sebagai nombor.", "zh": "我看不懂 '{word}' 这个数字。"},
@@ -573,13 +614,54 @@ def refer_sentences(localizer: Any = None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(found))
 
 
+#: CHAT-COMPOSER: the catalogue entries only the lane's gate-on sentences use. Kept apart from `LABELS`
+#: so a gate-off table never holds them; `defaults()` and `resolve()` add them when the gate is on.
+#: `{noun}` is a lower-case spec word, so it never takes the official-type wording of `{what}`.
+LANE_LABELS: dict[str, dict[str, str]] = {
+    "Name one to see them.": {"ms": "Sebut satu untuk melihatnya.", "zh": "请指定一个品牌查看。"},
+    'Reply "more" to see the next {n}.': {"ms": 'Balas "more" untuk lihat {n} seterusnya.', "zh": '回复 "more" 查看接下来的 {n} 个。'},
+    "That is all {total}.": {"ms": "Itu sahaja, {total}.", "zh": "就这些，共 {total} 个。"},
+    "But no stock matched these.": {"ms": 'Tiada stok yang sepadan.', "zh": '没有匹配的库存。'},
+    "But no product matched these.": {"ms": 'Tiada produk yang sepadan.', "zh": '没有匹配的产品。'},
+    "But no SPO line matched these.": {"ms": 'Tiada baris SPO yang sepadan.', "zh": '没有匹配的 SPO 行。'},
+    "No {what} on record for {product}.": {"ms": 'Tiada {what} dalam rekod untuk {product}.', "zh": '{product} 没有{what}记录。'},
+    "No {noun} on record for {product}.": {"ms": 'Tiada {noun} direkodkan untuk {product}.', "zh": '没有 {product} 的{noun}记录。'},
+    "No list price on record for {product}.": {"ms": 'Tiada harga senarai direkodkan untuk {product}.', "zh": '没有 {product} 的标价记录。'},
+    "No dimensions on record for {product}.": {"ms": 'Tiada dimensi direkodkan untuk {product}.', "zh": '没有 {product} 的尺寸记录。'},
+    # Lists L5: the tail `_named` counts the names it left off; filled into the `{names}` value only.
+    " and {n} others": {"ms": " dan {n} lagi", "zh": " 等另外 {n} 个"},
+    # Lists L1: the range a cut code-lookup list adds to its intro; it states no total (the probe
+    # behind such a list may have stopped short of its end).
+    "(showing {first} to {last})": {
+        "ms": "(menunjukkan {first} hingga {last})",
+        "zh": "（显示第 {first} 至 {last} 个）",
+    },
+    "Those are the first {n} matches. Send more of the code to narrow it.": {
+        "ms": "Itulah {n} padanan pertama. Hantar lebih banyak kod untuk mengecilkan carian.",
+        "zh": "以上是前 {n} 个匹配项。请发送更完整的编码以缩小范围。",
+    },
+}
+
+
+#: CHAT-COMPOSER: the catalogue keys the lane added. They belong to gate-on sentences only, so with
+#: the gate off the table neither seeds nor uses them (ms/zh replies stay as main prints them).
+LANE_KEYS = frozenset(LANE_LABELS)
+
+
+def _lane_on() -> bool:
+    from app.services.chatbot import composers
+
+    return composers.enabled()
+
+
 def defaults(lang: str) -> dict[str, str]:
     """English -> `lang` for every catalog entry whose translation keeps the English tokens."""
     if lang == "en":
         return {}
+    entries = {**LABELS, **LANE_LABELS} if _lane_on() else LABELS
     return {
         english: entry[lang]
-        for english, entry in LABELS.items()
+        for english, entry in entries.items()
         if lang in entry and tokens_match(english, entry[lang])
     }
 
@@ -609,7 +691,6 @@ INLINE = frozenset(
         "Which list would you like?",
         "Which one do you mean?",
         "Which kind of file do you need?",
-        "Which item do you mean? Reply with a rank number from 1 to {count}.",
         "Please reply with a number from {min} to {max}.",
         "How many units for each?",
         "How many units of {code}?",
@@ -625,19 +706,25 @@ INLINE = frozenset(
         "Okay, noted.",
         "Escalation declined.",
         "Sorry, I ran into a problem understanding that. Please try again in a moment.",
-        "Sorry, I didn't get that. What would you like to change in the ranking?",
         "Low stock report is not enabled for your account.",
         "Could not run the low stock report right now.",
+        "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.",
+        "I couldn't read that period. Which period? For example this month, September, 2026, or 1 to 15 Sep.",
         "Which customer is this outstanding report for?",
-        "Which category do you mean? Reply with one code: {codes}",
         "I could not match any product code in that photo.",
         "What would you like me to do with it?",
         "Ask again with the correct code.",
         "I read {codes} from that photo.",
         'Routed to your PIC, they will reply shortly.',
-        '{header} I found {count}, please type a little more of the name.',
         'and {n} others, reply with the full code.',
         "Couldn't find {names}.",
+        # CHAT-COMPOSER S3a: the miss sentence with a customer word, not a table name.
+        "But no stock matched these.",
+        "But no product matched these.",
+        "But no SPO line matched these.",
+        "No {what} on record for {product}.",
+        "That is all {total}.",
+        "Name one to see them.",
         'What would you like me to know?',
         "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
         'Do you mean customer {customer} or sales agent {agent}? Reply 1 for the customer, 2 for the sales agent.',
@@ -762,7 +849,35 @@ _SUB_ASK_KEYS = frozenset(
         "{date} ({qty}, {spo})", "{qty}, ETA {date}",
     }
 )
-DIRECT_ONLY = frozenset({"I have {names}.", "{code} has no {types}."}) | _SUB_ASK_KEYS | _find_fit_keys()
+#: The ranking head's vocabulary tokens (R3d): the English words each may carry, which `Localizer._text`
+#: translates from the table. A word outside these sets leaves the whole line as printed. The words are
+#: DIRECT_ONLY so a bare line ("products", "month") is never rewritten on its own.
+_RANK_NOUNS = frozenset(
+    {"products", "product", "categories", "category", "customers", "customer", "brands", "brand",
+     "sales agents", "sales agent", "locations", "location", "channels", "channel", "months", "month"}
+)
+_RANK_BASES = frozenset({"invoiced sales", "delivered sales", "ordered sales", "outstanding orders"})
+_RANK_MEASURES = frozenset({"customers", "orders", "products"})
+#: A count measure is said as a count ("bilangan pelanggan"), never as the grouping noun, so it has its own entries.
+_MEASURE_KEYS = {w: f"{w} (count)" for w in _RANK_MEASURES}
+VOCAB: dict[str, frozenset[str]] = {"rank_noun": _RANK_NOUNS, "basis": _RANK_BASES, "measure": _RANK_MEASURES}
+DIRECT_ONLY = (
+    frozenset(
+        {
+            "I have {names}.",
+            "{code} has no {types}.",
+            " and {n} others",
+            "(showing {first} to {last})",
+        }
+    )
+    | _SUB_ASK_KEYS
+    | _find_fit_keys()
+    | _RANK_NOUNS
+    | _RANK_BASES
+    | frozenset(_MEASURE_KEYS.values())
+)
+_NAMES_TAIL = " and {n} others"
+_OTHERS = re.compile(r"(.*) and (\d[\d,]*) others")
 
 #: Report value words `Localizer.lines` translates after a catalogued label. An explicit set, never
 #: "any catalog key", so data that happens to read like a label (a status named "Status") is safe.
@@ -782,7 +897,8 @@ RANGE = "{from} to {to}"
 #: `_INLINE_LINE_MAX` gets `lines()` only (the inline pass is skipped for it).
 _TOKEN_MAX = 200
 _INLINE_LINE_MAX = 1000
-_DATE_RANGE = re.compile(r"(?P<from>\d{2}/\d{2}/\d{4}) to (?P<to>\d{2}/\d{2}/\d{4})")
+_DATE = r"(?:\d{2}/\d{2}/\d{4}|\d{1,2} [A-Z][a-z]{2} \d{4})"  # 01/09/2026, or the report ask's 1 Sep 2026
+_DATE_RANGE = re.compile(rf"(?P<from>{_DATE}) to (?P<to>{_DATE})")
 _BREAKDOWN_VALUE = re.compile(r"\d[\d,]* \(O/S: ")
 #: A numbered row's `"<n>. "` or a cross-domain row's `"- "`; only the rest of the line is read.
 _NUMBERED = re.compile(r"\d+\. |- ")
@@ -791,11 +907,14 @@ _FLAG = re.compile(r"(\S+ +\*\()(.+)(\)\*)")
 _WRAPPERS = (("*_", "_*"), ("*", "*"), ("_", "_"))
 #: Tokens that are always a number: a template opening with one must not swallow the
 #: "<code> x <qty>: " prefix of the line it is matched against.
-_NUMERIC_TOKENS = frozenset({"available"})
+_NUMERIC_TOKENS = frozenset({"available", "top_n", "of_total"})
 
 
 def _token_pattern(name: str) -> str:
-    body = r"\d[\d,]*" if name in _NUMERIC_TOKENS else f"[^\\n]{{1,{_TOKEN_MAX}}}?"
+    if name == "noun":
+        body = f"[a-z][^\\n]{{0,{_TOKEN_MAX - 1}}}?"  # a spec word starts lower-case
+    else:
+        body = r"\d[\d,]*" if name in _NUMERIC_TOKENS else f"[^\\n]{{1,{_TOKEN_MAX}}}?"
     return f"(?P<{name}>{body})"
 
 
@@ -817,17 +936,35 @@ def _inline_pattern(english: str, target: str) -> tuple[re.Pattern[str], str, in
     return regex, target, fixed, tuple(_TOKEN.findall(english))
 
 
+#: CHAT-COMPOSER S4: the generic "no <what> on record" sentence, and the product-find none lines it
+#: must never rewrite (a kind with no noun translation is said in English, not garbled into
+#: `{what}` = "mirror is").
+_GENERIC_MISSING = "No {what} on record for {product}."
+_GENERIC_NOUN_MISSING = "No {noun} on record for {product}."
+
+
+def _find_none_patterns() -> list[re.Pattern[str]]:
+    from app.services import product_find
+
+    lines = [f(k) for k in product_find.KINDS for f in (product_find.none_line, product_find.no_host_line)]
+    return [re.compile(re.escape(x).replace(re.escape("{code}"), ".+?")) for x in lines]
+
+
 class Localizer:
     """Rewrites catalogued labels and sentences for `language`; everything else is untouched."""
 
     def __init__(self, language: str, table: dict[str, str]) -> None:
         self.language = language
+        if not _lane_on():
+            table = {k: v for k, v in table.items() if k not in LANE_KEYS}
         self.table = table
         # `{token}` entries as (whole-string regex over the English shape, target).
         self._templates: list[tuple[re.Pattern[str], str, int, bool]] = []  # most fixed text wins
         # The INLINE sentences the table carries: (regex for a start-anchored match, target,
         # fixed characters, token names). Longest fixed text wins where two start together.
         self._inline: list[tuple[re.Pattern[str], str, int, tuple[str, ...]]] = []
+        self._find_none = _find_none_patterns() if _GENERIC_MISSING in table else []
+        self._generic_targets = {table[k] for k in (_GENERIC_MISSING, _GENERIC_NOUN_MISSING) if k in table}
         for english, target in table.items():
             if english in INLINE and english not in DIRECT_ONLY:
                 self._inline.append(_inline_pattern(english, target))
@@ -864,6 +1001,9 @@ class Localizer:
         For the few sentences too generic to be matched in running text (`DIRECT_ONLY`)."""
         return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), self.table.get(key, key))
 
+    def _is_find_none(self, span: str) -> bool:
+        return any(r.fullmatch(span) for r in self._find_none)
+
     def _text(self, s: str, *, inline: bool) -> str:
         if s in _VALUE_ONLY:
             return s
@@ -874,11 +1014,15 @@ class Localizer:
             if is_inline and not inline:
                 continue  # INLINE sentences are replaced by `reply()` at their own boundaries
             m = regex.fullmatch(s)
+            if m and target in self._generic_targets and self._is_find_none(s):
+                continue
             if m and (best is None or fixed > best[0]):
-                best = (fixed, m.groupdict(), target)
+                found = self._vocab(m.groupdict())
+                if found is not None:
+                    best = (fixed, found, target)
         if best is None:
             return s
-        values = best[1]
+        values = self._names(best[1])
         return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), best[2])
 
     def lines(self, text: str) -> str:
@@ -910,11 +1054,34 @@ class Localizer:
             line if len(line) > _INLINE_LINE_MAX else self._inline_line(line) for line in text.split("\n")
         )
 
+    def _vocab(self, values: dict[str, str]) -> dict[str, str] | None:
+        """`values` with each `VOCAB` token said in the table's wording; None when a word is not
+        catalogued (the line is then left as printed, never half translated)."""
+        out = dict(values)
+        for name, words in VOCAB.items():
+            if name not in values:
+                continue
+            word = values[name]
+            key = _MEASURE_KEYS.get(word, word) if name == "measure" else word
+            if word not in words or key not in self.table:
+                return None
+            out[name] = self.table[key]
+        return out
+
+    def _names(self, values: dict[str, str]) -> dict[str, str]:
+        """`values` with a `{names}` tail "... and 3 others" said in the table's wording, when it has one."""
+        tail, m = self.table.get(_NAMES_TAIL), _OTHERS.fullmatch(values.get("names") or "")
+        if tail is None or m is None:
+            return values
+        return {**values, "names": m.group(1) + tail.replace("{n}", m.group(2))}
+
     def _inline_line(self, text: str) -> str:
         found: list[tuple[int, int, int, str]] = []
-        for regex, target, fixed, _names in self._inline:
+        for regex, target, fixed, names in self._inline:
             for m in regex.finditer(text):
-                values = m.groupdict()
+                values = self._names(m.groupdict())
+                if target in self._generic_targets and self._is_find_none(m.group(0)):
+                    continue
                 found.append((m.start(), m.end(), fixed, _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)))
         found.sort(key=lambda f: (f[0], -f[2]))
         out, pos = [], 0
@@ -1012,7 +1179,7 @@ def resolve(db: Any, lang: str, *, dry_run: bool = False) -> Localizer:
                 .filter(
                     TranslationMemory.source_lang == "en",
                     TranslationMemory.target_lang == lang,
-                    TranslationMemory.source_text.in_(list(LABELS)),
+                    TranslationMemory.source_text.in_(list(LABELS) + (list(LANE_LABELS) if _lane_on() else [])),
                 )
                 .all()
             )

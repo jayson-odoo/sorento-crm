@@ -12,7 +12,6 @@
  * components' own test files already cover.
  */
 import React from 'react';
-import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,14 +42,6 @@ vi.mock('@/services/userSelectService', () => ({
   getUserLookup: (...args: unknown[]) => getUserLookup(...args),
 }));
 
-const useBrandSelectQuery = vi.fn();
-vi.mock(
-  '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query',
-  () => ({
-    useBrandSelectQuery: () => useBrandSelectQuery(),
-  }),
-);
-
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },
 }));
@@ -62,6 +53,8 @@ const previewClashes = vi.fn();
 const registerProject = vi.fn();
 const updateProject = vi.fn();
 const listLeads = vi.fn();
+const getLead = vi.fn();
+const listCustomerOptions = vi.fn();
 
 // Same absolute module `../hooks/useProjects.ts` imports as `../services/projectService`
 // (both files sit one level under `_shared/`), so this mock reaches every hook ProjectForm
@@ -77,6 +70,8 @@ vi.mock('../services/projectService', async (importOriginal) => {
     registerProject: (...args: unknown[]) => registerProject(...args),
     updateProject: (...args: unknown[]) => updateProject(...args),
     listLeads: (...args: unknown[]) => listLeads(...args),
+    getLead: (...args: unknown[]) => getLead(...args),
+    listCustomerOptions: (...args: unknown[]) => listCustomerOptions(...args),
   };
 });
 
@@ -196,14 +191,14 @@ vi.mock('@/components/common/SearchableSelect', () => {
         {clearable && value && (
           <button
             type="button"
-            aria-label="Clear lead"
+            aria-label={id === 'project-lead' ? 'Clear lead' : `Clear ${id}`}
             onClick={() => {
               onChange('');
               onOptionChange?.(null);
               setQuery('');
             }}
           >
-            Clear lead
+            Clear
           </button>
         )}
       </span>
@@ -219,36 +214,6 @@ vi.mock('@/components/common/SearchableSelect', () => {
       ),
   };
 });
-
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: ({
-    id,
-    value,
-    onChange,
-    options,
-  }: {
-    id?: string;
-    value: string[];
-    onChange: (next: string[]) => void;
-    options?: Option[];
-  }) => (
-    <select
-      id={id}
-      multiple
-      value={value}
-      onChange={(event) => {
-        const selected = Array.from(event.target.selectedOptions).map((option) => option.value);
-        onChange(selected);
-      }}
-    >
-      {(options ?? []).map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-  ),
-}));
 
 vi.mock('@/components/ui/date-range-picker', () => ({
   DateRangePicker: ({
@@ -299,20 +264,14 @@ const TYPE_NO_LAUNCH = {
   sort_order: 2,
   is_active: true,
 };
-const BRAND_A = {
-  id: 'b1',
-  brand_code: 'BR1',
-  brand_name: 'BrandOne',
-  is_active: true,
-  flows_to_purchasing: true,
-} as never;
-
 const LEAD_OPEN = {
   id: 'lead-1',
   lead_code: 'LEAD-000001',
   title: 'Menara Lead',
   outcome: 'open',
   customer_id: 'cust-1',
+  customer_name: 'Aman Hartanah',
+  owner_user_id: 'u-me',
   project_count: 0,
   possible_duplicates: [],
   can_edit: true,
@@ -323,8 +282,6 @@ const BLOCKING: ClashCandidate = {
   project_code: 'PRJ-000009',
   title: 'Setia Alam Phase 3B',
   outcome: 'open',
-  owner_name: 'Aina',
-  brands: [],
   similarity: 1,
   blocks: true,
 };
@@ -352,8 +309,6 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     launch_date: null,
     expected_delivery_from: '2027-01-01',
     expected_delivery_to: '2027-06-01',
-    brands: ['BrandOne'],
-    brand_ids: ['b1'],
     architect_party_id: 'a1',
     architect_name: 'Archico',
     main_contractor_party_id: 'c1',
@@ -380,11 +335,14 @@ function renderForm(props: { mode: 'create' } | { mode: 'edit'; project: Project
   );
 }
 
+/** Developer, Architect, Main contractor and Customer are async searches: type, then pick. */
+async function pickParty(label: string | RegExp, text: string, optionName: string) {
+  fireEvent.change(screen.getByLabelText(label), { target: { value: text } });
+  fireEvent.click(await screen.findByRole('button', { name: optionName }));
+}
+
 async function fillWho() {
-  await waitFor(() =>
-    expect(within(screen.getByLabelText('Developer')).getByText('SP Setia')).toBeInTheDocument(),
-  );
-  fireEvent.change(screen.getByLabelText('Developer'), { target: { value: 'd1' } });
+  await pickParty('Developer', 'SP', 'SP Setia');
   await waitFor(() =>
     expect(within(screen.getByLabelText('Project type')).getByText('Hotel')).toBeInTheDocument(),
   );
@@ -402,10 +360,17 @@ async function fillWho() {
   );
 }
 
-/** A new project needs its lead (owner, 13 Oct): search and pick the open one. */
+/**
+ * LEAD-GOVERNS-REGISTER D2: a new project needs a Lead and the Customer comes from it, so
+ * "picking the customer" is picking the lead whose customer is Aman Hartanah.
+ */
+async function pickCustomer() {
+  await pickParty(/^Lead/, 'Menara', 'Menara Lead');
+}
+
+/** The Lead picker sits in the bottom section now, not in Details. */
 async function pickLead() {
-  fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Menara' } });
-  fireEvent.click(await screen.findByRole('button', { name: 'Menara Lead' }));
+  await pickParty(/^Lead/, 'Menara', 'Menara Lead');
 }
 
 /** Details starts folded in create mode (AC-PF033); open it by hand for its fields. */
@@ -446,11 +411,12 @@ beforeEach(() => {
     { id: 'u-me', name: 'Me' },
     { id: 'u-2', name: 'Aina' },
   ]);
-  useBrandSelectQuery.mockReturnValue({ data: [BRAND_A], isLoading: false });
+  listCustomerOptions.mockResolvedValue([{ value: 'cust-1', label: 'Aman Hartanah' }]);
+  getLead.mockImplementation(async (id: string) => ({ ...LEAD_OPEN, id }));
 });
 
 describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
-  it('create mode opens Who and what and Salesperson and lead, collapses Details', () => {
+  it('create mode opens Who and what and Lead, customer and salesperson, collapses Details', () => {
     renderForm({ mode: 'create' });
     expect(screen.getByRole('button', { name: /Who and what/ })).toHaveAttribute(
       'aria-expanded',
@@ -460,7 +426,7 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
       'aria-expanded',
       'false',
     );
-    expect(screen.getByRole('button', { name: /Salesperson and lead/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /Lead, customer and salesperson/ })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
@@ -468,7 +434,7 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
 
   it('edit mode opens every section', () => {
     renderForm({ mode: 'edit', project: baseProject() });
-    for (const name of [/Who and what/, /^Details/, /Salesperson and lead/]) {
+    for (const name of [/Who and what/, /^Details/, /Lead, customer and salesperson/]) {
       expect(screen.getByRole('button', { name })).toHaveAttribute('aria-expanded', 'true');
     }
   });
@@ -551,7 +517,7 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
 
   it('Check runs the check exactly once', async () => {
     renderForm({ mode: 'create' });
-    await pickLead();
+    await pickCustomer();
     fireEvent.change(screen.getByLabelText(/project title/i), {
       target: { value: 'Setia Alam Phase 3B' },
     });
@@ -560,24 +526,24 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
     expect(screen.getByRole('button', { name: 'Register project' })).toBeEnabled();
   });
 
-  it('a blocking match renames and disables the CTA', async () => {
+  it('a blocking match shows one line and turns the CTA into Register interest', async () => {
     previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
     renderForm({ mode: 'create' });
     fireEvent.change(screen.getByLabelText(/project title/i), {
       target: { value: 'Setia Alam Phase 3B' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole('button', { name: 'Blocked by an existing project' }),
-      ).toBeDisabled(),
-    );
+    const cta = await screen.findByRole('button', { name: 'Register interest in PRJ-000009' });
+    expect(cta).toBeEnabled();
+    expect(screen.getByText(/Project already registered/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Register project' })).toBeNull();
+    expect(screen.queryByText('Blocked by an existing project')).toBeNull();
   });
 
   it('submit re-runs the check as a guard even when Check was never pressed (AC-PF031)', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
-    await pickLead();
+    await pickCustomer();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
     expect(previewClashes).toHaveBeenCalledTimes(1);
@@ -587,7 +553,7 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
     previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
     renderForm({ mode: 'create' });
     await fillWho();
-    await pickLead();
+    await pickCustomer();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(previewClashes).toHaveBeenCalledTimes(1));
     expect(registerProject).not.toHaveBeenCalled();
@@ -636,13 +602,11 @@ describe('ProjectForm: type drives Template and delivery fields (AC-PF015, PF016
 describe('ProjectForm: clearable selects (AC-PF011, PF015, PF022, PF023)', () => {
   it('Developer clears back to empty', async () => {
     renderForm({ mode: 'create' });
-    await waitFor(() =>
-      expect(within(screen.getByLabelText('Developer')).getByText('SP Setia')).toBeInTheDocument(),
-    );
-    fireEvent.change(screen.getByLabelText('Developer'), { target: { value: 'd1' } });
-    const wrapper = screen.getByLabelText('Developer').parentElement as HTMLElement;
-    fireEvent.click(within(wrapper).getByRole('button', { name: 'Clear' }));
-    expect((screen.getByLabelText('Developer') as HTMLSelectElement).value).toBe('');
+    await pickParty('Developer', 'SP', 'SP Setia');
+    expect((screen.getByLabelText('Developer') as HTMLInputElement).value).toBe('SP Setia');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear project-developer' }));
+    expect((screen.getByLabelText('Developer') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByRole('button', { name: 'Clear project-developer' })).toBeNull();
   });
 });
 
@@ -668,25 +632,21 @@ describe('ProjectForm: text and number fields (AC-PF012-014, PF017, PF018)', () 
   });
 });
 
-describe('ProjectForm: Brands (AC-PF021)', () => {
-  it('preselects the project brands in edit mode', () => {
-    renderForm({ mode: 'edit', project: baseProject({ brand_ids: ['b1'] }) });
-    const select = screen.getByLabelText('Brands') as HTMLSelectElement;
-    expect(Array.from(select.selectedOptions).map((option) => option.value)).toEqual(['b1']);
+describe('ProjectForm: Brands are gone (PROJECT-REGISTER-V2 G3)', () => {
+  it('has no Brands field on create or edit', () => {
+    renderForm({ mode: 'create' });
+    expect(screen.queryByLabelText('Brands')).toBeNull();
+    renderForm({ mode: 'edit', project: baseProject() });
+    expect(screen.queryByLabelText('Brands')).toBeNull();
   });
 
-  it('sends brand_ids on create', async () => {
+  it('sends no brand_ids on create', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
-    await pickLead();
-    const select = screen.getByLabelText('Brands') as HTMLSelectElement;
-    await userEvent.selectOptions(select, ['b1']);
+    await pickCustomer();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
-    await waitFor(() =>
-      expect(registerProject).toHaveBeenCalledWith(
-        expect.objectContaining({ brand_ids: ['b1'] }),
-      ),
-    );
+    await waitFor(() => expect(registerProject).toHaveBeenCalled());
+    expect(registerProject.mock.calls[0][0]).not.toHaveProperty('brand_ids');
   });
 });
 
@@ -715,7 +675,7 @@ describe('ProjectForm: Salesperson (AC-PF040-043)', () => {
   it('lets a manage holder pick another salesperson on create, sent as owner_user_id', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
-    await pickLead();
+    await pickCustomer();
     await waitFor(() => expect(screen.getByLabelText('Salesperson')).not.toBeDisabled());
     fireEvent.change(screen.getByLabelText('Salesperson'), { target: { value: 'u-2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
@@ -740,7 +700,14 @@ vi.mock('../../leads/components/LeadWizardDialog', () => ({
       <button
         type="button"
         onClick={() =>
-          onDone({ id: 'lead-new', lead_code: 'LEAD-000077', title: initialTitle ?? '' })
+          onDone({
+            id: 'lead-new',
+            lead_code: 'LEAD-000077',
+            title: initialTitle ?? '',
+            customer_id: 'cust-1',
+            customer_name: 'Aman Hartanah',
+            owner_user_id: 'u-me',
+          } as never)
         }
       >
         Finish wizard
@@ -750,7 +717,7 @@ vi.mock('../../leads/components/LeadWizardDialog', () => ({
 }));
 
 describe('ProjectForm: Lead link (AC-PF050-058)', () => {
-  it('will not register a project without a lead (owner, 13 Oct)', async () => {
+  it('will not register a project without a lead; its customer comes with it (LEAD-GOVERNS-REGISTER D2)', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeDisabled();
@@ -809,8 +776,7 @@ describe('ProjectForm: Lead link (AC-PF050-058)', () => {
   it('sends lead_id on create when a lead is picked', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
-    fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Menara' } });
-    fireEvent.click(await screen.findByRole('button', { name: 'Menara Lead' }));
+    await pickLead();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() =>
       expect(registerProject).toHaveBeenCalledWith(
@@ -850,7 +816,7 @@ describe('ProjectForm: create submit (AC-PF024)', () => {
   it('registers with the filled fields and navigates to the new project', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
-    await pickLead();
+    await pickCustomer();
     fireEvent.change(screen.getByLabelText('Registered company / SPV'), {
       target: { value: 'Setia SPV' },
     });
@@ -878,6 +844,7 @@ describe('ProjectForm: create submit (AC-PF024)', () => {
           address: '123 Jalan Setia',
           admin_ref: 'PS26-0099',
           estimated_sales_value: '500000',
+          customer_id: 'cust-1',
         }),
       ),
     );
@@ -927,7 +894,6 @@ describe('ProjectForm: edit guards (review round 1, PR #1345)', () => {
     project_code: `PRJ-${projectId}`,
     title: 'Setia Alam Phase 3B',
     outcome: 'open',
-    brands: [],
     similarity: 1,
     blocks: true,
   });
@@ -989,7 +955,7 @@ describe('ProjectForm: edit guards (review round 1, PR #1345)', () => {
       ),
     );
     expect(previewClashes).toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'Blocked by an existing project' })).toBeNull();
+    expect(screen.queryByText(/Project already registered/)).toBeNull();
   });
 
   it('a rename onto another project is still blocked (AC-PF032)', async () => {
@@ -1002,10 +968,9 @@ describe('ProjectForm: edit guards (review round 1, PR #1345)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() =>
-      expect(
-        screen.getByRole('button', { name: 'Blocked by an existing project' }),
-      ).toBeDisabled(),
+      expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled(),
     );
+    expect(screen.getByText(/Project already registered/)).toBeInTheDocument();
     expect(updateProject).not.toHaveBeenCalled();
   });
 });

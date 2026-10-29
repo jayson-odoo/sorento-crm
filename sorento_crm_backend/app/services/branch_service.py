@@ -52,7 +52,7 @@ class BranchService:
         query: Optional[str] = None,
         sort_field: str = "last_synced_at",
         sort_dir: str = "desc",
-        book: Optional[str] = None,
+        book: Optional[list[str] | str] = None,
         in_crm: Optional[bool] = None,
         customer_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -75,7 +75,7 @@ class BranchService:
                 )
             )
         if book:
-            q = q.filter(Branch.source_book == book)
+            q = q.filter(Branch.source_book.in_([book] if isinstance(book, str) else book))
         if in_crm is not None:
             q = q.filter(self._in_crm() if in_crm else ~self._in_crm())
 

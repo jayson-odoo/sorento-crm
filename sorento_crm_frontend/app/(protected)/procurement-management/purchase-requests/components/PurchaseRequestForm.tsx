@@ -32,9 +32,11 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchableSelect } from "@/components/common/SearchableSelect";
 import { searchProjectsForLink } from "../services/purchaseRequestService";
+import { getProject } from "@/app/(protected)/project-sales/_shared/services/projectService";
 import { RequestCustomerField } from "./RequestCustomerField";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -52,6 +54,7 @@ import { getOrCreateViewLink } from "../services/purchaseRequestService";
 import { toast } from '@/lib/toast';
 import {
   PurchaseRequestFormSchema,
+  lineHasContent,
   type PurchaseRequestSchemaType,
 } from '../forms/purchase-request-schema';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
@@ -79,6 +82,8 @@ interface PurchaseRequestFormProps {
   expectedRequestType?: "purchase_request" | "sponsorship_form";
   /** URL to redirect to after successful create/update (serializable; use this from Server Component pages). */
   successRedirectUrl?: string;
+  /** Create mode only: seeds the project link (e.g. from a project's Sponsorship stage action). */
+  defaultProjectId?: string;
 }
 
 export default function PurchaseRequestForm({
@@ -86,6 +91,7 @@ export default function PurchaseRequestForm({
   defaultRequestType = "purchase_request",
   expectedRequestType,
   successRedirectUrl,
+  defaultProjectId,
 }: PurchaseRequestFormProps) {
   const router = useRouter();
   const isEditMode = !!requestId;
@@ -128,7 +134,7 @@ export default function PurchaseRequestForm({
       customer_id: null,
       pic: null,
       project_title: null,
-      project_id: null,
+      project_id: defaultProjectId ?? null,
       purpose: null,
       delivery_address: null,
       total_project_value: null,
@@ -154,6 +160,29 @@ export default function PurchaseRequestForm({
     },
     mode: 'onTouched',
   });
+
+  // A project passed in the URL fills the project link and, when still empty, the title.
+  const [defaultProject, setDefaultProject] = useState<{ value: string; label: string }>();
+  useEffect(() => {
+    if (!defaultProjectId || requestId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await getProject(defaultProjectId);
+        if (cancelled || !p) return;
+        setDefaultProject({
+          value: p.id,
+          label: [p.project_code, p.title].filter(Boolean).join(" - "),
+        });
+        if (!form.getValues("project_title")) form.setValue("project_title", p.title);
+      } catch {
+        // The hidden project_id still carries the link; only the label is lost.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultProjectId, requestId, form]);
 
   const requestType =
     form.watch("request_type") ?? defaultRequestType ?? "purchase_request";
@@ -228,26 +257,29 @@ export default function PurchaseRequestForm({
             render={({ field: f }) => (
               <FormItem>
                 <FormControl>
-                  <Input
-                    type="number"
+                  <NumberInput
                     step="any"
                     placeholder="0"
-                    {...f}
-                    value={f.value ?? ""}
-                    onChange={(e) => {
-                      const v = e.target.value ? parseFloat(e.target.value) : null;
+                    name={f.name}
+                    ref={f.ref}
+                    onBlur={f.onBlur}
+                    value={f.value ?? null}
+                    onValueChange={(v) => {
                       f.onChange(v);
+                      // Re-check a flagged box as it is fixed (the form validates on blur otherwise).
+                      if (form.getFieldState(f.name, form.formState).error) void form.trigger(f.name);
                       if (isSponsorship) {
                         const up = form.getValues(`products.${row.index}.unit_price`);
-                        if (up != null && up !== "") {
+                        if (v !== null && !Number.isNaN(v) && up != null && up !== "") {
                           form.setValue(`products.${row.index}.total`, (v ?? 0) * Number(up));
                         }
+                        if (v === null || Number.isNaN(v)) form.setValue(`products.${row.index}.total`, null);
                       }
                     }}
                     className="h-8 w-24"
                   />
                 </FormControl>
-                <FormMessage />
+                <FormMessage className="whitespace-normal break-words" />
               </FormItem>
             )}
           />
@@ -275,19 +307,20 @@ export default function PurchaseRequestForm({
                   render={({ field: f }) => (
                     <FormItem>
                       <FormControl>
-                        <Input
-                          type="number"
+                        <NumberInput
                           step="any"
                           placeholder="0"
-                          {...f}
-                          value={f.value ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value ? parseFloat(e.target.value) : null;
+                          name={f.name}
+                          ref={f.ref}
+                          onBlur={f.onBlur}
+                          value={f.value ?? null}
+                          onValueChange={(v) => {
                             f.onChange(v);
                             const qty = form.getValues(`products.${row.index}.quantity`);
-                            if (qty != null && qty !== "") {
+                            if (v !== null && !Number.isNaN(v) && qty != null && qty !== "") {
                               form.setValue(`products.${row.index}.total`, (v ?? 0) * Number(qty));
                             }
+                            if (v === null || Number.isNaN(v)) form.setValue(`products.${row.index}.total`, null);
                           }}
                           className="h-8 w-24"
                         />
@@ -310,14 +343,14 @@ export default function PurchaseRequestForm({
                   render={({ field: f }) => (
                     <FormItem>
                       <FormControl>
-                        <Input
-                          type="number"
+                        <NumberInput
                           step="any"
                           placeholder="0"
-                          {...f}
-                          value={f.value ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value ? parseFloat(e.target.value) : null;
+                          name={f.name}
+                          ref={f.ref}
+                          onBlur={f.onBlur}
+                          value={f.value ?? null}
+                          onValueChange={(v) => {
                             f.onChange(v);
                           }}
                           className="h-8 w-28"
@@ -453,6 +486,12 @@ export default function PurchaseRequestForm({
         products,
       });
       setFormInitialized(true);
+      // An intake line can arrive with a NULL quantity: flag it now, not only on Update.
+      const blank = products
+        .map((l, i) => (l.quantity == null ? i : -1))
+        .filter((i) => i >= 0)
+        .map((i) => `products.${i}.quantity` as const);
+      if (blank.length) void form.trigger(blank);
     }
   }, [request, isEditMode, form, formInitialized]);
 
@@ -499,11 +538,10 @@ export default function PurchaseRequestForm({
         requested_by_contact_id: data.requested_by_contact_id ?? null,
         requested_at: data.requested_at || undefined,
         products: data.products
-          .filter(
-            (p) =>
-              p.item_code != null ||
-              p.quantity != null ||
-              (isSponsorship && (p.unit_price != null || p.total != null)),
+          .filter((p) =>
+            lineHasContent(
+              isSponsorship ? p : { item_code: p.item_code, quantity: p.quantity },
+            ),
           )
           .map((p) => ({
             item_code: p.item_code ?? undefined,
@@ -695,12 +733,14 @@ export default function PurchaseRequestForm({
                       <SearchableSelect
                         value={field.value || ""}
                         onChange={(next) => field.onChange(next || null)}
+                        selectedOption={defaultProject}
                         fetchOptions={(query, pageIndex) =>
                           searchProjectsForLink(query, pageIndex + 1)
                         }
                         paginated
                         pageSize={25}
                         clearable
+                        truncateTriggerLabel
                         placeholder="Search a project by code or title"
                         emptyMessage="No project matches that. Leave it empty if it was never registered."
                       />
@@ -736,8 +776,7 @@ export default function PurchaseRequestForm({
                         <FormItem>
                           <FormLabel>Total Project Value</FormLabel>
                           <FormControl>
-                            <Input
-                              type="number"
+                            <NumberInput
                               inputMode="decimal"
                               step="0.01"
                               placeholder="e.g. 1234.00"

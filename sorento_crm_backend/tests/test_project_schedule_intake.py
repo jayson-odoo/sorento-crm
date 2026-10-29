@@ -86,7 +86,7 @@ def _user(db, name: str) -> str:
 
 
 def _product(db, code: str, name: str) -> Product:
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Set")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Set")
     category = ProductCategory(
         id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} cat"
     )
@@ -509,6 +509,44 @@ def test_run_extraction_commits_progress_once_per_page(scenario, monkeypatch):
     assert result["status"] in ("done", "partial")
     # RUNNING stamp + 3 page commits + the final persist_pages commit.
     assert commit_count["n"] >= 5
+
+
+def test_when_no_page_reads_the_schedule_says_why(scenario, monkeypatch):
+    """PO-READ-MODEL: "Nothing could be read" alone sent people hunting; the first page's
+    reason rides along, as it does on the PO panel."""
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+
+    monkeypatch.setattr(
+        ProjectScheduleService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(project_schedule_service, "parse_text_matrix", lambda *a, **k: {})
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich",
+        lambda *a, **k: [RenderedPage(image_b64="i", image_mime="image/jpeg") for _ in range(2)],
+    )
+
+    class _NotFoundProvider:
+        name = "gemini"
+
+        def chat(self, messages, **kwargs):
+            raise RuntimeError(
+                "Gemini call failed (404): This model models/gemini-2.5-flash is no "
+                "longer available to new users."
+            )
+
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: _NotFoundProvider())
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+
+    result = service.run_extraction(scenario["version"].id)
+
+    assert result["status"] == "failed"
+    version = service.get_version(scenario["version"].id)
+    assert version.extraction_error.startswith("Nothing could be read from this document.")
+    assert "Reason: Gemini call failed (404)" in version.extraction_error
+    assert "System Settings > Chatbot Media" in version.extraction_error
 
 
 def test_the_polled_detail_reports_each_page_as_it_is_read(scenario, monkeypatch):

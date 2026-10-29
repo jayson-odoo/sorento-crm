@@ -155,7 +155,7 @@ export function AmendmentReviewClient({
             : 'It may have been rebuilt or deleted.'}
         </p>
         <Button asChild variant="outline" className="mt-4">
-          <Link href={`/project-sales/${projectId}?tab=sales-orders`}>Back to sales orders</Link>
+          <Link href={`/project-sales/${projectId}?tab=orders`}>Back to orders</Link>
         </Button>
       </div>
     );

@@ -25,13 +25,12 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.project_po_intake import (
     AnnotationAcceptRequest,
     AnnotationActionResponse,
     AnnotationEditRequest,
     AnnotationRejectRequest,
-    POApprovalResponse,
     POLineUpdate,
     POVersionDetailResponse,
     POVersionHeaderUpdate,
@@ -48,6 +47,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 
 # There is deliberately no `GET /purchase-orders/{po_id}/versions` here. The sales-order
@@ -63,7 +66,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 def _project_for_edit(db: Session, project_id: str, current_user: dict):
     validate_uuid_path(project_id, resource="Project")
     project = projects.get_project_or_404(db, project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
     return project
@@ -104,7 +107,7 @@ def _action_body(service: ProjectPOExtractionService, result: dict) -> dict:
     response_model=POVersionUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def upload_purchase_order_document(
+def upload_purchase_order_document(
     project_id: str,
     file: UploadFile = File(..., description="The customer PO as a PDF, JPEG or PNG"),
     po_number: Optional[str] = Form(None),
@@ -121,7 +124,7 @@ async def upload_purchase_order_document(
         project = _project_for_edit(db, project_id, current_user)
         if purchase_order_id:
             validate_uuid_path(purchase_order_id, resource="Purchase order")
-        content = await file.read()
+        content = file.file.read()
         if len(content) > MAX_UPLOAD_BYTES:
             raise AppException(
                 status_code=413,
@@ -162,9 +165,9 @@ async def upload_purchase_order_document(
 
 
 @router.get("/purchase-orders/{po_id}/versions")
-async def list_purchase_order_versions(
+def list_purchase_order_versions(
     po_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Every document uploaded against this PO, newest first.
@@ -211,9 +214,9 @@ async def list_purchase_order_versions(
 @router.get(
     "/purchase-order-versions/{po_version_id}", response_model=POVersionDetailResponse
 )
-async def get_purchase_order_version(
+def get_purchase_order_version(
     po_version_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Everything the side-by-side confirm screen renders: the page, the transcription,
@@ -242,7 +245,7 @@ async def get_purchase_order_version(
 @router.put(
     "/purchase-order-versions/{po_version_id}", response_model=POVersionDetailResponse
 )
-async def update_purchase_order_version_header(
+def update_purchase_order_version_header(
     po_version_id: str,
     payload: POVersionHeaderUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -267,7 +270,7 @@ async def update_purchase_order_version_header(
     "/purchase-order-versions/{po_version_id}/lines/{line_id}",
     response_model=POVersionDetailResponse,
 )
-async def update_purchase_order_version_line(
+def update_purchase_order_version_line(
     po_version_id: str,
     line_id: str,
     payload: POLineUpdate,
@@ -299,7 +302,7 @@ async def update_purchase_order_version_line(
     "/purchase-order-versions/{po_version_id}/retry-extraction",
     response_model=POVersionDetailResponse,
 )
-async def retry_purchase_order_extraction(
+def retry_purchase_order_extraction(
     po_version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -330,7 +333,7 @@ async def retry_purchase_order_extraction(
     "/purchase-order-versions/{po_version_id}/confirm",
     response_model=POVersionDetailResponse,
 )
-async def confirm_purchase_order_version(
+def confirm_purchase_order_version(
     po_version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -360,58 +363,13 @@ async def confirm_purchase_order_version(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
-# --------------------------------------------------------------------- approvals
-
-
-@router.post("/purchase-orders/{po_id}/approve", response_model=POApprovalResponse)
-async def approve_purchase_order(
-    po_id: str,
-    current_user: dict = Depends(require_permission(EDIT)),
-    db: Session = Depends(get_db),
-):
-    """AC-D8. CS cannot open the SO draft until this has happened (D21)."""
-    try:
-        validate_uuid_path(po_id, resource="Purchase order")
-        service = ProjectPOExtractionService(db)
-        po = service.get_po(po_id)
-        _project_for_edit(db, po.project_id, current_user)
-        po = service.approve_po(po=po, actor_user_id=current_user["id"])
-        body = service.serialize_po_approval(po)
-        db.commit()
-        return body
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-@router.post("/purchase-orders/{po_id}/countersign", response_model=POApprovalResponse)
-async def countersign_purchase_order(
-    po_id: str,
-    current_user: dict = Depends(require_permission(EDIT)),
-    db: Session = Depends(get_db),
-):
-    """Requires an approved PO and a different person."""
-    try:
-        validate_uuid_path(po_id, resource="Purchase order")
-        service = ProjectPOExtractionService(db)
-        po = service.get_po(po_id)
-        _project_for_edit(db, po.project_id, current_user)
-        po = service.countersign_po(po=po, actor_user_id=current_user["id"])
-        body = service.serialize_po_approval(po)
-        db.commit()
-        return body
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
 # ------------------------------------------------------- handwriting review cards
 
 
 @router.post(
     "/po-annotations/{annotation_id}/accept", response_model=AnnotationActionResponse
 )
-async def accept_po_annotation(
+def accept_po_annotation(
     annotation_id: str,
     payload: Optional[AnnotationAcceptRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -436,7 +394,7 @@ async def accept_po_annotation(
 @router.post(
     "/po-annotations/{annotation_id}/edit", response_model=AnnotationActionResponse
 )
-async def edit_po_annotation(
+def edit_po_annotation(
     annotation_id: str,
     payload: AnnotationEditRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -463,7 +421,7 @@ async def edit_po_annotation(
 @router.post(
     "/po-annotations/{annotation_id}/reject", response_model=AnnotationActionResponse
 )
-async def reject_po_annotation(
+def reject_po_annotation(
     annotation_id: str,
     payload: AnnotationRejectRequest,
     current_user: dict = Depends(require_permission(EDIT)),

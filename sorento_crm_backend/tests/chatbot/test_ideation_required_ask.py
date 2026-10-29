@@ -207,6 +207,27 @@ class TestThroughTheEngine:
         slot = _focus_slot(session_factory)
         assert isinstance(slot, dict) and slot["ask"] == "ideation" and slot["asking"] == "problem"
 
+    @pytest.mark.parametrize("status", ["outstanding", "sales_report", "top_selling"])
+    def test_a_reply_the_parser_reads_as_a_report_status_is_still_captured_as_the_idea(
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch, status
+    ) -> None:
+        """The report status the parser (and `report_ask.by_capability`) read on the reply never turns the captured idea
+        into a report run: the idea ask's reroute clears it."""
+        _seed_completed_lanes(session_factory, system_settings_row)
+        stub_access()
+        calls = _fake_tool(monkeypatch, [_result("ask_idea", ASK_REPLY), _result("complete", DONE_REPLY)])
+
+        _say(session_factory, stub_parser, IDEATE_PARSE, "want to submit idea", f"ZZT-ri-st-a-{status}")
+        result = _say(
+            session_factory, stub_parser,
+            dict(message_type="business_query", intent_hint="check_order", domain_hint="order", order_status=status),
+            "outstanding report slow", f"ZZT-ri-st-b-{status}",
+        )
+
+        assert len(calls) == 2 and calls[1]["ask_reply"] is True, calls
+        assert calls[1]["message_text"] == "outstanding report slow", calls[1]
+        assert result.reply["text"] == DONE_REPLY, result.reply
+
     def test_a_vague_second_message_ends_with_the_give_up_and_no_third_ask(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
     ) -> None:

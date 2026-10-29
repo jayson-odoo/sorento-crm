@@ -8,6 +8,7 @@ New symbols are used inside each test.
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
@@ -84,7 +85,7 @@ def _foreign_set_with_driver(db, category, uom):
     other = _uid()
     db.execute(
         text("INSERT INTO companies (id, code, name, is_active) VALUES (:i, :c, :n, true)"),
-        {"i": other, "c": f"ZZT{_uid()[:5]}", "n": f"{MARKER} Mocha"},
+        {"i": other, "c": f"ZZT{uuid.uuid4().hex}", "n": f"{MARKER} Mocha"},
     )
     product_id = _uid()
     db.execute(
@@ -94,7 +95,7 @@ def _foreign_set_with_driver(db, category, uom):
         ),
         {
             "id": product_id,
-            "code": f"ZZTFOREIGNPART{_uid()[:4]}",
+            "code": f"ZZTFOREIGNPART{uuid.uuid4().hex}",
             "name": f"{MARKER} their part",
             "cat": category.id,
             "uom": uom.id,
@@ -107,7 +108,7 @@ def _foreign_set_with_driver(db, category, uom):
             "INSERT INTO product_sets (id, company_id, set_code, name, is_active) "
             "VALUES (:id, :co, :code, :name, true)"
         ),
-        {"id": set_id, "co": other, "code": f"ZZTFSET{_uid()[:4]}", "name": f"{MARKER} theirs"},
+        {"id": set_id, "co": other, "code": f"ZZTFSET{uuid.uuid4().hex}", "name": f"{MARKER} theirs"},
     )
     db.execute(
         text(
@@ -213,8 +214,8 @@ def test_r2_each_part_carries_its_own_uom_and_the_so_lines_use_it_not_the_pos():
     with blank_session() as db:
         env = _env(db)
         category = env["category"]
-        litre = UnitOfMeasure(id=_uid(), uom_code=f"ZZTL{_uid()[:3]}", uom_name="Litre")
-        each = UnitOfMeasure(id=_uid(), uom_code=f"ZZTE{_uid()[:3]}", uom_name="Each")
+        litre = UnitOfMeasure(id=_uid(), uom_code=f"ZZTL{uuid.uuid4().hex}", uom_name="Litre")
+        each = UnitOfMeasure(id=_uid(), uom_code=f"ZZTE{uuid.uuid4().hex}", uom_name="Each")
         db.add_all([litre, each])
         db.flush()
         pedestal = _product(db, category, each, "ZZT-UOM-RL")
@@ -258,7 +259,7 @@ def _select_world(db, company_id):
     token = _uid()[:6].upper()
     live = _set(db, company_id, category, uom, name=f"{MARKER} Alpha {token}")
     retired = _set(db, company_id, category, uom, name=f"{MARKER} Beta {token}", active=False)
-    theirs = _foreign_set(db, code=f"ZZTSEL{_uid()[:4]}")
+    theirs = _foreign_set(db, code=f"ZZTSEL{uuid.uuid4().hex}")
     return live, retired, theirs, token
 
 
@@ -311,7 +312,7 @@ def test_r3_ids_return_exactly_those_own_sets_inactive_included_never_a_foreign_
 def test_r3_a_foreign_sets_code_never_appears_in_a_search(api):
     _client_unused, db, company_id, user_id, _project = api
     _select_world(db, company_id)
-    code = f"ZZTONLYTHEIRS{_uid()[:4]}"
+    code = f"ZZTONLYTHEIRS{uuid.uuid4().hex}"
     _foreign_set(db, code=code)
     db.commit()
     client, originals = _viewer(db, user_id)
@@ -451,7 +452,7 @@ def test_r6_a_new_set_pick_fills_a_blank_brand_with_the_driver_parts_brand_and_k
         brand = Brand(
             id=_uid(),
             company_id=env["company_id"],
-            brand_code=f"ZZT{_uid()[:5]}",
+            brand_code=f"ZZT{uuid.uuid4().hex}",
             brand_name=f"{MARKER} Cabana",
         )
         db.add(brand)
@@ -599,7 +600,7 @@ def test_a_foreign_set_is_404_on_post_put_and_bulk_put(api):
     client, db, _company_id, _user_id, project = api
     category, uom = _catalogue(db)
     product = _product(db, category, uom, "ZZT-FS")
-    foreign = _foreign_set(db, code=f"ZZTFS{_uid()[:4]}")
+    foreign = _foreign_set(db, code=f"ZZTFS{uuid.uuid4().hex}")
     db.commit()
     version_id = _api_quotation(client, project.id)["current_version_id"]
     existing = client.post(
@@ -628,7 +629,7 @@ def test_another_companys_series_is_404_on_the_sets_rows_get_patch_and_delete(ap
     other = _uid()
     db.execute(
         text("INSERT INTO companies (id, code, name, is_active) VALUES (:i, :c, :n, true)"),
-        {"i": other, "c": f"ZZT{_uid()[:5]}", "n": f"{MARKER} Mocha"},
+        {"i": other, "c": f"ZZT{uuid.uuid4().hex}", "n": f"{MARKER} Mocha"},
     )
     theirs = ProjectSeries(id=_uid(), company_id=other, name=f"{MARKER} their series")
     db.add(theirs)
@@ -647,7 +648,7 @@ def test_another_companys_series_is_404_on_the_sets_rows_get_patch_and_delete(ap
 def test_a_series_row_pointing_at_a_foreign_set_is_not_listed(api):
     client, db, company_id, _user_id, _project = api
     series = _api_series(client, "Poisoned")
-    foreign = _foreign_set(db, code=f"ZZTPOISON{_uid()[:4]}")
+    foreign = _foreign_set(db, code=f"ZZTPOISON{uuid.uuid4().hex}")
     db.add(
         ProjectSeriesSet(
             series_id=series["id"],

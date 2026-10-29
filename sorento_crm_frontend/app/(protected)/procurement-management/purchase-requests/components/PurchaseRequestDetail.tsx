@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
+import { APPEALED_LABEL, isAwaitingReview, RESUBMITTED } from '@/lib/submission-status';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -88,6 +89,8 @@ import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSecti
 import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel';
 import { PurchaseRequestSignoffFooter } from './PurchaseRequestSignoffFooter';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { numberFieldError } from '@/lib/number-field';
+import { QUANTITY_RULES } from '../forms/purchase-request-schema';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 import {
   purchaseRequestNumberReplyPhrase,
@@ -145,7 +148,14 @@ function PurchaseRequestLineItemsGrid({
         id: 'quantity',
         accessorFn: (row) => row.quantity ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-        cell: ({ row }) => row.original.quantity ?? ' - ',
+        // An external-intake line can arrive with no quantity: staff see what to enter,
+        // not a dash.
+        cell: ({ row }) =>
+          row.original.quantity ?? (
+            <span className="whitespace-normal break-words text-xs text-destructive">
+              {numberFieldError(null, QUANTITY_RULES)}
+            </span>
+          ),
         size: 100,
         meta: { headerTitle: 'Qty' },
       },
@@ -555,7 +565,8 @@ export default function PurchaseRequestDetail({
   const approvalStatusNorm = (request.approval_status ?? '').trim();
   const lifecycleStatusNorm = (request.status ?? '').trim().toLowerCase();
   const isDraftLifecycle = lifecycleStatusNorm === 'draft';
-  const isSubmittedLifecycle = lifecycleStatusNorm === 'submitted';
+  // Resubmitted (after a rejection) gets the same reviewer actions as submitted.
+  const isSubmittedLifecycle = isAwaitingReview(lifecycleStatusNorm);
   const isDraftLike =
     approvalStatusNorm === '' || approvalStatusNorm === 'draft';
   const isRejected = approvalStatusNorm === 'rejected';
@@ -1221,12 +1232,14 @@ export default function PurchaseRequestDetail({
                             : request.approval_status === 'rejected'
                               ? 'Rejected'
                               : isSubmittedLifecycle
-                                ? 'Submitted'
+                                ? (lifecycleStatusNorm === RESUBMITTED ? APPEALED_LABEL : 'Submitted')
                                 : isDraftLifecycle
                                   ? 'Draft'
                                   : (request.approval_status || request.status || 'Draft');
                       return (
-                        <span className={`${STATUS_PILL_BASE} ${statusPillClass(statusText)}`}>
+                        <span
+                          className={`${STATUS_PILL_BASE} ${statusPillClass(statusText === APPEALED_LABEL ? RESUBMITTED : statusText)}`}
+                        >
                           {statusText}
                         </span>
                       );
@@ -1364,12 +1377,14 @@ export default function PurchaseRequestDetail({
                             : request.approval_status === 'rejected'
                               ? 'Rejected'
                               : isSubmittedLifecycle
-                                ? 'Submitted'
+                                ? (lifecycleStatusNorm === RESUBMITTED ? APPEALED_LABEL : 'Submitted')
                                 : isDraftLifecycle
                                   ? 'Draft'
                                   : (request.approval_status || request.status || 'Draft');
                       return (
-                        <span className={`${STATUS_PILL_BASE} ${statusPillClass(statusText)}`}>
+                        <span
+                          className={`${STATUS_PILL_BASE} ${statusPillClass(statusText === APPEALED_LABEL ? RESUBMITTED : statusText)}`}
+                        >
                           {statusText}
                         </span>
                       );

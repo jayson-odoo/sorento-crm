@@ -13,18 +13,22 @@
  * a multi-selection and cannot propagate a group's resize to its children.
  */
 
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
-import JsBarcode from 'jsbarcode';
-import type { LayerPadding, TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  LayerPadding,
+  TagLayer,
+  TagLayerProps,
+  TextLayerProps,
+} from '@/lib/dealer-kit/tag-template-types';
 import type { PriceBadgeInput, PriceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { priceBadgeInsets, priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
 import {
-  barcodePlateGeometry,
+  barcodeSvg,
   barcodeSymbologyFor,
-  humanReadableBarcode,
+  svgDataUrl,
 } from '@/lib/dealer-kit/barcode';
 import {
   polygonPoints,
@@ -32,6 +36,8 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
+import { canvasTextHeight, textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { useHtmlImage } from './useHtmlImage';
 
@@ -178,7 +184,15 @@ export function KonvaTagLayer({
       onMouseEnter={() => onHoverChange?.(reportId, true)}
       onMouseLeave={() => onHoverChange?.(reportId, false)}
     >
-      <LayerContent props={layer.props} w={w} h={h} scale={scale} display={display} />
+      <LayerContent
+        props={layer.props}
+        w={w}
+        h={h}
+        widthMm={layer.width_mm}
+        heightMm={layer.height_mm}
+        scale={scale}
+        display={display}
+      />
     </Group>
   );
 }
@@ -191,48 +205,33 @@ function LayerContent({
   props,
   w,
   h,
+  widthMm,
+  heightMm,
   scale,
   display,
 }: {
   props: TagLayerProps;
   w: number;
   h: number;
+  /** The layer box in mm, as stored: what the print page lays out from too. */
+  widthMm: number;
+  heightMm: number;
   scale: number;
   display?: TagLayerDisplay;
 }) {
   switch (props.kind) {
-    case 'text': {
-      // Padding insets the box the text wraps inside (S3): x/y move the Text
-      // node in from the layer's own top-left, width/height shrink to match,
-      // clamped at zero rather than going negative (AC-S3-4).
-      const inset = paddedBox(w, h, props.padding, scale);
+    case 'text':
       return (
-        <Text
-          x={inset.x}
-          y={inset.y}
-          width={inset.width}
-          height={inset.height}
+        <TextContent
+          props={props}
+          w={w}
+          h={h}
+          widthMm={widthMm}
+          heightMm={heightMm}
+          scale={scale}
           text={display?.text ?? props.text}
-          fontFamily={props.fontFamily}
-          fontSize={props.fontSize * scale * 0.35}
-          fontStyle={
-            [props.italic && 'italic', props.fontWeight >= 600 && 'bold']
-              .filter(Boolean)
-              .join(' ') || 'normal'
-          }
-          textDecoration={
-            [props.underline && 'underline', props.strikethrough && 'line-through']
-              .filter(Boolean)
-              .join(' ')
-          }
-          fill={props.color}
-          align={props.align}
-          lineHeight={props.lineHeight}
-          letterSpacing={props.letterSpacing * scale * 0.1}
-          wrap="word"
         />
       );
-    }
 
     case 'shape':
       return <ShapeContent shape={props.shape} w={w} h={h} scale={scale} props={props} />;
@@ -353,7 +352,8 @@ function LayerContent({
         <BarcodeContent
           w={w}
           h={h}
-          scale={scale}
+          widthMm={widthMm}
+          heightMm={heightMm}
           showCode={props.show_code}
           value={display?.text ?? null}
           code={display?.code ?? null}
@@ -552,79 +552,108 @@ function ImageContent({
 }
 
 // ---------------------------------------------------------------------------
+// Text (PRICETAG-BARCODE-MATCH)
+// ---------------------------------------------------------------------------
+
+/**
+ * A text layer draws the lines `textLayerLines` breaks it into - the SAME
+ * lines the print page prints - with Konva's own wrapping off, in the same
+ * face and units (`textFace`). Padding insets the box (S3): x/y move the Text
+ * node in from the layer's top-left, width/height shrink to match, clamped at
+ * zero (AC-S3-4). The node keeps its full box as its size, so the whole box
+ * stays clickable, and carries the unbroken text for a live resize to
+ * re-break (`TagCanvasEditor`'s transform handler).
+ */
+function TextContent({
+  props,
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  text,
+}: {
+  props: TextLayerProps;
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  text: string;
+}) {
+  const epoch = useFontsEpoch();
+  const lines = useMemo(() => {
+    void epoch; // re-measure once a face has loaded
+    return textLayerLines(props, text, widthMm, heightMm);
+  }, [props, text, widthMm, heightMm, epoch]);
+  const face = textFace(props);
+  const inset = paddedBox(w, h, props.padding, scale);
+
+  return (
+    <Text
+      key={epoch}
+      x={inset.x}
+      y={inset.y}
+      width={inset.width}
+      height={canvasTextHeight(inset.height)}
+      text={lines.join('\n')}
+      sourceText={text}
+      fontFamily={face.fontFamily}
+      fontSize={mm2px(face.fontSize_mm, scale)}
+      fontStyle={face.fontStyle}
+      textDecoration={
+        [props.underline && 'underline', props.strikethrough && 'line-through']
+          .filter(Boolean)
+          .join(' ')
+      }
+      fill={props.color}
+      align={props.align}
+      lineHeight={props.lineHeight}
+      letterSpacing={mm2px(face.letterSpacing_mm, scale)}
+      wrap="none"
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Barcode (D18, S7)
 // ---------------------------------------------------------------------------
 
-/** Whether the offscreen canvas has been drawn, is still to be drawn, or
- * `jsbarcode` threw drawing it. Distinct from `pending` so the renderer can
- * tell "still in flight" apart from "cannot encode this value" - the two used
- * to share one `null`, which drew the pending placeholder forever on a
- * genuine failure. */
-type BarcodeCanvasState =
-  | { status: 'pending' }
-  | { status: 'failed' }
-  | { status: 'ready'; canvas: HTMLCanvasElement };
-
 /**
- * Generates the bars onto an offscreen canvas via `jsbarcode`, the same
- * symbology decision `humanReadableBarcode` and the print page's DOM
- * renderer use (`barcodeSymbologyFor`). Konva takes any `CanvasImageSource`
- * as an Image's `image` prop, so the generated canvas is used directly -
- * no data-URL round trip.
- */
-function useBarcodeCanvas(value: string | null): BarcodeCanvasState {
-  const [state, setState] = useState<BarcodeCanvasState>({ status: 'pending' });
-
-  useEffect(() => {
-    const symbology = barcodeSymbologyFor(value);
-    if (!symbology || !value) {
-      setState({ status: 'pending' });
-      return;
-    }
-    const element = document.createElement('canvas');
-    try {
-      JsBarcode(element, value.trim(), {
-        format: symbology,
-        displayValue: false,
-        margin: 0,
-        height: 160,
-      });
-      setState({ status: 'ready', canvas: element });
-    } catch {
-      setState({ status: 'failed' });
-    }
-  }, [value]);
-
-  return state;
-}
-
-/**
- * The label plate (D18): white rounded backing, an optional black
- * product-code strip on top, the bars, then the guard-split human-readable
- * digits. Empty binding draws the same dashed placeholder every unbound
- * slot draws, so a designer sees the same "nothing here yet" language across
- * layer types. Band heights, padding and font sizes come from
- * `barcodePlateGeometry` (mm of plate), converted to canvas px by `scale` -
- * the SAME numbers the print page reaches by converting to `pt` instead, so
- * the two cannot draw a differently-proportioned plate.
+ * The barcode label (D18, PRICETAG-BARCODE-MATCH): the SAME SVG the request
+ * preview and the printed PDF draw (`barcodeSvg`, `TagSheetRenderer`), loaded
+ * as an image and drawn over the whole layer box. Konva draws none of the
+ * code, bars or digits itself, so the canvas cannot lay them out differently
+ * from the print page at any zoom.
+ *
+ * Empty binding draws the same dashed placeholder every unbound slot draws.
+ * A value that cannot be encoded shows a distinct failure state, never the
+ * "still loading" text forever.
  */
 function BarcodeContent({
   w,
   h,
-  scale,
+  widthMm,
+  heightMm,
   showCode,
   value,
   code,
 }: {
   w: number;
   h: number;
-  scale: number;
+  widthMm: number;
+  heightMm: number;
   showCode: boolean;
   value: string | null;
   code: string | null | undefined;
 }) {
   const symbology = barcodeSymbologyFor(value);
-  const barsState = useBarcodeCanvas(value);
+  const url = useMemo(() => {
+    if (!symbology) return null;
+    const svg = barcodeSvg({ value, code, showCode, widthMm, heightMm });
+    return svg ? svgDataUrl(svg) : null;
+  }, [symbology, value, code, showCode, widthMm, heightMm]);
+  const image = useHtmlImage(url);
 
   if (!value || !symbology) {
     return (
@@ -650,86 +679,45 @@ function BarcodeContent({
     );
   }
 
-  const geo = barcodePlateGeometry(px2mm(w, scale), px2mm(h, scale), showCode && !!code);
-  const strip = mm2px(geo.stripHeight_mm, scale);
-  const humanH = mm2px(geo.humanHeight_mm, scale);
-  const barsY = mm2px(geo.barsY_mm, scale);
-  const barsH = mm2px(geo.barsHeight_mm, scale);
-
-  return (
-    <>
-      <Rect width={w} height={h} fill="#ffffff" cornerRadius={mm2px(geo.cornerRadius_mm, scale)} />
-      {strip > 0 && (
-        <>
-          <Rect width={w} height={strip} fill="#000000" />
-          <Text
-            width={w}
-            height={strip}
-            text={code ?? ''}
-            align="center"
-            verticalAlign="middle"
-            fontSize={mm2px(geo.stripFontSize_mm, scale)}
-            fontStyle="bold"
-            fill="#ffffff"
-          />
-        </>
-      )}
-      {barsState.status === 'ready' ? (
-        <KonvaImage
-          image={barsState.canvas}
-          x={mm2px(geo.barsX_mm, scale)}
-          y={barsY}
-          width={mm2px(geo.barsWidth_mm, scale)}
-          height={barsH}
+  if (!url) {
+    return (
+      <>
+        <Rect
+          width={w}
+          height={h}
+          fill="transparent"
+          stroke="#dc2626"
+          strokeWidth={1}
+          dash={[4, 4]}
         />
-      ) : barsState.status === 'failed' ? (
-        <>
-          <Rect
-            x={mm2px(geo.barsX_mm, scale)}
-            y={barsY}
-            width={mm2px(geo.barsWidth_mm, scale)}
-            height={barsH}
-            fill="transparent"
-            stroke="#dc2626"
-            strokeWidth={1}
-            dash={[4, 4]}
-          />
-          <Text
-            width={w}
-            y={barsY}
-            height={barsH}
-            text="cannot encode"
-            align="center"
-            verticalAlign="middle"
-            fontSize={9}
-            fill="#dc2626"
-          />
-        </>
-      ) : (
         <Text
           width={w}
-          y={barsY}
-          height={barsH}
-          text="Preparing barcode"
+          height={h}
+          text="cannot encode"
           align="center"
           verticalAlign="middle"
           fontSize={9}
-          fill="#999999"
+          fill="#dc2626"
         />
-      )}
+      </>
+    );
+  }
+
+  if (!image) {
+    return (
       <Text
         width={w}
-        y={h - humanH}
-        height={humanH}
-        text={humanReadableBarcode(value, symbology)}
+        height={h}
+        text="Preparing barcode"
         align="center"
         verticalAlign="middle"
-        fontSize={mm2px(geo.humanFontSize_mm, scale)}
-        fontFamily="monospace"
-        fill="#000000"
+        fontSize={9}
+        fill="#999999"
       />
-    </>
-  );
+    );
+  }
+
+  return <KonvaImage image={image} width={w} height={h} />;
 }
 
 // ---------------------------------------------------------------------------

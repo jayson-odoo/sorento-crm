@@ -369,7 +369,7 @@ def test_resolve_provider_uses_the_configured_providers_own_default_model():
 
         assert isinstance(provider, GeminiProvider)
         assert provider_name == "gemini"
-        assert model_name == "gemini-2.5-flash"
+        assert model_name == "gemini-3.5-flash"
 
 
 def test_a_gemini_agent_never_borrows_an_openai_assistants_key(monkeypatch):

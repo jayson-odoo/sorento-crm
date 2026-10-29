@@ -37,7 +37,7 @@ def _sorento(db) -> str:
 
 
 def _uom(db) -> str:
-    row = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+    row = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     db.add(row)
     db.flush()
     return row.id

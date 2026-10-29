@@ -42,6 +42,7 @@ import {
   type OrderInquiryLineRow,
 } from '../../../_shared/lib/orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
+import type { LineSplitsPayload } from '../../../_shared/types/lineSplit.types';
 
 /** `PLAN-oi-header-list-detail.md`, AC-DP-03. */
 const LISTING_KEY = 'projects.projects.view::order-inquiry-lines';
@@ -136,6 +137,7 @@ export function OrderInquiryLinesTab({
   onUndoStaged,
   canEditAttachments,
   decideSlot,
+  splitSheet,
 }: {
   lines: OrderInquiryWorklistRow[];
   isLoading: boolean;
@@ -162,6 +164,12 @@ export function OrderInquiryLinesTab({
   /** OI-BULK-RESERVE (AC-BR-01): the caller's "Decide (N)", at the toolbar's right end
    * (its primary slot) so it sits right of the selection strip at 375 and 1280 alike. */
   decideSlot?: ReactNode;
+  /** OI-SPLIT-VIEW (UAC E5): the order's split sheet for the Split column's line popups. */
+  splitSheet?: {
+    payload: LineSplitsPayload | null | undefined;
+    error?: unknown;
+    onRetry?: () => void;
+  };
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -194,6 +202,7 @@ export function OrderInquiryLinesTab({
     onUndoStaged,
     attachmentsByLine,
     canEditAttachments,
+    splitSheet,
   });
 
   function handleStateFilterChange(next: string[]) {

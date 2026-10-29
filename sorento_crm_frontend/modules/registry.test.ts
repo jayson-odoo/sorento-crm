@@ -29,10 +29,15 @@ describe('module registry purge manifests', () => {
     expect(modulePurgeTables().sales.tables).toEqual([
       'sales.opportunity_lines',
       'sales.opportunities',
+      'sales.target_tier_rates',
       'sales.target_commission_tiers',
+      'sales.target_accounts',
       'sales.target_scope',
       'sales.target_periods',
       'sales.targets',
+      'sales.set_apart_customers',
+      'sales.agent_classes',
+      'sales.point_ratios',
       'sales.team_members',
       'sales.teams',
     ]);

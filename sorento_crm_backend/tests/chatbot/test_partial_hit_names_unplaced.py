@@ -32,6 +32,8 @@ import pytest
 
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
+from tests.chatbot._turn_helpers import make_office_access_type
+from tests.chatbot.test_engine import CONTACT_ID
 from tests.chatbot.test_outstanding_lane import (
     REPORT_HIT,
     _qf,
@@ -78,6 +80,8 @@ class TestTwoUnplacedTokensAreBothNamed:
     def test_couldnt_find_line_names_every_unplaced_token(self, session_factory, monkeypatch) -> None:
         _seed_products(session_factory, [PLACED_CODE])
         _seed_contact(session_factory, variables={})
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_access_type(session_factory, CONTACT_ID)
 
         result, captured = _run_turn(
             session_factory,
@@ -95,9 +99,8 @@ class TestTwoUnplacedTokensAreBothNamed:
 
         assert captured, "the placed code must still be fetched and answered"
         reply = (result.reply or {}).get("text") or ""
-        assert f"Product: {PLACED_CODE}" in reply, (
-            f"expected a real answer for the placed code before the miss line: {reply!r}"
-        )
+        # REPORT-UNIFY: the answer for the placed code is the report ask run on it (its header is the presenter's).
+        assert captured[0][1].get("product_code") == PLACED_CODE, captured
         # HELD (see class docstring): the CURRENT wording, not the plan's target -
         # still a hard requirement that BOTH unplaced tokens are named, verbatim.
         assert f"I could not find {UNPLACED_1} or {UNPLACED_2}." in reply, (

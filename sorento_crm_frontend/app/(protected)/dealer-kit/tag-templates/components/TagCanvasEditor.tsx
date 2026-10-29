@@ -111,6 +111,7 @@ import {
   type PreviewMap,
 } from '@/lib/dealer-kit/preview';
 import { paddedBox, reflowedTextSize } from '@/lib/dealer-kit/text-reflow';
+import { canvasTextHeight, textLayerLines } from '@/lib/dealer-kit/text-layout';
 import {
   guideCrossedIntoRuler,
   guideForAxis,
@@ -2120,7 +2121,16 @@ export function TagCanvasEditor({
         // widens for the length of the drag and then snaps back on release.
         const padded = paddedBox(width, height, layer.props.padding, scale);
         textNode.width(padded.width);
-        textNode.height(padded.height);
+        textNode.height(canvasTextHeight(padded.height));
+        // Konva's own wrap is off (the canvas draws the lines the print page
+        // prints, `textLayerLines`), so a live resize re-breaks the unbroken
+        // text `KonvaTagLayer` stashed on the node, the same way.
+        const source = textNode.getAttr('sourceText');
+        if (typeof source === 'string') {
+          (textNode as Konva.Text).text(
+            textLayerLines(layer.props, source, width / scale, height / scale).join('\n'),
+          );
+        }
       }
     }
     transformer.getLayer()?.batchDraw();

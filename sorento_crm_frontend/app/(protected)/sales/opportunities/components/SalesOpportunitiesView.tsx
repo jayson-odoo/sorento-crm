@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -19,7 +19,9 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
-import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Container } from '@/components/common/container';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -46,7 +48,7 @@ import SalesOpportunityModal from './SalesOpportunityModal';
  * `sales.opportunities.add`. Filters (Stage, Agent, Customer, close date range) and paging
  * are server-side - `manualPagination`, `recordCount` from the API's own total.
  */
-const SOURCE_LABEL: Record<string, string> = { portal: 'Portal', crm: 'CRM' };
+const SOURCE_LABEL: Record<string, string> = { portal: 'Portal', crm: 'CRM', chat: 'Chat' };
 
 export default function SalesOpportunitiesView() {
   const canAdd = useHasPermission('sales.opportunities.add');
@@ -62,7 +64,8 @@ export default function SalesOpportunitiesView() {
   const [statusId, setStatusId] = useState('');
   const [salesAgentId, setSalesAgentId] = useState('');
   const [customerId, setCustomerId] = useState('');
-  const [customerOption, setCustomerOption] = useState<SearchableSelectOption | undefined>();
+  // The names of the customers fetched so far, so a pick is named in the trigger (never an id).
+  const customerNames = useRef<Record<string, string>>({});
   const [closeFrom, setCloseFrom] = useState<string | null>(null);
   const [closeTo, setCloseTo] = useState<string | null>(null);
 
@@ -85,13 +88,15 @@ export default function SalesOpportunitiesView() {
     value: a.id,
     label: a.label,
   }));
-  const fetchCustomerOptions = async (q: string): Promise<SearchableSelectOption[]> => {
+  const fetchCustomerOptions = useCallback(async (q: string): Promise<SearchableSelectOption[]> => {
     const result = await getSalesOpportunityCustomerOptions(q);
-    return result.items.map((item) => ({
+    const found = result.items.map((item) => ({
       value: item.customer_id,
       label: `${item.customer_code} - ${item.customer_name}`,
     }));
-  };
+    for (const o of found) customerNames.current[o.value] = o.label;
+    return found;
+  }, []);
 
   const { data, isLoading, isFetching, isPlaceholderData, isError, refetch } = useSalesOpportunities({
     pageIndex: pagination.pageIndex,
@@ -233,7 +238,6 @@ export default function SalesOpportunitiesView() {
     setStatusId('');
     setSalesAgentId('');
     setCustomerId('');
-    setCustomerOption(undefined);
     setCloseFrom(null);
     setCloseTo(null);
   };
@@ -281,34 +285,36 @@ export default function SalesOpportunitiesView() {
                   placeholder="Search opportunities..."
                   className="w-full sm:w-64"
                 />
-                <SearchableSelect
+                <SearchableMultiSelect
                   id="opportunities-filter-stage"
                   aria-label="Stage"
-                  value={statusId}
-                  onChange={setStatusId}
+                  value={splitMulti(statusId)}
+                  onChange={(v) => setStatusId(joinMulti(v))}
                   options={stageOptions}
                   placeholder="Stage"
                   clearable
                   triggerClassName="w-full sm:w-40"
                 />
-                <SearchableSelect
+                <SearchableMultiSelect
                   id="opportunities-filter-agent"
                   aria-label="Agent"
-                  value={salesAgentId}
-                  onChange={setSalesAgentId}
+                  value={splitMulti(salesAgentId)}
+                  onChange={(v) => setSalesAgentId(joinMulti(v))}
                   options={agentSelectOptions}
                   placeholder="Agent"
                   clearable
                   triggerClassName="w-full sm:w-40"
                 />
-                <SearchableSelect
+                <SearchableMultiSelect
                   id="opportunities-filter-customer"
                   aria-label="Customer"
-                  value={customerId}
-                  onChange={setCustomerId}
-                  onOptionChange={(opt) => setCustomerOption(opt ?? undefined)}
+                  value={splitMulti(customerId)}
+                  onChange={(v) => setCustomerId(joinMulti(v))}
                   fetchOptions={fetchCustomerOptions}
-                  selectedOption={customerOption}
+                  selectedOptions={splitMulti(customerId).map((id) => ({
+                    value: id,
+                    label: customerNames.current[id] ?? 'Selected customer',
+                  }))}
                   placeholder="Customer"
                   clearable
                   triggerClassName="w-full sm:w-48"

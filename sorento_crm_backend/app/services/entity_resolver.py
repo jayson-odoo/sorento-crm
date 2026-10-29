@@ -2070,12 +2070,16 @@ def _product_family_order():
 def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     # Strip whitespace from both sides so 'cgb9032b- new' matches 'CGB9032B-NEW'.
     norm_token = _strip_all_ws(token)
-    prefix = f"{norm_token}%"
-    substr = f"%{norm_token}%"
+    if not re.sub(r"[^0-9A-Za-z]", "", norm_token):
+        return []  # separators only: nothing to probe a code with (an ILIKE '%' matches every code)
+    # LIKE wildcards in the token are literal characters, as `_code_candidates` autoescapes them.
+    escaped = norm_token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    prefix = f"{escaped}%"
+    substr = f"%{escaped}%"
     code_norm = _ws_insensitive_lower(Product.product_code)
     rows = (
         db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-        .filter(code_norm.ilike(prefix), chat_searchable_products())
+        .filter(code_norm.ilike(prefix, escape="\\"), chat_searchable_products())
         .order_by(*_product_family_order())
         .limit(PREFIX_LIMIT)
         .all()
@@ -2084,7 +2088,7 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     if not rows:
         rows = (
             db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-            .filter(code_norm.ilike(substr), chat_searchable_products())
+            .filter(code_norm.ilike(substr, escape="\\"), chat_searchable_products())
             .order_by(*_product_family_order())
             .limit(PREFIX_LIMIT)
             .all()
@@ -4823,22 +4827,36 @@ def _probe_project(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
     norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     keys = list(norm_to_token.keys())
 
-    rows = (
+    from app.services.project_service import approved_projects
+
+    # A portal registration waiting for approval is not a project to answer about yet
+    # (PROJECT-REG-PORTAL R4): it has no code to hand back.
+    query = approved_projects(
         db.query(
             Project.id,
             Project.project_code,
             Project.title,
             Project.outcome,
             Project.owner_user_id,
-        )
-        .filter(
+        ).filter(
             or_(
                 _ws_insensitive_lower(Project.project_code).in_(keys),
                 _ws_insensitive_lower(Project.title).in_(keys),
             )
         )
-        .all()
     )
+    # A user who may see only their own projects is not told another project exists
+    # (PORTAL-P2-ONLY-THEIRS): the acting user is the one stamped on this session.
+    from app.audit_context import get_actor
+    from app.services import own_scope
+
+    actor = get_actor(db)
+    acting_user = str(actor.user_id) if actor is not None and actor.user_id else None
+    if acting_user and own_scope.user_is_limited(
+        db, acting_user, own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN
+    ):
+        query = query.filter(own_scope.project_clause(own_scope.me(db, acting_user)))
+    rows = query.all()
     for pid, code, title, outcome, owner_user_id in rows:
         by_code = _strip_all_ws(str(code or "").lower())
         by_title = _strip_all_ws(str(title or "").lower())

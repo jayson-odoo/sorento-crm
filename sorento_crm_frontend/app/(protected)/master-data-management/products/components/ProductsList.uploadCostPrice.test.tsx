@@ -146,3 +146,17 @@ describe('ProductsList header: Upload cost price, Create product under Actions',
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['products'] });
   });
 });
+
+describe('ProductsList Actions: Import barcodes (BARCODE-IMPORT)', () => {
+  it('is offered only with master_data.products.edit', () => {
+    perms.granted = new Set(['master_data.products.view']);
+    renderList();
+    expect(toolbar.props?.secondaryActions?.some((a) => a.key === 'import-barcodes')).toBe(false);
+    cleanup();
+
+    perms.granted = new Set(['master_data.products.edit']);
+    renderList();
+    const item = toolbar.props?.secondaryActions?.find((a) => a.key === 'import-barcodes');
+    expect(item?.label).toBe('Import barcodes');
+  });
+});

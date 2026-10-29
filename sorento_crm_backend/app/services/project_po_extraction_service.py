@@ -307,18 +307,6 @@ class ProjectPOExtractionService(
             "action_note": annotation.action_note,
         }
 
-    def serialize_po_approval(self, po: ProjectPurchaseOrder) -> Dict[str, Any]:
-        return {
-            "id": str(po.id),
-            "po_number": po.po_number or "",
-            "project_id": str(po.project_id),
-            "status": po.status,
-            "approved_by_name": self._user_name(po.approved_by),
-            "approved_at": po.approved_at,
-            "countersigned_by_name": self._user_name(po.countersigned_by),
-            "countersigned_at": po.countersigned_at,
-        }
-
     # ------------------------------------------------------------------- guards
 
     def _assert_unconfirmed(self, version: ProjectPOVersion) -> None:

@@ -103,7 +103,7 @@ def _queue(db: Session, *, upload: RetainedUpload, job_type: str, task, user_id:
 # Project Sales owns what these two routes call (ADR 0010). The path stays under /scm so the
 # FE upload dialog is unaffected by the ownership move.
 @router.post("/order-inquiry/preview")
-async def preview_order_inquiry(
+def preview_order_inquiry(
     file: UploadFile = File(..., description="Order Inquiry sheet"),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
@@ -114,11 +114,11 @@ async def preview_order_inquiry(
     products and warehouses, and read across every company it matches the wrong ones.
     """
     _require_single_company(db)
-    return order_inquiry_service.preview(db, await read_upload(file))
+    return order_inquiry_service.preview(db, read_upload(file))
 
 
 @router.post("/order-inquiry/apply", status_code=status.HTTP_202_ACCEPTED)
-async def apply_order_inquiry(
+def apply_order_inquiry(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     validate_only: bool = Query(
         False,
@@ -136,7 +136,7 @@ async def apply_order_inquiry(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=jsonable_encoder(
-                order_inquiry_service.validate(db, await read_upload(file))
+                order_inquiry_service.validate(db, read_upload(file))
             ),
         )
 
@@ -144,7 +144,7 @@ async def apply_order_inquiry(
 
     return _queue(
         db,
-        upload=await read_upload_retained(file),
+        upload=read_upload_retained(file),
         job_type="order_inquiry_import",
         task=process_order_inquiry_import,
         user_id=current_user["id"],

@@ -179,7 +179,16 @@ import {
   deleteLineDraft,
   putLineDraft,
 } from '../../_shared/services/fulfilmentPlanningService';
+// OI-SPLIT-GUIDE (UAC F2): every guide page reads its order's split view; these specs only care
+// about what the press posts, so the read answers an order with no lines.
+vi.mock('../../_shared/services/lineSplitService', () => ({
+  getLineSplits: (psoId: string) =>
+    Promise.resolve({ pso_id: psoId, so_number: psoId, customer: null, project: null, lines: [] }),
+  saveLineSplits: vi.fn(),
+}));
+
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
@@ -343,7 +352,7 @@ function defaultPreview(body: {
 
 async function pressPreviewThenConfirm() {
   await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-  fireEvent.click(screen.getByTestId('board-confirm'));
+  await walkConfirmGuide();
 }
 
 beforeEach(() => {
@@ -413,6 +422,75 @@ describe('FulfilmentBoardPanel: the header', () => {
     expect(screen.getByTestId('board-header-actions').className).toContain(
       'flex-wrap',
     );
+  });
+
+  /**
+   * BOARD-ROWS-GRID-ONLY (owner, 21 Oct 2026): the Rows and date selectors only shape the
+   * grid, so in List they are not drawn at all and take no header space, on any width. The
+   * choices themselves live on the panel, so a round trip through List keeps them.
+   */
+  it('draws the Rows and date selectors only in Grid, keeping the choices across a toggle', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    currentSearchParams = new URLSearchParams('scope=all');
+
+    renderPanel();
+    const actions = await screen.findByTestId('board-header-actions');
+    await waitFor(() =>
+      expect(within(actions).getByRole('button', { name: 'List' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
+    );
+    expect(within(actions).queryByLabelText('rows')).not.toBeInTheDocument();
+    expect(within(actions).queryByLabelText('granularity')).not.toBeInTheDocument();
+    expect(within(actions).queryByText('Rows')).not.toBeInTheDocument();
+    expect(within(actions).getByRole('button', { name: 'Grid' })).toBeInTheDocument();
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'Grid' }));
+    fireEvent.change(within(actions).getByLabelText('rows'), { target: { value: 'customer' } });
+    fireEvent.change(within(actions).getByLabelText('granularity'), {
+      target: { value: 'month' },
+    });
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'List' }));
+    expect(within(actions).queryByLabelText('rows')).not.toBeInTheDocument();
+    expect(within(actions).queryByLabelText('granularity')).not.toBeInTheDocument();
+    // Hidden is not forgotten: the link written while List shows still carries both choices.
+    await waitFor(() => {
+      const url = String(routerReplace.mock.calls.at(-1)?.[0] ?? '');
+      expect(url).toContain('rows=customer');
+      expect(url).toContain('granularity=month');
+      expect(url).not.toContain('view=grid');
+    });
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'Grid' }));
+    expect(within(actions).getByLabelText('rows')).toHaveValue('customer');
+    expect(within(actions).getByLabelText('granularity')).toHaveValue('month');
+  });
+
+  /** Crew ruling (21 Oct 2026): the day-window buttons belong to the grid as well. */
+  it('draws Earlier days / Later days only in Grid under By day', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'day'));
+    currentSearchParams = new URLSearchParams('scope=all&granularity=day');
+
+    renderPanel();
+    const actions = await screen.findByTestId('board-header-actions');
+    await waitFor(() =>
+      expect(within(actions).getByRole('button', { name: 'List' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
+    );
+    expect(within(actions).queryByRole('button', { name: 'Earlier days' })).not.toBeInTheDocument();
+    expect(within(actions).queryByRole('button', { name: 'Later days' })).not.toBeInTheDocument();
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'Grid' }));
+    expect(within(actions).getByRole('button', { name: 'Earlier days' })).toBeInTheDocument();
+    expect(within(actions).getByRole('button', { name: 'Later days' })).toBeInTheDocument();
+    expect(within(actions).getByLabelText('granularity')).toHaveValue('day');
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'List' }));
+    expect(within(actions).queryByRole('button', { name: 'Earlier days' })).not.toBeInTheDocument();
   });
 });
 
@@ -1638,7 +1716,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
   async function openConfirmDialog() {
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('board-confirm'));
+    await walkConfirmGuide();
   }
 
   it('posts every plannable line as the engine’s own suggestion, in one confirmMany call (D2)', async () => {
@@ -2128,7 +2206,7 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
 
   async function openConfirmDialog() {
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('board-confirm'));
+    await walkConfirmGuide();
   }
 
   it('offers Confirm on an order nobody has adopted, and never says planning has not started', async () => {
@@ -2201,7 +2279,7 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     );
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
     expect(previewConfirmMany).not.toHaveBeenCalled();
@@ -2273,7 +2351,7 @@ describe('FulfilmentBoardPanel: Confirm posts against the id adopt itself return
 
   async function openConfirmDialog() {
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('board-confirm'));
+    await walkConfirmGuide();
   }
 
   it('posts against the id the adopt call returned, even though the refetched board still names none', async () => {
@@ -2321,7 +2399,7 @@ describe('FulfilmentBoardPanel: Confirm posts against the id adopt itself return
     renderPanel(['SO419851']);
     expect(screen.queryByText(/SO419851/)).not.toBeInTheDocument();
 
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() =>
       expect(adoptSalesOrder).toHaveBeenCalledWith('so-419851'),
@@ -3542,7 +3620,7 @@ describe('FulfilmentBoardPanel: an order whose change is already applied is not 
     await screen.findByTestId('fulfilment-board-matrix');
 
     // The applied order is left out at Preview already, and said so in the results.
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     expect(
       await screen.findByText(
@@ -4520,7 +4598,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -4550,7 +4628,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('Nothing was written');
@@ -4591,7 +4669,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340', 'SO398322']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0] as [{ orders: { pso_id: string }[] }];
@@ -4617,7 +4695,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340', 'SO398322']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0] as [{ orders: { pso_id: string }[] }];
@@ -4654,13 +4732,59 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('2 lines already fulfilled, decision cleared');
     expect(block).toHaveTextContent('line 6 SRTWT6808');
     expect(block).toHaveTextContent('line 9 SRTWT6808');
+  });
+
+  it('names the already-fulfilled lines by SO number while the held-back filter still matches the planning number (SO-LINE-NUMBERS AC-7)', async () => {
+    getPlanningBoard.mockResolvedValue(
+      allSaved(
+        boardOf([
+          demand({ line_no: 6, so_line_no: 224, item_code: 'SRTWT6808' }),
+          demand({ line_no: 9, so_line_no: 304, item_code: 'SRTWT6808' }),
+        ]),
+      ),
+    );
+    previewConfirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          preview: true,
+          revision_no: null,
+          lines_confirmed: [],
+          lines_withdrawn: [],
+          lines_held_back: [{ line_no: 9, so_line_no: 304, item_code: 'SRTWT6808', reason: 'only 3 free' }],
+          lines_fulfilled_skipped: 1,
+        },
+      ],
+    });
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: null,
+          lines_confirmed: [],
+          lines_carried: 0,
+          lines_held_back: [{ line_no: 9, so_line_no: 304, item_code: 'SRTWT6808', reason: 'only 3 free' }],
+          lines_fulfilled_skipped: 1,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await walkConfirmGuide();
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('1 line already fulfilled, decision cleared: line 224 SRTWT6808');
+    expect(block).not.toHaveTextContent('cleared: line 224 SRTWT6808 \u00b7');
   });
 
   it('shows a "nothing to confirm" entry for an order the dry run answers with nothing at all', async () => {
@@ -4679,7 +4803,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('SO403340: has nothing to confirm');
@@ -4691,7 +4815,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     previewConfirmMany.mockRejectedValue(new Error('Network down'));
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
@@ -4726,7 +4850,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('only 3 free');
@@ -4876,7 +5000,7 @@ describe('FulfilmentBoardPanel: Saved | All toggle, carried-over behaviour (owne
     await screen.findByTestId('fulfilment-board-matrix');
     await userEvent.click(segment(/^Saved/));
 
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     await screen.findByTestId('board-confirm-results');
 
@@ -5210,22 +5334,292 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     return screen.findByTestId('board-confirm-results');
   }
 
-  it('AC-F13: lists the saved cancel per line under the pending change', async () => {
-    batchNaming('pl-so-a-2');
-    getPlanningBoard.mockResolvedValue(batchedBoard());
-    const block = await press();
+  // PLAN-BATCH-HELD-CANCEL (owner ruling (a), 21 Oct 2026; supersedes AC-F13/AC-F14): a
+  // saved cancel on a line the pending change NAMES is no longer held. The one press applies
+  // the change and sends the cancel; the results say both, and count the order.
+  /** SO394881's shape in small: line 1 the book cancelled, line 2 a named line with Cancel SO. */
+  function retiredPlusNamedCancel() {
+    batchNaming('pl-so-a-1', 'pl-so-a-2');
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        batchedBoard(),
+        (entry) => entry.line_no === 1,
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+      ),
+    );
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 4,
+          inquiry_rows_created: 0,
+          lines_confirmed: [],
+          lines_carried: 0,
+          lines_cancelled: [
+            { line_no: 2, item_code: 'CB110', reason: 'AutoCount Cancel SO CSO-0001' },
+          ],
+          lines_retired: [{ line_no: 1, item_code: 'WESERP10B' }],
+          planning_change_applied: true,
+        },
+      ],
+    });
+  }
+
+  it('BATCH-HELD-CANCEL (crew item 3): an order with only a line the book cancelled still posts its batch', async () => {
+    batchNaming('pl-so-a-1');
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        batchedBoard({ onlyCancel: true }),
+        (entry) => entry.line_no === 2,
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+      ),
+    );
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 4,
+          inquiry_rows_created: 0,
+          lines_confirmed: [],
+          lines_carried: 0,
+          lines_retired: [{ line_no: 2, item_code: 'CB110' }],
+          planning_change_applied: true,
+        },
+      ],
+    });
+    renderPanel(['SO403340']);
+    // COUNT-DISPLAY (crew ruling b): no decision, so never an enabled Confirm (0).
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Apply AutoCount change'),
+    );
+    expect(screen.getByTestId('board-confirm')).toBeEnabled();
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
+        'Applies the AutoCount change from 1 Sep: 1 old line (CB110) is retired',
+      ),
+    );
+    await pressPreviewThenConfirm();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      { orders: { batch_id: string | null; lines: unknown[]; cancelled_lines: unknown[] }[] },
+    ];
+    expect(body.orders[0].batch_id).toBe('b-1');
+    expect(body.orders[0].lines).toEqual([]);
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('1 of 1 orders confirmed');
     expect(block).toHaveTextContent(
-      'Cancel SO is saved; it commits after the pending change is applied.',
+      'SO403340: applied the AutoCount change from 1 Sep: 1 old line (CB110) was retired',
     );
   });
 
-  it('AC-F14: an order sentence for cancels only names Cancel SO, never a rejection', async () => {
+  /** One book-cancelled line (CB110) on SO403340's pending change b-1, nothing decided. */
+  function changeOnlyBoard() {
     batchNaming('pl-so-a-2');
-    getPlanningBoard.mockResolvedValue(batchedBoard());
-    const block = await press();
-    const sentence = within(block).getByText(/^SO403340: (has|was confirmed, but)/);
-    expect(sentence).toHaveTextContent(/Cancel SO/);
-    expect(sentence).not.toHaveTextContent(/rejection/);
+    return withContribution(
+      batchedBoard({ onlyCancel: true }),
+      (entry) => entry.line_no === 2,
+      (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+    );
+  }
+
+  it('COUNT-DISPLAY review: the guide of a change-only press says Apply AutoCount change, never Confirm 0 orders', async () => {
+    getPlanningBoard.mockResolvedValue(changeOnlyBoard());
+    renderPanel(['SO403340']);
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 1 Sep'),
+    );
+    await walkToConfirmStep();
+    const guide = screen.getByTestId('confirm-guide');
+    expect(within(guide).getByRole('heading')).toHaveTextContent('Apply AutoCount change');
+    expect(screen.getByTestId('confirm-guide-confirm')).toHaveTextContent('Apply AutoCount change');
+    expect(guide).toHaveTextContent(
+      'Applies the AutoCount change from 1 Sep: 1 old line (CB110) is retired',
+    );
+    expect(guide).not.toHaveTextContent(/0 orders/);
+  });
+
+  it('COUNT-DISPLAY review: the guide of a mixed press also names the AutoCount change', async () => {
+    retiredPlusNamedCancel();
+    renderPanel(['SO403340']);
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 1 Sep'),
+    );
+    await walkToConfirmStep();
+    expect(screen.getByTestId('confirm-guide')).toHaveTextContent(
+      'Also applies the AutoCount change from 1 Sep: 1 old line (WESERP10B) is retired',
+    );
+  });
+
+  it('COUNT-DISPLAY review: the results keep the change date after the board re-reads it as applied', async () => {
+    const pending = changeOnlyBoard();
+    getPlanningBoard.mockResolvedValue(pending);
+    confirmMany.mockImplementation(async () => {
+      // The press applied the change: the re-read board no longer names a pending batch.
+      getPlanningBoard.mockResolvedValue({
+        ...pending,
+        orders: pending.orders.map((order) => ({ ...order, pending_change_batch_id: null })),
+      });
+      return {
+        results: [
+          {
+            pso_id: 'pso-so-a',
+            ok: true,
+            decision_revision: 4,
+            inquiry_rows_created: 0,
+            lines_confirmed: [],
+            lines_carried: 0,
+            lines_retired: [{ line_no: 2, item_code: 'CB110' }],
+            planning_change_applied: true,
+          },
+        ],
+      };
+    });
+    renderPanel(['SO403340']);
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 1 Sep'),
+    );
+    await pressPreviewThenConfirm();
+    const block = await screen.findByTestId('board-confirm-results');
+    await waitFor(() => expect(getPlanningBoard.mock.calls.length).toBeGreaterThan(1));
+    expect(block).toHaveTextContent(
+      'SO403340: applied the AutoCount change from 1 Sep: 1 old line (CB110) was retired',
+    );
+    expect(block).not.toHaveTextContent('pending');
+  });
+
+  it('COUNT-DISPLAY (crew audit c): a decision on one order beside two change-only orders reads Confirm (1) and names both changes', async () => {
+    getPlanningChangeBatch.mockResolvedValue({
+      id: 'b-1',
+      created_at: '2026-09-01T00:00:00Z',
+      applied_at: null,
+      applied_by_name: null,
+      orders: [
+        { so_number: 'SO398322', rows: [{ id: 'pcr-b', project_line_id: 'pl-so-b-2', applied_state: 'pending' }] },
+        { so_number: 'SO400001', rows: [{ id: 'pcr-c', project_line_id: 'pl-so-c-3', applied_state: 'pending' }] },
+      ],
+    });
+    const built = allSaved(
+      boardOf([
+        demand({ line_no: 1 }),
+        demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, item_code: 'ZZT-B' }),
+        demand({ sales_order_id: 'so-c', so_number: 'SO400001', line_no: 3, item_code: 'ZZT-C' }),
+      ]),
+    );
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        {
+          ...built,
+          orders: built.orders.map((order) =>
+            order.sales_order_id === 'so-a' ? order : { ...order, pending_change_batch_id: 'b-1' },
+          ),
+        },
+        (entry) => entry.sales_order_id !== 'so-a',
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+      ),
+    );
+    renderPanel(['SO403340', 'SO398322', 'SO400001']);
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
+        'SO398322: from 1 Sep, 1 old line (ZZT-B) is retired',
+      ),
+    );
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
+    const note = screen.getByTestId('board-autocount-change-note');
+    expect(note).toHaveTextContent('Also applies the AutoCount change on 2 orders');
+    expect(note).toHaveTextContent('SO400001: from 1 Sep, 1 old line (ZZT-C) is retired');
+    expect(note).not.toHaveTextContent('SO403340');
+  });
+
+  it('COUNT-DISPLAY (crew ruling b): two orders with only pending changes read Apply AutoCount changes (2 orders)', async () => {
+    getPlanningChangeBatch.mockResolvedValue({
+      id: 'b-1',
+      created_at: '2026-09-01T00:00:00Z',
+      applied_at: null,
+      applied_by_name: null,
+      orders: [
+        { so_number: 'SO403340', rows: [{ id: 'pcr-a', project_line_id: 'pl-so-a-1', applied_state: 'pending' }] },
+        { so_number: 'SO398322', rows: [{ id: 'pcr-b', project_line_id: 'pl-so-b-2', applied_state: 'pending' }] },
+      ],
+    });
+    const built = allSaved(
+      boardOf([
+        demand({ line_no: 1 }),
+        demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, item_code: 'ZZT-B' }),
+      ]),
+    );
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        {
+          ...built,
+          orders: built.orders.map((order) => ({ ...order, pending_change_batch_id: 'b-1' })),
+        },
+        () => true,
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+      ),
+    );
+    renderPanel(['SO403340', 'SO398322']);
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent(
+        'Apply AutoCount changes (2 orders)',
+      ),
+    );
+    expect(screen.getByTestId('board-confirm')).toBeEnabled();
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
+        'SO403340: from 1 Sep, 1 old line (WESERP10B) is retired',
+      ),
+    );
+    const note = screen.getByTestId('board-autocount-change-note');
+    expect(note).toHaveTextContent('Applies the AutoCount change on 2 orders');
+    expect(note).toHaveTextContent('SO398322: from 1 Sep, 1 old line (ZZT-B) is retired');
+  });
+
+  // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15, crew ruling (b)): the count is
+  // decisions only; the line the change retires is one note beside the button.
+  it('COUNT-DISPLAY D1/D2: Confirm counts the named cancel only, and the retired line is one note', async () => {
+    retiredPlusNamedCancel();
+    renderPanel(['SO403340']);
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
+        'Also applies the AutoCount change from 1 Sep: 1 old line (WESERP10B) is retired',
+      ),
+    );
+  });
+
+  it('BATCH-HELD-CANCEL U2: the press posts batch_id with the named cancel in cancelled_lines', async () => {
+    retiredPlusNamedCancel();
+    renderPanel(['SO403340']);
+    await pressPreviewThenConfirm();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      { orders: { batch_id: string | null; cancelled_lines: { project_line_id: string; reason: string }[] }[] },
+    ];
+    expect(body.orders[0].batch_id).toBe('b-1');
+    expect(body.orders[0].cancelled_lines).toEqual([
+      { project_line_id: 'pl-so-a-2', reason: 'CANCEL ORDER' },
+    ]);
+  });
+
+  it('BATCH-HELD-CANCEL U3: the results say the change applied and the cancel went, 1 of 1', async () => {
+    retiredPlusNamedCancel();
+    renderPanel(['SO403340']);
+    await pressPreviewThenConfirm();
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('1 of 1 orders confirmed');
+    expect(block).toHaveTextContent('SO403340: 1 line transferred to Cancel SO');
+    expect(block).not.toHaveTextContent('applied the AutoCount change;');
+    // COUNT-DISPLAY D4: the retired line is the one note, not a list of lines.
+    expect(block).toHaveTextContent(
+      'Also applied the AutoCount change from 1 Sep: 1 old line (WESERP10B) was retired',
+    );
+    expect(block).not.toHaveTextContent('Retired by the AutoCount change:');
+    expect(block).toHaveTextContent(
+      'Transferred to Cancel SO: line 2 CB110 (AutoCount Cancel SO CSO-0001)',
+    );
+    expect(block).not.toHaveTextContent(/commits after the pending change/);
   });
 
   it('AC-F15: an unplannable cancel is not listed as held back by the batch', async () => {

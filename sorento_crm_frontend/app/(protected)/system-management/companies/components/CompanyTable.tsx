@@ -82,6 +82,22 @@ export function buildCompanyColumns(handlers: {
       ),
     },
     {
+      id: 'sales_agent_source',
+      accessorFn: (row) => row.sales_agent_source,
+      header: ({ column }) => <DataGridColumnHeader title="Sales agent on a sale" column={column} />,
+      size: 190,
+      enableSorting: false,
+      meta: { headerTitle: 'Sales agent on a sale' },
+      cell: ({ row }) => {
+        const label = row.original.sales_agent_source === 'customer' ? "Customer's agent" : "Document's agent";
+        return (
+          <span className="truncate block" title={label}>
+            {label}
+          </span>
+        );
+      },
+    },
+    {
       id: 'user_count',
       accessorFn: (row) => row.user_count ?? 0,
       header: ({ column }) => <DataGridColumnHeader title="Users" column={column} />,

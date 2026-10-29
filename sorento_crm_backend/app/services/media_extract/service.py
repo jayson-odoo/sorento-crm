@@ -38,7 +38,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.media_extract import prompts, wording
+from app.services.media_extract import prompts, sniff, wording
 from app.services.media_extract.schema import (
     MediaExtraction,
     MediaExtractionParseError,
@@ -148,6 +148,30 @@ class MediaExtractionOutcome:
     media_content_type: Optional[str] = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
+
+
+def _finish_reason(raw: Any) -> Optional[str]:
+    """Why the provider stopped, read off its native response.
+
+    `ChatResult` does not normalise it, so read each adapter's shape: OpenAI's
+    `choices[0].finish_reason`, Anthropic's `stop_reason`, Gemini's
+    `candidates[0].finishReason` (a dict body). None when none is reported.
+    """
+    try:
+        if isinstance(raw, dict):
+            candidates = raw.get("candidates") or []
+            if candidates and isinstance(candidates[0], dict):
+                value = candidates[0].get("finishReason")
+                return str(value) if value else None
+            return None
+        choices = getattr(raw, "choices", None)
+        if choices:
+            value = getattr(choices[0], "finish_reason", None)
+            return str(value) if value else None
+        value = getattr(raw, "stop_reason", None)
+        return str(value) if value else None
+    except Exception:  # noqa: BLE001 - diagnostics must never mask the real error
+        return None
 
 
 def _too_large(size_bytes: Optional[int] = None) -> MediaExtractionError:
@@ -434,6 +458,13 @@ class MediaExtractService:
 
         data, content_type = fetch_media_bytes(job.media_url or "")
         mime = (job.mime_type or content_type or "image/jpeg").split(";")[0].strip()
+        kind = sniff.expected_kind(job.modality, mime)
+        sniffed = sniff.sniff_mime(data)
+        if not sniff.matches_kind(sniffed, kind):
+            raise MediaExtractionError(sniff.mismatch_reason(data, content_type, kind))
+        if kind in ("image", "visual"):
+            # The bytes, not the label, say which format the model is handed.
+            mime = sniffed
 
         helper = AIExtractService(self.db)
         parts = helper._render_files(
@@ -467,7 +498,32 @@ class MediaExtractService:
         try:
             payload = parse_provider_json(result.content)
         except MediaExtractionParseError as exc:
-            raise MediaExtractionError(str(exc)) from exc
+            # The spend happened, and which model failed is exactly what prod
+            # needs to see: log it before failing, as unanswered.
+            self._log_usage(
+                helper,
+                job=job,
+                provider_name=provider_name,
+                model=model_name,
+                result=result,
+                elapsed_ms=elapsed_ms,
+                form_key=FORM_KEY_IMAGE,
+                answered=False,
+            )
+            finish_reason = _finish_reason(result.raw)
+            logger.warning(
+                "media extract: unparseable vision output (provider=%s model=%s "
+                "finish_reason=%s completion_tokens=%s): %s",
+                provider_name,
+                model_name,
+                finish_reason,
+                result.completion_tokens,
+                exc,
+            )
+            raise MediaExtractionError(
+                f"{exc} (provider={provider_name} model={model_name} "
+                f"finish_reason={finish_reason})"
+            ) from exc
         extraction = parse_extraction(payload, max_entities=settings.max_entities)
         body = build_image_result_body(
             extraction, caption=job.caption, max_entities=settings.max_entities
@@ -610,6 +666,17 @@ class MediaExtractService:
         from app.services.llm_provider import ChatResult, resolve_api_key
 
         data, content_type = fetch_media_bytes(job.media_url or "")
+        if not sniff.matches_kind(sniff.sniff_mime(data), "audio"):
+            # Refused before the transcription call, so it is a clip refusal (the
+            # contact keeps the allowance) carrying the same customer notice.
+            raise MediaClipLengthError(
+                sniff.mismatch_reason(data, content_type, "audio"),
+                notice={
+                    "kind": "unreadable",
+                    "text": wording.voice_unclear(),
+                    "append": True,
+                },
+            )
         self._enforce_clip_length(job, data, settings)
         cfg = (
             self.db.query(AIAssistantConfig)
@@ -780,7 +847,11 @@ class MediaExtractService:
 
 
 def _filename_for(mime: str) -> str:
-    """A filename with an extension, because `_render_files` sniffs both."""
+    """A filename with an extension, because `_render_files` sniffs both.
+
+    The `.jpg` fallback is what lets a gif / heic through `_render_files` as an
+    image part under its own mime; the bytes were already checked against the
+    lane's modality in `sniff`, so it no longer forwards a non-image."""
     extension = {
         "image/png": ".png",
         "image/jpeg": ".jpg",

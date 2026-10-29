@@ -71,7 +71,7 @@ def _sorento(db) -> str:
 def _second_company(db) -> str:
     """A second company, because AC-E1 is a per-company rule and one company cannot prove it."""
     row = Company(
-        id=_uid(), name=f"{MARKER} Zenith {_uid()[:6]}", code=f"ZQT{_uid()[:5]}", is_active=True
+        id=_uid(), name=f"{MARKER} Zenith {_uid()[:6]}", code=f"ZQT{uuid.uuid4().hex}", is_active=True
     )
     db.add(row)
     db.flush()
@@ -612,7 +612,7 @@ def test_the_grand_total_renders_as_money_not_as_a_decimal_repr():
         owner = _user(db, f"{MARKER} Baser")
         project = _project(db, company_id, owner)
 
-        uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+        uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
         category = ProductCategory(
             id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} Sanitary"
         )

@@ -69,7 +69,7 @@ def _user(db, name: str = f"{MARKER} Baser") -> str:
 
 
 def _catalogue(db):
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     category = ProductCategory(
         id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} Sanitary"
     )
@@ -170,7 +170,7 @@ def _foreign_set(db, *, code: str, active: bool = True) -> str:
             "INSERT INTO companies (id, code, name, is_active) "
             "VALUES (:id, :code, :name, true)"
         ),
-        {"id": other, "code": f"ZZT{_uid()[:5]}", "name": f"{MARKER} Mocha"},
+        {"id": other, "code": f"ZZT{uuid.uuid4().hex}", "name": f"{MARKER} Mocha"},
     )
     set_id = _uid()
     db.execute(
@@ -477,7 +477,7 @@ def test_a2b_the_text_is_cut_at_the_columns_100_characters():
 def test_a4_a_set_that_does_not_exist_or_is_another_companys_is_refused_as_not_found():
     with blank_session() as db:
         env = _env(db)
-        theirs = _foreign_set(db, code=f"ZZTFOREIGN{_uid()[:4]}")
+        theirs = _foreign_set(db, code=f"ZZTFOREIGN{uuid.uuid4().hex}")
 
         for set_id in (theirs, _uid()):
             with pytest.raises(AppException) as refused:
@@ -954,7 +954,7 @@ def test_c5_another_companys_set_cannot_be_put_on_a_series():
     with blank_session() as db:
         env = _env(db)
         series = _series(db, env["company_id"])
-        theirs = _foreign_set(db, code=f"ZZTTHEIRS{_uid()[:4]}")
+        theirs = _foreign_set(db, code=f"ZZTTHEIRS{uuid.uuid4().hex}")
 
         for set_id in (theirs, _uid()):
             with pytest.raises(AppException) as refused:

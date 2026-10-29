@@ -34,7 +34,7 @@ class AIAssistantConfig(Base):
     model: Mapped[str] = mapped_column(String(128), nullable=False, server_default="gpt-4o-mini")
     temperature: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
-    # The three *_ciphertext columns hold Fernet tokens (EncryptedText); the attribute
+    # The four *_ciphertext columns hold Fernet tokens (EncryptedText); the attribute
     # reads back the plain key. scripts/reencrypt_field_secrets.py encrypts legacy rows.
     api_key_ciphertext: Mapped[str | None] = mapped_column(
         EncryptedText("ai_assistant_configs.api_key_ciphertext"), nullable=True
@@ -48,6 +48,11 @@ class AIAssistantConfig(Base):
     # the assistant stays on the primary provider. DB-configurable.
     gemini_api_key_ciphertext: Mapped[str | None] = mapped_column(
         EncryptedText("ai_assistant_configs.gemini_api_key_ciphertext"), nullable=True
+    )
+    # Dedicated OpenAI key - each provider resolves its own slot, so a contact-level
+    # model pick on OpenAI works while the assistant row sits on another provider.
+    openai_api_key_ciphertext: Mapped[str | None] = mapped_column(
+        EncryptedText("ai_assistant_configs.openai_api_key_ciphertext"), nullable=True
     )
     enabled_tools: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default="[]")
     rag_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
@@ -187,7 +192,8 @@ class LLMModelPrice(Base):
 
     Read by the analytics connector's `llm_calls` / `turn_costs` views. `model` matches
     `ai_assistant_usage_logs.model` exactly; a model with no row is reported unpriced
-    (cost NULL), never as free. `cached_input_usd_per_1m` NULL means no cache discount.
+    (cost NULL), never as free. `cached_input_usd_per_1m` NULL means unknown: a call with
+    cached tokens is then unpriced too (`analytics_connector.prices.cost_sql`).
     """
 
     __tablename__ = "llm_model_prices"

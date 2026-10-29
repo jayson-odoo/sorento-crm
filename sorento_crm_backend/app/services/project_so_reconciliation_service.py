@@ -73,6 +73,7 @@ from app.models.project_so import (
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.services import planning_change_service
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 from app.services.scm.demand import PROJECT_CLASS, demand_qty, is_open_demand
 
 # Per-line outcomes (slice note section 2). `linked` is the only one that writes.
@@ -1134,7 +1135,7 @@ class ProjectSOReconciliationService:
         self,
         *,
         query: Optional[str] = None,
-        review_state: Optional[str] = None,
+        review_state: Optional[str | Sequence[str]] = None,
         project_id: Optional[str] = None,
         sales_order_id: Optional[str] = None,
         sort: Optional[str] = None,
@@ -1260,14 +1261,14 @@ class ProjectSOReconciliationService:
         # A not-started row IS a row with no planning record, so that filter needs nothing
         # derived; it also empties the two extra passes below, because there is then no
         # record left to derive anything for.
-        if review_state == REVIEW_NOT_STARTED:
+        states = multi_values(review_state)
+        wants_not_started = bool(states) and REVIEW_NOT_STARTED in states
+        derived_states = [state for state in states or [] if state != REVIEW_NOT_STARTED]
+        if wants_not_started and not derived_states:
             rows = [row for row in rows if row["id"] is None]
 
         record_ids = [row["id"] for row in rows if row["id"]]
-        wants_all_outcomes = bool(
-            (review_state and review_state != REVIEW_NOT_STARTED)
-            or sort_field in _SORT_NEEDS_OUTCOMES
-        )
+        wants_all_outcomes = bool(derived_states or sort_field in _SORT_NEEDS_OUTCOMES)
         outcomes: Dict[str, _OrderOutcome] = (
             self._outcomes_for(self._planning_records(record_ids))
             if wants_all_outcomes
@@ -1279,11 +1280,13 @@ class ProjectSOReconciliationService:
             else {}
         )
 
-        if review_state and review_state != REVIEW_NOT_STARTED:
+        if derived_states:
+            # OR across the picked states: a not-started row (no record) joins when that one is picked.
             rows = [
                 row
                 for row in rows
-                if row["id"] and outcomes[str(row["id"])].review_state == review_state
+                if (not row["id"] and wants_not_started)
+                or (row["id"] and outcomes[str(row["id"])].review_state in derived_states)
             ]
 
         self._sort_rows(rows, sort_field, descending, outcomes, headers)

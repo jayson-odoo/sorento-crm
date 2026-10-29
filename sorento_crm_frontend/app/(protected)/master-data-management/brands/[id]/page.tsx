@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
@@ -19,6 +21,7 @@ import DetailActions from '@/components/common/DetailActions';
 import type { RecordAction } from '@/components/common/recordActions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { useBrand, useUpdateBrand } from '../hooks/useBrands';
+import { DealerGroupSelect } from '../components/DealerGroupSelect';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDate } from '@/lib/helpers';
 
@@ -43,6 +46,7 @@ interface Draft {
   flows_to_purchasing: boolean;
   chatbot_weight: string;
   is_searchable: boolean;
+  dealer_company_id: string | null;
 }
 
 const Empty = ({ children = 'Not set' }: { children?: string }) => (
@@ -94,6 +98,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
   });
 
   const [editing, setEditing] = useState(false);
+  const [checked, setChecked] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
 
   const header = (
@@ -143,6 +148,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
       flows_to_purchasing: brand.flows_to_purchasing,
       chatbot_weight: String(brand.chatbot_weight ?? 0),
       is_searchable: brand.is_searchable ?? true,
+      dealer_company_id: brand.dealer_company_id ?? null,
     });
     setEditing(true);
   };
@@ -150,10 +156,13 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
   const cancelEdit = () => {
     setEditing(false);
     setDraft(null);
+    setChecked(false);
   };
 
   const handleSave = async () => {
     if (!draft) return;
+    setChecked(true);
+    if (weightProblem(draft.chatbot_weight)) return;
     await update.mutateAsync({
       id,
       data: {
@@ -163,24 +172,28 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
         is_active: draft.is_active,
         access_levels: draft.access_levels,
         flows_to_purchasing: draft.flows_to_purchasing,
-        chatbot_weight: Number(draft.chatbot_weight) || 0,
+        chatbot_weight: parseNumberDraft(draft.chatbot_weight) as number,
         is_searchable: draft.is_searchable,
+        dealer_company_id: draft.dealer_company_id,
       },
     });
     cancelEdit();
   };
 
-  // Round 6 N-r5-1: the dialog's own words (zod in BrandFormDialog), under the input.
-  const weight = draft ? Number(draft.chatbot_weight) : 0;
-  const weightError =
-    weight < 0 ? 'Enter 0 or more' : weight > 9999 ? 'Enter 9999 or less' : null;
+  // The dialog's own words (zod in BrandFormDialog), under the input once Save has been pressed.
+  const weightProblem = (raw: string): string | undefined => {
+    const n = parseNumberDraft(raw);
+    if (n === null) return numberFieldError(raw, { min: 0, max: 9999 });
+    if (n < 0) return 'Enter 0 or more';
+    if (n > 9999) return 'Enter 9999 or less';
+    return undefined;
+  };
+  const weightError = checked && draft ? weightProblem(draft.chatbot_weight) : undefined;
 
   const canSave =
     !!draft &&
     draft.brand_code.trim().length > 0 &&
     draft.brand_name.trim().length > 0 &&
-    Number(draft.chatbot_weight) >= 0 &&
-    Number(draft.chatbot_weight) <= 9999 &&
     !update.isPending;
 
   const actions: RecordAction[] = [
@@ -311,6 +324,20 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                   )}
                 </Field>
 
+                <Field label="Dealer group" htmlFor="brand-dealer-group">
+                  {editing && draft ? (
+                    <DealerGroupSelect
+                      value={draft.dealer_company_id}
+                      storedName={brand.dealer_company_name}
+                      onChange={(value) => setDraft({ ...draft, dealer_company_id: value })}
+                    />
+                  ) : brand.dealer_company_name ? (
+                    brand.dealer_company_name
+                  ) : (
+                    <Empty>No dealer group</Empty>
+                  )}
+                </Field>
+
                 <Field label="Flows to purchasing" htmlFor="brand-flows-to-purchasing">
                   {editing && draft ? (
                     <Switch
@@ -330,21 +357,17 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                 <Field label="Chatbot brand weight" htmlFor="brand-chatbot-weight">
                   {editing && draft ? (
                     <div className="grid gap-1.5">
-                      <Input
+                      <NumberInput
                         id="brand-chatbot-weight"
-                        type="number"
                         min={0}
                         max={9999}
                         step={0.1}
                         inputMode="decimal"
                         className="w-32"
-                        aria-invalid={weightError ? true : undefined}
                         value={draft.chatbot_weight}
                         onChange={(e) => setDraft({ ...draft, chatbot_weight: e.target.value })}
+                        error={weightError}
                       />
-                      {weightError && (
-                        <p className="text-xs font-normal text-destructive">{weightError}</p>
-                      )}
                     </div>
                   ) : (
                     String(brand.chatbot_weight ?? 0)

@@ -221,6 +221,36 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { toast } from '@/lib/toast';
+// These filters are multi-selects now (FILTER-MULTISELECT PR6); a one-value pick stands in for them here.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+    id,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+    id?: string;
+  }) => (
+    <select
+      aria-label={id ?? placeholder ?? 'select'}
+      value={value[0] ?? ''}
+      onChange={(event) => onChange(event.target.value ? [event.target.value] : [])}
+    >
+      <option value="">{placeholder ?? ''}</option>
+      {(options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 import { OrderInquiriesClient } from './OrderInquiriesClient';
 
 function envelope(rows: OrderInquiryWorklistRow[], total?: number) {
@@ -595,7 +625,7 @@ describe('AC-CF-18: a remembered filter with no URL param seeds the first list c
 
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ location: 'SRT-HQ' }),
+        expect.objectContaining({ location: ['SRT-HQ'] }),
       ),
     );
   });
@@ -633,7 +663,7 @@ describe('AC-CF-18: a remembered filter with no URL param seeds the first list c
           service.upsertUserListColumnConfig.mock.calls.some(
             ([, payload]) =>
               ((payload as { filters?: Record<string, unknown> }).filters ?? {})
-                .location === 'BRW-IR',
+                .location?.toString() === 'BRW-IR',
           ),
         ).toBe(true),
       { timeout: 3000 },
@@ -658,7 +688,7 @@ describe('AC-CF-18: a remembered filter with no URL param seeds the first list c
     for (const [params] of listOrderInquiryWorklist.mock.calls as [
       Record<string, unknown>,
     ][]) {
-      expect(params.location).toBe('BRW-IR');
+      expect(params.location).toEqual(['BRW-IR']);
     }
     // The row was never re-read - so anything written from here is written over the
     // memory this session already holds (`staleTime: Infinity`, seeded by the PUT).
@@ -670,7 +700,7 @@ describe('AC-CF-18: a remembered filter with no URL param seeds the first list c
     for (const [, payload] of service.upsertUserListColumnConfig.mock.calls.slice(
       putsBefore,
     ) as [string, { filters?: Record<string, unknown> }][]) {
-      expect((payload.filters ?? {}).location).toBe('BRW-IR');
+      expect((payload.filters ?? {}).location).toEqual(['BRW-IR']);
     }
   });
 });
@@ -735,7 +765,7 @@ describe('AC-CF-20: a URL param wins for this visit, and is written back', () =>
 
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ location: 'OTHER-LOC' }),
+        expect.objectContaining({ location: ['OTHER-LOC'] }),
       ),
     );
 
@@ -746,7 +776,7 @@ describe('AC-CF-20: a URL param wins for this visit, and is written back', () =>
           service.upsertUserListColumnConfig.mock.calls.some(
             ([, payload]) =>
               ((payload as { filters?: Record<string, unknown> }).filters ?? {})
-                .location === 'OTHER-LOC',
+                .location?.toString() === 'OTHER-LOC',
           ),
         ).toBe(true),
       { timeout: 3000 },

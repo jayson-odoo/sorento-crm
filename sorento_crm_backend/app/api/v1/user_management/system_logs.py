@@ -15,7 +15,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse)
-async def get_system_logs(
+def get_system_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
@@ -106,7 +106,7 @@ async def get_system_logs(
 
 
 @router.get("/users/{user_id}", response_model=ListResponse)
-async def get_user_system_logs(
+def get_user_system_logs(
     user_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
@@ -119,7 +119,7 @@ async def get_user_system_logs(
     db: Session = Depends(get_db)
 ):
     """Get system logs for a specific user."""
-    return await get_system_logs(
+    return get_system_logs(
         page=page,
         limit=limit,
         query=query,

@@ -688,8 +688,8 @@ def worklist(
     page: int = 1,
     limit: int = 25,
     query: str | None = None,
-    state: str | None = None,
-    class_label: str | None = None,
+    state: list[str] | str | None = None,
+    class_label: list[str] | str | None = None,
     include_discontinued: bool = False,
     sort: str = SORT_DEFAULT,
     direction: str = "asc",
@@ -742,6 +742,9 @@ def worklist(
     narrowed. That is what stops the dropdown emptying itself, and it stays far inside
     the 400 ms threshold.
     """
+    # Several states / classes are OR-ed; a lone string is one value.
+    states = [state] if isinstance(state, str) else list(state or [])
+    class_labels = [class_label] if isinstance(class_label, str) else list(class_label or [])
     class_label_expr = _class_label_expr()
     # Read ONCE per request and handed to both readers: the numerator `sort=coverage`
     # orders on, and the per-row key list `_hydrate_page` builds the figure and the
@@ -805,19 +808,19 @@ def worklist(
     classes = sorted({label for _state, label, _count in facet if label is not None})
     summary = {"total": 0, "verified": 0, "needs_reverify": 0, "unverified": 0}
     for row_state, row_class, count in facet:
-        if class_label and row_class != class_label:
+        if class_labels and row_class not in class_labels:
             continue
         summary[row_state] += count
         summary["total"] += count
     # The state filter narrows the list but not the summary, so the total it would
     # have counted is already in hand.
-    total = summary.get(state, 0) if state else summary["total"]
+    total = sum(summary.get(s, 0) for s in states) if states else summary["total"]
 
     listing = select(slim.c.product_code)
-    if class_label:
-        listing = listing.where(slim.c.class_label == class_label)
-    if state:
-        listing = listing.where(slim.c.state == state)
+    if class_labels:
+        listing = listing.where(slim.c.class_label.in_(class_labels))
+    if states:
+        listing = listing.where(slim.c.state.in_(states))
 
     descending = str(direction or "asc").lower() == "desc"
 

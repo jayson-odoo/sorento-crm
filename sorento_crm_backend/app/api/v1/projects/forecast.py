@@ -35,7 +35,7 @@ REPORT_VIEW = "projects.reports.view"
 
 
 @router.get("/reports/forecast", response_model=ProjectForecastResponse)
-async def project_forecast(
+def project_forecast(
     # API-key readable (AC-K1): `crm_project_forecast`. Conversion and the composite
     # dashboard stay JWT-only -- no tool asks for them, and an API-key surface should only be
     # as wide as something actually needs.
@@ -58,7 +58,7 @@ async def project_forecast(
 
 
 @router.get("/reports/conversion", response_model=ConversionResponse)
-async def project_conversion(
+def project_conversion(
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -70,7 +70,7 @@ async def project_conversion(
 
 
 @router.get("/reports/dashboard", response_model=ProjectDashboardResponse)
-async def project_dashboard(
+def project_dashboard(
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):

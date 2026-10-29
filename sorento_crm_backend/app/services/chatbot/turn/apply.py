@@ -27,12 +27,23 @@ from typing import Any
 from app.services.chatbot import contracts
 from app.services.chatbot.turn import refer
 from app.services.chatbot.turn import task as task_mod
+from app.services.chatbot.turn.chat_state import (
+    bare_position_quantity,
+    lone_position as _lone_position,
+    message_states_a_quantity as _message_states_a_quantity,
+    names_a_product as _names_a_product,
+    stated_quantity as _stated_quantity,
+    stock_pick as _stock_pick,
+    stock_task_is_the_current_question as _stock_task_is_the_current_question,
+    stock_task_owed_a_number as _stock_task_owed_a_number,
+)
 from app.services.chatbot.turn.decide import (
     ANSWER,
     CARRY,
     DOCUMENT_BY_SCOPE,
     NEW_ASK,
     OUTSTANDING_KINDS,
+    REFINE,
     EVERYTHING,
     FAMILY,
     Decision,
@@ -42,13 +53,16 @@ from app.services.chatbot.turn.decide import (
     domain_in_message,
     names_its_own_domain,
     restated_kinds,
+    _stored_scope,
 )
 from app.services.chatbot.turn.narrow import decide as narrow_decide
 from app.services.chatbot.turn.pending import (
     ESCALATION_OFFER_KINDS,
     OFFER_KINDS,
+    SALES_ANALYSIS_COMPANY_KIND,
     Pending,
     ask as pending_ask,
+    asked_report,
     is_roster,
     offered_companies,
     with_answered_positions,
@@ -541,8 +555,22 @@ def _settle_question_subject(focus: Focus, pending: Pending, trace: Trace | None
         focus.sales_channel = str(filters["channel"])
 
 
+def _report_more(verdict: dict[str, Any] | None, focus: Focus) -> int | None:
+    """CHAT-COMPOSER Lists L2: the group offset a bare "more" asks for, off the report's own carry
+    (armed by the engine from the lane's `set_window`), or None."""
+    from app.services.chatbot import composers
+    from app.services.chatbot.turn_runtime import SET_CONTINUE_KEY
+
+    if not composers.enabled() or not verdict or verdict.get(SET_CONTINUE_KEY) is not True:
+        return None
+    key = focus.set_page.get("set_key") if isinstance(focus.set_page, dict) else None
+    if not isinstance(key, dict) or not key.get("report_groups"):
+        return None
+    return int(key.get("shown") or 0)
+
+
 def _answer_outstanding(
-    pending: Pending, decision: Decision, focus: Focus, trace: Trace
+    pending: Pending, decision: Decision, focus: Focus, trace: Trace, *, more: int | None = None
 ):
     """Contracts 38 and 39: the outstanding report's scope question and detail offer.
 
@@ -586,6 +614,20 @@ def _answer_outstanding(
     #: The status word the re-run goes out under, and therefore which tool
     #: `run_fetch`'s order-domain override picks.
     status_word = "sales_report" if sales_report else "outstanding"
+
+    if more is not None and pending.kind == "outstanding_detail":
+        # CHAT-COMPOSER Lists L2: "more" is a REFINE with an offset. The open offer's own filters
+        # settle the subject, so the re-run cannot widen; the offer stays open.
+        scope = _stored_scope(pending)
+        _settle_question_subject(focus, pending, trace)
+        focus.status = status_word
+        focus.document = list(DOCUMENT_BY_SCOPE[scope]) if scope else []
+        if asked_for:
+            focus.domains = [asked_for]
+        focus.set_page = None
+        trace.rules_fired.append("outstanding_more")
+        trace.outstanding = {"kind": pending.kind, "scope": scope, "detail": None, "group_offset": more}
+        return focus, pending, None, True
 
     if decision.refines:
         # The subject SETTLES exactly as an answer's does - the question's own resolved
@@ -730,16 +772,23 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
     if pending is None:
         return focus, None, None, False
 
+    if pending.kind == SALES_ANALYSIS_COMPANY_KIND and (decision.answers or decision.positions):
+        # Chat fix PR-B S7 (review): ONE company is the answer, taken at the engine seam
+        # before this runs; "both" or any other pick asks the same question again, never
+        # the generic roster path (a company name is no entity to fetch with).
+        trace.rules_fired.append("sales_analysis_company_reask")
+        return state.focus, pending, Plan(domains=[], fetch=[], ask=pending, denied=[], trace=trace), False
+
     if pending.kind in OUTSTANDING_KINDS:
         # BEFORE the generic roster path: these options are a SCOPE, not an entity to
         # fetch with, and building one into an entity sent "Both" to the resolver as an
         # order token (console run 4, finding 6).
-        answered = _answer_outstanding(pending, decision, focus, trace)
+        answered = _answer_outstanding(pending, decision, focus, trace, more=_report_more(verdict, state.focus))
         if answered is not None:
             return answered
 
     if pending.kind == "top_selling_pick":
-        answered = _answer_top_selling_pick(pending, decision, focus, trace)
+        answered = _answer_top_selling_pick(pending, decision, focus, trace, verdict)
         if answered is not None:
             return answered
     if _stock_pick(pending):
@@ -757,6 +806,13 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             # decline.
             trace.rules_fired.append("stock_pick_declined")
             trace.task_question = refer.sentence()
+            # "None of these": the token the question was about never resolved, and nothing of that
+            # ask carries (a later bare number must not re-run it into the same did-you-mean). A
+            # product the ask also named and resolved stays.
+            focus.products = [
+                row for row in focus.products or []
+                if not (isinstance(row, dict) and not (row.get("uuid") or row.get("uuids")))
+            ]
             focus.domains = ["inventory"]
             return (
                 focus,
@@ -892,6 +948,15 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             asked_status = pending.payload.get("status")
             if isinstance(asked_status, str) and asked_status:
                 focus.status = asked_status
+            held_ask = pending.payload.get("ranking_ask")
+            if isinstance(held_ask, dict) and isinstance(verdict, dict):
+                for key, value in held_ask.items():
+                    if verdict.get(key) in (None, "", []):
+                        verdict[key] = value
+            if pending.kind == "customer_pick" and isinstance(verdict, dict):
+                # Only a customer pick: the picked row is the held report ask's customer, a ranking's or an outstanding
+                # ask's (REPORT-UNIFY), (engine key, never the parser's).
+                verdict["ranking_pick"] = True
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
         # queued on THIS pick's own payload is asked NEXT, once this one is
         # answered - never the same options re-printed (`with_answered_positions`,
@@ -978,6 +1043,10 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             # contract 36, and used to fall all the way through to "the generic rules
             # settle it" below with no lane composed at all - silence, not an
             # acknowledgement).
+            if names_its_own_domain(verdict or {}):
+                # "never mind, outstanding orders?": the offer is declined (the pending drops) and
+                # the message's own ask is still planned, so nothing short-circuits to "Okay, noted."
+                return focus, None, None, False
             trace.lane = "offer_declined"
             return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
@@ -1026,8 +1095,12 @@ def _focus_rules(
     domain_locked: bool,
     domain_override: str | None,
     trace: Trace,
+    carried: bool = False,
 ) -> Focus:
-    if verdict.get("topic_reset"):
+    # CHAT-STATE: `carried` is True when the parser's `state_changes` already decided what
+    # the prior state keeps (`turn/chat_state.apply_changes`); the four carry wipes below
+    # are then skipped. The write half (this message's values onto the axes) always runs.
+    if verdict.get("topic_reset") and not carried:
         # Every axis the old topic filled goes; the tier and the brand are the contact's,
         # not the topic's, so they stay. The rules BELOW still run on the emptied focus -
         # a reset turn is a new topic, and it names that topic's own domain and entities
@@ -1036,6 +1109,12 @@ def _focus_rules(
         # on (AC-1546).
         kept = {k: getattr(focus, k) for k in RESET_KEEPS}
         focus = Focus(**kept)
+        trace.rules_fired.append("reset_on_topic")
+    elif verdict.get("topic_reset") and not _states_an_entity(verdict):
+        # A reset that names nothing of its own is the old path's wipe, whatever ops the state
+        # path read and whatever the answer mode: nothing carried (the held customers and
+        # products, the list) outlives it (release gate #1829).
+        focus = replace(Focus(**{k: getattr(focus, k) for k in RESET_KEEPS}), tasks=focus.tasks)
         trace.rules_fired.append("reset_on_topic")
 
     # #865 round 5 (R2): on an escalation to a named team, a product code the parser is
@@ -1074,6 +1153,11 @@ def _focus_rules(
     replaced_kinds = {kind for kind in by_kind if kind not in picked_kinds}
     for kind in replaced_kinds:
         _set_kind_field(focus, kind, by_kind[kind])
+    # CLOSED LISTS: a kind this message named and grounding dropped replaces the axis with nothing.
+    for kind in verdict.get("dropped_kinds") or []:
+        if kind not in by_kind and kind not in picked_kinds:
+            _set_kind_field(focus, kind, [])
+            trace.rules_fired.append(f"dropped_{kind}_clears_axis")
     # MULTI-CODE-DYM Q3 (owner, 4 Oct 2026): "2 and SRTWC286-SH-150" picks one option AND
     # names a code of its own. The typed code that is not the picked row's own word is a
     # second subject, answered beside the pick, never dropped.
@@ -1126,6 +1210,10 @@ def _focus_rules(
             # Per KIND, not per row: every settled row of that kind stays (an echo of a
             # few of fifty listed products keeps the fifty, as ATTACH-SET round 2 wants).
             kept_kinds = set(by_kind) | restated_kinds(verdict)
+            if verdict.get("closed_lists") and set(by_kind) == {"attachment_type"}:
+                # CLOSED LISTS: a message whose only entities are file types says what to
+                # answer, not about what, so the held product stays its subject.
+                kept_kinds.add("product")
             for kind, attr in KIND_FIELD_MAP.items():
                 if kind in kept_kinds:
                     continue
@@ -1143,6 +1231,17 @@ def _focus_rules(
                 # rule, unchanged).
                 focus.date_window = None
                 trace.rules_fired.append("new_ask_drops_date_window")
+            if focus.sales_channel and not verdict.get("sales_channel"):
+                # The SAME rule (owner hand pass 6), the sales report's channel axis:
+                # "srt102-rg dealer sales may 2026" then "srt102-rg sales 2026" (a NEW
+                # ASK, `domain_in_message`) still ran the report for Dealer only. A
+                # follow-up keeps it (a picker answer or a refine is never `starts_fresh`;
+                # PLAN-chatbot-sales-report.md S4 wiring point 2), and a channel THIS
+                # message names is written below, so it is only ever dropped unnamed.
+                # `turn_runtime`'s lane input reads the channel off this focus. A ranking
+                # keeps its own channel in its held frame (`report_ask._refine`), not here.
+                focus.sales_channel = None
+                trace.rules_fired.append("new_ask_drops_sales_channel")
             # Hand pass 10 (owner ruling): the SAME rule, extended to the two axes
             # that hold no subject of their own - `tier` and `extra` are never a
             # SUBJECT (contract 121's `domain_in_message` table is unchanged: it
@@ -1171,7 +1270,8 @@ def _focus_rules(
         elif decision.refines:
             trace.rules_fired.append("refinement_keeps_subject")
     if (
-        focus.sort
+        not carried
+        and focus.sort
         and not verdict.get("sort_by")
         and (decision.starts_fresh or domain_in_message(verdict) is True)
     ):
@@ -1197,7 +1297,7 @@ def _focus_rules(
             focus.domains = [verdict["domain_hint"]]
             trace.rules_fired.append("domains_from_asks")
         # else: no domain word this turn - focus.domains carries over unchanged.
-    if focus.date_window and _left_every_carried_domain(carried_domains, focus.domains):
+    if not carried and focus.date_window and _left_every_carried_domain(carried_domains, focus.domains):
         # ORDER-BROADEN (owner, 5 Oct 2026): a window narrows the question it was asked
         # on, and a DIFFERENT domain is a different question, so the carried window
         # never rides into it. "check delivery for last week" (28/09 to 04/10) missed,
@@ -1215,11 +1315,8 @@ def _focus_rules(
     _broaden(focus, verdict, decision, by_kind, carried_rows, trace)
 
     document = verdict.get("document")
-    status = verdict.get("status")
-    # Read before the v3 `status` overwrites it: "outstanding" in that key alone left a
-    # ranking with no hop and no carried filters (PR #1273 round 7).
-    was_ranking = focus.status == TOP_SELLING_STATUS
-    if not domain_locked and domain_in_message(verdict) is True:
+    status = delivery_status(verdict)
+    if not carried and not domain_locked and domain_in_message(verdict) is True:
         # #1262 fix lane round 5, R2 (owner hand test, 27 Sep 2026): a message with a
         # domain or status word of its OWN states its own document and status, or none.
         # Writing only when the verdict named one kept "outstanding" on the focus for
@@ -1238,10 +1335,7 @@ def _focus_rules(
     # nothing else (S12 - no word table in deterministic code). Only when the message
     # named one: a sales report ask with no channel word counts every channel, and a
     # turn that narrows an open one ("for project only") names it and wins here.
-    # AC-HT8-16: an answer to an open top selling question ("ordered") fills that slot only;
-    # a channel the parser put on it is not a new filter (a turn that answers nothing keeps it).
-    answering_top_selling = answers_open_top_selling(focus, verdict)
-    if verdict.get("sales_channel") and not answering_top_selling:
+    if verdict.get("sales_channel"):
         focus.sales_channel = str(verdict["sales_channel"])
     if verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end"):
         focus.date_window = {
@@ -1254,446 +1348,53 @@ def _focus_rules(
         # PLAN-po-spo-warehouse-29sep S5: the PO/SPO sort axis, written from the parser's field.
         focus.sort = {"by": verdict["sort_by"], "dir": verdict.get("sort_dir")}
         trace.rules_fired.append("sort_restated")
-
-    _top_selling_rules(focus, verdict, decision, trace, was_ranking=was_ranking)
     return focus
 
 
-#: The ask word the top selling ranking goes out under (`order_status`, projected by
-#: `turn_runtime.lane_parse_output`, read by `lanes/business.run_fetch`'s override).
-TOP_SELLING_STATUS = "top_selling"
-#: The parser keys a top selling ask carries (`head/parser.py`), plus `top_n`.
-TOP_SELLING_KEYS = ("rank_by", "basis", "rank_group", "rank_direction", "top_n")
-#: A picked row's own key: the detail is ONE answer, so it never outlives the turn that
-#: picked (`_without_top_selling_pick`), while a category pick's filter does.
-TOP_SELLING_ONE_SHOT = ("detail_code",)
+#: The values the parser's `status` field takes (`head/parser.py`: "outstanding", "delivered", or null).
+DELIVERY_STATUSES = frozenset({"outstanding", "delivered"})
 
 
-#: The clarify questions the lane asks (`lanes/business._top_selling_question`'s axis)
-#: and the parser key that answers each. The how-many question is not here: its answer
-#: is a bare count, which never names the ranking, so a message that does name it is a
-#: new ask (reviewer B2 (b), PR #1273).
-TOP_SELLING_CLARIFY_AXES = {
-    "group": "rank_group",
-    "metric": "rank_by",
-    "basis": "basis",
-    "category": "category_words",
-}
-
-
-#: The metric question lists quantity first and amount second ("By quantity or by
-#: amount?"), so a bare "1" or "2" under it is that option (owner retest, 27 Sep 2026).
-TOP_SELLING_METRIC_ORDER = ("quantity", "amount")
-
-#: The narrowing words a top selling ask resolves itself (`engine._top_selling_narrowing`
-#: and `lanes/business`), never through the generic resolver: a message naming only
-#: these narrows the ranking on screen, it does not leave it.
-TOP_SELLING_NARROWING_HINTS = frozenset({"category", "brand", "sales_agent"})
-
-#: A slot filter a correction's `broaden_axis` clears (`broaden_to: "all"`), by axis.
-#: `customer` also clears the focus customers (the generic `_broaden` rule does that).
-TOP_SELLING_BROADEN_KEYS = {
-    "customer": ("customer_ids",),
-    "sales_agent": ("agent_ids",),
-    "brand": ("brand_ids",),
-    "category": ("category_words", "category_code"),
-}
-
-
-def _narrows_the_ranking(verdict: dict[str, Any]) -> bool:
-    """Is this message only narrowing the ranking on screen, whatever the parser said
-    about `domain_in_message`? True when it carries a top selling key of its own, or
-    names only category / brand / sales agent words, or only widens an axis, and asks
-    no other order question (owner retest, 27 Sep 2026: "water closet only" fell out
-    of the ranking into "Could not find order")."""
-    status = verdict.get("order_status")
-    if status not in (None, "", TOP_SELLING_STATUS):
-        return False
-    # R7 (PLAN-prompt-dynamic-30sep D9): the ranking is the `sales` domain's own ask.
-    if verdict.get("domain_hint") not in (None, "", *contracts.ORDER_OR_SALES_DOMAINS):
-        return False
-    if any(verdict.get(k) is not None for k in ("rank_by", "basis", "rank_group", "rank_direction")):
-        return True
-    hints = [e.get("hint") for e in (verdict.get("entities") or []) if isinstance(e, dict)]
-    if hints:
-        return all(h in TOP_SELLING_NARROWING_HINTS for h in hints)
-    return broaden_level(verdict) == EVERYTHING
-
-
-def answers_open_top_selling(focus: Focus, verdict: dict[str, Any]) -> bool:
-    """Does this verdict answer the top selling question the last reply asked? The top
-    selling rules' own notion (`_top_selling_waiting`), read off the focus's `asked` and the
-    verdict's own axis keys, never text."""
-    slot = focus.top_selling
-    if not isinstance(slot, dict):
-        return False
-    own = {k: verdict.get(k) for k in TOP_SELLING_KEYS if verdict.get(k) is not None}
-    return _top_selling_waiting(slot.get("asked"), own)
-
-
-def _top_selling_waiting(asked: Any, own: dict[str, Any]) -> bool:
-    """Is this message the answer to the question the LAST reply asked? `asked` is what
-    that reply recorded (`record_top_selling_asked`), never inferred from which axes
-    happen to be empty: a single row sent as is, or a how-many left unanswered, leaves a
-    carried slot with no count, and reading that as "still waiting" let a fresh ask
-    inherit the old category, customer and metric (reviewer B2, PR #1273). A message
-    that restates the ranking while answering the clarify ("top 5 by amount" under "By
-    quantity or by amount?") completes the asked ask."""
-    axis = TOP_SELLING_CLARIFY_AXES.get(asked) if isinstance(asked, str) else None
-    return axis is not None and own.get(axis) not in (None, "unclear")
-
-
-def record_top_selling_asked(focus: Focus, envelopes: list[dict[str, Any]]) -> None:
-    """After the lane ran: record on `focus.top_selling` which top selling question the
-    reply asked (`asked`), or clear it when the reply asked nothing (a list, a single
-    row, a detail, a miss, a refusal). `_top_selling_rules` reads it next turn."""
-    slot = focus.top_selling
-    if not isinstance(slot, dict):
-        return
-    asked = next(
-        (e.get("top_selling_asked") for e in envelopes or [] if isinstance(e, dict) and e.get("top_selling_asked")),
-        None,
-    )
-    if asked:
-        slot["asked"] = asked
-    else:
-        slot.pop("asked", None)
-    # A category word the reply said it does not know is dropped, so the next turn
-    # neither repeats the line nor filters by it (owner retest, 27 Sep 2026).
-    for e in envelopes or []:
-        if isinstance(e, dict):
-            for key in e.get("top_selling_drop") or ():
-                slot.pop(key, None)
-    # The item codes the reply listed: an outstanding ask after the ranking asks about
-    # these (fix lane round 8, `_hop_to_report`). A reply that listed none forgets them;
-    # a detail or a refusal (None) leaves the listed ranking's codes standing.
-    for e in envelopes or []:
-        codes = e.get("top_selling_codes") if isinstance(e, dict) else None
-        if isinstance(codes, list):
-            if codes:
-                slot["ranked_codes"] = list(codes)
-            else:
-                slot.pop("ranked_codes", None)
-
-
-def _top_selling_rules(
-    focus: Focus, verdict: dict[str, Any], decision: Decision, trace: Trace, *, was_ranking: bool = False
-) -> None:
-    """PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top
-    selling ask's axes live on `focus.top_selling` while `focus.status` says so.
-
-    * A verdict naming the ask (`order_status: "top_selling"`) sets the status. Its own
-      non-null axes always win. Carried ones fill the rest unless this is a FRESH ask
-      (the parser's `domain_in_message`: the message names the ask itself, "top 10
-      selling items") that does not answer the clarify the last reply asked
-      (`_top_selling_waiting`); a fresh ask states its own metric, grain, count and
-      filters (owner: no default metric, never assume), while "by amount" or "ordered"
-      under a ranking changes only the axis it names.
-    * A new ask about anything else (`domain_in_message` without the word) leaves
-      the ranking: the status and the slot go, so a later order list is not re-read as
-      a ranking.
-    * The parser can read a bare "6" under the how-many question as a position; with
-      no pick this turn, the how-many asked last and one position, the position IS the count
-      (the parser's own field, never the text).
-    * Category words the message names ride on the slot, because the lane resolves
-      them itself (the generic resolver re-types a category under `order` as a
-      customer, `entity_resolver._DOMAIN_HINT_EXPANSIONS`).
-    """
+def delivery_status(verdict: dict[str, Any]) -> str | None:
+    """The verdict's delivery status (REPORT-SMART-L S3-4): the parser fills it in `status` OR in
+    `order_status`, so every reader that WRITES it (the focus, the lane's parse output) takes the
+    same value. `order_status` also names report kinds (sales_ranking, top_selling, ...), and the
+    projected buckets (so_outstanding, ...), which are no delivery status: only the values of
+    `status`'s own vocabulary count. Parser fields only."""
+    status = verdict.get("status")
+    if status:
+        return status
     order_status = verdict.get("order_status")
-    asked = isinstance(order_status, str) and order_status.strip() == TOP_SELLING_STATUS
-    # A verdict the parser itself named a sales ranking is a new ask (owner held-state rule:
-    # a new intent always wins), never an answer inside an open top selling question.
-    new_sales_ranking = isinstance(order_status, str) and order_status.strip() == "sales_ranking"
-    names_its_ask = decision.starts_fresh or domain_in_message(verdict) is True or new_sales_ranking
-    hopped = isinstance(focus.top_selling, dict) and bool(focus.top_selling.get("hop"))
-    if was_ranking and not asked and not new_sales_ranking:
-        # `_focus_rules` overwrote the status before this ran: the v3 `status` key
-        # ("outstanding"), and #1262's rule that a message with a domain word of its own
-        # states its own status or none ("can show me the DO" cleared it to None). The
-        # ranking decides below whether this message hops to a report, narrows it or
-        # leaves it (`new_ask_leaves_top_selling` writes the new status itself).
-        focus.status = TOP_SELLING_STATUS
-    if asked:
-        focus.status = TOP_SELLING_STATUS
-    elif (focus.status == TOP_SELLING_STATUS or hopped) and _is_report_hop(verdict):
-        _hop_to_report(focus, verdict, trace)
-        return
-    elif focus.status == TOP_SELLING_STATUS and names_its_ask and (
-        new_sales_ranking or not _narrows_the_ranking(verdict)
-    ):
-        focus.status = verdict.get("status") or None
-        focus.top_selling = None
-        trace.rules_fired.append("new_ask_leaves_top_selling")
-        return
-    elif hopped and not names_its_ask:
-        # An answer inside the report the ranking handed over to ("2" to "Outstanding
-        # for which document?") keeps the carried filters and their header line.
-        return
-    if focus.status != TOP_SELLING_STATUS:
-        focus.top_selling = None
-        return
-    carried = dict(focus.top_selling or {})
-    carried.pop("hop", None)
-    carried.pop("answered", None)
-    # What the last reply asked lives one turn: this turn's reply records its own.
-    asked_last = carried.pop("asked", None)
-    # A word the last reply said it does not know is said once (owner retest, 27 Sep).
-    carried.pop("unknown", None)
-    own = {k: verdict.get(k) for k in TOP_SELLING_KEYS if verdict.get(k) is not None}
-    if _top_selling_waiting(asked_last, own):
-        # One turn: the lane input of THIS answer sends no channel (`lane_parse_output`).
-        carried["answered"] = True
-    positions = [p for p in (verdict.get("reference_positions") or []) if isinstance(p, (int, float))]
-    if (
-        "top_n" not in own
-        and "answer_top_selling_pick" not in trace.rules_fired
-        and asked_last == "how_many"
-        and carried.get("rank_by")
-        and carried.get("top_n") is None
-        and len(positions) == 1
-    ):
-        own["top_n"] = int(positions[0])
-        trace.rules_fired.append("top_selling_position_is_the_count")
-    picked = "answer_top_selling_pick" in trace.rules_fired
-    if (
-        "rank_by" not in own
-        and not picked
-        and asked_last == "metric"
-        and len(positions) == 1
-        and int(positions[0]) in (1, 2)
-    ):
-        # "1" / "2" under "By quantity or by amount?" (owner retest, 27 Sep 2026): the
-        # parser's own position, in the order the question lists the two.
-        own["rank_by"] = TOP_SELLING_METRIC_ORDER[int(positions[0]) - 1]
-        trace.rules_fired.append("top_selling_position_is_the_metric")
-    who = carried.pop("who", None)
-    # The engine binds an answer to "customer or sales agent?" before this runs
-    # (`engine._top_selling_verdict`: "2", "yeah sales agent", "fanny sales agent");
-    # a bare position the parser read is the same answer.
-    answer = verdict.get("top_selling_who")
-    if answer is None and not picked and len(positions) == 1:
-        answer = int(positions[0])
-    if isinstance(who, dict) and asked_last == "who" and answer in (0, 1, 2):
-        # Owner retest of round 4 (27 Sep 2026, R1): the answer binds to that question
-        # only. "1" the customer, "2" the sales agent, "neither" (0) neither; the other
-        # axis is cleared, every other filter of the ask stays.
-        focus.customers = []
-        carried.pop("customer_ids", None)
-        carried.pop("customer_names", None)
-        if answer == 1 and who.get("customer_ids"):
-            carried["customer_ids"] = list(who["customer_ids"])
-            if who.get("customer_label"):
-                carried["customer_names"] = [who["customer_label"]]
-            carried.pop("agent_ids", None)
-            trace.rules_fired.append("top_selling_who_is_the_customer")
-        elif answer == 2 and who.get("agent_ids"):
-            carried["agent_ids"] = list(who["agent_ids"])
-            trace.rules_fired.append("top_selling_who_is_the_agent")
-        else:
-            trace.rules_fired.append("top_selling_who_is_neither")
-    if verdict.get("top_selling_unclear"):
-        # A message inside a ranking the bot cannot place (the parser's out_of_scope):
-        # one short question, never the escalation (owner retest of round 4, R6/R8).
-        carried["unclear"] = True
-    else:
-        carried.pop("unclear", None)
-    leftovers = [w for w in (verdict.get("top_selling_leftover") or []) if isinstance(w, str) and w]
-    if leftovers:
-        # R4: the word left over from a split noisy token, said once above the ranking.
-        carried["unknown"] = [["", w] for w in leftovers]
-    if broaden_level(verdict) == EVERYTHING and not decision.answers:
-        # A correction widening an axis ("customer is everyone") clears that axis's
-        # filter on the ranking too; `broaden_axis: "all"` clears every one.
-        axis = broaden_kind(verdict)
-        for key in _top_selling_axis_keys(axis):
-            if carried.pop(key, None) is not None:
-                trace.rules_fired.append(f"top_selling_broaden_clears_{key}")
-    # A message stating no axis of its own and naming only narrowing words ("sold by
-    # fanny", "water closet only") narrows the ranking on screen even when the parser
-    # says it names the ask (owner retest, 27 Sep 2026): it never restarts it.
-    only_narrows = not own and _narrows_the_ranking(verdict)
-    # The English class word the parser put in `canonical_code` (AC-HT8-12) comes before the
-    # verbatim `raw`, so a Chinese category word resolves.
-    categories = [
-        (str(e.get("canonical_code") or "").strip() or e.get("raw"))
-        for e in (verdict.get("entities") or [])
-        if isinstance(e, dict) and e.get("hint") == "category" and e.get("raw")
-    ]
-    if categories:
-        own["category_words"] = categories
-        carried.pop("category_code", None)
-    if asked and names_its_ask and not only_narrows and not _top_selling_waiting(asked_last, own):
-        # A fresh ask names the ask ITSELF ("top 10 selling items": `domain_in_message`);
-        # "by amount" under a ranking names only the axis it changes. A fresh ask states
-        # its own filters too (owner: never assume): a customer, channel or date window
-        # it does not name is not carried from the last ask (reviewer B2, PR #1273).
-        carried = {}
-        _drop_unnamed_filters(focus, verdict)
-        trace.rules_fired.append("top_selling_fresh_ask")
-    carried.update(own)
-    focus.top_selling = carried
+    return order_status if order_status in DELIVERY_STATUSES else None
 
 
-def _top_selling_axis_keys(axis: str | None) -> tuple[str, ...]:
-    """The slot keys `broaden_axis` clears: that axis's, or every axis's for None."""
-    if axis is None:
-        return tuple(k for keys in TOP_SELLING_BROADEN_KEYS.values() for k in keys)
-    return TOP_SELLING_BROADEN_KEYS.get(axis, ())
-
-
-#: The order reports a ranking hands its filters to (owner retest of round 4, 27 Sep
-#: 2026, R5): "outstanding", "can show me the DO", "show me the orders". None is the
-#: plain order list.
-TOP_SELLING_REPORT_HOPS = frozenset(
-    {None, "", "outstanding", "so_outstanding", "do_outstanding", "outstanding_both", "delivered"}
-)
-
-#: The outstanding asks (`order_status`): after a ranking each is the ordinary
-#: outstanding ask with the ranked codes as its products (fix lane round 8).
-TOP_SELLING_OUTSTANDING_HOPS = frozenset({"outstanding", "so_outstanding", "do_outstanding", "outstanding_both"})
-
-
-def _is_report_hop(verdict: dict[str, Any]) -> bool:
-    """Is this message an order report ask naming no ranking of its own ("outstanding",
-    "can show me the DO", "show me the orders")?"""
-    if verdict.get("domain_hint") != "order":
-        return False
-    status = verdict.get("order_status") or verdict.get("status")
-    if status not in TOP_SELLING_REPORT_HOPS:
-        return False
-    if any(verdict.get(k) is not None for k in TOP_SELLING_KEYS) or _narrows_the_ranking(verdict):
-        return False
-    return bool(status) or bool(verdict.get("document")) or domain_in_message(verdict) is True
-
-
-def _report_name(verdict: dict[str, Any]) -> str:
-    status = verdict.get("order_status") or verdict.get("status")
-    documents = [str(d).upper() for d in (verdict.get("document") or [])]
-    if status == "so_outstanding" or documents == ["SO"]:
-        return "sales orders"
-    if status == "do_outstanding" or "DO" in documents:
-        return "delivery orders"
-    if status in ("outstanding", "outstanding_both"):
-        return "outstanding orders"
-    return "orders"
-
-
-def _hop_to_report(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
-    """After a ranking, an order report ask runs that report with the ranking's filters
-    as its inputs (owner retest of round 4, R5; owner hand test of round 7, 28 Sep 2026).
-
-    * The customer and the period carry (the ranking's own window, or the current year
-      its route defaults to).
-    * An OUTSTANDING ask is the ordinary outstanding ask: its products are the item
-      codes the ranking listed (`ranked_codes`), unless the message names a product of
-      its own. It then prints the ordinary Product / Customer / Location / Order date
-      header and the "Outstanding for which document?" menu, and goes on exactly as a
-      direct outstanding ask does. Without them the ask carried no subject, missed the
-      outstanding report and fell into the order list, whose window is the actual
-      delivery date an outstanding order does not have yet: "No matching results found".
-    * The agent, category and brand filters are not the report's; they are simply not
-      carried, and their words never reach the order lookup (it answered "Couldn't find:
-      bathtub (category)"). Nothing is printed about them.
-
-    The slot stays, marked `hop`, so the next report ask carries the same filters and a
-    new ranking ask starts over."""
-    from datetime import datetime, timedelta, timezone
-
-    slot = dict(focus.top_selling or {})
-    for key in ("asked", "who", "unknown", "unclear", "detail_code"):
-        slot.pop(key, None)
-    for kind in ("category", "sales_agent", "brand"):
-        focus.extra.pop(kind, None)
-    focus.brands = []
-    focus.outstanding_brand_ids = []
-    named = [
-        e.get("hint")
-        for e in (verdict.get("entities") or [])
-        if isinstance(e, dict) and e.get("current_message") is not False
-    ]
-    ids = slot.get("dealer_customer_ids") or slot.get("customer_ids")
-    if ids and "customer" not in named:
-        labels = list(slot.get("customer_names") or [])
-        focus.customers = [
-            {"uuid": uid, "hint": "customer", "current_message": False, **({"name": labels[0]} if len(ids) == 1 and labels else {})}
-            for uid in ids
-        ]
-    if not (focus.date_window and (focus.date_window.get("start") or focus.date_window.get("end"))):
-        # The route's own default for the ranking: the current calendar year, Malaysia
-        # time (`fetch._current_myt_year`'s formula).
-        year = (datetime.now(timezone.utc) + timedelta(hours=8)).year
-        focus.date_window = {"mode": None, "start": f"{year}-01-01", "end": f"{year}-12-31"}
-    status = verdict.get("status") or verdict.get("order_status")
-    hop: dict[str, Any] = {"report": _report_name(verdict)}
-    outstanding = (verdict.get("order_status") or verdict.get("status")) in TOP_SELLING_OUTSTANDING_HOPS
-    if outstanding and "product" not in named and slot.get("ranked_codes"):
-        hop["product_codes"] = list(slot["ranked_codes"])
-        focus.products = []
-    slot["hop"] = hop
-    focus.top_selling = slot
-    focus.status = str(status) if status else None
-    trace.rules_fired.append("top_selling_hops_to_report")
-
-
-def _drop_unnamed_filters(focus: Focus, verdict: dict[str, Any]) -> None:
-    """A fresh top selling ask keeps only the filters THIS message named: its own
-    customer entities (the generic rules already wrote those), channel and dates."""
-    names_customer = any(
-        isinstance(e, dict) and e.get("hint") == "customer" and e.get("current_message") is not False
-        for e in (verdict.get("entities") or [])
-    )
-    if not names_customer:
-        focus.customers = []
-    if not verdict.get("sales_channel"):
-        focus.sales_channel = None
-    if not verdict.get("document"):
-        # A document picked for an earlier report ("1" to "Outstanding for which
-        # document?") is not this ranking's, nor the next report's (round 7).
-        focus.document = []
-    if not (verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end")):
-        focus.date_window = None
-
-
-def _without_top_selling_pick(focus: Focus) -> Focus:
-    """A copy of `focus` without the one-shot key a pick wrote last turn (the detail is
-    one answer; the next message re-runs the ranking unless it picks again)."""
-    slot = focus.top_selling
-    if not slot or not any(k in slot for k in TOP_SELLING_ONE_SHOT):
-        return focus
-    return replace(focus, top_selling={k: v for k, v in slot.items() if k not in TOP_SELLING_ONE_SHOT})
-
-
-def _answer_top_selling_pick(pending: Pending, decision: Decision, focus: Focus, trace: Trace):
-    """The ranked list is a pick list (owner, PR #1258 05:32Z), answered the pickers' way
-    (`decide` settles the positions, a typed code matches a label) but it re-runs the
-    ASK rather than settling an entity: an item row opens that code's detail
-    (`detail_code`), a category row runs the item ranking inside that category. The rows
-    carry no uuid and must not land on `focus.products`, where the generic roster path
-    would put them and the resolver would re-open the product's whole family.
+def _answer_top_selling_pick(
+    pending: Pending, decision: Decision, focus: Focus, trace: Trace, verdict: dict[str, Any] | None = None
+):
+    """An item or category ranking's printed list is a pick list (owner, PR #1258 05:32Z),
+    answered the pickers' way (`decide` settles the positions, a typed code matches a label)
+    but it re-runs the ASK rather than settling an entity: REPORT-SMART-L R3c (owner Q2 b), the
+    picked row opens its detail on the report engine (`report_ask.settle` reads
+    `ranking_detail`). The rows carry no uuid and must not land on `focus.products`, where the
+    generic roster path would put them and the resolver would re-open the product's whole family.
 
     None when nothing on the list was picked: the generic rules settle it (an aside keeps
     the list open, a number past the end re-prints it, a new ask closes it)."""
     positions = list(decision.positions) if decision.answers else []
     matched = [o for o in pending.options if o.get("position") in positions]
-    if not matched:
+    ranking = (pending.payload.get("filters") or {}).get("ranking")
+    if not matched or not isinstance(ranking, dict) or not isinstance(verdict, dict):
         return None
     option = matched[-1]
     code = option.get("code") or option.get("label")
-    slot = dict(focus.top_selling or {})
-    if not slot:
-        stored = pending.payload.get("filters")
-        stored = stored if isinstance(stored, dict) else {}
-        slot = {k: stored.get(k) for k in TOP_SELLING_KEYS if stored.get(k) is not None}
-    if option.get("entity_type") == "category":
-        slot["rank_group"] = "item"
-        slot["category_code"] = code
-        slot.pop("category_words", None)
-    else:
-        slot["detail_code"] = code
-    focus.top_selling = slot
-    focus.status = TOP_SELLING_STATUS
+    verdict["ranking_detail"] = {
+        "group_by": ranking.get("group_by"),
+        "name": code,
+        "keys": list((option.get("payload") or {}).get("keys") or []),
+    }
+    focus.status = "sales_ranking"
     focus.domains = [contracts.SALES_DOMAIN]
-    trace.rules_fired.append("answer_top_selling_pick")
+    trace.rules_fired.append("answer_ranking_pick")
     return focus, with_answered_positions(pending, positions), None, True
 
 
@@ -1701,9 +1402,7 @@ def _domain_family(domains: list[str]) -> set[str]:
     """`order` and `sales` are ONE family for the window's sake: a sales report's
     follow-up ("and srtwc286-sh-new?") comes back as `order` (`turn_runtime.
     _report_status_means_order_domain` maps a report status to `sales` and a plain
-    follow-up to `order`), and a report drilled out of a top selling ranking carries
-    the ranking's period (`test_top_selling_round5.py::
-    test_a_report_after_a_ranking_carries_its_filters`)."""
+    follow-up to `order`)."""
     return {"order" if d in contracts.ORDER_OR_SALES_DOMAINS else d for d in domains or []}
 
 
@@ -1800,8 +1499,10 @@ def _reconcile_step(
     trace: Trace,
     *,
     turn_no: int,
+    exact: dict[str, dict[str, int]] | None = None,
+    typed: str | None = None,
 ):
-    result = apply_reconciliation(entities, resolved)
+    result = apply_reconciliation(entities, resolved, exact=exact, typed=typed)
     trace.reconciled = result.reconciled
 
     if result.kind_pick_options is not None and _named_teams(verdict):
@@ -1984,7 +1685,7 @@ _IDLE_CHAT_DISQUALIFIERS = (
     "sales_channel",
     "sort_by",
     # PLAN-chatbot-top-x-hot-selling-24sep.md S4: "amount", "ordered" and "the
-    # categories" answer the bot's own top selling question and name nothing else.
+    # categories" answer the bot's own ranking question and name nothing else.
     "rank_by",
     "basis",
     "rank_group",
@@ -2194,17 +1895,6 @@ _REFUSES_EMPTY_SUBJECT: frozenset[str] = frozenset({"inventory"})
 # --------------------------------------------------------------------------- #
 
 
-def _stated_quantity(value: Any) -> int | None:
-    """A quantity the message stated, or None. Mirrors `turn/task.py::_number`."""
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, str) and value.strip().lstrip("+").isdigit():
-        return int(value.strip())
-    return None
-
-
 def _row_codes(row: dict[str, Any]) -> set[str]:
     out = set()
     for name in ("canonical_code", "code", "raw"):
@@ -2299,6 +1989,8 @@ def _narrow_and_plan(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
     refuse_empty_subject: bool = False,
+    held_product_uuids: frozenset[str] = frozenset(),
+    skip_customer_narrowing: bool = False,
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -2324,6 +2016,8 @@ def _narrow_and_plan(
         domain_ask_kind = None
         domain_ask_options: list[dict[str, Any]] = []
         for kind, policy_value in row.narrowing.items():
+            if kind == "customer" and skip_customer_narrowing:
+                continue
             outcome = narrow_decide(
                 kind=kind,
                 policy_value=policy_value,
@@ -2344,6 +2038,7 @@ def _narrow_and_plan(
                 # rosters already read through `roster_caps` - never `narrow.py`'s
                 # module literal.
                 roster_cap=getattr(policy.kind(kind), "roster_cap", None),
+                held_uuids=held_product_uuids if kind == "product" else frozenset(),
             )
             trace.narrowing.append(f"{name}.{kind}:{outcome.note or policy_value}")
             if outcome.ask_kind:
@@ -2562,40 +2257,6 @@ def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: T
     trace.rules_fired.append("did_you_mean_keeps_quantity")
 
 
-def _stock_task_owed_a_number(focus: Focus) -> Any:
-    """The stock check a bare number is for, or None: one still asking its quantities
-    (any number of products - round 6, "one number like 10 to apply to all"), or a
-    one-product check just answered (the number revises it, round 5)."""
-    for task in focus.tasks or ():
-        if task.kind != "stock_qty":
-            continue
-        if task.status == task_mod.OPEN and task.slots:
-            return task
-        if task.status == task_mod.ANSWERED and len(task.slots) == 1:
-            return task
-    return None
-
-
-def _lone_position(verdict: dict[str, Any]) -> int | None:
-    """The one position this message names and nothing else beside it: no quantity, no
-    product of its own, no proceed and no reset."""
-    raw = verdict.get("reference_positions")
-    positions = [
-        int(p) for p in (raw if isinstance(raw, list) else [])
-        if isinstance(p, (int, float)) and not isinstance(p, bool)
-    ]
-    if len(positions) != 1 or positions[0] < 1:
-        return None
-    if (
-        _message_states_a_quantity(verdict)
-        or _names_a_product(verdict)
-        or verdict.get("proceed_anyway") is True
-        or verdict.get("topic_reset") is True
-    ):
-        return None
-    return positions[0]
-
-
 def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace: Trace) -> None:
     """Owner ruling 26 Sep 2026 (round 3 hand test, ruling 2): once the which-one pick is
     spent and the stock check is about one product, a bare number is that product's
@@ -2612,41 +2273,12 @@ def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace:
     tool asked "How many units of SRTWC286-SH?" again. Written onto `demand_qty` here,
     before any reader, the same way `_normalise_demand_qty` settles its own two shapes.
     """
-    task = _stock_task_owed_a_number(state.focus)
-    if task is None:
-        return
-    if state.pending is not None and not _stock_task_is_the_current_question(state, task, verdict):
-        return
-    position = _lone_position(verdict)
+    position = bare_position_quantity(state, verdict)
     if position is None:
         return
     verdict["demand_qty"] = position
     verdict["reference_positions"] = []
     trace.rules_fired.append("bare_number_is_the_quantity")
-
-
-def _stock_task_is_the_current_question(state: State, task: Any, verdict: dict[str, Any]) -> bool:
-    """Issue #1352, the chained-question rule (owner ruling, 29 Sep 2026): the engine
-    judges a message against the CURRENT question first, and earlier rosters stay stored
-    underneath for a later pick.
-
-    "incoming srtwc286" -> "4" -> "check stock" -> "How many units of SRTWC286-SH-NEW?"
-    leaves the product roster stored (sticky, contract 36) AND the stock task asking.
-    The task was touched after the roster was asked, so it is the question the next bare
-    number answers: "5" is SRTWC286-SH-NEW's quantity, never variant 5 off the roster
-    underneath (the scout's trace T4 fetched incoming for SRTWC286-SH-NEW-150). A message
-    that names its own domain is not a bare answer to either and is left to the judgement
-    in `_answer_pending`. A stored pick with no turn stamp, or one asked at or after the
-    task, is still the current question: today's behaviour.
-    """
-    pending = state.pending
-    if pending is None or _stock_pick(pending) or not is_roster(pending.kind):
-        return False
-    if names_its_own_domain(verdict):
-        return False
-    asked = pending.asked_at_turn
-    touched = max(task.opened_at_turn or 0, task.touched_at_turn or 0)
-    return isinstance(asked, int) and touched > asked
 
 
 def _open_point_form_task(focus: Focus) -> Any:
@@ -2823,10 +2455,11 @@ def _open_question_answer(
       named as not checked (the list pasted back with blanks, "that's it", "itu saja").
     * all: `qty_for_all` on every line of the list ("3 for all of them"), asked or just
       answered.
-    * cancel: the question is dropped.
+    * cancel: not read here; a cancel that names nothing is a reset (`is_reset`), which
+      closed the question before this ran.
 
     Written onto the verdict as the fields the task step already reads
-    (`SLOT_QUANTITIES`, `proceed_anyway`, `topic_reset`), so nothing downstream learns a
+    (`SLOT_QUANTITIES`, `proceed_anyway`), so nothing downstream learns a
     second shape. Returns False, and touches nothing, when the object is absent, mode
     null, or not usable (an item that places on no line, two on one line, "all" with no
     number): then the shape rules run as the fallback. Nothing here reads a word.
@@ -2838,7 +2471,15 @@ def _open_question_answer(
     if not isinstance(answer, dict) or state.pending is not None:
         return False
     mode = answer.get("mode")
-    if mode not in ("fill", "all", "done", "cancel"):
+    if mode == "pick" and any(
+        isinstance(item, dict) and item.get("qty") is not None for item in answer.get("items") or []
+    ):
+        # The parser placed a quantity on a line of the open quantities question: those items
+        # are the answer, whatever mode label it gave (with a stored pending the pick readers
+        # run first and this is never reached).
+        mode = "fill"
+    if mode not in ("fill", "all", "done"):
+        # A cancel is no answer here: `is_reset` read it before any reader ran.
         return False
     task = _open_question_task(state.focus)
     if task is None:
@@ -2884,7 +2525,7 @@ def _open_question_answer(
         and _line_number(entity) is None
         and not str(entity.get("raw") or "").strip().isdigit()
     ]
-    if mode != "cancel" and any(
+    if any(
         entity.get("hint") in (None, "product") and entity.get("current_message") is True
         for entity in others
     ):
@@ -2896,18 +2537,13 @@ def _open_question_answer(
     verdict["demand_qty"] = None
     verdict["reference_positions"] = []
     verdict["message_type"] = "business_query"
-    if mode == "cancel":
-        verdict["topic_reset"] = True
-        verdict["domain_hint"] = task.domain or verdict.get("domain_hint")
-        verdict["entities"] = []
-    else:
-        verdict["topic_reset"] = False
-        verdict[task_mod.SLOT_QUANTITIES] = quantities
-        verdict["proceed_anyway"] = True if (mode == "done" and not answered) else None
-        if mode == "done" and not answered and quantities:
-            # Review B1: the pasted list is the whole answer. A line left blank in it is
-            # skipped, even when an earlier turn noted a quantity on it.
-            verdict[task_mod.ONLY_THESE_LINES] = True
+    verdict["topic_reset"] = False
+    verdict[task_mod.SLOT_QUANTITIES] = quantities
+    verdict["proceed_anyway"] = True if (mode == "done" and not answered) else None
+    if mode == "done" and not answered and quantities:
+        # Review B1: the pasted list is the whole answer. A line left blank in it is
+        # skipped, even when an earlier turn noted a quantity on it.
+        verdict[task_mod.ONLY_THESE_LINES] = True
     trace.rules_fired.append(f"open_question_answer_{mode}")
     return True
 
@@ -2943,8 +2579,10 @@ def _open_pick_answer(state: State, verdict: dict[str, Any], trace: Trace) -> tu
       the same message ("the first one, I need 2") rides on a stock pick and is stamped
       onto the product the pick settles (`_spend_stock_pick`), so nothing re-asks it.
     * yes: `is_affirmative` true, for a question that has one option or expects yes/no.
-    * no / cancel: `is_affirmative` false: the decline the question's own arm answers
-      ("none of them" to a dealer's did-you-mean is "Please refer to your salesman.").
+    * no: `is_affirmative` false: the decline the question's own arm answers ("none of
+      them" to a dealer's did-you-mean is "Please refer to your salesman."). A cancel that
+      names nothing of its own is a reset (`is_reset`), which closed the question before this
+      ran; one that names something is read the same way as a "no".
 
     Only the fields `decide()` and `_answer_pending` already read are written, so every
     guard they keep (no handover on a position over a yes/no offer) still holds. Returns
@@ -2972,6 +2610,15 @@ def _open_pick_answer(state: State, verdict: dict[str, Any], trace: Trace) -> tu
         trace.rules_fired.append("open_question_answer_yes")
         return state, True
     if mode != "pick":
+        return state, False
+    from app.services.chatbot.turn.chat_state import names_own_subject
+
+    if pending.kind == "tier_pick" and names_own_subject(verdict):
+        # CHAT-PROMO-TIER-PICK-KIND (owner run 21 Oct, "Gimme sorento a3 flyer"): an access
+        # level menu lists levels, never a subject, so a message typing its own subject of any
+        # subject kind (product, customer, warehouse, brand: `names_own_subject`) is a fresh ask;
+        # the still-open menu's position is not its answer. A typed tier stays the menu's answer.
+        trace.rules_fired.append("open_question_pick_fresh_ask")
         return state, False
     offered = {o.get("position") for o in pending.options}
     picked: list[int] = []
@@ -3098,31 +2745,6 @@ def _bare_number_over_a_finished_answer(
         ideation=state.ideation,
     )
     return asked, Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace)
-
-
-def _stock_pick(pending: Any) -> bool:
-    """Is the open question a stock pick (owner hand test 26 Sep, slice 2 and F1): the
-    which-one question `turn/task.py::after_reply` asks over a product family, or the
-    dealer's did-you-mean? Both carry the typed quantity on their own payload."""
-    return pending is not None and bool((pending.payload or {}).get("stock_pick"))
-
-
-def _message_states_a_quantity(verdict: dict[str, Any]) -> bool:
-    if _stated_quantity(verdict.get("demand_qty")) is not None:
-        return True
-    return any(
-        isinstance(e, dict) and _stated_quantity(e.get("quantity")) is not None
-        for e in verdict.get("entities") or []
-    )
-
-
-def _names_a_product(verdict: dict[str, Any]) -> bool:
-    return any(
-        isinstance(e, dict)
-        and e.get("current_message") is True
-        and e.get("hint") in (None, "product")
-        for e in verdict.get("entities") or []
-    )
 
 
 #: AVAIL-MODE-REPLIES rule 4 (owner, 2 Oct 2026): the re-ask when a dealer answers a stock
@@ -3285,6 +2907,82 @@ def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, A
     trace.rules_fired.append("stock_pick_lists_still_open")
 
 
+def _question_codes(state: State) -> set[str]:
+    """The open question's own options (code, label) or, with none stored, the open stock
+    check's own lines (slot key, label), folded."""
+    if state.pending is not None:
+        values = [v for o in state.pending.options for v in (o.get("code"), o.get("label"))]
+    else:
+        task = _open_question_task(state.focus)
+        values = [v for slot in (task.slots if task else ()) for v in (slot.key, slot.label)]
+    return {v.strip().casefold() for v in values if isinstance(v, str) and v.strip()}
+
+
+def _stated(entity: Any) -> bool:
+    """An entity THIS message states, for the reset code: anything but the parser's echo of a
+    held row (`current_message` false). The schema allows null, which is stated."""
+    return isinstance(entity, dict) and entity.get("current_message") is not False
+
+
+def _states_an_entity(verdict: dict[str, Any]) -> bool:
+    return any(_stated(e) for e in verdict.get("entities") or [])
+
+
+def entities_a_reset_keeps(verdict: dict[str, Any], state: State) -> list[dict[str, Any]]:
+    """The entities a reset plans as its own ask (rule 4). On a `topic_reset`, every stated one,
+    on the open question's list or not. On a cancel, the stated ones off that list: the on-list
+    names of a cancel only point at the question it closes. An echo is never kept."""
+    stated = [e for e in verdict.get("entities") or [] if _stated(e)]
+    if verdict.get("topic_reset") is True:
+        return stated
+    codes = _question_codes(state)
+    return [e for e in stated if not (_codes_named(e) & codes)]
+
+
+def is_reset(verdict: dict[str, Any], state: State) -> bool:
+    """The ONE reading of a reset (release gate #1829, crew ruling): the parser's `topic_reset`,
+    or a cancel answer that names nothing of its own: no stated entity off the open question's
+    own options or lines (an on-list one counts too when the message names its own domain), no
+    position, no pick, no item with a quantity. A "no" is the open question's own decline, never
+    a reset. Parser fields only. Read before the state applier runs (`chat_state.apply_changes`)
+    and again here, where the applier has written its reading onto `topic_reset`."""
+    if verdict.get("topic_reset") is True:
+        return True
+    answer = verdict.get(OPEN_QUESTION_ANSWER)
+    if not isinstance(answer, dict) or answer.get("mode") != "cancel":
+        return False
+    named = _states_an_entity(verdict) if names_its_own_domain(verdict) else entities_a_reset_keeps(verdict, state)
+    return not (
+        named
+        or verdict.get("reference_positions")
+        or answer.get("picked")
+        or any(isinstance(item, dict) and item.get("qty") is not None for item in answer.get("items") or [])
+    )
+
+
+def _reset(state: State, verdict: dict[str, Any], trace: Trace) -> State:
+    """A reset, before any reader of the answer, on both paths: the stored question closes and is
+    never answered (no accept, no decline, no pick, no escalation flag read), every task closes
+    (open or parked, whatever domain the message names) and the stored list goes. A closed stock
+    check takes the products it was about with it (D23); what THIS message names of its own is
+    written after, by `_focus_rules`, and nothing else it carries is."""
+    verdict["entities"] = entities_a_reset_keeps(verdict, state)
+    verdict["topic_reset"] = True
+    verdict["is_affirmative"] = None
+    escalation = verdict.get("escalation")
+    if isinstance(escalation, dict):
+        verdict["escalation"] = {**escalation, "escalation_declined": None, "is_escalation_confirmation": None}
+    focus = replace(state.focus, tasks=(), last_list=None, required_ask=None)
+    if state.pending is not None:
+        trace.rules_fired.append("reset_closes_the_question")
+    for task in state.focus.tasks or ():
+        trace.rules_fired.append(f"task_closed_on_reset_{task.kind}")
+    if any(task.kind == "stock_qty" for task in state.focus.tasks or ()):
+        focus = replace(focus, products=[])
+        trace.rules_fired.append("task_close_clears_products")
+    return replace(state, focus=focus, pending=None)
+
+
 def apply(
     state: State,
     verdict: dict[str, Any],
@@ -3292,6 +2990,8 @@ def apply(
     resolved: dict[str, dict[str, int]] | None = None,
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    exact: dict[str, dict[str, int]] | None = None,
+    typed: str | None = None,
 ):
     """`_apply`, and for a contact whose escalation is barred (ESCALATION-CONTROL, owner
     30 Sep 2026) no offer survives it: an escalation offer still open from an earlier
@@ -3299,12 +2999,12 @@ def apply(
     asked, carried or routed to on the way out. The forced path (`_lane`) lands on
     "escalation_barred" whichever door it came through."""
     if not escalation_barred(state.profile):
-        return _apply(state, verdict, policy, resolved, candidates, unplaced)
+        return _apply(state, verdict, policy, resolved, candidates, unplaced, exact, typed)
     open_question, _dropped = without_escalation(state.pending)
     closed = open_question is not state.pending
     if closed:
         state = replace(state, pending=open_question)
-    new_state, plan = _apply(state, verdict, policy, resolved, candidates, unplaced)
+    new_state, plan = _apply(state, verdict, policy, resolved, candidates, unplaced, exact, typed)
     if closed:
         plan.trace.rules_fired.append("escalation_barred_offer_closed")
     ask, _asked = without_escalation(plan.ask)
@@ -3330,11 +3030,17 @@ def _apply(
     resolved: dict[str, dict[str, int]] | None = None,
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    exact: dict[str, dict[str, int]] | None = None,
+    typed: str | None = None,
 ):
     """`unplaced` is the resolver's own verdict about the tokens THIS message named and
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
     only: a roster is never built out of a word that matched nothing."""
     trace = Trace()
+    # Release gate #1829: the reset is read once, here, before every reader of the answer.
+    reset = is_reset(verdict, state)
+    if reset:
+        state = _reset(state, verdict, trace)
     # PR #1247 round 8: the parser's declared answer to the open stock question comes
     # first. The two shape rules below are the fallback, for a verdict that declares
     # none (a recorded emission, or a parser that left mode null).
@@ -3374,9 +3080,6 @@ def _apply(
         # 36's own "closed once the answering turn's fetch ran" wording allows.
         state = replace(state, pending=None)
         trace.rules_fired.append("stale_roster_closed")
-
-    # PLAN-chatbot-top-x-hot-selling-24sep.md S4: a picked row's detail is one answer.
-    state = replace(state, focus=_without_top_selling_pick(state.focus))
 
     # F3 (contract 65): a `domain_hint` outside the declared enum must never reach a
     # reader - evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b emitted "purchasing"
@@ -3418,6 +3121,17 @@ def _apply(
     # decide for themselves disagreed at the edges, and each hand pass since the second
     # found a path one of them missed.
     decision = decide(verdict, state.focus, state.pending)
+    if state.state_led not in (None, "answer"):
+        # CHAT-STATE: the parser declared what this message does to the state; decide()'s
+        # own subject reading is bypassed. why="state_changes" keeps `starts_fresh` False,
+        # so the carry eviction in `_focus_rules` cannot fire.
+        decision = replace(decision, kind=state.state_led, why="state_changes")
+    elif getattr(state, "state_gate", False) and decision.kind != ANSWER:
+        # CHAT-STATE r6 S5: under the state gate decide()'s standing-subject table (its
+        # refine-of-standing-subject row included) stands down too. An `answer` the open
+        # question did not take, or a rejected change set, keeps every held axis and fills
+        # what the message typed (card R1 / R5): a refine of it, a carry when it typed nothing.
+        decision = replace(decision, kind=REFINE if decision.entities else CARRY, why="state_changes")
     trace.decision = decision.as_trace()
 
     refused = _stock_pick_refuses_all(state, verdict, decision, trace)
@@ -3436,6 +3150,8 @@ def _apply(
     # read the subject - and its result is written back onto the focus AFTER
     # `_focus_rules`, which empties every other axis on a topic reset and would take
     # the tasks with it.
+    from app.services.chatbot.class_named import names_own_class
+
     task_outcome = task_mod.run(
         tuple(state.focus.tasks or ()),
         verdict,
@@ -3443,12 +3159,22 @@ def _apply(
         positions=list(decision.positions) if decision.answers else [],
         pending=state.pending,
         turn_no=state.turn_no,
+        # CHAT-CLOSED-LISTS R6-3 (a class ask is not the held product at a new number), read off
+        # the state gate only: under it the ops decide, as decide()'s table stands down above.
+        class_ask=(
+            not getattr(state, "state_gate", False)
+            and bool(verdict.get("closed_lists"))
+            and names_own_class(verdict.get("entities") or [])
+        ),
     )
     trace.rules_fired.extend(task_outcome.rules)
 
     verdict_entities = list(verdict.get("entities") or [])
+    # Crew ruling a41487222 (a): the reconciliation is data-led (R11 kind pick, R15 retype), so
+    # it runs on the state path too; the retype needs an exact whole-token hit (`exact`).
     entities, domain_override, reconcile_short_circuit = _reconcile_step(
-        verdict_entities, resolved, policy, verdict, trace, turn_no=state.turn_no
+        verdict_entities, resolved, policy, verdict, trace, turn_no=state.turn_no, exact=exact,
+        typed=typed,
     )
     if reconcile_short_circuit is not None:
         # #1262 slice 8 (F1b siblings): a kind pick over ONE ambiguous token
@@ -3465,6 +3191,7 @@ def _apply(
             domain_locked=False,
             domain_override=domain_override,
             trace=trace,
+            carried=state.state_led is not None,
         )
         return replace(state, focus=focus), reconcile_short_circuit
 
@@ -3491,8 +3218,6 @@ def _apply(
         closed_focus = focus_after_pending
         if task_outcome.tasks != tuple(state.focus.tasks or ()):
             closed_focus = replace(focus_after_pending, tasks=task_outcome.tasks)
-            if "stock_qty" in task_outcome.closed_kinds:
-                _set_kind_field(closed_focus, "product", [])
         unchanged = replace(state, focus=closed_focus, pending=pending_after)
         return unchanged, pending_short_circuit
 
@@ -3507,21 +3232,12 @@ def _apply(
         domain_locked=domain_locked,
         domain_override=domain_override,
         trace=trace,
+        carried=state.state_led is not None,
     )
-    # Ported from PR #1118 (not merged). AFTER the focus rules, never before: a topic
-    # reset rebuilds the focus from `RESET_KEEPS` alone, and the tasks it KEEPS (the
-    # ones aimed elsewhere, parked by D23) are what the task step above already
-    # decided. One writer, one answer.
+    # Ported from PR #1118 (not merged). AFTER the focus rules, never before: the task
+    # step above already decided. One writer, one answer. (A reset closed every task
+    # before either ran, `_reset`.)
     focus.tasks = task_outcome.tasks
-    if "stock_qty" in task_outcome.closed_kinds:
-        # D23, review round 6 (case F turn 3, #1118): "never mind the stock check"
-        # ends the task, and what the task was ABOUT ends with it. The reset already
-        # empties the focus, but the rules below it refill `products` from THIS
-        # message's entities - and the parser hands back the products it has been
-        # discussing, so the closed question's own products came straight back and a
-        # bare number typed next re-asked it.
-        _set_kind_field(focus, "product", [])
-        trace.rules_fired.append("task_close_clears_products")
 
     # A task that just took a value re-runs its own domain's fetch. The domain is the
     # TASK's, locked the same way a pick locks a turn - a detour left `focus.domains`
@@ -3566,7 +3282,12 @@ def _apply(
         )
 
     asks = verdict.get("asks") or []
-    if task_locked:
+    if reset and not _states_an_entity(verdict) and not names_its_own_domain(verdict):
+        # Release gate #1829: a reset that names nothing of its own plans nothing - no fetch,
+        # no ask, so no empty-fetch refusal either: the reset is acknowledged, as on main.
+        domains = []
+        trace.rules_fired.append("reset_plans_nothing")
+    elif task_locked:
         # Ported from PR #1118 (not merged): the lock - this turn belongs to the task
         # that just took a value, whatever the conversation was last about.
         domains = [task_domain]
@@ -3675,18 +3396,36 @@ def _apply(
     # set to the brand, counted the same way the offer counted it, never a new set of
     # everything the brand has.
     chosen_brand = verdict.get("set_brand")
-    if carried_set and isinstance(chosen_brand, str) and chosen_brand:
+    # The state path carries a LIST (every brand the parser named, one re-run); main's path
+    # carries the one brand string it always did.
+    brand_names = [chosen_brand] if isinstance(chosen_brand, str) else list(chosen_brand) if isinstance(chosen_brand, list) else []
+    brand_names = [b for b in brand_names if isinstance(b, str) and b]
+    if carried_set and brand_names:
         key = dict(carried_set.get("set_key") or {})
         domain = key.get("domain")
         if domain:
-            offered = next(
-                (o for o in key.get("other_brands") or [] if str(o.get("brand") or "").lower() == chosen_brand.lower()),
-                {},
-            )
+            offered_rows = [
+                o for o in key.get("other_brands") or []
+                if isinstance(o, dict) and str(o.get("brand") or "").lower() in {b.lower() for b in brand_names}
+            ]
+            own_brand = key.get("brand")
+            if (
+                isinstance(chosen_brand, list)
+                and isinstance(own_brand, str)
+                and own_brand.lower() in {b.lower() for b in brand_names}
+                and not any(str(o.get("brand") or "").lower() == own_brand.lower() for o in offered_rows)
+            ):
+                # State path: the set's own brand counts with the set's own total.
+                offered_rows.append({"brand": own_brand, "count": key.get("total") or 0})
             for stale in ("offer_only", "other_brands"):
                 key.pop(stale, None)
             key.update(
-                {"brand": chosen_brand, "brand_default": False, "shown": 0, "total": int(offered.get("count") or 0)}
+                {
+                    "brand": chosen_brand if isinstance(chosen_brand, str) else brand_names,
+                    "brand_default": False,
+                    "shown": 0,
+                    "total": sum(int(o.get("count") or 0) for o in offered_rows),
+                }
             )
             trace.rules_fired.append("set_brand_chosen")
             return new_state, Plan(
@@ -3743,9 +3482,28 @@ def _apply(
         attributes,
         candidates,
         unplaced,
+        # HELD-FAMILY: the products the conversation held BEFORE this message; none when
+        # the parser read the message as asking for the whole family.
+        held_product_uuids=(
+            frozenset()
+            if verdict.get("family") is True or verdict.get("broaden_to") or not verdict.get("closed_lists")
+            else frozenset(
+                str(p["uuid"]) for p in state.focus.products or [] if isinstance(p, dict) and p.get("uuid")
+            )
+        ),
+        # REPORT-SMART-L S2 (B): a sales ranking reads current-message customers only (the lane's
+        # own rule), so a carried customer is never re-asked by the customer narrowing.
+        skip_customer_narrowing=verdict.get("order_status") == "sales_ranking"
+        and not any(
+            isinstance(e, dict)
+            and e.get("current_message") is not False
+            and str(e.get("hint") or e.get("entity_type") or "") == "customer"
+            for e in verdict.get("entities") or []
+        ),
         # Ported from PR #1118 (not merged), review round 9 finding 4 / D34 round 11:
-        # a bare quantity with nothing open, or a cancel that names nothing, is not a
-        # subject - see `_narrow_and_plan`'s own comment on `refuse_empty_subject`.
+        # a bare quantity with nothing open, or a reset that names a domain and no subject,
+        # is not a subject (a reset naming nothing plans no domain at all, above) - see
+        # `_narrow_and_plan`'s own comment on `refuse_empty_subject`.
         refuse_empty_subject=(
             (
                 decision.kind == CARRY
@@ -3761,6 +3519,17 @@ def _apply(
             )
         ),
     )
+    if (
+        plan.ask is not None
+        and plan.ask.kind in ("customer_pick", "product_pick")
+        and verdict.get("order_status") in contracts.SALES_FIGURE_STATUSES
+        and not plan.ask.payload.get("status")
+    ):
+        # CHAT-CUSTOMER-PICK-RESUME (crew chat pass + review, 25 Oct): the narrower's roster over a sales figure ask
+        # carries the asking turn's ask (its status, a ranking's held fields), by the gate picker's own rule
+        # (`pending.asked_report`), so the pick resumes THAT ask. Without it a pick parsed `sales_analysis` ran the
+        # company analysis ("Sorento or Mocha?") and a ranking's pick ran a plain sales report.
+        plan = replace(plan, ask=replace(plan.ask, payload={**plan.ask.payload, **asked_report(verdict)}))
     _exact_code_when_a_quantity_is_named(plan, verdict, trace)
 
     # ESCALATION-CONTROL: a barred contact's named-team escalation is still the escalation

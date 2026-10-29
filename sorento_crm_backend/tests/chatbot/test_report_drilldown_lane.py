@@ -171,28 +171,38 @@ def test_the_same_axis_scoped_ranks_within_the_rows_printed(console) -> None:
 def test_global_is_a_fresh_ask_and_carries_nothing(console) -> None:
     _turn1(console)
     text, calls = console.say(_drill(ranking_drill="global"), "top 10 customers overall")
-    assert calls == [] and text.strip() == PERIOD_Q, text
-
-
-def test_unsure_asks_one_question_and_runs_nothing(console) -> None:
-    _turn1(console)
-    text, calls = console.say(_drill(ranking_drill="unsure"), "top 10 customers")
-    assert calls == [], calls
-    assert text.strip() == "Top 10 customers of the 3 sales agents above, or across all customers?", text
-
-
-def test_unsure_with_no_count_names_no_count(console) -> None:
-    _turn1(console)
-    text, _calls = console.say(_drill(ranking_drill="unsure", top_n=None), "customers")
-    assert text.strip() == "Customers of the 3 sales agents above, or across all customers?", text
-
-
-def test_the_reply_to_unsure_drills_the_rows_still_held(console) -> None:
-    _turn1(console)
-    console.say(_drill(ranking_drill="unsure"), "top 10 customers")
-    _text, calls = console.say(_drill(), "the agents above")
+    # S6c: the measure, basis and period on screen stay, so nothing is asked and it runs across all.
     (args,) = calls
-    assert args["customer_agent_ids"] == [AG1, AG2, "none"] and args["product_code"] == PRODUCT_CODE, args
+    assert args["group_by"] == "customer" and args["top_n"] == 10 and "customer_agent_ids" not in args, args
+    assert "Across all sales agents" in text, text
+
+
+def test_unsure_runs_across_all_and_says_so(console) -> None:
+    # Owner ruling B (23 Oct): a new axis read as unsure runs across all, never the scope question.
+    _turn1(console)
+    text, calls = console.say(_drill(ranking_drill="unsure", measure="qty", basis="delivered", **SEP), "top 10 customers")
+    (args,) = calls
+    assert args["group_by"] == "customer" and args["top_n"] == 10, args
+    assert "customer_agent_ids" not in args and args["product_code"] == PRODUCT_CODE, args  # S6b: the product stays
+    assert "Across all sales agents" in text and "or across all" not in text, text
+
+
+def test_unsure_with_no_count_runs_across_all_with_the_held_count(console) -> None:
+    _turn1(console)
+    text, calls = console.say(_drill(ranking_drill="unsure", top_n=None), "customers")
+    # S6c: the count on screen stays, so nothing is asked and the scope question is not either.
+    (args,) = calls
+    assert args["group_by"] == "customer" and args["top_n"] == 3 and "customer_agent_ids" not in args, args
+    assert "or across all" not in text, text
+
+
+def test_unsure_across_all_run_carries_the_header_the_held_count_and_the_held_product(console) -> None:
+    _turn1(console)
+    text, calls = console.say(_drill(ranking_drill="unsure", top_n=None), "customers")
+    (args,) = calls
+    assert args["group_by"] == "customer" and args["top_n"] == 3, args
+    assert "customer_agent_ids" not in args and args["product_code"] == PRODUCT_CODE, args
+    assert "Across all sales agents" in text, text  # the run carries the header too
 
 
 # ============================================================================ never a guess
@@ -212,13 +222,18 @@ def test_scoped_with_no_ranking_held_is_said_and_nothing_runs(console) -> None:
 def test_unsure_with_no_ranking_held_is_the_fresh_ask(console) -> None:
     """Review S3: with nothing to scope to, the global reading is the only one."""
     text, calls = console.say(_drill(ranking_drill="unsure"), "top 10 customers")
-    assert calls == [] and text.strip() == PERIOD_Q, text
+    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
+    assert calls == [] and text.strip().startswith(f"1. {PERIOD_Q}\n"), text
 
 
-def test_unsure_after_a_month_list_is_the_fresh_ask(console) -> None:
+def test_a_new_axis_after_a_month_list_runs_with_the_held_choices_and_no_across_all_header(console) -> None:
+    # Months are not a population: no "Across all months" line (lead decision, S6c review); the held
+    # period, measure and basis still apply.
     _turn1(console, group_by="month")
     text, calls = console.say(_drill(ranking_drill="unsure"), "top 10 customers")
-    assert calls == [] and text.strip() == PERIOD_Q, text
+    (args,) = calls
+    assert args["group_by"] == "customer" and args["top_n"] == 10, args
+    assert "Across all" not in text, text
 
 
 @pytest.mark.parametrize(
@@ -367,18 +382,33 @@ def test_a_refine_verdict_on_a_new_axis_is_the_drill(console) -> None:
     assert args["group_by"] == "customer" and args["customer_agent_ids"] == [AG1, AG2, "none"], args
 
 
-def test_no_reading_on_a_new_axis_after_a_ranking_asks_the_scope(console) -> None:
-    """Never a silent global: the parser gave no reading, so the bot asks (owner, 8 Oct)."""
+def test_no_reading_on_a_new_axis_after_a_ranking_runs_across_all(console) -> None:
+    """Owner ruling B (23 Oct, reverses 8 Oct): no reading runs across all and the header says so."""
     _turn1(console)
-    text, calls = console.say(_drill(ranking_drill=None), "top 10 customers")
-    assert calls == [] and text.strip() == SCOPE_Q, text
+    text, calls = console.say(_drill(ranking_drill=None, measure="qty", basis="delivered", **SEP), "top 10 customers")
+    (args,) = calls
+    assert args["group_by"] == "customer" and "customer_agent_ids" not in args, args
+    assert "Across all sales agents" in text and SCOPE_Q not in text, text
+
+
+def _hold_scope(console) -> None:
+    """A scope question held in the session, as the lane stored it before ruling B (a session can still hold one)."""
+    period = {"value": {"from": SEP["date_filter_start"], "to": SEP["date_filter_end"]}, "label": "September 2026"}
+    base = {"group_by": "customer", "sort": "desc", "basis": "delivered", "measure": "qty"}
+    console.session_vars["focus"]["required_ask"] = {
+        "ask": "sales_ranking", "values": {}, "asking": "scope", "options": [], "misses": 0, "extras": {"scope": {
+            "question": SCOPE_Q, "source": "sales_agent",
+            "scoped": {"args": {**base, "customer_agent_ids": [AG1, AG2, "none"], "product_code": PRODUCT_CODE},
+                       "top_n": 10, "period": period, "held": True},
+            "global": {"args": {"group_by": "customer", "sort": "desc"}, "top_n": 10, "period": None, "held": False},
+        }}}
 
 
 def test_the_scope_reply_runs_the_drill_with_the_held_period(console) -> None:
     """Live: "the agents above" came back as an agent ranking. The question holds the ask;
     the reply only says which reading."""
     _turn1(console)
-    console.say(_drill(ranking_drill="unsure"), "top 10 customers")
+    _hold_scope(console)
     _text, calls = console.say(_scope_reply("scoped"), "the agents above")
     (args,) = calls
     assert args["group_by"] == "customer" and args["top_n"] == 10, args
@@ -388,9 +418,10 @@ def test_the_scope_reply_runs_the_drill_with_the_held_period(console) -> None:
 
 def test_the_scope_reply_global_is_the_fresh_ask(console) -> None:
     _turn1(console)
-    console.say(_drill(ranking_drill="unsure"), "top 10 customers")
+    _hold_scope(console)
     text, calls = console.say(_scope_reply("global", group_by="customer"), "across all customers")
-    assert calls == [] and text.strip() == PERIOD_Q, text
+    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
+    assert calls == [] and text.strip().startswith(f"1. {PERIOD_Q}\n"), text
     _text, calls = console.say(_reply(**SEP), "september")
     _text, calls = console.say(_reply(measure="amount"), "by amount") if not calls else (_text, calls)
     _text, calls = console.say(_reply(basis="delivered"), "delivered") if not calls else (_text, calls)
@@ -401,7 +432,7 @@ def test_the_scope_reply_global_is_the_fresh_ask(console) -> None:
 
 def test_an_unread_scope_reply_asks_again_then_gives_up(console) -> None:
     _turn1(console)
-    console.say(_drill(ranking_drill="unsure"), "top 10 customers")
+    _hold_scope(console)
     text, calls = console.say(_scope_reply(None, group_by=None), "hmm")
     assert calls == [] and SCOPE_Q in text, text
     text, calls = console.say(_scope_reply(None, group_by=None), "dunno")

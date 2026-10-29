@@ -14,6 +14,12 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Delete controls read the caller's permissions (ATTACH-DELETE-PERM); grant them here.
+vi.mock('@/hooks/usePermissions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/usePermissions')>()),
+  useHasPermission: () => true,
+}));
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 

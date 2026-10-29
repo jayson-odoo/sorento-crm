@@ -10,7 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.services.uuid_path_param import UUID_PATTERN
 
@@ -162,17 +162,16 @@ class ClashCandidateResponse(BaseModel):
     """
 
     project_id: str
-    project_code: str
+    project_code: Optional[str] = None
     title: str
-    outcome: str
+    outcome: Optional[str] = None
     status_label: Optional[str] = None
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
     developer_name: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = None
-    brands: List[str] = Field(default_factory=list)
     last_activity_at: Optional[datetime] = None
-    similarity: float
+    similarity: Optional[float] = None
     blocks: bool
 
 
@@ -208,17 +207,23 @@ class ProjectRegisterRequest(BaseModel):
     # lead another project already carries is refused.
     lead_id: Optional[str] = None
     admin_ref: Optional[str] = Field(None, max_length=64)
+    # Required to register or submit (422 project_customer_required); a draft and an edit
+    # may leave it out.
+    customer_id: Optional[str] = None
+    # A salesperson holding only the submit grant: false saves a draft, true submits it.
+    submit: bool = False
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
     architect_party_id: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brand_ids: List[str] = Field(default_factory=list)
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -236,20 +241,73 @@ class ProjectUpdateRequest(BaseModel):
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
     architect_party_id: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brand_ids: Optional[List[str]] = None
     # Sent as null to unlink; omitted leaves the link as it is (#1339).
     lead_id: Optional[str] = None
+    customer_id: Optional[str] = None
 
     # AC-G7: critical is a flag settable at any status, never a funnel rung.
     is_critical: Optional[bool] = None
     management_support: Optional[str] = None
     management_notes: Optional[str] = None
+
+
+class ProjectApproveRequest(BaseModel):
+    """Approve a pending portal registration (PROJECT-REG-PORTAL R9). Every field is
+    optional: the header's Approve sends `{}` once the developer was picked on the edit page,
+    and a field sent here wins over what the project already carries."""
+
+    title: Optional[str] = Field(None, min_length=1)
+    developer_party_id: Optional[str] = None
+    type_id: Optional[str] = None
+    template_id: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    admin_ref: Optional[str] = Field(None, max_length=64)
+
+    registered_company_name: Optional[str] = None
+    location: Optional[str] = None
+    address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
+    architect_party_id: Optional[str] = None
+    main_contractor_party_id: Optional[str] = None
+    estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
+    launch_date: Optional[date] = None
+    expected_delivery_from: Optional[date] = None
+    expected_delivery_to: Optional[date] = None
+
+
+class ProjectRejectRequest(BaseModel):
+    reason: str
+
+
+class ProjectPossibleDuplicate(BaseModel):
+    """An approved project a pending registration may repeat (D8): a link, never a block."""
+
+    project_id: str
+    project_code: Optional[str] = None
+    title: str
+
+
+class ProjectRegistrationInfo(BaseModel):
+    """What the sales agent typed on the portal that has no home on a project (R7), shown
+    read-only under the detail header. Null on a staff-registered project."""
+
+    sales_agent_name: Optional[str] = None
+    distributor_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    your_ref: Optional[str] = None
+    type_of_building: Optional[str] = None
+    developer_name: Optional[str] = None
+    main_contractor_name: Optional[str] = None
+    architect_name: Optional[str] = None
 
 
 class ProjectStatusChangeRequest(BaseModel):
@@ -261,7 +319,7 @@ class ProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    project_code: str
+    project_code: Optional[str] = None
     title: str
     outcome: str
     loss_reason: Optional[str] = None
@@ -286,6 +344,7 @@ class ProjectResponse(BaseModel):
     # Null with no lead, or with a lead whose buyer is not known yet.
     customer_id: Optional[str] = None
     customer_name: Optional[str] = None
+    customer_code: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_attn: Optional[str] = None
 
@@ -304,6 +363,8 @@ class ProjectResponse(BaseModel):
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
     architect_party_id: Optional[str] = None
     architect_name: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
@@ -312,8 +373,6 @@ class ProjectResponse(BaseModel):
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brands: List[str] = Field(default_factory=list)
-    brand_ids: List[str] = Field(default_factory=list)
 
     last_meaningful_activity_at: Optional[datetime] = None
     days_since_last_activity: Optional[int] = None
@@ -332,6 +391,15 @@ class ProjectResponse(BaseModel):
     stale_since: Optional[datetime] = None
     is_unattended: bool = False
     can_edit: bool = False
+
+    # Portal registration (PROJECT-REG-PORTAL R1, R7): NULL approval_state is a staff project.
+    # A pending or rejected one has no code yet.
+    approval_state: Optional[str] = None
+    reject_reason: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    decided_at: Optional[datetime] = None
+    registration: Optional[ProjectRegistrationInfo] = None
+    possible_duplicates: List[ProjectPossibleDuplicate] = Field(default_factory=list)
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -785,7 +853,6 @@ class ProjectLeadQualifyRequest(BaseModel):
     type_id: Optional[str] = None
     template_id: Optional[str] = None
     owner_user_id: Optional[str] = None
-    brand_ids: Optional[List[str]] = None
     details: Optional[Dict[str, Any]] = Field(
         None, description="Sales-profile fields, same shape as registration."
     )
@@ -1291,6 +1358,14 @@ class ProjectQuotationLineUpdate(BaseModel):
     band_label: Optional[str] = Field(None, max_length=150)
     is_rate_only: Optional[bool] = None
 
+    @field_validator("quantity")
+    @classmethod
+    def _quantity_not_null(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        # Runs only when the key is sent: an explicit null would be read as 1 downstream.
+        if v is None:
+            raise ValueError("Quantity cannot be blank.")
+        return v
+
 
 class ProjectQuotationLineBulkItem(ProjectQuotationLineBase):
     """One line in a whole-set save (S10).
@@ -1563,6 +1638,8 @@ class ProjectPurchaseOrderResponse(BaseModel):
     # What still stands between this PO and its sales orders (see the serializer).
     status: Optional[str] = None
     po_confirmed: bool = False
+    # PM-SIMPLIFY: the PO came from an uploaded document (its lines are the document's).
+    has_document: bool = False
     schedule_confirmed: bool = False
     # Sales orders already OUT of this PO. Editing it stays allowed - corrections are the
     # normal case - but the screen has to be able to say so before somebody saves over it,
@@ -1582,6 +1659,11 @@ class ProjectPurchaseOrderResponse(BaseModel):
 
     # True only on the response to the create that actually moved the funnel (AC-F10).
     status_moved_to_po_received: bool = False
+
+    # PM-SIMPLIFY AC-O3: units ordered and delivered (AutoCount), next delivery.
+    ordered_units: Decimal = Decimal("0")
+    delivered_units: Decimal = Decimal("0")
+    next_delivery_date: Optional[date] = None
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -1613,6 +1695,14 @@ class ProjectPurchaseOrderLineUpdate(BaseModel):
     uom: Optional[str] = None
     sort_order: Optional[int] = None
     notes: Optional[str] = None
+
+    @field_validator("quantity")
+    @classmethod
+    def _quantity_not_null(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        # Runs only when the key is sent: an explicit null would be read as 1 downstream.
+        if v is None:
+            raise ValueError("Quantity cannot be blank.")
+        return v
 
 
 class ProjectPurchaseOrderLineWrite(ProjectPurchaseOrderLineBase):

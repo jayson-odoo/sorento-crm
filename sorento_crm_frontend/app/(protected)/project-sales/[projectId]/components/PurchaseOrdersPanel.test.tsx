@@ -183,7 +183,7 @@ describe('PurchaseOrdersPanel', () => {
     ).toBeNull();
     // The explainer under the heading is gone (ADR 1e); the two ways in live in the toolbar.
     expect(screen.getByRole('button', { name: /Upload a PO document/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Record a PO/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions' })).toBeInTheDocument();
   });
 
   it('offers both ways in when nothing is recorded, without explaining the funnel', async () => {
@@ -193,9 +193,57 @@ describe('PurchaseOrdersPanel', () => {
     // The two ways in live in the TOOLBAR only (ADR 1d): no centred duplicates in the empty
     // state, and no paragraph teaching what recording a PO does to the funnel.
     expect(screen.getByRole('button', { name: /Upload a PO document/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Record a PO/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Record it by hand/i })).toBeNull();
     expect(screen.queryByText(/moves this project to PO Received/i)).not.toBeInTheDocument();
+  });
+
+  it('puts Upload at the right end and Record a PO only inside the Actions menu (PROJECT-PO-ACTIONS)', async () => {
+    renderPos();
+    expect(await screen.findByText(/No PO received yet/i)).toBeInTheDocument();
+
+    // The shared list toolbar's right cluster: Actions, then the primary, at the end.
+    const upload = screen.getByRole('button', { name: /Upload a PO document/i });
+    const actions = screen.getByRole('button', { name: 'Actions' });
+    const columns = screen.getByRole('button', { name: /Columns/i });
+    const rightCluster = upload.parentElement as HTMLElement;
+    expect(rightCluster).toBe(actions.parentElement);
+    expect(rightCluster.className).toContain('ms-auto');
+    expect(rightCluster.lastElementChild).toBe(upload);
+    expect(rightCluster.contains(columns)).toBe(false);
+    expect(
+      columns.compareDocumentPosition(upload) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    // Not a button of its own any more.
+    expect(screen.queryByRole('button', { name: /Record a PO/i })).toBeNull();
+
+    fireEvent.keyDown(actions, { key: 'Enter' });
+    const menu = await screen.findByRole('menu');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Record a PO/i }));
+    // The same dialog the old button opened.
+    expect(await screen.findByText('Record a purchase order')).toBeInTheDocument();
+  });
+
+  it('searches from inside the shared toolbar, so the header stays one row', async () => {
+    listPurchaseOrders.mockResolvedValue([
+      po(),
+      po({ id: 'po2', po_number: 'PO-7777', issuing_party_name: 'Other Builder' }),
+    ]);
+    const { container } = renderPos();
+    expect(await screen.findByText('PO-7777')).toBeInTheDocument();
+
+    const box = screen.getByRole('searchbox', { name: 'Search POs' });
+    const toolbar = container.querySelector('[data-slot="data-grid-list-toolbar"]') as HTMLElement;
+    expect(toolbar.contains(box)).toBe(true);
+    expect(screen.getAllByRole('searchbox')).toHaveLength(1);
+
+    fireEvent.change(box, { target: { value: '7777' } });
+    expect(await screen.findByText('PO-7777')).toBeInTheDocument();
+    expect(screen.queryByText('PO-9001')).toBeNull();
+
+    fireEvent.change(box, { target: { value: 'nothing like this' } });
+    expect(await screen.findByText('Nothing matches that search')).toBeInTheDocument();
   });
 
   it('separates the two mismatch kinds instead of one generic warning', async () => {
@@ -332,6 +380,8 @@ describe('PurchaseOrdersPanel', () => {
 
     expect((await screen.findAllByText('PO-9001')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /Record a PO/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Upload a PO document/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Delete PO-9001/i })).toBeNull();
   });
 });
@@ -374,5 +424,32 @@ describe('SamplesPanel', () => {
     renderSamples();
 
     expect((await screen.findAllByText('-')).length).toBeGreaterThan(0);
+  });
+});
+
+describe('describeNextStep (PM-SIMPLIFY Orders tab)', () => {
+  it('names the step left on each PO, counting unpublished orders', async () => {
+    const { describeNextStep } = await import('./PurchaseOrdersPanel');
+    const base = {
+      id: 'po1',
+      project_id: 'p1',
+      po_source: 'contractor_direct',
+      po_number: 'PO-1',
+      line_count: 3,
+      line_total: '0',
+      model_mismatch_count: 0,
+      price_mismatch_count: 0,
+    } as ProjectPurchaseOrder;
+    const order = (status: string) => ({ status }) as never;
+
+    expect(describeNextStep({ ...base, has_document: true, po_confirmed: false })).toBe('Confirm PO');
+    expect(describeNextStep({ ...base, line_count: 0 })).toBe('Add the lines');
+    expect(describeNextStep({ ...base, po_confirmed: true })).toBe('Add or confirm the schedule');
+    const ready = { ...base, po_confirmed: true, schedule_confirmed: true };
+    expect(describeNextStep(ready)).toBe('Build sales orders');
+    expect(describeNextStep(ready, [order('published'), order('blocked')])).toBe(
+      'Publish 1 sales order',
+    );
+    expect(describeNextStep(ready, [order('published'), order('amended')])).toBe('Sales orders out');
   });
 });

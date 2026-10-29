@@ -17,6 +17,14 @@ class ReportAskFilter(BaseModel):
     values: List[str]
 
 
+class ReportAskNotApplied(BaseModel):
+    # REPORT-UNIFY: a filter the caller named that did not narrow the figures, and why
+    # (unknown_spec | hidden | unit | invalid_value | per_document).
+    filter: str
+    value: str
+    reason: str
+
+
 class ReportAskRow(BaseModel):
     rank: int
     name: str
@@ -26,15 +34,32 @@ class ReportAskRow(BaseModel):
     # "(no agent)" row), so a follow-up can rank within exactly the rows printed. Empty for a
     # channel or month row (not a drill source).
     keys: List[str] = []
+    # REPORT-SMART-L R3a: a category row's code (the top selling reply printed a category by its code).
+    code: Optional[str] = None
+    # REPORT-SMART-1021: a count measure's distinct count (customers, orders, products).
+    count: Optional[int] = None
+    # REPORT-SMART-1021 `compare_to`: the earlier window's figures and the change in percent
+    # on the sort measure (None when the earlier figure is zero).
+    prev: Optional["ReportAskFigures"] = None
+    change_pct: Optional[float] = None
+
+
+class ReportAskFigures(BaseModel):
+    qty: int
+    amount: float
+    count: Optional[int] = None
 
 
 class ReportAskTotal(BaseModel):
     qty: int
     amount: float
+    count: Optional[int] = None
+    prev: Optional[ReportAskFigures] = None
+    change_pct: Optional[float] = None
 
 
 class ReportAskResponse(BaseModel):
-    status: str  # ok | refused | busy
+    status: str  # ok | refused | busy | no_products
     message: Optional[str] = None
     basis: str
     basis_label: str
@@ -42,13 +67,21 @@ class ReportAskResponse(BaseModel):
     sort: str = "desc"
     group_by: Optional[str] = None
     group_label: Optional[str] = None
-    date_from: str
-    date_to: str
+    # None = every date (an outstanding basis asked with no period).
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
     filters: List[ReportAskFilter] = []
+    not_applied: List[ReportAskNotApplied] = []
     rows: List[ReportAskRow] = []
     more: int = 0
     total_count: int = 0
     total: ReportAskTotal
+    compare_to: Optional[str] = None
+    compare_from: Optional[str] = None
+    compare_until: Optional[str] = None
+    # REPORT-SMART-L R3b: an item / category ranking with an agent filter carries the share of the window's
+    # sales orders that carry any agent (the old top selling note); absent otherwise.
+    sales_agent_fill_rate: Optional[float] = None
 
 
 class ReportAskChatRow(BaseModel):

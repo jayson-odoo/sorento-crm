@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.planning_change import PlanningChangeFromTo
+from app.schemas.project_line_split import LineSplitsOut, LineSplitViewOut
 
 
 # --- sales orders -----------------------------------------------------------
@@ -154,6 +155,10 @@ class SalesOrderLine(BaseModel):
     #: sorts and labels by (PLAN-so-lines-autocount-order.md). `None` for a line AutoCount
     #: never numbered.
     line_no: Optional[int] = None
+    #: FULFIL-SO-REMARK (AC-16): the line reads as a mockup line, and wears the Mockup label
+    #: (only when the order mixes mockup and actual lines).
+    is_mockup: bool = False
+    mockup_label: bool = False
     #: Where THIS LINE came from - never inherited from the header (R2): a line with no
     #: provenance of its own reads `manual` even under an AutoCount or uploaded header.
     source: str = "manual"
@@ -198,6 +203,10 @@ class SalesOrderLine(BaseModel):
     #: Sent on the SINGLE order read only. The list has no column for it and would pay two
     #: more queries a page for a fact nothing there prints.
     order_inquiry: Optional[SalesOrderLineInquiry] = None
+    #: OI-SPLIT-VIEW (UAC B1, B7): the split popup of this line's planning mirror, the same
+    #: value the OI reads carry; null on a line with no splits or no project order. Single
+    #: order read only, like `order_inquiry`.
+    split_view: Optional[LineSplitViewOut] = None
     #: Which confirmed revision decided supply for this line: the ACTIVE decision's
     #: `revision_no` when its `line_snapshots` name this core line, `None` otherwise.
     #:
@@ -332,6 +341,9 @@ class SalesOrder(BaseModel):
     is_transferable: Optional[bool] = None
     #: The customer's own PO number as AutoCount printed it (SO-PO-REF). Read-only.
     po_ref: Optional[str] = None
+    #: FULFIL-SO-REMARK (AC-16): AutoCount Shipping Info, and the default SO remark over all lines.
+    ship_info: Optional[str] = None
+    remark: str = ""
     #: The purchase orders its lines wait on, each with whether the pairing is resolved.
     #: Present on the LIST (attached in one query per page); absent on a single read.
     linked_purchase_orders: List[LinkedPurchaseOrder] = Field(default_factory=list)
@@ -361,6 +373,10 @@ class SalesOrder(BaseModel):
     planned_lines: int = 0
     plannable_lines: int = 0
     created_at: str
+    #: OI-SPLIT-VIEW (UAC E5): the order's split sheet as `GET /project-sales/sales-orders/
+    #: {pso}/line-splits` serves it (`LineSplitService.read`), for the read-only split popups;
+    #: `None` when no line of the order has saved splits. Single read only.
+    line_splits: Optional[LineSplitsOut] = None
 
 
 class LinkedPurchaseOrder(BaseModel):
@@ -531,6 +547,27 @@ class SalesAgentOption(BaseModel):
 
 # --- purchase orders --------------------------------------------------------
 
+class DocumentReceiptOut(BaseModel):
+    """LINKAGE-UNIFY: one GR bin goods were received at, and how many."""
+
+    qty: str
+    bin: Optional[str] = None
+
+
+class PoLineSpoOut(BaseModel):
+    """LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto
+    (`goods_chain.spo_lines_of`) - the PO screens' SPO column, drawn with the order
+    inquiry's own document pills."""
+
+    spo_number: Optional[str] = None
+    #: `L12` when the book numbered the line.
+    line_label: Optional[str] = None
+    #: Where the SPO line's landed goods sit, per GR bin. Empty while in transit.
+    receipts: List[DocumentReceiptOut] = []
+    #: `spo_withdrawn` when the SPO line brings nothing.
+    dead_reason: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
+
+
 class PurchaseOrderLine(BaseModel):
     id: str
     sku: str
@@ -592,6 +629,13 @@ class PurchaseOrderLine(BaseModel):
     #: and resolving it per page would be a full `sales_orders` scan per search keystroke.
     #: The detail/update routes (`get_one`, `update`) always resolve and never emit `None`.
     book_so_unresolved: Optional[bool] = None
+    #: LINKAGE-UNIFY U4: every SPO line this PO line was transferred onto, with where its
+    #: goods landed or why it brings nothing. Filled on the detail and update routes; the
+    #: list leaves it empty.
+    spos: List[PoLineSpoOut] = []
+    #: `po_cancelled` when this PO line brings nothing (`goods_chain.po_line_is_dead`), so a
+    #: placement on it reads "PO cancelled". Filled with `spos` (detail and update routes).
+    dead_reason: Optional[Literal["po_cancelled"]] = None
 
 
 class PurchaseOrderSpoLanding(BaseModel):
@@ -854,6 +898,11 @@ class SoLineDeliveryRow(BaseModel):
     qty: float
 
 
+class SoOtherDeliveryRow(SoLineDeliveryRow):
+    """A DO line naming the SO whose product is on no line of it: it names its own SKU."""
+    sku: Optional[str] = None
+
+
 class SoLineCancelRow(BaseModel):
     doc_no: str
     doc_date: Optional[date] = None
@@ -878,3 +927,5 @@ class SoProductGroupHistory(BaseModel):
 class SalesOrderDeliveries(BaseModel):
     lines: List[SoLineHistory]
     groups: List[SoProductGroupHistory]
+    # DO lines naming this SO whose product is on no line of it (DO-SO-LINK-SURFACE).
+    others: List[SoOtherDeliveryRow] = []

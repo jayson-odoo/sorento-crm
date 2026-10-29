@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission_with_api_key
+from app.dependencies import require_any_permission_with_api_key
 from app.modules.projects.status_entities import (
     PROJECT_ENTITY_TYPE,
     PROJECT_LEAD_ENTITY_TYPE,
@@ -28,6 +28,10 @@ from app.services.status_service import resolve_graph
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 
 PROJECT_SALES_GRAPHS = frozenset(
     {PROJECT_ENTITY_TYPE, PROJECT_TASK_ENTITY_TYPE, PROJECT_LEAD_ENTITY_TYPE}
@@ -35,13 +39,13 @@ PROJECT_SALES_GRAPHS = frozenset(
 
 
 @router.get("/status-graph/{entity_type}", response_model=StatusGraphResponse)
-async def get_project_sales_status_graph(
+def get_project_sales_status_graph(
     entity_type: str,
     scope_id: Optional[str] = Query(
         default=None,
         description="A project template's forked graph. Falls back to the default when it has not forked.",
     ),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     if entity_type not in PROJECT_SALES_GRAPHS:

@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   ClashPreview,
@@ -7,6 +8,7 @@ import type {
   ProjectListParams,
   ProjectParty,
   ProjectPartyBody,
+  ProjectPossibleDuplicate,
   ProjectRegisterBody,
   ProjectStakeholder,
   ProjectStakeholderBody,
@@ -63,8 +65,33 @@ import type {
   TaskPhase,
   TaskStatusChangeBody,
 } from '../types/project.types';
+import { projectCodeLabel } from '../lib/projectCode';
 
 const BASE = '/api/v1/project-sales';
+
+/**
+ * A refused approve. An exact developer + title repeat names the approved project it repeats
+ * (`existing_project`, at the top of the body or under `details`), so the header can link it.
+ */
+export class ProjectApprovalError extends Error {
+  existingProject?: ProjectPossibleDuplicate;
+}
+
+async function approvalError(response: Response, fallback: string): Promise<ProjectApprovalError> {
+  const spare = response.clone();
+  const error = new ProjectApprovalError(await extractApiError(response, fallback));
+  try {
+    const body = (await spare.json()) as {
+      existing_project?: ProjectPossibleDuplicate;
+      details?: { existing_project?: ProjectPossibleDuplicate };
+    };
+    const existing = body.existing_project ?? body.details?.existing_project;
+    if (existing && typeof existing === 'object') error.existingProject = existing;
+  } catch {
+    // not JSON: the message is all there is
+  }
+  return error;
+}
 
 interface ListEnvelope<T> {
   data: T[];
@@ -77,13 +104,13 @@ function buildProjectParams(params: ProjectListParams): string {
   const sp = new URLSearchParams();
   if (params.query) sp.set('query', params.query);
   if (params.only_critical) sp.set('only_critical', 'true');
+  splitMulti(params.approval_state).forEach((value) => sp.append('approval_state', value));
+  if (params.approved_only) sp.set('approved_only', 'true');
   if (params.page) sp.set('page', String(params.page));
   if (params.limit) sp.set('limit', String(params.limit));
   if (params.sort) sp.set('sort', params.sort);
   if (params.dir) sp.set('dir', params.dir);
-  (
-    ['status_id', 'outcome', 'owner_user_id', 'developer_party_id', 'type_id', 'brand_id'] as const
-  ).forEach((key) => {
+  (['status_id', 'outcome', 'owner_user_id', 'developer_party_id', 'type_id'] as const).forEach((key) => {
     (params[key] ?? []).forEach((value) => sp.append(key, value));
   });
   const query = sp.toString();
@@ -116,6 +143,8 @@ export async function listEditableProjectOptions(query: string) {
   for (;;) {
     const body = await listProjects({
       query: query || undefined,
+      // A registration waiting for approval takes no uploads (PROJECT-REG-PORTAL R4).
+      approved_only: true,
       page,
       limit: PROJECTS_MAX_PAGE_LIMIT,
     });
@@ -130,7 +159,7 @@ export async function listEditableProjectOptions(query: string) {
     .map((project) => ({
       value: project.id,
       label: project.title,
-      description: [project.project_code, project.developer_name].filter(Boolean).join(' · '),
+      description: [projectCodeLabel(project), project.developer_name].filter(Boolean).join(' · '),
     }));
 }
 
@@ -172,6 +201,65 @@ export async function registerProject(body: ProjectRegisterBody): Promise<Projec
   return response.json();
 }
 
+/** Submits the user's own draft or rejected registration for approval (J1, J5). */
+export async function submitProject(projectId: string): Promise<Project> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/submit`, { method: 'POST' });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to submit the registration'));
+  return response.json();
+}
+
+/** One proposal per field from the register form's AI extract (PROJECT-REGISTER-V2 C3). */
+export type ProjectExtractProposal = {
+  status: 'match' | 'new' | 'not_found';
+  id?: string;
+  name?: string;
+  value?: string;
+};
+
+export type ProjectExtractFieldKey =
+  | 'developer'
+  | 'architect'
+  | 'main_contractor'
+  | 'project_type'
+  | 'state'
+  | 'mukim'
+  | 'title'
+  | 'customer';
+
+/** The backend sends title and mukim as plain strings, the rest as proposal objects. */
+export type ProjectExtractResult = Partial<
+  Record<ProjectExtractFieldKey, ProjectExtractProposal | string>
+>;
+
+/** `text` is the title box text; `files` are photos. Writes nothing on the server (C4). */
+export async function aiExtractProject(
+  text: string | null,
+  files: File[],
+): Promise<ProjectExtractResult> {
+  const form = new FormData();
+  if (text) form.set('text', text);
+  for (const file of files) form.append('files', file, file.name);
+  const response = await apiFetch(`${BASE}/projects/ai-extract`, { method: 'POST', body: form });
+  if (!response.ok) throw new Error(await extractApiError(response, 'AI extract failed.'));
+  return response.json();
+}
+
+/** Customers by name for the register form's Customer picker (A3): name only, no code. */
+export async function listCustomerOptions(
+  query: string,
+): Promise<{ value: string; label: string }[]> {
+  const sp = new URLSearchParams({ limit: '20' });
+  if (query.trim()) sp.set('query', query.trim());
+  const response = await apiFetch(`/api/v1/order-management/customers/select?${sp.toString()}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load customers'));
+  const body = (await response.json()) as { data?: { id: string; customer_name: string }[] };
+  return (body.data ?? []).map((customer) => ({
+    value: customer.id,
+    label: customer.customer_name,
+  }));
+}
+
 export async function updateProject(
   projectId: string,
   body: ProjectUpdateBody,
@@ -197,6 +285,36 @@ export async function changeProjectStatus(
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to move the project'));
+  return response.json();
+}
+
+/**
+ * Approve a pending portal registration (PROJECT-REG-PORTAL R9): it draws its PPF code and
+ * enters the funnel. The header button sends no body once the developer was picked on the
+ * edit page.
+ */
+export async function approveProject(
+  projectId: string,
+  body: Partial<ProjectRegisterBody> = {},
+): Promise<Project> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await approvalError(response, 'Failed to approve the project');
+  return response.json();
+}
+
+/** Reject a pending portal registration with the reason the salesperson reads (R10). */
+export async function rejectProject(projectId: string, reason: string): Promise<Project> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to reject the project'));
   return response.json();
 }
 
@@ -332,14 +450,18 @@ export async function listParties(
   return response.json();
 }
 
-export async function createParty(body: ProjectPartyBody): Promise<ProjectParty> {
+/** A 200 answer means the party already existed for that type (B4); 201 means it was created. */
+export async function createParty(
+  body: ProjectPartyBody,
+): Promise<ProjectParty & { already_existed?: boolean }> {
   const response = await apiFetch(`${BASE}/parties/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to create the party'));
-  return response.json();
+  const party = (await response.json()) as ProjectParty;
+  return { ...party, already_existed: response.status === 200 };
 }
 
 export async function updateParty(

@@ -240,12 +240,12 @@ def _scoped_customer_names(db: Session, contact_id: Optional[str], space_id: Opt
 
 
 @router.get("/", response_model=ListResponse[ComplaintResponse])
-async def get_complaints(
+def get_complaints(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
-    assigned_to: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
+    assigned_to: Optional[list[str]] = Query(None),
+    status: Optional[list[str]] = Query(None),
     root_cause_ids: Optional[str] = Query(
         None, description="Comma-separated root cause ids; matches complaints with ANY of them"
     ),
@@ -295,7 +295,7 @@ async def get_complaints(
 
 
 @router.get("/analytics")
-async def get_complaint_analytics(
+def get_complaint_analytics(
     metric: str = Query("count", description="Aggregate to compute. Only 'count' is supported."),
     group_by: str = Query(
         "none",
@@ -345,7 +345,7 @@ async def get_complaint_analytics(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_complaints(
+def bulk_delete_complaints(
     body: BulkDeleteComplaintsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -361,7 +361,7 @@ async def bulk_delete_complaints(
 
 
 @router.delete("/attachments/{link_id}", status_code=status.HTTP_200_OK)
-async def delete_complaint_attachment(
+def delete_complaint_attachment(
     link_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -382,7 +382,7 @@ async def delete_complaint_attachment(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def link_attachment_to_complaint(
+def link_attachment_to_complaint(
     complaint_id: str,
     body: ComplaintAttachmentLinkRequest,
     current_user: dict = Depends(get_current_user),
@@ -410,7 +410,7 @@ async def link_attachment_to_complaint(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def upload_complaint_response_attachment(
+def upload_complaint_response_attachment(
     complaint_id: str,
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
@@ -424,7 +424,7 @@ async def upload_complaint_response_attachment(
         validate_uuid_path(complaint_id, resource="Complaint")
         service = ComplaintService(db)
         complaint = service.get_complaint(complaint_id)
-        contents = await file.read()
+        contents = file.file.read()
         from app.services.entity_attachment_service import create_response_attachment
 
         return create_response_attachment(
@@ -443,7 +443,7 @@ async def upload_complaint_response_attachment(
 
 
 @router.delete("/response-attachments/{link_id}", status_code=status.HTTP_200_OK)
-async def delete_complaint_response_attachment(
+def delete_complaint_response_attachment(
     link_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -460,7 +460,7 @@ async def delete_complaint_response_attachment(
 
 
 @router.get("/{complaint_id}/conversation")
-async def get_complaint_conversation(
+def get_complaint_conversation(
     complaint_id: str,
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     cursor: Optional[str] = Query(None),
@@ -546,7 +546,7 @@ router.include_router(
 
 
 @router.get("/{complaint_id}/fulfilment-orders")
-async def get_complaint_fulfilment_orders(
+def get_complaint_fulfilment_orders(
     complaint_id: str,
     current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.view")),
     db: Session = Depends(get_db),
@@ -566,7 +566,7 @@ async def get_complaint_fulfilment_orders(
 
 
 @router.get("/{complaint_id}", response_model=ComplaintResponse)
-async def get_complaint(
+def get_complaint(
     complaint_id: str,
     current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.view")),
     db: Session = Depends(get_db)
@@ -591,7 +591,7 @@ async def get_complaint(
     response_model=ViewLinkResponse,
     dependencies=[Depends(require_public_view_links_enabled())],
 )
-async def get_or_create_complaint_view_link(
+def get_or_create_complaint_view_link(
     complaint_id: str,
     data: Optional[ViewLinkRequest] = Body(None),
     current_user: dict = Depends(get_current_user),
@@ -1023,7 +1023,7 @@ def _build_merged_complaint_create_for_validation(
 
 
 @router.post("/", response_model=ComplaintResponse, status_code=status.HTTP_201_CREATED)
-async def create_complaint(
+def create_complaint(
     request: Request,
     body: Any = Body(..., embed=False),
     current_user: dict = Depends(get_current_user_or_api_key),  # Support both JWT and API key
@@ -1101,7 +1101,7 @@ async def create_complaint(
             update_payload = ComplaintUpdate.model_validate(
                 complaint_data.model_dump(exclude_none=True, exclude={"attachments"})
             )
-            service.update_complaint(str(existing.id), update_payload)
+            service.resubmit_rejected_complaint(str(existing.id), update_payload)
             db.commit()
             return service.get_complaint_with_attachments(str(existing.id))
 
@@ -1153,7 +1153,7 @@ async def create_complaint(
 
 
 @router.post("/integration", status_code=status.HTTP_200_OK)
-async def create_complaint_integration(
+def create_complaint_integration(
     request: Request,
     body: Union[List[ComplaintIntegrationCreate], ComplaintIntegrationCreate] = Body(..., embed=False),
     db: Session = Depends(get_db),
@@ -1231,7 +1231,7 @@ async def create_complaint_integration(
 
 
 @router.post("/{complaint_id}/sync-assignee", status_code=status.HTTP_200_OK)
-async def sync_complaint_assignee(
+def sync_complaint_assignee(
     complaint_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1253,7 +1253,7 @@ async def sync_complaint_assignee(
     response_model=ComplaintResponse,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def update_complaint(
+def update_complaint(
     complaint_id: str,
     complaint_data: ComplaintUpdate,
     request: Request,
@@ -1278,7 +1278,7 @@ async def update_complaint(
     response_model=ComplaintResponse,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def approve_complaint(
+def approve_complaint(
     complaint_id: str,
     request: Request,
     current_user: dict = Depends(require_permission("complaint_management.complaints.approve")),
@@ -1323,7 +1323,7 @@ async def approve_complaint(
     response_model=ComplaintResponse,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def reject_complaint(
+def reject_complaint(
     complaint_id: str,
     payload: ComplaintRejectRequest,
     request: Request,
@@ -1370,7 +1370,7 @@ async def reject_complaint(
     response_model=ComplaintResponse,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def process_complaint_by_cs(
+def process_complaint_by_cs(
     complaint_id: str,
     payload: ComplaintFinalizeRequest,
     request: Request,
@@ -1420,7 +1420,7 @@ async def process_complaint_by_cs(
     response_model=ComplaintResponse,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def close_complaint(
+def close_complaint(
     complaint_id: str,
     payload: ComplaintFinalizeRequest,
     request: Request,
@@ -1470,7 +1470,7 @@ async def close_complaint(
     response_model=ComplaintResponse,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def void_complaint(
+def void_complaint(
     complaint_id: str,
     payload: FormVoidRequest,
     current_user: dict = Depends(require_permission("complaint_management.complaints.void")),
@@ -1501,7 +1501,7 @@ async def void_complaint(
 
 
 @router.post("/{complaint_id}/export/pdf")
-async def export_complaint_pdf(
+def export_complaint_pdf(
     complaint_id: str,
     current_user: dict = Depends(require_permission("complaint_management.complaints.view")),
     db: Session = Depends(get_db),
@@ -1555,7 +1555,7 @@ async def export_complaint_pdf(
     response_model=ComplaintResponse,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def notify_complaint_root_cause(
+def notify_complaint_root_cause(
     complaint_id: str,
     request: Request,
     current_user: dict = Depends(require_permission("complaint_management.complaints.edit")),
@@ -1584,7 +1584,7 @@ async def notify_complaint_root_cause(
     response_model=ComplaintResponse,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def notify_complaint_resolution(
+def notify_complaint_resolution(
     complaint_id: str,
     request: Request,
     current_user: dict = Depends(require_permission("complaint_management.complaints.edit")),
@@ -1613,7 +1613,7 @@ async def notify_complaint_resolution(
     response_model=ComplaintResponse,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def update_complaint_and_reply(
+def update_complaint_and_reply(
     complaint_id: str,
     complaint_data: ComplaintUpdate,
     request: Request,
@@ -1653,7 +1653,7 @@ async def update_complaint_and_reply(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def delete_complaint(
+def delete_complaint(
     complaint_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

@@ -32,6 +32,7 @@ from app.api.v1 import (
     dealer_kit,
     reports,
     sales,
+    finance,
     scm,
     connector,
     form_comments,
@@ -43,6 +44,7 @@ from app.api.v1.system import (
     companies as system_companies,
 )
 from app.api.v1.assistant import record_context as assistant_record_context
+from app.api.v1.projects._own_scope import project_own_scope_guard
 from app.modules.runtime.guards import (
     require_any_module_enabled,
     require_module_enabled,
@@ -109,13 +111,23 @@ api_router.include_router(
     projects.router,
     prefix="/project-sales",
     tags=["project-sales"],
-    dependencies=[Depends(require_module_enabled_with_api_key("projects"))],
+    dependencies=[
+        Depends(require_module_enabled_with_api_key("projects")),
+        # "Only theirs" for a user holding projects.projects.view_own alone (PORTAL-P2).
+        Depends(project_own_scope_guard),
+    ],
 )
 api_router.include_router(
     sales.router,
     prefix="/sales",
     tags=["sales"],
     dependencies=[Depends(require_module_enabled_with_api_key("sales"))],
+)
+api_router.include_router(
+    finance.router,
+    prefix="/finance",
+    tags=["finance"],
+    dependencies=[Depends(require_module_enabled_with_api_key("finance"))],
 )
 api_router.include_router(
     forms.router,
@@ -269,14 +281,14 @@ api_router.include_router(
 )
 api_router.include_router(lookup.router, prefix="/lookup", tags=["lookup"])
 
-# Form comments span four kinds in two modules (complaints, procurement), so the module guard is
+# Form comments span five kinds in three modules (complaints, procurement, projects), so the module guard is
 # "either enabled" and the kind's own view permission is the real gate (see form_comments.py).
 # JWT-only guard on purpose: posting a comment is a staff-session action, no API key.
 api_router.include_router(
     form_comments.router,
     prefix="/form-comments",
     tags=["form-comments"],
-    dependencies=[Depends(require_any_module_enabled("procurement", "complaints"))],
+    dependencies=[Depends(require_any_module_enabled("procurement", "complaints", "projects"))],
 )
 
 # Activities & Notes - generic per-entity panel (consumed by tickets et al.).

@@ -107,9 +107,11 @@ def of_required_ask(slot: Any) -> dict[str, Any] | None:
     if ask is None or not ask.answered_by_parser:
         # Only an ask whose replies the parser reads (the low stock report) is stated.
         return None
-    field = next((f for f in (ask.fields if ask else ()) if f.name == slot.get("asking")), None)
+    field = next((f for f in (*ask.fields, *ask.slot_fields) if f.name == slot.get("asking")), None)
     if field is None:
         return None
+    extras = slot.get("extras") if isinstance(slot.get("extras"), dict) else {}
+    own = extras.get(field.name) if isinstance(extras.get(field.name), dict) else {}
     options = [
         {"position": i, "code": str(o[1])}
         for i, o in enumerate(slot.get("options") or [], start=1)
@@ -118,9 +120,23 @@ def of_required_ask(slot: Any) -> dict[str, Any] | None:
     obj: dict[str, Any] = {
         "kind": PICK_ONE if options else FREE,
         "about": ask.name,
-        "question": field.question,
+        # A slot-only field (the rankings' scope) carries its own question on the slot.
+        "question": own.get("question") or field.question,
         "owed": [field.name],
     }
+    if ask.ask_all and field in ask.fields:
+        # One reply asked every missing detail, so every one is owed, and the values the
+        # ask already holds ride with the question (the parser reads them, never re-asks).
+        held = (slot.get("values") if isinstance(slot.get("values"), dict) else {})
+        # An optional field asked (the report ask's company or sales agent pick) is what is owed: every required one
+        # was settled before it was asked, and a question owing nothing is one the parser never answers.
+        obj["owed"] = [field.name] if not field.required else [
+            f.name for f in ask.fields if f.required and f.name not in held
+        ]
+        obj["held"] = {k: v.get("value") for k, v in held.items() if isinstance(v, dict) and v.get("value") is not None}
+        compare = (extras.get("args") if isinstance(extras.get("args"), dict) else {}).get("compare_to")
+        if compare:
+            obj["held"]["compare_to"] = compare  # a held arg of the ask (the rankings' comparison)
     if options:
         obj["options"] = options
     return obj
@@ -166,16 +182,13 @@ def without_phantom_answer(
     that exists, and the positions that ride with a pick index nothing either. Both
     go, here, before any reader: `apply._open_pick_answer` and `decide.picked_positions`
     already guard on `state.pending`, but `gate.py`'s `pick_applied` (a non-empty
-    `reference_positions` suppresses "Which customer do you mean?") and the stock and
-    top-selling position readers do not all share that guard.
+    `reference_positions` suppresses "Which customer do you mean?") and the stock
+    position readers do not all share that guard.
 
-    `positions_read_elsewhere`: two questions are not `Open question:` objects yet are
+    `positions_read_elsewhere`: a question that is not an `Open question:` object yet is
     answered by a position - the ideation lane's media menu (`ideation.pending_media`,
-    read by `lanes/ideate.py::build_arguments` as `reference_positions`) and the top
-    selling questions ("How many?", "By quantity or by amount?", "Customer or sales
-    agent?", `focus.top_selling.asked`, read by `turn/apply.py::record_top_selling_asked`
-    and its `top_selling_position_is_*` rules, so "the first one" answers them). While
-    one of those is outstanding the positions stay and only the declared answer goes.
+    read by `lanes/ideate.py::build_arguments` as `reference_positions`). While it is
+    outstanding the positions stay and only the declared answer goes.
 
     `focus_has_product`: a bare number with nothing open and a product in focus is
     "that product again" (owner ruling, round 4 hand test: "1" after the escalation

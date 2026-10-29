@@ -64,6 +64,10 @@ def test_defaults_match_start_sh(monkeypatch):
     --bind "${API_HOST:-0.0.0.0}:${API_PORT:-8000}", --timeout 120,
     --keep-alive "${GUNICORN_KEEP_ALIVE:-75}", --access-logfile -, --error-logfile -,
     --log-level info.
+
+    Except the worker class: since CHAT-INBOX-QUEUE (#1848) it is
+    app.uvicorn_worker.InboxUvicornWorker, a UvicornWorker subclass that sets
+    timeout_graceful_shutdown (app/uvicorn_worker.py).
     """
     # workers: default 4
     monkeypatch.delenv("WORKERS", raising=False)
@@ -77,7 +81,7 @@ def test_defaults_match_start_sh(monkeypatch):
     monkeypatch.delenv("WORKERS", raising=False)
 
     module = _load_conf_module()
-    assert module.worker_class == "uvicorn.workers.UvicornWorker"
+    assert module.worker_class == "app.uvicorn_worker.InboxUvicornWorker"
     assert module.timeout == 120
 
     # keepalive: default 75
@@ -146,3 +150,20 @@ def test_post_fork_is_idempotent_per_call(monkeypatch):
     assert fake_engine.dispose.call_count == 2
     for call in fake_engine.dispose.call_args_list:
         assert call.kwargs.get("close") is False
+
+
+def test_pre_fork_freezes_the_preloaded_heap():
+    """BACKEND-MEMORY: the master moves every object it holds (the preloaded app) into the
+    permanent generation right before each fork, so a worker's garbage collector never walks
+    them. Measured on the app (28 Oct): one full collection in a forked child touched about
+    1.4 GB of pages shared with the master (87,217 faults, 1.67 s) and 32 faults after
+    gc.freeze(); every touched page is copied out of the preload into the worker."""
+    import gc
+
+    module = _load_conf_module()
+    gc.unfreeze()
+    try:
+        module.pre_fork(server=MagicMock(), worker=MagicMock())
+        assert gc.get_freeze_count() > 0
+    finally:
+        gc.unfreeze()

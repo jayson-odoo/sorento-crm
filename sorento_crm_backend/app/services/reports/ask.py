@@ -17,14 +17,22 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.reports.datasets import chat_asks, chat_report_ask, sales_order_lines_ask
+from app.services.reports import spec_set
+from app.services.reports.datasets import (
+    billing_document_lines,
+    chat_asks,
+    chat_report_ask,
+    delivery_order_lines,
+    sales_order_lines_ask,
+    unpaid_documents,
+)
 from app.services.sales_report_delivered import _CHANNEL_CLASS, resolve_locations
 from app.services.sales_report_service import _money_edge, _qty
 
 #: The words a caller may group by and filter by. Every word is named the same as the column or
 #: param key behind it, so one list each serves every basis (a word that differs from its key
 #: earns a mapping then).
-DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month")
+DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month", "year")
 FILTERS = ("customer", "product", "brand", "category", "sales_agent", "customer_agent", "location", "channel")
 
 #: The datasets a caller may ask over; the first is the default (a call naming none is sales).
@@ -39,21 +47,43 @@ CHAT_MEASURES = ("asks", "failed", "failure_rate", "contacts")
 #: The dimensions that are a run of time: a trend lists every bucket, oldest first.
 CHAT_TRENDS = frozenset({"week", "month", "day"})
 
-#: Dataset -> basis -> entry. Sales: one entry per basis, every one over sales order lines.
-#: Chat: `asks` counts every ask, `turns` each message once.
+#: Dataset -> basis -> entry. Sales: `invoiced` (SALES-UNIFIED: the one sales definition, on the
+#: billing lines the Top selling items report reads, so the two cannot disagree) and one entry
+#: per order basis over sales order lines. Chat: `asks` counts every ask, `turns` each message once.
 CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
     "sales": {
-        basis: {
-            "definition": sales_order_lines_ask.DEFINITIONS[basis],
-            "label": label,
+        "invoiced": {
+            "definition": billing_document_lines.ASK_DEFINITION,
+            "label": "invoiced sales",
             "dimensions": DIMENSIONS,
             "filters": FILTERS,
-        }
-        for basis, label in (
-            ("delivered", "delivered sales"),
-            ("ordered", "ordered sales"),
-            ("outstanding", "outstanding orders"),
-        )
+        },
+        **{
+            basis: {
+                "definition": sales_order_lines_ask.DEFINITIONS[basis],
+                "label": label,
+                "dimensions": (*DIMENSIONS, "sales_order") if basis == "outstanding" else DIMENSIONS,
+                "filters": FILTERS,
+            }
+            for basis, label in (
+                ("delivered", "delivered sales"),
+                ("ordered", "ordered sales"),
+                ("outstanding", "outstanding orders"),
+            )
+        },
+        # REPORT-UNIFY: delivery order lines of DOs not yet delivered, and unpaid invoices (per document).
+        "pending_delivery": {
+            "definition": delivery_order_lines.PENDING_DEFINITION,
+            "label": "pending delivery",
+            "dimensions": DIMENSIONS,
+            "filters": FILTERS,
+        },
+        "unpaid": {
+            "definition": unpaid_documents.DEFINITION,
+            "label": "unpaid invoices",
+            "dimensions": ("customer", "sales_agent", "month", "year"),
+            "filters": ("customer", "sales_agent", "customer_agent"),
+        },
     },
     "chat": {
         basis: {
@@ -66,8 +96,15 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
+#: The bases a caller may leave the period off (REPORT-UNIFY: absent = every date); both dates or neither.
+OPEN_BASES = frozenset({"outstanding", "pending_delivery", "unpaid"})
+#: The filter words a document-level basis (`unpaid`) cannot apply: a document has no product, place or channel.
+PER_DOCUMENT_FILTERS = ("product", "brand", "category", "spec", "location", "channel")
+#: `group_by=spec:<key>`: the prefix of a ranking by a product spec's value.
+SPEC_GROUP = "spec:"
+
 #: What a customer-scoped contact (a dealer) may group or filter by (PLAN section 0, Q1/Q2).
-DEALER_KEYS = frozenset({"product", "brand", "category", "month"})
+DEALER_KEYS = frozenset({"product", "brand", "category", "month", "year", "sales_order"})
 CHAT_DEALER_KEYS = frozenset({"topic", "subject", "product", "month"})
 
 GROUP_LABELS = {
@@ -79,6 +116,8 @@ GROUP_LABELS = {
     "location": "Location",
     "channel": "Channel",
     "month": "Month",
+    "year": "Year",
+    "sales_order": "Sales order",
 }
 
 CHAT_GROUP_LABELS = {
@@ -108,7 +147,7 @@ CHAT_ITEM_AXES = frozenset({"product", "category", "brand"})
 
 #: The filter words' labels, as the route echoes them: the dimensions' own, plus the customer
 #: card link a drill down uses (REPORT-DRILLDOWN, owner 8 Oct 2026), named so the reply says it.
-FILTER_LABELS = {**GROUP_LABELS, "customer_agent": "Customers assigned to"}
+FILTER_LABELS = {**GROUP_LABELS, "customer_agent": "Customers assigned to", "spec": "Specification", "company": "Company"}
 
 NO_AGENT_KEY = sales_order_lines_ask.NO_AGENT_KEY
 
@@ -182,10 +221,39 @@ def _row_keys(db: Session, group_by: str, names: list[str], company_grants: Any)
     return {n: sorted(set(ids)) for n, ids in out.items()}
 
 
+def _category_codes(db: Session, names: list[str], company_grants: Any) -> dict[str, str]:
+    """The category code beside each printed category name (REPORT-SMART-L R3a: the top selling reply
+    printed a category by its code), inside the contact's companies; a name with no code is absent."""
+    from app.models.base import company_scope
+    from app.models.product import ProductCategory
+
+    grants = sorted(str(c) for c in company_grants or ())
+    if not names or not grants:
+        return {}
+    with company_scope(db, None):
+        rows = (
+            db.query(ProductCategory.category_name, ProductCategory.category_code)
+            .filter(ProductCategory.category_name.in_(names),
+                    (ProductCategory.company_id.in_(grants)) | (ProductCategory.company_id.is_(None)))
+            .order_by(ProductCategory.category_code)
+            .all()
+        )
+    out: dict[str, str] = {}
+    for name, code in rows:
+        if code and name not in out:
+            out[name] = str(code)
+    return out
+
+
 #: The delivered dataset's raw channel values, as the ordered dataset already prints them.
-_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team"}
+_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team", "other": "Other"}
 
 MEASURES = ("amount", "qty")
+#: REPORT-SMART-1021: distinct counts, ranked by the count (ties by amount, then quantity).
+#: Each row and the total carry `count` beside the amount and quantity.
+COUNT_MEASURES = tuple(key for key, _label, _column in sales_order_lines_ask.COUNT_COLUMNS)
+#: Every measure a sales ask may name.
+SALES_MEASURES = MEASURES + COUNT_MEASURES
 
 
 def _empty(status: str = "ok", message: Optional[str] = None) -> dict[str, Any]:
@@ -241,22 +309,25 @@ def run_ask(
             values = [_CHANNEL_CLASS[v] for v in values]
         params[word] = list(values)
 
-    location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
-    if refusal is not None:
-        return _empty("refused", refusal)
-    if nothing:
-        return _empty()
-    if location_ids is not None:
-        params["location"] = location_ids
+    if "location" in entry["filters"]:  # a document-level basis has no location to cap
+        location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
+        if refusal is not None:
+            return _empty("refused", refusal)
+        if nothing:
+            return _empty()
+        if location_ids is not None:
+            params["location"] = location_ids
 
     # The engine refuses rows == cols, so the one-total shape groups by month and reads the
     # grand total only.
-    rows_key = group_by or "month"
+    by_spec = bool(group_by) and group_by.startswith(SPEC_GROUP)
+    rows_key = "product" if by_spec else (group_by or "month")
+    counted = measure in COUNT_MEASURES
     view = ReportViewConfig.model_validate(
         {
             "params": params,
             "detail": {"columns": [], "order": []},
-            "pivot": {"rows": rows_key, "cols": "all", "measures": list(MEASURES)},
+            "pivot": {"rows": rows_key, "cols": "all", "measures": [*MEASURES, *((measure,) if counted else ())]},
         }
     )
     pivot = engine.run_summary(
@@ -266,6 +337,8 @@ def run_ask(
     grand = pivot.grand_total or {}
     body = _empty()
     body["total"] = {"qty": _qty(grand.get("qty")), "amount": _money_edge(grand.get("amount"))}
+    if counted:
+        body["total"]["count"] = int(Decimal(grand.get(measure) or 0))
     if not group_by:
         return body
 
@@ -276,20 +349,84 @@ def run_ask(
         if not qty and not amount:
             continue
         name = _CHANNEL_NAMES.get(value, value) if group_by == "channel" else value
-        ranked.append((name, qty, amount))
+        ranked.append((name, qty, amount, Decimal(totals.get(measure) or 0) if counted else Decimal(0)))
+
+    if by_spec:
+        # A product ranking folded to the value each product holds (a count measure is refused by the route).
+        ids = _row_keys(db, "product", [r[0] for r in ranked], company_grants)
+        ranked = spec_set.fold_by_key(db, group_by[len(SPEC_GROUP):], ranked, ids)
 
     sign = -1 if sort == "desc" else 1
-    first, second = (2, 1) if measure == "amount" else (1, 2)
-    ranked.sort(key=lambda r: (sign * r[first], sign * r[second], r[0]))
+    order = {"amount": (2, 1), "qty": (1, 2)}.get(measure, (3, 2))
+    ranked.sort(key=lambda r: (sign * r[order[0]], sign * r[order[1]], r[0]))
 
     shown = ranked[:top_n] if top_n else ranked
-    keys = _row_keys(db, group_by, [name for name, _q, _a in shown], company_grants)
+    keys = _row_keys(db, group_by, [r[0] for r in shown], company_grants)
+    codes = _category_codes(db, [r[0] for r in shown], company_grants) if group_by == "category" else {}
     body["rows"] = [
-        {"rank": i, "name": name, "qty": _qty(qty), "amount": _money_edge(amount), "keys": keys.get(name, [])}
-        for i, (name, qty, amount) in enumerate(shown, start=1)
+        {
+            "rank": i, "name": name, "qty": _qty(qty), "amount": _money_edge(amount), "keys": keys.get(name, []),
+            **({"count": int(count)} if counted else {}),
+            **({"code": codes[name]} if codes.get(name) else {}),
+        }
+        for i, (name, qty, amount, count) in enumerate(shown, start=1)
     ]
     body["total_count"] = len(ranked)
     body["more"] = len(ranked) - len(shown)
+    return body
+
+
+# ----------------------------------------------------------------------- compare (REPORT-SMART-1021)
+
+#: What a sales ask may be compared with: the same number of days just before the period, or
+#: the same dates a year earlier.
+COMPARE_TO = ("previous_period", "last_year")
+#: The sales channels a sales report filters by: the route, the parser schema and the parser's
+#: `Sales channels:` line all read this one tuple.
+SALES_CHANNELS = ("dealer", "project")
+
+
+def compare_window(compare_to: str, date_from: date, date_to: date) -> tuple[date, date]:
+    """The earlier window `compare_to` names. A 29 Feb a year back is 28 Feb."""
+    from datetime import timedelta
+
+    if compare_to == "previous_period":
+        until = date_from - timedelta(days=1)
+        return until - (date_to - date_from), until
+
+    def year_back(d: date) -> date:
+        try:
+            return d.replace(year=d.year - 1)
+        except ValueError:
+            return d.replace(year=d.year - 1, day=28)
+
+    return year_back(date_from), year_back(date_to)
+
+
+def _change_pct(now: Any, before: Any) -> Optional[float]:
+    now, before = Decimal(str(now or 0)), Decimal(str(before or 0))
+    if not before:
+        return None
+    return float(((now - before) * 100 / before).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def attach_compare(body: dict[str, Any], earlier: dict[str, Any], measure: str) -> dict[str, Any]:
+    """The earlier window's figures on every row of `body` (by name; a row the earlier window
+    did not sell is zero there) and on the total, with the change on the sort measure. The
+    ranking stays the period's own: a row only the earlier window has is not added."""
+    key = "count" if measure in COUNT_MEASURES else measure
+    zero = {"qty": 0, "amount": 0.0, **({"count": 0} if key == "count" else {})}
+    by_name = {r["name"]: r for r in earlier.get("rows") or []}
+    for row in body.get("rows") or []:
+        before = by_name.get(row["name"])
+        prev = {k: before.get(k, 0) for k in zero} if before else dict(zero)
+        row["prev"] = prev
+        row["change_pct"] = _change_pct(row.get(key), prev.get(key))
+    total = body.get("total") or {}
+    prev_total = {k: (earlier.get("total") or {}).get(k, 0) for k in zero}
+    total["prev"] = prev_total
+    total["change_pct"] = _change_pct(total.get(key), prev_total.get(key))
+    body["total"] = total
     return body
 
 

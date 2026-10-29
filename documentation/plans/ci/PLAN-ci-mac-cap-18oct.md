@@ -1,0 +1,49 @@
+# PLAN: CI-MAC-CAP (xdist workers OOM-killed on the Mac runner)
+
+Status: In review (PR #1779). Track: small fix track (CI config, its pin tests and one pytest
+plugin module under tests/; no migration, no auth/RBAC, no ingest).
+
+## Evidence
+
+Release run 39126899668 (main 0f5c6537e0), the first full suite on the Mac runner
+(`RUNNER_TESTS=mac` since 14 Oct 2026):
+
+- Shard 5 `Backend test suite (Postgres, xdist) (5)` on runner `sorento-mac-1`: `[gw1]`, `[gw3]`,
+  `[gw0]`, `[gw5]` "node down: Not properly terminated" between 12:57:46 and 13:00:07, then
+  `INTERNALERROR> KeyError: <WorkerController gw7>` (xdist `scheduler/loadscope.py`) and
+  "2 failed, 2206 passed ... in 380.52s". The 2 failures are the crashed workers' tests, no
+  assertion failed.
+- `colima ssh -p ci -- sudo dmesg`: four "Out of memory: Killed process (python)" at about
+  1.3-1.4 GB each. The VM is 4 CPU, 6 GiB, no swap (`scripts/ci-runner/up.sh:13`).
+- Shard 7 hung until the job's 90 min cap after a worker died.
+
+Cause: `-n auto` is 4 workers on the 4-CPU VM, 4 x ~1.4 GB plus Postgres plus Redis does not fit
+in 6 GiB. GitHub-hosted runners (16 GB) never hit it. xdist's default `--max-worker-restart` is
+4 x workers (`xdist/dsession.py` `get_default_max_worker_restart`), so each OOM respawned a
+worker into the same memory pressure (gw4..gw7 are respawns) instead of failing.
+
+## Change
+
+`.github/workflows/deploy.yml`, every xdist call in a job that can land on the Mac
+(`test-backend`, `test-backend-scm`, `lean-gate`):
+
+1. `-n auto` becomes `-n "$XDIST_WORKERS"`, with the step env
+   `XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}`:
+   2 workers on the Mac (2 x 1.4 GB fits beside Postgres and Redis), unchanged on GitHub-hosted.
+   Env, not an inline `${{ }}`: tests/test_ci_docs_only_filter.py executes the PR gate's script
+   in bash, which cannot run one (the step already passes FILES the same way).
+2. `--max-worker-restart 0`: a crashed worker ends the session at once instead of respawning
+   into the same pressure or hanging to the cap. Applies on both runner kinds: a worker crash is
+   never a healthy run.
+3. `tests/_xdist_crash_guard.py`, from review, loaded with `-p` on the same three calls (not
+   from `tests/conftest.py`: a conftest change makes `ci_select_tests.py` report `full=true`).
+   With restarts off, a worker killed before it reports its collection ends the session "no tests ran" with exit 0
+   (xdist 3.8, reproduced 4/4), and the PR gate's `run()` also passes exit 5. The guard turns
+   exit 0/5 into 1 whenever `pytest_testnodedown` reports an error. A worker killed mid-test
+   already exits 1 (its test is reported failed).
+
+Pinned by `sorento_crm_backend/tests/test_ci_runner_routing.py` and
+`sorento_crm_backend/tests/test_xdist_crash_guard.py` (red first, each).
+
+Not changed (crew's call): `RUNNER_TESTS`, the colima VM size. Raising the `ci` VM to >= 10 GiB
+is the alternative that keeps 4 workers.

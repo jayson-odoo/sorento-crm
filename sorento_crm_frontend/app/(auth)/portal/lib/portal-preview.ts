@@ -28,15 +28,7 @@ export function toPreviewItem(a: PortalAttachment): AttachmentPreviewItem {
   };
 }
 
-/** Staged (not-yet-uploaded) files the modal can render from a blob: url. The
- *  owning component creates the url and revokes it, so it cannot leak. */
-export function canPreviewLocally(file: File): boolean {
-  return (
-    file.type.startsWith('image/') ||
-    file.type.startsWith('video/') ||
-    file.type === 'application/pdf'
-  );
-}
+export { canPreviewLocally } from '@/components/common/ai-extract/canPreviewLocally';
 
 /** `fetchBytes` for AttachmentPreviewModal on the portal (token auth). */
 export function portalFetchBytes(item: AttachmentPreviewItem): Promise<Response> {

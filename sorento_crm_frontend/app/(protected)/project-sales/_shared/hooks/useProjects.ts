@@ -6,9 +6,16 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import type { QueryKey } from '@tanstack/react-query';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from '@/lib/toast';
+import { splitMulti } from '@/lib/list-filters/multiValue';
+import { projectCodeLabel } from '../lib/projectCode';
 import { getProductSetsForLineSelect } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
   addStakeholder,
+  aiExtractProject,
+  approveProject,
+  listCustomerOptions,
+  submitProject,
+  rejectProject,
   changeProjectStatus,
   changeTaskStatus,
   createProjectTask,
@@ -163,13 +170,14 @@ export function projectsListParamsFromUrl(params: ListPagerParams): ProjectListP
   return {
     query: params.searchQuery || undefined,
     developer_party_id: params.filters.developer_party_id
-      ? [params.filters.developer_party_id]
+      ? splitMulti(params.filters.developer_party_id)
       : undefined,
     owner_user_id: params.filters.owner_user_id
       ? [params.filters.owner_user_id]
       : undefined,
-    type_id: params.filters.type_id ? [params.filters.type_id] : undefined,
+    type_id: params.filters.type_id ? splitMulti(params.filters.type_id) : undefined,
     only_critical: params.filters.only_critical === 'true' || undefined,
+    approval_state: (params.filters.approval_state || undefined) as ProjectListParams['approval_state'],
     page: params.pageIndex + 1,
     limit: params.pageSize,
     sort: params.sorting[0]?.id ?? 'created_at',
@@ -306,7 +314,22 @@ export function useRegisterProject() {
     mutationFn: (body: ProjectRegisterBody) => registerProject(body),
     onSuccess: (project) => {
       invalidate();
-      toast.success(`${project.project_code} registered`);
+      if (project.approval_state === 'draft') toast.success('Draft saved');
+      else if (project.approval_state === 'pending') toast.success('Submitted for approval');
+      else toast.success(`${project.project_code} registered`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/** Submits an own draft or rejected registration for approval (J1, J5). */
+export function useSubmitProject(projectId: string) {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: () => submitProject(projectId),
+    onSuccess: () => {
+      invalidate(projectId);
+      toast.success('Submitted for approval');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -335,12 +358,42 @@ export function useChangeProjectStatus() {
       changeProjectStatus(projectId, toStatusId),
     onSuccess: (project) => {
       invalidate(project.id);
-      toast.success(`${project.project_code} moved to ${project.status_label ?? 'a new stage'}`);
+      toast.success(`${projectCodeLabel(project)} moved to ${project.status_label ?? 'a new stage'}`);
     },
     onError: (error: Error, variables) => {
       invalidate(variables.projectId);
       toast.error(error.message);
     },
+  });
+}
+
+/**
+ * Approve a pending portal registration (PROJECT-REG-PORTAL R9). A refusal toasts the server's
+ * message and still rejects, so the header can link the project an exact duplicate names
+ * (`ProjectApprovalError.existingProject`).
+ */
+export function useApproveProject(projectId: string) {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: (body?: Partial<ProjectRegisterBody>) => approveProject(projectId, body),
+    onSuccess: (project) => {
+      invalidate(projectId);
+      toast.success(`Approved as ${projectCodeLabel(project)}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/** Reject a pending portal registration with a reason (R10). */
+export function useRejectProject(projectId: string) {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: (reason: string) => rejectProject(projectId, reason),
+    onSuccess: () => {
+      invalidate(projectId);
+      toast.success('Registration rejected');
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 }
 
@@ -400,7 +453,7 @@ export function usePartyMutations() {
     mutationFn: (body: ProjectPartyBody) => createParty(body),
     onSuccess: (party) => {
       invalidate();
-      toast.success(`${party.name} added`);
+      toast.success(party.already_existed ? `${party.name} already exists` : `${party.name} added`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -443,7 +496,7 @@ export function useTakeoverMutations(projectId: string) {
       toast.success(
         created.kind === 'join'
           ? 'Request sent to the project owner'
-          : 'Dispute raised with the sales manager',
+          : 'Interest registered',
       );
     },
     onError: (error: Error) => toast.error(error.message),
@@ -733,13 +786,60 @@ export function useLeads(params: LeadListParams) {
 export function useFetchLeadOptions() {
   return React.useCallback(async (query: string) => {
     const result = await listLeads({ query: query || undefined, outcome: ['open'], limit: 20 });
-    // Title first, code as the second line: no " · " joins (owner rule, 13 Oct).
-    return result.data.map((lead) => ({
-      value: lead.id,
-      label: lead.title,
-      description: lead.lead_code,
-    }));
+    // Title first, code as the second line: no " · " joins (owner rule, 13 Oct). The
+    // customer and assignee ride along so the form fills from the pick without a fetch.
+    return result.data.map(
+      (lead): LeadPick => ({
+        value: lead.id,
+        label: lead.title,
+        description: lead.lead_code,
+        customer_id: lead.customer_id ?? null,
+        customer_name: lead.customer_name ?? null,
+        owner_user_id: lead.owner_user_id ?? null,
+      }),
+    );
   }, []);
+}
+
+/** A Lead picker option: the pick plus what the register form takes from the lead. */
+export type LeadPick = {
+  value: string;
+  label: string;
+  description?: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  owner_user_id: string | null;
+};
+
+/**
+ * Async options for the Developer / Architect / Main contractor pickers: a server-side search
+ * of one party type (PROJECT-REGISTER-V2 B1), so a party past the first page is found by name.
+ */
+export function useFetchPartyOptions(partyType: 'developer' | 'architect' | 'main_contractor') {
+  return React.useCallback(
+    async (query: string) => {
+      const result = await listParties({ party_type: partyType, query: query || undefined, limit: 20 });
+      return result.data.map((party) => ({
+        value: party.id,
+        label: party.name,
+        description: party.registration_no ?? undefined,
+      }));
+    },
+    [partyType],
+  );
+}
+
+/** Async options for the register form's Customer picker (name only). */
+export function useFetchCustomerOptions() {
+  return React.useCallback((query: string) => listCustomerOptions(query), []);
+}
+
+/** The register form's AI extract call, handed to the shared dialog. */
+export function useProjectAiExtract() {
+  return React.useCallback(
+    (text: string | null, files: File[]) => aiExtractProject(text, files),
+    [],
+  );
 }
 
 /** The leads list a detail URL describes, in the shape `LeadsClient` passes. */

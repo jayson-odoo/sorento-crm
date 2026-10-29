@@ -72,7 +72,9 @@ DEALER_MESSAGE = "That breakdown is not available for your account."
 
 
 def _ask(client, contact, headers=KEY, **params):
-    q = {**PERIOD, **_as_contact(contact), **params}
+    # The order bases are what these tests rank; the route's own default is invoiced since
+    # SALES-UNIFIED (tests/test_sales_unified_tally.py covers it), so it is named here.
+    q = {**PERIOD, "basis": "delivered", **_as_contact(contact), **params}
     q = {k: v for k, v in q.items() if v is not None}
     return client.get(ROUTE, params=q, headers=headers)
 
@@ -91,9 +93,28 @@ def _rows(body):
     return [(r["name"], r["qty"], money(r["amount"])) for r in body["rows"]]
 
 
+def _both_reveals(db, contact):
+    """The Sales report AND the Outstanding reveal (owner Q6: the outstanding kinds need the second)."""
+    from app.services.contact_field_reveal_service import set_granted_keys
+
+    set_granted_keys(db, contact.id, ["sales_orders.sales_report", "sales_orders.outstanding"], actor_id=None)
+    db.flush()
+
+
 def _full(db):
     """A grant holder with no customer link: the FULL audience."""
     contact = _contact(db)
+    _both_reveals(db, contact)
+    db.commit()
+    return contact
+
+
+def _staff(db):
+    """A grant holder with an office access type: staff, the audience an item / category ranking is for
+    (REPORT-SMART-L R1: an unlinked non-staff contact is refused those, `test_one_ranking_r1.py`)."""
+    contact = _contact(db)
+    _access(db, contact, "Sorento Office")
+    _both_reveals(db, contact)
     db.commit()
     return contact
 
@@ -288,6 +309,31 @@ def test_ac_re_8_the_body_echoes_the_filters_by_name(client, db):
     assert body["date_from"] == "2026-09-01" and body["date_to"] == "2026-09-30", body
 
 
+def test_prb_s6_a_category_filter_echoes_its_class_label_once_never_the_code(client, db):
+    """Chat fix PR-B S6 (AC-B8): a live category's name copies its code ("SRT-WC"), so the echo
+    names the class label the categories share, once ("Category: BRT-WC, CB-WC, ..." on v94)."""
+    w = _ranking_world(db)
+    w.cat_x.class_label = w.cat_y.class_label = "ZZT Water Closet"
+    db.commit()
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=3, category_ids=[w.cat_x.id, w.cat_y.id])
+    assert {"key": "category", "label": "Category", "values": ["ZZT Water Closet"]} in body["filters"], body["filters"]
+
+
+def test_prb_s6_near_miss_a_category_with_no_class_label_echoes_its_own_name(client, db):
+    w = _ranking_world(db)
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=3, category_ids=[w.cat_x.id])
+    assert {"key": "category", "label": "Category", "values": ["ZZT-CAT-X"]} in body["filters"], body["filters"]
+
+
+def test_prb_s6_a_brand_name_two_rows_share_echoes_once(client, db):
+    """Chat fix PR-B S6: "Brand: SORENTO, SORENTO" (two brand rows, one per company) prints once."""
+    w = _ranking_world(db)
+    twin = _brand(db, "ZZT-BRAND-B")
+    db.commit()
+    body = _ok(client, _full(db), group_by="sales_agent", top_n=3, brand_ids=[w.brand_b.id, twin.id])
+    assert {"key": "brand", "label": "Brand", "values": ["ZZT-BRAND-B"]} in body["filters"], body["filters"]
+
+
 # ================================================================ AC-RE-9: every dimension
 
 
@@ -341,14 +387,14 @@ def test_ac_re_9_group_by_brand(client, db):
 
 def test_ac_re_9_group_by_category(client, db):
     _ranking_world(db)
-    body = _ok(client, _full(db), group_by="category", top_n=5)
+    body = _ok(client, _staff(db), group_by="category", top_n=5)
     assert _rows(body) == [("ZZT-CAT-X", 65, D("5100.00")), ("ZZT-CAT-Y", 5, D("150.00"))], body["rows"]
     assert body["group_label"] == "Category", body
 
 
 def test_ac_re_9_group_by_product(client, db):
     _ranking_world(db)
-    body = _ok(client, _full(db), group_by="product", top_n=5)
+    body = _ok(client, _staff(db), group_by="product", top_n=5)
     assert [r["name"] for r in body["rows"]] == ["ZZTBB-1", "ZZTAA-1", "ZZTAA-2"], body["rows"]
 
 
@@ -399,7 +445,7 @@ def test_ac_re_11_no_group_by_and_no_top_n_is_the_number_shape(client, db):
     "params, code",
     [
         ({"group_by": "colour", "top_n": 3}, "unknown_group_by"),
-        ({"group_by": "product", "top_n": 3, "basis": "invoiced"}, "unknown_basis"),
+        ({"group_by": "product", "top_n": 3, "basis": "billed"}, "unknown_basis"),
         ({"group_by": "product", "top_n": 3, "measure": "profit"}, "unknown_measure"),
         ({"group_by": "product", "top_n": 3, "sort": "sideways"}, "unknown_sort"),
         ({"group_by": "product", "top_n": 0}, "top_n_out_of_range"),
@@ -441,7 +487,7 @@ def test_ac_re_12_a_contact_without_the_grant_is_refused(client, db):
 
 def test_ac_re_12_an_unknown_contact_is_refused(client, db):
     resp = client.get(ROUTE, params={**PERIOD, "contact_id": str(uuid.uuid4()), "space_id": "zzt-space",
-                                     "group_by": "product", "top_n": 3}, headers=KEY)
+                                     "group_by": "product", "top_n": 3, "basis": "delivered"}, headers=KEY)
     assert resp.status_code == 403 and _code(resp) == "sales_report_not_enabled", resp.text
 
 
@@ -450,6 +496,7 @@ def test_ac_re_12_an_unknown_contact_is_refused(client, db):
 
 def _dealer(db, w):
     contact = _contact(db)
+    _both_reveals(db, contact)
     _link(db, contact, w.cust)
     db.commit()
     return contact
@@ -559,9 +606,9 @@ def test_a_brand_name_shared_across_companies_counts_only_the_contacts_own_compa
                  total="5000.00", company_id=mocha.id)
     db.commit()
     ids = [brand_a.id, brand_b.id]
-    body = _ok(client, _full(db), group_by="product", top_n=10, brand_ids=ids)
+    body = _ok(client, _staff(db), group_by="product", top_n=10, brand_ids=ids)
     assert [r["name"] for r in body["rows"]] == [prod_a.product_code], body["rows"]
-    total = _ok(client, _full(db), brand_ids=ids)["total"]
+    total = _ok(client, _staff(db), brand_ids=ids)["total"]
     assert total["qty"] == 10 and money(total["amount"]) == D("100.00"), total
 
 
@@ -569,7 +616,7 @@ def test_a_brand_name_shared_across_companies_counts_only_the_contacts_own_compa
 
 
 def test_ac_re_17_a_product_code_matching_nothing_is_404(client, db):
-    resp = _ask(client, _full(db), group_by="product", top_n=3, product_code="ZZTNOSUCHPRODUCT")
+    resp = _ask(client, _staff(db), group_by="product", top_n=3, product_code="ZZTNOSUCHPRODUCT")
     assert resp.status_code == 404, resp.text
     assert resp.json().get("code") == "NOT_FOUND", resp.text  # not the missing route's bare 404
 
@@ -665,7 +712,7 @@ def _top_selling_rows(db, *, rank_by, basis, **extra):
 def test_ac_re_20_group_by_product_is_top_sellings_item_ranking(client, db, basis, measure, rank_by):
     """Same per-product numbers AND the same order as `top_selling`, on both bases and both measures."""
     _parity_world(db)
-    ask = _ok(client, _full(db), group_by="product", top_n=100, basis=basis, measure=measure)
+    ask = _ok(client, _staff(db), group_by="product", top_n=100, basis=basis, measure=measure)
     expected, out = _top_selling_rows(db, rank_by=rank_by, basis=basis)
     assert len(expected) >= 3, expected  # the world ranks several products
     assert _rows(ask) == expected, (basis, measure, _rows(ask), expected)
@@ -680,7 +727,7 @@ def test_ac_re_20_the_world_pins_the_numbers_not_only_the_parity(client, db):
     in Sep), PC 4 / 0.00 (qty, no value). The cancelled line, the Oct-required line and the undelivered
     PC line are out or zero."""
     _parity_world(db)
-    contact = _full(db)
+    contact = _staff(db)
     delivered = _ok(client, contact, group_by="product", top_n=100, basis="delivered")
     assert _rows(delivered) == [("ZZTPAR-A", 18, D("1240.00")), ("ZZTPAR-D", 5, D("333.33")),
                                 ("ZZTPAR-B", 10, D("320.00")), ("ZZTPAR-E", 7, D("70.00")),
@@ -696,7 +743,7 @@ def test_ac_re_20_the_world_pins_the_numbers_not_only_the_parity(client, db):
 @pytest.mark.parametrize("measure, rank_by", [("amount", "amount"), ("qty", "quantity")])
 def test_ac_re_20_with_a_category_filter_it_still_equals_top_selling(client, db, basis, measure, rank_by):
     w = _parity_world(db)
-    ask = _ok(client, _full(db), group_by="product", top_n=100, basis=basis, measure=measure,
+    ask = _ok(client, _staff(db), group_by="product", top_n=100, basis=basis, measure=measure,
               category_ids=[w.cat1.id])
     expected, out = _top_selling_rows(db, rank_by=rank_by, basis=basis, category_ids=[w.cat1.id])
     assert "ZZTPAR-D" not in [name for name, _q, _a in expected], expected  # the other category is out
@@ -710,7 +757,7 @@ def test_ac_re_20_group_by_category_equals_top_sellings_category_ranking(client,
     from app.services.sales_report_service import top_selling
 
     _parity_world(db)
-    ask = _ok(client, _full(db), group_by="category", top_n=100, basis="delivered")
+    ask = _ok(client, _staff(db), group_by="category", top_n=100, basis="delivered")
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
     out = top_selling(db, rank_by="amount", basis="delivered", group="category",
                       date_from=date(2026, 9, 1), date_to=date(2026, 9, 30))
@@ -871,7 +918,7 @@ def test_outstanding_works_with_a_total_and_a_filter(client, db):
 
 
 def test_outstanding_is_an_allowed_basis_in_the_unknown_basis_detail(client, db):
-    resp = _ask(client, _full(db), group_by="product", top_n=3, basis="invoiced")
+    resp = _ask(client, _full(db), group_by="product", top_n=3, basis="billed")
     assert resp.status_code == 422 and _code(resp) == "unknown_basis", resp.text
     assert "outstanding" in str(resp.json().get("detail")), resp.text
 
@@ -905,11 +952,12 @@ def test_the_default_basis_is_delivered_when_basis_is_omitted(client, db):
     assert body["basis"] == "delivered" and body["basis_label"] == "delivered sales", body
 
 
-def test_the_routes_declared_default_basis_is_delivered(client, db):
+def test_the_routes_declared_default_basis_is_invoiced(client, db):
+    # SALES-UNIFIED: sales has one definition; a caller naming no basis gets invoiced sales.
     spec = client.get("/openapi.json").json()
     params = spec["paths"][ROUTE]["get"]["parameters"]
     (basis,) = [p for p in params if p["name"] == "basis"]
-    assert basis["schema"].get("default") == "delivered", basis
+    assert basis["schema"].get("default") == "invoiced", basis
 
 
 # ================================================================ fix round 1 (REPORT-ENGINE)
@@ -990,7 +1038,7 @@ def test_an_unknown_query_key_is_422_unknown_param(client, db):
     "params, code",
     [
         ({"group_by": "colour", "top_n": 3}, "unknown_group_by"),
-        ({"group_by": "product", "top_n": 3, "basis": "invoiced"}, "unknown_basis"),
+        ({"group_by": "product", "top_n": 3, "basis": "billed"}, "unknown_basis"),
         ({"group_by": "product", "top_n": 3, "measure": "profit"}, "unknown_measure"),
         ({"group_by": "product", "top_n": 3, "sort": "sideways"}, "unknown_sort"),
         ({"group_by": "product", "top_n": 3, "channel": "retail"}, "invalid_channel"),
@@ -1300,7 +1348,7 @@ def _bulk_world(db):
 
 def test_a_ranking_over_more_than_5000_groups_is_not_truncated(client, db):
     top = _bulk_world(db)
-    body = _ok(client, _full(db), group_by="product", top_n=3)
+    body = _ok(client, _staff(db), group_by="product", top_n=3)
     assert body["status"] == "ok", body
     groups = BULK_PRODUCTS + 1
     assert body["rows"][0]["name"] == "ZZZ-TOP" and money(body["rows"][0]["amount"]) == D("500.00"), body["rows"]
@@ -1311,3 +1359,46 @@ def test_a_ranking_over_more_than_5000_groups_is_not_truncated(client, db):
     assert money(body["total"]["amount"]) == D("500.00") + D(BULK_PRODUCTS), body["total"]
     assert body["total"]["qty"] == 5 + BULK_PRODUCTS, body["total"]
     assert top["product_code"] == "ZZZ-TOP"
+
+
+# ================================================================ owner 28 Oct 09:30: the open sales orders behind an undelivered figure
+
+
+def test_outstanding_group_by_sales_order_lists_the_open_orders_and_sums_to_the_figure(client, db):
+    _outstanding_world(db)
+    whole = _ok(client, _full(db), basis="outstanding")
+    body = _ok(client, _full(db), group_by="sales_order", top_n=50, basis="outstanding")
+    assert body["group_label"] == "Sales order", body
+    assert body["total_count"] == 4, body["rows"]  # O1 (two SOs), O7 and O8 are open with a quantity owed
+    assert all("-SO-" in r["name"] for r in body["rows"]), body["rows"]
+    assert sum(r["qty"] for r in body["rows"]) == whole["total"]["qty"] == 32, body
+    assert sum(money(r["amount"]) for r in body["rows"]) == money(whole["total"]["amount"]) == D("860.00"), body
+
+
+@pytest.mark.parametrize("basis", ["delivered", "ordered"])
+def test_group_by_sales_order_is_refused_on_the_other_order_bases(client, db, basis):
+    _outstanding_world(db)
+    resp = client.get(ROUTE, params={**PERIOD, "basis": basis, "group_by": "sales_order", "top_n": 5,
+                                     **_as_contact(_full(db))}, headers=KEY)
+    assert resp.status_code == 422 and resp.json()["code"] == "unknown_group_by", resp.text
+
+
+def test_group_by_year_rows_sum_to_the_total_across_a_two_year_period(client, db):
+    """Crew (28 Oct): the Yearly comparison is the report ask grouped by year, on the ask's own line date."""
+    cust = seed_customer(db, name=unique_code("Cust"))
+    prod = _prod(db, "ZZTYR-1")
+    seed_so_line(db, cust=cust, prod=prod, qty=3, total="300.00", order_date=date(2025, 6, 10))
+    seed_so_line(db, cust=cust, prod=prod, qty=2, total="200.00", order_date=date(2025, 11, 2))
+    seed_so_line(db, cust=cust, prod=prod, qty=5, total="500.00", order_date=date(2026, 3, 5))
+    db.commit()
+    window = {"date_from": "2025-01-01", "date_to": "2026-12-31"}
+    contact = _full(db)
+    whole = client.get(ROUTE, params={**window, "basis": "delivered", **_as_contact(contact)}, headers=KEY).json()
+    body = client.get(
+        ROUTE, params={**window, "basis": "delivered", "group_by": "year", "top_n": 10, **_as_contact(contact)}, headers=KEY
+    ).json()
+    assert {r["name"]: (r["qty"], money(r["amount"])) for r in body["rows"]} == {
+        "2025": (5, D("500.00")), "2026": (5, D("500.00")),
+    }, body["rows"]
+    assert sum(r["qty"] for r in body["rows"]) == whole["total"]["qty"], (body, whole)
+    assert body["group_label"] == "Year", body

@@ -42,7 +42,7 @@ _RESOURCE = "Sales Agent"
 
 
 @router.get("/", response_model=ListResponse[SalesAgentResponse])
-async def list_sales_agents(
+def list_sales_agents(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -62,7 +62,7 @@ async def list_sales_agents(
 
 
 @router.post("/bulk-annotate", response_model=BulkAnnotateResult)
-async def bulk_annotate_sales_agents(
+def bulk_annotate_sales_agents(
     payload: SalesAgentBulkAnnotate,
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
     db: Session = Depends(get_db),
@@ -96,7 +96,7 @@ async def bulk_annotate_sales_agents(
 
 
 @router.get("/{sales_agent_id}", response_model=SalesAgentResponse)
-async def get_sales_agent(
+def get_sales_agent(
     sales_agent_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.sales_agents.view")),
     db: Session = Depends(get_db),
@@ -111,7 +111,7 @@ async def get_sales_agent(
 
 
 @router.patch("/{sales_agent_id}/annotation", response_model=SalesAgentResponse)
-async def annotate_sales_agent(
+def annotate_sales_agent(
     sales_agent_id: str,
     payload: SalesAgentAnnotationUpdate,
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
@@ -154,7 +154,7 @@ async def annotate_sales_agent(
 
 
 @router.get("/{sales_agent_id}/customers", response_model=ListResponse[CustomerResponse])
-async def list_sales_agent_customers(
+def list_sales_agent_customers(
     sales_agent_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -179,7 +179,7 @@ async def list_sales_agent_customers(
 
 
 @router.post("/{sales_agent_id}/customers", response_model=AgentCustomersAssignedResponse)
-async def assign_sales_agent_customers(
+def assign_sales_agent_customers(
     sales_agent_id: str,
     payload: AgentCustomerAssign,
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
@@ -206,3 +206,91 @@ async def assign_sales_agent_customers(
     except Exception as e:
         db.rollback()
         raise handle_internal_error(str(e))
+
+
+# ------------------------------------------------------------------ class history
+# SALES-UNIFIED round 3 (owner rulings Q6 to Q8 (a)): the agent's class by month. Every save
+# re-derives the agent's sales orders over the months it covers (`agent_class_service`).
+
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+
+
+class AgentClassBody(_BaseModel):
+    demand_class: Optional[str] = None
+    from_month: Optional[str] = None
+    to_month: Optional[str] = None
+
+
+def _months(body: AgentClassBody) -> dict:
+    from app.services.sales.set_apart_service import parse_month
+
+    fields = body.model_dump(exclude_unset=True)
+    for key in ("from_month", "to_month"):
+        if key in fields:
+            fields[key] = parse_month(fields[key], key.replace("_", " ").capitalize())
+    return fields
+
+
+@router.get("/{sales_agent_id}/classes")
+def list_agent_classes(
+    sales_agent_id: str,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.sales_agents.view")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sales import agent_class_service
+
+    agent_id = validate_uuid_path(sales_agent_id, resource=_RESOURCE)
+    if not agent_class_service.agent_visible(db, agent_id):
+        raise handle_not_found(_RESOURCE, agent_id)
+    return {"data": [agent_class_service.serialize(r) for r in agent_class_service.rows_of(db, agent_id)]}
+
+
+@router.post("/{sales_agent_id}/classes", status_code=201)
+def add_agent_class(
+    sales_agent_id: str,
+    body: AgentClassBody,
+    current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sales import agent_class_service
+
+    agent_id = validate_uuid_path(sales_agent_id, resource=_RESOURCE)
+    fields = _months(body)
+    return agent_class_service.add(
+        db, agent_id,
+        demand_class=(body.demand_class or "").strip().lower(),
+        from_month=fields.get("from_month"),
+        to_month=fields.get("to_month"),
+    )
+
+
+@router.patch("/classes/{row_id}")
+def update_agent_class(
+    row_id: str,
+    body: AgentClassBody,
+    current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sales import agent_class_service
+
+    fields = _months(body)
+    if "demand_class" in fields:
+        fields["demand_class"] = (fields["demand_class"] or "").strip().lower()
+    return agent_class_service.update(db, validate_uuid_path(row_id, resource="Class row"), fields)
+
+
+@router.get("/classes/rederive-preview")
+def rederive_preview(
+    current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
+    db: Session = Depends(get_db),
+):
+    """The dry run (Q8, Q10 (a)): every sales order whose stored class differs from the rule,
+    per agent per month, with the RM. Writes nothing."""
+    from app.services.sales import agent_class_service
+
+    moves = agent_class_service.rederive(db, apply=False)
+    return {"data": [
+        {"agent": m.agent, "month": m.month, "before": m.before, "after": m.after,
+         "orders": m.orders, "amount": str(m.amount)}
+        for m in moves
+    ]}

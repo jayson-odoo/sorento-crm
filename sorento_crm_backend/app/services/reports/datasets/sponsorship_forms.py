@@ -38,6 +38,7 @@ from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
 from app.models.projects import Project
 from app.services.reports import registry as reg
 from app.services.reports.engine import month_label
+from app.services.submission_status import APPEALED_LABEL
 
 # Core tables, not mapped entities (see the module docstring).
 _PR = PurchaseRequestHeader.__table__
@@ -55,6 +56,7 @@ SUBJECT_SET_KEY = "procurement_sponsor_subject"
 STATUS_LABELS: Tuple[Tuple[str, str], ...] = (
     ("draft", "Draft"),
     ("submitted", "Submitted"),
+    ("resubmitted", APPEALED_LABEL),
     ("approved", "Approved"),
     ("processed_by_cs", "Processed by CS"),
     ("closed", "Closed"),

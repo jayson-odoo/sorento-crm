@@ -8,6 +8,8 @@ import logging
 from typing import Any
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -15,6 +17,7 @@ from app.database import SessionLocal
 from app.models.base import set_company_scope
 from app.models.certificate import Certificate, CertificateProduct
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
+from app.services.embedding_change_listener import SUPERSEDED_ERROR
 from app.models.product import Product, ProductCategory, Brand
 from app.models.marketing import Promotion
 from app.models.marketing import PromotionProduct, PromotionAttachment
@@ -25,6 +28,7 @@ from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllo
 from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
 from app.models.product import ProductAttachment
 from app.models.conversation_frame import ConversationFrame
+from app.models.projects import APPROVAL_APPROVED, Project, ProjectParty, ProjectSalesProfile
 from app.services.embedding_service import EmbeddingReadService, parse_debtor_seed_id
 
 logger = logging.getLogger(__name__)
@@ -54,6 +58,8 @@ _SOURCE_MODEL_FOR_COMPANY = {
     "customer": Customer,
     "transporter": Transporter,
     "certificate": Certificate,
+    # PROJECT-REG-PORTAL D9: the registration queue's meaning signal reads these.
+    "project": Project,
 }
 
 
@@ -475,6 +481,30 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
         ).strip()
         return {"source_key": row.order_number, "title": row.order_number, "body_text": body, "visibility_scope": "internal", "source_updated_at": row.updated_at or row.created_at, "metadata": {"order_status_id": row.order_status_id, "is_cancelled": row.is_cancelled}}
 
+    if source_type == "project":
+        project = db.query(Project).filter(Project.id == source_id).first()
+        if not project:
+            raise ValueError(f"Project not found: {source_id}")
+        # A portal registration is not a project until it is approved (PROJECT-REG-PORTAL R4).
+        if project.approval_state not in (None, APPROVAL_APPROVED):
+            raise ValueError(f"Project not approved yet: {source_id}")
+        developer = (
+            db.query(ProjectParty.name).filter(ProjectParty.id == project.developer_party_id).scalar()
+            if project.developer_party_id
+            else None
+        )
+        profile = db.query(ProjectSalesProfile).filter(ProjectSalesProfile.project_id == project.id).first()
+        place = ", ".join(p for p in (profile.state if profile else None, profile.mukim if profile else None) if p)
+        return {
+            "source_key": project.project_code,
+            "title": project.title,
+            # `title | developer name | state, mukim` (D9), the same text a registration is embedded as.
+            "body_text": " | ".join([project.title or "", developer or "", place]),
+            "visibility_scope": "internal",
+            "source_updated_at": getattr(project, "updated_at", None) or project.created_at,
+            "metadata": {"project_id": str(project.id), "company_id": str(project.company_id)},
+        }
+
     if source_type == "customer":
         # Customer source supports two shapes:
         # 1. UUID source_id → Customer master row.
@@ -613,7 +643,7 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
     raise ValueError(f"Unsupported source type: {source_type}")
 
 
-def _embed_text_chunks(chunks: list[str]) -> list[list[float]]:
+def _embed_text_chunks(chunks: list[str], timeout: float | None = None) -> list[list[float]]:
     from app.services import llm_cassette
 
     if llm_cassette.mode() != "replay" and not settings.openai_api_key:
@@ -626,16 +656,17 @@ def _embed_text_chunks(chunks: list[str]) -> list[list[float]]:
         key=llm_cassette.embed_key(settings.embedding_model_name, json.dumps(chunks, ensure_ascii=False)),
         model=settings.embedding_model_name,
         secret=settings.openai_api_key or "",
-        live=lambda: _post_embeddings(chunks),
+        # No timeout given is the plain call (30 s); a read path that must not wait passes one.
+        live=lambda: _post_embeddings(chunks) if timeout is None else _post_embeddings(chunks, timeout),
         dump=lambda vectors: vectors,
         load=lambda vectors: [list(v) for v in vectors],
     )
 
 
-def _post_embeddings(chunks: list[str]) -> list[list[float]]:
+def _post_embeddings(chunks: list[str], timeout: float | None = None) -> list[list[float]]:
     headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
     payload = {"model": settings.embedding_model_name, "input": chunks}
-    with httpx.Client(timeout=30) as client:
+    with httpx.Client(timeout=timeout or 30) as client:
         response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
         response.raise_for_status()
         data = response.json()
@@ -716,6 +747,83 @@ def _spo_allocation_hidden(db: Session, source_id: str) -> bool:
     return visible is None
 
 
+# Source types whose queue payload carries the content to embed (mcp_tool: the capability
+# text). Two pending rows of these are not interchangeable, so none supersedes another.
+_PAYLOAD_SOURCE_TYPES = frozenset({"mcp_tool"})
+
+
+def _supersede_pending_duplicates(db: Session, queue_item: EmbeddingQueue) -> int:
+    """Mark every other pending row of the claimed source `skipped`.
+
+    They all predate the claim, and the source is read after it, so the claimed row embeds
+    whatever they would have. This is what drains the duplicate backlog enqueued before
+    EMBED-QUEUE-DEDUPE: each claim retires all of its source's copies in one statement.
+    """
+    if queue_item.source_type in _PAYLOAD_SOURCE_TYPES:
+        return 0
+    # A retrying row is one failure nearer dead_letter; the fresh rows must survive it.
+    if (queue_item.retry_count or 0) > 0:
+        return 0
+    now = datetime.utcnow()
+    # SKIP LOCKED: a row an enqueuer is holding stays pending and is claimed on its own later,
+    # rather than this claim waiting on (or deadlocking with) that transaction.
+    others = (
+        db.query(EmbeddingQueue.id)
+        .filter(
+            EmbeddingQueue.source_type == queue_item.source_type,
+            EmbeddingQueue.source_id == queue_item.source_id,
+            EmbeddingQueue.status == "pending",
+            EmbeddingQueue.id != queue_item.id,
+        )
+        .with_for_update(skip_locked=True)
+        .subquery()
+    )
+    return (
+        db.query(EmbeddingQueue)
+        .filter(EmbeddingQueue.id.in_(select(others.c.id)))
+        .update(
+            {"status": "skipped", "processed_at": now, "last_error": SUPERSEDED_ERROR},
+            synchronize_session=False,
+        )
+    )
+
+
+def _claim(db: Session, queue_id: str) -> EmbeddingQueue | None:
+    """Lock the row FOR UPDATE NOWAIT; None when another transaction holds it.
+
+    An enqueuer that skipped its insert because this row was pending holds it FOR SHARE until
+    it commits. Waiting here would stall the scheduler loop behind that transaction (an
+    import can run for minutes), so a busy row is left pending for the next poll instead.
+    """
+    try:
+        return (
+            db.query(EmbeddingQueue)
+            .filter(EmbeddingQueue.id == queue_id)
+            .with_for_update(nowait=True)
+            .populate_existing()
+            .first()
+        )
+    except DBAPIError as exc:
+        if getattr(getattr(exc, "orig", None), "pgcode", None) != "55P03":  # lock_not_available
+            raise
+        db.rollback()
+        return None
+
+
+def _has_other_pending(db: Session, queue_item: EmbeddingQueue) -> bool:
+    return (
+        db.query(EmbeddingQueue.id)
+        .filter(
+            EmbeddingQueue.source_type == queue_item.source_type,
+            EmbeddingQueue.source_id == queue_item.source_id,
+            EmbeddingQueue.status == "pending",
+            EmbeddingQueue.id != queue_item.id,
+        )
+        .first()
+        is not None
+    )
+
+
 def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
     db = SessionLocal()
     # The embedding pipeline is a system process that materializes embeddings for
@@ -731,7 +839,16 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         if queue_item.status in {"completed", "skipped"}:
             return {"status": queue_item.status, "queue_id": queue_id}
 
+        # Claim under the row lock (EMBED-QUEUE-DEDUPE): a transaction that found this row
+        # pending and queued nothing must commit before the source is read below.
+        queue_item = _claim(db, queue_id)
+        if queue_item is None:
+            return {"status": "busy", "queue_id": queue_id}
+        if queue_item.status in {"completed", "skipped"}:
+            db.rollback()
+            return {"status": queue_item.status, "queue_id": queue_id}
         queue_item.status = "processing"
+        _supersede_pending_duplicates(db, queue_item)
         db.commit()
 
         # R9: a retired-and-hidden SPO line deactivates its document instead of
@@ -897,6 +1014,10 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
             queue_item.last_error = str(exc)
             if queue_item.retry_count >= settings.embedding_max_retries:
                 queue_item.status = "dead_letter"
+            elif _has_other_pending(db, queue_item):
+                # A change queued while this ran is waiting already and will re-read the source.
+                queue_item.status = "skipped"
+                queue_item.processed_at = datetime.utcnow()
             else:
                 queue_item.status = "pending"
                 queue_item.available_at = datetime.utcnow() + timedelta(

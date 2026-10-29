@@ -38,3 +38,13 @@ export async function getLookupOptionsByBinding(
   if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load lookup options'));
   return r.json();
 }
+
+/**
+ * The active options of one lookup set by its key (`GET /api/v1/lookup/{set_key}/options`),
+ * for a field that is not bound to a table column (the project State, set `my_state`).
+ */
+export async function getLookupSetOptions(setKey: string): Promise<LookupBoundOption[]> {
+  const r = await apiFetch(`/api/v1/lookup/${encodeURIComponent(setKey)}/options`);
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load lookup options'));
+  return r.json();
+}

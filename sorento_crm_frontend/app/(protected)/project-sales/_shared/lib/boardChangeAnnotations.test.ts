@@ -13,6 +13,7 @@ import {
   annotationsByCell,
   annotationsByLine,
   cellKeyOf,
+  changedFieldsOf,
   decisionWords,
   preMarkedKeys,
   uncoverChangedLines,
@@ -125,6 +126,13 @@ function batchOf(rows: PlanningChangeRow[]): PlanningChangeBatch {
 }
 
 describe('the Was / Now table of a changed line', () => {
+  it('prints the SO line number, not the planning order\'s own (SO-LINE-NUMBERS AC-6)', () => {
+    expect(annotationOf(row({ line_no: 11, so_line_no: 224 }), 'SO401624', 'BRW-IB').lineNo).toBe(
+      224,
+    );
+    expect(annotationOf(row({ line_no: 11 }), 'SO401624', 'BRW-IB').lineNo).toBe(11);
+  });
+
   it('states the quantity, the date and the decision on both sides', () => {
     const annotation = annotationOf(row({}), 'SO381895', 'BRW-IB');
     expect(annotation.was).toEqual({
@@ -988,5 +996,34 @@ describe('uncoverChangedLines', () => {
     const byLine = annotationsByLine(batch);
     expect(byLine.get('pl-16')?.map((entry) => entry.rowId)).toEqual(['pcr-cfh14']);
     expect(byLine.get('pl-20')?.map((entry) => entry.rowId)).toEqual(['pcr-moved']);
+  });
+});
+
+describe('changedFieldsOf: the product swap (PRODUCT-CHANGE-TALLY)', () => {
+  const base = {
+    closed: false,
+    itemCode: 'NEWCODE-CR',
+    was: { qty: '10', date: '2026-11-03', decision: null },
+    now: { qty: '10', date: '2026-11-03', decision: null },
+  };
+
+  it('a product swap is the FIRST moved field, Was the old code and Now the new one', () => {
+    const fields = changedFieldsOf({
+      ...base,
+      productChangedFrom: 'OLDCODE-CR',
+      now: { qty: '12', date: '2026-11-03', decision: null },
+    });
+    expect(fields.map((field) => field.key)).toEqual(['product', 'qty']);
+    expect(fields[0]).toEqual({
+      key: 'product',
+      label: 'Product',
+      from: 'OLDCODE-CR',
+      to: 'NEWCODE-CR',
+    });
+  });
+
+  it('no swap, or the same code on both sides, is not a product field', () => {
+    expect(changedFieldsOf({ ...base, productChangedFrom: null })).toEqual([]);
+    expect(changedFieldsOf({ ...base, productChangedFrom: 'NEWCODE-CR' })).toEqual([]);
   });
 });

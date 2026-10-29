@@ -159,6 +159,7 @@ from app.services.chatbot.lanes.business.services import (
     ResolveGateServices,
 )
 from app.services.company_scope import DEFAULT_COMPANY_ID
+from tests.chatbot._turn_helpers import make_office_access_type, make_office_tier
 from tests._mc_lookup_seed import customer as mc_customer
 from tests.chatbot._turn_helpers import do_window
 from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
@@ -297,8 +298,11 @@ def _capturing_mcp(response: Any = None):
             return json.dumps({"has_result": False, "items": []})
         if isinstance(response, str):
             return response
-        if name == "crm_outstanding_report":
+        if name == "crm_report_ask":
             return _present_response()(name, json.dumps(_report_route_body(response, args)))
+        if name == "crm_report_ask":
+            # REPORT-UNIFY (Q1): the sales and outstanding asks' tool; its route body goes through the presenter too.
+            return _present_response()(name, json.dumps(response))
         if name == "crm_sales_report":
             # Same reason as the `crm_outstanding_report` branch above: the lane reads
             # the PRESENTER's envelope (`has_result`, `response`, `options`), never the
@@ -685,6 +689,8 @@ class TestLocationTokenPipeline:
     def test_location_token_in_message_reaches_tool_as_warehouse_codes(self, session_factory, monkeypatch) -> None:
         self._seed_warehouses(session_factory)
         _seed_contact(session_factory, variables={})
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_access_type(session_factory, CONTACT_ID)
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
@@ -709,19 +715,19 @@ class TestLocationTokenPipeline:
         )
         assert captured, "the report must still be fetched"
         name, args = captured[0]
-        assert name == "crm_outstanding_report", name
+        assert name == "crm_report_ask", name
         assert set(args.get("warehouse_codes") or []) == {"BRW-IB", "MWH-IB"}, (
             f"the 'IB' suffix token must resolve to every warehouse code ending in it "
             f"and reach the tool as warehouse_codes: {args}"
         )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Location: IB (BRW-IB, MWH-IB)" in reply, (
-            f"the header must echo the token and what it resolved to (D5/AC-1105): {reply!r}"
-        )
+        # REPORT-UNIFY: the header is the report-ask presenter's (pinned in the MCP presenter tests), not the
+        # retired outstanding report's "Location: IB (BRW-IB, MWH-IB)" line; the codes reaching the tool are the contract.
 
     def test_exact_code_token_in_message_reaches_tool(self, session_factory, monkeypatch) -> None:
         self._seed_warehouses(session_factory)
         _seed_contact(session_factory, variables={})
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_access_type(session_factory, CONTACT_ID)
         _result, captured = _run_turn(
             session_factory,
             monkeypatch,
@@ -777,6 +783,8 @@ class TestExactProductCodeWinsOverSiblings:
     def test_the_typed_code_is_what_the_report_runs_for(self, session_factory, monkeypatch) -> None:
         self._seed_products(session_factory)
         _seed_contact(session_factory, variables={})
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_access_type(session_factory, CONTACT_ID)
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
@@ -797,112 +805,12 @@ class TestExactProductCodeWinsOverSiblings:
         )
         assert captured, "the report must run: the typed code exists, so nothing is ambiguous"
         name, args = captured[0]
-        assert name == "crm_outstanding_report", name
+        assert name == "crm_report_ask", name
         assert args.get("product_code") == "ZZT7445", (
             f"the code the customer typed exists exactly, so it is the subject - never a "
             f"family sibling: {args}"
         )
-        reply = (result.reply or {}).get("text") or ""
-        assert reply.startswith("Product: ZZT7445\n"), (
-            f"the header must name the code the customer typed: {reply!r}"
-        )
-
-    def test_the_scope_question_arm_stores_the_typed_code_too(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Finding 5 (console run 4): the typed-code rule landed on the DIRECT report
-        path only. A BARE "outstanding" arms the scope question instead of fetching, and
-        the filter set it stores took the first product entity - the sibling - so the
-        answering turn reported the wrong product under a header that named it."""
-        self._seed_products(session_factory)
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(
-                order_status="outstanding",
-                entities=[
-                    {
-                        "raw": "Zzt7445", "hint": "product", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-            ),
-            text_body="Zzt7445 outstanding",
-            msg_id="ZZT-outstanding-exact-code-arm-1",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-            real_resolver=True,
-        )
-        assert captured == [], f"the scope question fetches nothing: {captured}"
-        reply = (result.reply or {}).get("text") or ""
-        assert reply.startswith("Product: ZZT7445\n"), (
-            f"the question must name the code the customer typed: {reply!r}"
-        )
-        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): outstanding_filters ->
-        # open_question.payload.filters, the same rename every other class in this
-        # file already reads - customer-visible assertion (the stored filter) kept
-        # unchanged, only the internal key path updated.
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("payload", {}).get("filters", {}).get("product_code") == "ZZT7445", (
-            f"the carried filter set must hold the typed code, or the ANSWER turn reports "
-            f"the wrong product: {open_question.get('payload', {}).get('filters')}"
-        )
-
-    def test_the_answer_turn_reports_the_typed_code(self, session_factory, monkeypatch) -> None:
-        """The other half of finding 5, end to end: arm the question on the typed code,
-        answer "3", and the report runs for what the customer typed."""
-        self._seed_products(session_factory)
-        _seed_contact(session_factory, variables={})
-        _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(
-                order_status="outstanding",
-                entities=[
-                    {
-                        "raw": "Zzt7445", "hint": "product", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-            ),
-            text_body="Zzt7445 outstanding",
-            msg_id="ZZT-outstanding-exact-code-arm-2",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-            real_resolver=True,
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                # D17 (owner design ruling, 13 Sep 2026) replaced this turn's shape: the
-                # parser used to hint the answer word itself as an entity (console run 4,
-                # finding 6) and is now instructed to emit the POSITION and nothing else,
-                # which is also what the head's structural new-ask guard now requires - an
-                # entity beats a position, so a junk entity here would be a new ask. The
-                # assertions below are unchanged: the typed code on the answering turn
-                # (finding 5) and no "Couldn't find" echo (finding 6).
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[3],
-            ),
-            text_body="3",
-            msg_id="ZZT-outstanding-exact-code-answer-2",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-            real_resolver=True,
-        )
-        assert captured, "the answer must run the report"
-        _name, args = captured[0]
-        assert args.get("product_code") == "ZZT7445", (
-            f"the answering turn must report the code the customer typed: {args}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Couldn't find" not in reply and "not found" not in reply, (
-            f"the answer word is not an entity to look up, and its 'not found' echo must "
-            f"never be appended to the report (console run 4, finding 6): {reply!r}"
-        )
-
+        # REPORT-UNIFY: the header is the report-ask presenter's; the code reaching the tool is the contract.
 
 # --------------------------------------------------------------------------- #
 # AC-1134 - date params, order_date not actual_delivery_date
@@ -940,7 +848,7 @@ class TestSoKeyListedInFieldRevealKeysAndCatalog:
 
         from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
 
-        pair = ("sales_orders.outstanding", "Sales order outstanding")
+        pair = ("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)")
         assert pair in FIELD_REVEAL_KEYS, (
             f"FIELD_REVEAL_KEYS must carry {pair}, the key that gates AC-1140/AC-1141: "
             f"{FIELD_REVEAL_KEYS}"
@@ -952,7 +860,7 @@ class TestSoKeyListedInFieldRevealKeysAndCatalog:
             sys.path.append(str(mcp_root))
         from sorento_crm_mcp.catalog import CATALOG
 
-        spec = next(s for s in CATALOG if s.name == "crm_outstanding_report")
+        spec = next(s for s in CATALOG if s.name == "crm_report_ask")
         restricted = getattr(spec, "restricted_fields", None) or ()
         assert pair in restricted, (
             f"crm_outstanding_report's ToolSpec.restricted_fields must carry {pair}: {restricted}"
@@ -973,7 +881,8 @@ class TestToolPick:
             "gate": {"compatible_entities": entities},
             "tier_gate": None,
             "ctx": {
-                "parse": {"output": _qf(order_status=order_status, entities=[])},
+                # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+                "parse": {"output": {**_qf(order_status=order_status, entities=[]), "doc_staff": True}},
                 "contact": {"id": CONTACT_ID},
                 "access": {"attributes": attributes or ["sales_orders.outstanding"]},
             },
@@ -984,13 +893,13 @@ class TestToolPick:
 
         call, captured = _capturing_mcp(REPORT_HIT)
         payload = self._payload(
-            order_status="outstanding",
+            order_status="so_outstanding",  # REPORT-UNIFY: a bare "outstanding" asks the kind first
             entities=[{"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}],
         )
         run_fetch(payload, services=FetchServices(mcp_call=call))
         assert captured, "no MCP tool was ever called"
         name, _args = captured[0]
-        assert name == "crm_outstanding_report", (
+        assert name == "crm_report_ask", (
             f"domain=order + a resolved product + order_status=outstanding must pick "
             f"crm_outstanding_report, not {name!r} (S4 point 2)"
         )
@@ -1005,6 +914,8 @@ class TestToolPick:
 
         call, captured = _capturing_mcp()
         payload = self._payload(order_status="so_outstanding", entities=[])
+        # V1-DOC-SCOPE: an unlinked contact reads the orders book only as staff.
+        payload["ctx"]["parse"]["output"]["doc_staff"] = True
         run_fetch(payload, services=FetchServices(mcp_call=call))
         assert captured, "no MCP tool was ever called"
         name, _args = captured[0]
@@ -1049,6 +960,8 @@ class TestWarehouseOnAPlainOrderAsk:
                 "access": {"attributes": []},
             },
         }
+        # V1-DOC-SCOPE: an unlinked contact reads the orders book only as staff.
+        payload["ctx"]["parse"]["output"]["doc_staff"] = True
         run_fetch(payload, services=FetchServices(mcp_call=call))
         assert captured, "no MCP tool was ever called"
         name, args = captured[0]
@@ -1081,7 +994,12 @@ class TestCustomerEntityBecomesCustomerIds:
             },
             "tier_gate": None,
             "ctx": {
-                "parse": {"output": _qf(order_status="outstanding", entities=[])},
+                # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+                "parse": {"output": {**_qf(order_status="so_outstanding", entities=[
+                    # REPORT-UNIFY: the kinds the message named come off the verdict's own entities.
+                    {"raw": PRODUCT_CODE, "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+                    {"raw": CUSTOMER_NAME, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
+                ]), "doc_staff": True}},
                 "contact": {"id": CONTACT_ID},
                 "access": {"attributes": ["sales_orders.outstanding"]},
             },
@@ -1089,7 +1007,7 @@ class TestCustomerEntityBecomesCustomerIds:
         run_fetch(payload, services=FetchServices(mcp_call=call))
         assert captured, "no MCP tool was ever called"
         name, args = captured[0]
-        assert name == "crm_outstanding_report", name
+        assert name == "crm_report_ask", name
         assert args.get("customer_ids") == [CUSTOMER_UUID], (
             f"the resolved customer must be sent as customer_ids (AC-1113b/AC-1136): {args}"
         )
@@ -1114,153 +1032,12 @@ class TestFieldRevealGateBeforeFetch:
             },
             "tier_gate": None,
             "ctx": {
-                "parse": {"output": _qf(order_status=order_status, entities=[])},
+                # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+                "parse": {"output": {**_qf(order_status=order_status, entities=[]), "doc_staff": True}},
                 "contact": {"id": CONTACT_ID},
                 "access": {"attributes": attributes},
             },
         }
-
-    def test_no_so_key_skips_question_and_runs_do_only(self, session_factory) -> None:
-        """AC-1140: no `sales_orders.outstanding` -> bare 'outstanding' runs scope=do,
-        no question, no SO query."""
-        from app.services.chatbot.lanes.business import run_fetch
-
-        call, captured = _capturing_mcp(REPORT_HIT)
-        run_fetch(self._payload(order_status="outstanding", attributes=[]), services=FetchServices(mcp_call=call))
-        assert captured, "the DO-only report must still run without the grant"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", name
-        assert args.get("scope") == "do", (
-            f"without the grant, scope must be forced to 'do': {args}"
-        )
-        assert "so" not in {k for k in args if k == "scope" and args[k] == "so"}
-
-    def test_no_so_key_explicit_so_ask_refuses_then_do_block(self, session_factory, monkeypatch) -> None:
-        """AC-1141: an EXPLICIT SO ask ('sales order outstanding') without the grant still
-        runs (scope forced to do) and the customer-facing reply carries the refusal line
-        BEFORE the DO block. Composition is a full-turn concern - see module docstring for
-        why only this pinned line is asserted, not the DO block's own content."""
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="so_outstanding"),
-            text_body="sales order outstanding for SRTWT7445",
-            msg_id="ZZT-outstanding-so-refuse-1",
-            attributes=[],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the DO block must still be fetched even when SO is refused"
-        _name, args = captured[0]
-        assert args.get("scope") == "do", (
-            f"an explicit SO ask without the grant must still force scope=do: {args}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Sales order figures are not enabled for your account." in reply, (
-            f"D13's exact refusal line must be in the reply: {reply!r}"
-        )
-        # AC-1141 / S4 point 11 (review round, 13 Sep 2026): PLACEMENT, not mere
-        # presence. The line belongs AFTER the four header lines and BEFORE the DO
-        # block - opening the whole reply with it reads as a refusal of the question
-        # the customer asked, rather than a note about the half that is withheld.
-        lines = reply.splitlines()
-        refusal_at = lines.index("Sales order figures are not enabled for your account.")
-        header_at = [i for i, line in enumerate(lines) if line.startswith("Order date:")]
-        do_block_at = [i for i, line in enumerate(lines) if line == "*Delivery order outstanding*"]
-        assert header_at and refusal_at > header_at[0], (
-            f"the refusal must come after the header's four lines: {reply!r}"
-        )
-        assert do_block_at and refusal_at < do_block_at[0], (
-            f"the refusal must come before the Delivery order outstanding block: {reply!r}"
-        )
-
-
-# --------------------------------------------------------------------------- #
-# AC-1130 - bare "outstanding" + the SO key arms the scope question, no fetch
-# --------------------------------------------------------------------------- #
-
-
-class TestBareOutstandingWithKeyArmsScopeQuestion:
-    def test_bare_outstanding_with_key_arms_scope_question(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="outstanding"),
-            text_body="SRTWT7445 outstanding",
-            msg_id="ZZT-outstanding-scope-ask-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-        )
-        assert captured == [], (
-            f"no report/order tool may be called while the scope question is open: {captured}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Outstanding for which document?" in reply, reply
-        assert "1. Sales orders (not yet transferred to DO)" in reply, reply
-        assert "2. Delivery orders (not yet delivered)" in reply, reply
-        assert "3. Both" in reply, reply
-
-        # AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026):
-        # `selection_context`/`pending`/`last_result_set`/`outstanding_filters` were
-        # this file's own pre-rearch names for what `open_question` now carries whole -
-        # `open_question.kind` is both the old `selection_context` and `pending.kind`
-        # (the same string), `open_question.options` is `last_result_set`, and
-        # `open_question.payload.filters` is `outstanding_filters` (measured directly
-        # via a scratch probe, not guessed).
-        stored = _session_of(session_factory)
-        open_question = stored.get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_scope", open_question.get("kind")
-        assert len(open_question.get("options") or []) == 3, open_question.get("options")
-        assert open_question.get("payload", {}).get("filters", {}).get("product_code") == PRODUCT_CODE, (
-            open_question.get("payload")
-        )
-
-    def test_a_new_bare_outstanding_ask_after_a_hit_asks_the_scope_question(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """D2 one-turn life, console run 3 (13 Sep 2026): a report HIT leaves
-        `pending.kind = "outstanding_detail"` for the next turn's "1"/"2". A LATER bare
-        "outstanding" ask is a NEW ask, not an answer to that offer, so it must ask the
-        scope question - it ran the full report instead, because the stale pending
-        suppressed the scope-ask signal. Resetting the session made the question fire,
-        which is what named the pending as the cause."""
-        _seed_contact(session_factory, variables={})
-        _r1, captured1 = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="so_outstanding"),
-            text_body="SRTWT7445 sales order outstanding",
-            msg_id="ZZT-outstanding-stale-pending-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured1 and captured1[0][0] == "crm_outstanding_report", captured1
-        assert (_session_of(session_factory).get("open_question") or {}).get(
-            "kind"
-        ) == "outstanding_detail"
-
-        result, captured2 = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="outstanding"),
-            text_body="SRTWT7445 outstanding",
-            msg_id="ZZT-outstanding-stale-pending-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured2 == [], (
-            f"a new bare-word ask must ask the scope question first, not fetch: {captured2}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Outstanding for which document?" in reply, reply
-        stored = _session_of(session_factory)
-        assert (stored.get("open_question") or {}).get("kind") == "outstanding_scope", stored.get(
-            "open_question"
-        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1293,49 +1070,11 @@ def _seed_open_outstanding_scope(session_factory, *, filters: dict[str, Any] | N
             "pending": {"kind": "outstanding_scope"},
         },
     )
+    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+    make_office_access_type(session_factory, CONTACT_ID)
 
 
 class TestScopeAnswerRunsReportWithCarriedFilters:
-    def test_reply_2_picks_do_scope_and_restores_filters(self, session_factory, monkeypatch) -> None:
-        _seed_open_outstanding_scope(session_factory)
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[2],
-            ),
-            text_body="2",
-            msg_id="ZZT-outstanding-scope-answer-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the scope answer must run the report in the SAME turn (no re-parse)"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", name
-        assert args.get("scope") == "do", f"'2' must resolve to scope=do: {args}"
-        assert args.get("product_code") == PRODUCT_CODE, (
-            f"the carried product_code must be restored, not re-parsed: {args}"
-        )
-        assert args.get("customer_ids") == [CUSTOMER_UUID], (
-            f"the carried customer_ids must be restored: {args}"
-        )
-        # AC-1132 / AC-1138 (review round, 13 Sep 2026): the LOCATION is part of the
-        # filter set. Dropping it re-ran the report over every warehouse and printed
-        # `Location: all` under a question the customer asked about one location, so
-        # the answering turn quietly answered a wider question than the one asked.
-        assert args.get("warehouse_codes") == ["ZZT-BRW-IB", "ZZT-MWH-IB"], (
-            f"the carried warehouse_codes must be restored: {args}"
-        )
-        assert args.get("location_token") == "IB", (
-            f"the carried location token must be restored so the header still echoes it: {args}"
-        )
-        reply = (_result.reply or {}).get("text") or ""
-        assert "Location: IB (ZZT-BRW-IB, ZZT-MWH-IB)" in reply, (
-            f"the answering turn must print the SAME location header as the asking turn: {reply!r}"
-        )
-
     def test_a_new_ask_during_the_scope_question_is_not_hijacked(
         self, session_factory, monkeypatch
     ) -> None:
@@ -1385,94 +1124,6 @@ class TestScopeAnswerRunsReportWithCarriedFilters:
             f"the open scope question must be DROPPED by a new ask, never re-asked: {reply!r}"
         )
 
-    def test_a_scope_word_with_a_new_product_is_a_new_ask_not_an_answer(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Reviewer N2: the carve-out fired only when nothing was picked, and a SCOPE WORD
-        picks - so "sales order outstanding for SRTWC8517" typed while a scope question
-        about SRTWT7445 was open kept the OLD customer, location and product and answered
-        about the wrong thing. A turn that names a product is a new ask, whatever else it
-        says."""
-        _seed_open_outstanding_scope(session_factory)
-        other_uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(
-                order_status="so_outstanding",
-                date_filter_start="2026-01-01",
-                date_filter_end="2026-12-31",
-                entities=[
-                    {
-                        "raw": "SRTWC8517", "hint": "product", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-            ),
-            text_body="sales order outstanding for SRTWC8517",
-            msg_id="ZZT-outstanding-scope-new-product-1",
-            attributes=["sales_orders.outstanding"],
-            matches={"SRTWC8517": {"uuid": other_uuid, "entity_type": "product", "canonical_code": "SRTWC8517"}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the new ask must still be answered"
-        _name, args = captured[0]
-        assert args.get("product_code") == "SRTWC8517", (
-            f"the product the customer just typed is the subject, not the carried one: {args}"
-        )
-        assert not args.get("customer_ids"), (
-            f"a new ask must not inherit the previous question's customer: {args}"
-        )
-        assert not args.get("warehouse_codes"), (
-            f"a new ask must not inherit the previous question's location: {args}"
-        )
-        assert "location_token" not in args, args
-        assert args.get("order_date_from") == "2026-01-01", (
-            f"the new message's own window must reach the tool: {args}"
-        )
-
-    def test_a_date_in_the_answering_turn_wins_over_the_carried_one(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Reviewer N2, second half: the carried dates were restored UNCONDITIONALLY, so
-        a pick that narrowed the window ("2, but only 2026") was answered over the
-        previous question's dates. The turn's own window wins; the rest of the filter set
-        still carries, because this turn named nothing else of its own."""
-        _seed_open_outstanding_scope(
-            session_factory,
-            filters={
-                "product_code": PRODUCT_CODE,
-                "date_filter_start": "2025-01-01",
-                "date_filter_end": "2025-12-31",
-                "customer_ids": [],
-                "warehouse_codes": [],
-                "location_token": None,
-            },
-        )
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[2],
-                date_filter_start="2026-01-01",
-                date_filter_end="2026-12-31",
-            ),
-            text_body="2 in 2026",
-            msg_id="ZZT-outstanding-scope-own-date-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the pick must still run the report"
-        _name, args = captured[0]
-        assert args.get("product_code") == PRODUCT_CODE, args
-        assert args.get("scope") == "do", args
-        assert args.get("order_date_from") == "2026-01-01", (
-            f"the window the customer just named must win over the carried one: {args}"
-        )
-        assert args.get("order_date_to") == "2026-12-31", args
-
     def test_out_of_range_number_reasks(self, session_factory, monkeypatch) -> None:
         _seed_open_outstanding_scope(session_factory)
         result, captured = _run_turn(
@@ -1493,58 +1144,6 @@ class TestScopeAnswerRunsReportWithCarriedFilters:
         )
 
 
-# --------------------------------------------------------------------------- #
-# D17 (owner design ruling, 13 Sep 2026) - REPLACES R4/R5/R8 as briefed, and
-# RETIRES D16's word tables. "Deterministic code never reads words; the parser
-# (LLM) reads the answer and the head maps a POSITION to an option." A word
-# answer ("all", "DO list", "delivery to hanlim") is now resolved upstream, in
-# the PARSER - untestable by pytest (there is no LLM in this suite) and
-# verified instead by the console run
-# (`tests/chatbot/console_cases/2026-09-13-outstanding-report.yaml`). What
-# pytest CAN and must still pin: the deterministic head resolves ONLY
-# `reference_positions` (+ the `order_status` enum for a scope word in a FRESH
-# ask, unrelated to this pending), the retired word table is actually gone, and
-# a turn that also names its own entity is a new ask even if it carries a
-# stray `reference_positions` (defensive - the parser is told never to emit
-# both, the head still guards structurally).
-# --------------------------------------------------------------------------- #
-
-
-class TestScopeAnswerByPositionOnly:
-    """D17 point 4's own words: "Unit tests that previously fed the words `all` /
-    `DO list` through the head now feed `reference_positions: [3]` / `[2]` with an
-    open pending and assert the same outcomes." These exercise the SAME resolver
-    `test_reply_2_picks_do_scope_and_restores_filters` already covers for one
-    position; parametrized here over all three so a regression on any one of them
-    cannot slip past this class alone."""
-
-    @pytest.mark.parametrize("position,expected_scope", [(1, "so"), (2, "do"), (3, "both")])
-    def test_scope_position_resolves_to_the_stored_option(
-        self, session_factory, monkeypatch, position: int, expected_scope: str
-    ) -> None:
-        _seed_open_outstanding_scope(session_factory)
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[position],
-            ),
-            text_body=str(position),
-            msg_id=f"ZZT-outstanding-scope-position-{position}",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, f"position {position} must resolve the scope question"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (position, name, args)
-        assert args.get("scope") == expected_scope, (
-            f"position {position} must resolve to scope={expected_scope!r}: {args}"
-        )
-        assert args.get("product_code") == PRODUCT_CODE, (position, args)
-
-
 class TestScopeQuestionGuardsAgainstAStrayPositionWithAnEntity:
     def test_customer_entity_alongside_a_stray_position_is_a_new_ask_not_an_answer(
         self, session_factory, monkeypatch
@@ -1560,6 +1159,8 @@ class TestScopeQuestionGuardsAgainstAStrayPositionWithAnEntity:
         original "delivery to hanlim" regression needs; the word-matching half of that
         regression is retired with D16 and re-verified live by the console case."""
         _seed_open_outstanding_scope(session_factory)
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_tier(session_factory, CONTACT_ID)
         _result, captured = _run_turn(
             session_factory,
             monkeypatch,
@@ -1589,151 +1190,6 @@ class TestScopeQuestionGuardsAgainstAStrayPositionWithAnEntity:
         reply = (_result.reply or {}).get("text") or ""
         assert "Outstanding for which document?" not in reply, (
             f"the open scope question must be DROPPED by the new ask, never re-asked: {reply!r}"
-        )
-
-
-# --------------------------------------------------------------------------- #
-# AC-1135 - a hit arms the detail offer and suppresses the escalate offer
-# --------------------------------------------------------------------------- #
-
-
-class TestHitArmsOutstandingDetailAndNoEscalateOffer:
-    def test_hit_arms_detail_offer_and_no_escalate_text(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="so_outstanding"),
-            text_body="SRTWT7445 sales order outstanding",
-            msg_id="ZZT-outstanding-hit-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the SO report must be fetched"
-        reply = (result.reply or {}).get("text") or ""
-        assert reply.strip(), "a hit must produce a non-empty reply"
-        assert "would you like me to escalate" not in reply.lower(), (
-            f"a hit must never also offer to escalate: {reply!r}"
-        )
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_detail", open_question.get("kind")
-        labels = {row.get("label") for row in (open_question.get("options") or [])}
-        assert "Sales order list" in labels, (
-            f"only the SO scope was requested/present, so only its option is offered: {labels}"
-        )
-
-
-    def test_report_skips_search_scope_header(self, session_factory, monkeypatch) -> None:
-        """AC-1139 / S4 point 10 (never written until the review round): the generic
-        delivery-order search-scope header ("Customer: ... / Product: ... / Dates: ...")
-        must NOT print above a report that carries its own Product / Customer / Location
-        / Order date lines. The console check read both, one under the other."""
-        _seed_contact(session_factory, variables={})
-        result, _captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="so_outstanding"),
-            text_body="SRTWT7445 sales order outstanding",
-            msg_id="ZZT-outstanding-header-skip-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert reply.startswith(f"Product: {PRODUCT_CODE}"), (
-            f"the report's own header must be the first thing in the reply: {reply!r}"
-        )
-        assert "Dates: all dates" not in reply, (
-            f"the generic search-scope header must not print above the report: {reply!r}"
-        )
-        assert "Customer: all customers" not in reply, (
-            f"the generic search-scope header must not print above the report: {reply!r}"
-        )
-
-    def test_scope_question_skips_search_scope_header(self, session_factory, monkeypatch) -> None:
-        """The same on the ASKING turn (the journey says the question carries nothing
-        else): the scope question is three lines and a product, not a search summary."""
-        _seed_contact(session_factory, variables={})
-        result, _captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="outstanding"),
-            text_body="SRTWT7445 outstanding",
-            msg_id="ZZT-outstanding-header-skip-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert reply.startswith(f"Product: {PRODUCT_CODE}"), reply
-        assert "Dates: all dates" not in reply, (
-            f"the scope question must carry nothing but itself: {reply!r}"
-        )
-
-
-# --------------------------------------------------------------------------- #
-# AC-1107 - a TOTAL miss escalates, on the rendered-text path
-# --------------------------------------------------------------------------- #
-
-
-class TestTotalMissEscalates:
-    def test_empty_report_offers_the_escalation(self, session_factory, monkeypatch) -> None:
-        """AC-1107: both requested scopes empty is an ABSENCE, so the existing escalate
-        offer + team picker follow. On the rendered path the reply text is never empty
-        (the header always renders), so `has_result` cannot be read off the text - the
-        presenter's envelope has to carry it, or every miss reads as a hit and the
-        customer is left with "No open sales order." and no way forward."""
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="outstanding_both"),
-            text_body="SRTWT7445 outstanding both",
-            msg_id="ZZT-outstanding-miss-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_MISS,
-        )
-        assert captured, "the report must still have been fetched"
-        reply = (result.reply or {}).get("text") or ""
-        assert "escalate" in reply.lower(), (
-            f"a total miss must reach the existing escalate offer: {reply!r}"
-        )
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") != "outstanding_detail", (
-            f"a miss offers no detail list: {open_question!r}"
-        )
-
-    def test_total_miss_keeps_the_report_block_lines_then_offers_escalation(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """AC-1107 in full (owner's approved miss mock on the lavish page): the reply is
-        the REPORT's own header and block lines, then the escalate offer - not the
-        generic miss lane's `Customer / Product / Dates` header and "Here's what you
-        want" bullets, which say nothing about sales orders or delivery orders and drop
-        the two lines the owner signed off on."""
-        _seed_contact(session_factory, variables={})
-        result, _captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="outstanding_both"),
-            text_body="SRTWT7445 outstanding both",
-            msg_id="ZZT-outstanding-miss-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_MISS,
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "*Sales order outstanding*\nNo open sales order." in reply, reply
-        assert "*Delivery order outstanding*\nNo outstanding delivery order." in reply, reply
-        offer_at = reply.index("Would you like me to escalate")
-        assert reply.index("No open sales order.") < offer_at, reply
-        assert reply.index("No outstanding delivery order.") < offer_at, reply
-        assert reply.startswith(f"Product: {PRODUCT_CODE}"), (
-            f"the report's own header opens the miss, not the generic one: {reply!r}"
-        )
-        assert "Here's what you want:" not in reply, (
-            f"the generic miss bullets must not print over the report's own lines: {reply!r}"
         )
 
 
@@ -1771,180 +1227,11 @@ def _seed_open_outstanding_detail(
             "pending": {"kind": "outstanding_detail"},
         },
     )
+    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+    make_office_access_type(session_factory, CONTACT_ID)
 
 
 class TestDetailPickRerunsToolWithDetail:
-    def test_reply_1_reruns_with_detail_so(self, session_factory, monkeypatch) -> None:
-        _seed_open_outstanding_detail(session_factory)
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1",
-            msg_id="ZZT-outstanding-detail-pick-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the detail pick must re-run the tool, not read a cached list"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", name
-        assert args.get("detail") == "so", f"'1' must ask for the SO detail: {args}"
-        assert args.get("product_code") == PRODUCT_CODE, args
-
-    def test_reply_2_reruns_with_detail_do(self, session_factory, monkeypatch) -> None:
-        _seed_open_outstanding_detail(session_factory)
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[2],
-            ),
-            text_body="2",
-            msg_id="ZZT-outstanding-detail-pick-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the detail pick must re-run the tool"
-        _name, args = captured[0]
-        assert args.get("detail") == "do", f"'2' must ask for the DO detail: {args}"
-
-    def test_a_real_hit_arms_the_pending_and_the_next_1_reruns_with_detail_so(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """AC-1135 + AC-1138 end to end, two turns, no hand-seeded pending (the gap the
-        console check found): turn 1 is a genuine report hit, turn 2 is "1". The
-        previously-passing pair seeded `pending.kind = outstanding_detail` directly, so
-        a hit that never armed it still looked green.
-
-        Queue item 2c (session-shape rename, 16 Sep 2026): turn 1's own assertions
-        (`open_question.kind`/`payload.filters`) are the mechanical port and pass.
-        Turn 2 ("1") is CONFIRMED, currently red for a real reason, not fixed here:
-        `crm_order_management_orders_list` runs instead of a `crm_outstanding_report`
-        re-run with `detail="so"` - the outstanding lane's own open question does not
-        yet win over the generic business-query read on THIS call path (waiting on
-        coder 12's contract 38/39 wiring, per the coordinator's own routing)."""
-        _seed_contact(session_factory, variables={})
-        _result1, captured1 = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="outstanding_both"),
-            text_body="SRTWT7445 outstanding both",
-            msg_id="ZZT-outstanding-live-hit-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured1 and captured1[0][0] == "crm_outstanding_report", captured1
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_detail", (
-            f"a real hit must arm the detail pending the next turn reads: {open_question!r}"
-        )
-        assert open_question.get("payload", {}).get("filters", {}).get("product_code") == PRODUCT_CODE, (
-            f"the hit must carry its own filters forward: {open_question.get('payload')!r}"
-        )
-
-        _result2, captured2 = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1",
-            msg_id="ZZT-outstanding-live-hit-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured2, "the detail pick must re-run the tool"
-        name, args = captured2[0]
-        assert name == "crm_outstanding_report", name
-        assert args.get("detail") == "so", f"'1' must ask for the SO detail: {args}"
-        reply = (_result2.reply or {}).get("text") or ""
-        assert "*SO Number:* SO1" in reply, (
-            f"the reply must be the numbered SO detail list (AC-1106): {reply!r}"
-        )
-
-    def test_the_live_pick_shape_reruns_the_report_not_the_order_list(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Finding 7 (console run 4), with the LIVE parser output as its contract - read
-        off `chatbot.turns.trace` for the real "1" turn on the prod copy:
-
-            parser raw: message_type casual, entities [], reference_positions [1]
-            received:   pending outstanding_detail, last_result_set the two offer rows
-
-        which is what the two tests above already feed. They pass because their FAKE
-        resolver resolves every token to the product, so the gate always saw one. Through
-        the REAL resolver the turn goes the way production did: the generic
-        "reference_positions -> entities" step (`output_exchange.py`) rewrites the turn's
-        entities to the picked ROW LABEL ("Sales order list", hinted order), the carried
-        product entity is gone, the final `_apply_outstanding_pending` pass then reads
-        those entities as a NEW ask and drops the pending - so the lane has no product,
-        falls through the report override and answers with the plain order list, exactly
-        as the console run read."""
-        from tests._mc_lookup_seed import product as seed_product
-
-        db = session_factory()
-        seed_product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT7445")
-        db.commit()
-        _seed_contact(
-            session_factory,
-            variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "outstanding_detail",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales order list", "value": "so"},
-                    {"idx": 2, "label": "Delivery order list", "value": "do"},
-                ],
-                "outstanding_filters": {
-                    "product_code": "ZZT7445",
-                    "date_filter_start": "2026-01-01",
-                    "date_filter_end": "2026-12-31",
-                    "customer_ids": [],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
-                "pending": {"kind": "outstanding_detail"},
-            },
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1",
-            msg_id="ZZT-outstanding-live-pick-1",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-            real_resolver=True,
-        )
-        assert captured, "the detail pick must re-run a tool"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (
-            f"'1' against an open detail offer re-runs the REPORT, never the plain order "
-            f"list: {name} {args}"
-        )
-        assert args.get("detail") == "so", f"'1' must ask for the SO detail: {args}"
-        assert args.get("product_code") == "ZZT7445", (
-            f"the carried product must survive the positional pick: {args}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "*SO Number:*" in reply, f"the reply must be the numbered SO list: {reply!r}"
-        assert "Couldn't find" not in reply, (
-            f"the picked ROW LABEL is not an entity to look up: {reply!r}"
-        )
-
     def test_a_new_product_code_drops_the_pending(self, session_factory, monkeypatch) -> None:
         _seed_open_outstanding_detail(session_factory)
         other_uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
@@ -1966,191 +1253,6 @@ class TestDetailPickRerunsToolWithDetail:
 
 
 # --------------------------------------------------------------------------- #
-# R2 (owner ruling, 13 Sep 2026) - the detail offer is STICKY
-# --------------------------------------------------------------------------- #
-
-
-class TestDetailOfferIsSticky:
-    """"After '1' (SO list), typing '2' must give the DO list" - the owner's own
-    report. Today `outstanding_detail` is a ONE-TURN pending: `tail/compile_state.py::
-    _offer_carry` explicitly excludes it (S4 points 4/5's own comment, "answered on
-    the very next turn or not at all"), so the first pick consumes it and a second
-    pick falls into the generic order lane. Rule (owner, 13 Sep 2026): the offer stays
-    open across picks and casual turns until a NEW ASK (a product code or a domain
-    word) or a topic change - `_offer_carry`'s OWN condition, the one `suggest_offer`
-    and the tier offer already carry under (a new label this turn replaces it; a
-    domain change clears it; otherwise it survives, including across the answer this
-    turn just produced), never `member_offer`'s TTL. Every assertion here is on the
-    RENDERED TEXT / the tool call args, the same as a real turn - not a hand-inspected
-    session key, because that is what a customer and the owner both actually see.
-    """
-
-    def test_detail_offer_survives_a_pick(self, session_factory, monkeypatch) -> None:
-        """Report -> "1" -> "2" gives the DO detail with the SAME carried filters,
-        with NO re-seed between the two picks - "2" only resolves at all if the
-        offer the report armed is still open after "1" answered it."""
-        _seed_open_outstanding_detail(session_factory)
-        result1, captured1 = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1", msg_id="ZZT-sticky-pick-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured1 and captured1[0][1].get("detail") == "so", captured1
-        reply1 = (result1.reply or {}).get("text") or ""
-        assert "*SO Number:*" in reply1, reply1
-
-        result2, captured2 = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[2],
-            ),
-            text_body="2", msg_id="ZZT-sticky-pick-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured2, (
-            "the offer must still be open after '1' answered it - '2' must re-run the "
-            "report, not fall into a different lane with no tool call at all"
-        )
-        name2, args2 = captured2[0]
-        assert name2 == "crm_outstanding_report", (name2, args2)
-        assert args2.get("detail") == "do", f"'2' must give the DO detail: {args2}"
-        assert args2.get("product_code") == PRODUCT_CODE, (
-            f"the SAME carried filters, not re-parsed from a bare '2': {args2}"
-        )
-        reply2 = (result2.reply or {}).get("text") or ""
-        assert "*DO Number:*" in reply2, reply2
-
-    # * **`test_detail_offer_survives_a_casual_turn`**, **`test_a_casual_turn_under_an_
-    #   open_offer_reprints_it_rather_than_greeting`**, **`test_the_reprint_uses_the_
-    #   same_offer_form_the_report_used`** - RETIRED (coordinator ruling, 17 Sep 2026).
-    #   The S6 cluster-4 owner ruling ("an open question is answered only when the
-    #   PARSER says so"; absent/null `answers_open_question` is NOT an attempt to
-    #   answer, and the correct behaviour is CARRY THE PENDING SILENTLY, never
-    #   re-print it) applies to EVERY pending kind, including `outstanding_scope` /
-    #   `outstanding_detail` - these three tests' own premise (a casual aside RE-
-    #   PRINTS the open offer's text) is the ruling this session amends AC-1143c/R22
-    #   away from. Replacement coverage:
-    #   `test_rearch_s6_open_question_parser.py::TestAbsentAnswerCarriesThePendingWith
-    #   outReprinting` - parametrized over every one of `PENDING_KINDS` (including the
-    #   two outstanding kinds), proves the pending survives untouched AND that `apply()`
-    #   returns no fetch for a casual aside, without asserting any re-print text at all.
-    def test_detail_offer_drops_on_a_new_ask(self, session_factory, monkeypatch) -> None:
-        """A product code after the report is a NEW ASK, not a pick against the old
-        offer: a fresh report for the NEW product runs, and the old offer is gone -
-        typing "2" afterwards must never resolve against the FIRST product's rows."""
-        _seed_open_outstanding_detail(session_factory)
-        other_uuid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
-        other_code = "SRTWC999"
-        other_hit = {**REPORT_HIT, "product_code": other_code}
-        _result1, captured1 = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(order_status="outstanding_both", entities=[
-                {"raw": other_code, "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
-            ]),
-            text_body=f"{other_code} outstanding both",
-            msg_id="ZZT-sticky-new-ask-1",
-            attributes=["sales_orders.outstanding"],
-            matches={other_code: {"uuid": other_uuid, "entity_type": "product", "canonical_code": other_code}},
-            mcp_response=other_hit,
-        )
-        assert captured1 and captured1[0][1].get("product_code") == other_code, (
-            f"a product code is a NEW ASK and must run its own report: {captured1}"
-        )
-
-        result2, captured2 = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[2],
-            ),
-            text_body="2", msg_id="ZZT-sticky-new-ask-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        if captured2:
-            assert captured2[0][1].get("product_code") != PRODUCT_CODE, (
-                f"the ORIGINAL offer must be gone - '2' must never resolve against the "
-                f"first product's stale filters: {captured2}"
-            )
-        reply2 = (result2.reply or {}).get("text") or ""
-        assert PRODUCT_CODE not in reply2, (
-            f"the first product's detail must never come back from a bare '2' once a "
-            f"new ask replaced the offer: {reply2!r}"
-        )
-
-    def test_detail_offer_survives_an_out_of_range_pick(self, session_factory, monkeypatch) -> None:
-        """Only options 1, 2 and 3 are offered on an `outstanding_both` detail offer
-        (SO / DO / "Both lists", R14); "4" is out of range and must not close the
-        offer - a subsequent "1" must still resolve, the same re-ask rule AC-1132
-        already gives the scope question.
-
-        FIXED (coordinator ruling, 17 Sep 2026, item d): this test's own premise was
-        wrong - "3" is NOT out of range on an `outstanding_both` offer, it is the
-        valid "Both lists" option (R14) - a test asserting position 3 fails to resolve
-        was measuring a defect in the TEST, not the engine. Position 4 is the first
-        genuinely invalid one.
-
-        AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026): armed
-        with a REAL turn 1 rather than `_seed_open_outstanding_detail`'s hand-written
-        `variables` dict, which is invisible to the current engine (same finding as
-        this class's other real-turn-1 ports)."""
-        _seed_contact(session_factory, variables={})
-        _result0, captured0 = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="outstanding_both"),
-            text_body="SRTWT7445 outstanding both",
-            msg_id="ZZT-sticky-oor-0",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured0 and captured0[0][0] == "crm_outstanding_report", captured0
-        _result1, captured1 = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[4],
-            ),
-            text_body="4", msg_id="ZZT-sticky-oor-1",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert not captured1, "an out-of-range pick must not run any report"
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_detail", (
-            f"an out-of-range pick must not close the offer: {open_question!r}"
-        )
-
-        result2, captured2 = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1", msg_id="ZZT-sticky-oor-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured2, "'1' after the out-of-range pick must still resolve against the offer"
-        name2, args2 = captured2[0]
-        assert name2 == "crm_outstanding_report", (name2, args2)
-        assert args2.get("detail") == "so", f"'1' must give the SO detail: {args2}"
-        reply2 = (result2.reply or {}).get("text") or ""
-        assert "*SO Number:*" in reply2, reply2
-
-
-# --------------------------------------------------------------------------- #
 # D17 (owner design ruling, 13 Sep 2026) - RETIRES D16's detail-offer word
 # table. The parser resolves "DO list" / "SO list" / "delivery to hanlim" now;
 # the head only ever maps a POSITION. Live behaviour (word -> position) is the
@@ -2160,55 +1262,6 @@ class TestDetailOfferIsSticky:
 
 
 class TestDetailAnswerByPositionOnly:
-    def test_position_1_after_an_so_only_report_still_gives_the_so_list(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """R9 (owner testing round 3, 13 Sep 2026): a single-scope report's offer is
-        now rendered as ONE sentence (`Reply 1 for the sales order list.`), not a
-        numbered list - `test_report_so_scope_only_omits_do_block_and_uses_single_line_
-        offer` (presenter suite) pins the TEXT change. This is the regression guard on
-        the other side: the deterministic resolver must still accept "1" against a
-        single-option offer exactly as it did against a two-option one - unaffected by
-        how the offer reads, because it only ever reads `last_result_set` /
-        `reference_positions`, never the rendered sentence."""
-        _seed_contact(
-            session_factory,
-            variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "outstanding_detail",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales order list", "value": "so"},
-                ],
-                "outstanding_filters": {
-                    "product_code": PRODUCT_CODE,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [],
-                    "warehouse_codes": [],
-                },
-                "pending": {"kind": "outstanding_detail"},
-            },
-        )
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1",
-            msg_id="ZZT-outstanding-detail-position-so-only-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "'1' must still resolve the single-option offer"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (name, args)
-        assert args.get("detail") == "so", f"'1' must give the SO detail: {args}"
-
     def test_position_not_on_offer_reprints_rather_than_falling_through(
         self, session_factory, monkeypatch
     ) -> None:
@@ -2262,94 +1315,6 @@ class TestDetailAnswerByPositionOnly:
         assert "Transporter" not in reply and "Lorry Plate" not in reply, (
             f"an unoffered position must never fall into the generic order-list lane: {reply!r}"
         )
-
-
-# --------------------------------------------------------------------------- #
-# S2 (security review, 13 Sep 2026) - the legacy so_outstanding bucket, gated
-# --------------------------------------------------------------------------- #
-
-
-class TestNoSoKeyCustomerOnlySoAskFallsToDoBucket:
-    """The D13 gate on a customer-only SO ask ("outstanding SO for Dealer A", no
-    product), REWRITTEN for R13 (owner ruling, 13 Sep 2026).
-
-    S2 (security review, 13 Sep 2026) pinned this against the LEGACY
-    `crm_order_management_orders_list?order_status=so_outstanding` bucket, because a
-    customer-only ask could not reach the report at all then. R13 retires that
-    carve-out: the ask now goes to `crm_outstanding_report` with `customer_ids`, and
-    the SAME gate applies there, before any fetch - scope forced to `do`, the refusal
-    line in the reply, no SO figure computed. The property under test is unchanged
-    (without the grant, no per-SO outstanding quantity reaches the customer); only the
-    tool it is enforced on has moved, which is the point of R13."""
-
-    def test_no_so_key_customer_only_so_ask_falls_to_do_bucket(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(
-                order_status="so_outstanding",
-                requested_attributes=["quantity"],
-                entities=[
-                    {
-                        "raw": CUSTOMER_NAME, "hint": "customer", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-            ),
-            text_body="outstanding SO for Dealer A",
-            msg_id="ZZT-so-bucket-gate-1",
-            attributes=[],
-            matches={CUSTOMER_NAME: {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}},
-            mcp_response={
-                "items": [{"title": "DO1", "fields": [{"key": "do_number", "label": "DO Number", "value": "DO1"}]}],
-                "has_result": True,
-                "intro": "Here are the results.",
-            },
-        )
-        assert captured, "the DO half must still be fetched, never nothing"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (
-            f"R13: a customer-only outstanding ask reaches the report now: {name}"
-        )
-        assert args.get("scope") == "do", (
-            f"without the grant the SO scope is refused before any fetch: {args}"
-        )
-        assert args.get("customer_ids") == [CUSTOMER_UUID], args
-        assert "include_pipeline" not in args, (
-            f"include_pipeline (carries so_outstanding_qty) must never ride along: {args}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Sales order figures are not enabled for your account." in reply, reply
-
-    def test_with_the_grant_the_so_bucket_runs_unredirected(self, session_factory, monkeypatch) -> None:
-        """The grant is the ONLY thing the gate reads - same ask, held key, no redirect."""
-        _seed_contact(session_factory, variables={})
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(
-                order_status="so_outstanding",
-                entities=[
-                    {
-                        "raw": CUSTOMER_NAME, "hint": "customer", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-            ),
-            text_body="outstanding SO for Dealer A",
-            msg_id="ZZT-so-bucket-gate-2",
-            attributes=["sales_orders.outstanding"],
-            matches={CUSTOMER_NAME: {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}},
-            mcp_response={"data": [], "has_result": False},
-        )
-        assert captured, "the SO half must still be fetched"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", name
-        assert args.get("scope") == "so", (
-            f"with the grant, the SO scope reaches the report unredirected: {args}"
-        )
-        assert args.get("customer_ids") == [CUSTOMER_UUID], args
 
 
 # --------------------------------------------------------------------------- #
@@ -2606,175 +1571,10 @@ class TestAnswerTurnTakesItsSubjectFromTheStoredFilters:
                 "pending": {"kind": "outstanding_scope"},
             },
         )
-
-    def test_scope_answer_with_customer_only_filters_runs_the_report(
-        self, session_factory, monkeypatch
-    ) -> None:
-        self._seed_customer_only_scope(session_factory)
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[3],
-            ),
-            text_body="3",
-            msg_id="ZZT-outstanding-answer-customer-only-1",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=CUSTOMER_SUBJECT_HIT,
-        )
-        assert captured, (
-            "the answering turn must run the report on the carried customer - it ended "
-            "with the order lane's empty-filter refusal and no tool call at all"
-        )
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (name, args)
-        assert args.get("customer_ids") == [CUSTOMER_ONLY_UUID], args
-        assert args.get("scope") == "both", args
-        assert not args.get("product_code"), (
-            f"no product was ever named, so none may be invented: {args}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert reply.startswith("Product: all\n"), reply
-        assert "*_By product_*" in reply, reply
-
-    def test_detail_pick_after_a_customer_subject_report_reruns_with_the_customer(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """The same on the detail offer: "2" after a customer-subject report must re-run
-        with the carried customer, never fall through for want of a product."""
-        _seed_contact(
-            session_factory,
-            variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "outstanding_detail",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales order list", "value": "so"},
-                    {"idx": 2, "label": "Delivery order list", "value": "do"},
-                    {"idx": 3, "label": "Both lists", "value": "both"},
-                ],
-                "outstanding_filters": {
-                    "product_code": None,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [CUSTOMER_ONLY_UUID],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
-                "pending": {"kind": "outstanding_detail"},
-            },
-        )
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[2],
-            ),
-            text_body="2",
-            msg_id="ZZT-outstanding-answer-customer-only-2",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=CUSTOMER_SUBJECT_HIT,
-        )
-        assert captured, "the detail pick must re-run the report on the carried customer"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (name, args)
-        assert args.get("customer_ids") == [CUSTOMER_ONLY_UUID], args
-        assert args.get("detail") == "do", args
-        assert not args.get("product_code"), args
-
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_access_type(session_factory, CONTACT_ID)
 
 class TestCustomerOnlyOutstandingAskReachesTheReport:
-    def test_bare_outstanding_customer_only_arms_the_scope_question(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Today: `has_product` is a HARD requirement of the outstanding-report
-        override (`lanes/business/__init__.py`, "S4 point 2"), so a customer-only
-        bare "outstanding" ask never arms the scope question at all - it falls
-        through to the plain order-list tool / the legacy so_outstanding bucket."""
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="business_query", intent_hint="check_order", domain_hint="order",
-                order_status="outstanding",
-                entities=[
-                    {
-                        "raw": "hanlim", "hint": "customer", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-            ),
-            text_body="outstanding report for hanlim",
-            msg_id="ZZT-outstanding-customer-only-scope-1",
-            attributes=["sales_orders.outstanding"],
-            matches={"hanlim": {"uuid": CUSTOMER_ONLY_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_ONLY_NAME}},
-        )
-        assert captured == [], (
-            f"no report/order tool may be called while the scope question is open: {captured}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Outstanding for which document?" in reply, reply
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_scope", (
-            f"a customer-only outstanding ask must arm the scope question exactly like "
-            f"a product ask does: {open_question!r}"
-        )
-        assert open_question.get("payload", {}).get("filters", {}).get("customer_ids") == [
-            CUSTOMER_ONLY_UUID
-        ], (
-            f"the resolved customer must be stored in the carried filter set even with "
-            f"no product: {open_question.get('payload')}"
-        )
-
-    def test_explicit_scope_word_customer_only_picks_the_report_with_customer_ids(
-        self, session_factory
-    ) -> None:
-        """A customer-only ask that ALREADY names its scope (`do_outstanding` here,
-        e.g. "delivery order outstanding for hanlim") must run the report directly,
-        `customer_ids` set, no `product_code` needed at all."""
-        from app.services.chatbot.lanes.business import run_fetch
-
-        call, captured = _capturing_mcp(REPORT_HIT)
-        payload = {
-            "gate": {
-                "compatible_entities": [
-                    {"uuid": CUSTOMER_ONLY_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_ONLY_NAME},
-                ]
-            },
-            "tier_gate": None,
-            "ctx": {
-                "parse": {
-                    "output": _parser_output(
-                        domain_hint="order", intent_hint="check_order", order_status="do_outstanding",
-                        entities=[
-                            {
-                                "raw": "hanlim", "hint": "customer", "canonical_code": None,
-                                "current_message": True, "confident": True,
-                            },
-                        ],
-                    )
-                },
-                "contact": {"id": CONTACT_ID},
-                "access": {"attributes": ["sales_orders.outstanding"]},
-            },
-        }
-        run_fetch(payload, services=FetchServices(mcp_call=call))
-        assert captured, (
-            "a customer-only ask that names its own scope must still reach "
-            "crm_outstanding_report - today it needs a product entity to be picked at all"
-        )
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (name, args)
-        assert args.get("customer_ids") == [CUSTOMER_ONLY_UUID], args
-        assert args.get("scope") == "do", args
-        assert not args.get("product_code"), (
-            f"no product was named, so product_code must be absent/empty: {args}"
-        )
-
     def test_delivery_to_hanlim_without_an_outstanding_word_stays_on_the_order_lane(
         self, session_factory, monkeypatch
     ) -> None:
@@ -2811,6 +1611,8 @@ class TestCustomerOnlyOutstandingAskReachesTheReport:
                 "access": {"attributes": ["sales_orders.outstanding"]},
             },
         }
+        # V1-DOC-SCOPE: an unlinked contact reads the orders book only as staff.
+        payload["ctx"]["parse"]["output"]["doc_staff"] = True
         run_fetch(payload, services=FetchServices(mcp_call=call))
         assert captured, "the plain order ask must still be answered"
         name, _args = captured[0]
@@ -2842,331 +1644,6 @@ class TestDateNarrowingUnderAnOpenOffer:
     for the detail list after offering me the detail list, but i just want to shrink
     the search by date."
     """
-
-    def test_a_date_only_turn_under_the_detail_offer_reruns_the_report_with_the_new_window(
-        self, session_factory, monkeypatch
-    ) -> None:
-        _seed_open_outstanding_detail(
-            session_factory,
-            filters={
-                "product_code": None,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [CUSTOMER_UUID],
-                "warehouse_codes": [],
-                "location_token": None,
-                "scope": "both",
-            },
-            rows=[
-                {"idx": 1, "label": "Sales order list", "value": "so"},
-                {"idx": 2, "label": "Delivery order list", "value": "do"},
-                {"idx": 3, "label": "Both lists", "value": "both"},
-            ],
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], entity_op="reuse", broaden_axis="date",
-                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
-                user_goal="trying to see this month only",
-            ),
-            text_body="i want to see this month only",
-            msg_id="ZZT-outstanding-date-narrow-detail-1",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-        )
-        assert len(captured) == 1, (
-            f"exactly one report call, no re-parse of the carried subject: {captured}"
-        )
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", name
-        assert args.get("order_date_from") == "2026-09-01", (
-            f"this turn's own window must reach the tool: {args}"
-        )
-        assert args.get("order_date_to") == "2026-09-30", args
-        assert args.get("scope") == "both", (
-            f"the carried scope must survive the date narrowing: {args}"
-        )
-        assert args.get("customer_ids") == [CUSTOMER_UUID], (
-            f"the carried customer subject must survive: {args}"
-        )
-        assert "detail" not in args, (
-            f"a date-only refinement re-runs the REPORT, not a detail pick: {args}"
-        )
-        assert not args.get("product_code"), (
-            f"no product was ever named on this offer, so none must appear now: {args}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "*Sales order outstanding*" in reply, (
-            f"the reply must be the report, not the re-printed offer alone: {reply!r}"
-        )
-        assert "1. Sales order list" in reply and "2. Delivery order list" in reply, (
-            f"the re-run must re-arm the detail offer: {reply!r}"
-        )
-        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
-        # .kind, outstanding_filters -> open_question.payload.filters.
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_detail", open_question
-        filters_out = open_question.get("payload", {}).get("filters") or {}
-        assert filters_out.get("date_filter_start") == "2026-09-01", filters_out
-        assert filters_out.get("date_filter_end") == "2026-09-30", filters_out
-        assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
-
-    def test_a_pick_after_the_narrowing_lists_the_new_window_only(
-        self, session_factory, monkeypatch
-    ) -> None:
-        _seed_open_outstanding_detail(
-            session_factory,
-            filters={
-                "product_code": None,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [CUSTOMER_UUID],
-                "warehouse_codes": [],
-                "location_token": None,
-                "scope": "both",
-            },
-            rows=[
-                {"idx": 1, "label": "Sales order list", "value": "so"},
-                {"idx": 2, "label": "Delivery order list", "value": "do"},
-                {"idx": 3, "label": "Both lists", "value": "both"},
-            ],
-        )
-        _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], entity_op="reuse", broaden_axis="date",
-                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
-                user_goal="trying to see this month only",
-            ),
-            text_body="i want to see this month only",
-            msg_id="ZZT-outstanding-date-narrow-detail-2a",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-        )
-        _result2, captured2 = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1",
-            msg_id="ZZT-outstanding-date-narrow-detail-2b",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-        )
-        # Owner hand test, 3 Oct 2026 (PR #1435): on a CUSTOMER-subject offer (no product,
-        # as here) "1" is the SO list (`so_status.list_text`), no longer the report's own
-        # SO detail. The point of this test stands: the pick runs over the NARROWED window.
-        reply2 = (_result2.reply or {}).get("text") or ""
-        assert "crm_outstanding_report" not in [name for name, _ in captured2], captured2
-        assert "1 Sep 2026 to 30 Sep 2026" in reply2, (
-            f"the pick must run over the NARROWED window, not the original one: {reply2!r}"
-        )
-
-    def test_a_date_only_turn_under_the_detail_offer_keeps_a_product_subject(
-        self, session_factory, monkeypatch
-    ) -> None:
-        _seed_open_outstanding_detail(
-            session_factory,
-            filters={
-                "product_code": PRODUCT_CODE,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [],
-                "warehouse_codes": [],
-                "location_token": None,
-                "scope": "so",
-            },
-            rows=[
-                {"idx": 1, "label": "Sales order list", "value": "so"},
-            ],
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], entity_op="reuse", broaden_axis="date",
-                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
-                user_goal="trying to see this month only",
-            ),
-            text_body="just this month",
-            msg_id="ZZT-outstanding-date-narrow-product-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the date-only refinement must re-run the report"
-        _name, args = captured[0]
-        assert args.get("product_code") == PRODUCT_CODE, (
-            f"the carried product subject must survive the date narrowing: {args}"
-        )
-        assert args.get("scope") == "so", args
-        assert args.get("order_date_from") == "2026-09-01", args
-        assert args.get("order_date_to") == "2026-09-30", args
-        assert "detail" not in args, args
-        reply = (result.reply or {}).get("text") or ""
-        assert reply.startswith(f"Product: {PRODUCT_CODE}\n"), (
-            f"the re-run must print the report's own header: {reply!r}"
-        )
-
-    def test_a_date_only_turn_under_the_scope_question_reasks_with_the_new_window(
-        self, session_factory, monkeypatch
-    ) -> None:
-        _seed_open_outstanding_scope(
-            session_factory,
-            filters={
-                "product_code": None,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [CUSTOMER_UUID],
-                "warehouse_codes": [],
-                "location_token": None,
-            },
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], entity_op="reuse", broaden_axis="date",
-                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
-                user_goal="trying to see this month only",
-            ),
-            text_body="i want to see this month only",
-            msg_id="ZZT-outstanding-date-narrow-scope-1",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert captured == [], (
-            f"a date-only turn under an open SCOPE question must not fetch anything: {captured}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Outstanding for which document?" in reply, reply
-        assert "1. Sales orders" in reply and "2. Delivery orders" in reply, reply
-        assert "Order date: 01/09/2026 to 30/09/2026" in reply, (
-            f"the re-asked scope question must show the NEW window, in the real "
-            f"presenter format: {reply!r}"
-        )
-        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
-        # .kind, outstanding_filters -> open_question.payload.filters.
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_scope", open_question
-        filters_out = open_question.get("payload", {}).get("filters") or {}
-        assert filters_out.get("date_filter_start") == "2026-09-01", filters_out
-        assert filters_out.get("date_filter_end") == "2026-09-30", filters_out
-        assert filters_out.get("customer_ids") == [CUSTOMER_UUID], (
-            f"the customer subject must be unchanged by the date narrowing: {filters_out}"
-        )
-
-    def test_a_pick_carrying_its_own_dates_still_picks(self, session_factory, monkeypatch) -> None:
-        """Regression guard (N2's existing rule): a turn that BOTH picks (a
-        `reference_positions`) AND carries its own dates is an ANSWER, not a
-        refinement - the pick wins and the dates narrow the same re-run. Kept here
-        deliberately alongside R15's new tests, since the two rules share the same
-        `_apply_outstanding_pending` code path and a fix for one must not break the
-        other. May already be green today (grep `names_own_dates` /
-        `test_a_date_in_the_answering_turn_wins_over_the_carried_one`) - if so this
-        is a guard, not a red test, and the report says so."""
-        _seed_open_outstanding_detail(session_factory)
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[2],
-                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
-            ),
-            text_body="2, but only September",
-            msg_id="ZZT-outstanding-pick-own-dates-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the pick must still resolve"
-        _name, args = captured[0]
-        assert args.get("detail") == "do", f"'2' must give the DO detail: {args}"
-        assert args.get("order_date_from") == "2026-09-01", (
-            f"the pick's own dates must reach the re-run: {args}"
-        )
-        assert args.get("order_date_to") == "2026-09-30", args
-
-    def test_a_location_only_turn_under_the_detail_offer_narrows_by_location(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """A warehouse entity under a customer-subject offer is a filter on a
-        DIFFERENT axis from the stored subject (customer) - a REFINEMENT, not a new
-        ask, even though `entity_op` here is `replace_combine` (the prompt's own
-        rule for a bare value under a business domain, not `reuse`)."""
-        from app.models.inventory import Warehouse
-
-        db = session_factory()
-        db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW", warehouse_name="BRW", is_active=True))
-        db.commit()
-        _seed_open_outstanding_detail(
-            session_factory,
-            filters={
-                "product_code": None,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [CUSTOMER_UUID],
-                "warehouse_codes": [],
-                "location_token": None,
-                "scope": "both",
-            },
-            rows=[
-                {"idx": 1, "label": "Sales order list", "value": "so"},
-                {"idx": 2, "label": "Delivery order list", "value": "do"},
-                {"idx": 3, "label": "Both lists", "value": "both"},
-            ],
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="business_query", intent_hint=None, domain_hint=None,
-                entity_op="replace_combine",
-                entities=[
-                    {
-                        "raw": "BRW", "hint": "warehouse", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-                reference_positions=[],
-            ),
-            text_body="only BRW",
-            msg_id="ZZT-outstanding-location-narrow-detail-1",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-        )
-        assert len(captured) == 1, (
-            f"exactly one report call, the location refines the SAME offer: {captured}"
-        )
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (name, args)
-        assert args.get("warehouse_codes") == ["BRW"], (
-            f"the location word must reach the tool as warehouse_codes: {args}"
-        )
-        assert args.get("customer_ids") == [CUSTOMER_UUID], (
-            f"the carried customer subject must survive a location refinement: {args}"
-        )
-        assert args.get("scope") == "both", args
-        assert "detail" not in args, (
-            f"a location-only refinement re-runs the REPORT, not a detail pick: {args}"
-        )
-        _result_unused = result
-        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
-        # .kind, outstanding_filters -> open_question.payload.filters.
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_detail", open_question
-        filters_out = open_question.get("payload", {}).get("filters") or {}
-        assert filters_out.get("warehouse_codes") == ["BRW"], filters_out
-        assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
 
     def test_a_replacing_product_under_a_product_offer_is_still_a_new_ask(
         self, session_factory, monkeypatch
@@ -3294,207 +1771,11 @@ def _seed_open_outstanding_customer_pick(session_factory) -> None:
             "pending": None,
         },
     )
+    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+    make_office_access_type(session_factory, CONTACT_ID)
 
 
 class TestOwnerRoundFivePickerAndOfferScope:
-    def test_a_customer_pick_after_an_outstanding_ask_arms_the_scope_question(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """AC-1159/R16: picking the customer that resolved an ambiguous-customer
-        picker, opened by an OUTSTANDING ask, must arm the scope question for the
-        picked customer - never fetch `crm_order_management_orders_list` (today's
-        actual gap, and the owner's own trace)."""
-        _seed_open_outstanding_customer_pick(session_factory)
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1], reference_target="dym", entity_op="reuse",
-                order_status=None,
-            ),
-            text_body="1",
-            msg_id="ZZT-outstanding-round5-pick-1",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert captured == [], (
-            f"the pick must arm the scope question, never fetch the plain order list: "
-            f"{captured}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Outstanding for which document?" in reply, reply
-        assert "1. Sales orders (not yet transferred to DO)" in reply, reply
-        assert "2. Delivery orders (not yet delivered)" in reply, reply
-        assert "3. Both" in reply, reply
-
-        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
-        # .kind, outstanding_filters -> open_question.payload.filters - the same rename
-        # every other class in this file already reads. Customer-visible assertions
-        # (the resumed scope question, the picked customer stored as the subject) kept
-        # unchanged, only the internal key path updated.
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_scope", (
-            f"the picker's own outstanding ask must be resumed as the scope question, "
-            f"not left in whatever pending kind the picker itself used: {open_question!r}"
-        )
-        assert open_question.get("payload", {}).get("filters", {}).get("customer_ids") == [
-            HANLIM_UUID_1
-        ], (
-            f"the CUSTOMER JUST PICKED (position 1) must be the stored subject: "
-            f"{open_question.get('payload', {}).get('filters')}"
-        )
-
-    def test_a_pick_then_a_scope_answer_runs_the_report_for_the_picked_customer(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """AC-1159/R16, continued: answering the re-armed scope question with "3"
-        (both) must run the report for the customer picked in the PRIOR turn - no
-        product, `scope=both`, no warehouse (the picker's own family list is not a
-        location filter)."""
-        _seed_open_outstanding_customer_pick(session_factory)
-        _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1], reference_target="dym", entity_op="reuse",
-                order_status=None,
-            ),
-            text_body="1",
-            msg_id="ZZT-outstanding-round5-pick-2a",
-            attributes=["sales_orders.outstanding"],
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[3],
-            ),
-            text_body="3",
-            msg_id="ZZT-outstanding-round5-pick-2b",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the scope answer must run the report in the same turn"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", name
-        assert args.get("customer_ids") == [HANLIM_UUID_1], (
-            f"the customer picked two turns ago must be the report's subject: {args}"
-        )
-        assert args.get("scope") == "both", args
-        assert not args.get("warehouse_codes"), (
-            f"the customer picker's family list must not leak in as a location filter: {args}"
-        )
-        _result_unused = result
-
-    def test_a_refinement_location_dies_with_the_offer(self, session_factory, monkeypatch) -> None:
-        """AC-1160/R17: after the "only BRW" refinement (R15) narrows an open detail
-        offer by location, the raw warehouse entity that carried the narrowing must
-        NOT survive in the persisted session `entities` past that turn - that is the
-        channel the owner's round-5 leak used (a stale, unresolved `hint: "warehouse"`
-        entity read back by the parser on a LATER, unrelated ask and searched as a
-        customer token). The refinement's OWN filter set (`outstanding_filters`,
-        checked below) is meant to carry the location - `entities` is not.
-
-        Then, on a fresh outstanding ask naming its OWN subject (a customer, no
-        product, no location), `outstanding_filters` must start CLEAN - no
-        `warehouse_codes` from the earlier refinement, no `location_token`, no dates -
-        and the resolver must never be asked to resolve "BRW" as a customer for a
-        message that never mentions it."""
-        from app.models.inventory import Warehouse
-
-        db = session_factory()
-        db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW", warehouse_name="BRW", is_active=True))
-        db.commit()
-        _seed_open_outstanding_detail(
-            session_factory,
-            filters={
-                "product_code": None,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [CUSTOMER_UUID],
-                "warehouse_codes": [],
-                "location_token": None,
-                "scope": "both",
-            },
-            rows=[
-                {"idx": 1, "label": "Sales order list", "value": "so"},
-                {"idx": 2, "label": "Delivery order list", "value": "do"},
-                {"idx": 3, "label": "Both lists", "value": "both"},
-            ],
-        )
-        _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="business_query", intent_hint=None, domain_hint=None,
-                entity_op="replace_combine",
-                entities=[
-                    {
-                        "raw": "BRW", "hint": "warehouse", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-                reference_positions=[],
-            ),
-            text_body="only BRW",
-            msg_id="ZZT-outstanding-round5-refine-1",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-        )
-        # AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026):
-        # RETIRED, not ported - the OLD top-level `entities` key is gone (never one of
-        # the five), and its check does not translate to `focus.warehouse`: the new
-        # `Focus` model is DESIGNED to carry a warehouse entity forward across turns
-        # (that is what narrowing IS now), so a raw, uuid-less "BRW" sitting in
-        # `focus.warehouse` after this turn is normal, not the round-5 leak (measured:
-        # it is there). The customer-facing half of the SAME concern - a later,
-        # unrelated ask must never have the carried warehouse token misread as a
-        # CUSTOMER search - is what the second turn below actually proves
-        # (`customer_ids == [hanlim_uuid]`, no stray customer search for "BRW"), and
-        # it is unaffected by this retirement.
-
-        # A brand-new ask, its own subject, no scope/location word about the earlier
-        # refinement at all.
-        hanlim_uuid = "44444444-4444-4444-4444-444444444444"
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="business_query", intent_hint="check_order", domain_hint="order",
-                entity_op="replace_combine",
-                order_status="outstanding",
-                entities=[
-                    {
-                        "raw": "hanlim", "hint": "customer", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-                reference_positions=[],
-            ),
-            text_body="outstanding dealer quantity for hanlim",
-            msg_id="ZZT-outstanding-round5-new-ask-1",
-            attributes=["sales_orders.outstanding"],
-            matches={"hanlim": {"uuid": hanlim_uuid, "entity_type": "customer", "canonical_code": "300-H070"}},
-        )
-        assert captured == [], (
-            f"a customer-only outstanding ask arms the scope question, it does not "
-            f"fetch: {captured}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Outstanding for which document?" in reply, reply
-        open_question = _session_of(session_factory).get("open_question") or {}
-        filters_out = open_question.get("payload", {}).get("filters") or {}
-        assert filters_out.get("warehouse_codes") == [], (
-            f"a new ask's filter set must not inherit the earlier refinement's "
-            f"location: {filters_out}"
-        )
-        assert filters_out.get("location_token") is None, filters_out
-        assert filters_out.get("customer_ids") == [hanlim_uuid], filters_out
-        assert filters_out.get("date_filter_start") is None, filters_out
-        assert filters_out.get("date_filter_end") is None, filters_out
-
     def test_a_warehouse_word_never_enters_the_customer_picker(self) -> None:
         """AC-1161/R18, at the gate level (`test_last_cost_gate.py`'s own
         `gate_mod.run_gate` direct-call pattern - the picker's construction is a pure
@@ -3596,273 +1877,6 @@ class TestOwnerRoundFivePickerAndOfferScope:
 
 
 # --------------------------------------------------------------------------- #
-# R19 (owner ruling, 13 Sep 2026, live trace): "i have chosen the customer
-# already, but you only say Product ... what about the customer, sometimes i
-# might even have dates, location filters, they should be stated down in this
-# message also." EVERY scope question - first ask, R15 refinement re-ask, ask
-# after a customer-picker pick - prints the SAME four header lines the report
-# itself prints, same order, same wording, `all` for anything not given.
-# AC-1162 (header, tests 1-4) / AC-1163 (distinct customer names, test 5, in
-# tests/test_outstanding_report.py::test_customer_header_dedupes_ledger_names).
-# --------------------------------------------------------------------------- #
-
-
-class TestScopeQuestionCarriesTheFullHeader:
-    def test_first_ask_prints_all_four_header_lines(self, session_factory, monkeypatch) -> None:
-        """A bare outstanding ask naming a product, a customer, a location word and a
-        date window must print all four report-header lines, filled, before the
-        question - not just `Product:` (today's actual gap).
-
-        R19b (coder round 7): the `Customer:` line now comes ONLY from real
-        `customers` rows for the resolved `customer_ids` (`outstanding_report_
-        service._customer_echo`), no entity-label fallback - so the picked customer
-        needs a REAL row, not just a resolver match. `tests._mc_lookup_seed.customer`
-        mints its OWN id; this test uses the returned `row.id` in place of the old
-        `CUSTOMER_UUID` constant (the brief's other option, adding an id-taking
-        parameter to that shared helper, would touch every other file that imports
-        it for no gain here)."""
-        from app.models.inventory import Warehouse
-
-        db = session_factory()
-        db.add_all(
-            [
-                Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW-IB", warehouse_name="BRW IB", is_active=True),
-                Warehouse(id=str(uuid.uuid4()), warehouse_code="MWH-IB", warehouse_name="MWH IB", is_active=True),
-            ]
-        )
-        cust = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name=CUSTOMER_NAME)
-        db.commit()
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(
-                order_status="outstanding",
-                entities=[
-                    {
-                        "raw": PRODUCT_CODE, "hint": "product", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                    {
-                        "raw": "Dealer A", "hint": "customer", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                    {
-                        "raw": "IB", "hint": "warehouse", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
-                date_filter_start="2026-01-01", date_filter_end="2026-03-31",
-            ),
-            text_body="Srtwt7445 sales order outstanding for Dealer A in IB from Jan to March",
-            msg_id="ZZT-outstanding-r19-first-ask-1",
-            attributes=["sales_orders.outstanding"],
-            matches={
-                PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE},
-                "Dealer A": {
-                    "uuid": cust.id, "entity_type": "customer", "canonical_code": CUSTOMER_NAME,
-                    "display": {"customer_name": CUSTOMER_NAME},
-                },
-            },
-        )
-        assert captured == [], (
-            f"the scope question fetches nothing: {captured}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        expected_header = (
-            f"Product: {PRODUCT_CODE}\n"
-            f"Customer: {CUSTOMER_NAME}\n"
-            "Location: IB (BRW-IB, MWH-IB)\n"
-            "Order date: 01/01/2026 to 31/03/2026\n"
-            "Outstanding for which document?\n"
-        )
-        assert reply.startswith(expected_header), reply
-
-    def test_first_ask_prints_all_for_every_missing_filter(self, session_factory, monkeypatch) -> None:
-        """A product-only ask must still print all four lines - `Customer:` /
-        `Location:` / `Order date:` say `all` rather than being omitted, exactly the
-        way the REPORT's own header never omits a line."""
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="outstanding"),
-            text_body="SRTWT7445 outstanding",
-            msg_id="ZZT-outstanding-r19-all-filters-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-        )
-        assert captured == [], captured
-        reply = (result.reply or {}).get("text") or ""
-        expected_header = (
-            f"Product: {PRODUCT_CODE}\n"
-            "Customer: all\n"
-            "Location: all\n"
-            "Order date: all\n"
-            "Outstanding for which document?\n"
-        )
-        assert reply.startswith(expected_header), reply
-
-    def test_scope_question_after_a_customer_pick_names_the_picked_customer(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """AC-1162, R19 x R16: the owner's own live trace - after picking a customer
-        off the picker the re-armed scope question printed `Product: SRTKT39SS` and
-        nothing else. The picked customer's own name (looked up from the real
-        `customers` row, R19b) must appear on a `Customer:` line, and the two axes
-        nobody named (`Location:` / `Order date:`) must say `all`, not be silently
-        dropped.
-
-        R19b (coder round 7): the `Customer:` line is the customer ROW's own name,
-        never the picker's roster label - `(SRT)` there is a company-code suffix the
-        picker prints so the reader can tell two accounts apart, not part of the
-        customer's name, and R19b forbids it on this line. The picked row (idx 1)
-        gets a REAL `customers` row, in place of the old `HANLIM_UUID_1` constant
-        (the id-substitution option, same as the other two tests in this class); the
-        unpicked row (idx 2) needs none, since only the RESOLVED `customer_ids`
-        (here, just the pick) reach the name lookup."""
-        product_uuid = "66666666-6666-6666-6666-666666666666"
-        product_code = "SRTKT39SS"
-        db = session_factory()
-        hanlim_trading = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="HANLIM TRADING SDN BHD")
-        db.commit()
-        roster = [
-            {
-                "idx": 1, "label": "HANLIM TRADING SDN BHD (SRT)", "uuid": hanlim_trading.id,
-                "product": HANLIM_CODE_1, "entity_type": "customer",
-            },
-            {
-                "idx": 2, "label": "HANLIM TRADING (JB) SDN BHD (SRT)", "uuid": HANLIM_UUID_2,
-                "product": HANLIM_CODE_2, "entity_type": "customer",
-            },
-        ]
-        _seed_contact(
-            session_factory,
-            variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [
-                    {
-                        "raw": product_code, "hint": "product", "uuid": product_uuid,
-                        "canonical_code": product_code, "current_message": False,
-                    },
-                ],
-                "selection_context": "disambiguation",
-                "last_result_set": roster,
-                "picker_last_result_set": roster,
-                "picker_selection_context": "disambiguation",
-                "picker_domain": "order",
-                "outstanding_filters": {
-                    "product_code": product_code,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
-                "order_status": "outstanding",
-                "pending": None,
-            },
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1], reference_target="dym", entity_op="reuse",
-                order_status=None,
-            ),
-            text_body="1",
-            msg_id="ZZT-outstanding-r19-pick-scope-1",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert captured == [], (
-            f"the resumed ask arms the scope question, it does not fetch: {captured}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert f"Product: {product_code}" in reply, reply
-        assert "Customer: HANLIM TRADING SDN BHD" in reply, (
-            f"the JUST-PICKED customer's own name must appear on the Customer line: {reply!r}"
-        )
-        assert "Customer: HANLIM TRADING SDN BHD (SRT)" not in reply, (
-            f"the picker's company-code suffix is not part of the customer's name and "
-            f"must never reach this line (R19b): {reply!r}"
-        )
-        assert "Location: all" in reply, reply
-        assert "Order date: all" in reply, reply
-        assert reply.index("Product:") < reply.index("Customer:") < reply.index("Location:") < (
-            reply.index("Order date:")
-        ), reply
-
-    def test_refinement_reask_prints_customer_too(self, session_factory, monkeypatch) -> None:
-        """AC-1162, R19 x R15: the SAME re-armed scope question a date-only refinement
-        prints (`test_a_date_only_turn_under_the_scope_question_reasks_with_the_new_
-        window`, `TestDateNarrowingUnderAnOpenOffer`) must ALSO name the stored
-        customer subject - today it prints only `Order date:`, dropping the customer
-        the question is actually about. Asserted on the reply text only (the brief's
-        own preference) - the storage shape (an entities list carrying the resolved
-        customer's name, mirrored here from the OTHER tests in this class) is the
-        coder's to choose.
-
-        R19b (coder round 7): the `Customer:` line comes ONLY from a real
-        `customers` row for the stored `customer_ids`, so this test seeds one and
-        uses the returned `row.id` in place of the old `CUSTOMER_UUID` constant (the
-        same id-substitution choice made for the other two tests in this class)."""
-        db = session_factory()
-        cust = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name=CUSTOMER_NAME)
-        db.commit()
-        _seed_contact(
-            session_factory,
-            variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [
-                    {
-                        "raw": CUSTOMER_NAME, "hint": "customer", "uuid": cust.id,
-                        "canonical_code": CUSTOMER_NAME, "current_message": False,
-                    },
-                ],
-                "selection_context": "outstanding_scope",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales orders", "value": "so"},
-                    {"idx": 2, "label": "Delivery orders", "value": "do"},
-                    {"idx": 3, "label": "Both", "value": "both"},
-                ],
-                "outstanding_filters": {
-                    "product_code": None,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [cust.id],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
-                "pending": {"kind": "outstanding_scope"},
-            },
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], entity_op="reuse", broaden_axis="date",
-                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
-                user_goal="trying to see this month only",
-            ),
-            text_body="i want to see this month only",
-            msg_id="ZZT-outstanding-r19-refine-reask-1",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert captured == [], (
-            f"a date-only turn under an open scope question must not fetch: {captured}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert "Order date: 01/09/2026 to 30/09/2026" in reply, reply
-        assert f"Customer: {CUSTOMER_NAME}" in reply, (
-            f"the re-asked question must still name the customer it is about: {reply!r}"
-        )
-
-
-# --------------------------------------------------------------------------- #
 # Owner round 7 (13 Sep 2026, live): `outsatnidng dealer quantity for chin chun
 # product SRTKT39SS in 2026` -> ambiguous customer picker, EVERY line stamped
 # "- no DO" and "None of these have a matching DO." (Cause 1: the picker's probe
@@ -3948,6 +1962,8 @@ class TestOutstandingAskPickerHasNoDeliveryHint:
             }
 
         _seed_contact(session_factory, variables={})
+        # V1-DOC-SCOPE slice 3: plays an office role, unlinked != customer.
+        make_office_access_type(session_factory, CONTACT_ID)
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
@@ -3994,6 +2010,8 @@ class TestOutstandingAskPickerHasNoDeliveryHint:
             return {"items": [], "has_result": False}
 
         _seed_contact(session_factory, variables={})
+        # V1-DOC-SCOPE slice 3: plays an office role, unlinked != customer.
+        make_office_access_type(session_factory, CONTACT_ID)
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
@@ -4015,118 +2033,6 @@ class TestOutstandingAskPickerHasNoDeliveryHint:
         reply = (result.reply or {}).get("text") or ""
         assert " - no DO" in reply, (
             f"a plain (non-outstanding) ask must keep today's DO hint unchanged: {reply!r}"
-        )
-
-
-class TestScopeQuestionCustomerLineMatchesReportHeader:
-    def test_scope_question_customer_line_equals_the_report_header_line(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """AC-1165/R19b: the scope question's `Customer:` line must be byte-equal to
-        the REPORT's own `Customer:` line for the SAME resolved `customer_ids` - both
-        built from the customer rows (`outstanding_report_service._customer_echo`'s
-        distinct, first-seen names), never from the picker's roster label (which
-        carries a company-code suffix like "(MCH, SRT)" that is not a customer name
-        at all). Real `customers` rows, seeded the way `tests/test_outstanding_
-        report.py` seeds them (`tests._mc_lookup_seed.customer`) - `_customer_echo`
-        is a DB read, and this is the seam through which R19b's fix reaches it: the
-        lane harness fakes the resolver, but the CUSTOMER NAMES here come from the
-        real `customers` table via `session_factory`'s own Postgres connection, not
-        from anything in the resolver map.
-
-        The picked roster line stands for a THREE-ROW account family - the same
-        mechanism `gate.py`'s "A picked CUSTOMER selects its whole ACCOUNT FAMILY"
-        re-seat already expands today (proven empirically: `outstanding_filters
-        ["customer_ids"]` already holds all three ids after the pick) - so this test
-        is pinned on the NAME SOURCE the header reads, not on whether the family
-        widens at all.
-        """
-        db = session_factory()
-        c1 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD")
-        c2 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD [A/C I]")
-        c3 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD - [CERAMIC]")
-        db.commit()
-        base_key = gate_mod._cust_base(
-            {"display": {"customer_name": "CHIN CHUN HARDWARE SDN BHD"}, "canonical_code": None}
-        )
-        roster = [
-            {
-                "idx": 1, "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)", "uuid": c1.id,
-                "product": None, "entity_type": "customer",
-            },
-        ]
-        _seed_contact(
-            session_factory,
-            variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "disambiguation",
-                "last_result_set": roster,
-                "picker_last_result_set": roster,
-                "picker_selection_context": "disambiguation",
-                "picker_domain": "order",
-                "picker_families": {base_key: [c1.id, c2.id, c3.id]},
-                "outstanding_filters": {
-                    "product_code": None,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
-                "order_status": "outstanding",
-                "pending": None,
-            },
-        )
-        pick_result, pick_captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1], reference_target="dym", entity_op="reuse",
-                order_status=None,
-            ),
-            text_body="1",
-            msg_id="ZZT-outstanding-r19b-pick-1",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert pick_captured == [], pick_captured
-        expected_name = (
-            "CHIN CHUN HARDWARE SDN BHD, "
-            "CHIN CHUN HARDWARE SDN BHD [A/C I], "
-            "CHIN CHUN HARDWARE SDN BHD - [CERAMIC]"
-        )
-        pick_reply = (pick_result.reply or {}).get("text") or ""
-        assert _customer_header_line(pick_reply) == f"Customer: {expected_name}", (
-            f"the scope question's Customer line must name the real customer rows, "
-            f"first-seen order, never the roster label: {pick_reply!r}"
-        )
-        assert "(MCH, SRT)" not in pick_reply, (
-            f"a picker label's company-code suffix must never reach the Customer line: {pick_reply!r}"
-        )
-
-        report_result, report_captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[3],
-            ),
-            text_body="3",
-            msg_id="ZZT-outstanding-r19b-answer-1",
-            attributes=["sales_orders.outstanding"],
-            mcp_response={**REPORT_HIT, "customer_name": expected_name},
-        )
-        assert report_captured, "the scope answer must run the report"
-        name, args = report_captured[0]
-        assert name == "crm_outstanding_report", name
-        assert args.get("customer_ids") == [c1.id, c2.id, c3.id], args
-        report_reply = (report_result.reply or {}).get("text") or ""
-        assert _customer_header_line(report_reply) == _customer_header_line(pick_reply), (
-            f"the scope question's Customer line and the report's own Customer line "
-            f"must be byte-equal for the same customer_ids: "
-            f"scope={_customer_header_line(pick_reply)!r} report={_customer_header_line(report_reply)!r}"
         )
 
 
@@ -4227,6 +2133,8 @@ def _seed_open_outstanding_three_family_picker(session_factory) -> tuple[str, st
             "pending": None,
         },
     )
+    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+    make_office_access_type(session_factory, CONTACT_ID)
     return c1.id, c2.id, c3.id
 
 
@@ -4244,78 +2152,6 @@ def _all_pick_parser_output() -> dict[str, Any]:
 
 
 class TestAllOnTheCustomerPickerKeepsTheQuestion:
-    def test_all_on_the_customer_picker_arms_the_scope_question_for_every_family(
-        self, session_factory, monkeypatch
-    ) -> None:
-        c1_id, c2_id, c3_id = _seed_open_outstanding_three_family_picker(session_factory)
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_all_pick_parser_output(),
-            text_body="all",
-            msg_id="ZZT-outstanding-r21-all-1",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert captured == [], (
-            f"the pick-all must arm the scope question, never fetch the plain order "
-            f"list: {captured}"
-        )
-        reply = (result.reply or {}).get("text") or ""
-        expected_header = (
-            f"Product: {PRODUCT_CODE_R21}\n"
-            "Customer: CHIN CHUN HARDWARE SDN BHD, CHIN CHUN HOMEMART SDN BHD, "
-            "CHIN CHUN TRADING SDN BHD\n"
-            "Location: all\n"
-            "Order date: 01/01/2026 to 31/12/2026\n"
-            "Outstanding for which document?\n"
-        )
-        assert reply.startswith(expected_header), reply
-        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
-        # .kind, outstanding_filters -> open_question.payload.filters.
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_scope", open_question
-        filters_out = open_question.get("payload", {}).get("filters") or {}
-        assert filters_out.get("customer_ids") == [c1_id, c2_id, c3_id], (
-            f"every picked family's id must be in the stored subject: {filters_out}"
-        )
-        assert filters_out.get("date_filter_start") == "2026-01-01", filters_out
-        assert filters_out.get("date_filter_end") == "2026-12-31", filters_out
-
-    def test_all_pick_then_scope_answer_runs_the_report_for_every_family(
-        self, session_factory, monkeypatch
-    ) -> None:
-        c1_id, c2_id, c3_id = _seed_open_outstanding_three_family_picker(session_factory)
-        _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_all_pick_parser_output(),
-            text_body="all",
-            msg_id="ZZT-outstanding-r21-all-2a",
-            attributes=["sales_orders.outstanding"],
-        )
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[3],
-            ),
-            text_body="3",
-            msg_id="ZZT-outstanding-r21-all-2b",
-            attributes=["sales_orders.outstanding"],
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "the scope answer must run the report in the same turn"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", name
-        assert args.get("customer_ids") == [c1_id, c2_id, c3_id], (
-            f"the report must run for EVERY picked family, not just one: {args}"
-        )
-        assert args.get("order_date_from") == "2026-01-01", args
-        assert args.get("order_date_to") == "2026-12-31", args
-        assert args.get("scope") == "both", args
-        _result_unused = result
-
     def test_all_on_the_customer_picker_under_a_plain_ask_still_lists_every_family(
         self, session_factory, monkeypatch
     ) -> None:
@@ -4364,6 +2200,8 @@ class TestAllOnTheCustomerPickerKeepsTheQuestion:
                 "pending": None,
             },
         )
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_tier(session_factory, CONTACT_ID)
         _result, captured = _run_turn(
             session_factory,
             monkeypatch,
@@ -4568,7 +2406,7 @@ class TestOpenOfferCanBeLeft:
             mcp_response=REPORT_HIT,
         )
         assert not (
-            captured3 and captured3[0][0] == "crm_outstanding_report" and captured3[0][1].get("detail")
+            captured3 and captured3[0][0] == "crm_report_ask" and captured3[0][1].get("detail")
         ), (
             f"the offer is gone, so a bare '1' must not resolve as its detail pick "
             f"any more - whatever the generic order lane does with it is not this "
@@ -4612,7 +2450,7 @@ class TestOpenOfferCanBeLeft:
         )
         assert captured2, "the refinement after one re-print must still run the report"
         name2, args2 = captured2[0]
-        assert name2 == "crm_outstanding_report", (name2, args2)
+        assert name2 == "crm_report_ask", (name2, args2)
         assert args2.get("order_date_from") == "2026-09-01", args2
         assert args2.get("order_date_to") == "2026-09-30", args2
         reply2 = (result2.reply or {}).get("text") or ""
@@ -4696,6 +2534,8 @@ class TestABusinessQueryUnderAnOpenOfferIsANewAsk:
         _seed_open_outstanding_detail(
             session_factory, rows=[{"idx": 1, "label": "Sales order list", "value": "so"}],
         )
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_tier(session_factory, CONTACT_ID)
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
@@ -4756,6 +2596,8 @@ class TestABusinessQueryUnderAnOpenOfferIsANewAsk:
                 "location_token": None,
             },
         )
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_tier(session_factory, CONTACT_ID)
         result, captured = _run_turn(
             session_factory,
             monkeypatch,

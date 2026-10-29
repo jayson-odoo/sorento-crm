@@ -265,7 +265,7 @@ def _query(db: Session):
     )
 
 
-def listing(db: Session, *, version: Optional[int], show: str, subject: Optional[str]) -> AuditResponse:
+def listing(db: Session, *, version: Optional[int], show: str, subject: Optional[list[str] | str]) -> AuditResponse:
     chosen = version if version is not None else current_version(db)
     query = _query(db).filter(ChatLabelAudit.taxonomy_version == chosen)
     if show == "to_review":
@@ -273,7 +273,7 @@ def listing(db: Session, *, version: Optional[int], show: str, subject: Optional
     elif show == "reviewed":
         query = query.filter(ChatLabelAudit.verdict.isnot(None))
     if subject:
-        query = query.filter(_SUBJECT == subject)
+        query = query.filter(_SUBJECT.in_([subject] if isinstance(subject, str) else subject))
     audits = query.order_by(ChatAskFact.asked_at.desc(), ChatLabelAudit.id.asc()).all()
     sample_size, reviewed, rates = _rates(db, chosen)
     return AuditResponse(

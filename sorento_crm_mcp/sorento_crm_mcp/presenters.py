@@ -27,9 +27,10 @@ the AI assistant (which still reads raw) is not affected until it migrates.
 """
 from __future__ import annotations
 
+import calendar
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
@@ -59,6 +60,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_sales_report",
         "crm_top_selling_report",
         "crm_sales_analysis",
+        "crm_sales_target_progress",
         "crm_report_ask",
         "crm_find",
     }
@@ -361,6 +363,10 @@ class _Builder:
             "mimeType": a.get("mime_type") or a.get("mimeType"),
             "attachmentType": _att_type(a),
         }
+        # CHAT-STATE r7: the attachment's own id, so a numbered pick of this file fetches
+        # exactly it (`attachment_ids`). Machine identity: never printed. Absent when none.
+        if _filled(a.get("id")):
+            entry["id"] = a["id"]
         # When the file was uploaded, per FILE. A document class is re-uploaded
         # under the same name - six revisions of "Container Status 2026.xlsx" are
         # six identical-looking entries - so without this a consumer handing over
@@ -457,6 +463,8 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
                 ("warehouse", "Warehouse", wh),
                 ("products", "Products", prods),
             ],
+            # CHAT-STATE r7: a numbered pick of this row fetches it by id (`order_ids`).
+            entity_id=o.get("id"),
         )
     # DO-ASK-SIMPLIFY rule 2 (owner, 2 Oct 2026; every printed field since the 3 Oct hand
     # test): each DO field is a per-contact reveal, hidden from a contact without the grant.
@@ -670,6 +678,7 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
                 ("warehouse", "Warehouse", whs),
                 ("products", "Products", prods),
             ],
+            entity_id=o.get("id"),
         )
     b.restrict("order_number", "delivery_orders.order_number")
     b.restrict("debtor_name", "delivery_orders.customer")
@@ -1062,6 +1071,8 @@ def _promotions(rows: list[dict], b: _Builder) -> None:
                 ("End Date", promo.get("end_date")),
             ],
             expired=promo.get("is_expired") is True,
+            # CHAT-STATE r7: a numbered pick of this row fetches it by id (`promotion_ids`).
+            entity_id=promo.get("id"),
         )
         for a in promo.get("attachments") or []:
             b.attach(a.get("attachment") or a)
@@ -1941,6 +1952,11 @@ def present_response(tool_name: str, raw: str) -> str:
     if tool_name == "crm_sales_report":
         return json.dumps(_sales_report_envelope(data))
 
+    # SALES-TARGET-CHAT: the same minimal envelope. The text is the answer, built from the
+    # route's own lines; a refusal arrives through the generic HTTP error envelope above.
+    if tool_name == "crm_sales_target_progress":
+        return json.dumps(_sales_target_envelope(data))
+
     # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the SAME bypass, for the same
     # reason - a ranking plus a header, a count-only how-many question, or one
     # code's detail, none of which the generic item/field envelope could build.
@@ -2253,7 +2269,7 @@ def _outstanding_group(rows: list, *, name_key: str, total_key: str, outstanding
 
 
 def _outstanding_capped_group(
-    rows: list, *, name_key: str, total_key: str, outstanding_key: str
+    rows: list, *, name_key: str, total_key: str, outstanding_key: str, offset: int | None = None
 ) -> list[str]:
     """The second group of a block: the first `OUTSTANDING_GROUP_CAP` rows exactly as
     `_outstanding_group` prints them (R10's order, so the top of the ranking is what
@@ -2269,6 +2285,13 @@ def _outstanding_capped_group(
     the pending offer off the rendered text with anchored patterns (`^\\d+\\. ... list$` /
     `^Reply \\d+ for the ...\\.$`); this line starts with `...` and matches none of them.
     """
+    if offset is not None:
+        # CHAT-COMPOSER Lists L2: one page of the ranking and no trailer; the report prints
+        # the one `Reply "more"` line for the whole group pair.
+        return _outstanding_group(
+            rows[offset : offset + OUTSTANDING_GROUP_CAP],
+            name_key=name_key, total_key=total_key, outstanding_key=outstanding_key,
+        )
     shown = rows[:OUTSTANDING_GROUP_CAP]
     lines = _outstanding_group(
         shown, name_key=name_key, total_key=total_key, outstanding_key=outstanding_key
@@ -2295,7 +2318,9 @@ def _outstanding_second_group(report: dict, prefix: str) -> tuple[str, list]:
     return "", []
 
 
-def _outstanding_so_block(so: dict, by_location: list, second_rows: list, second_key: str) -> str:
+def _outstanding_so_block(
+    so: dict, by_location: list, second_rows: list, second_key: str, offset: int | None = None
+) -> str:
     lines = [
         "*Sales order outstanding*",
         # R7 (owner testing round 3, 13 Sep 2026): the COUNT opens both blocks, then the
@@ -2313,18 +2338,20 @@ def _outstanding_so_block(so: dict, by_location: list, second_rows: list, second
             by_location, name_key="code", total_key="ordered_qty", outstanding_key="outstanding_qty"
         )
     )
-    if second_key:
+    if second_key and not (offset and not second_rows[offset : offset + OUTSTANDING_GROUP_CAP]):
         lines.append("*_By customer_*" if second_key == "customer_name" else "*_By product_*")
         lines.extend(
             _outstanding_capped_group(
                 second_rows, name_key=second_key, total_key="ordered_qty",
-                outstanding_key="outstanding_qty",
+                outstanding_key="outstanding_qty", offset=offset,
             )
         )
     return "\n".join(lines)
 
 
-def _outstanding_do_block(do: dict, by_location: list, second_rows: list, second_key: str) -> str:
+def _outstanding_do_block(
+    do: dict, by_location: list, second_rows: list, second_key: str, offset: int | None = None
+) -> str:
     """R6/R7 (owner testing round 3, 13 Sep 2026): the DO block says OUTSTANDING, never
     "pending", and states the delivered figure beside it - "need to show the delivered
     also, so the by location and by customer needs to be the DO qty (O/S: {pending}) so
@@ -2349,12 +2376,12 @@ def _outstanding_do_block(do: dict, by_location: list, second_rows: list, second
             by_location, name_key="code", total_key="do_qty", outstanding_key="pending_qty"
         )
     )
-    if second_key:
+    if second_key and not (offset and not second_rows[offset : offset + OUTSTANDING_GROUP_CAP]):
         lines.append("*_By customer_*" if second_key == "customer_name" else "*_By product_*")
         lines.extend(
             _outstanding_capped_group(
                 second_rows, name_key=second_key, total_key="do_qty",
-                outstanding_key="pending_qty",
+                outstanding_key="pending_qty", offset=offset,
             )
         )
     return "\n".join(lines)
@@ -2388,11 +2415,32 @@ def _outstanding_header_lines(report: dict) -> list[str]:
     return lines
 
 
+def _outstanding_group_offset(report: dict) -> int | None:
+    """The route's `group_offset` echo (CHAT-COMPOSER Lists L2): an int >= 0, else None
+    (absent = today's body, every other client)."""
+    value = report.get("group_offset")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _outstanding_group_total(report: dict) -> int:
+    """The longest second group among the blocks that print (SO and DO page together)."""
+    longest = 0
+    for prefix, count_key in (("so", "so_count"), ("do", "do_count")):
+        block = report.get(prefix)
+        if block is not None and block.get(count_key):
+            longest = max(longest, len(_outstanding_second_group(report, prefix)[1] or []))
+    return longest
+
+
 def _outstanding_report(report: dict) -> str:
     """The SO backlog / DO pending reply (PLAN-chatbot-outstanding-report.md, "The
     reply (contract for Phase 1)"). See the module-level note above for the
     `report` shape."""
     lines = _outstanding_header_lines(report)
+    offset = _outstanding_group_offset(report)
+    group_total = _outstanding_group_total(report) if offset is not None else 0
+    # Past the last row of every group: header, the end sentence and the offer only.
+    past_end = offset is not None and offset > 0 and group_total > 0 and offset >= group_total
 
     blocks: list[str] = []
     offer: list[str] = []
@@ -2405,7 +2453,8 @@ def _outstanding_report(report: dict) -> str:
             so_second_key, so_second_rows = _outstanding_second_group(report, "so")
             blocks.append(
                 _outstanding_so_block(
-                    so, report.get("so_by_location") or [], so_second_rows or [], so_second_key
+                    so, report.get("so_by_location") or [], so_second_rows or [], so_second_key,
+                    offset,
                 )
             )
             offer.append(_SO_LIST_OFFER)
@@ -2418,7 +2467,8 @@ def _outstanding_report(report: dict) -> str:
             do_second_key, do_second_rows = _outstanding_second_group(report, "do")
             blocks.append(
                 _outstanding_do_block(
-                    do, report.get("do_by_location") or [], do_second_rows or [], do_second_key
+                    do, report.get("do_by_location") or [], do_second_rows or [], do_second_key,
+                    offset,
                 )
             )
             offer.append(_DO_LIST_OFFER)
@@ -2431,8 +2481,13 @@ def _outstanding_report(report: dict) -> str:
     # the two copies are pinned by a test on each side.
     if report.get("so_refused"):
         text += "\n\n" + SO_NOT_ENABLED_MESSAGE
-    if blocks:
+    if past_end:
+        text += f"\n\nThat is all {group_total:,}."
+    elif blocks:
         text += "\n\n" + "\n\n".join(blocks)
+    left = group_total - (offset or 0) - OUTSTANDING_GROUP_CAP
+    if offset is not None and left > 0:
+        text += f'\n\nReply "more" to see the next {min(OUTSTANDING_GROUP_CAP, left):,}.'
     if len(offer) == 1:
         # R9 (owner testing round 3, 13 Sep 2026): one option is a sentence, not a list -
         # a numbered list of one asks the reader to choose from a single thing. The
@@ -2506,7 +2561,7 @@ def _outstanding_envelope(report: dict) -> dict:
         }
     so = report.get("so")
     do = report.get("do")
-    return {
+    envelope = {
         "result_type": "outstanding_report",
         "response": _outstanding_report(report),
         "has_result": bool(
@@ -2514,6 +2569,15 @@ def _outstanding_envelope(report: dict) -> dict:
             or (isinstance(do, dict) and do.get("do_count"))
         ),
     }
+    offset = _outstanding_group_offset(report)
+    if offset is not None:
+        total = _outstanding_group_total(report)
+        envelope["group_window"] = {
+            "offset": offset,
+            "shown": max(0, min(OUTSTANDING_GROUP_CAP, total - offset)),
+            "total": total,
+        }
+    return envelope
 
 
 #: The three lines the low stock report can answer with (AC-61). Written here, once, and
@@ -2811,6 +2875,10 @@ def _sales_report_header(report: dict) -> list[str]:
         f"*Customer:* {customer if _filled(customer) else 'all'}",
         f"*Product:* {_sales_product_header(report.get('product_code'), report.get('product_codes'))}",
     ]
+    if _filled(report.get("brand_name")):
+        # Chat fix PR-B S5b (AC-B7): a brand filter is named, so a brand's total (or its
+        # empty one) never reads as every brand's. No line without one.
+        lines.append(f"*Brand:* {report['brand_name']}")
     if report.get("channel_shown"):
         lines.append(f"*Channel:* {_sales_report_channel(report.get('channel'))}")
     if _filled(report.get("location_token")):
@@ -3326,6 +3394,7 @@ _REPORT_ASK_PLURALS = {
     "location": "locations",
     "channel": "channels",
     "month": "months",
+    "year": "years",
 }
 
 
@@ -3343,10 +3412,114 @@ def _ask_pcs(value: Any) -> str:
         return "0 pcs"
 
 
+#: REPORT-SMART-1021: a count measure's unit, one and several.
+_ASK_COUNT_UNITS = {"customers": ("customer", "customers"), "orders": ("order", "orders"), "products": ("product", "products")}
+
+
+def _ask_figures(figures: dict, measure: Any) -> str:
+    """A row's (or the total's) amount and quantity, the measure the ranking sorts by first
+    (chat fix PR-B S6); a count measure's count before both."""
+    rm, pcs = _ask_rm(figures.get("amount")), _ask_pcs(figures.get("qty"))
+    if measure in _ASK_COUNT_UNITS:
+        one, many = _ASK_COUNT_UNITS[measure]
+        count = int(figures.get("count") or 0)
+        return f"{count:,} {one if count == 1 else many}, {rm}, {pcs}"
+    return f"{pcs}, {rm}" if measure == "qty" else f"{rm}, {pcs}"
+
+
+def _ask_before(figures: dict, measure: Any) -> str:
+    """REPORT-SMART-1021 `compare_to`: " (before <the sort measure's earlier figure>, +x%)",
+    or "new" when the earlier figure is zero; "" when the body compares with nothing."""
+    prev = figures.get("prev")
+    if not isinstance(prev, dict):
+        return ""
+    if measure in _ASK_COUNT_UNITS:
+        one, many = _ASK_COUNT_UNITS[measure]
+        count = int(prev.get("count") or 0)
+        earlier = f"{count:,} {one if count == 1 else many}"
+    else:
+        earlier = _ask_pcs(prev.get("qty")) if measure == "qty" else _ask_rm(prev.get("amount"))
+    change = figures.get("change_pct")
+    return f" (before {earlier}, {'new' if change is None else f'{float(change):+.1f}%'})"
+
+
+def _ask_month(value: Any) -> str:
+    """`2026-09` as `Sep 2026`; anything unreadable as it came."""
+    try:
+        d = datetime.strptime(str(value), "%Y-%m")
+    except ValueError:
+        return str(value)
+    return f"{d.strftime('%b')} {d.year}"
+
+
+def _ask_rows(rows: list, group_by: Any, measure: Any = None, sort: Any = None) -> list[dict]:
+    """The rows to print: one per name (two rows sharing a name, one brand per company, are
+    one row with their figures summed, then re-ranked by the sort measure and renumbered),
+    and a month breakdown in date order (chat fix PR-B S6). No twins: the route's order."""
+    merged: dict[str, dict] = {}
+    for row in rows:
+        name = str(row.get("name"))
+        if name in merged:
+            seen = merged[name]
+            seen["qty"] = (seen.get("qty") or 0) + (row.get("qty") or 0)
+            seen["amount"] = (seen.get("amount") or 0) + (row.get("amount") or 0)
+            if row.get("count") is not None:
+                seen["count"] = (seen.get("count") or 0) + row["count"]
+        else:
+            merged[name] = dict(row)
+    out = list(merged.values())
+    if group_by in ("month", "year"):
+        out.sort(key=lambda r: str(r.get("name")))
+    elif len(out) < len(rows):
+        first, second = {"qty": ("qty", "amount"), "amount": ("amount", "qty")}.get(str(measure), ("count", "amount"))
+        sign = 1 if sort == "asc" else -1
+        out.sort(key=lambda r: (sign * float(r.get(first) or 0), sign * float(r.get(second) or 0)))
+        for i, row in enumerate(out, start=1):
+            row["rank"] = i
+    return out
+
+
+#: REPORT-UNIFY: why the route could not apply a filter (`not_applied[].reason`), as words, and the label each
+#: filter word is said with. A reason code is never printed as it is.
+_NOT_APPLIED_REASONS = {
+    "per_document": "unpaid invoices are per document",
+    "unknown_spec": "not a specification I know",
+    "unit": "unit not recognised",
+    "invalid_value": "value not readable",
+}
+_NOT_APPLIED_LABELS = {
+    "customer": "Customer", "product": "Product", "brand": "Brand", "category": "Category",
+    "sales_agent": "Sales agent", "customer_agent": "Customers assigned to", "location": "Location",
+    "channel": "Channel", "spec": "Specification",
+}
+
+
+def _not_applied(body: dict) -> list[dict]:
+    """The route's `not_applied`, one entry per filter and reason: `{filter, label, words}`."""
+    out: list[dict] = []
+    for item in body.get("not_applied") or []:
+        word = str(item.get("filter") or "")
+        entry = {
+            "filter": word,
+            "label": _NOT_APPLIED_LABELS.get(word, word.replace("_", " ").capitalize()),
+            "words": _NOT_APPLIED_REASONS.get(str(item.get("reason")), "not applied"),
+        }
+        if entry not in out:
+            out.append(entry)
+    return out
+
+
+_ASK_SO_LIST_OFFER = "Reply 1 for the sales order list."
+
+
 def _report_ask(body: dict) -> str:
     """The whole reply for `crm_report_ask`: a head line, then one fact per line (`Label: value`
     per filter, then the period; owner rule, REPORT-DRILLDOWN), the ranked rows, `and N more`,
-    the whole set's total; for the number shape the total alone."""
+    the whole set's total; for the number shape the total alone.
+
+    Chat fix PR-B S6 (AC-B8): the head says how many rows exist ("Top 10 of 37"), every
+    figure names the sort measure first, each name prints once, dates read as dates, and a
+    month breakdown lists its months in date order."""
     if body.get("status") in ("refused", "busy"):
         return str(body.get("message") or "")
     if body.get("dataset") == "chat":
@@ -3355,14 +3528,36 @@ def _report_ask(body: dict) -> str:
         f"{f.get('label')}: {', '.join(str(v) for v in f.get('values') or [])}"
         for f in body.get("filters") or []
     ]
-    facts.append(f"Period: {body.get('date_from')} to {body.get('date_to')}")
-    total = body.get("total") or {}
-    figures = f"{_ask_rm(total.get('amount'))}, {_ask_pcs(total.get('qty'))}"
+    agent_note = _top_selling_agent_note(body)  # REPORT-SMART-L R3b: the top selling fill-rate caveat, below 95%
+    if agent_note:
+        facts.append(agent_note)
+    if body.get("date_from") is None and body.get("date_to") is None:
+        facts.append("Period: all dates")  # an outstanding basis asked with no period
+    else:
+        facts.append(f"Period: {_chat_date(body.get('date_from'))} to {_chat_date(body.get('date_to'))}")
+    skipped = _not_applied(body)
+    if skipped:
+        facts.append("Not applied: " + "; ".join(f"{n['label']} ({n['words']})" for n in skipped))
+    if body.get("compare_to") and body.get("compare_from"):
+        facts.append(f"Compared with: {_chat_date(body.get('compare_from'))} to {_chat_date(body.get('compare_until'))}")
+    measure = body.get("measure")
+    figures = _ask_figures(body.get("total") or {}, measure) + _ask_before(body.get("total") or {}, measure)
     basis = body.get("basis_label")
     group_by = body.get("group_by")
     if not group_by:
-        return "\n".join([f"Sales by {basis}", *facts, f"Total {figures}"])
-    rows = body.get("rows") or []
+        # An outstanding kind is not a sale: "Undelivered orders", "Pending delivery", "Unpaid invoices" (the kinds'
+        # own words); every sales basis reads "Sales by <basis>".
+        head = (
+            "Undelivered orders" if body.get("basis") == "outstanding"
+            else basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid")
+            else f"Sales by {basis}"
+        )
+        text = "\n".join([head, *facts, f"Total {figures}"])
+        if body.get("basis") == "outstanding" and not body.get("compare_to"):
+            # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure; pending delivery and unpaid get none.
+            text += "\n\n" + _ASK_SO_LIST_OFFER
+        return text
+    rows = _ask_rows(body.get("rows") or [], group_by, measure, body.get("sort"))
     if not rows:
         return "\n".join([f"No {basis} found", *facts])
     plural = _REPORT_ASK_PLURALS.get(group_by, str(body.get("group_label") or group_by).lower())
@@ -3370,16 +3565,36 @@ def _report_ask(body: dict) -> str:
         # One row printed reads singular: "Top 1 product", never "Top 1 products".
         plural = str(body.get("group_label") or group_by).lower()
     lead = "Bottom" if body.get("sort") == "asc" else "Top"
-    lines = [f"{lead} {len(rows)} {plural} by {basis}", *facts]
-    for row in rows:
-        lines.append(
-            f"{row.get('rank')}. {row.get('name')} {_ask_rm(row.get('amount'))}, {_ask_pcs(row.get('qty'))}"
-        )
     more = int(body.get("more") or 0)
+    raw_rows = len(body.get("rows") or [])
+    # The twins folded above are one name each, so the count of every name drops by as many.
+    count = int(body.get("total_count") or (raw_rows + more)) - (raw_rows - len(rows))
+    of = f" of {count:,}" if count > len(rows) else ""
+    by = f"{measure}, {basis}" if measure in _ASK_COUNT_UNITS else basis
+    lines = [f"{lead} {len(rows)}{of} {plural} by {by}", *facts]
+    items = group_by in ("product", "category")
+    if items and body.get("sort") == "asc":
+        # REPORT-SMART-L R3a: what the top selling reply said of a least sold ranking (an item that sold nothing is never ranked).
+        lines.insert(1, TOP_SELLING_NO_SALE_LINE.replace("Items", "Categories") if group_by == "category" else TOP_SELLING_NO_SALE_LINE)
+    for row in rows:
+        if group_by in ("month", "year"):
+            # A trend, not a ranking: its months (or years) in date order, no rank number.
+            when = _ask_month(row.get("name")) if group_by == "month" else str(row.get("name"))
+            lines.append(f"{when} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
+        else:
+            label = row.get("code") if group_by == "category" and _filled(row.get("code")) else row.get("name")
+            lines.append(f"{row.get('rank')}. {label} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
     if more > 0:
         lines.append(f"and {more} more")
     lines.append(f"Total {figures}")
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    offer = _REPORT_ASK_OFFERS.get(group_by)
+    if offer and not body.get("compare_to"):
+        # REPORT-SMART-L R3c: the top selling reply's own offer (Q2 b): a rank number opens that row.
+        # R5 B (owner b2): a sales agent / customer ranking offers its row's detail too.
+        text += "\n\n" + offer
+    # Length never cuts a ranking: split between rows into WhatsApp-sized parts (as top selling did).
+    return "\n\n".join(whatsapp_parts(text))
 
 
 #: The measure as the head line says it, by the route's `measure`.
@@ -3467,6 +3682,14 @@ def _chat_report_ask(body: dict) -> str:
     return "\n".join(lines)
 
 
+_REPORT_ASK_OFFERS = {
+    "product": "Reply with a rank number to see that item's customers and months.",
+    "category": "Reply with a rank number to see that category's top items.",
+    "sales_agent": "Reply with a rank number to see that sales agent's customers and months.",
+    "customer": "Reply with a rank number to see that customer's products and months.",
+}
+
+
 def _report_ask_envelope(body: dict) -> dict:
     """Minimal envelope (`response` + `has_result`), like the other report tools: the rendered
     header is never empty, so the text alone cannot tell a miss from a hit. A ranking that
@@ -3482,17 +3705,28 @@ def _report_ask_envelope(body: dict) -> dict:
     drill = (
         {
             "group_by": body.get("group_by"),
-            "rows": [{"name": r.get("name"), "keys": list(r.get("keys") or [])} for r in rows],
+            "rows": [
+                {"name": r.get("name"), "keys": list(r.get("keys") or []), **({"code": r["code"]} if r.get("code") else {})}
+                for r in rows
+            ],
         }
         if rows
         else None
     )
-    return {"result_type": "report_ask", "response": _report_ask(body), "has_result": answered, "drill_rows": drill}
+    return {
+        "result_type": "report_ask", "response": _report_ask(body), "has_result": answered, "drill_rows": drill,
+        "not_applied": _not_applied(body),
+    }
 
 
 def _sales_analysis_envelope(payload: dict) -> dict:
     status = payload.get("status")
     envelope = {"result_type": "sales_analysis", "attachments": [], "has_result": True}
+    if status == "clarify" and isinstance(payload.get("options"), list):
+        # Chat fix PR-B S7: the company question's options, so the chatbot registers it.
+        options = [str(o) for o in payload["options"] if str(o).strip()]
+        return {**envelope, "response": str(payload.get("message") or _SALES_ANALYSIS_ERROR),
+                "company_options": options}
     if status in ("clarify", "refused", "busy"):
         return {**envelope, "response": str(payload.get("message") or _SALES_ANALYSIS_ERROR)}
     if status not in ("ready", "pending", "error") or not isinstance(payload.get("rows"), list):
@@ -3507,4 +3741,183 @@ def _sales_analysis_envelope(payload: dict) -> dict:
         **envelope,
         "response": text,
         "attachments": attachments if isinstance(attachments, list) else [],
+    }
+
+
+# --------------------------------------------------------------------------
+# sales target progress (PLAN-sales-target-chat-25oct.md "Reply text"). English text,
+# like the sales report. Body: `asker`, `as_of`, `window`, `own[]`, `team[]`, `dealers[]`.
+# --------------------------------------------------------------------------
+
+_TARGET_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _target_date(iso: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(iso)[:10])
+    except ValueError:
+        return None
+
+
+def _target_dmon(d: date) -> str:
+    return f"{d.day} {_TARGET_MONTHS[d.month - 1]}"
+
+
+def _target_money(v: Any, unit: str = "amount") -> str:
+    n = float(v or 0)
+    if unit == "quantity":
+        return f"{n:,.0f}" if n == int(n) else f"{n:,.2f}"
+    return f"RM {n:,.2f}"
+
+
+def _target_period_label(start: date, end: date) -> str:
+    if start.year == end.year:
+        if (start.month, start.day) == (1, 1) and (end.month, end.day) == (12, 31):
+            return str(start.year)
+        if start.day == 1 and start.month == end.month and end.day == calendar.monthrange(end.year, end.month)[1]:
+            return f"{_TARGET_MONTHS[start.month - 1]} {start.year}"
+        if (
+            start.day == 1
+            and start.month % 3 == 1
+            and end.month == start.month + 2
+            and end.day == calendar.monthrange(end.year, end.month)[1]
+        ):
+            return f"Q{(start.month - 1) // 3 + 1} {start.year}"
+    return f"{_target_dmon(start)} to {_target_dmon(end)} {end.year}"
+
+
+def _target_rate(r: Any) -> str:
+    return f"{float(r):g}%"
+
+
+def _target_rates(rung: dict, multi: bool) -> str:
+    parts = []
+    for rate in rung.get("rates") or []:
+        label = rate.get("label")
+        parts.append(_target_rate(rate.get("rate")) + (f" on {label}" if multi and label else ""))
+    text = ", ".join(parts)
+    for rate in rung.get("additional_rates") or []:
+        label = rate.get("label")
+        text += f" + additional {_target_rate(rate.get('rate'))}" + (f" on {label}" if multi and label else "")
+    return text
+
+
+def _target_header(prefix: str, line: dict, subject: str | None) -> str:
+    start, end = _target_date(line.get("period_start")), _target_date(line.get("period_end"))
+    text = f"{prefix} {_target_period_label(start, end)} ({_target_dmon(start)} to {_target_dmon(end)})"
+    return f"{text}, {subject}" if subject else text
+
+
+def _target_line_lines(line: dict, as_of: date | None) -> list[str]:
+    """The lines under a header: Counts, Achieved, and the tier / target outcome."""
+    unit = "quantity" if line.get("threshold_unit") == "quantity" else "amount"
+    accounts = line.get("accounts") or []
+    multi = len(accounts) > 1
+    out: list[str] = []
+    if accounts:
+        out.append("Counts: " + ", ".join(a.get("label") or a.get("code") or "" for a in accounts))
+    if line.get("ratio_missing"):
+        out.append(f"Target: {float(line.get('target_points') or 0):,.0f} points")
+    achieved = _target_money(line.get("achieved_value"), unit)
+    notes = ["provisional", "incl. tax"] if line.get("provisional") else []
+    if line.get("is_current") and as_of is not None:
+        notes.append(f"to {_target_dmon(as_of)}")
+    out.append(f"Achieved: {achieved}" + (f" ({', '.join(notes)})" if notes else ""))
+    if line.get("ratio_missing"):
+        out.append("Points are not converted yet, so I can't compare.")
+        return out
+    reached, nxt = line.get("tier_reached"), line.get("next_tier")
+    if reached:
+        out.append(f"Tier reached: Tier {reached['tier']}, {_target_rates(reached, multi)}")
+    if nxt:
+        short = _target_money(nxt.get("gap"), unit)
+        threshold = _target_money(nxt.get("threshold"), unit)
+        if line.get("is_current"):
+            out.append(f"Next tier: Tier {nxt['tier']}, {_target_rates(nxt, multi)} at {threshold}, {short} to go")
+        else:
+            out.append(
+                f"Tier {nxt['tier']} ({_target_rates(nxt, multi)}) at {threshold}: not reached, short {short}"
+            )
+    elif reached:
+        out[-1] = f"Top tier reached: Tier {reached['tier']}, {_target_rates(reached, multi)}"
+    else:
+        target = float(line.get("target_value") or 0)
+        gap = target - float(line.get("achieved_value") or 0)
+        if gap <= 0:
+            out.append(f"Target reached: {_target_money(target, unit)}")
+        else:
+            out.append(f"Target: {_target_money(target, unit)}, {_target_money(gap, unit)} to go")
+    return out
+
+
+def _target_block(prefix: str, lines: list[dict], as_of: date | None, *, team: bool = False) -> str:
+    blocks = []
+    for line in lines:
+        subject = line.get("subject_label")
+        if team:
+            start, end = _target_date(line["period_start"]), _target_date(line["period_end"])
+            head = (
+                f"Team {subject} target {_target_period_label(start, end)} "
+                f"({_target_dmon(start)} to {_target_dmon(end)})"
+            )
+        else:
+            head = _target_header(prefix, line, subject if len(lines) > 1 else None)
+        body = [head, *_target_line_lines(line, as_of)]
+        pipeline = line.get("pipeline_value")
+        if pipeline and float(pipeline) > 0:
+            body.append(f"Open opportunities closing by {_target_dmon(_target_date(line.get('target_end_date') or line['period_end']))}: {_target_money(pipeline)}")
+        blocks.append("\n".join(body))
+    return "\n\n".join(blocks)
+
+
+def _target_dealer_row(line: dict) -> str:
+    unit = "quantity" if line.get("threshold_unit") == "quantity" else "amount"
+    labels = ", ".join(a.get("label") or a.get("code") or "" for a in line.get("accounts") or [])
+    head = f"{line.get('subject_label')} [{labels}]: {_target_money(line.get('achieved_value'), unit)}"
+    reached, nxt = line.get("tier_reached"), line.get("next_tier")
+    if line.get("ratio_missing"):
+        return f"{head}, points not converted yet"
+    if nxt:
+        return (
+            f"{head} of {_target_money(nxt.get('threshold'), unit)} (Tier {nxt['tier']}), "
+            f"{_target_money(nxt.get('gap'), unit)} to go"
+        )
+    if reached:
+        return f"{head}, top tier reached (Tier {reached['tier']})"
+    target = float(line.get("target_value") or 0)
+    gap = target - float(line.get("achieved_value") or 0)
+    tail = f"{_target_money(gap, unit)} to go" if gap > 0 else "target reached"
+    return f"{head} of {_target_money(target, unit)}, {tail}"
+
+
+def _sales_target(report: dict) -> str:
+    as_of = _target_date(report.get("as_of"))
+    own, team, dealers = report.get("own") or [], report.get("team") or [], report.get("dealers") or []
+    window = report.get("window") or {}
+    start, end = _target_date(window.get("date_from")), _target_date(window.get("date_to"))
+    when = ""
+    if start and end and start != end:
+        when = f" for {_target_period_label(start, end)}"
+    if report.get("asker") == "dealer":
+        if not dealers:
+            return f"No sales target is set for your accounts{when or ' right now'}."
+        return _target_block("Sales target", dealers, as_of)
+    # A named dealer narrows the answer to that dealer: no own or team block, not even "no target".
+    blocks = [] if report.get("narrowed") else [
+        _target_block("Your sales target", own, as_of) if own else f"No sales target is set for you{when or ' right now'}."
+    ]
+    if team:
+        blocks.append(_target_block("", team, as_of, team=True))
+    if dealers:
+        blocks.append("\n".join(["Your dealers, smallest gap first:", *(_target_dealer_row(d) for d in dealers)]))
+    if not blocks:
+        return f"No sales target is set for that dealer{when or ' right now'}."
+    return "\n\n".join(blocks)
+
+
+def _sales_target_envelope(report: dict) -> dict:
+    return {
+        "result_type": "sales_target",
+        "response": _sales_target(report),
+        "has_result": True,
     }

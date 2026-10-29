@@ -92,6 +92,15 @@ const exportOrderInquiryXlsxSpy = vi.hoisted(() =>
   })),
 );
 
+const exportOrderInquiryPdfSpy = vi.hoisted(() =>
+  vi.fn<(inquiryId: string) => Promise<unknown>>(async () => ({
+    id: 'dl-2',
+    kind: 'order_inquiry_pdf',
+    status: 'pending',
+    filename: 'order-inquiry-OI-2609-0001.pdf',
+  })),
+);
+
 const toastSpy = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -185,6 +194,8 @@ vi.mock(
       })),
       exportOrderInquiryXlsx: (...args: unknown[]) =>
         exportOrderInquiryXlsxSpy(...(args as [string])),
+      exportOrderInquiryPdf: (...args: unknown[]) =>
+        exportOrderInquiryPdfSpy(...(args as [string])),
       acknowledgeOrderInquiryRowsByFilter: (...args: unknown[]) =>
         acknowledgeFilterSpy(...(args as [unknown])),
       acknowledgeOrderInquiryRows: (...args: unknown[]) =>
@@ -620,6 +631,24 @@ describe('Unlink selected is a server-deferred pending action, not a confirm dia
     );
     // The selection is untouched by Cancel - only a commit clears it.
     expect(checkbox).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('Print / Download PDF, tied to this OI (OI-DOWNLOAD)', () => {
+  it('calls exportOrderInquiryPdf(id) and toasts My Downloads', async () => {
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), {
+      button: 0,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /print \/ download pdf/i }));
+
+    await waitFor(() => expect(exportOrderInquiryPdfSpy).toHaveBeenCalledWith('oi-1'));
+    expect(exportOrderInquiryXlsxSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(toastSpy.success).toHaveBeenCalled());
+    expect(toastSpy.success.mock.calls.at(-1)?.[0]).toMatch(/my downloads/i);
+    expect(saveBlobAsSpy).not.toHaveBeenCalled();
   });
 });
 

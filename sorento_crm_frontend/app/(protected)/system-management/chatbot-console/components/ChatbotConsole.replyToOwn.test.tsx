@@ -1,8 +1,8 @@
 /**
- * QUOTED-REPLY AC-QR-23 (UI): the "Reply to" picker also lists the customer's own bubbles. A
+ * QUOTED-REPLY AC-QR-23 (UI): the customer's own bubbles are quotable too (bubble menu since
+ * CHAT-CONSOLE-UX). A
  * customer bubble posts `source: "contact"` with the response's `message_id`; a bot bubble posts
  * `source: "n8n"` (asserted explicitly: the hook sends it, the server default is the fallback).
- * Red until the response type carries `message_id` and the picker lists customer bubbles.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -67,21 +67,24 @@ async function send(text: string) {
   fireEvent.keyDown(textarea(), { key: 'Enter' });
 }
 
-/** The "Reply to" SearchableSelect trigger: found by its accessible name or visible text. */
-function replyTrigger(): HTMLElement | null {
-  const triggers = Array.from(
-    document.querySelectorAll<HTMLElement>('[data-slot="searchable-select-trigger"]'),
-  );
-  return (
-    triggers.find((t) => /reply to/i.test(`${t.getAttribute('aria-label') ?? ''} ${t.textContent ?? ''}`)) ?? null
-  );
+/** The bubble's own menu (right-click; long-press on a phone) - the reply action since
+ * CHAT-CONSOLE-UX replaced the "Reply to" dropdown. */
+function bubbleOf(text: string): HTMLElement {
+  return screen.getAllByText(text)[0].closest('[data-testid="message-bubble"]') as HTMLElement;
 }
 
-async function openReplyOptions(): Promise<HTMLElement[]> {
-  const trigger = replyTrigger();
-  expect(trigger, 'a "Reply to" SearchableSelect trigger').not.toBeNull();
-  fireEvent.click(trigger!);
-  return screen.findAllByRole('option');
+async function menuItemsOf(text: string): Promise<string[]> {
+  fireEvent.contextMenu(bubbleOf(text), { clientX: 20, clientY: 20 });
+  const items = (await screen.findAllByRole('menuitem')).map((i) => i.textContent ?? '');
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+  return items;
+}
+
+async function replyTo(text: string) {
+  fireEvent.contextMenu(bubbleOf(text), { clientX: 20, clientY: 20 });
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Reply' }));
+  await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
 }
 
 beforeEach(() => {
@@ -98,19 +101,17 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('ChatbotConsole - own-message quotes (AC-QR-23)', () => {
-  it('lists the customer bubble beside bot bubbles, newest first, greetings excluded', async () => {
+  it('offers Reply on the acknowledged customer bubble and the bot bubble, not on greetings', async () => {
     postConsoleTurn.mockResolvedValueOnce(turn('t1', 'Which product do you mean?', [], 'm-1'));
     renderConsole();
     await send('SRTBF11841 have stock?');
     await screen.findByText('Which product do you mean?');
 
-    const labels = (await openReplyOptions()).map((o) => o.textContent ?? '');
+    expect(await menuItemsOf('Which product do you mean?')).toContain('Reply');
+    expect(await menuItemsOf('SRTBF11841 have stock?')).toContain('Reply');
     for (const greeting of CONSOLE_GREETING_MESSAGES) {
-      expect(labels.some((l) => l.includes(greeting))).toBe(false);
+      expect(await menuItemsOf(greeting)).not.toContain('Reply');
     }
-    expect(labels).toHaveLength(2);
-    expect(labels[0]).toContain('Which product do you mean?');
-    expect(labels[1]).toContain('SRTBF11841 have stock?');
   });
 
   it('choosing the customer bubble posts reply_to {id: message_id, text, source: contact}', async () => {
@@ -121,10 +122,7 @@ describe('ChatbotConsole - own-message quotes (AC-QR-23)', () => {
     await send('SRTBF11841 have stock?');
     await screen.findByText('Which product do you mean?');
 
-    const options = await openReplyOptions();
-    const own = options.find((o) => (o.textContent ?? '').includes('SRTBF11841 have stock?'));
-    expect(own, 'the customer bubble option').toBeTruthy();
-    fireEvent.click(own!);
+    await replyTo('SRTBF11841 have stock?');
     await send('and eta?');
 
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2));
@@ -141,9 +139,7 @@ describe('ChatbotConsole - own-message quotes (AC-QR-23)', () => {
     await send('price?');
     await screen.findByText('Which product do you mean?');
 
-    const options = await openReplyOptions();
-    const bot = options.find((o) => (o.textContent ?? '').includes('Which product do you mean?'));
-    fireEvent.click(bot!);
+    await replyTo('Which product do you mean?');
     await send('1 unit');
 
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2));
@@ -162,8 +158,7 @@ describe('ChatbotConsole - own-message quotes (AC-QR-23)', () => {
     await send('SRTBF11841 have stock?');
     await screen.findByText('Which product do you mean?');
 
-    const options = await openReplyOptions();
-    fireEvent.click(options.find((o) => (o.textContent ?? '').includes('SRTBF11841 have stock?'))!);
+    await replyTo('SRTBF11841 have stock?');
     await send('and eta?');
 
     const typed = await screen.findByText('and eta?');

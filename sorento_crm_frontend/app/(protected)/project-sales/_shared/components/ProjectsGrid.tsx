@@ -17,7 +17,6 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { OutcomePill } from './OutcomePill';
-import { PillOverflow, PillOverflowList } from '@/components/common/PillOverflow';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import {
   DataGridListToolbar,
@@ -26,6 +25,8 @@ import {
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import type { Project } from '../types/project.types';
+import { projectCodeLabel } from '../lib/projectCode';
+import { ApprovalStatePill, isAwaitingDecision } from './ApprovalStatePill';
 
 /**
  * Every registered project as a row. ONE grid, two screens.
@@ -97,12 +98,15 @@ export function ProjectsGrid({
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         size: 120,
         meta: { headerTitle: 'Code' },
+        // No underline here or on Project (owner, 29 Oct): the whole row is the link, as on the
+        // Orders list.
         cell: ({ row }) => (
-          <Link
-            href={`/project-sales/${row.original.id}`}
-            className="hover:underline"
-          >
-            {row.original.project_code}
+          <Link href={`/project-sales/${row.original.id}`}>
+            {row.original.approval_state === 'draft' && !row.original.project_code ? (
+              <ApprovalStatePill state="draft" />
+            ) : (
+              projectCodeLabel(row.original)
+            )}
           </Link>
         ),
       },
@@ -114,7 +118,7 @@ export function ProjectsGrid({
         cell: ({ row }) => (
           <Link
             href={`/project-sales/${row.original.id}`}
-            className="block truncate hover:underline"
+            className="block truncate"
             title={row.original.title}
           >
             {row.original.title}
@@ -128,11 +132,21 @@ export function ProjectsGrid({
         size: 180,
         enableSorting: false,
         meta: { headerTitle: 'Developer' },
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.developer_name ?? ''}>
-            {row.original.developer_name ?? <Muted>-</Muted>}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const typed = row.original.developer_name
+            ? null
+            : row.original.registration?.developer_name?.trim();
+          // A portal registration names its developer as typed until a party is picked.
+          return typed ? (
+            <span className="block truncate" title={typed}>
+              <Muted>Typed: {typed}</Muted>
+            </span>
+          ) : (
+            <span className="block truncate" title={row.original.developer_name ?? ''}>
+              {row.original.developer_name ?? <Muted>-</Muted>}
+            </span>
+          );
+        },
       },
       {
         id: 'status_label',
@@ -142,7 +156,9 @@ export function ProjectsGrid({
         enableSorting: false,
         meta: { headerTitle: 'Stage' },
         cell: ({ row }) =>
-          row.original.status_label ? (
+          isAwaitingDecision(row.original.approval_state) ? (
+            <ApprovalStatePill state={row.original.approval_state} />
+          ) : row.original.status_label ? (
             <Badge variant="secondary" className="truncate">
               {row.original.status_label}
             </Badge>
@@ -172,27 +188,6 @@ export function ProjectsGrid({
             </span>
           ) : (
             <Muted>-</Muted>
-          ),
-      },
-      {
-        id: 'brands',
-        accessorFn: (row) => row.brands.join(', '),
-        header: ({ column }) => <DataGridColumnHeader title="Brands" column={column} />,
-        size: 180,
-        enableSorting: false,
-        meta: { headerTitle: 'Brands' },
-        // One line of pills, folding what does not fit into "+N" (owner, 13 Oct), the same
-        // shared row the sales-team Agents column uses.
-        cell: ({ row }) =>
-          row.original.brands.length ? (
-            <PillOverflow
-              ariaLabel={`Brands on ${row.original.project_code}`}
-              items={row.original.brands.map((brand) => ({ key: brand, label: brand }))}
-              renderPopover={(items) => <PillOverflowList items={items} />}
-              testId={`project-brands-${row.original.id}`}
-            />
-          ) : (
-            <Muted>None</Muted>
           ),
       },
       {

@@ -346,3 +346,42 @@ describe('PurchaseRequestDetail - sponsorship form Sales Type (SF-SALES-TYPE)', 
     expect(labels.indexOf(salesType as Element)).toBe(labels.indexOf(subject as Element) + 1);
   });
 });
+
+describe('PurchaseRequestDetail - a resubmitted request (RESUBMITTED-STATUS)', () => {
+  it.each(['submitted', 'resubmitted'])(
+    'offers Change to pending approval and Reject at status %s',
+    async (status) => {
+      permissionMap = {
+        ...permissionMap,
+        'procurement.purchase_requests.send_for_approval': true,
+      };
+      usePurchaseRequestMock.mockReturnValue({
+        data: purchaseRequest({ status, approval_status: null }),
+        isLoading: false,
+      });
+      renderPage();
+
+      expect(
+        await screen.findByRole('button', { name: /Change to pending approval/ }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Reject$/ })).toBeInTheDocument();
+    },
+  );
+});
+
+describe('PurchaseRequestDetail - an appealed request (COMPLAINT-APPEAL-WORDING)', () => {
+  it.each(['purchase_request', 'sponsorship_form'])(
+    'reads Appealed in the status pill of a %s, never Submitted or Resubmitted',
+    async (request_type) => {
+      usePurchaseRequestMock.mockReturnValue({
+        data: purchaseRequest({ request_type, status: 'resubmitted', approval_status: null }),
+        isLoading: false,
+      });
+      renderPage();
+
+      expect((await screen.findAllByText('Appealed')).length).toBeGreaterThan(0);
+      expect(screen.queryByText('Submitted')).toBeNull();
+      expect(screen.queryByText(/resubmitted/i)).toBeNull();
+    },
+  );
+});

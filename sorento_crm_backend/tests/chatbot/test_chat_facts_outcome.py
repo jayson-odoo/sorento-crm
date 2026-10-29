@@ -543,3 +543,25 @@ def test_flatten_asked_product_ids_ignore_missing_or_malformed_args():
 
 def test_flatten_asked_product_ids_is_empty_without_tools():
     assert outcome_mod().flatten(turn_dict(apply_event()))["asked_product_ids"] == []
+
+
+# ------------------------------------------------------------------ WU27: the phone kinds
+
+
+PHONE_KINDS = ("phone_ask", "phone_linked", "phone_ignored", "phone_handoff")
+
+
+@pytest.mark.parametrize("branch", PHONE_KINDS)
+def test_wu27_phone_kinds_are_refused_policy_like_ai_not_allowed(branch):
+    assert _outcome(turn_dict(branch_kind=branch)) == _outcome(turn_dict(branch_kind="ai_not_allowed"))
+    assert _outcome(turn_dict(branch_kind=branch)) == ("refused_policy", None)
+
+
+def test_wu27_chat_asks_branch_words_carry_the_phone_lane_words():
+    from app.services.reports.datasets.chat_asks import BRANCH_WORDS
+
+    words = dict(BRANCH_WORDS)
+    assert words["phone_ask"] == "Asked for a phone number"
+    assert words["phone_linked"] == "Phone linked"
+    assert words["phone_ignored"] == "Phone card ignored"
+    assert words["phone_handoff"] == "Phone handed to staff"

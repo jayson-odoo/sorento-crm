@@ -18,6 +18,8 @@ from sqlalchemy import exists, false, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
+from app.utils.multi_value import multi_values as _as_list
+
 from app.models.access import MarketSegment
 from app.models.inventory import Stock, Warehouse
 from app.models.lookup import LookupOption
@@ -39,6 +41,7 @@ from app.models.project_so import (
 from app.models.sales_agent import SalesAgent
 from app.models.scm import OrderLinkClaim
 from app.services.document_ingest_service import CANCELLED
+from app.services import so_remark_rules
 from app.services.scm.po_ref import po_ref_key
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
@@ -435,6 +438,11 @@ class SalesOrderService:
         # cell), so this is the detail screen's own seam onto the same "where it went"
         # fact the board's dialog reads. Same gate: the list has no column for it.
         planning_changes = self._line_planning_changes(so) if line_planning else {}
+        # OI-SPLIT-VIEW (UAC B1): each line's split popup, off the one serializer the OI
+        # reads use. Same gate: the list has no column for it.
+        split_views = self._line_split_views(so) if line_planning else {}
+        # OI-SPLIT-VIEW (UAC E5): the split sheet payload the read-only popups draw. Same gate.
+        line_splits = self._line_splits(so) if line_planning else None
         # AC-CANCEL-CRM (owner hand test): which AutoCount Cancel SO documents make up each
         # line's `qty_cancelled`, and how each was matched. One read for the order.
         from app.models.autocount_cancel import AutocountCancelLine
@@ -454,6 +462,20 @@ class SalesOrderService:
         # money are summed from them), so a `min`/`max` over them costs nothing and cannot
         # disagree with the figures beside it.
         required_dates = []
+        # FULFIL-SO-REMARK (AC-16): the Remark and the Mockup labels read ALL the order's lines
+        # (the lines are already loaded above for the sums, so no extra read per list row).
+        mockup_by_line = {
+            ln.id: so_remark_rules.is_mockup_line(
+                so.internal_note, ln.line_remark, ln.section_heading
+            )
+            for ln in so.lines
+        }
+        # Live lines only: a cancelled line neither makes the order a Mockup nor counts toward
+        # labelling (it is not part of the order total either).
+        live_flags = [
+            mockup_by_line[ln.id] for ln in so.lines if (ln.line_status or "open") != CANCELLED
+        ]
+        label_mockups = so_remark_rules.label_lines(live_flags)
         for ln in sorted(so.lines, key=_line_sort_key):
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
@@ -482,10 +504,17 @@ class SalesOrderService:
             committed += outstanding
             if ln.line_status == "open" and outstanding > 0:
                 open_lines += 1
-            if ln.required_date:
+            if ln.required_date and not ln.removed_unreferenced:
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
                 required_dates.append(ln.required_date)
             lines.append({
                 "id": ln.id,
+                "is_mockup": mockup_by_line[ln.id],
+                "mockup_label": (
+                    label_mockups
+                    and mockup_by_line[ln.id]
+                    and (ln.line_status or "open") != CANCELLED
+                ),
                 # AutoCount's own line number - the address the Lines tab sorts and
                 # labels by. `None` for a line AutoCount never numbered.
                 "line_no": ln.line_no,
@@ -529,6 +558,7 @@ class SalesOrderService:
                 # caller asked for them (`line_planning`), and null on a line nobody has
                 # raised or decided anything on - which is most of the book.
                 "order_inquiry": inquiries.get(str(ln.id)),
+                "split_view": split_views.get(str(ln.id)),
                 # AC-I9 / S7: WHERE this line's Buy sits - the order-inquiry link(s) a
                 # PROJECT line carries first, then a RETAIL line's own SPO coverage (S7,
                 # AC-G2..G6) after them. `None` when NEITHER exists (no inquiry row covers
@@ -613,9 +643,11 @@ class SalesOrderService:
             # What the order SAYS versus what is still owed. Both, because a "Total qty"
             # reading 0 on a fully delivered order is the label lying - the same rule the
             # purchase-order detail already follows with `open_qty` / `total_qty`.
-            "line_count": len(lines),
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            "line_count": len([ln for ln in so.lines if not ln.removed_unreferenced]),
             "open_line_count": open_lines,
             "lines": lines,
+            "line_splits": line_splits,
             # Where the order came from. `inquiry` is its own answer because an order Joey's
             # sheet created is one CS has never seen, and a buyer looking at the list is
             # entitled to know which of the two he is reading.
@@ -645,6 +677,10 @@ class SalesOrderService:
             # AutoCount's Transferable flag; None when the source never stated it.
             "is_transferable": so.is_transferable,
             "po_ref": so.po_ref or None,
+            "ship_info": so.ship_info or None,
+            "remark": so_remark_rules.default_remark(
+                so_remark_rules.remark_type(so.ship_info), live_flags
+            ),
             "created_at": so.created_at.isoformat() if so.created_at else "",
         }
 
@@ -718,6 +754,49 @@ class SalesOrderService:
                 "rejected_at": entry.get("rejected_at"),
             }
         return out
+
+    def _line_split_views(self, so: SalesOrder) -> dict[str, dict]:
+        """OI-SPLIT-VIEW (UAC B1, B5): `core line id -> split_view` for the lines of this order
+        whose planning mirror has saved splits (`LineSplitService.split_views`, the one
+        serializer). The mirror is found by `core_sales_order_line_id`; an order with no
+        project order has none."""
+        from app.services.project_line_split_service import LineSplitService
+
+        core_ids = [str(ln.id) for ln in so.lines]
+        if not core_ids:
+            return {}
+        mirror_to_core = {
+            str(mirror_id): str(core_id)
+            for mirror_id, core_id in self.db.query(
+                ProjectSalesOrderLine.id, ProjectSalesOrderLine.core_sales_order_line_id
+            )
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids))
+            .all()
+        }
+        if not mirror_to_core:
+            return {}
+        views = LineSplitService(self.db).split_views(list(mirror_to_core))
+        return {mirror_to_core[mirror_id]: view for mirror_id, view in views.items()}
+
+    def _line_splits(self, so: SalesOrder) -> Optional[dict]:
+        """OI-SPLIT-VIEW (UAC E5): the order's split sheet (`LineSplitService.read`, the payload
+        `GET .../line-splits` serves) when a line of its project order has saved splits, else
+        `None`. Scoped like the rest of this read; no project order means no splits."""
+        from app.models.project_so import ProjectSalesOrder, SOLineSplit
+        from app.services.project_line_split_service import LineSplitService
+
+        # One project order per core order (`so_id` is unique where set).
+        order = self.db.query(ProjectSalesOrder).filter(ProjectSalesOrder.so_id == so.id).first()
+        if order is None:
+            return None
+        has_splits = (
+            self.db.query(SOLineSplit.id)
+            .filter(SOLineSplit.project_sales_order_id == str(order.id))
+            .first()
+        )
+        if has_splits is None:
+            return None
+        return LineSplitService(self.db).read(order)
 
     def _line_planning_changes(self, so: SalesOrder) -> dict[str, dict]:
         """The latest planning-change row for each of this order's lines, WITHIN the
@@ -818,6 +897,10 @@ class SalesOrderService:
         for core_id, row_id in rows:
             entries = out.setdefault(str(core_id), [])
             for link in links_by_row.get(row_id, []):
+                # LINKAGE-UNIFY U3: a dead document (`dead_reason`) brings nothing, so
+                # "Linked to" leaves it out, as it did before the link was listed.
+                if link.get("dead_reason"):
+                    continue
                 entries.append(
                     {
                         "kind": link["kind"],
@@ -1277,12 +1360,13 @@ class SalesOrderService:
         )[0]
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[str], priority: Optional[str],
-             source: Optional[str] = None, *,
+             query: Optional[str], status: Optional[list[str] | str],
+             priority: Optional[list[str] | str],
+             source: Optional[list[str] | str] = None, *,
              date_from: Optional[date] = None, date_to: Optional[date] = None,
-             customer_code: Optional[str] = None, outstanding: bool = False,
-             sales_agent_id: Optional[str] = None,
-             demand_class: Optional[str] = None,
+             customer_code: Optional[list[str] | str] = None, outstanding: bool = False,
+             sales_agent_id: Optional[list[str] | str] = None,
+             demand_class: Optional[list[str] | str] = None,
              transferable: Optional[str] = None,
              doc_type: str = "sales_order") -> dict:
         q = self.db.query(SalesOrder).options(
@@ -1295,24 +1379,26 @@ class SalesOrderService:
         # disagreeing about the same order.
         # AC-CONSIGN-CRM: a consignment has its own page; this list is one kind at a time.
         q = q.filter(SalesOrder.doc_type == doc_type)
-        if source:
-            if source == "manual":
-                # Everything neither feed wrote: keyed in, or from a system we have no name
-                # for. NULL has to be spelled out because `NOT IN` never matches it.
-                known = [v for vs in _SOURCE_SYSTEMS.values() for v in vs]
-                q = q.filter(
-                    (SalesOrder.source_system.is_(None))
-                    | (~SalesOrder.source_system.in_(known))
+        # Several values of one filter are OR-ed (FILTER-MULTISELECT); a lone string is one value.
+        sources, statuses, priorities = _as_list(source), _as_list(status), _as_list(priority)
+        if sources:
+            # `manual` is a pseudo-value: everything neither feed wrote (keyed in, or from a
+            # system we have no name for). NULL has to be spelled out because `NOT IN` never
+            # matches it. An unrecognised value matches NOTHING rather than being ignored: a
+            # filter that quietly drops the value it did not understand shows the whole book
+            # under a heading claiming it is narrowed - the worst of the three options.
+            known = [v for vs in _SOURCE_SYSTEMS.values() for v in vs]
+            real = [sys for s in sources if s != "manual" for sys in _SOURCE_SYSTEMS.get(s, ())]
+            clauses = [SalesOrder.source_system.in_(real)] if real else []
+            if "manual" in sources:
+                clauses.append(
+                    (SalesOrder.source_system.is_(None)) | (~SalesOrder.source_system.in_(known))
                 )
-            else:
-                # An unrecognised value matches NOTHING rather than being ignored. A filter
-                # that quietly drops the value it did not understand shows the whole book
-                # under a heading claiming it is narrowed - the worst of the three options.
-                q = q.filter(SalesOrder.source_system.in_(_SOURCE_SYSTEMS.get(source, ())))
-        if status:
-            q = q.filter(SalesOrder.status == status)
-        if priority:
-            q = q.filter(SalesOrder.priority == priority)
+            q = q.filter(or_(*clauses) if clauses else text("false"))
+        if statuses:
+            q = q.filter(SalesOrder.status.in_(statuses))
+        if priorities:
+            q = q.filter(SalesOrder.priority.in_(priorities))
         # Inclusive of both ends, because a person asking for "March" means the 1st and the
         # 31st. An undated order is excluded from a range rather than swept into one: absorbed
         # rows can arrive with no date, and putting one in January states a fact we do not have.
@@ -1320,30 +1406,35 @@ class SalesOrderService:
             q = q.filter(SalesOrder.order_date >= date_from)
         if date_to:
             q = q.filter(SalesOrder.order_date <= date_to)
-        if customer_code:
+        customer_codes = _as_list(customer_code)
+        if customer_codes:
             # By CODE, not id. `customer_code` is not unique in this dataset - several legal
             # entities share a debtor code - so a person picking "Acme" from the dropdown
             # means every one of them, and filtering by a single id would show part of their
             # book. Trimmed and case-folded to match `_customer`.
             q = q.filter(
                 SalesOrder.customer.has(
-                    func.lower(func.btrim(Customer.customer_code))
-                    == customer_code.strip().lower()
+                    func.lower(func.btrim(Customer.customer_code)).in_(
+                        [c.strip().lower() for c in customer_codes]
+                    )
                 )
             )
-        if sales_agent_id:
-            q = q.filter(SalesOrder.sales_agent_id == sales_agent_id)
+        agent_ids = _as_list(sales_agent_id)
+        if agent_ids:
+            q = q.filter(SalesOrder.sales_agent_id.in_(agent_ids))
         # Same "matches nothing" rule as `source`/`status` above - a demand_class the
         # vocabulary does not know is never silently ignored. `unclassified` reads the
         # column as NULL rather than as a third stored value: the whole point of the closed
         # vocabulary (`app.services.scm.demand_class`) is that "nobody said" is not a class.
-        if demand_class:
-            if demand_class == "unclassified":
-                q = q.filter(SalesOrder.demand_class.is_(None))
-            elif demand_class in DEMAND_CLASSES:
-                q = q.filter(SalesOrder.demand_class == demand_class)
-            else:
-                q = q.filter(text("false"))
+        demand_classes = _as_list(demand_class)
+        if demand_classes:
+            clauses = []
+            if "unclassified" in demand_classes:
+                clauses.append(SalesOrder.demand_class.is_(None))
+            real = [d for d in demand_classes if d in DEMAND_CLASSES]
+            if real:
+                clauses.append(SalesOrder.demand_class.in_(real))
+            q = q.filter(or_(*clauses) if clauses else text("false"))
         # AutoCount's Transferable flag (SO-TRANSFERABLE), same "matches nothing" rule.
         # `unknown` is the NULL the source never stated, kept apart from `yes`.
         if transferable:
@@ -1435,6 +1526,8 @@ class SalesOrderService:
             "delivery_date_from": (
                 select(func.min(SalesOrderLine.required_date))
                 .where(SalesOrderLine.sales_order_id == SalesOrder.id)
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                .where(SalesOrderLine.removed_unreferenced.is_(False))
                 .correlate(SalesOrder)
                 .scalar_subquery()
             ),

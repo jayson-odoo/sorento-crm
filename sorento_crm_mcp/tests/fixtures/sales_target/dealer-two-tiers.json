@@ -1,0 +1,61 @@
+{
+  "asker": "dealer",
+  "as_of": "2026-10-23",
+  "window": {
+    "date_from": "2026-10-25",
+    "date_to": "2026-10-25"
+  },
+  "own": [],
+  "team": [],
+  "dealers": [
+    {
+      "target_no": "TGT-000090",
+      "name": "TWOTIER",
+      "subject_kind": "dealer",
+      "subject_label": "TWO TIER DEALER SDN BHD",
+      "company_code": "SRT",
+      "period_start": "2026-10-01",
+      "period_end": "2026-12-31",
+      "is_current": true,
+      "metric": "amount",
+      "threshold_unit": "amount",
+      "provisional": true,
+      "accounts": [
+        {
+          "code": "300-T001",
+          "label": "A/C I"
+        }
+      ],
+      "target_value": 50000.0,
+      "target_points": null,
+      "achieved_value": 55000.0,
+      "ratio_missing": false,
+      "tier_reached": {
+        "tier": 1,
+        "threshold": 50000.0,
+        "threshold_points": null,
+        "rates": [
+          {
+            "label": "A/C I",
+            "rate": 3.0
+          }
+        ],
+        "additional_rates": []
+      },
+      "next_tier": {
+        "tier": 2,
+        "threshold": 70000.0,
+        "threshold_points": null,
+        "rates": [
+          {
+            "label": "A/C I",
+            "rate": 4.0
+          }
+        ],
+        "additional_rates": [],
+        "gap": 15000.0
+      },
+      "pipeline_value": null
+    }
+  ]
+}

@@ -873,6 +873,30 @@ def test_the_list_filters_by_state_warehouse_product_and_sales_order(one_transfe
     assert str(transfer.id) not in ids(kind="borrow")
 
 
+def test_the_so_pages_transfers_tab_sorts_by_its_own_columns_and_nothing_else(one_transfer):
+    """SO-TRANSFERS-SORT-422. The SO detail page's Transfers tab asks for this list pinned
+    to the order. Every column the grid lets a reader sort by must be accepted, and the SO
+    list's own sort (`order_date`, carried in the detail URL) must stay REFUSED: the fix is
+    the page not sending it, never the list quietly ordering by something else."""
+    client, _world, transfer = one_transfer
+    sales_order_id = client.get(f"{TRANSFERS}/{transfer.id}").json()["sales_order_id"]
+
+    for sort in ("transfer_no", "item_code", "kind", "so_number", "state", "proposed_at"):
+        for direction in ("asc", "desc"):
+            response = client.get(
+                TRANSFERS,
+                params={"sales_order_id": sales_order_id, "sort": sort, "dir": direction},
+            )
+            assert response.status_code == 200, (sort, direction, response.text)
+            assert [row["id"] for row in response.json()["data"]] == [str(transfer.id)]
+
+    refused = client.get(
+        TRANSFERS, params={"sales_order_id": sales_order_id, "sort": "order_date"}
+    )
+    assert refused.status_code == 422, refused.text
+    assert "proposed_at" in refused.text
+
+
 def test_the_search_box_matches_the_sales_order_and_the_agent(one_transfer):
     """The SO and the AGENT are reached by typing rather than by a select: the page's
     audience is the warehouse, and a select over either master would need a permission a
@@ -1030,3 +1054,19 @@ def test_transfers_leave_committed_and_on_order_exactly_where_they_were():
             "a stock transfer is neither demand nor supply: committed_v and on_order_v "
             "must read exactly as they did before it existed"
         )
+
+
+def test_the_list_names_the_so_line_number_not_the_planning_orders_own(one_transfer):
+    """SO-LINE-NUMBERS AC-8: `so_line_no` is the core line's AutoCount number (the mirror
+    reads 10 here); the mirror's only stands in for a core line with no number."""
+    from app.models.order import SalesOrderLine
+
+    client, world, transfer = one_transfer
+    world.db.query(SalesOrderLine).filter(SalesOrderLine.id == transfer.so_line_id).update(
+        {SalesOrderLine.line_no: 224}
+    )
+    world.db.commit()
+
+    row = client.get(TRANSFERS, params={"query": transfer.transfer_no}).json()["data"][0]
+
+    assert row["so_line_no"] == 224, row

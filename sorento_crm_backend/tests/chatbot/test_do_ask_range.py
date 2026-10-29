@@ -53,6 +53,9 @@ def _run(*, start=None, end=None, dealer=True, entities=None, requested=None, or
         "date_filter_end": end,
         "requested_attributes": requested or [],
         "order_status": order_status,
+        # V1-DOC-SCOPE: the non-dealer here is an office contact (staff); an unlinked
+        # contact that is not staff owns no delivery order and is refused before the range.
+        **({} if dealer else {"doc_staff": True}),
     }
     payload = {
         "_exit_kind": "continue",
@@ -186,13 +189,6 @@ def test_a_non_dealer_january_to_june_is_refused_too():
 
 
 # --- review round 1 ---------------------------------------------------------------------- #
-
-
-def test_an_outstanding_bucket_ask_needs_no_range():
-    """S3: the outstanding bucket lists DOs not yet delivered, which have no delivery date
-    to range over."""
-    said, calls = _run(order_status="outstanding", entities=[])
-    assert "crm_order_management_orders_list" in calls, (calls, said)
 
 
 def test_a_range_that_is_not_whole_months_is_said_in_days():

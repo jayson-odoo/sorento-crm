@@ -447,6 +447,10 @@ class SystemSetting(Base):
     cost_price_verification_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # Sample requests (SR-CORE card rules 2 and 3): soft-transition switches, OFF on deploy.
+    sample_request_require_project = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     # How many days an untouched price tag collection waits before the sweep
     # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
     price_tag_auto_collect_days = Column(
@@ -601,6 +605,12 @@ class SystemSetting(Base):
     # and shipping a paid model switched on by default is not a decision this
     # feature gets to make on an operator's behalf.
     media_image_degraded_model = Column(Text, nullable=True)
+    # The PO / delivery schedule document reader (`document_extraction`). Same shape as
+    # the image pair above. NULL falls back to DOCUMENT_AI_PROVIDER / DOCUMENT_AI_MODEL;
+    # migration po_read_0001 seeds gemini / gemini-3.5-flash so prod never depends on
+    # the env for it (29 Oct 2026: a new Google key 404s on gemini-2.5-flash).
+    document_ai_provider = Column(Text, nullable=True)
+    document_ai_model = Column(Text, nullable=True)
     media_transcribe_model = Column(Text, nullable=False, server_default="whisper-1", default="whisper-1")
     # Voice's own degraded tier, and it ships NULL and UNSEEDED on purpose. The
     # image tiers were measured (PLAN section 14.1) so migration 358 seeds them;
@@ -747,6 +757,36 @@ class SystemSetting(Base):
     chatbot_ordering_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # CHAT-SPEED: does the respond.io webhook start the turn itself? `off` (today),
+    # `contacts` (only the respond.io contact ids in `chatbot_direct_ingress_contacts`, one
+    # per line or comma separated) or `all`. The n8n producer keeps running either way, so
+    # its later copy of a message comes back as a D15 duplicate and sends nothing.
+    chatbot_direct_ingress_mode = Column(
+        String(16), nullable=False, server_default="off", default="off"
+    )
+    chatbot_direct_ingress_contacts = Column(Text, nullable=True)
+    # CLOSED-LISTS-INDEX-MODE: how a CLOSED LISTS parser version sees the closed lists.
+    # `block` (today) renders every full list into the system prompt; `index` renders each
+    # as one fixed pointer line, and the per-turn CLOSED LISTS block carries only what the
+    # message's words and the held products match (`head/closed_lists_index.py`). Read per
+    # turn, so a flip reaches the next turn with no restart.
+    chatbot_closed_lists_mode = Column(
+        String(16), nullable=False, server_default="block", default="block"
+    )
+    # CHAT-RELEASE-1021: the stored CHAT-COMPOSER gate (default off), flipped on Settings >
+    # Chatbot and read at run time by `chatbot.composers.enabled()`; `CHAT_COMPOSER_ENABLED`,
+    # when set, overrides it.
+    chatbot_composer_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    # LEAN: the reasoning effort the parser's OpenAI call asks for: `off` (the default: none sent,
+    # as before) | `low`; anything else reads as `off` (`head/parser.reasoning_effort_setting`; widen
+    # only per the trigger at `head/parser.REASONING_EFFORTS`). Read per parse, so a flip reaches the next turn.
+    chatbot_parser_reasoning_effort = Column(
+        String(16), nullable=False, server_default="off", default="off"
+    )
+    # PARSER-MAX-TOKENS: the parser's answer budget in output tokens (Settings > Chatbot), on every
+    # provider; held to 1024-32768 on read (`head/parser.max_output_tokens_setting`) and on write (the
+    # settings API). Read per parse, so a change reaches the next turn.
+    chatbot_parser_max_output_tokens = Column(Integer, nullable=False, server_default="8192", default=8192)
 
 
 class UserQuickAccess(Base):

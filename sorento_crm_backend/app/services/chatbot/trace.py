@@ -180,6 +180,9 @@ class TurnTrace:
         )
         self.start()
 
+    def has_event(self, kind: str) -> bool:
+        return any(e.get("kind") == kind for e in self._events)
+
     def add(self, kind: str, payload: dict[str, Any]) -> None:
         """A sub-event WITHIN the current stage (A9, chatbot-growth-r1): one MCP tool
         call, one cross-domain rung probe, or which restricted fields a turn saw /
@@ -251,6 +254,11 @@ _LANE_WORDS = {
     "demand_qty": "Asked for a quantity",
     "business_query": "Business query",
     "ai_not_allowed": "AI not allowed",
+    "log_opportunity": "Logging a sales opportunity",
+    "phone_ask": "Asked for a phone number",
+    "phone_linked": "Phone linked",
+    "phone_ignored": "Phone card ignored",
+    "phone_handoff": "Phone handed to staff",
 }
 
 

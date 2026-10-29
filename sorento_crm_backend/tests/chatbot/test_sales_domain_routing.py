@@ -9,7 +9,7 @@ questions (outstanding, delivered, SO/DO outstanding, a plain DO list) stay `ord
 with the tools they always had. The grant refusal reads exactly as before.
 
 Built on the harness the sales tests already share (`test_outstanding_lane.py`'s
-`_run_turn` / `_capturing_mcp`, `test_top_selling_lane.py`'s `route` double).
+`_run_turn` / `_capturing_mcp`).
 """
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ from tests.chatbot.test_outstanding_lane import (
 )
 from tests.chatbot.test_sales_analysis_lane import _rendered as _sales_analysis_hit
 from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
-from tests.chatbot.test_top_selling_lane import _calls, _ts, _turn, route  # noqa: F401 - fixture
 
 GRANT = "sales_orders.sales_report"
 DENIAL = "Sales report is not enabled for your account."
@@ -59,7 +58,11 @@ def _picked(domain: str, order_status: str | None, entities: list[dict[str, Any]
             "gate": {"compatible_entities": entities},
             "tier_gate": None,
             "ctx": {
-                "parse": {"output": _qf(domain_hint=domain, order_status=order_status, entities=[], **qf)},
+                # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+                # The parse names what the gate resolved (REPORT-UNIFY: the report ask reads its filters off the parse).
+                "parse": {"output": {**_qf(domain_hint=domain, order_status=order_status, entities=[
+                    {"raw": e["canonical_code"], "hint": e["entity_type"], "canonical_code": None,
+                     "current_message": True, "confident": True} for e in entities], **qf), "doc_staff": True}},
                 "contact": {"id": 437264483},
                 "access": {"attributes": list(attributes)},
             },
@@ -99,24 +102,34 @@ class TestTheSalesStatusesMeanTheSalesDomain:
 
 
 class TestTheLanePicksTheSalesTools:
-    def test_sales_analysis_under_sales(self, session_factory) -> None:
-        captured = _picked("sales", "sales_analysis", [], response=_sales_analysis_hit())
-        assert [c[0] for c in captured] == ["crm_sales_analysis"]
+    def test_the_yearly_comparison_is_the_report_ask_grouped_by_year(self, session_factory) -> None:
+        # Crew 28 Oct: no chat path calls `crm_sales_analysis`. A basis is named: it is asked, never defaulted (owner, 27 Oct).
+        captured = _picked(
+            "sales", "sales_analysis", [], group_by="year", sales_basis="delivered", response=_sales_analysis_hit(),
+            date_filter_start="2026-01-01", date_filter_end="2026-12-31",  # the report ask asks the period; the old tool defaulted it
+        )
+        assert [c[0] for c in captured] == ["crm_report_ask"] and captured[0][1]["group_by"] == "year", captured
+
+    def test_sales_analysis_under_sales_is_the_report_ask(self, session_factory) -> None:
+        captured = _picked("sales", "sales_analysis", [], basis="delivered", response=_sales_analysis_hit(), **_A_MONTH)
+        assert [c[0] for c in captured] == ["crm_report_ask"], captured
 
     @pytest.mark.parametrize("entity", [CUSTOMER, PRODUCT])
-    def test_sales_report_under_sales(self, session_factory, entity) -> None:
-        captured = _picked("sales", "sales_report", [entity], response=SALES_REPORT_HIT)
-        assert captured and captured[0][0] == "crm_sales_report", captured
+    def test_sales_report_under_sales_is_the_report_ask(self, session_factory, entity) -> None:
+        captured = _picked("sales", "sales_report", [entity], basis="delivered", response=SALES_REPORT_HIT, **_A_MONTH)
+        assert captured and captured[0][0] == "crm_report_ask", captured
 
     def test_top_selling_under_sales(self, session_factory) -> None:
-        captured = _picked("sales", "top_selling", [], top_selling={"rank_by": "quantity", "basis": "delivered", "top_n": 5})
-        assert captured and captured[0][0] == "crm_top_selling_report", captured
+        # REPORT-SMART-L R1: an item ranking is the report engine's (`crm_report_ask`), never `crm_top_selling_report`.
+        captured = _picked("sales", "top_selling", [], rank_by="quantity", basis="delivered", top_n=5, rank_group="item", **_A_MONTH)
+        assert captured and captured[0][0] == "crm_report_ask", captured
 
     @pytest.mark.parametrize("status", ["outstanding", "so_outstanding", "delivered"])
-    def test_an_order_report_still_picks_the_outstanding_report(self, session_factory, status) -> None:
+    def test_an_order_report_picks_the_report_ask_and_a_delivered_list_the_orders_list(self, session_factory, status) -> None:
         # #1433 answers a dateless order list ask with "Which period?", so give it a range.
-        captured = _picked("order", status, [PRODUCT], response=REPORT_HIT, **_A_MONTH)
-        expected = "crm_outstanding_report" if status != "delivered" else "crm_order_management_orders_list"
+        # REPORT-UNIFY: an outstanding ask is the report ask (its kind named: the bare status names none).
+        captured = _picked("order", status, [PRODUCT], response=REPORT_HIT, basis="outstanding", **_A_MONTH)
+        expected = "crm_report_ask" if status != "delivered" else "crm_order_management_orders_list"
         assert captured and captured[0][0] == expected, captured
 
     def test_a_plain_do_list_still_picks_the_orders_list(self, session_factory) -> None:
@@ -126,20 +139,26 @@ class TestTheLanePicksTheSalesTools:
 
 
 class TestAWholeTurn:
-    def test_my_sales_this_month_answers_from_the_sales_analysis(self, session_factory, monkeypatch) -> None:
+    def test_my_sales_this_month_answers_from_the_report_ask(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
         _result, captured = _run_turn(
             session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[], self_reference=True),
+            qf=_qf(order_status="sales_analysis", entities=[], self_reference=True, basis="delivered", **_A_MONTH),
             text_body="my sales this month", msg_id="ZZT-sales-domain-my-1",
             attributes=[GRANT], mcp_response=_sales_analysis_hit(),
         )
-        assert [c[0] for c in captured] == ["crm_sales_analysis"]
+        assert [c[0] for c in captured] == ["crm_report_ask"]
 
-    def test_a_top_selling_ask_answers_from_the_ranking(self, session_factory, monkeypatch, route) -> None:  # noqa: F811
+    def test_a_top_selling_ask_answers_from_the_ranking(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
-        _text, captured = _turn(session_factory, monkeypatch, _ts(), "top 5 selling items")
-        assert len(_calls(captured)) == 1, captured
+        _result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_qf(order_status="top_selling", entities=[], rank_by="quantity", basis="delivered", top_n=5, **_A_MONTH),
+            text_body="top 5 selling items", msg_id="ZZT-sales-domain-top-1", attributes=[GRANT],
+        )
+        # REPORT-SMART-L R1: the item ranking runs once on the report engine, never `crm_top_selling_report`.
+        names = [c[0] for c in captured]
+        assert names.count("crm_report_ask") == 1 and "crm_top_selling_report" not in names, captured
 
     @pytest.mark.parametrize(
         "status,text",
@@ -187,15 +206,17 @@ class TestTheDomainRow:
     def test_select_tool_reads_the_sales_row(self) -> None:
         from app.services.chatbot.lanes.business.fetch import select_tool
 
-        assert select_tool("sales") == [{"name": "crm_sales_report", "similarity": 1.0}]
+        assert select_tool("sales") == [{"name": "crm_report_ask", "similarity": 1.0}]
 
-    def test_the_three_tools_are_on_the_allow_list(self) -> None:
+    def test_the_report_ask_is_on_the_allow_list_and_the_retired_tools_are_not(self) -> None:
         from app.services.chatbot.lanes.business.fetch import CHATBOT_READ_ONLY_TOOLS
         from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS
 
-        for tool in ("crm_sales_report", "crm_sales_analysis", "crm_top_selling_report"):
-            assert tool in CHATBOT_READ_ONLY_TOOLS
-            assert CHATBOT_TOOL_DOMAINS[tool] == "sales"
+        assert "crm_report_ask" in CHATBOT_READ_ONLY_TOOLS and CHATBOT_TOOL_DOMAINS["crm_report_ask"] == "sales"
+        # REPORT-UNIFY (Q1): the retired tools left the domain rows, so the allow-list; their routes stay. Only the
+        # Yearly comparison file's tool is still callable, as an undomained tool.
+        assert "crm_sales_report" not in CHATBOT_READ_ONLY_TOOLS
+        assert "crm_sales_analysis" in CHATBOT_READ_ONLY_TOOLS
 
     def test_the_seed_row_matches_the_migration(self) -> None:
         import importlib.util
@@ -209,7 +230,11 @@ class TestTheDomainRow:
         spec.loader.exec_module(module)
         row = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "sales")
         for key, value in module.SALES_DOMAIN.items():
+            if key == "tools":
+                continue  # R4b: `or_r4b_top_selling_off` swaps the top selling tool for `crm_report_ask`
             assert row[key] == value, key
+        # R4b swapped the top selling tool for `crm_report_ask`; `report_unify_0001_retire` drops the other two.
+        assert row["tools"] == ["crm_report_ask"]
         order = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "order")
         assert row["narrowing"] == order["narrowing"]
 
@@ -228,17 +253,7 @@ class TestReviewPass2:
     def test_a_sales_hint_with_a_sales_status_stays_sales(self) -> None:
         assert _normalised(domain_hint="sales", order_status="sales_report")["domain_hint"] == "sales"
 
-    def test_the_sales_report_override_runs_under_sales(self, session_factory, monkeypatch) -> None:
-        import app.services.chatbot.lanes.business as lane
-
-        calls: list[str] = []
-        real = lane._resolve_report_product_and_location
-
-        def spy(*args, **kwargs):
-            calls.append("resolved")
-            return real(*args, **kwargs)
-
-        monkeypatch.setattr(lane, "_resolve_report_product_and_location", spy)
-        captured = _picked("sales", "sales_report", [CUSTOMER], response=SALES_REPORT_HIT)
-        assert captured and captured[0][0] == "crm_sales_report", captured
-        assert calls == ["resolved"], "the sales report override (product + location resolution) did not run"
+    def test_the_sales_report_runs_the_report_ask_under_sales(self, session_factory) -> None:
+        captured = _picked("sales", "sales_report", [CUSTOMER], basis="delivered", response=SALES_REPORT_HIT, **_A_MONTH)
+        assert captured and captured[0][0] == "crm_report_ask", captured
+        assert captured[0][1]["customer_ids"] == [CUSTOMER_UUID], captured

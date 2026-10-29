@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.v1.projects._common import acting_company_id
+from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.projects import (
     ProjectPartyCreate,
@@ -18,21 +19,24 @@ from app.schemas.projects import (
 from app.services import project_reference_service as refs
 from app.services.error_handler import handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
 VIEW = "projects.parties.view"
 EDIT = "projects.parties.edit"
+#: A salesperson who submits registrations searches parties without the parties grant.
+SUBMIT = "projects.registrations.submit"
 
 
 @router.get("/", response_model=ListResponse[ProjectPartyResponse])
-async def list_parties(
-    party_type: Optional[str] = Query(None),
+def list_parties(
+    party_type: Optional[list[str]] = Query(None),
     query: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission([VIEW, SUBMIT])),
     db: Session = Depends(get_db),
 ):
     try:
@@ -40,14 +44,25 @@ async def list_parties(
         rows, total = refs.list_parties(
             db,
             company_id=company_id,
-            party_type=party_type,
+            party_type=multi_values(party_type),
             search=query,
             include_inactive=include_inactive,
             page=page,
             limit=limit,
         )
+        data = refs.serialize_parties(db, rows)
+        if VIEW not in permission_slugs(db, _user["id"]):
+            # A salesperson with the submit grant only needs to pick a party (D8).
+            data = [{k: row.get(k) for k in ("id", "name", "party_type")} for row in data]
+            return JSONResponse(
+                {
+                    "data": data,
+                    "pagination": {"total": total, "page": page, "limit": limit},
+                    "empty": total == 0,
+                }
+            )
         return {
-            "data": refs.serialize_parties(db, rows),
+            "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
@@ -58,14 +73,15 @@ async def list_parties(
 @router.post(
     "/", response_model=ProjectPartyResponse, status_code=status.HTTP_201_CREATED
 )
-async def create_party(
+def create_party(
     payload: ProjectPartyCreate,
+    response: Response,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
     try:
         company_id = acting_company_id(db)
-        party = refs.create_party(
+        party, created = refs.create_party(
             db,
             company_id=company_id,
             payload=payload.model_dump(exclude_unset=True),
@@ -73,6 +89,8 @@ async def create_party(
         )
         db.commit()
         db.refresh(party)
+        if not created:
+            response.status_code = status.HTTP_200_OK
         return refs.serialize_parties(db, [party])[0]
     except Exception as exc:
         db.rollback()
@@ -80,7 +98,7 @@ async def create_party(
 
 
 @router.get("/{party_id}", response_model=ProjectPartyResponse)
-async def get_party(
+def get_party(
     party_id: str,
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -94,7 +112,7 @@ async def get_party(
 
 
 @router.put("/{party_id}", response_model=ProjectPartyResponse)
-async def update_party(
+def update_party(
     party_id: str,
     payload: ProjectPartyUpdate,
     _user: dict = Depends(require_permission(EDIT)),
@@ -113,7 +131,7 @@ async def update_party(
 
 
 @router.delete("/{party_id}")
-async def delete_party(
+def delete_party(
     party_id: str,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),

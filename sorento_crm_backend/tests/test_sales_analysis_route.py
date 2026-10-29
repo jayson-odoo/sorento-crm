@@ -249,7 +249,7 @@ def test_security_b1_a_dealer_is_refused_under_the_empty_scope_production_gives(
         ({"rows": "year", "cols": "year"}, "rows_equal_cols"),
         ({"rows": "agent_shoe_size"}, "unknown_axis"),
         ({"date_from": "2026-05-01", "date_to": "2026-04-01"}, "date_range_inverted"),
-        ({"basis": None}, "basis_required"),
+        # ({"basis": None}): no basis is invoiced since SALES-UNIFIED (test_sales_unified_tally).
         ({"basis": "shipped"}, "basis_required"),
         ({"n": 0}, "n_out_of_range"),
         ({"n": 101}, "n_out_of_range"),
@@ -273,7 +273,8 @@ def test_ac_s1_21_a_contact_in_both_companies_naming_neither_is_asked(db, queue)
     before = _downloads(db)
     with _client(db, _actor(db), [DEFAULT_COMPANY_ID, MOCHA_ID]) as client:
         body = client.get(ROUTE, params=_q(contact)).json()
-    assert body == {"status": "clarify", "message": "Sorento or Mocha?"}
+    # Chat fix PR-B S7 (AC-B9): the names also ride as data, the company question's options.
+    assert body == {"status": "clarify", "message": "Sorento or Mocha?", "options": ["Sorento", "Mocha"]}
     assert _downloads(db) == before and not queue
 
 
@@ -344,7 +345,9 @@ def test_ac_r4_6_the_file_is_the_same_query_as_the_text(db, queue, monkeypatch):
     assert params["period"] == {"kind": "custom", "from": "2025-01-01", "to": "2026-09-26"}
     # Month by year is the report's own year by month layout on its side: the file uses
     # the PDF's orientation, with the VARIANCE row carrying the text's Difference column.
-    assert view["pivot"] == {"rows": "year", "cols": "month_of_year", "measures": ["sales_value"]}
+    assert view["pivot"] == {
+        "rows": "year", "cols": "month_of_year", "measures": ["sales_value"], "sort": None,
+    }
 
 
 def test_ac_r4_6_the_files_figures_are_the_texts(db, queue, monkeypatch):

@@ -24,6 +24,16 @@ PENDING_KINDS: tuple[str, ...] = (
     "top_selling_pick",
 )
 
+#: The sales analysis's company question ("Sorento or Mocha?", chat fix PR-B S7): armed by the
+#: lane (`lanes/business/fetch._sales_analysis_company_ask`), answered by ONE pick at the engine
+#: seam (`lanes.business.sales_analysis_company_reply`); any other pick re-asks it (`apply`).
+SALES_ANALYSIS_COMPANY_KIND = "sales_analysis_company"
+
+#: SALES-TARGET-CHAT slice 2: the read-back of an opportunity a salesperson is logging ("Reply YES
+#: to save."), a yes/no question armed and answered by `lanes/opportunity.py` alone; the payload
+#: carries the values to save. Any other ask drops it (the engine's opportunity seam).
+OPPORTUNITY_CONFIRM_KIND = "opportunity_confirm"
+
 # Stay alive, tracked by `answered_positions`, after their own pick.
 #
 # `tier_pick` (hand pass 9, D3, owner ruling 20 Sep 2026): main's fresh-typed picker
@@ -105,16 +115,44 @@ def ask(
     )
 
 
+#: The ranking fields a pick interrupting a ranking resumes (REPORT-SMART-L R1 review).
+_HELD_RANKING_KEYS = (
+    "group_by", "top_n", "measure", "basis", "rank_direction", "rank_by", "rank_group", "date_filter_start",
+    "date_filter_end",
+    # REPORT-UNIFY: a sales total or outstanding ask is this ask too; its channel, its kind (`capability_from`), the
+    # brand / agent / category / spec words and the comparison ride the pick like the rest.
+    "sales_channel", "capability_from", "report_breakdown", "self_reference", "compare_to", "report_ask_words",
+    "report_ask_spec",
+)
+
+
+def asked_report(verdict: dict[str, Any] | None) -> dict[str, Any]:
+    """The asking turn's own ask, as a roster pending's payload carries it, so the pick continues THAT ask: its
+    `status` (AC-1704's carry) and, for a ranking (`sales_ranking` / `top_selling`), the `ranking_ask` it interrupts
+    (`turn/apply._answer_pending` fills what the answering verdict leaves empty). Parser fields only. The ONE rule
+    for the gate's picker (`answer_bridge._offer_ask_payload`) and the narrower's roster (`turn/apply.py`)."""
+    verdict = verdict or {}
+    out: dict[str, Any] = {}
+    order_status = verdict.get("order_status")
+    if order_status:
+        out["status"] = order_status
+    if order_status in ("sales_ranking", "top_selling"):
+        held = {k: verdict[k] for k in _HELD_RANKING_KEYS if verdict.get(k) not in (None, "", [])}
+        if held:
+            out["ranking_ask"] = held
+    return out
+
+
 def top_selling_pick(
     result_set: list[dict[str, Any]] | None,
     *,
     asked_at_turn: int | None,
     filters: dict[str, Any],
 ) -> Pending | None:
-    """The top X ranking's printed lines as a sticky pick list (`top_selling_pick`).
+    """An item or category ranking's printed lines as a sticky pick list (`top_selling_pick`).
 
-    `result_set` is `presenters._top_selling_envelope`'s own, one `{idx, label, code,
-    entity_type}` row per printed line (no name: owner ruling 26 Sep ~07:40Z, so the
+    `result_set` is `lanes/business/fetch._report_ask_output`'s own, one `{idx, label, code,
+    entity_type, keys}` row per printed line (no name: owner ruling 26 Sep ~07:40Z, so the
     option's `name` stays None), `idx` the printed rank. The option shape is
     the roster one `turn/narrow.py::_options` builds, so every reader of a customer or
     product roster reads this one unchanged. `status` / `domain` send a pick back to the
@@ -128,7 +166,7 @@ def top_selling_pick(
             "code": row.get("code"),
             "name": row.get("name"),
             "entity_type": row.get("entity_type") or "product",
-            "payload": {},
+            "payload": ({"keys": list(row["keys"])} if row.get("keys") else {}),
         }
         for row in (result_set or [])
         if isinstance(row, dict) and isinstance(row.get("idx"), int) and row.get("label")
@@ -140,7 +178,12 @@ def top_selling_pick(
         options,
         asked_at_turn=asked_at_turn,
         # R7 (PLAN-prompt-dynamic-30sep D9): the ranking is the `sales` domain's.
-        payload={"domain": "sales", "status": "top_selling", "filters": dict(filters)},
+        payload={
+            "domain": "sales",
+            # REPORT-SMART-L R3c: a ranking run on the report engine is carried back as that ranking.
+            "status": "sales_ranking",
+            "filters": dict(filters),
+        },
     )
 
 
@@ -358,6 +401,11 @@ def from_wire(raw: Any) -> Pending | None:
         return None
     options = raw.get("options")
     payload = raw.get("payload")
+    filters = payload.get("filters") if isinstance(payload, dict) else None
+    if raw["kind"] == "top_selling_pick" and not (isinstance(filters, dict) and filters.get("ranking")):
+        # REPORT-SMART-L R4a: a list the retired top selling lane printed (no report engine
+        # `ranking` to re-run its rows on) is not read back; the next message starts fresh.
+        return None
     return Pending(
         kind=str(raw["kind"]),
         expects=raw.get("expects"),
@@ -387,3 +435,27 @@ def without_escalation(question: Any) -> tuple[Any, list[dict[str, Any]] | None]
     if not kept:
         return None, members
     return replace(question, options=kept, payload=payload, team=None), members
+
+
+def option_entities(option: dict[str, Any]) -> list[dict[str, Any]]:
+    """What ONE picked option becomes: the entity rows a resolver-matched entity would
+    have been, `canonical_code` the code and `uuid` the key (one row per key). An option
+    with no key (a tier, a stored list row) is one row carrying only its code, its
+    payload value standing in for the code when it has one."""
+    uuids = option.get("uuids") or ([option["uuid"]] if option.get("uuid") else [])
+    payload = option.get("payload") if isinstance(option.get("payload"), dict) else {}
+    code = option.get("code") or (payload.get("value") if not uuids else None)
+    code = code or option.get("label")
+    name = option.get("name")
+    base = {
+        "raw": code,
+        "hint": option.get("entity_type"),
+        "canonical_code": code,
+        "current_message": True,
+        "confident": True,
+    }
+    if not uuids:
+        return [{**base, **({"name": name} if name else {})}]
+    return [
+        {**base, "uuid": u, **({"name": name} if name and len(uuids) <= 1 else {})} for u in uuids
+    ]

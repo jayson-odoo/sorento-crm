@@ -223,7 +223,8 @@ export interface FulfilmentPlanningListParams {
   page?: number;
   limit?: number;
   query?: string;
-  review_state?: ReviewState;
+  /** One state, or several comma-joined (OR-ed). */
+  review_state?: string;
   project_id?: string;
   sales_order_id?: string;
   /** One of `FULFILMENT_PLANNING_SORT_FIELDS`. Omitted leaves the server's own order. */
@@ -413,6 +414,8 @@ export interface SupplyFrozenLine {
 export interface SupplyLine {
   project_line_id: string;
   line_no: number;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   item_code?: string | null;
   /** Addressing only, never rendered - what the Proof button asks the classification
    * evidence endpoint with. */
@@ -620,6 +623,11 @@ export interface ConfirmLine {
   /** PR 1622: what the planner typed, carried to purchasing's new order inquiry row. */
   cs_note?: string | null;
   /**
+   * OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK for the purchasing email and Excel,
+   * edited over the default words; absent prints the default words.
+   */
+  remark?: string;
+  /**
    * Why this composition is not the engine's, in the planner's own words. Frozen with the
    * line: every other component carries the sentence of the RULE that produced it, and those
    * explain a decision nobody took once a person has overridden them.
@@ -668,7 +676,11 @@ export interface CancelledLineBody {
 /** A line a press transferred to Cancel SO, as the server echoes it. */
 export interface CancelledLineEcho {
   line_no?: number | null;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   item_code?: string | null;
+  /** Why it went to Cancel SO ("AutoCount Cancel SO <doc>" for an AutoCount draft). */
+  reason?: string | null;
 }
 
 export interface ConfirmException {
@@ -682,6 +694,8 @@ export interface ConfirmException {
 export interface ConfirmedLine {
   project_line_id: string;
   line_no?: number | null;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   item_code?: string | null;
 }
 
@@ -714,6 +728,10 @@ export interface ConfirmResult {
   lines_withdrawn?: ConfirmedLine[] | null;
   /** The lines this press transferred to Cancel SO. */
   lines_cancelled?: CancelledLineEcho[] | null;
+  /** PLAN-BATCH-HELD-CANCEL: this press applied the order's pending AutoCount change. */
+  planning_change_applied?: boolean | null;
+  /** The lines that change retired (the book cancelled them). */
+  lines_retired?: CancelledLineEcho[] | null;
   /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
   /**
@@ -1163,6 +1181,8 @@ export interface BoardLineDecision {
  * be supplied from").
  */
 export interface BoardContribution {
+  /** FULFIL-SO-REMARK: the line reads as a mockup line (note, line remark or heading). */
+  is_mockup?: boolean;
   /**
    * THIS LINE's own stock position, location by location (R1).
    *
@@ -1413,6 +1433,11 @@ export interface BoardContribution {
    * fields are absent because it is not in the queue they count.
    */
   covered?: boolean;
+  /**
+   * OI-SPLIT-VIEW (UAC A2): the line's saved split plan differs from the one its last
+   * Confirm applied; the next Confirm applies it whether or not the body names the line.
+   */
+  split_edited?: boolean;
   /** What was frozen, when the row is covered. Absent otherwise, never an empty object. */
   decision?: BoardLineDecision | null;
   /**
@@ -1434,6 +1459,18 @@ export interface BoardContribution {
    * (untouched, running on the suggestion).
    */
   draft?: BoardLineDraft | null;
+  /**
+   * OI-SPLIT-GUIDE (UAC F3, F10): the purchasing email's own words, from the server, for
+   * what the next Confirm sends for this line: a saved draft's, "CANCEL ALL" for a line the
+   * book cancelled with no draft; null otherwise. The guided Confirm prints it, never a
+   * browser rebuild.
+   */
+  saved_remark?: string | null;
+  /**
+   * OI-SPLIT-GUIDE (UAC F32): the planner's own REMARK the active revision froze for this
+   * line (null without one). A re-approve carries it unless the planner changes or clears it.
+   */
+  confirmed_remark?: string | null;
   /**
    * AC-DT-2: the same saver facts as `draft.saved_by` / `draft.saved_at`, flattened
    * onto the line under the trail's own names for the tooltip. `null`/absent when
@@ -1926,6 +1963,8 @@ export interface BoardOrderDecisionHeader {
 export interface BoardOrderStanding {
   sales_order_id: string;
   so_number: string;
+  /** FULFIL-SO-REMARK: `Sponsorship` / `Purchase Request` from the order's Shipping Info. */
+  remark_type?: string | null;
   /**
    * The PLANNING RECORD's id, which is what `POST .../sales-orders/{pso_id}/confirm` takes.
    * Addressing only, never rendered. An order that has not been adopted has none, and the
@@ -1933,6 +1972,11 @@ export interface BoardOrderStanding {
    */
   project_sales_order_id?: string | null;
   customer_name?: string | null;
+  /**
+   * OI-SPLIT-CONFIRM-POLISH: the core sales order's document date (`YYYY-MM-DD`), the same value
+   * the split read's `so_date` carries; the guided Confirm prints it when there is no read.
+   */
+  so_date?: string | null;
   /** Lines of this order inside the SELECTION - never only the ones a window is showing. */
   line_count: number;
   /** How many of those lines carry a verdict in the draft. The client's, never the server's. */
@@ -2118,6 +2162,11 @@ export interface BoardDecision {
   buy_reason?: string;
   /** PR 1622: the planner's OWN words on this line (never a seeded engine sentence). */
   cs_note?: string;
+  /**
+   * OI-SPLIT-GUIDE (UAC F25, F26): the planner's own REMARK for the purchasing email, typed
+   * over the default words on the split sheet; absent (or blank) keeps the default words.
+   */
+  remark?: string;
   /** The server's incoming cover, carried through unedited: it is dated supply, not a choice. */
   timely_spo_qty?: string;
   /**
@@ -2428,6 +2477,8 @@ export interface PileQueueLine {
   so_number: string;
   /** Null until the order has been adopted: an un-mirrored line has no line number. */
   line_no?: number | null;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   customer_name?: string | null;
   qty: string;
   required_date?: string | null;
@@ -2552,7 +2603,8 @@ export interface PlanListParams {
   limit?: number;
   query?: string;
   /** Defaults to `active` server-side - what is stored NOW. */
-  state?: PlanState;
+  /** One state, or several comma-joined (OR-ed). */
+  state?: string;
   agent_code?: string;
   sort?: PlanSortField;
   dir?: 'asc' | 'desc';
@@ -2587,6 +2639,8 @@ export interface ConfirmManyOrderBody {
   cancelled_lines?: CancelledLineBody[];
   /** Scope this order's press to exactly these mirror line ids (what a Preview showed). */
   only_line_ids?: string[];
+  /** FULFIL-SO-REMARK: the REMARK printed beside this SO in the purchasing email; `''` = cleared. */
+  so_remark?: string | null;
 }
 
 /**
@@ -2618,7 +2672,10 @@ export interface ConfirmManyBody {
 
 /** One order inquiry row a previewed press would raise. */
 export interface PreviewInquiryRow {
+  /** The planning address (the mirror line's number). */
   line_no?: number | null;
+  /** OI-SPLIT-GUIDE (UAC C2a): AutoCount's line number, the one the board prints. */
+  so_line_no?: number | null;
   item_code?: string | null;
   verb: string;
   /** False: the row already exists and is only settled by this press. */
@@ -2627,11 +2684,15 @@ export interface PreviewInquiryRow {
   delivery_date?: string | null;
   stock_location?: string | null;
   note?: string | null;
+  /** The row's state after the press (`raised`, `cancelled`, ...): `cancelled` reads CANCEL. */
+  state?: string | null;
 }
 
 /** One stock transfer a previewed press would propose. */
 export interface PreviewTransfer {
   line_no?: number | null;
+  /** As `PreviewInquiryRow.so_line_no`. */
+  so_line_no?: number | null;
   kind: string;
   is_new?: boolean;
   qty: string | number;
@@ -2642,6 +2703,8 @@ export interface PreviewTransfer {
 /** One line the admin Simulate probe found failing on its own, with the server's raw reason. */
 export interface SimulatedLineError {
   line_no?: number | null;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   item_code?: string | null;
   project_line_id: string;
   error: string;
@@ -2660,6 +2723,10 @@ export interface ConfirmManyOrderResult {
   lines_withdrawn?: ConfirmedLine[] | null;
   /** The lines this press transferred to Cancel SO. */
   lines_cancelled?: CancelledLineEcho[] | null;
+  /** PLAN-BATCH-HELD-CANCEL: this press applied the order's pending AutoCount change. */
+  planning_change_applied?: boolean | null;
+  /** The lines that change retired (the book cancelled them). */
+  lines_retired?: CancelledLineEcho[] | null;
   transfers?: PreviewTransfer[] | null;
   pso_id: string;
   ok: boolean;

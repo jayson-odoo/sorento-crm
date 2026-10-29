@@ -108,14 +108,14 @@ def _seed(sf, *, dealer: bool, salesperson: bool, later_shipment: bool = False, 
         )
     cat = ProductCategory(
         id=str(uuid.uuid4()),
-        category_code=f"ZZTC-{uuid.uuid4().hex[:5]}",
+        category_code=f"ZZTC-{uuid.uuid4().hex}",
         category_name="ZZT ETA",
         class_label="wc286",
         search_synonyms=[],
         chatbot_eta_offset_days=5,
         chatbot_max_qty=200,
     )
-    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"ZZTU-{uuid.uuid4().hex[:5]}", uom_name="u")
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"ZZTU-{uuid.uuid4().hex}", uom_name="u")
     db.add_all([cat, uom])
     db.flush()
     pid = str(uuid.uuid4())

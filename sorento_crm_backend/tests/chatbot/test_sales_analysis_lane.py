@@ -50,7 +50,13 @@ def _rendered(payload=ROUTE_HIT) -> str:
     return _present_response()(TOOL, json.dumps(payload))
 
 
+#: REPORT-UNIFY (Q1): only the Yearly comparison is left on this tool (every other axis is the report ask's), and
+#: a sales total never defaults its basis (owner, 27 Oct): the asks here name both.
+YEARLY = dict(group_by="year", sales_basis="delivered")
+
+
 def _payload(*, attributes=(GRANT,), **qf):
+    qf = {**YEARLY, **qf}
     return {
         "gate": {"compatible_entities": []},
         "tier_gate": None,
@@ -72,48 +78,19 @@ def _args(session_factory, **qf) -> tuple[str, dict[str, Any]]:
 
 
 class TestToolPickAndArgs:
-    def test_ac_s1_20_compare_by_month_asks_month_by_year_for_the_years_named(self, session_factory):
-        name, args = _args(
-            session_factory, group_by="month", sales_channel="dealer",
-            date_filter_start="2025-01-01", date_filter_end="2026-12-31",
-        )
-        assert name == TOOL
-        assert args["rows"] == "month" and args["cols"] == "year"
-        assert args["channel"] == "dealer"
-        assert args["date_from"] == "2025-01-01" and args["date_to"] == "2026-12-31"
-        assert args["basis"] == "delivered"  # G1: the default
-        assert "contact_id" in args and "space_id" in args
-        assert "reply_format" not in args and "deliver" not in args
+    def test_a_yearly_comparison_with_no_basis_asks_the_basis_never_defaults_to_invoiced(self, session_factory):
+        from app.services.chatbot.lanes.business import run_fetch
 
-    def test_a_total_asks_channel_by_year(self, session_factory):
-        _name, args = _args(session_factory, sales_channel="project")
-        assert args["rows"] == "channel" and args["cols"] == "year"
-        assert args["channel"] == "project"
+        call, captured = _capturing_mcp(_rendered())
+        out = run_fetch(_payload(sales_basis=None), services=FetchServices(mcp_call=call))
+        assert captured == [], captured
+        assert "Invoiced, delivered, ordered or outstanding?" in str(out), out
 
-    def test_reviewer_r2_s1_by_year_is_named_not_defaulted(self, session_factory):
-        """S1 (review round 2): "by year" is the years across, one line per channel, mapped
-        on purpose rather than falling through to the default."""
-        _name, args = _args(session_factory, group_by="year",
-                            date_filter_start="2024-01-01", date_filter_end="2026-09-26")
-        assert args["rows"] == "channel" and args["cols"] == "year"
-
-    def test_ac_s1_22_no_period_said_is_this_calendar_year(self, session_factory):
-        from app.services.reports.registry import today_malaysia
-
-        _name, args = _args(session_factory)
-        today = today_malaysia()
-        assert args["date_from"] == date(today.year, 1, 1).isoformat()
-        assert args["date_to"] == today.isoformat()
-
-    def test_basis_and_company_come_from_the_parser(self, session_factory):
-        _name, args = _args(session_factory, sales_basis="ordered", sales_company="Mocha")
-        assert args["basis"] == "ordered"
-        assert args["company"] == "Mocha"
-
-    def test_s1_6_invoiced_reaches_the_route(self, session_factory):
-        """Finance S1 (#1309): the parser's "invoiced" is the tool's basis, not Delivered."""
-        _name, args = _args(session_factory, sales_basis="invoiced")
-        assert args["basis"] == "invoiced"
+    def test_the_yearly_comparison_runs_the_report_ask_by_year_never_the_analysis_tool(self, session_factory):
+        """Crew 28 Oct: no chat path calls `crm_sales_analysis`; the Yearly comparison is `crm_report_ask`, axis year."""
+        name, args = _args(session_factory, group_by="year", sales_basis="ordered",
+                           date_filter_start="2024-01-01", date_filter_end="2026-09-26")
+        assert name == "crm_report_ask" and args["group_by"] == "year" and args["basis"] == "ordered", (name, args)
 
     def test_the_outstanding_and_sales_report_picks_are_untouched(self, session_factory):
         from app.services.chatbot.lanes.business import run_fetch
@@ -130,7 +107,7 @@ class TestGate:
         _seed_contact(session_factory, variables={})
         result, captured = _run_turn(
             session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[]),
+            qf=_qf(order_status="sales_analysis", entities=[], sales_basis="invoiced"),
             text_body="total project sales this year", msg_id="ZZT-sa-no-key-1",
             attributes=[],
         )
@@ -140,47 +117,13 @@ class TestGate:
         )
 
 
-class TestTextAndFile:
-    def test_ac_r4_1_the_turn_sends_the_text_and_the_file(self, session_factory, monkeypatch):
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[], sales_channel="project"),
-            text_body="total project sales this year", msg_id="ZZT-sa-hit-1",
-            attributes=[GRANT], mcp_response=_rendered(),
-        )
-        assert [c[0] for c in captured] == [TOOL]
-        text = (result.reply or {}).get("text") or ""
-        assert "Project team: RM 1,234.50" in text
-        assert "Total: RM 1,234.50" in text
-        # Found by the console run: the answer states its own scope, so the order
-        # domain's generic header must not print above it.
-        assert text.startswith("*Sales, Sorento*"), text
-        assert "Customer: all customers" not in text and "Dates: all dates" not in text
-        kinds = [a.get("kind") for a in (result.actions or [])]
-        assert "send_attachments" in kinds, result.actions
-
-    def test_ac_r4_3_a_clarify_answer_sends_no_file(self, session_factory, monkeypatch):
-        _seed_contact(session_factory, variables={})
-        result, _captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[]),
-            text_body="sales this year", msg_id="ZZT-sa-clarify-1",
-            attributes=[GRANT],
-            mcp_response=_rendered({"status": "clarify", "message": "Sorento or Mocha?"}),
-        )
-        assert "Sorento or Mocha?" in ((result.reply or {}).get("text") or "")
-        kinds = [a.get("kind") for a in (result.actions or [])]
-        assert "send_attachments" not in kinds
-
-
 class TestUnsupportedAxis:
     """S1 (review round 2): an axis the sales analysis cannot draw is said plainly, with no
-    figure and no fetch, never a silent by-channel table."""
+    figure and no fetch, never a silent by-channel table. REPORT-SMART-1021: customer, product
+    and warehouse are the report ask's now (`tests/chatbot/test_report_smart_capability.py`);
+    an axis no sales tool draws is still said."""
 
-    @pytest.mark.parametrize(
-        "group_by", ["customer", "product", "date", "warehouse", "supplier", "transporter"]
-    )
+    @pytest.mark.parametrize("group_by", ["date", "supplier", "transporter"])
     def test_an_axis_it_cannot_draw_is_said_and_nothing_is_fetched(
         self, session_factory, monkeypatch, group_by
     ):
@@ -193,10 +136,10 @@ class TestUnsupportedAxis:
         )
         assert captured == []
         text = ((result.reply or {}).get("text") or "").strip()
-        assert text == (
-            f"I can't break sales down by {group_by} yet. "
-            "I can show them by month, by year or by channel."
-        )
+        # REPORT-UNIFY (R2): the report ask draws month and channel now; the line names the axes it can.
+        from app.services.chatbot.lanes.business import report_ask
+
+        assert text == report_ask.UNSUPPORTED_AXIS_LINE.format(axis=group_by)
         kinds = [a.get("kind") for a in (result.actions or [])]
         assert "send_attachments" not in kinds
 
@@ -246,9 +189,10 @@ def test_ac_s1_19_the_seed_rows_carry_the_same_tool():
     from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS as TOOL_DOMAINS
 
     order = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "order")
-    assert TOOL in order["tools"] and order["tools"][0] != TOOL
+    # REPORT-UNIFY: the Yearly file is an override, not a row tool: the order row no longer lists it.
+    assert TOOL not in order["tools"]
     assert TOOL in CHATBOT_READ_ONLY_TOOLS
-    assert TOOL in policy_rows.DATE_PARAM_TOOLS
+    # (its date params ride `fetch.DATE_PARAMS`, not a row's tools)
     assert TOOL_DOMAINS[TOOL] == "sales"  # R7 (PLAN-prompt-dynamic-30sep D9)
 
 
@@ -268,32 +212,3 @@ class TestInvoicedBasis:
         from app.services.chatbot.lanes.business import fetch
 
         assert "invoiced" in fetch.SALES_ANALYSIS_BASES
-
-
-class TestANon2xxIsAnErrorOnTheTrace:
-    def test_b3_a_403_from_the_route_is_an_error_fragment_and_on_the_trace(self, session_factory) -> None:
-        """CHATBOT-SELFREF-SCOPE B3: the MCP client stamps a 403 with its status, the
-        presenter answers an error envelope, and the lane records it as a tool ERROR
-        (`kind: error`, never `has_result: true` with a friendly line) with the envelope,
-        status and the route's own code on the `tool` trace event."""
-        from app.services.chatbot.lanes.business import run_fetch
-        from app.services.chatbot.trace import TurnTrace
-
-        route_403 = {
-            "success": False, "message": "Permission required", "code": "PERMISSION_DENIED",
-            "error": "GET /api/v1/sales/analysis returned HTTP 403: PERMISSION_DENIED",
-            "http_error": "GET /api/v1/sales/analysis returned HTTP 403: PERMISSION_DENIED",
-            "status_code": 403, "path": "/api/v1/sales/analysis", "method": "GET",
-        }
-        call, captured = _capturing_mcp(_present_response()(TOOL, json.dumps(route_403)))
-        trace = TurnTrace()
-        fragment = run_fetch(_payload(), services=FetchServices(mcp_call=call), trace=trace)
-        assert captured and captured[0][0] == TOOL
-        assert fragment["kind"] == "error", fragment
-        assert "HTTP 403" in fragment["error"] and "PERMISSION_DENIED" in fragment["error"], fragment
-        assert (fragment.get("fetch") or {}).get("has_result") is not True
-        assert "Could not run the sales report" not in json.dumps(fragment)
-        (tool_event,) = [e for e in trace.events if e.get("kind") == "tool"]
-        assert tool_event["envelope"]["status_code"] == 403
-        assert "HTTP 403" in tool_event["envelope"]["error"]
-        assert tool_event["envelope"]["detail"]["code"] == "PERMISSION_DENIED"

@@ -5,7 +5,8 @@ fan-out belonged to this slice, because the thing they were missing was not the 
 the RECIPIENT RULE: "management" had to mean one auditable thing, not three per-feature
 recipient lists that drift.
 
-That rule is `projects.projects.view_all_financials` (grill finding G20), resolved from RBAC
+That rule is `projects.projects.manage` (PROJECT-REGISTER-V2 F3; it was view_all_financials,
+grill finding G20), resolved from RBAC
 rather than a configured list, so a newly-promoted sales manager starts receiving alerts the
 moment they get the role and a departing one stops when the role goes. Nobody has to remember
 a per-feature recipient screen.
@@ -25,15 +26,18 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.projects import Project
+from app.services.project_service import project_label
 
 logger = logging.getLogger(__name__)
 
 # The single definition of "management" for this module (G20).
-MANAGEMENT_PERMISSION = "projects.projects.view_all_financials"
+MANAGEMENT_PERMISSION = "projects.projects.manage"
 
 
-def management_user_ids(db: Session) -> List[str]:
-    """Active users whose role grants the management permission."""
+def management_user_ids(db: Session, company_id: Optional[str] = None) -> List[str]:
+    """Active, non-bot users of ``company_id`` whose role grants the management permission."""
+    from app.models.company import UserCompany
+    from app.services.company_routing_service import DEFAULT_COMPANY_ID
     from app.models.user import (
         User,
         UserPermission,
@@ -47,8 +51,11 @@ def management_user_ids(db: Session) -> List[str]:
         .join(UserRolePermission, UserRolePermission.role_id == UserRoleAssignment.role_id)
         .join(UserPermission, UserPermission.id == UserRolePermission.permission_id)
         .join(User, User.id == UserRoleAssignment.user_id)
+        .join(UserCompany, UserCompany.user_id == User.id)
         .filter(
             UserPermission.slug == MANAGEMENT_PERMISSION,
+            UserCompany.company_id == str(company_id or DEFAULT_COMPANY_ID),
+            User.is_integration.is_(False),
             # There is no is_active column: ACTIVE vs INACTIVE/BLOCKED lives in `status`,
             # and `is_trashed` is the soft-delete. Both have to be excluded or a departed
             # manager keeps receiving warnings about projects they cannot open.
@@ -68,9 +75,15 @@ def management_user_ids(db: Session) -> List[str]:
 
 
 def approver_user_ids(
-    db: Session, company_id: Optional[str] = None, exclude: Optional[set] = None
+    db: Session,
+    company_id: Optional[str] = None,
+    exclude: Optional[set] = None,
+    slug: Optional[str] = None,
 ) -> List[str]:
     """Active, non-bot users who hold the quotation approve grant AND the quotation's company.
+
+    ``slug`` asks the same question for another grant (the new product application's approve
+    and open_code use it); it defaults to the quotation approve grant.
 
     The company grant is the same shape `cs_routing_service.eligible_pics_query` uses: a role
     that carries the slug says nothing about which company's quotations its holder may see.
@@ -93,7 +106,7 @@ def approver_user_ids(
         .join(User, User.id == UserRoleAssignment.user_id)
         .join(UserCompany, UserCompany.user_id == User.id)
         .filter(
-            UserPermission.slug == APPROVE_PERMISSION,
+            UserPermission.slug == (slug or APPROVE_PERMISSION),
             UserCompany.company_id == str(company_id or DEFAULT_COMPANY_ID),
             User.status == UserStatus.ACTIVE.value,
             User.is_trashed.is_(False),
@@ -176,6 +189,66 @@ def _send(
     return sent
 
 
+def notify_interest_registered(
+    db: Session, *, project: Project, request, requester_user_id: str
+) -> int:
+    """Someone registered interest in a project (a dispute-kind takeover request): tell the
+    owner and every active manager, never the requester (PROJECT-REGISTER-V2 F1)."""
+    from app.services.project_service import resolve_user_names
+
+    requester_name = resolve_user_names(db, [requester_user_id]).get(str(requester_user_id)) or "A colleague"
+    recipients = {str(project.owner_user_id)} if project.owner_user_id else set()
+    recipients.update(management_user_ids(db, project.company_id))
+    recipients.discard(str(requester_user_id))
+    label = project_label(project)
+    return _send(
+        db,
+        user_ids=sorted(recipients),
+        notif_type="project_interest_registered",
+        title=f"{requester_name} registered interest in {label}",
+        body=f"{requester_name} registered interest in {label}: {project.title}",
+        data={
+            "project_id": str(project.id),
+            "project_code": project.project_code,
+            "request_id": str(request.id),
+            "link": f"/project-sales/{project.id}",
+        },
+        project_id=str(project.id),
+        dedup_key=f"{request.id}:interest",
+    )
+
+
+def notify_reassigned(
+    db: Session,
+    *,
+    project: Project,
+    request,
+    previous_owner_id: Optional[str],
+    new_owner_id: str,
+) -> int:
+    """An interest was approved and the owner changed: tell the new and the previous owner
+    (PROJECT-REGISTER-V2 F2)."""
+    label = project_label(project)
+    recipients = {str(new_owner_id)}
+    if previous_owner_id:
+        recipients.add(str(previous_owner_id))
+    return _send(
+        db,
+        user_ids=sorted(recipients),
+        notif_type="project_reassigned",
+        title=f"{label} was reassigned",
+        body=f"{label}: {project.title} has a new owner.",
+        data={
+            "project_id": str(project.id),
+            "project_code": project.project_code,
+            "request_id": str(request.id),
+            "link": f"/project-sales/{project.id}",
+        },
+        project_id=str(project.id),
+        dedup_key=f"{request.id}:reassigned",
+    )
+
+
 def floor_breach_dedup_key(event: Dict[str, Any]) -> str:
     """Idempotency key for a below-floor alert: the LINE plus the price that breached.
 
@@ -220,9 +293,9 @@ def notify_floor_breach(
     )
     return _send(
         db,
-        user_ids=management_user_ids(db),
+        user_ids=management_user_ids(db, project.company_id),
         notif_type="project_price_floor_breach",
-        title=f"{project.project_code} priced below floor",
+        title=f"{project_label(project)} priced below floor",
         body=body,
         data={
             "project_id": str(project.id),
@@ -290,18 +363,20 @@ def notify_quotation_approval_requested(
     below: int,
     requester_id: Optional[str],
     requester_name: str,
+    resubmitted: bool = False,
 ) -> int:
     """A quotation was sent for approval: tell every approver but the sender. One per press."""
     lines = f"{below} line{'' if below == 1 else 's'} below the price floor"
+    verb = "appealed" if resubmitted else "sent"
     text = (
-        f"{requester_name} sent quotation {document.document_no} ({project.project_code}) "
+        f"{requester_name} {verb} quotation {document.document_no} ({project_label(project)}) "
         f"for approval: {lines}."
     )
     return _send(
         db,
         user_ids=approver_user_ids(db, document.company_id, {requester_id}),
         notif_type="project_quotation_approval_requested",
-        title=f"{project.project_code}: approval needed on {document.document_no}",
+        title=f"{project_label(project)}: approval needed on {document.document_no}",
         body=text,
         data=_approval_data(project, document),
         project_id=str(project.id),
@@ -337,7 +412,7 @@ def notify_quotation_approval_decided(
             if approved
             else "project_quotation_approval_rejected"
         ),
-        title=f"{project.project_code}: {document.document_no} {verb}",
+        title=f"{project_label(project)}: {document.document_no} {verb}",
         body=body,
         data=_approval_data(project, document),
         project_id=str(project.id),
@@ -357,14 +432,14 @@ def notify_quotation_approval_withdrawn(
 ) -> int:
     """The creator pulled a pending quotation back to change it: tell the approvers."""
     text = (
-        f"{actor_name} took quotation {document.document_no} ({project.project_code}) back "
+        f"{actor_name} took quotation {document.document_no} ({project_label(project)}) back "
         f"for changes: {reason or ''}"
     ).strip()
     return _send(
         db,
         user_ids=approver_user_ids(db, document.company_id, {actor_id}),
         notif_type="project_quotation_approval_withdrawn",
-        title=f"{project.project_code}: {document.document_no} withdrawn",
+        title=f"{project_label(project)}: {document.document_no} withdrawn",
         body=text,
         data=_approval_data(project, document),
         project_id=str(project.id),
@@ -413,13 +488,13 @@ def notify_quotation_changes_requested(
     if len(excerpt) > 400:
         excerpt = f"{excerpt[:400]}..."
 
-    recipients = [str(project.owner_user_id)] if project.owner_user_id else management_user_ids(db)
+    recipients = [str(project.owner_user_id)] if project.owner_user_id else management_user_ids(db, project.company_id)
 
     return _send(
         db,
         user_ids=recipients,
         notif_type="project_quotation_changes_requested",
-        title=f"{project.project_code}: changes requested on {reference}",
+        title=f"{project_label(project)}: changes requested on {reference}",
         body=f'{who} asked for changes to {reference}: "{excerpt}"',
         data={
             "project_id": str(project.id),
@@ -463,7 +538,7 @@ def notify_po_mismatch(
         for m in mismatches[:3]
     )
     more = "" if len(mismatches) <= 3 else f" and {len(mismatches) - 3} more"
-    recipients = management_user_ids(db)
+    recipients = management_user_ids(db, project.company_id)
     if project.owner_user_id:
         recipients.append(str(project.owner_user_id))
 
@@ -471,7 +546,7 @@ def notify_po_mismatch(
         db,
         user_ids=recipients,
         notif_type="project_po_mismatch",
-        title=f"{project.project_code}: PO {po.po_number} does not match the quotation",
+        title=f"{project_label(project)}: PO {po.po_number} does not match the quotation",
         body=(
             f"{len(mismatches)} line(s) show a {what}: {lines}{more}. "
             "Reconcile with the contractor before delivery."

@@ -115,6 +115,11 @@ function settings(overrides: Partial<ChatbotSettings> = {}): ChatbotSettings {
     chatbot_business_lane_enabled: false,
     chatbot_ordering_enabled: false,
     chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'],
+    chatbot_direct_ingress_mode: 'off',
+    chatbot_direct_ingress_contacts: null,
+    chatbot_closed_lists_mode: 'block',
+    chatbot_composer_enabled: false,
+    chatbot_parser_max_output_tokens: 8192,
     ...overrides,
   };
 }
@@ -257,6 +262,11 @@ describe('ChatbotSettingsPage - Save payload (AC-810)', () => {
       chatbot_business_lane_enabled: false,
       chatbot_ordering_enabled: false,
       chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'],
+      chatbot_direct_ingress_mode: 'off',
+      chatbot_direct_ingress_contacts: null,
+      chatbot_closed_lists_mode: 'block',
+      chatbot_composer_enabled: false,
+      chatbot_parser_max_output_tokens: 8192,
     });
   });
 });
@@ -424,5 +434,152 @@ describe('ChatbotSettingsPage - loading and error states', () => {
     renderPage();
 
     expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+  });
+});
+
+// CHAT-SPEED: the direct-ingress switch (off / listed contacts / all, owner ruling Q4 a).
+describe('ChatbotSettingsPage - direct ingress', () => {
+  beforeEach(() => {
+    mockMemoryQuery.mockReturnValue({ data: DEFAULT_MEMORY, isLoading: false, isError: false });
+    mockTierOrderQuery.mockReturnValue({ data: DEFAULT_TIER_ORDER, isLoading: false, isError: false });
+  });
+
+  it('shows the mode and hides the contact list while the mode is off', () => {
+    mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+    mockSettingsQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderPage();
+
+    expect(screen.getByText('Direct ingress')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: /direct ingress/i }).textContent).toMatch(/off/i);
+    expect(screen.queryByLabelText(/listed contacts/i)).toBeNull();
+  });
+
+  it('shows the listed contacts in listed mode and saves edits to them', () => {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({
+      data: settings({
+        chatbot_direct_ingress_mode: 'contacts',
+        chatbot_direct_ingress_contacts: '100000077',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    const box = screen.getByLabelText(/listed contacts/i) as HTMLTextAreaElement;
+    expect(box.value).toBe('100000077');
+    fireEvent.change(box, { target: { value: '100000077\n100000078' } });
+    fireEvent.click(saveButton());
+
+    const [payload] = mutate.mock.calls[0];
+    expect(payload.chatbot_direct_ingress_mode).toBe('contacts');
+    expect(payload.chatbot_direct_ingress_contacts).toBe('100000077\n100000078');
+  });
+});
+
+// CHAT-RELEASE-1021 (owner, 21 Oct 2026): the two release switches get a screen, so the
+// deploy is inert until the owner flips them here - no API call.
+describe('ChatbotSettingsPage - release switches (closed lists mode, reply composer)', () => {
+  beforeEach(() => {
+    mockMemoryQuery.mockReturnValue({ data: DEFAULT_MEMORY, isLoading: false, isError: false });
+    mockTierOrderQuery.mockReturnValue({ data: DEFAULT_TIER_ORDER, isLoading: false, isError: false });
+  });
+
+  it('shows both switches at their defaults: block and composer off', () => {
+    mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+    mockSettingsQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderPage();
+
+    expect(screen.getByRole('combobox', { name: /closed lists/i }).textContent).toMatch(
+      /block \(full lists\)/i,
+    );
+    expect(screen.getByLabelText(/reply composer/i).getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('shows index mode when the row holds index', () => {
+    mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+    mockSettingsQuery.mockReturnValue({
+      data: settings({ chatbot_closed_lists_mode: 'index' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    expect(screen.getByRole('combobox', { name: /closed lists/i }).textContent).toMatch(
+      /index \(per-turn matches\)/i,
+    );
+  });
+
+  it('turning the reply composer on saves it with the rest of the draft', () => {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderPage();
+
+    fireEvent.click(screen.getByLabelText(/reply composer/i));
+    fireEvent.click(saveButton());
+
+    const [payload] = mutate.mock.calls[0];
+    expect(payload.chatbot_composer_enabled).toBe(true);
+    expect(payload.chatbot_closed_lists_mode).toBe('block');
+  });
+
+  it('picking index from the closed lists select saves index', () => {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderPage();
+
+    fireEvent.click(screen.getByRole('combobox', { name: /closed lists/i }));
+    fireEvent.click(screen.getByText(/index \(per-turn matches\)/i));
+    fireEvent.click(saveButton());
+
+    const [payload] = mutate.mock.calls[0];
+    expect(payload.chatbot_closed_lists_mode).toBe('index');
+  });
+});
+
+// PARSER-MAX-TOKENS: the parser output cap is a number field on the Switches card.
+describe('ChatbotSettingsPage - parser max output tokens', () => {
+  beforeEach(() => {
+    mockMemoryQuery.mockReturnValue({ data: DEFAULT_MEMORY, isLoading: false, isError: false });
+    mockTierOrderQuery.mockReturnValue({ data: DEFAULT_TIER_ORDER, isLoading: false, isError: false });
+  });
+
+  function load(mutate = vi.fn()) {
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({
+      data: settings({ chatbot_parser_max_output_tokens: 16000 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+    return mutate;
+  }
+
+  it('shows the loaded value under its label', () => {
+    load();
+    const input = screen.getByLabelText(/parser max output tokens/i) as HTMLInputElement;
+    expect(input.id).toBe('chatbot-parser-max-output-tokens');
+    expect(input.value).toBe('16000');
+  });
+
+  it('saves a changed value in the payload', () => {
+    const mutate = load();
+    fireEvent.change(screen.getByLabelText(/parser max output tokens/i), {
+      target: { value: '12000' },
+    });
+    fireEvent.click(saveButton());
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0].chatbot_parser_max_output_tokens).toBe(12000);
+  });
+
+  it.each(['500', '40000'])('rejects %s: error under the field and no save', (value) => {
+    const mutate = load();
+    fireEvent.change(screen.getByLabelText(/parser max output tokens/i), { target: { value } });
+    fireEvent.click(saveButton());
+    expect(mutate).not.toHaveBeenCalled();
+    expect(document.getElementById('chatbot-parser-max-output-tokens-error')).not.toBeNull();
   });
 });

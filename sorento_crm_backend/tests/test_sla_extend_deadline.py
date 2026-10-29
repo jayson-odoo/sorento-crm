@@ -13,7 +13,6 @@ Run:
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -544,20 +543,14 @@ from app.api.v1.sla.sla_tracking import (  # noqa: E402
 )
 
 
-def _run(coro):
-    return asyncio.run(coro)
-
-
 def test_route_preview_both_days_and_date_422():
     """Preview route: exactly-one guard -> 422."""
     with pytest.raises(HTTPException) as ei:
-        _run(
-            preview_extend_sla_tracking(
-                tracking_id=uuid.uuid4(),
-                payload=_ExtendPreviewRequest(days=2, target_date="2026-07-06"),
-                current_user={"id": "me"},
-                db=MagicMock(),
-            )
+        preview_extend_sla_tracking(
+            tracking_id=uuid.uuid4(),
+            payload=_ExtendPreviewRequest(days=2, target_date="2026-07-06"),
+            current_user={"id": "me"},
+            db=MagicMock(),
         )
     assert ei.value.status_code == 422
 
@@ -570,13 +563,11 @@ def test_route_preview_non_assignee_403():
     )
     with patch.object(route_mod, "ConversationSLATrackingService", return_value=svc):
         with pytest.raises(HTTPException) as ei:
-            _run(
-                preview_extend_sla_tracking(
-                    tracking_id=uuid.uuid4(),
-                    payload=_ExtendPreviewRequest(days=2),
-                    current_user={"id": "not-owner"},
-                    db=MagicMock(),
-                )
+            preview_extend_sla_tracking(
+                tracking_id=uuid.uuid4(),
+                payload=_ExtendPreviewRequest(days=2),
+                current_user={"id": "not-owner"},
+                db=MagicMock(),
             )
     assert ei.value.status_code == 403
 
@@ -589,13 +580,11 @@ def test_route_preview_no_resolution_due_422():
     )
     with patch.object(route_mod, "ConversationSLATrackingService", return_value=svc):
         with pytest.raises(HTTPException) as ei:
-            _run(
-                preview_extend_sla_tracking(
-                    tracking_id=uuid.uuid4(),
-                    payload=_ExtendPreviewRequest(days=2),
-                    current_user={"id": "me"},
-                    db=MagicMock(),
-                )
+            preview_extend_sla_tracking(
+                tracking_id=uuid.uuid4(),
+                payload=_ExtendPreviewRequest(days=2),
+                current_user={"id": "me"},
+                db=MagicMock(),
             )
     assert ei.value.status_code == 422
 
@@ -612,13 +601,11 @@ def test_route_preview_resolved_ticket_422():
     )
     with patch.object(route_mod, "ConversationSLATrackingService", return_value=svc):
         with pytest.raises(HTTPException) as ei:
-            _run(
-                preview_extend_sla_tracking(
-                    tracking_id=uuid.uuid4(),
-                    payload=_ExtendPreviewRequest(days=2),
-                    current_user={"id": "me"},
-                    db=MagicMock(),
-                )
+            preview_extend_sla_tracking(
+                tracking_id=uuid.uuid4(),
+                payload=_ExtendPreviewRequest(days=2),
+                current_user={"id": "me"},
+                db=MagicMock(),
             )
     assert ei.value.status_code == 422
     assert "resolved" in ei.value.detail.lower()
@@ -636,13 +623,11 @@ def test_route_preview_happy_path_returns_four_fields():
     svc.compute_extension.return_value = (new, 3)
     svc.evaluate_extension_warnings.return_value = ["warn!"]
     with patch.object(route_mod, "ConversationSLATrackingService", return_value=svc):
-        result = _run(
-            preview_extend_sla_tracking(
-                tracking_id=uuid.uuid4(),
-                payload=_ExtendPreviewRequest(days=3),
-                current_user={"id": "me"},
-                db=MagicMock(),
-            )
+        result = preview_extend_sla_tracking(
+            tracking_id=uuid.uuid4(),
+            payload=_ExtendPreviewRequest(days=3),
+            current_user={"id": "me"},
+            db=MagicMock(),
         )
     assert result["current_due_at"] == current.isoformat()
     assert result["new_due_at"] == new.isoformat()
@@ -652,13 +637,11 @@ def test_route_preview_happy_path_returns_four_fields():
 
 def test_route_extend_both_inputs_422():
     with pytest.raises(HTTPException) as ei:
-        _run(
-            extend_sla_tracking(
-                tracking_id=uuid.uuid4(),
-                payload=_ExtendRequest(days=2, target_date="2026-07-06", reason="x"),
-                current_user={"id": "me"},
-                db=MagicMock(),
-            )
+        extend_sla_tracking(
+            tracking_id=uuid.uuid4(),
+            payload=_ExtendRequest(days=2, target_date="2026-07-06", reason="x"),
+            current_user={"id": "me"},
+            db=MagicMock(),
         )
     assert ei.value.status_code == 422
 

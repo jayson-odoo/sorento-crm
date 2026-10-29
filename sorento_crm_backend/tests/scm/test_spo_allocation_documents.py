@@ -899,6 +899,8 @@ def test_detail_denies_without_the_view_permission(scm_app):
 
 
 # =================================================================================== #
+# U4 (LINKAGE-UNIFY): every `so_covered` entry carries `via_po` - null for a direct
+# placement, the PO number for one that reached the SPO through its PO line.
 # R23, AC-J2/AC-J3 - lines carry `po` and `so_covered`; the header carries `linkage`.
 # =================================================================================== #
 
@@ -1035,12 +1037,14 @@ def test_document_line_carries_po_and_so_covered_ac_j2(scm_app):
             "customer": project.title,
             "demand_class": "project",
             "qty": 10.0,
+            "via_po": None,
         },
         {
             "document": so.so_number,
             "customer": customer.customer_name,
             "demand_class": "retail",
             "qty": 20.0,
+            "via_po": None,
         },
     ]
 
@@ -1090,6 +1094,7 @@ def test_so_covered_reads_the_coverage_record_not_the_planner_claim(scm_app):
             "customer": customer.customer_name,
             "demand_class": "retail",
             "qty": 20.0,
+            "via_po": None,
         },
     ]
     assert body["linkage"]["so_count"] == 1
@@ -1142,12 +1147,14 @@ def test_two_spo_lines_of_one_product_each_show_their_own_take_of_one_sales_orde
         {
             "document": so.so_number, "customer": customer.customer_name,
             "demand_class": "retail", "qty": 30.0,
+            "via_po": None,
         },
     ]
     assert by_line[str(second.id)] == [
         {
             "document": so.so_number, "customer": customer.customer_name,
             "demand_class": "retail", "qty": 40.0,
+            "via_po": None,
         },
     ]
     assert body["linkage"]["so_count"] == 2

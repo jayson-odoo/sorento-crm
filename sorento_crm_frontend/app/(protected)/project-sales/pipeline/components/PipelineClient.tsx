@@ -1,9 +1,11 @@
 'use client';
 
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Filter, KanbanSquare, Table2 } from 'lucide-react';
 import type { PaginationState, SortingState } from '@tanstack/react-table';
+import type { ProjectListParams } from '../../_shared/types/project.types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,11 +15,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import {
+  idFilterLabels,
+  joinMulti,
+  multiChipLabel,
+  splitMulti,
+} from '@/lib/list-filters/multiValue';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Switch } from '@/components/ui/switch';
+import { useHasAnyPermission, useHasPermission } from '@/hooks/usePermissions';
 import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
 import {
   useChangeProjectStatus,
@@ -53,6 +62,8 @@ type PipelineView = 'board' | 'grid';
  */
 export function PipelineClient() {
   const router = useRouter();
+  const canEdit = useHasPermission('projects.projects.edit');
+  const canRegister = useHasAnyPermission(['projects.projects.edit', 'projects.registrations.submit']);
   const [view, setView] = React.useState<PipelineView>('board');
   const [startAction, setStartAction] = React.useState<StartAction>(null);
   const {
@@ -66,6 +77,8 @@ export function PipelineClient() {
   const [developerFilter, setDeveloperFilter] = React.useState('');
   const [typeFilter, setTypeFilter] = React.useState('');
   const [onlyCritical, setOnlyCritical] = React.useState(false);
+  // A portal registration waiting for a decision, or refused (R6): '' is every project.
+  const [approvalFilter, setApprovalFilter] = React.useState('');
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -85,6 +98,7 @@ export function PipelineClient() {
     setOwnerFilter(urlState.filters.owner_user_id ?? '');
     setTypeFilter(urlState.filters.type_id ?? '');
     setOnlyCritical(urlState.filters.only_critical === 'true');
+    setApprovalFilter(urlState.filters.approval_state ?? '');
   });
 
   React.useEffect(() => {
@@ -101,6 +115,7 @@ export function PipelineClient() {
     developerFilter,
     typeFilter,
     onlyCritical,
+    approvalFilter,
   ]);
 
   const graph = useProjectStatusGraph('project');
@@ -111,10 +126,11 @@ export function PipelineClient() {
   const listParams = React.useMemo(
     () => ({
       query: debouncedSearch || undefined,
-      developer_party_id: developerFilter ? [developerFilter] : undefined,
+      developer_party_id: developerFilter ? splitMulti(developerFilter) : undefined,
       owner_user_id: ownerFilter ? [ownerFilter] : undefined,
-      type_id: typeFilter ? [typeFilter] : undefined,
+      type_id: typeFilter ? splitMulti(typeFilter) : undefined,
       only_critical: onlyCritical || undefined,
+      approval_state: (approvalFilter || undefined) as ProjectListParams['approval_state'],
       page: view === 'board' ? 1 : pagination.pageIndex + 1,
       limit: view === 'board' ? 200 : pagination.pageSize,
       sort: sorting[0]?.id ?? 'created_at',
@@ -126,6 +142,7 @@ export function PipelineClient() {
       ownerFilter,
       typeFilter,
       onlyCritical,
+      approvalFilter,
       view,
       pagination,
       sorting,
@@ -154,9 +171,11 @@ export function PipelineClient() {
           owner_user_id: ownerFilter,
           type_id: typeFilter,
           only_critical: onlyCritical ? 'true' : '',
+          approval_state: approvalFilter,
         },
       ),
     [
+      approvalFilter,
       debouncedSearch,
       developerFilter,
       onlyCritical,
@@ -176,7 +195,7 @@ export function PipelineClient() {
   );
 
   const hasFilters = Boolean(
-    debouncedSearch || developerFilter || ownerFilter || typeFilter || onlyCritical,
+    debouncedSearch || developerFilter || ownerFilter || typeFilter || onlyCritical || approvalFilter,
   );
   const total = projects.data?.pagination.total ?? 0;
   const rows = projects.data?.data ?? [];
@@ -198,7 +217,10 @@ export function PipelineClient() {
   );
 
   const activeFilterCount =
-    (developerFilter ? 1 : 0) + (typeFilter ? 1 : 0) + (onlyCritical ? 1 : 0);
+    (developerFilter ? 1 : 0) +
+    (typeFilter ? 1 : 0) +
+    (onlyCritical ? 1 : 0) +
+    (approvalFilter ? 1 : 0);
 
   function clearFilters() {
     setSearch('');
@@ -206,6 +228,7 @@ export function PipelineClient() {
     setOwnerFilter('');
     setTypeFilter('');
     setOnlyCritical(false);
+    setApprovalFilter('');
   }
 
   // One definition of "the pipeline filters", fed to the grid toolbar in Grid view and
@@ -217,11 +240,18 @@ export function PipelineClient() {
         <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
           Developer
         </Label>
-        <SearchableSelect
+        <SearchableMultiSelect
           id="filter-developer"
-          value={developerFilter}
-          onChange={setDeveloperFilter}
+          value={splitMulti(developerFilter)}
+          onChange={(value) => setDeveloperFilter(joinMulti(value))}
           clearable
+          renderTriggerLabel={(chosen) =>
+            chosen.length ? (
+              <span className="block truncate">{multiChipLabel('Developer', idFilterLabels(chosen))}</span>
+            ) : (
+              <span className="text-muted-foreground">All developers</span>
+            )
+          }
           options={(developers.data?.data ?? []).map((party) => ({
             value: party.id,
             label: party.name,
@@ -233,16 +263,40 @@ export function PipelineClient() {
         <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
           Type
         </Label>
-        <SearchableSelect
+        <SearchableMultiSelect
           id="filter-type"
-          value={typeFilter}
-          onChange={setTypeFilter}
+          value={splitMulti(typeFilter)}
+          onChange={(value) => setTypeFilter(joinMulti(value))}
           clearable
+          renderTriggerLabel={(chosen) =>
+            chosen.length ? (
+              <span className="block truncate">{multiChipLabel('Type', idFilterLabels(chosen))}</span>
+            ) : (
+              <span className="text-muted-foreground">All types</span>
+            )
+          }
           options={(types.data ?? []).map((type) => ({
             value: type.id,
             label: type.name,
           }))}
           placeholder="All types"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="filter-approval" className="text-xs text-muted-foreground">
+          Approval
+        </Label>
+        <SearchableMultiSelect
+          id="filter-approval"
+          value={splitMulti(approvalFilter)}
+          onChange={(value) => setApprovalFilter(joinMulti(value))}
+          clearable
+          options={[
+            { value: 'pending', label: 'Awaiting approval' },
+            { value: 'resubmitted', label: APPEALED_LABEL },
+            { value: 'rejected', label: 'Rejected' },
+          ]}
+          placeholder="Any approval state"
         />
       </div>
       <div className="flex items-center gap-2">
@@ -305,25 +359,31 @@ export function PipelineClient() {
                 <Table2 className="size-4" aria-hidden />
               </Button>
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button">
-                  Start
-                  <ChevronDown className="size-4" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => router.push('/project-sales/new')}>
-                  Register a project
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
-                  Upload PO
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
-                  Upload delivery schedule
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {canRegister && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button">
+                    Start
+                    <ChevronDown className="size-4" aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => router.push('/project-sales/new')}>
+                    Register a project
+                  </DropdownMenuItem>
+                  {canEdit && (
+                    <>
+                      <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
+                        Upload PO
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
+                        Upload delivery schedule
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         }
       />

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -24,6 +24,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { useCustomers } from '../hooks/useCustomers';
@@ -59,7 +61,18 @@ export default function CustomersList() {
     reset: resetSearch,
   } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [groupFilter, setGroupFilter] = useState<{ id: string; name: string } | null>(null);
+  // Group ids, comma-joined when several; the names are what the picker has fetched so far.
+  const [groupFilter, setGroupFilter] = useState('');
+  const groupNames = useRef<Record<string, string>>({});
+  const fetchGroups = useCallback(async (query: string) => {
+    const found = (await searchCustomerGroupsSelect(query)).map((g) => ({
+      value: g.id,
+      label: g.name,
+      description: `${g.ledger_count} ${g.ledger_count === 1 ? 'ledger' : 'ledgers'}`,
+    }));
+    for (const o of found) groupNames.current[o.value] = o.label;
+    return found;
+  }, []);
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -68,12 +81,8 @@ export default function CustomersList() {
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
     setStatusFilter(state.filters.status ?? 'all');
-    // The URL carries the id only; the name is re-read once the filter popover opens.
-    setGroupFilter((prev) =>
-      state.filters.customer_group_id
-        ? { id: state.filters.customer_group_id, name: prev?.name ?? 'Selected group' }
-        : null,
-    );
+    // The URL carries the ids only; a name this page has not fetched reads "Selected group".
+    setGroupFilter(state.filters.customer_group_id ?? '');
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const canSetSalesAgent = useHasPermission('master_data.sales_agents.edit');
@@ -98,7 +107,7 @@ export default function CustomersList() {
     sorting,
     searchQuery,
     status: statusFilter === 'all' ? undefined : statusFilter,
-    customer_group_id: groupFilter?.id,
+    customer_group_id: groupFilter || undefined,
   });
 
   // Reset selection whenever the result set changes.
@@ -123,7 +132,7 @@ export default function CustomersList() {
       },
       {
         status: statusFilter === 'all' ? undefined : statusFilter,
-        customer_group_id: groupFilter?.id,
+        customer_group_id: groupFilter || undefined,
       },
     );
     const qs = search ? `?${search}` : '';
@@ -284,7 +293,7 @@ export default function CustomersList() {
             }
             filters={{
               kind: 'custom',
-              active: statusFilter !== 'all' || groupFilter !== null,
+              active: statusFilter !== 'all' || groupFilter !== '',
               activeCount: (statusFilter !== 'all' ? 1 : 0) + (groupFilter ? 1 : 0),
               content: (
                 <div className="space-y-4">
@@ -307,26 +316,18 @@ export default function CustomersList() {
                   </div>
                   <div>
                     <Label>Group</Label>
-                    <SearchableSelect
+                    <SearchableMultiSelect
                       aria-label="Group"
-                      value={groupFilter?.id ?? ''}
+                      value={splitMulti(groupFilter)}
                       onChange={(v) => {
-                        if (!v) setGroupFilter(null);
+                        setGroupFilter(joinMulti(v));
                         setPagination((p) => ({ ...p, pageIndex: 0 }));
                       }}
-                      onOptionChange={(opt) =>
-                        setGroupFilter(opt ? { id: opt.value, name: opt.label } : null)
-                      }
-                      fetchOptions={async (query) =>
-                        (await searchCustomerGroupsSelect(query)).map((g) => ({
-                          value: g.id,
-                          label: g.name,
-                          description: `${g.ledger_count} ${g.ledger_count === 1 ? 'ledger' : 'ledgers'}`,
-                        }))
-                      }
-                      selectedOption={
-                        groupFilter ? { value: groupFilter.id, label: groupFilter.name } : undefined
-                      }
+                      fetchOptions={fetchGroups}
+                      selectedOptions={splitMulti(groupFilter).map((id) => ({
+                        value: id,
+                        label: groupNames.current[id] ?? 'Selected group',
+                      }))}
                       placeholder="All groups"
                       emptyMessage="No groups match."
                       triggerClassName="mt-1"
@@ -340,7 +341,7 @@ export default function CustomersList() {
                         size="sm"
                         onClick={() => {
                           setStatusFilter('all');
-                          setGroupFilter(null);
+                          setGroupFilter('');
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
                       >

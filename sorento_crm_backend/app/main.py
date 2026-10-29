@@ -1,4 +1,5 @@
 """FastAPI application entry point."""
+import asyncio
 import os
 # Load .env with override=True so file values beat any stale shell env
 # (e.g. a STORAGE_DEFAULT_PROVIDER exported earlier in the session).
@@ -40,6 +41,7 @@ _load_env_file()
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -401,6 +403,20 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to register task handlers: {str(e)}", exc_info=True)
 
+    # CHAT-INBOX-QUEUE: every API process sweeps the chatbot inbox (gated off under pytest).
+    try:
+        from app.tasks import chat_turns as _chat_turns
+
+        _chat_turns.start_inbox_queue()
+    except Exception as e:
+        logging.error(f"Failed to start the chatbot inbox sweeper: {str(e)}", exc_info=True)
+    try:
+        from app.tasks import chat_turns as _chat_turns
+
+        _chat_turns.start_lookup_warm()
+    except Exception as e:
+        logging.error(f"Failed to start the lookup vector warm: {str(e)}", exc_info=True)
+
     # Scheduler is gated so only the dedicated `worker` container runs it.
     # Blue/green API containers must NOT fire cron ticks (would double-process).
     if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":
@@ -576,8 +592,16 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Shutdown event: stop scheduler."""
+    """Shutdown event: let the chatbot inbox drains finish their current row, stop scheduler."""
     global scheduler
+    # CHAT-INBOX-QUEUE (IQ-25): returns only once every running drain has finished its row,
+    # sender POST and done mark included, so a deploy never exits mid-turn.
+    try:
+        from app.tasks import chat_turns as _chat_turns
+
+        await asyncio.to_thread(_chat_turns.stop_inbox_queue)
+    except Exception as e:
+        logging.error(f"Error stopping the chatbot inbox: {str(e)}", exc_info=True)
     if scheduler:
         try:
             scheduler.shutdown()
@@ -587,40 +611,12 @@ async def shutdown_event():
 
 
 @app.get("/")
-async def root():
+def root():
     """Root endpoint."""
     return {"message": "Sorento CRM API", "version": "1.0.0"}
 
 
-def _git_sha() -> str:
-    """The short sha of the checkout this process is running, read ONCE at import.
-
-    A stack check has to be able to say WHICH code answered it, and the deploy is the
-    only other thing that knows. `GIT_SHA` (set by the container build) wins where there
-    is no git directory at all; a local run reads it from the checkout beside this file.
-    Never per request: this shells out.
-    """
-    from os import environ
-
-    env_sha = (environ.get("GIT_SHA") or "").strip()
-    if env_sha:
-        return env_sha
-    try:
-        import subprocess
-
-        out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(_Path(__file__).resolve().parent.parent),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return (out.stdout or "").strip() or "unknown"
-    except Exception:  # noqa: BLE001 - a health probe never fails over its own metadata
-        return "unknown"
-
-
-GIT_SHA = _git_sha()
+from app.utils.build_info import GIT_SHA, _git_sha  # noqa: E402,F401 - /health reports it
 
 
 def _production_prompt_version(db) -> int | None:
@@ -651,25 +647,51 @@ async def health_check():
     Also names the code and the prompt that answered, so a stack check can tell a lane
     running yesterday's commit from one running today's (`scripts/chatbot-stack-check.sh`).
     """
-    try:
+    def _database_check():
         from sqlalchemy import text
         from app.database import SessionLocal
         db = SessionLocal()
         try:
             db.execute(text("SELECT 1"))
-            prompt_version = _production_prompt_version(db)
+            return _production_prompt_version(db)
         finally:
             db.close()
-        return {
-            "status": "healthy",
-            "git_sha": GIT_SHA,
-            "prompt_version": prompt_version,
-        }
+
+    try:
+        # Off the event loop (API-NONBLOCKING): a slow or starved connection checkout must
+        # not freeze every other request this worker holds.
+        prompt_version = await run_in_threadpool(_database_check)
     except Exception as e:
         # The error stays server-side: a Postgres connection error names the internal host
         # and port.
         logging.getLogger(__name__).error("/health: database check failed: %s", str(e)[:200])
         return JSONResponse(status_code=503, content={"status": "unhealthy"})
+
+    # Reported, never gating: Redis or the scheduler being down must not hold a deploy.
+    from app.services import health_probes
+
+    probes = await health_probes.snapshot()
+    return {
+        "status": "healthy",
+        "git_sha": GIT_SHA,
+        "prompt_version": prompt_version,
+        "redis": probes["redis"],
+        "scheduler": probes["scheduler"],
+    }
+
+
+@app.get("/health/deep")
+async def health_deep():
+    """For monitors, not for blue/green: 503 unless the database, Redis and the scheduler are
+    all OK. States only, no error text (unauthenticated route)."""
+    from app.services import health_probes
+
+    probes = await health_probes.snapshot()
+    ok = probes["database"] == "ok" and probes["redis"] == "ok" and probes["scheduler"]["status"] == "ok"
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={"status": "healthy" if ok else "unhealthy", **probes},
+    )
 
 
 @app.get("/api/v1/health")

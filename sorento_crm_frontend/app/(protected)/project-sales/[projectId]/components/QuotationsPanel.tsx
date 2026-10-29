@@ -24,6 +24,7 @@ import { useQuotationDocumentActions } from '../quotation-documents/actions';
 import type { QuotationDocument } from '../../_shared/services/quotationDocumentService';
 import type { Project } from '../../_shared/types/project.types';
 import { formatMyrExact, sumMoney } from '../../_shared/lib/money';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 /**
  * The row "..." cell: the record's own action set, in the same order as its gear.
@@ -230,12 +231,12 @@ export function QuotationsPanel({ project }: { project: Project }) {
           <QuotationRowActions
             projectId={project.id}
             document={row.original}
-            canEdit={project.can_edit}
+            canEdit={canWorkOnProject(project)}
           />
         ),
       },
     ],
-    [project.id, project.can_edit],
+    [project.id, project.can_edit, project.approval_state],
   );
 
   const ticked = rows.filter((row) => rowSelection[row.id]);
@@ -260,7 +261,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
             />
           }
           bulkActions={
-            project.can_edit
+            canWorkOnProject(project)
               ? [
                   {
                     key: 'delete',
@@ -278,7 +279,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
               : []
           }
           primaryAction={
-            project.can_edit ? (
+            canWorkOnProject(project) ? (
               <Button
                 type="button"
                 size="sm"

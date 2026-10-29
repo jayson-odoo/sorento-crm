@@ -19,14 +19,35 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
+import { DealerGroupSelect } from './DealerGroupSelect';
 import { FormDescription } from '@/components/ui/form';
 import { useCreateBrand, useUpdateBrand, useBrand } from '../hooks/useBrands';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import type { BrandFormData, Brand } from '../types/brand.types';
+
+// Typed as text; blank is refused here, never turned into 0. Typed number in and out so the
+// form's field types stay what they were.
+const chatbotWeightSchema = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    const n = parseNumberDraft(value as string | number | null | undefined);
+    const message =
+      n === null
+        ? numberFieldError(value as string | number | null | undefined, { min: 0, max: 9999 })
+        : n < 0
+          ? 'Enter 0 or more'
+          : n > 9999
+            ? 'Enter 9999 or less'
+            : undefined;
+    if (message) ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+  })
+  .transform((value) => parseNumberDraft(value as string | number | null | undefined) as number) as unknown as z.ZodType<number, z.ZodTypeDef, number>;
 
 const BrandFormSchema = z.object({
   brand_code: z.string().min(1, 'Brand code is required').max(50),
@@ -38,11 +59,13 @@ const BrandFormSchema = z.object({
   // raises an Order Inquiry (PLAN-brand-flows-to-purchasing.md).
   flows_to_purchasing: z.boolean(),
   // The chatbot's brand preference: higher weights are answered first (0 = none).
-  chatbot_weight: z.coerce.number().min(0, 'Enter 0 or more').max(9999, 'Enter 9999 or less'),
+  chatbot_weight: chatbotWeightSchema,
   // "Customers can ask for this brand" (S0, D3, fix round 3 D4): default true;
   // false for the placeholder brands OTHERS and NO LOGO, which record the
   // absence of a brand rather than name a real one.
   is_searchable: z.boolean(),
+  // The company whose dealers get this brand from the access-sheet upload; null = a project brand.
+  dealer_company_id: z.string().nullable(),
 });
 
 interface BrandFormDialogProps {
@@ -76,6 +99,7 @@ export default function BrandFormDialog({
       flows_to_purchasing: true,
       chatbot_weight: 0,
       is_searchable: true,
+      dealer_company_id: null,
     },
   });
 
@@ -91,6 +115,7 @@ export default function BrandFormDialog({
           flows_to_purchasing: brand.flows_to_purchasing,
           chatbot_weight: brand.chatbot_weight ?? 0,
           is_searchable: brand.is_searchable ?? true,
+          dealer_company_id: brand.dealer_company_id ?? null,
         });
       } else if (copyFromBrand) {
         form.reset({
@@ -103,6 +128,7 @@ export default function BrandFormDialog({
           // A copy never takes the preference of the brand it was copied from.
           chatbot_weight: 0,
           is_searchable: copyFromBrand.is_searchable ?? true,
+          dealer_company_id: copyFromBrand.dealer_company_id ?? null,
         });
       } else {
         form.reset({
@@ -114,6 +140,7 @@ export default function BrandFormDialog({
           flows_to_purchasing: true,
           chatbot_weight: 0,
           is_searchable: true,
+          dealer_company_id: null,
         });
       }
     }
@@ -130,6 +157,7 @@ export default function BrandFormDialog({
         flows_to_purchasing: data.flows_to_purchasing,
         chatbot_weight: data.chatbot_weight,
         is_searchable: data.is_searchable,
+        dealer_company_id: data.dealer_company_id || null,
       };
 
       if (brandId) {
@@ -283,14 +311,31 @@ export default function BrandFormDialog({
                 <FormItem>
                   <FormLabel>Chatbot brand weight</FormLabel>
                   <FormControl>
-                    <Input
-                      type="number"
+                    <NumberInput
                       min={0}
                       max={9999}
                       step={0.1}
                       inputMode="decimal"
                       className="w-32"
                       {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="dealer_company_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Dealer group</FormLabel>
+                  <FormControl>
+                    <DealerGroupSelect
+                      value={field.value}
+                      storedName={brand?.dealer_company_name ?? copyFromBrand?.dealer_company_name}
+                      onChange={field.onChange}
                     />
                   </FormControl>
                   <FormMessage />

@@ -88,10 +88,12 @@ def assert_can_edit_task(
 ) -> None:
     if can_edit_task(db, task, project, user_id, permissions):
         return
+    from app.services.project_service import project_label
+
     raise AppException(
         status_code=403,
         message=(
-            f"This task belongs to {project.project_code}, which another salesperson "
+            f"This task belongs to {project_label(project)}, which another salesperson "
             "owns. Ask to join the project, or have the task assigned to you."
         ),
         code="project_task_not_editable",
@@ -116,6 +118,9 @@ def change_task_status(
     half-escalated.
     """
     assert_can_edit_task(db, task, project, actor_user_id, permissions)
+    from app.services.project_service import assert_project_approved
+
+    assert_project_approved(project)
 
     target = _status_or_422(db, to_status_id)
 
@@ -344,9 +349,9 @@ def create_task(
     actor_user_id: str,
     permissions: Set[str],
 ) -> ProjectTask:
-    from app.services.project_service import assert_can_edit_project
+    from app.services.project_service import assert_can_write_project
 
-    assert_can_edit_project(db, project, actor_user_id, permissions)
+    assert_can_write_project(db, project, actor_user_id, permissions)
 
     name = (payload.get("name") or "").strip()
     if not name:
@@ -414,6 +419,9 @@ def update_task(
     update.
     """
     assert_can_edit_task(db, task, project, actor_user_id, permissions)
+    from app.services.project_service import assert_project_approved
+
+    assert_project_approved(project)
 
     if "task_phase" in payload:
         _assert_phase(payload.get("task_phase"))
@@ -450,11 +458,11 @@ def delete_task(
     actor_user_id: str,
     permissions: Set[str],
 ) -> None:
-    from app.services.project_service import assert_can_edit_project
+    from app.services.project_service import assert_can_write_project
 
     # Deleting is a project-owner act, not an assignee one: an assignee dropping a task
     # off the checklist would erase work the owner planned.
-    assert_can_edit_project(db, project, actor_user_id, permissions)
+    assert_can_write_project(db, project, actor_user_id, permissions)
     db.delete(task)
     db.flush()
 

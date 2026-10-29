@@ -18,6 +18,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.services.submission_status import APPEALED_LABEL
+
 logger = logging.getLogger(__name__)
 
 
@@ -155,6 +157,7 @@ def notify_undo(db: Session, record, *, actor_id: Optional[str], reason: str) ->
 _STATUS_LABELS = {
     "draft": "Draft",
     "submitted": "Submitted",
+    "resubmitted": APPEALED_LABEL,
     "pending_approval": "Pending Approval",
     "approved": "Approved",
     "rejected": "Rejected",

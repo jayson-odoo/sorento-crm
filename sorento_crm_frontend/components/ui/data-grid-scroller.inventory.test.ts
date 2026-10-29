@@ -175,6 +175,12 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     1,
   ],
   [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx',
+    // OI-LINE-SPLIT (UAC D3): a split line's splits, a few rows in the Lines tab's own
+    // expanded row; the outer Lines grid owns the vertical scroll.
+    1,
+  ],
+  [
     'app/(protected)/project-sales/order-inquiries/components/OrderInquiryDocumentDialog.tsx',
     2, // two PanelDataGrid bodies (PO, SPO) inside one DialogBody that already owns the scroll
   ],
@@ -241,7 +247,10 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   ],
   [
     'app/(protected)/scm/sales-orders/[id]/components/SoLineHistoryBody.tsx',
-    2, // the delivered-DOs DrillTable and the Cancel SO DrillTable, same as SoLineLinksBody
+    // The delivered-DOs DrillTable and the Cancel SO DrillTable, same as SoLineLinksBody.
+    // The delivered-DOs one is conditional (`onPage ? undefined : false`, #1855): the SO
+    // page's Delivery tab keeps the bounded default, the lightbox opts out.
+    2,
   ],
   [
     'app/(protected)/scm/loading-plan/components/ContainerRequestSection.tsx',
@@ -257,8 +266,9 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   ],
 ]);
 
+// `scrollerMaxHeight={cond ? x : false}` counts too: it opts out in its dialog branch.
 const SCROLLER_MAX_HEIGHT_FALSE =
-  /scrollerMaxHeight:\s*false|scrollerMaxHeight=\{false\}/g;
+  /scrollerMaxHeight:\s*false|scrollerMaxHeight=\{(?:[^{}?:]+\?[^{}:]+:\s*)?false\s*\}/g;
 
 describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2, M5 review run 1)', () => {
   it('every scrollerMaxHeight: false site is enumerated with a reason', () => {
@@ -273,6 +283,16 @@ describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2
     );
   });
 
+  it('counts a conditional site that opts out only in its dialog branch', () => {
+    // DO-SO-LINK-SURFACE (#1855): DeliveriesTable keeps the bounded default on the SO page
+    // and opts out inside the lightbox, so its one site reads `onPage ? undefined : false`.
+    const count = (src: string) => src.match(SCROLLER_MAX_HEIGHT_FALSE)?.length ?? 0;
+    expect(count('scrollerMaxHeight={onPage ? undefined : false}')).toBe(1);
+    // Prettier's wrapped form of the same site.
+    expect(count('scrollerMaxHeight={\n  onPage ? undefined : false\n}')).toBe(1);
+    expect(count("scrollerMaxHeight={onPage ? undefined : '24rem'}")).toBe(0);
+  });
+
   it('every enumerated file still exists', () => {
     const missing = [...SCROLLER_MAX_HEIGHT_FALSE_SITES.keys()].filter(
       (file) => !fs.existsSync(file),
@@ -280,7 +300,7 @@ describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2
     expect(missing).toEqual([]);
   });
 
-  it('PoPlanCard keeps the bounded default - the one plain-page caller of DrillTable', () => {
+  it('PoPlanCard keeps the bounded default - it renders DrillTable on a plain page card', () => {
     const src = fs.readFileSync(
       'app/(protected)/scm/purchase-orders/[id]/components/PoPlanCard.tsx',
       'utf8',

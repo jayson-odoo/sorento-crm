@@ -128,6 +128,8 @@ class SystemSettingUpdate(BaseModel):
     # on, a staff upload goes through Submit/Decide/Return before Apply. Same rule again -
     # must appear here AND in the GET dict below.
     cost_price_verification_enabled: Optional[bool] = None
+    # Sample requests (SR-CORE, card rule 2): soft-transition switch, OFF on deploy. Must appear here, in the GET dict, and in AppConfigResponse below.
+    sample_request_require_project: Optional[bool] = None
     # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
     # again - every one of these must ALSO appear in the GET dict below.
     #
@@ -146,6 +148,9 @@ class SystemSettingUpdate(BaseModel):
     media_image_provider: Optional[str] = None
     media_image_model: Optional[str] = None
     media_image_degraded_model: Optional[str] = None
+    # The PO / delivery schedule document reader. Blank falls back to the env.
+    document_ai_provider: Optional[str] = None
+    document_ai_model: Optional[str] = None
     media_transcribe_model: Optional[str] = None
     # Voice's own degraded tier. NULL means the voice quota is a hard refusal
     # rather than a degrade - image was measured and is seeded, voice was not.
@@ -194,6 +199,21 @@ class SystemSettingUpdate(BaseModel):
     # above - they must appear HERE and in the GET dict, because both are manual.
     chatbot_business_lane_enabled: Optional[bool] = None
     chatbot_ordering_enabled: Optional[bool] = None
+    # CHAT-SPEED: the direct-ingress switch. A Literal, so a mode outside the three answers
+    # 422 instead of being stored and read as off. Same rule as every block above - it must
+    # appear HERE and in the GET dict, because both are manual.
+    chatbot_direct_ingress_mode: Optional[Literal["off", "contacts", "all"]] = None
+    chatbot_direct_ingress_contacts: Optional[str] = Field(None, max_length=20000)
+    # CLOSED-LISTS-INDEX-MODE: a Literal, so a mode outside the two answers 422. Same rule as
+    # every block above - it must appear HERE and in the GET dict, because both are manual.
+    chatbot_closed_lists_mode: Optional[Literal["block", "index"]] = None
+    # CHAT-RELEASE-1021: the stored reply composer switch (default off). Same rule as every
+    # block above - it must appear HERE and in the GET dict, because both are manual.
+    chatbot_composer_enabled: Optional[bool] = None
+    # PARSER-MAX-TOKENS: the parser's answer budget, bounded as `head/parser.PARSER_MAX_TOKENS_RANGE`
+    # (core may not import the chatbot package). Same rule as every block above - it must appear
+    # HERE and in the GET dict, because both are manual.
+    chatbot_parser_max_output_tokens: Optional[int] = Field(None, ge=1024, le=32768)
     # Price tag packages (D2): the product classes a request line is WARNED about
     # when it reaches marketing without its catalogue package. Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
@@ -245,10 +265,13 @@ class AppConfigResponse(BaseModel):
     #: `price_tag_auto_collect_days` is here. A warehouse id, never rendered as text -
     #: only matched against the dialog's own resolved pool options.
     oi_reserve_default_pool_warehouse_id: Optional[str] = None
+    #: SR-CORE: a salesperson's sample request form must know whether to require a
+    #: registered project, and holds no `user_management.settings.view`.
+    sample_request_require_project: bool = False
 
 
 @router.get("/")
-async def get_settings(
+def get_settings(
     current_user: dict = Depends(require_permission("user_management.settings.view")),
     db: Session = Depends(get_db)
 ):
@@ -414,6 +437,9 @@ async def get_settings(
                 "cost_price_verification_enabled": (
                     bool(getattr(settings, "cost_price_verification_enabled", False)) if settings else False
                 ),
+                "sample_request_require_project": (
+                    bool(getattr(settings, "sample_request_require_project", False)) if settings else False
+                ),
                 # Chatbot media. NULL is meaningful for the three model columns:
                 # provider/model inherit the AIAssistantConfig row, and a NULL
                 # degraded model means the monthly quota is a hard stop rather
@@ -427,6 +453,8 @@ async def get_settings(
                 "media_image_provider": getattr(settings, "media_image_provider", None) if settings else None,
                 "media_image_model": getattr(settings, "media_image_model", None) if settings else None,
                 "media_image_degraded_model": getattr(settings, "media_image_degraded_model", None) if settings else None,
+                "document_ai_provider": getattr(settings, "document_ai_provider", None) if settings else None,
+                "document_ai_model": getattr(settings, "document_ai_model", None) if settings else None,
                 "media_transcribe_model": getattr(settings, "media_transcribe_model", "whisper-1") if settings else None,
                 "media_voice_degraded_model": getattr(settings, "media_voice_degraded_model", None) if settings else None,
                 "media_language_mode": getattr(settings, "media_language_mode", "pinned") if settings else None,
@@ -463,6 +491,11 @@ async def get_settings(
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
+                "chatbot_direct_ingress_mode": getattr(settings, "chatbot_direct_ingress_mode", None) or "off" if settings else None,
+                "chatbot_direct_ingress_contacts": getattr(settings, "chatbot_direct_ingress_contacts", None) if settings else None,
+                "chatbot_closed_lists_mode": getattr(settings, "chatbot_closed_lists_mode", None) or "block" if settings else None,
+                "chatbot_composer_enabled": bool(getattr(settings, "chatbot_composer_enabled", False)) if settings else None,
+                "chatbot_parser_max_output_tokens": getattr(settings, "chatbot_parser_max_output_tokens", None) or 8192 if settings else None,
                 "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
                 # PLAN-oi-request-cs-reserve.md section 6c (F1): BOTH manual builders,
                 # or the setting never reaches the General settings screen at all.
@@ -482,7 +515,7 @@ async def get_settings(
 # Declared immediately after `GET /` and ahead of every other GET in this file so a
 # path-parameter route added later (e.g. `/{section}`) cannot shadow this static path.
 @router.get("/app-config", response_model=AppConfigResponse)
-async def get_app_config(
+def get_app_config(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -529,6 +562,9 @@ async def get_app_config(
                 getattr(settings, "oi_reserve_default_pool_warehouse_id", None)
                 if settings
                 else None
+            ),
+            sample_request_require_project=bool(
+                getattr(settings, "sample_request_require_project", False)
             ),
         )
     except Exception as e:
@@ -660,7 +696,7 @@ def _runtime_settings_body(db: Session) -> dict:
 
 
 @router.get("/runtime")
-async def get_runtime_settings(
+def get_runtime_settings(
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
 ):
@@ -669,7 +705,7 @@ async def get_runtime_settings(
 
 
 @router.put("/runtime")
-async def update_runtime_settings(
+def update_runtime_settings(
     payload: Any = Body(...),
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
@@ -713,7 +749,7 @@ def _completed_lane_vocabulary() -> frozenset[str]:
 
 
 @router.get("/chatbot-lanes", response_model=List[ChatbotLane])
-async def get_chatbot_lanes(
+def get_chatbot_lanes(
     current_user: dict = Depends(require_permission("user_management.settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -893,6 +929,14 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 if model_col not in update_data:
                     update_data[model_col] = None
 
+    # The document reader: same rule, same reason.
+    if "document_ai_provider" in update_data:
+        new_provider = (update_data["document_ai_provider"] or "").strip() or None
+        update_data["document_ai_provider"] = new_provider
+        old_provider = (getattr(settings, "document_ai_provider", None) or "").strip() or None
+        if new_provider != old_provider and "document_ai_model" not in update_data:
+            update_data["document_ai_model"] = None
+
     # Chatbot media: the pair has to hold together, and the per-field ge/le on
     # SystemSettingUpdate cannot express a relationship between two fields. An
     # extraction ceiling below the synchronous wait would kill a job mid-flight at
@@ -1012,6 +1056,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "borrow_from_order_enabled": False,
         "chatbot_business_lane_enabled": False,
         "chatbot_ordering_enabled": False,
+        "chatbot_direct_ingress_mode": "off",
+        "chatbot_closed_lists_mode": "block",
+        "chatbot_composer_enabled": False,
+        # Repeats SystemSetting.chatbot_parser_max_output_tokens' own default (app/models/user.py).
+        "chatbot_parser_max_output_tokens": 8192,
         # A7 (chatbot-growth-r1): repeats SystemSetting.chatbot_crossdomain_ladder's own
         # default (app/models/user.py).
         "chatbot_crossdomain_ladder": {
@@ -1055,6 +1104,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         != bool(getattr(settings, "cost_price_verification_enabled", False))
     )
 
+    # NOT NULL booleans: an explicit null would 500 at commit, so it reads as "off".
+    for column in ("sample_request_require_project",):
+        if column in update_data and update_data[column] is None:
+            update_data[column] = False
+
     for key, value in update_data.items():
         setattr(settings, key, value)
 
@@ -1076,11 +1130,16 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 
     db.commit()
     db.refresh(settings)
+    if "chatbot_composer_enabled" in update_data:
+        from app.modules.chatbot.lane_vocabulary import clear_composer_cache
+
+        # The gate caches the stored switch per process; this process sees the flip now.
+        clear_composer_cache()
     return {"message": "General settings updated successfully", "data": _row_without_secrets(settings)}
 
 
 @router.put("/general", status_code=status.HTTP_200_OK)
-async def update_general_settings(
+def update_general_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1108,7 +1167,7 @@ async def update_general_settings(
 
 
 @router.post("/general", status_code=status.HTTP_200_OK)
-async def update_general_settings_post(
+def update_general_settings_post(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1128,7 +1187,7 @@ async def update_general_settings_post(
 
 
 @router.put("/social", status_code=status.HTTP_200_OK)
-async def update_social_settings(
+def update_social_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1159,7 +1218,7 @@ async def update_social_settings(
 
 
 @router.put("/notifications", status_code=status.HTTP_200_OK)
-async def update_notification_settings(
+def update_notification_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1193,7 +1252,7 @@ async def update_notification_settings(
 
 
 @router.put("/smtp", status_code=status.HTTP_200_OK)
-async def update_smtp_settings(
+def update_smtp_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
@@ -1227,7 +1286,7 @@ async def update_smtp_settings(
 
 
 @router.post("/smtp/test", status_code=status.HTTP_200_OK, response_model=SmtpTestResult)
-async def test_smtp_connection(
+def test_smtp_connection(
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
 ):

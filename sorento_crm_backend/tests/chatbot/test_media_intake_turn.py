@@ -255,6 +255,10 @@ def media_pipeline(monkeypatch, session_factory):
         def calls(self) -> list[Any]:
             return calls
 
+        @property
+        def monkeypatch(self):
+            return monkeypatch
+
     return _Controller()
 
 
@@ -726,14 +730,72 @@ class TestFailedAndPendingArms:
         media_pipeline.set_result(error=RuntimeError("provider timed out"))
         stub_access()
 
+        # No caption: nothing to fall back on, so today's denial stands (owner
+        # ruling 27 Oct; the captioned case is TestCaptionFallback below).
         with _patch.object(parser_mod, "parse", lambda *a, **k: {}):
             result = engine_mod.run_turn(
-                _image_envelope(caption="Check stock", contact_id=contact_id), session_factory=session_factory
+                _image_envelope(caption=None, contact_id=contact_id), session_factory=session_factory
             )
 
         assert (result.reply or {}).get("text") == wording.nothing_read()
         row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
         assert row.status == "failed"
+
+    def test_completed_image_read_with_nothing_on_it_replies_nothing_read(
+        self, session_factory, stub_parser, stub_access, media_pipeline
+    ):
+        """24 Oct incident: a photo turn 'completed' with 0 items and no caption, and
+        the parser then ran on empty text (check_stock, 0 entities). An empty read
+        now closes on the existing nothing-read wording; the parser is never called."""
+        from app.services.media_extract import wording
+
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(
+            {
+                "rendered_text": None,
+                "entities": [],
+                "attributes": [],
+                "notes": "The image file appears corrupted or unreadable.",
+                "truncated": False,
+                "needs_clarification": False,
+            }
+        )
+        parser_calls: list[str] = []
+        stub_parser(on_call=parser_calls.append)
+        stub_access()
+
+        result = engine_mod.run_turn(
+            _image_envelope(caption=None, contact_id=contact_id), session_factory=session_factory
+        )
+
+        assert (result.reply or {}).get("text") == wording.nothing_read()
+        assert parser_calls == [], "the parser must not run on an empty photo read"
+        stage = _media_intake_stage(_trace_of(session_factory, result.turn_id))
+        assert (stage.get("facts") or {}).get("status") == "completed"
+
+    def test_completed_image_read_with_only_a_caption_still_parses_the_caption(
+        self, session_factory, stub_parser, stub_access, media_pipeline
+    ):
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(
+            {"rendered_text": "check stock please", "entities": [], "attributes": []}
+        )
+        parser_calls: list[str] = []
+        stub_parser(on_call=parser_calls.append)
+        stub_access()
+
+        engine_mod.run_turn(
+            _image_envelope(caption="check stock please", contact_id=contact_id),
+            session_factory=session_factory,
+        )
+
+        assert len(parser_calls) == 1
 
     def test_pending_after_the_wait_replies_the_timeout_sentence(
         self, session_factory, stub_access, media_pipeline
@@ -758,6 +820,143 @@ class TestFailedAndPendingArms:
         )
         row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
         assert row.status == "failed"
+
+
+class TestCaptionFallback:
+    """Owner ruling 27 Oct (MEDIA-JSON-TOLERANT option B): a photo read that fails or
+    reads nothing, on a turn whose photo carries a caption, continues the turn with the
+    caption as the message text through the normal parser path. No media-denied reply,
+    no "could not read" line, no new wording. No caption keeps today's denial."""
+
+    def _run(self, session_factory, stub_parser, stub_access, media_pipeline, *, caption, **result_kw):
+        from app.services.ai_assistant_service import MCPRuntimeClient
+
+        # The answering arm's CRM read: recorded, answered empty (no real MCP server).
+        self.tool_calls: list[str] = []
+
+        def _call_tool(client, name, args):
+            self.tool_calls.append(name)
+            return json.dumps({"ok": True, "items": []})
+
+        media_pipeline.monkeypatch.setattr(MCPRuntimeClient, "call_tool", _call_tool)
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(**result_kw)
+        blocks: list[str] = []
+        stub_parser(
+            _parser_output(
+                intent_hint="check_stock",
+                entities=[
+                    {
+                        "raw": "SRTKS6547",
+                        "hint": "product",
+                        "canonical_code": None,
+                        "current_message": True,
+                        "confident": True,
+                    }
+                ],
+            ),
+            on_call=blocks.append,
+        )
+        stub_access()
+        result = engine_mod.run_turn(
+            _image_envelope(caption=caption, contact_id=contact_id), session_factory=session_factory
+        )
+        return result, blocks
+
+    def test_failed_read_with_a_caption_answers_from_the_caption(
+        self, session_factory, stub_parser, stub_access, media_pipeline
+    ):
+        from app.services.media_extract import wording
+        from app.services.media_extract.service import MediaExtractionError
+
+        result, blocks = self._run(
+            session_factory,
+            stub_parser,
+            stub_access,
+            media_pipeline,
+            caption="SRTKS6547",
+            error=MediaExtractionError("The vision model returned a non-object JSON value."),
+        )
+
+        assert len(blocks) == 1, "the caption never reached the parser"
+        assert "SRTKS6547" in blocks[0], blocks[0]
+        assert result.branch_kind != "media_denied"
+        assert self.tool_calls, "the turn never reached the answering arm's CRM read"
+        reply = (result.reply or {}).get("text") or ""
+        assert reply, "the turn answered nothing"
+        assert wording.nothing_read() not in reply, reply
+        assert "could not read" not in reply.lower(), reply
+        stage = _media_intake_stage(_trace_of(session_factory, result.turn_id))
+        facts = stage.get("facts") or {}
+        assert facts.get("status") == "failed"
+        assert facts.get("caption_fallback") is True
+        assert "non-object JSON" in (facts.get("extraction_error") or "")
+
+    def test_empty_read_with_a_caption_answers_from_the_caption_with_no_nothing_read_line(
+        self, session_factory, stub_parser, stub_access, media_pipeline
+    ):
+        from app.services.media_extract import wording
+
+        result, blocks = self._run(
+            session_factory,
+            stub_parser,
+            stub_access,
+            media_pipeline,
+            caption="SRTKS6547",
+            result={
+                "rendered_text": "SRTKS6547",
+                "confirmation_message": wording.nothing_read(),
+                "entities": [],
+                "attributes": [],
+            },
+        )
+
+        assert len(blocks) == 1
+        assert "SRTKS6547" in blocks[0], blocks[0]
+        assert result.branch_kind != "media_denied"
+        reply = (result.reply or {}).get("text") or ""
+        assert reply
+        assert wording.nothing_read() not in reply, reply
+
+    def test_failed_read_without_a_caption_still_denies(
+        self, session_factory, stub_parser, stub_access, media_pipeline
+    ):
+        from app.services.media_extract import wording
+
+        result, blocks = self._run(
+            session_factory,
+            stub_parser,
+            stub_access,
+            media_pipeline,
+            caption=None,
+            error=RuntimeError("The vision model returned a non-object JSON value."),
+        )
+
+        assert blocks == []
+        assert self.tool_calls == []
+        assert result.branch_kind == "media_denied"
+        assert (result.reply or {}).get("text") == wording.nothing_read()
+
+    def test_whitespace_caption_is_no_caption(
+        self, session_factory, stub_parser, stub_access, media_pipeline
+    ):
+        from app.services.media_extract import wording
+
+        result, blocks = self._run(
+            session_factory,
+            stub_parser,
+            stub_access,
+            media_pipeline,
+            caption="   ",
+            error=RuntimeError("boom"),
+        )
+
+        assert blocks == []
+        assert result.branch_kind == "media_denied"
+        assert (result.reply or {}).get("text") == wording.nothing_read()
 
 
 class TestQuotaWarnNoticeAppended:

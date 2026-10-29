@@ -232,14 +232,15 @@ def _live_projects(db: Session, company_id: str) -> List[Project]:
     It does NOT follow that a lost project contributes nothing to COMMITTED: see
     `_projects_for_committed`.
     """
-    return (
-        db.query(Project)
-        .filter(
+    from app.services.project_service import approved_projects
+
+    # A pending estimate is not pipeline yet (PROJECT-REG-PORTAL R4, flagged to the owner).
+    return approved_projects(
+        db.query(Project).filter(
             Project.company_id == company_id,
             Project.outcome.notin_([OUTCOME_LOST]),
         )
-        .all()
-    )
+    ).all()
 
 
 def _lost_projects_with_committed_money(db: Session, company_id: str) -> List[Project]:
@@ -363,9 +364,14 @@ def conversion(db: Session, *, company_id: str) -> Dict[str, Any]:
     ``rate`` is None rather than 0 with nothing decided: 0% says we lose everything, which is
     a different and much worse claim than "we have not finished anything yet".
     """
+    from app.services.project_service import approved_projects
+
     rows = (
-        db.query(Project.outcome, func.count(Project.id))
-        .filter(Project.company_id == company_id)
+        approved_projects(
+            db.query(Project.outcome, func.count(Project.id)).filter(
+                Project.company_id == company_id
+            )
+        )
         .group_by(Project.outcome)
         .all()
     )

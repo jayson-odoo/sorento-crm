@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import permission_slugs
 from app.api.v1.projects.quotations import _notify_breaches
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import require_any_permission_with_api_key, require_permission
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
     ProjectQuotationDocumentCreate,
@@ -51,6 +51,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 # S16: the sales-manager grant on below-floor pricing. The whole access control on that
@@ -82,12 +86,13 @@ def _issue_or_404(db: Session, document, issue_id: str):
     return record
 
 
-def _editable_project(db: Session, project_id: str, current_user: dict):
+def _editable_project(db: Session, project_id: str, current_user: dict, *, write: bool = True):
+    """`write=False` for a read behind the edit right (the letter templates): it does not
+    need the project approved, only the right to work it."""
     validate_uuid_path(project_id, resource="Project")
     project = projects.get_project_or_404(db, project_id)
-    projects.assert_can_edit_project(
-        db, project, current_user["id"], permission_slugs(db, current_user["id"])
-    )
+    check = projects.assert_can_write_project if write else projects.assert_can_edit_project
+    check(db, project, current_user["id"], permission_slugs(db, current_user["id"]))
     return project
 
 
@@ -98,9 +103,9 @@ def _editable_project(db: Session, project_id: str, current_user: dict):
     "/projects/{project_id}/quotation-documents",
     response_model=ListResponse[ProjectQuotationDocumentResponse],
 )
-async def list_quotation_documents(
+def list_quotation_documents(
     project_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -116,7 +121,7 @@ async def list_quotation_documents(
     response_model=ProjectQuotationDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_quotation_document(
+def create_quotation_document(
     project_id: str,
     payload: ProjectQuotationDocumentCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -144,7 +149,7 @@ async def create_quotation_document(
 
 
 @router.get("/projects/{project_id}/quotation-documents/letter-templates")
-async def get_quotation_letter_templates(
+def get_quotation_letter_templates(
     project_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -152,7 +157,7 @@ async def get_quotation_letter_templates(
     """The company's cover letter and terms for the create form's own tabs (#1341). Declared
     before ``/{document_id}`` so the literal segment is not read as a document id."""
     try:
-        project = _editable_project(db, project_id, current_user)
+        project = _editable_project(db, project_id, current_user, write=False)
         return svc.letter_templates(db, project=project)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -162,10 +167,10 @@ async def get_quotation_letter_templates(
     "/projects/{project_id}/quotation-documents/{document_id}",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def get_quotation_document(
+def get_quotation_document(
     project_id: str,
     document_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -184,7 +189,7 @@ async def get_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def update_quotation_document(
+def update_quotation_document(
     project_id: str,
     document_id: str,
     payload: ProjectQuotationDocumentUpdate,
@@ -247,7 +252,7 @@ async def update_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_quotation_document(
+def delete_quotation_document(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
@@ -274,7 +279,7 @@ async def delete_quotation_document(
     response_model=ProjectQuotationScopeSummary,
     status_code=status.HTTP_201_CREATED,
 )
-async def add_quotation_scope(
+def add_quotation_scope(
     project_id: str,
     document_id: str,
     payload: ProjectQuotationScopeCreate,
@@ -306,7 +311,7 @@ async def add_quotation_scope(
     "/projects/{project_id}/quotation-documents/{document_id}/scopes/{quotation_id}",
     response_model=ProjectQuotationScopeSummary,
 )
-async def update_quotation_scope(
+def update_quotation_scope(
     project_id: str,
     document_id: str,
     quotation_id: str,
@@ -336,10 +341,10 @@ async def update_quotation_scope(
     "/projects/{project_id}/quotation-documents/{document_id}/issues",
     response_model=ListResponse[ProjectQuotationIssueResponse],
 )
-async def list_quotation_issues(
+def list_quotation_issues(
     project_id: str,
     document_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -358,7 +363,7 @@ async def list_quotation_issues(
     response_model=ProjectQuotationIssueResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def issue_quotation_document(
+def issue_quotation_document(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -387,8 +392,8 @@ async def issue_quotation_document(
 
 
 @router.get("/quotation-approval-graph", response_model=StatusGraphResponse)
-async def get_quotation_approval_graph(
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+def get_quotation_approval_graph(
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The `quotation` approval graph, readable by anyone who can see a project.
@@ -420,7 +425,7 @@ async def get_quotation_approval_graph(
     "/projects/{project_id}/quotation-documents/{document_id}/approval-status",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def move_quotation_approval(
+def move_quotation_approval(
     project_id: str,
     document_id: str,
     payload: QuotationApprovalMoveRequest,
@@ -459,7 +464,7 @@ async def move_quotation_approval(
     "/projects/{project_id}/quotation-documents/{document_id}/approve",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def approve_quotation_document(
+def approve_quotation_document(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_permission(APPROVE)),
@@ -496,7 +501,7 @@ async def approve_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}/reject",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def reject_quotation_document(
+def reject_quotation_document(
     project_id: str,
     document_id: str,
     payload: QuotationRejectRequest,
@@ -536,7 +541,7 @@ async def reject_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}/approval-revise",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def revise_quotation_approval(
+def revise_quotation_approval(
     project_id: str,
     document_id: str,
     payload: QuotationReviseRequest,
@@ -548,7 +553,7 @@ async def revise_quotation_approval(
         validate_uuid_path(document_id, resource="Quotation")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
-        was_pending = approvals.current_key(db, document) == approvals.STATUS_PENDING
+        was_pending = approvals.current_key(db, document) in approvals.AWAITING_KEYS
         approvals.revise_approval(db, document, current_user["id"], payload.reason)
         reason = " ".join((payload.reason or "").split())
         db.commit()
@@ -569,7 +574,7 @@ async def revise_quotation_approval(
     response_model=QuotationSignatureResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def sign_quotation_document(
+def sign_quotation_document(
     project_id: str,
     document_id: str,
     payload: QuotationSignatureRequest,
@@ -604,7 +609,7 @@ async def sign_quotation_document(
 @router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/sign-link",
 )
-async def create_quotation_sign_link(
+def create_quotation_sign_link(
     project_id: str,
     document_id: str,
     issue_id: str,
@@ -640,11 +645,11 @@ async def create_quotation_sign_link(
 @router.get(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf",
 )
-async def download_quotation_issue_pdf(
+def download_quotation_issue_pdf(
     project_id: str,
     document_id: str,
     issue_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The issued quotation, as the customer received it, rendered inline in this request.
@@ -697,11 +702,11 @@ async def download_quotation_issue_pdf(
 @router.get(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx",
 )
-async def download_quotation_issue_xlsx(
+def download_quotation_issue_xlsx(
     project_id: str,
     document_id: str,
     issue_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The same issued quotation as a workbook, one sheet per scope (AC-F2).
@@ -806,11 +811,11 @@ def _queue_issue_export(
 @router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/pdf",
 )
-async def queue_quotation_issue_pdf(
+def queue_quotation_issue_pdf(
     project_id: str,
     document_id: str,
     issue_id: str,
-    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Queue the issued quotation's PDF; it appears in My Downloads when it is ready.
@@ -838,11 +843,11 @@ async def queue_quotation_issue_pdf(
 @router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/xlsx",
 )
-async def queue_quotation_issue_xlsx(
+def queue_quotation_issue_xlsx(
     project_id: str,
     document_id: str,
     issue_id: str,
-    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Queue the issued quotation's workbook; it appears in My Downloads when it is ready."""

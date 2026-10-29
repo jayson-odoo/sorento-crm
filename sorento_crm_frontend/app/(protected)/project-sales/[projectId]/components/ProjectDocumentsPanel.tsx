@@ -5,6 +5,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Eye, Trash2, Upload } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -31,6 +32,7 @@ import {
 } from '../../_shared/services/projectDocumentService';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import type { Project } from '../../_shared/types/project.types';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 /**
  * Tender documents and drawings on this project.
@@ -52,6 +54,9 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
   const [uploading, setUploading] = React.useState(false);
   const [deleting, setDeleting] = React.useState<ProjectDocument | null>(null);
   const [previewIndex, setPreviewIndex] = React.useState<number | null>(null);
+  // Delete goes through the library's single delete, which the server gates on this slug.
+  const holdsDelete = useHasPermission('resource.attachments.delete');
+  const canDelete = project.can_edit && holdsDelete;
 
   const documents = useQuery({
     queryKey: ['project-documents', project.id],
@@ -181,7 +186,7 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
                 <Download className="size-3.5" />
               </a>
             </Button>
-            {project.can_edit && (
+            {canDelete && (
               <Button
                 mode="icon"
                 variant="ghost"
@@ -199,7 +204,7 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [project.can_edit],
+    [canDelete],
   );
 
   return (
@@ -207,7 +212,7 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
       <PanelDataGrid
         title="Documents"
         toolbar={
-          project.can_edit ? (
+          canWorkOnProject(project) ? (
             <Button type="button" size="sm" onClick={() => setUploading(true)}>
               <Upload className="size-4" aria-hidden />
               Upload documents

@@ -19,19 +19,23 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import ListResponse
 from app.schemas.project_schedule import (
+    AreaDateChange,
+    AreaDateChangeResponse,
     DeliveryScheduleDeleteResponse,
     DeliveryScheduleListRow,
     DeliveryScheduleUploadResponse,
     DeliveryScheduleVersionListRow,
     DeliveryScheduleVersionResponse,
+    POProgressResponse,
     ScheduleCellsUpdate,
     ScheduleColumnDismiss,
     ScheduleConfirmRequest,
     ScheduleProductResolve,
 )
+from app.services import project_po_progress_service as progress_svc
 from app.services import project_po_service as po_svc
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
@@ -43,6 +47,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 
 # A schedule is a PDF or a photograph of one. Anything else is a person uploading the
@@ -70,7 +78,7 @@ def _schedule_for_edit(db: Session, schedule_id: str, current_user: dict):
     service = _service(db)
     schedule = service.get_schedule(schedule_id)
     project = projects.get_project_or_404(db, schedule.project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
     return schedule
@@ -84,7 +92,7 @@ def _version_for_edit(db: Session, version_id: str, current_user: dict):
     version = service.get_version(version_id)
     schedule = service.schedule_for(version)
     project = projects.get_project_or_404(db, schedule.project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
     return version
@@ -94,9 +102,9 @@ def _version_for_edit(db: Session, version_id: str, current_user: dict):
     "/projects/{project_id}/delivery-schedules",
     response_model=ListResponse[DeliveryScheduleListRow],
 )
-async def list_project_delivery_schedules(
+def list_project_delivery_schedules(
     project_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Where a person starts: the schedules on this project, each with its latest
@@ -113,9 +121,9 @@ async def list_project_delivery_schedules(
     "/delivery-schedules/{schedule_id}/versions",
     response_model=ListResponse[DeliveryScheduleVersionListRow],
 )
-async def list_delivery_schedule_versions(
+def list_delivery_schedule_versions(
     schedule_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The revision history, newest first. R1 and R2 are two documents of one
@@ -132,7 +140,7 @@ async def list_delivery_schedule_versions(
     response_model=DeliveryScheduleUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def upload_delivery_schedule(
+def upload_delivery_schedule(
     po_id: str,
     file: UploadFile = File(...),
     issuer_party_id: Optional[str] = Form(None),
@@ -158,11 +166,11 @@ async def upload_delivery_schedule(
         validate_uuid_path(po_id, resource="Purchase order")
         po = po_svc.get_po(db, po_id)
         project = projects.get_project_or_404(db, po.project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
 
-        content = await file.read()
+        content = file.file.read()
         mime = (file.content_type or "").lower().split(";")[0].strip()
         if mime not in ALLOWED_MIMES:
             raise AppException(
@@ -232,9 +240,9 @@ def _page_count(content: bytes, mime: str) -> Optional[int]:
     "/delivery-schedule-versions/{version_id}",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def get_delivery_schedule_version(
+def get_delivery_schedule_version(
     version_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The whole grid plus its verdict, per column. Reconciliation is never per
@@ -251,7 +259,7 @@ async def get_delivery_schedule_version(
     "/delivery-schedule-versions/{version_id}/retry-extraction",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def retry_delivery_schedule_extraction(
+def retry_delivery_schedule_extraction(
     version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -276,7 +284,7 @@ async def retry_delivery_schedule_extraction(
     "/delivery-schedule-versions/{version_id}/cells",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def update_delivery_schedule_cells(
+def update_delivery_schedule_cells(
     version_id: str,
     payload: ScheduleCellsUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -301,7 +309,7 @@ async def update_delivery_schedule_cells(
     "/delivery-schedule-versions/{version_id}/products/{product_index}",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def resolve_delivery_schedule_product(
+def resolve_delivery_schedule_product(
     version_id: str,
     product_index: int,
     payload: ScheduleProductResolve,
@@ -330,7 +338,7 @@ async def resolve_delivery_schedule_product(
     "/delivery-schedule-versions/{version_id}/columns/{column_index}/dismissal",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def dismiss_delivery_schedule_column(
+def dismiss_delivery_schedule_column(
     version_id: str,
     column_index: int,
     payload: ScheduleColumnDismiss,
@@ -364,7 +372,7 @@ async def dismiss_delivery_schedule_column(
     "/delivery-schedule-versions/{version_id}/confirm",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def confirm_delivery_schedule_version(
+def confirm_delivery_schedule_version(
     version_id: str,
     payload: Optional[ScheduleConfirmRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -397,7 +405,7 @@ async def confirm_delivery_schedule_version(
     "/delivery-schedule-versions/{version_id}/revision-proposals/{index}/accept",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def accept_revision_proposal(
+def accept_revision_proposal(
     version_id: str,
     index: int,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -422,7 +430,7 @@ async def accept_revision_proposal(
     "/delivery-schedule-versions/{version_id}/revision-proposals/{index}/reject",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def reject_revision_proposal(
+def reject_revision_proposal(
     version_id: str,
     index: int,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -447,7 +455,7 @@ async def reject_revision_proposal(
     "/delivery-schedules/{schedule_id}",
     response_model=DeliveryScheduleDeleteResponse,
 )
-async def delete_delivery_schedule(
+def delete_delivery_schedule(
     schedule_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -475,7 +483,7 @@ async def delete_delivery_schedule(
     "/delivery-schedule-versions/{version_id}",
     response_model=DeliveryScheduleDeleteResponse,
 )
-async def delete_delivery_schedule_version(
+def delete_delivery_schedule_version(
     version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -492,6 +500,73 @@ async def delete_delivery_schedule_version(
         deleted = service.delete_schedule_version(version.id)
         db.commit()
         return {"success": True, "deleted": deleted}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ------------------------------------------------------------- PM-SIMPLIFY progress
+
+
+@router.get(
+    "/purchase-orders/{po_id}/progress",
+    response_model=POProgressResponse,
+)
+def get_purchase_order_progress(
+    po_id: str,
+    _user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """Per PO line: ordered, scheduled, delivered (AutoCount), outstanding; per area of
+    the confirmed schedule: date, units, delivered, sales orders (AC-L1, AC-D1)."""
+    try:
+        validate_uuid_path(po_id, resource="Purchase order")
+        po = po_svc.get_po(db, po_id)
+        projects.get_project_or_404(db, po.project_id)
+        return progress_svc.po_progress(db, po)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/delivery-phases/{phase_id}/date",
+    response_model=AreaDateChangeResponse,
+)
+def change_delivery_area_date(
+    phase_id: str,
+    payload: AreaDateChange,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Move one area's delivery date (Q2a). Draft sales order lines on the area follow in
+    the same transaction; a published order gets an amendment proposed, never a rewrite.
+    `restore_lines` is Undo."""
+    try:
+        validate_uuid_path(phase_id, resource="Delivery area")
+        if payload.delivery_date is None and payload.restore_lines is None:
+            raise AppException(
+                status_code=422,
+                message="Pick the new delivery date.",
+                code="area_date_required",
+            )
+        phase = progress_svc.get_phase(db, phase_id)
+        project = projects.get_project_or_404(db, phase.project_id)
+        projects.assert_can_write_project(
+            db, project, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+        body = progress_svc.change_area_date(
+            db,
+            phase,
+            delivery_date=payload.delivery_date,
+            actor_user_id=current_user["id"],
+            restore_lines=(
+                [row.model_dump() for row in payload.restore_lines]
+                if payload.restore_lines is not None
+                else None
+            ),
+        )
+        db.commit()
+        return body
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

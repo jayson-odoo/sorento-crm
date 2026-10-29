@@ -7,6 +7,8 @@
  */
 
 import type { PlanningChangeFromTo } from '@/app/(protected)/project-sales/_shared/types/planningChange.types';
+import type { LineSplitView } from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
+import type { LineSplitsPayload } from '@/app/(protected)/project-sales/_shared/types/lineSplit.types';
 import type { CancelSource } from '../lib/autocountCancel';
 
 /** Health-state vocabulary. Backend-real: stockout (rendered "Out of stock"), dead,
@@ -265,6 +267,9 @@ export type SalesOrderStatus =
 
 export interface SalesOrderLine {
   id: string;
+  /** FULFIL-SO-REMARK: the line reads as a mockup line; `mockup_label` = wear the badge. */
+  is_mockup?: boolean;
+  mockup_label?: boolean;
   /** AC-CONSIGN-CRM: what a Consignment Return handed back; reporting only. */
   qty_returned?: number;
   /**
@@ -317,6 +322,9 @@ export interface SalesOrderLine {
    * more queries a page for a fact nothing there prints.
    */
   order_inquiry?: SalesOrderLineInquiry | null;
+  /** OI-SPLIT-VIEW (UAC B1): the split popup of this line's planning mirror; null when the
+   * line has no splits or no project order. Single order read only. */
+  split_view?: LineSplitView | null;
   /**
    * Which confirmed revision decided supply for this line: the ACTIVE decision's
    * `revision_no` when its frozen snapshots cover the line, `null` otherwise. A line
@@ -500,6 +508,11 @@ export interface SalesOrder {
   line_count?: number;
   open_line_count?: number;
   lines: SalesOrderLine[];
+  /**
+   * OI-SPLIT-VIEW (UAC E5): the order's split sheet (`GET .../line-splits` payload) for the
+   * read-only split popups; null when no line is split. Single read only.
+   */
+  line_splits?: LineSplitsPayload | null;
   /** Where the order came from - it decides who may edit its figures. `inquiry` = the Order
    *  Inquiry sheet created it, `upload` = CS's outstanding extract, `manual` = keyed in. */
   source?: SalesOrderSource;
@@ -514,11 +527,14 @@ export interface SalesOrder {
   project_label_source?: 'inquiry' | 'note' | 'ref' | 'delivery' | null;
   /** The customer's own PO number as AutoCount printed it; read-only, null when blank. */
   po_ref?: string | null;
+  /** FULFIL-SO-REMARK: AutoCount Shipping Info, and the default SO remark over all lines. */
+  ship_info?: string | null;
+  remark?: string;
   /** Every distinct location its lines ship from. Plural: one order can land in two. */
   stock_locations?: string[];
   /** The planning class this order was classified into, or `null` when nobody has ever
    *  said. Distinct from `order_type_label` - see `lib/demandClass.ts`. */
-  demand_class?: 'project' | 'retail' | null;
+  demand_class?: 'project' | 'retail' | 'other' | null;
   /** AutoCount's `Transferable` flag, read-only (AutoCount owns it). `false` = not confirmed
    *  for the queue yet, so Stock Debt and the fulfilment ladder skip the order; `null` = the
    *  source never said (counted). */
@@ -711,6 +727,20 @@ export interface PurchaseOrderLine {
   /** True when the book named a sales order this CRM does not hold. Three display states,
    *  not two - see `BookSoCell`. */
   book_so_unresolved?: boolean | null;
+  /** LINKAGE-UNIFY U4: every SPO line this line was transferred onto, with where its goods
+   *  landed or why it brings nothing. Filled on the detail read; the list leaves it empty. */
+  spos?: PurchaseOrderLineSpo[];
+  /** `po_cancelled` when the line itself brings nothing; the SPO cell draws the red pill. */
+  dead_reason?: 'po_cancelled' | null;
+}
+
+/** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto (same shape as the order
+ *  inquiry PO popup's own). */
+export interface PurchaseOrderLineSpo {
+  spo_number: string | null;
+  line_label: string | null;
+  receipts: { qty: string; bin: string | null }[];
+  dead_reason: 'po_cancelled' | 'spo_withdrawn' | null;
 }
 
 /**
@@ -930,6 +960,11 @@ export interface SoLineDeliveryRow {
   qty: number;
 }
 
+/** A DO line naming the SO whose product is on no line of it: it names its own SKU. */
+export interface SoOtherDeliveryRow extends SoLineDeliveryRow {
+  sku: string | null;
+}
+
 /** One Cancel SO line placed under a sales-order line; `qty` is null for `group_whole`. */
 export interface SoLineCancelRow {
   doc_no: string;
@@ -956,4 +991,6 @@ export interface SoProductGroupHistory {
 export interface SalesOrderDeliveries {
   lines: SoLineHistory[];
   groups: SoProductGroupHistory[];
+  /** DO lines naming this SO whose product is on no line of it (DO-SO-LINK-SURFACE). */
+  others?: SoOtherDeliveryRow[];
 }

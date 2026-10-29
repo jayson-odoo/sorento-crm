@@ -16,6 +16,7 @@ from fastapi import APIRouter, Body, Depends, Query, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_values
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.product import Product, ProductAttachment
@@ -1171,7 +1172,7 @@ def list_recommendations(
     sort: Optional[str] = Query(None),
     dir: str = Query("asc"),
     query: Optional[str] = Query(None),
-    type: Optional[str] = Query(None),  # buy | covered | disposition | exception | needs_level
+    type: Optional[list[str]] = Query(None),  # buy | covered | disposition | exception | needs_level; several = any
     budget: Optional[float] = Query(None, ge=0),  # M4 - live funding what-if
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
@@ -1188,9 +1189,10 @@ def list_recommendations(
 
     where = ["rr.run_id = :rid"]
     params: dict[str, Any] = {"rid": run_id}
-    if type in ("buy", "covered", "disposition", "exception", "needs_level"):
-        where.append("rr.rec_type = :type")
-        params["type"] = type
+    rec_types = [t for t in (multi_values(type) or []) if t in ("buy", "covered", "disposition", "exception", "needs_level")]
+    if rec_types:
+        where.append("rr.rec_type = ANY(:types)")
+        params["types"] = rec_types
     if query:
         where.append("(p.product_code ILIKE :q OR p.product_name ILIKE :q)")
         params["q"] = f"%{query}%"

@@ -42,6 +42,7 @@ import {
   Package,
   Users as PeopleIcon,
   Plug,
+  Receipt,
   Settings,
   Share2,
   Shield,
@@ -135,6 +136,31 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'sales.reports.view',
         moduleKey: 'sales',
       },
+      {
+        title: 'Sales by debtor type',
+        path: '/sales/sales-by-debtor-type',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Top selling items',
+        path: '/sales/top-selling-items',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Sales & outstanding',
+        path: '/sales/sales-and-outstanding',
+        // Invoiced needs the reports slug, unpaid the finance one, the other four the orders slug: any opens the screen.
+        permissionsAny: ['sales.reports.view', 'order_management.orders.view', 'finance.billing_documents.view'],
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Set-apart customers',
+        path: '/sales/set-apart-customers',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
     ],
   },
   {
@@ -166,6 +192,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock Claims',
         path: '/project-sales/stock-claims',
         permission: 'projects.projects.view',
+      },
+      {
+        title: 'Sample Requests',
+        path: '/project-sales/sample-requests',
+        permission: 'projects.sample_requests.view',
       },
       {
         title: 'AutoCount Differences',
@@ -267,6 +298,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'marketing.campaigns.view',
       },
     ],
+  },
+
+  { heading: 'FINANCE' },
+  {
+    // PLAN-finance-billing-documents-27sep S2: AutoCount billing documents, read only.
+    title: 'Billing Documents',
+    icon: Receipt,
+    path: '/finance/billing-documents',
+    permission: 'finance.billing_documents.view',
+    moduleKey: 'finance',
   },
 
   { heading: 'SUPPLY CHAIN' },
@@ -373,6 +414,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'procurement.stock_inquiries.view',
       },
       {
+        title: 'New Product Applications',
+        path: '/procurement-management/new-product-applications',
+        permissionsAny: [
+          'procurement.new_product_applications.view',
+          'procurement.new_product_applications.create',
+          'procurement.new_product_applications.approve',
+          'procurement.new_product_applications.open_code',
+        ],
+      },
+      {
         title: 'Supply Chain',
         children: [
           {
@@ -434,6 +485,19 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock',
         path: '/inventory-management/stock',
         permission: 'inventory.stock.view',
+      },
+      {
+        title: 'Stock status',
+        path: '/inventory-management/stock-status',
+        // The API's own gate (`app/api/v1/inventory/stock_status.py`): the panel shows SO
+        // customers and PO suppliers, which `inventory.stock.view` alone never granted.
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
+      },
+      {
+        title: 'Stock position',
+        path: '/inventory-management/stock-position',
+        // Same gate as Stock status (`app/api/v1/inventory/stock_position.py` reuses its slugs).
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
       },
       {
         title: 'Stock Batches',
@@ -821,6 +885,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Contact Access Types',
             path: '/user-management/contact-access-types',
             permission: 'user_management.access_agents.view',
+          },
+          {
+            title: 'Contact Tags',
+            path: '/user-management/contact-tags',
+            permission: 'user_management.contacts.view',
           },
         ],
       },
@@ -1687,6 +1756,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/contact-access-types',
       },
       {
+        title: 'Contact Tags',
+        path: '/user-management/contact-tags',
+      },
+      {
         title: 'Market Segments',
         path: '/user-management/market-segments',
       },
@@ -1910,6 +1983,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/procurement-management/stock-inquiries',
         permission: 'procurement.stock_inquiries.view',
       },
+      {
+        title: 'New Product Applications',
+        path: '/procurement-management/new-product-applications',
+        permissionsAny: [
+          'procurement.new_product_applications.view',
+          'procurement.new_product_applications.create',
+          'procurement.new_product_applications.approve',
+          'procurement.new_product_applications.open_code',
+        ],
+      },
     ],
   },
   {
@@ -1953,6 +2036,19 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock',
         path: '/inventory-management/stock',
         permission: 'inventory.stock.view',
+      },
+      {
+        title: 'Stock status',
+        path: '/inventory-management/stock-status',
+        // The API's own gate (`app/api/v1/inventory/stock_status.py`): the panel shows SO
+        // customers and PO suppliers, which `inventory.stock.view` alone never granted.
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
+      },
+      {
+        title: 'Stock position',
+        path: '/inventory-management/stock-position',
+        // Same gate as Stock status (`app/api/v1/inventory/stock_position.py` reuses its slugs).
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
       },
       {
         title: 'Stock Batches',
@@ -2045,6 +2141,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        title: 'Sample Requests',
+        path: '/project-sales/sample-requests',
+        permission: 'projects.sample_requests.view',
+      },
+      {
         // Cross-project for the same reason claims are: a reconciliation belongs to one
         // sales order, but the point of the list is that a STACK of unanswered ones is
         // visible to management rather than discovered (AC-N6).
@@ -2117,6 +2218,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'projects.types.view',
       },
     ],
+  },
+  {
+    // PLAN-finance-billing-documents-27sep S2: AutoCount billing documents, read only.
+    title: 'Billing Documents',
+    icon: Receipt,
+    path: '/finance/billing-documents',
+    permission: 'finance.billing_documents.view',
+    moduleKey: 'finance',
   },
   {
     title: 'Marketing Management',

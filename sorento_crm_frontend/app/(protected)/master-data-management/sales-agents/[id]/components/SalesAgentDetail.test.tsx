@@ -358,12 +358,12 @@ describe('SalesAgentDetail - the record header and its tabs', () => {
     expect(panel).toHaveAttribute('data-sales-agent', 'agent-1');
   });
 
-  it('carries exactly four tabs, General first', () => {
+  it('carries exactly five tabs, General first', () => {
     withAgent(agent());
     renderDetail();
 
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent);
-    expect(tabs).toEqual(['General', 'Sales orders', 'Transfers', 'Customers']);
+    expect(tabs).toEqual(['General', 'Sales orders', 'Transfers', 'Customers', 'Class history']);
   });
 
   it('renders every section, with an explicit empty state on the ones with nothing in them', () => {
@@ -416,6 +416,7 @@ describe('SalesAgentDetail - view and edit are the same layout', () => {
       'Sales orders',
       'Transfers',
       'Customers',
+      'Class history',
     ]);
   });
 

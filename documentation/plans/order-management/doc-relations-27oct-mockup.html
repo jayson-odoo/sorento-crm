@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DOC-RELATIONS mock</title>
+<style>
+  :root { --fg:#18181b; --muted:#71717a; --border:#e4e4e7; --primary:#2563eb; --bg:#fff; --soft:#f4f4f5; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; color:var(--fg); background:var(--bg); }
+  main { max-width:1200px; margin:0 auto; padding:16px; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:15px; margin:0 0 8px; }
+  .muted { color:var(--muted); } a { color:var(--primary); font-weight:500; text-decoration:none; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; background:var(--soft); border:1px solid var(--border); }
+  .tabs { display:flex; gap:20px; border-bottom:1px solid var(--border); margin:16px 0; overflow-x:auto; }
+  .tabs span { padding:8px 0; white-space:nowrap; } .tabs .on { border-bottom:2px solid var(--fg); font-weight:600; }
+  .card { border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:14px; }
+  table { width:100%; border-collapse:collapse; table-layout:fixed; } th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  th::after { content:" \2195"; color:var(--muted); font-size:11px; } .r { text-align:right; }
+  .group { margin-bottom:14px; } .group ul { list-style:none; padding:0; margin:0; display:flex; flex-wrap:wrap; gap:6px 18px; }
+  .sep { margin:36px 0 12px; border-top:3px dashed var(--border); padding-top:8px; font-weight:600; color:var(--muted); }
+  .scroll { overflow-x:auto; }
+</style>
+</head>
+<body>
+<main>
+  <p class="muted">Static mock, v2 after owner feedback 15:51 (Related as a sortable table; no sentence above the DO table). for DOC-RELATIONS (27 Oct). Data shaped like SO427775 / DO 202610-3905 / invoice 202610-3905.</p>
+
+  <div class="sep">1. Delivery order detail: /order-management/orders/{id}</div>
+  <h1>202610-3905 <span class="badge">In Transit</span></h1>
+  <div class="muted">DEBTOR-001 &middot; Delivery order date 21 Oct 2026 &middot; AutoCount</div>
+  <div class="tabs"><span>General</span><span>Lines</span><span>Delivery</span><span class="on">Invoices</span><span>Related</span></div>
+  <div class="card scroll">
+    <h2>Invoices</h2>
+    <table><thead><tr><th style="width:130px">Type</th><th style="width:140px">Number</th><th style="width:110px">Date</th><th class="r" style="width:140px">Total</th><th class="r" style="width:140px">Outstanding</th><th style="width:110px">Status</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge">Invoice</span></td><td><a href="#">202610-3905</a></td><td>22 Oct 2026</td><td class="r">MYR 1,280.00</td><td class="r">MYR 1,280.00</td><td><span class="badge">Posted</span></td></tr>
+      <tr><td><span class="badge">Credit note</span></td><td><a href="#">CN-202610-0041</a></td><td>25 Oct 2026</td><td class="r">MYR 80.00</td><td class="r">-</td><td><span class="badge">Posted</span></td></tr>
+    </tbody></table>
+  </div>
+
+  <div class="tabs"><span>General</span><span>Lines</span><span>Delivery</span><span>Invoices</span><span class="on">Related</span></div>
+  <div class="card scroll">
+    <h2>Related</h2>
+    <table><thead><tr><th style="width:140px">Type</th><th style="width:160px">Number</th><th style="width:120px">Date</th><th style="width:130px">Status</th><th class="r" style="width:140px">Amount</th></tr></thead><tbody><tr><td><span class="badge">Sales order</span></td><td><a href="#">SO427775</a></td><td>14 Oct 2026</td><td><span class="badge">Open</span></td><td class="r">MYR 1,360.00</td></tr><tr><td><span class="badge">Invoice</span></td><td><a href="#">202610-3905</a></td><td>22 Oct 2026</td><td><span class="badge">Posted</span></td><td class="r">MYR 1,280.00</td></tr><tr><td><span class="badge">Credit note</span></td><td><a href="#">CN-202610-0041</a></td><td>25 Oct 2026</td><td><span class="badge">Posted</span></td><td class="r">MYR 80.00</td></tr></tbody></table>
+  </div>
+
+  <div class="sep">2. Sales order detail: Related tab (new) and Delivery tab: no sentence when DO rows exist; "Nothing delivered yet." only when there are none</div>
+  <h1>SO427775 <span class="badge">Open</span></h1>
+  <div class="tabs"><span>General</span><span>Lines</span><span class="on">Delivery</span><span>Invoices</span><span>Transfers</span><span>Related</span></div>
+  <div class="card scroll">
+    <h2>Delivery</h2>
+    <table><thead><tr><th style="width:150px">DO no.</th><th style="width:130px">DO date</th><th style="width:170px">Status</th><th style="width:150px">SKU</th><th style="width:110px">Location</th><th class="r" style="width:80px">Qty</th></tr></thead>
+    <tbody>
+      <tr><td><a href="#">202610-3905</a></td><td>21 Oct 2026</td><td><span class="badge">Picked Up</span></td><td>SKU-A</td><td>HQ</td><td class="r">5</td></tr>
+      <tr><td><a href="#">202610-3905</a></td><td>21 Oct 2026</td><td><span class="badge">In Transit</span></td><td>SKU-B</td><td>HQ</td><td class="r">10</td></tr>
+    </tbody></table>
+  </div>
+  <div class="tabs"><span>General</span><span>Lines</span><span>Delivery</span><span>Invoices</span><span>Transfers</span><span class="on">Related</span></div>
+  <div class="card scroll">
+    <h2>Related</h2>
+    <table><thead><tr><th style="width:140px">Type</th><th style="width:160px">Number</th><th style="width:120px">Date</th><th style="width:130px">Status</th><th class="r" style="width:140px">Amount</th></tr></thead><tbody><tr><td><span class="badge">Delivery order</span></td><td><a href="#">202610-3905</a></td><td>21 Oct 2026</td><td><span class="badge">In Transit</span></td><td class="r">MYR 1,280.00</td></tr><tr><td><span class="badge">Invoice</span></td><td><a href="#">202610-3905</a></td><td>22 Oct 2026</td><td><span class="badge">Posted</span></td><td class="r">MYR 1,280.00</td></tr></tbody></table>
+  </div>
+
+  <div class="sep">3. Billing document detail: Related tab</div>
+  <h1>202610-3905 <span class="badge">Invoice</span> <span class="badge">Posted</span></h1>
+  <div class="tabs"><span>Details</span><span>Lines</span><span class="on">Related</span></div>
+  <div class="card scroll">
+    <h2>Related</h2>
+    <table><thead><tr><th style="width:140px">Type</th><th style="width:160px">Number</th><th style="width:120px">Date</th><th style="width:130px">Status</th><th class="r" style="width:140px">Amount</th></tr></thead><tbody><tr><td><span class="badge">Sales order</span></td><td><a href="#">SO427775</a></td><td>14 Oct 2026</td><td><span class="badge">Open</span></td><td class="r">MYR 1,360.00</td></tr><tr><td><span class="badge">Delivery order</span></td><td><a href="#">202610-3905</a></td><td>21 Oct 2026</td><td><span class="badge">In Transit</span></td><td class="r">MYR 1,280.00</td></tr><tr><td><span class="badge">Credit note</span></td><td><a href="#">CN-202610-0041</a></td><td>25 Oct 2026</td><td><span class="badge">Posted</span></td><td class="r">MYR 80.00</td></tr></tbody></table>
+  </div>
+  <div class="card"><h2>No related documents</h2><p class="muted">Empty state (cash sale with no order).</p></div>
+</main>
+</body>
+</html>

@@ -236,39 +236,40 @@ class TestB1r2OutstandingFollowUpKeepsTheBrand:
     """Probe B: the outstanding report, answered, then a follow-up."""
 
     def test_third_turn_report_still_carries_the_brand(self, session_factory, monkeypatch) -> None:
+        """REPORT-UNIFY: the report ask names its kind at once (no scope answer turn); a period-only follow-up the
+        parser reads as a refine re-runs it with the customer and the brand it was asked about."""
         chat = _Chat(
-            session_factory, monkeypatch, attributes=["sales_orders.outstanding"], tool_body=_MISS
-        )
-        chat.say(
-            "outstanding brand Sorento dealer Cheng Huat Sentul",
-            _parser_output(
-                domain_hint="order", intent_hint="check_order", order_status="outstanding",
-                entities=[_brand("Sorento"), _cheng_huat()],
-            ),
+            session_factory, monkeypatch,
+            attributes=["sales_orders.outstanding", "sales_orders.sales_report"],
+            # The presenter's envelope for a report ask total (the fake MCP here returns the body verbatim).
+            tool_body={
+                "result_type": "report_ask", "has_result": True, "drill_rows": None,
+                "response": "Outstanding orders\nPeriod: all dates\nTotal RM 100.00, 10 pcs",
+            },
         )
         mark = len(chat.captured)
         chat.say(
-            "3",
+            "outstanding brand Sorento dealer Cheng Huat Sentul",
             _parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[3],
+                domain_hint="order", intent_hint="check_order", order_status="outstanding", basis="outstanding",
+                entities=[_brand("Sorento"), _cheng_huat()],
             ),
         )
-        answered = chat.calls_since(mark)
-        assert answered and answered[-1][0] == "crm_outstanding_report", answered
-        assert answered[-1][1].get("brand_ids") == [chat.brand_id], answered
+        first = chat.calls_since(mark)
+        assert first and first[-1][0] == "crm_report_ask", first
+        assert first[-1][1].get("brand_ids") == [chat.brand_id], first
 
         mark = len(chat.captured)
         third = chat.say(
             "delivered in August",
             _parser_output(
-                domain_hint="order", intent_hint="check_order", order_status="outstanding",
+                domain_hint="order", intent_hint="check_order", order_status="outstanding", ranking_refine=True,
                 entities=[], date_mode="range",
                 date_filter_start="2026-08-01", date_filter_end="2026-08-31",
             ),
         )
         calls = chat.calls_since(mark)
-        report_calls = [(n, a) for n, a in calls if n == "crm_outstanding_report"]
+        report_calls = [(n, a) for n, a in calls if n == "crm_report_ask"]
         assert report_calls, f"the follow-up must re-run the report: {calls} / {third!r}"
         _, args = report_calls[-1]
         assert args.get("customer_ids") == [CHENG_HUAT_UUID], args

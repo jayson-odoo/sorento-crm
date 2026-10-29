@@ -16,7 +16,8 @@ export type PortalSubmissionKind =
   | 'complaint'
   | 'stock_inquiry'
   | 'purchase_request'
-  | 'sponsorship_form';
+  | 'sponsorship_form'
+  | 'project_registration';
 
 /** Canonical kind list - single source for route guards, tab lists, labels. */
 export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
@@ -24,6 +25,7 @@ export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
   'stock_inquiry',
   'purchase_request',
   'sponsorship_form',
+  'project_registration',
 ] as const;
 
 export function isSubmissionKind(
@@ -72,9 +74,25 @@ export const CUSTOMER_ASKS_KIND = 'customer_asks' as const;
  */
 export const CONVERSATION_KIND = 'conversation' as const;
 
+/**
+ * Sample Request (lane SR-CORE): a consignment requisition for samples to a project site.
+ * Grantable per contact exactly like `price_tag_request`; its pages are its own
+ * (`app/(auth)/portal/c/[slug]/sample_request/`).
+ */
+export const SAMPLE_REQUEST_KIND = 'sample_request' as const;
+
+/**
+ * New Product Application (lane NEW-PRODUCT-APP): a request to open new product codes, started
+ * from the contact's own responded stock inquiry. Grantable per contact like `sample_request`;
+ * its pages are its own (`app/(auth)/portal/c/[slug]/new_product_application/`).
+ */
+export const NEW_PRODUCT_APPLICATION_KIND = 'new_product_application' as const;
+
 export type PortalLandingKind =
   | PortalSubmissionKind
   | typeof GATED_FORM_TYPE
+  | typeof SAMPLE_REQUEST_KIND
+  | typeof NEW_PRODUCT_APPLICATION_KIND
   | typeof SALES_OPPORTUNITY_KIND
   | typeof CUSTOMER_ASKS_KIND
   | typeof CONVERSATION_KIND;
@@ -82,6 +100,8 @@ export type PortalLandingKind =
 /** Every kind an access type may be granted, in the order the admin sees them. */
 export const LANDING_KINDS: readonly PortalLandingKind[] = [
   ...SUBMISSION_KINDS,
+  SAMPLE_REQUEST_KIND,
+  NEW_PRODUCT_APPLICATION_KIND,
   GATED_FORM_TYPE,
   SALES_OPPORTUNITY_KIND,
   CUSTOMER_ASKS_KIND,
@@ -96,7 +116,7 @@ export const LANDING_KINDS: readonly PortalLandingKind[] = [
  * opt-in kind joins `LANDING_KINDS` above and appears here automatically.
  */
 export const ADDITIONAL_LANDING_KINDS: readonly PortalLandingKind[] = LANDING_KINDS.filter(
-  (k) => !isSubmissionKind(k),
+  (k) => !isSubmissionKind(k) || k === 'project_registration',
 );
 
 export function isLandingKind(
@@ -110,12 +130,15 @@ export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
   stock_inquiry: 'Stock Inquiry',
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
+  project_registration: 'Project Registration',
 };
 
 /** Every kind the landing can list, legacy or gated (D45). */
 export const LANDING_LABELS: Record<PortalLandingKind, string> = {
   ...SUBMISSION_LABELS,
   price_tag_request: 'Price Tag Request',
+  sample_request: 'Sample Request',
+  new_product_application: 'New Product Application',
   sales_opportunity: 'Sales Opportunity',
   customer_asks: 'Customer asks',
   conversation: 'Conversation',

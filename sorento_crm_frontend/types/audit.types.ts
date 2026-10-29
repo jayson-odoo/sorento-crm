@@ -5,6 +5,8 @@ export interface AuditLogEntry {
   action: string;
   user_id: string | null;
   user_display_name?: string | null;
+  /** Acting contact for a portal / public write (legacy rows carry no actor_type). */
+  contact_id?: string | null;
   /** user | contact | integration | worker | scheduler | public_link | system | legacy */
   actor_type?: string | null;
   /** password | phone_otp | portal_link | portal_token | api_key | impersonation | dev_login */
@@ -20,6 +22,10 @@ export interface AuditLogEntry {
   new_values: Record<string, unknown> | null;
   description: string | null;
   ip_address: string | null;
+  /** The record in words; for a child row on its parent's trail, e.g. "Product line CWCY604". */
+  entity_label?: string | null;
+  root_entity_type?: string | null;
+  root_entity_id?: string | null;
 }
 
 export interface AuditLogsResponse {

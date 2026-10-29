@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useEffect,
   useLayoutEffect,
@@ -51,6 +52,8 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
@@ -85,6 +88,7 @@ import {
   discardRevisionDraft,
   saveRevisionDraft,
   statusLabel,
+  submitVerb,
   submitDraft,
   uploadAttachment,
 } from '../lib/portal-client';
@@ -115,6 +119,8 @@ import {
   InquiryFormTableRow,
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
+import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import { complaintStatusLabel } from '@/lib/complaint-status';
 
 type ProductLine = {
   item_code?: string;
@@ -144,6 +150,8 @@ type WidgetKind =
   | 'pill-text'
   | 'product-quantities'
   | 'contact-select'
+  /** A value the server owns (the sales agent's name): shown disabled from `displayFromDetail`, never saved. */
+  | 'readonly'
   /** Carries a value in the saved payload (the picked customer's id) but draws no control. */
   | 'hidden';
 
@@ -186,6 +194,14 @@ interface FieldDef {
    * ineligible contact still renders its name instead of a blank / UUID.
    */
   legacyLabelField?: string;
+  /** `debtor-async` only: the form asking, so the server offers only that form's debtors. */
+  lookupKind?: string;
+  /** `debtor-async` only: a pick or nothing; typed free text is discarded. */
+  pickOnly?: boolean;
+  /** `readonly` only: how the detail value reads (`date` = DD/MM/YYYY). */
+  displayFormat?: 'date';
+  /** Render only when the loaded record satisfies this (the submitted Date needs a submission). */
+  showWhenDetail?: (detail: PortalSubmissionDetail | null) => boolean;
 }
 
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
@@ -214,6 +230,52 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       label: 'Additional remark',
       widget: 'textarea',
     },
+  ],
+  // Legacy paper form order (PROJECT-REG-PORTAL D3). The sales agent is the contact's own
+  // agent, set by the server on create; required on submit: title, state, developer.
+  project_registration: [
+    { name: 'title', label: 'Project title', widget: 'textarea', required: true },
+    { name: 'distributor_name', label: 'Distributor name' },
+    {
+      name: 'sales_agent_name',
+      label: 'Sales agent',
+      widget: 'readonly',
+      displayFromDetail: 'sales_agent_name',
+    },
+    {
+      name: 'submitted_at_display',
+      label: 'Date',
+      widget: 'readonly',
+      displayFromDetail: 'submitted_at',
+      displayFormat: 'date',
+      showWhenDetail: (d) => Boolean(d?.submitted_at),
+    },
+    {
+      name: 'customer_name',
+      label: 'Customer name',
+      widget: 'debtor-async',
+      lookupKind: 'project_registration',
+      pickOnly: true,
+    },
+    { name: 'customer_id', label: 'Customer', widget: 'hidden' },
+    {
+      name: 'type_of_building',
+      label: 'Type of building',
+      widget: 'lookup-select',
+      setKey: 'project_building_type',
+    },
+    {
+      name: 'state',
+      label: 'State',
+      widget: 'lookup-select',
+      setKey: 'my_state',
+      required: true,
+    },
+    { name: 'mukim', label: 'Area' },
+    { name: 'your_ref', label: 'Your ref' },
+    { name: 'developer_name', label: 'Developer', required: true },
+    { name: 'main_contractor_name', label: 'Main contractor' },
+    { name: 'architect_name', label: 'Architect' },
   ],
   complaint: [
     {
@@ -389,8 +451,12 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
   stock_inquiry: ['salesperson_contact_id', 'salesperson'],
   purchase_request: ['requested_by_contact_id', 'requested_by'],
   sponsorship_form: ['requested_by_contact_id', 'requested_by'],
+  project_registration: [],
   complaint: [],
 };
+
+const VERB_DOING = { Submit: 'Submitting...', Appeal: 'Appealing...' };
+const VERB_DONE = { Submit: 'Submitted.', Appeal: 'Appealed.' };
 
 /** Same sentence the server answers with, so a client-side block and a
  *  server-side one never read differently. Required but with no character
@@ -407,6 +473,12 @@ function formatDraftSavedAt(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+/** A stored (naive UTC) timestamp as DD/MM/YYYY in Malaysia time; anything else as it came. */
+function formatDisplay(value: string | undefined, format?: 'date'): string | undefined {
+  if (!value || format !== 'date') return value;
+  return formatDateInMalaysia(value) || value;
 }
 
 function fieldSpansFullWidth(f: FieldDef): boolean {
@@ -429,6 +501,10 @@ interface Props {
 
 export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const router = useRouter();
+  // Read inside the load effect through a ref: its identity must not re-run the seed and wipe
+  // what the visitor has typed.
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const [loading, setLoading] = useState(Boolean(submissionId));
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -437,6 +513,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [detail, setDetail] = useState<PortalSubmissionDetail | null>(null);
+  const verb = submitVerb(detail?.status);
   // The id a create call answered with, held in STATE rather than trusted to
   // live only in the `submissionId` prop (the route param) - a retry after
   // create-succeeded-but-flushPendingFiles-failed never gets a fresh prop, so
@@ -457,6 +534,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // failed the sponsorship-only check below, so the "Unit price" cell itself can show
   // the inline message - same shape `invalidFields` gives every other required field.
   const [invalidLineIndex, setInvalidLineIndex] = useState<number | null>(null);
+  // Set once a Save / Submit found a wrong line quantity; line rows then show their sentence.
+  const [showNumberErrors, setShowNumberErrors] = useState(false);
   const [staffPreviewOpen, setStaffPreviewOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('details');
   const [neighbours, setNeighbours] =
@@ -485,7 +564,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // The id to save/flush against: the route param when one exists, else
   // whatever a create call in THIS session already answered with (#482).
   const effectiveId = submissionId ?? createdSubmissionId ?? undefined;
-  const commentsTabbed = Boolean(effectiveId && detail && !detail.is_draft);
+  // A project registration is exactly its legacy fields: no comments thread, no attachments.
+  const takesExtras = kind !== 'project_registration';
+  const commentsTabbed = Boolean(takesExtras && effectiveId && detail && !detail.is_draft);
   const commentsThread = usePortalSubmissionComments(
     kind,
     effectiveId ?? '',
@@ -795,7 +876,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         }
       } catch (e) {
         if (e instanceof PortalUnauthorizedError) {
-          router.replace(
+          routerRef.current.replace(
             portalVerifyPath({
               slug,
               reason: 'expired',
@@ -808,7 +889,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         // Logged in as a different contact than the form's owner - send them to
         // the owner's confirm-identity card (deep-link slug), keep their token.
         if (e instanceof PortalOwnerMismatchError) {
-          router.replace(
+          routerRef.current.replace(
             portalVerifyPath({
               slug,
               reason: 'expired',
@@ -830,7 +911,6 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   }, [
     fieldDefs,
     kind,
-    router,
     showLines,
     submissionId,
     defaultsFromContact,
@@ -840,6 +920,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const cleanedFields = useMemo(() => {
     const out: Record<string, unknown> = {};
     for (const f of fieldDefs) {
+      if (f.widget === 'readonly') continue;
       const raw = fields[f.name];
       if (f.widget === 'do-multi-filter') {
         const arr = Array.isArray(raw) ? raw : [];
@@ -904,6 +985,13 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   };
 
   const handleSaveDraft = async () => {
+    // A draft may be incomplete, but a typed number that is wrong is never saved.
+    const badHeaderNumbers = collectMissingRequired().filter((m) => m.badNumber);
+    if (badHeaderNumbers.length > 0) {
+      reportMissingRequired(badHeaderNumbers);
+      return;
+    }
+    if (lineQuantitiesInvalid()) return;
     setSaving(true);
     try {
       // A retry after create succeeded but the attachment flush after it
@@ -932,8 +1020,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
   /** Required fields still empty. Shared by submit and revise so the two can
    *  never disagree about what a complete form is. */
-  const collectMissingRequired = (): { name: string; label: string }[] => {
-    const missing: { name: string; label: string }[] = [];
+  const collectMissingRequired = (): { name: string; label: string; badNumber?: boolean }[] => {
+    const missing: { name: string; label: string; badNumber?: boolean }[] = [];
     for (const f of fieldDefs) {
       const isRequired =
         f.required || (f.requiredWhen ? f.requiredWhen(contact) : false);
@@ -944,6 +1032,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         : !(typeof v === 'string' && v.trim().length > 0);
       if (empty) missing.push({ name: f.name, label: f.label });
     }
+    for (const f of fieldDefs) {
+      if (f.widget !== 'number' || (f.showWhen && !f.showWhen(fields))) continue;
+      const v = fields[f.name];
+      if (typeof v === 'string' && v.trim() && numberFieldError(v, { min: 0 })) {
+        // Typed but wrong: told on the field itself, not listed as missing.
+        missing.push({ name: f.name, label: f.label, badNumber: true });
+      }
+    }
     if (
       kind === 'complaint' &&
       complaintLines.filter((l) => (l.product_code || '').trim()).length === 0
@@ -953,21 +1049,63 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return missing;
   };
 
-  const reportMissingRequired = (
-    missing: { name: string; label: string }[],
-  ) => {
-    setInvalidFields(new Set(missing.map((m) => m.name)));
-    toast.error(
-      `Missing ${missing.length} required field${missing.length === 1 ? '' : 's'}: ${missing
-        .map((m) => m.label)
-        .join(', ')}`,
-    );
-    setTimeout(() => {
-      const node = document.querySelector(
-        `[data-field-name="${missing[0].name}"]`,
-      ) as HTMLElement | null;
+  const isUnreadable = (v: string | null | undefined): boolean =>
+    typeof v === 'string' && v.trim() !== '' && parseNumberDraft(v) === null;
+
+  /** A line quantity, unit price or total that is typed but wrong (negative, bad input). Blank stays allowed. */
+  const lineQuantitiesInvalid = (): boolean => {
+    const bad =
+      products.some(
+        (l) =>
+          numberFieldError(l.quantity, { min: 0, optional: true }) ||
+          // A negative unit price keeps its own "Unit price is required" refusal on submit.
+          (isUnreadable(l.unit_price) && numberFieldError(l.unit_price, { min: 0, optional: true })) ||
+          numberFieldError(l.total, { min: 0, optional: true }),
+      ) ||
+      complaintLines.some((l) => numberFieldError(l.quantity, { min: 0, optional: true }));
+    if (bad) {
+      setShowNumberErrors(true);
+      toast.error('Fix the quantity on the highlighted line.');
+    }
+    return bad;
+  };
+
+  /** One pending scroll-to-field at a time, cleared on unmount: a timer left running
+   *  past the form (or past a test's jsdom teardown) must never reach `document`. */
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    },
+    [],
+  );
+  const scrollToField = (name: string) => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => {
+      scrollTimerRef.current = null;
+      if (typeof document === 'undefined') return;
+      const node = document.querySelector(`[data-field-name="${name}"]`) as HTMLElement | null;
       node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
     }, 50);
+  };
+
+  const reportMissingRequired = (
+    all: { name: string; label: string; badNumber?: boolean }[],
+  ) => {
+    const missing = all.filter((m) => !m.badNumber);
+    const badNumbers = all.filter((m) => m.badNumber);
+    setInvalidFields(new Set(all.map((m) => m.name)));
+    if (missing.length > 0) {
+      toast.error(
+        `Missing ${missing.length} required field${missing.length === 1 ? '' : 's'}: ${missing
+          .map((m) => m.label)
+          .join(', ')}`,
+      );
+    }
+    if (badNumbers.length > 0) {
+      toast.error(`Fix the number in: ${badNumbers.map((m) => m.label).join(', ')}`);
+    }
+    scrollToField(all[0].name);
   };
 
   /** Same "does this row have anything in it" test `cleanLineItems` filters on - a
@@ -1015,6 +1153,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       reportMissingRequired(missing);
       return;
     }
+    if (lineQuantitiesInvalid()) {
+      setConfirmOpen(false);
+      return;
+    }
     const missingPrice = findMissingSponsorshipUnitPrice();
     setInvalidLineIndex(missingPrice ? missingPrice.rawIndex : null);
     if (missingPrice) {
@@ -1035,7 +1177,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       }
       await flushPendingFiles(id);
       await submitDraft(kind, id, cleanedFields, cleanedProducts);
-      toast.success('Submitted.');
+      toast.success(VERB_DONE[verb]);
       router.replace(portalHomePath({ type: kind }));
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
@@ -1104,6 +1246,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       reportMissingRequired(missing);
       return;
     }
+    if (lineQuantitiesInvalid()) return;
     const missingPrice = findMissingSponsorshipUnitPrice();
     if (missingPrice) {
       setInvalidLineIndex(missingPrice.rawIndex);
@@ -1113,12 +1256,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     const trimmed = reason.trim();
     if (!trimmed) {
       setReasonError(REASON_REQUIRED);
-      setTimeout(() => {
-        const node = document.querySelector(
-          '[data-field-name="revision_reason"]',
-        ) as HTMLElement | null;
-        node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-      }, 50);
+      scrollToField('revision_reason');
       return;
     }
     setReasonError(null);
@@ -1287,7 +1425,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       if ('customer_name' in aiValues && 'customer_id' in next) next.customer_id = '';
       return next;
     });
-    if (payload.alsoAttach && payload.files.length > 0) {
+    if (takesExtras && payload.alsoAttach && payload.files.length > 0) {
       setPendingFiles((prev) => [...prev, ...payload.files]);
     }
 
@@ -1547,11 +1685,23 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // to "Draft", because the list row shows the same real status and the two
   // must never disagree. The "nothing sent yet" message lives in the
   // revising banner below, not in the pill.
-  const statusBadge = detail?.is_draft
+  // Project registration only: the server names existing projects that look the same (no links
+  // in the portal, and no ids).
+  const possibleDuplicates = Array.isArray(detail?.possible_duplicates)
+    ? (detail.possible_duplicates as { project_code: string | null; title: string }[])
+    : [];
+  const duplicateLine =
+    possibleDuplicates.length > 0
+      ? `Possible duplicate: ${possibleDuplicates
+          .map((d) => `${projectCodeLabel(d)} ${d.title}`)
+          .join(', ')}`
+      : null;
+
+  const statusBadge = detail?.is_draft && detail.status !== 'rejected'
     ? { label: 'Draft', variant: 'warning' as const }
     : detail?.status
       ? {
-          label: statusLabel(detail.status),
+          label: kind === 'complaint' ? complaintStatusLabel(detail.status) : statusLabel(detail.status),
           variant:
             detail.status === 'rejected'
               ? ('destructive' as const)
@@ -1673,11 +1823,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           </AlertContent>
         </Alert>
       )}
-      {detail?.rejection_reason && (
+      {(detail?.rejection_reason || detail?.reject_reason) && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
           <p className="font-medium">Rejection reason</p>
-          <p>{detail.rejection_reason}</p>
+          <p>{detail.rejection_reason ?? String(detail.reject_reason)}</p>
         </div>
+      )}
+      {duplicateLine && (
+        <p className="text-sm text-muted-foreground">{duplicateLine}</p>
       )}
 
       {responseInfo && (
@@ -1755,6 +1908,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           frozenFields={frozenFields}
           statusBadge={statusBadge}
           onProductItemSelected={handleProductItemSelected}
+          invalidFields={invalidFields}
           resolveContactOption={resolveContactOption}
         />
       ) : kind === 'complaint' ? (
@@ -1774,6 +1928,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           contact={contact}
           complaintLines={complaintLines}
           setComplaintLines={setComplaintLines}
+          showNumberErrors={showNumberErrors}
         />
       ) : (
         <PurchaseRequestFormSection
@@ -1857,11 +2012,15 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                           />
                         </td>
                         <td className="px-2 py-2">
-                          <Input
-                            type="number"
+                          <NumberInput
                             inputMode="numeric"
                             min="0"
                             value={line.quantity ?? ''}
+                            error={
+                              showNumberErrors
+                                ? numberFieldError(line.quantity, { min: 0, optional: true })
+                                : undefined
+                            }
                             onChange={(e) =>
                               setProducts((prev) =>
                                 prev.map((p, i) =>
@@ -1877,12 +2036,16 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                         {kind === 'sponsorship_form' && (
                           <>
                             <td className="px-2 py-2">
-                              <Input
-                                type="number"
+                              <NumberInput
                                 inputMode="decimal"
                                 min="0"
                                 step="0.01"
                                 value={line.unit_price ?? ''}
+                                error={
+                                  showNumberErrors
+                                    ? numberFieldError(line.unit_price, { min: 0, optional: true })
+                                    : undefined
+                                }
                                 onChange={(e) => {
                                   setProducts((prev) =>
                                     prev.map((p, i) =>
@@ -1913,12 +2076,16 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                               )}
                             </td>
                             <td className="px-2 py-2">
-                              <Input
-                                type="number"
+                              <NumberInput
                                 inputMode="decimal"
                                 min="0"
                                 step="0.01"
                                 value={line.total ?? computedTotal}
+                                error={
+                                  showNumberErrors
+                                    ? numberFieldError(line.total, { min: 0, optional: true })
+                                    : undefined
+                                }
                                 onChange={(e) =>
                                   setProducts((prev) =>
                                     prev.map((p, i) =>
@@ -2013,6 +2180,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         </Card>
       )}
 
+      {takesExtras && (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Attachments</CardTitle>
@@ -2026,9 +2194,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             disabled={!editing}
             pendingFiles={pendingFiles}
             onPendingFilesChange={setPendingFiles}
+            allowedExtensions={contact?.attachment_allowed_extensions}
           />
         </CardContent>
       </Card>
+      )}
 
       {reviseMode && (
         <Card>
@@ -2094,7 +2264,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         </div>
       ) : (
         <div className="flex flex-wrap gap-2 justify-end pt-2">
-          {submissionId && detail?.is_draft && (
+          {/* A rejected registration is editable but the server deletes drafts only. */}
+          {submissionId && detail?.is_draft && detail.status !== 'rejected' && (
             <Button
               variant="outline"
               className="text-destructive border-destructive/50 hover:bg-destructive/10 mr-auto"
@@ -2129,8 +2300,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               disabled={saving || submitting}
             >
               {submitting
-                ? 'Submitting...'
-                : `Submit ${SUBMISSION_LABELS[kind].toLowerCase()}`}
+                ? VERB_DOING[verb]
+                : `${verb} ${SUBMISSION_LABELS[kind].toLowerCase()}`}
             </Button>
           )}
         </div>
@@ -2321,7 +2492,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Submit this {SUBMISSION_LABELS[kind].toLowerCase()}?
+              {verb} this {SUBMISSION_LABELS[kind].toLowerCase()}?
             </AlertDialogTitle>
             <AlertDialogDescription>
               Once submitted, your team will be notified. You can no longer edit
@@ -2331,7 +2502,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleSubmit} disabled={submitting}>
-              Submit {SUBMISSION_LABELS[kind].toLowerCase()}
+              {verb} {SUBMISSION_LABELS[kind].toLowerCase()}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2341,7 +2512,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         open={aiExtractOpen}
         onOpenChange={setAiExtractOpen}
         kind={kind}
-        fieldDefs={fieldDefs.filter((f) => f.widget !== 'hidden')}
+        canAttach={takesExtras}
+        fieldDefs={fieldDefs.filter((f) => f.widget !== 'hidden' && f.widget !== 'readonly')}
         onApply={handleAIExtractApply}
       />
 
@@ -2446,6 +2618,7 @@ interface SectionProps {
   }) => void;
   invalidFields?: Set<string>;
   complaintLines?: ComplaintLine[];
+  showNumberErrors?: boolean;
   setComplaintLines?: Dispatch<SetStateAction<ComplaintLine[]>>;
   /** Needed for `FieldDef.requiredWhen`: some fields are mandatory per CONTACT (AC-F4). */
   contact?: PortalContact | null;
@@ -2467,6 +2640,7 @@ function StockInquiryFormSection({
   frozenFields,
   statusBadge,
   onProductItemSelected,
+  invalidFields,
   resolveContactOption,
 }: SectionProps) {
   const fieldByName = useMemo(() => {
@@ -2555,6 +2729,11 @@ function StockInquiryFormSection({
             value={fields.quantity ?? ''}
             onChange={(v) => setFieldValue('quantity', v)}
             disabled={!isEditable}
+            numberError={
+              invalidFields?.has('quantity')
+                ? numberFieldError(String(fields.quantity ?? ''), { min: 0 })
+                : undefined
+            }
           />
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Delivery date">
@@ -2597,11 +2776,13 @@ function ComplaintLinesTable({
   setLines,
   disabled,
   invalid,
+  showNumberErrors,
 }: {
   lines: ComplaintLine[];
   setLines: Dispatch<SetStateAction<ComplaintLine[]>>;
   disabled?: boolean;
   invalid?: boolean;
+  showNumberErrors?: boolean;
 }) {
   const updateRow = (index: number, patch: Partial<ComplaintLine>) =>
     setLines((prev) =>
@@ -2685,13 +2866,17 @@ function ComplaintLinesTable({
                   />
                 </td>
                 <td className="px-2 py-2">
-                  <Input
-                    type="number"
+                  <NumberInput
                     inputMode="numeric"
                     min="0"
                     value={line.quantity}
                     onChange={(e) =>
                       updateRow(index, { quantity: e.target.value })
+                    }
+                    error={
+                      showNumberErrors
+                        ? numberFieldError(line.quantity, { min: 0, optional: true })
+                        : undefined
                     }
                     placeholder="Qty"
                     disabled={disabled}
@@ -2740,6 +2925,7 @@ function ComplaintFormSection({
   invalidFields,
   complaintLines,
   setComplaintLines,
+  showNumberErrors,
   contact,
 }: SectionProps) {
   return (
@@ -2777,6 +2963,7 @@ function ComplaintFormSection({
                 setLines={setComplaintLines}
                 disabled={!isEditable}
                 invalid={invalidFields?.has('product_lines')}
+                showNumberErrors={showNumberErrors}
               />
             </div>
           )}
@@ -2803,7 +2990,9 @@ function PurchaseRequestFormSection({
   const heading =
     kind === 'sponsorship_form'
       ? 'Project Sales Sponsorship Form'
-      : 'Purchase Request';
+      : kind === 'project_registration'
+        ? 'Project Registration'
+        : 'Purchase Request';
   return (
     <div className="w-full">
       <Card className="border-2 shadow-sm">
@@ -2823,6 +3012,7 @@ function PurchaseRequestFormSection({
             {fieldDefs
               .filter((f) => f.widget !== 'hidden')
               .filter((f) => (f.showWhen ? f.showWhen(fields) : true))
+              .filter((f) => (f.showWhenDetail ? f.showWhenDetail(detail) : true))
               .map((f) => (
                 <div
                   key={f.name}
@@ -2839,9 +3029,16 @@ function PurchaseRequestFormSection({
                     contactOption={resolveContactOption?.(f)}
                     displayValue={
                       f.displayFromDetail
-                        ? (((detail as Record<string, unknown> | null)?.[
-                            f.displayFromDetail
-                          ] as string | undefined) ?? undefined)
+                        ? (formatDisplay(
+                            ((detail as Record<string, unknown> | null)?.[
+                              f.displayFromDetail
+                            ] as string | undefined) ?? undefined,
+                            f.displayFormat,
+                          ) ??
+                          // A new form has no detail yet: the read-only agent name comes from /me.
+                          (f.widget === 'readonly'
+                            ? (contact?.sales_agent_name ?? undefined)
+                            : undefined))
                         : undefined
                     }
                   />
@@ -2890,6 +3087,10 @@ function FieldInput({
   const isRequired =
     field.required ||
     (field.requiredWhen ? field.requiredWhen(contact ?? null) : false);
+  const numberError =
+    invalid && field.widget === 'number'
+      ? numberFieldError(typeof value === 'string' ? value : '', { min: 0, optional: !isRequired })
+      : undefined;
   return (
     <div className="space-y-1.5 min-w-0" data-field-name={field.name}>
       <Label htmlFor={field.name} className="min-w-0">
@@ -2912,11 +3113,12 @@ function FieldInput({
           onDOItemsChange={onDOItemsChange}
           onDOProductsConfirmed={onDOProductsConfirmed}
           disabled={disabled}
+          numberError={numberError}
           contactOption={contactOption}
           displayValue={displayValue}
         />
       </div>
-      {invalid && (
+      {invalid && field.widget !== 'number' && (
         <p className="text-xs text-destructive">{field.label} is required.</p>
       )}
     </div>
@@ -2932,6 +3134,7 @@ function FieldControl({
   onDOItemsChange,
   onDOProductsConfirmed,
   disabled,
+  numberError,
   contactOption,
   displayValue,
 }: {
@@ -2947,6 +3150,8 @@ function FieldControl({
   }) => void;
   contactOption?: SearchableSelectOption;
   disabled?: boolean;
+  /** The sentence under a `number` widget once a submit found it wrong. */
+  numberError?: string;
   /** Human-readable text for an id-valued picker (`FieldDef.displayFromDetail`). */
   displayValue?: string;
 }) {
@@ -2955,6 +3160,8 @@ function FieldControl({
   const arrayValue = Array.isArray(value) ? value : [];
 
   switch (widget) {
+    case 'readonly':
+      return <Input id={field.name} value={displayValue ?? ''} disabled readOnly />;
     case 'textarea':
       return (
         <Textarea
@@ -2978,15 +3185,15 @@ function FieldControl({
       );
     case 'number':
       return (
-        <Input
+        <NumberInput
           id={field.name}
-          type="number"
           inputMode="numeric"
           min={0}
           value={stringValue}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
           disabled={disabled}
+          error={numberError}
         />
       );
     case 'lookup-select':
@@ -3027,7 +3234,8 @@ function FieldControl({
             onChange(v);
             onDebtorChange?.(item);
           }}
-          fetchOptions={(q) => lookupDebtors(q)}
+          fetchOptions={(q) => lookupDebtors(q, 20, field.lookupKind)}
+          allowFreeText={!field.pickOnly}
           optionValue={(o) => o.debtor_name}
           optionLabel={(o) => o.debtor_name}
           optionMeta={(o) => o.customer_code}
@@ -3043,7 +3251,7 @@ function FieldControl({
           onChange={(v) => onChange(v)}
           fetchOptions={(q) => lookupProjects(q)}
           optionValue={(o) => o.id}
-          optionLabel={(o) => `${o.project_code} - ${o.title}`}
+          optionLabel={(o) => `${projectCodeLabel(o)} - ${o.title}`}
           // A registered project is picked, never typed: the column is a UUID FK, so
           // free text would reach the server as an id and fail there instead of here.
           allowFreeText={false}

@@ -206,9 +206,49 @@ register(
 )
 
 
+def _delete_set_apart_customer(db: Session, payload: dict):
+    from app.services.sales import set_apart_service
+
+    return set_apart_service.delete_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_set_apart.delete",
+        entity_types=("sales_set_apart",),
+        execute=_delete_set_apart_customer,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.set_apart.edit",
+        label="Remove set-apart customer",
+    )
+)
+
+
+def _delete_agent_class(db: Session, payload: dict):
+    from app.services.sales import agent_class_service
+
+    return agent_class_service.delete_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_agent_class.delete",
+        entity_types=("sales_agent_class",),
+        execute=_delete_agent_class,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.sales_agents.edit",
+        label="Remove class row",
+    )
+)
+
+
 def _delete_sales_opportunity(db: Session, payload: dict):
+    from app.services import own_scope
     from app.services.sales import opportunity_service
 
+    own_scope.assert_pending_action_allowed(
+        db, "sales_opportunity.delete", _entity_id(payload), payload.get("requested_by_id")
+    )
     return opportunity_service.delete_opportunity_by_id(db, _entity_id(payload))
 
 
@@ -1159,6 +1199,22 @@ def _delete_market_segment(db: Session, payload: dict):
     return MarketSegmentService(db).delete_segment(_entity_id(payload))
 
 
+def _delete_contact_tag(db: Session, payload: dict):
+    from app.services.contact_tag_service import ContactTagService
+
+    from app.api.v1.system.companies import _is_superadmin
+    from app.services.user_service import UserPermissionService
+
+    # Same gates as clearing the tag's gated sections by PATCH. The actor is the requester.
+    actor = payload.get("requested_by_id")
+    perms = UserPermissionService(db)
+    gates = (
+        (lambda slug: bool(actor) and perms.check_user_has_permission(str(actor), slug)),
+        (lambda: bool(actor) and _is_superadmin(db, str(actor))),
+    )
+    return ContactTagService(db).delete_tag(_entity_id(payload), gates=gates)
+
+
 def _delete_onboarding_request(db: Session, payload: dict):
     from app.services import onboarding_service
 
@@ -1469,6 +1525,17 @@ register(
         # at all (issue #402).
         permission="user_management.reference_data.manage",
         label="Delete market segment",
+    )
+)
+
+register(
+    FormAction(
+        key="contact_tag.delete",
+        entity_types=("contact_tag",),
+        execute=_delete_contact_tag,
+        window=WINDOW_DESTRUCTIVE,
+        permission="user_management.contacts.edit",
+        label="Delete contact tag",
     )
 )
 
@@ -2127,6 +2194,75 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission=OWN_RECORD,
         label="Delete snapshot",
+    )
+)
+
+
+def _delete_sample_request(db: Session, payload: dict):
+    from app.services import sample_request_service
+
+    # Owner's own Draft only; re-checked here because the state can change inside the window.
+    sample_request_service.delete_draft(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="sample_request.delete",
+        entity_types=("sample_request",),
+        execute=_delete_sample_request,
+        # Destructive: a hard delete of the owner's draft and its lines.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
+def _delete_new_product_application(db: Session, payload: dict):
+    from app.services import new_product_application_service
+
+    # Applicant's own Draft only; re-checked here because the state can change inside the window.
+    new_product_application_service.delete_draft(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="new_product_application.delete",
+        entity_types=("new_product_application",),
+        execute=_delete_new_product_application,
+        # Destructive: a hard delete of the applicant's draft and its lines.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
+def _unlink_new_product_application_attachment(db: Session, payload: dict):
+    from app.services import new_product_application_service
+
+    # The applicant's own link on an editable application; re-checked here because the state
+    # can change inside the window. Only the link goes: the file stays in the library.
+    new_product_application_service.unlink_attachment(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Unlinked"}
+
+
+register(
+    FormAction(
+        key="new_product_application_attachment.unlink",
+        entity_types=("new_product_application_attachment",),
+        execute=_unlink_new_product_application_attachment,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Unlink attachment",
     )
 )
 

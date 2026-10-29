@@ -282,7 +282,7 @@ describe('SalesOrderDetailClient', () => {
 
     expect(await screen.findByText('This sales order could not be loaded')).toBeInTheDocument();
     expect(screen.getByText('That draft was rebuilt')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Back to sales orders' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to orders' })).toBeInTheDocument();
   });
 
   it('shows every line and no gate count when nothing is open', async () => {
@@ -975,12 +975,15 @@ describe('SalesOrderDetailClient, the S7 review screen', () => {
 
     renderDetail();
 
-    expect(
-      await screen.findByText(
+    // The project name renders through TruncatedTextCell (its own span), so assert on the
+    // meta line's text content rather than one text node.
+    const activity = await screen.findByRole('link', { name: 'View activity' });
+    await waitFor(() =>
+      expect(activity.parentElement?.textContent).toMatch(
         /Setia Alam \(PRJ-000001\) · Area group TOWER · Customer PO HQ\/26\/01\/121 v1/,
       ),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'View activity' })).toHaveAttribute(
+    );
+    expect(activity).toHaveAttribute(
       'href',
       '/project-sales/p1?tab=activity',
     );

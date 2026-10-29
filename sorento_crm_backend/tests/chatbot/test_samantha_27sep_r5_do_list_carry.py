@@ -35,12 +35,18 @@ from tests.chatbot._turn_helpers import build_policy, entity, verdict
 from tests.chatbot.conftest import validating_resolve_entity
 from tests.chatbot._turn_helpers import do_window
 from tests.chatbot.test_engine import _parser_output
-from tests.chatbot.test_outstanding_lane import REPORT_HIT, _present_response, _report_route_body
+from tests.chatbot.test_outstanding_lane import _present_response
 from tests.chatbot.test_samantha_26sep_r3_brand_carry import CHENG_HUAT_UUID, _Chat
 
 HANLIM_UUID = "55555555-5555-5555-5555-555555555555"
 ORDERS_LIST = "crm_order_management_orders_list"
-REPORT = "crm_outstanding_report"
+#: REPORT-UNIFY (Q1): the outstanding report is `crm_report_ask` (its kind named in the first message).
+REPORT = "crm_report_ask"
+_ASK_BODY = {
+    "status": "ok", "message": None, "basis": "outstanding", "basis_label": "outstanding orders", "measure": "amount",
+    "sort": "desc", "group_by": None, "group_label": None, "date_from": None, "date_to": None, "filters": [],
+    "rows": [], "more": 0, "total_count": 0, "total": {"qty": 10, "amount": 100.0},
+}
 OUTSTANDING_BUCKETS = {"outstanding", "so_outstanding", "do_outstanding", "outstanding_both"}
 
 _ORDERS_ROUTE_BODY = {
@@ -121,15 +127,12 @@ def _do_list(customer: str, brand: str = "sorento") -> dict[str, Any]:
 OWNER_TURNS: list[tuple[str, dict[str, Any], str]] = [
     (
         "outstaing brand sorento dealr cheng huat sentul",
-        _order_ask(entities=[_brand("sorento"), _customer("Cheng Huat Sentul")], document=[], status="outstanding"),
-        "scope_ask",
+        _order_ask(entities=[_brand("sorento"), _customer("Cheng Huat Sentul")], document=[], status="outstanding",
+                   basis="outstanding"),
+        "outstanding",
     ),
-    ("1", _pick(1), "outstanding"),
-    # A bare document word typed under the report's own open offer re-runs the report
-    # for that document (hand pass 3 row 5, unchanged): it answers the open question.
-    ("delieyr orer?", _document_only("DO"), "outstanding"),
-    ("ssales order", _document_only("SO"), "outstanding"),
-    ("1", _pick(1), "outstanding"),
+    # REPORT-UNIFY: the report ask arms no document question or detail offer, so the owner's four turns under
+    # them (the pick "1", "delieyr orer?", "ssales order", "1") are retired.
     ("check stock X4:M488-75-pvd-GM", _check_stock(), "stock"),
     ("DO for sorento brand in cheng huat sentul", _do_list("Cheng Huat Sentul"), "do_list"),
     ("delivery for sorento brand in cheng huat sentul", _do_list("Cheng Huat Sentul"), "do_list"),
@@ -164,7 +167,7 @@ class _Replay(_Chat):
     and the orders list go through the real presenter, anything else is a miss."""
 
     def __init__(self, session_factory, monkeypatch):
-        super().__init__(session_factory, monkeypatch, attributes=["sales_orders.outstanding", *_DO_REVEALS], tool_body={})
+        super().__init__(session_factory, monkeypatch, attributes=["sales_orders.outstanding", "sales_orders.sales_report", *_DO_REVEALS], tool_body={})
         from app.services.chatbot import engine as engine_mod
         from app.services.chatbot.lanes.business.services import AnswerServices  # noqa: F401
 
@@ -198,7 +201,7 @@ class _Replay(_Chat):
         def mcp_call(name: str, args: dict) -> str:
             self.captured.append((name, dict(args)))
             if name == REPORT:
-                return present(name, json.dumps(_report_route_body(REPORT_HIT, args)))
+                return present(name, json.dumps(_ASK_BODY))
             if name == ORDERS_LIST:
                 return present(name, json.dumps(_ORDERS_ROUTE_BODY))
             return json.dumps({"has_result": False, "items": []})
@@ -229,10 +232,7 @@ class _Replay(_Chat):
 def _assert_reading(n: int, text_body: str, expected: str, reply: str, calls, projected, chat) -> None:
     where = f"turn {n} {text_body!r}: calls={[c[0] for c in calls]} projected={projected} reply={reply!r}"
     names = [c[0] for c in calls]
-    if expected == "scope_ask":
-        assert "Outstanding for which document?" in reply, where
-        assert REPORT not in names, where
-    elif expected == "outstanding":
+    if expected == "outstanding":
         assert REPORT in names, where
         assert ORDERS_LIST not in names, where
     elif expected == "stock":
@@ -280,7 +280,7 @@ def test_do_list_right_after_an_outstanding_report(session_factory, monkeypatch,
     """R1 "whatever was said before": the list ask typed straight under the outstanding
     report's own open offer is still the delivery order list."""
     chat = _Replay(session_factory, monkeypatch)
-    for n, (body, qf, expected) in enumerate(OWNER_TURNS[:2], start=1):
+    for n, (body, qf, expected) in enumerate(OWNER_TURNS[:1], start=1):
         reply, calls, projected = chat.turn(body, qf)
         _assert_reading(n, body, expected, reply, calls, projected, chat)
     reply, calls, projected = chat.turn(text_body, _do_list("Cheng Huat Sentul"))
@@ -291,12 +291,14 @@ def test_outstanding_do_in_the_message_still_runs_the_outstanding_report(session
     """The other half of R1: the message's OWN outstanding word enters the bucket, even
     after the list ran."""
     chat = _Replay(session_factory, monkeypatch)
-    chat.turn(OWNER_TURNS[6][0], OWNER_TURNS[6][1])
+    first_list = next(t for t in OWNER_TURNS if t[2] == "do_list")
+    chat.turn(first_list[0], first_list[1])
     reply, calls, projected = chat.turn(
         "outstanding DO for sorento brand in cheng huat sentul",
         _order_ask(entities=[_brand("sorento"), _customer("Cheng Huat Sentul")], document=["DO"], status="outstanding"),
     )
     assert [c for c in calls if c[0] == REPORT], (calls, reply)
+    assert [c for c in calls if c[0] == REPORT][0][1].get("basis") == "pending_delivery", calls  # the DO names its kind
     assert "do_outstanding" in projected, projected
 
 

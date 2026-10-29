@@ -31,7 +31,7 @@ import {
   Building2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
@@ -40,11 +40,12 @@ import { DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/
 import DriveListView from './DriveListView';
 import DriveGridView from './DriveGridView';
 import DriveBreadcrumb from './DriveBreadcrumb';
+import { useOnFolderChange } from './useFolderUrl';
 import DriveRowActions from './DriveRowActions';
 import AccessLevelsCell from './AccessLevelsCell';
 import MoveToDialog, { type MoveSelection } from './MoveToDialog';
 import { buildDriveBulkActions } from './driveBulkActions';
-import { buildBreadcrumb } from './drivePath';
+import { buildBreadcrumb, isFolderUnavailable } from './drivePath';
 import { useDriveViewMode } from './useDriveViewMode';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -73,7 +74,9 @@ import {
 } from '../../attachments/hooks/useAttachments';
 import { useAttachmentTypes } from '../../attachment-types/hooks/useAttachmentTypes';
 import { useCompany } from '@/app/providers/CompanyProvider';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { Calendar } from '@/components/ui/calendar';
 import { getUserLookup, type UserLookupItem } from '@/services/userSelectService';
 import { useQuery } from '@tanstack/react-query';
@@ -98,6 +101,7 @@ import {
 import type { Attachment } from '../../attachments/types/attachment.types';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import AttachmentUploadDialog from '../../attachments/components/AttachmentUploadDialog';
@@ -159,11 +163,12 @@ export default function AttachmentsInFolderPanel({
   const [thisFolderOnly, setThisFolderOnly] = useState(false);
   const [accessLevelFilters, setAccessLevelFilters] = useState<string[]>([]);
   const [accessLevelsMatch, setAccessLevelsMatch] = useState<'any' | 'all' | 'exact'>('any');
-  const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
+  // Attachment type, storage status, company and uploader hold one value or several, comma-joined (OR-ed).
+  const [attachmentTypeId, setAttachmentTypeId] = useState<string>('');
   const [linkStatus, setLinkStatus] = useState<'__all__' | 'linked' | 'unlinked'>('__all__');
-  const [storageStatus, setStorageStatus] = useState<'__all__' | 'accessible' | 'missing' | 'unchecked'>('__all__');
+  const [storageStatus, setStorageStatus] = useState<string>('');
   const [companyFilter, setCompanyFilter] = useState<string>('');
-  const [uploadedBy, setUploadedBy] = useState<string>('__all__');
+  const [uploadedBy, setUploadedBy] = useState<string>('');
   const [uploadedRange, setUploadedRange] = useState<DateRange | undefined>();
   const uploadedAtFrom = uploadedRange?.from ? format(uploadedRange.from, 'yyyy-MM-dd') : '';
   const uploadedAtTo = uploadedRange?.to ? format(uploadedRange.to, 'yyyy-MM-dd') : '';
@@ -185,15 +190,15 @@ export default function AttachmentsInFolderPanel({
   });
   const attachmentTypes = attachmentTypesData?.data ?? [];
   const { data: accessTypes = [] } = useContactAccessTypes();
-  const { data: tree = [] } = useDirectoryTree();
+  const { data: tree = [], isSuccess: treeLoaded, isFetching: treeFetching } = useDirectoryTree();
 
   const { grants: companyGrants } = useCompany();
   const extraFilterCount =
-    (attachmentTypeId !== '__all__' ? 1 : 0) +
+    (attachmentTypeId ? 1 : 0) +
     (linkStatus !== '__all__' ? 1 : 0) +
-    (storageStatus !== '__all__' ? 1 : 0) +
+    (storageStatus ? 1 : 0) +
     (companyFilter ? 1 : 0) +
-    (uploadedBy !== '__all__' ? 1 : 0) +
+    (uploadedBy ? 1 : 0) +
     (uploadedAtFrom || uploadedAtTo ? 1 : 0);
   const totalFilterCount = accessLevelFilters.length + extraFilterCount;
 
@@ -214,6 +219,7 @@ export default function AttachmentsInFolderPanel({
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [bulkDownloadOpen, setBulkDownloadOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const canDeletePermanently = useHasPermission('resource.attachments.delete');
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
   const [setCompanyDialogOpen, setSetCompanyDialogOpen] = useState(false);
@@ -271,11 +277,11 @@ export default function AttachmentsInFolderPanel({
     is_deleted: isTrashView ? true : undefined,
     access_levels: accessLevelFilters.length > 0 ? accessLevelFilters : undefined,
     access_levels_match: accessLevelFilters.length > 0 ? accessLevelsMatch : undefined,
-    attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
+    attachment_type_id: attachmentTypeId || undefined,
     link_status: linkStatus !== '__all__' ? linkStatus : undefined,
-    storage_status: storageStatus !== '__all__' ? storageStatus : undefined,
+    storage_status: storageStatus || undefined,
     company: companyFilter || undefined,
-    uploaded_by: uploadedBy !== '__all__' ? uploadedBy : undefined,
+    uploaded_by: uploadedBy || undefined,
     uploaded_at_from: uploadedAtFrom || undefined,
     uploaded_at_to: uploadedAtTo || undefined,
   });
@@ -424,16 +430,26 @@ export default function AttachmentsInFolderPanel({
   const clearSelection = useCallback(() => setRowSelection({}), []);
 
   // ---- Drill / open --------------------------------------------------------
+  // Changing folder clears the active search (B7), resets paging and the selection.
+  const resetFolderView = useCallback(() => {
+    resetSearchQuery('');
+    setThisFolderOnly(false);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+    clearSelection();
+  }, [resetSearchQuery, clearSelection]);
+  // Runs for every folder change, whatever caused it: a click here, the tree, browser
+  // Back / Forward, a pasted link (FILES-URL-NAV AC-9).
+  useOnFolderChange(directoryId, resetFolderView);
+
   const navigateToFolder = useCallback(
     (folderId: string | null) => {
-      // Drilling into a folder clears the active search (B7) and resets paging.
-      resetSearchQuery('');
-      setThisFolderOnly(false);
-      setPagination((p) => ({ ...p, pageIndex: 0 }));
-      clearSelection();
+      // A real change resets through useOnFolderChange once the URL lands. Reset here only
+      // when nothing will change (the open folder's own crumb, or the Trash page, which has
+      // no folder URL), so the OLD folder is never refetched unfiltered in between.
+      if (!onSelectFolder || (folderId ?? null) === (directoryId ?? null)) resetFolderView();
       onSelectFolder?.(folderId);
     },
-    [onSelectFolder, clearSelection]
+    [onSelectFolder, directoryId, resetFolderView]
   );
 
   const openItem = useCallback(
@@ -790,6 +806,16 @@ export default function AttachmentsInFolderPanel({
     );
   };
 
+  // "Folder not available" verdict, taken only from a SETTLED tree: a refetch after a create
+  // or move may not hold a just-opened folder yet. Held through later refetches (window
+  // focus, invalidations) so a real unavailable folder does not blink back to an empty grid.
+  const [unavailableId, setUnavailableId] = useState<string | null>(null);
+  if (treeLoaded && !treeFetching) {
+    const verdict = isFolderUnavailable(tree, true, effectiveDirectoryId) ? effectiveDirectoryId : null;
+    if (verdict !== unavailableId) setUnavailableId(verdict);
+  }
+  const folderUnavailable = effectiveDirectoryId != null && unavailableId === effectiveDirectoryId;
+
   const crumbs = useMemo(
     () => buildBreadcrumb(tree, isTrashView ? null : effectiveDirectoryId),
     [tree, effectiveDirectoryId, isTrashView]
@@ -937,6 +963,7 @@ export default function AttachmentsInFolderPanel({
         isTrashView={isTrashView}
         recursive={recursive}
         resubmitting={isFileItem(item) && pendingResubmitIds.has(item.id)}
+        canDeletePermanently={canDeletePermanently}
         handlers={{
           onOpen: openItem,
           onPreview: handlePreview,
@@ -968,6 +995,7 @@ export default function AttachmentsInFolderPanel({
     [
       isTrashView,
       recursive,
+      canDeletePermanently,
       pendingResubmitIds,
       openItem,
       handlePreview,
@@ -983,6 +1011,39 @@ export default function AttachmentsInFolderPanel({
       openFolderDelete,
     ]
   );
+
+  // A folder URL the loaded tree does not hold (deleted, in Trash, outside the viewer's
+  // companies, mistyped). The drive listing would answer with an empty 200, so say so
+  // instead of showing a silent empty folder; the breadcrumb's Home goes back (AC-6).
+  if (folderUnavailable) {
+    return (
+      <Card data-testid="folder-unavailable">
+        <CardHeader className="block">
+          <div className="flex flex-wrap items-center gap-2">
+            {isMobile && onToggleTreeDrawer && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onToggleTreeDrawer}
+                aria-label="Show folders"
+              >
+                <FolderOpen className="size-4" />
+              </Button>
+            )}
+            <div className="min-w-0 flex-1">
+              <DriveBreadcrumb crumbs={crumbs} onNavigate={navigateToFolder} droppable={false} />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="py-10">
+          <h3 className="text-base font-medium">Folder not available</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            It may have been deleted, moved to Trash, or you do not have access.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <>
@@ -1019,7 +1080,7 @@ export default function AttachmentsInFolderPanel({
               </div>
               <div className="flex items-center rounded-md border p-0.5">
                 <Button
-                  variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                  variant={viewMode === 'list' ? 'primary' : 'ghost'}
                   size="sm"
                   className="size-7 p-0"
                   onClick={() => setViewMode('list')}
@@ -1029,7 +1090,7 @@ export default function AttachmentsInFolderPanel({
                   <List className="size-4" />
                 </Button>
                 <Button
-                  variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                  variant={viewMode === 'grid' ? 'primary' : 'ghost'}
                   size="sm"
                   className="size-7 p-0"
                   onClick={() => setViewMode('grid')}
@@ -1081,11 +1142,11 @@ export default function AttachmentsInFolderPanel({
                           onClick={() => {
                             setAccessLevelFilters([]);
                             setAccessLevelsMatch('any');
-                            setAttachmentTypeId('__all__');
+                            setAttachmentTypeId('');
                             setLinkStatus('__all__');
-                            setStorageStatus('__all__');
+                            setStorageStatus('');
                             setCompanyFilter('');
-                            setUploadedBy('__all__');
+                            setUploadedBy('');
                             setUploadedRange(undefined);
                             setPagination((p) => ({ ...p, pageIndex: 0 }));
                           }}
@@ -1096,21 +1157,28 @@ export default function AttachmentsInFolderPanel({
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Attachment type</p>
-                      <SearchableSelect
-                        value={attachmentTypeId}
+                      <SearchableMultiSelect
+                        value={splitMulti(attachmentTypeId)}
                         onChange={(v) => {
-                          setAttachmentTypeId(v);
+                          setAttachmentTypeId(joinMulti(v));
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
-                        options={[
-                          { value: '__all__', label: 'All attachment types' },
-                          ...attachmentTypes.map((t) => ({
-                            value: t.id,
-                            label: t.type_name,
-                          })),
-                        ]}
+                        options={attachmentTypes.map((t) => ({
+                          value: t.id,
+                          label: t.type_name,
+                        }))}
                         placeholder="All attachment types"
                         triggerClassName="w-full"
+                        clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Type', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">All attachment types</span>
+                          )
+                        }
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -1132,31 +1200,40 @@ export default function AttachmentsInFolderPanel({
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Storage status</p>
-                      <SearchableSelect
-                        value={storageStatus}
+                      <SearchableMultiSelect
+                        value={splitMulti(storageStatus)}
                         onChange={(v) => {
-                          setStorageStatus(v as '__all__' | 'accessible' | 'missing' | 'unchecked');
+                          setStorageStatus(joinMulti(v));
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
                         options={[
-                          { value: '__all__', label: 'All files' },
                           { value: 'accessible', label: 'Accessible' },
                           { value: 'missing', label: 'Missing (broken)' },
                           { value: 'unchecked', label: 'Unchecked' },
                         ]}
                         placeholder="All files"
                         triggerClassName="w-full"
+                        clearable
                       />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Company</p>
-                      <SearchableSelect
-                        value={companyFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(companyFilter)}
                         onChange={(v) => {
-                          setCompanyFilter(v);
+                          setCompanyFilter(joinMulti(v));
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
                         clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Company', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">All companies</span>
+                          )
+                        }
                         options={[
                           ...companyGrants.map((c) => ({ value: c.id, label: c.name })),
                           { value: SHARED_COMPANY_VALUE, label: 'Shared' },
@@ -1167,23 +1244,30 @@ export default function AttachmentsInFolderPanel({
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Uploaded by</p>
-                      <SearchableSelect
-                        value={uploadedBy}
+                      <SearchableMultiSelect
+                        value={splitMulti(uploadedBy)}
                         onChange={(v) => {
-                          setUploadedBy(v);
+                          setUploadedBy(joinMulti(v));
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
                         loadError={usersSelectError}
                         onRetry={() => void refetchUsersSelect()}
-                        options={[
-                          { value: '__all__', label: 'All users' },
-                          ...usersSelect.map((u) => ({
-                            value: u.id,
-                            label: u.name?.trim() || 'Unnamed user',
-                          })),
-                        ]}
+                        options={usersSelect.map((u) => ({
+                          value: u.id,
+                          label: u.name?.trim() || 'Unnamed user',
+                        }))}
                         placeholder="All users"
                         triggerClassName="w-full"
+                        clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Uploaded by', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">All users</span>
+                          )
+                        }
                       />
                     </div>
                     <div className="space-y-1.5">

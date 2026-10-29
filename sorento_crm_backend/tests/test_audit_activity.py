@@ -304,3 +304,38 @@ def test_endpoint_requires_auth():
         assert r.status_code == 401
     finally:
         app.dependency_overrides.clear()
+
+
+def test_the_actor_list_keeps_to_the_company_scope_for_impersonators_too():
+    """The actor dropdown read `user_id` inside the company scope but `real_user_id` (an
+    admin who acted while impersonating, plan 8.1) across EVERY company, so another
+    company's impersonating admin was listed by name (crew note, API-NONBLOCKING 28 Oct)."""
+    from app.models.base import set_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+    with blank_session() as session:
+        seed_mocha(session)
+        ours, target, theirs = (str(uuid.uuid4()) for _ in range(3))
+        session.add_all([
+            User(id=ours, email="zzt-ours@example.com", name="ZZT Ours", status="ACTIVE"),
+            User(id=target, email="zzt-target@example.com", name="ZZT Target", status="ACTIVE"),
+            User(id=theirs, email="zzt-theirs@example.com", name="ZZT Theirs", status="ACTIVE"),
+        ])
+        session.commit()
+        session.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
+        session.query(AuditLog).delete()
+        at = datetime(2026, 6, 30, 9, 0, 0)
+        session.add_all([
+            AuditLog(id=str(uuid.uuid4()), entity_type="orders", entity_id=str(uuid.uuid4()),
+                     action="UPDATE", changed_at=at, user_id=ours, company_id=DEFAULT_COMPANY_ID),
+            AuditLog(id=str(uuid.uuid4()), entity_type="orders", entity_id=str(uuid.uuid4()),
+                     action="UPDATE", changed_at=at, user_id=target, real_user_id=theirs,
+                     company_id=MOCHA_ID),
+        ])
+        session.commit()
+
+        set_company_scope(session, frozenset({DEFAULT_COMPANY_ID}))
+        actors = {a["id"] for a in get_activity_feed(session)["actors"]}
+
+        assert actors == {ours}, actors

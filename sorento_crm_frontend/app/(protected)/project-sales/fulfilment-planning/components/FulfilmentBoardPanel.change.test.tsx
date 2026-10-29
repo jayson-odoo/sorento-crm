@@ -129,7 +129,16 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// OI-SPLIT-GUIDE (UAC F2): every guide page reads its order's split view; these specs only care
+// about what the press posts, so the read answers an order with no lines.
+vi.mock('../../_shared/services/lineSplitService', () => ({
+  getLineSplits: (psoId: string) =>
+    Promise.resolve({ pso_id: psoId, so_number: psoId, customer: null, project: null, lines: [] }),
+  saveLineSplits: vi.fn(),
+}));
+
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { walkConfirmGuide } from '@/test-mocks/confirmGuide';
 import {
   buildBoard,
   type BoardDemandLine,
@@ -214,7 +223,7 @@ function defaultPreview(body: {
 
 async function pressPreviewThenConfirm() {
   await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-  fireEvent.click(screen.getByTestId('board-confirm'));
+  await walkConfirmGuide();
 }
 
 beforeEach(() => {
@@ -469,13 +478,15 @@ describe('the product-changed row, through the full panel (S7)', () => {
     expect(screen.queryByTestId('board-change-icon-pcr-s7')).toBeInTheDocument();
   });
 
-  it('reads "Product changed, was <old item code>" then the sourcing lines in the dialog', async () => {
+  it('reads the product swap as the Was/Now Product row, then the sourcing lines in the dialog', async () => {
     renderProductChangedPanel();
     const icon = await screen.findByTestId('board-change-icon-pcr-s7');
     fireEvent.click(icon);
 
     const dialog = await screen.findByTestId('board-change-dialog');
-    expect(within(dialog).getByText(/Product changed, was B2155-NL-BLUE/)).toBeInTheDocument();
+    expect(within(dialog).getByTestId('change-was-product')).toHaveTextContent('B2155-NL-BLUE');
+    expect(within(dialog).getByTestId('change-now-product')).toHaveTextContent('B2155-NL-WHITE');
+    expect(within(dialog).queryByText(/Product changed, was/)).toBeNull();
     expect(
       within(dialog).getByText('Release 134 B2155-NL-BLUE, free at BRW-IB'),
     ).toBeInTheDocument();

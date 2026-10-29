@@ -44,6 +44,7 @@ from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes import escalation as escalation_mod
 from app.services.chatbot.lanes.escalation import _next_assignee_body, escalation_context
 from app.services.chatbot.turn import compose as turn_compose
+from tests.chatbot._turn_helpers import make_office_access_type
 from tests.chatbot.test_engine import _parser_output, stub_access, stub_parser  # noqa: F401
 from tests.chatbot.test_engine_company_scope import (
     _scope_envelope,
@@ -81,8 +82,10 @@ SORENTO_MEMBERS = [("zzt-u-jer", "Jereen Tee"), ("zzt-u-tay", "Tay Zhi Yang")]
 def _chain(session_factory, *, product_order: tuple[str, str] = ("mocha", "sorento")) -> dict[str, str]:
     """`product_order` is the order the two same-code products are INSERTED in, which is
     the only thing that decides which one the resolver's exact probe returns first (it has
-    no ORDER BY). The default is this file's historical order; a shared xdist worker's
-    earlier tests can still lay the rows out the other way on disk (main cd220251)."""
+    no ORDER BY) in a fresh table. The default is this file's historical order; a shared
+    xdist worker's earlier tests can still lay the rows out the other way on disk (main
+    cd220251), so no assertion may depend on it: the product-row order shows only in the
+    "checked in" phrase (BOTH_CHECKED) and the plain clarify (PLAIN_CLARIFY)."""
     a = _seed_company(session_factory, name=MOCHA)
     b = _seed_company(session_factory, name=SORENTO)
     ids = {"mocha": a, "sorento": b}
@@ -94,6 +97,9 @@ def _chain(session_factory, *, product_order: tuple[str, str] = ("mocha", "soren
     _seed_contact(
         session_factory, contact_id=CONTACT, phone="+60000000966", workspace_id=workspace, company_ids=[a, b]
     )
+    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff (by an office
+    # access type, so the escalation offer under test is unchanged).
+    make_office_access_type(session_factory, CONTACT)
     return ids
 
 
@@ -272,9 +278,12 @@ MEMBER_CLARIFY = (
     "Both *Mocha* and *Sorento* teams are listed - reply a number, a name, or the company "
     "(*Mocha* / *Sorento*) and I'll assign automatically."
 )
-PLAIN_CLARIFY = (
-    "Both *Mocha* and *Sorento* teams are listed - reply with the company (Mocha / Sorento) "
+# The plain (no picker) copy names the companies in the routing pool's order, which follows
+# the unordered product rows (see BOTH_CHECKED above), so either order is the same copy.
+PLAIN_CLARIFY = tuple(
+    f"Both *{a}* and *{b}* teams are listed - reply with the company ({a} / {b}) "
     "and I'll assign automatically."
+    for a, b in ((MOCHA, SORENTO), (SORENTO, MOCHA))
 )
 
 
@@ -543,23 +552,19 @@ class TestR3BothMissClarifiesTheCompany:
 class TestR3RefusalHoldsWhicheverProductRowComesFirst:
     """Main deploy cd220251 (run 36379111785): on a shared xdist worker the Sorento product
     row sat ahead of the Mocha one, the offer said "checked in Sorento and Mocha", and the
-    refusal test died in its setup before the rule it pins was ever reached. Both physical
-    orders are pinned here, so the refusal is proven in each and the phrase's order is on
-    the record as the resolver's, not a promise."""
+    refusal test died in its setup before the rule it pins was ever reached. Both INSERT
+    orders run here, so the refusal is proven in each. The insert order does not pin the
+    physical row order (a worker whose earlier tests freed heap space can lay the second
+    insert out first; release runs 39823699218 / 39876559607 and a third run saw the
+    phrase flip with Mocha inserted first), so the phrase accepts either order."""
 
-    @pytest.mark.parametrize(
-        ("product_order", "phrase"),
-        [
-            (("mocha", "sorento"), "checked in Mocha and Sorento"),
-            (("sorento", "mocha"), "checked in Sorento and Mocha"),
-        ],
-    )
-    def test_a_parser_pick_of_a_company_never_offered_is_refused(self, conversation, product_order, phrase):
+    @pytest.mark.parametrize("product_order", [("mocha", "sorento"), ("sorento", "mocha")])
+    def test_a_parser_pick_of_a_company_never_offered_is_refused(self, conversation, product_order):
         conv = conversation(_both_miss, product_order=product_order)
         said = _said(conv.say(f"{PRODUCT_CODE} kim seng jaya send yet", _order_ask()))
-        assert phrase in said, said
+        assert _checked_both(said), said
         assert f"{PICKER_HEAD}\n*Mocha:*\n1. Kia Yee\n*Sorento:*\n2. Jereen Tee" in said, (
-            "the picker's order is the lookup's company order, not the product rows'"
+            "the picker's order is the gate's name-sorted routing companies, not the product rows'"
         )
         conv.say("the cabana one", _reply(escalation={"is_escalation_confirmation": False, "company_pick": "Cabana"}))
         assert conv.last_lane == [], "a pick outside the offered pool routes nowhere"
@@ -586,7 +591,7 @@ class TestR3BothMissWithNoPicker:
     def test_yes_clarifies_with_the_plain_copy(self, conversation):
         conv = self._offer(conversation)
         result = conv.say("yes", _yes())
-        assert PLAIN_CLARIFY in _said(result), _said(result)
+        assert any(copy in _said(result) for copy in PLAIN_CLARIFY), _said(result)
         assert "a number" not in _said(result)
 
     def test_yes_then_sorento_routes_to_sorento(self, conversation):
@@ -613,7 +618,7 @@ class TestR5OfferHold:
         offered = conv.open_question()
         result = conv.say("asdkjh", _reply())
         assert result.branch_kind == "offer_hold", result.branch_kind
-        assert (result.reply or {}).get("text") == PLAIN_CLARIFY, result.reply
+        assert (result.reply or {}).get("text") in PLAIN_CLARIFY, result.reply
         assert conv.last_lane == []
         held = conv.open_question()
         held["payload"].pop("ttl", None)  # AC-816: the offer's own clock still ticks

@@ -1077,6 +1077,20 @@ def test_ac23_chat_analytics_not_granted_is_its_fixed_refusal_with_no_fit_line(s
     _assert_refusal(a_reply, c_reply)
 
 
+def test_ac23_a_doc_list_by_an_unlinked_non_staff_contact_is_its_scope_refusal_with_no_fit_line(
+    session_factory, monkeypatch
+) -> None:
+    """V1-DOC-SCOPE-R: an unlinked contact that is not staff owns no delivery order, so its
+    orders read is refused before any fetch (`_DOC_TOOLS`); the refusal is sent as it is."""
+    (c_reply, _c), (a_reply, _a) = _attr_parity(
+        session_factory, monkeypatch, attributes=[], domain="order", intent="check_order",
+        typed=[COVER_A], asked=[WC_A], find=fits("seat_cover", "seat cover"),
+        date_filter_start="2026-10-01", date_filter_end="2026-10-31",
+    )
+    assert "only check on your own account" in c_reply, c_reply
+    _assert_refusal(a_reply, c_reply)
+
+
 def _bar_escalation(session_factory) -> None:
     from sqlalchemy import text
 

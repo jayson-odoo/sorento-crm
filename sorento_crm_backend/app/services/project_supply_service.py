@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import contextmanager
 from collections import defaultdict
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import date, datetime, timedelta
@@ -70,7 +71,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import case, func, null, nullslast, or_
+from sqlalchemy import and_, case, func, null, nullslast, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -90,6 +91,8 @@ from app.models.project_so import (
     ACK_AWAITING,
     ALLOC_SOURCE_BRW,
     ALLOC_SOURCE_GROUP_TAKE,
+    ALLOC_BORROW_SOURCES,
+    ALLOC_RESERVE_SOURCES,
     ALLOC_SOURCE_ORDER,
     ALLOC_SOURCE_OTHER_LOCATION,
     ALLOC_SOURCE_OTHER_PROJECT,
@@ -115,6 +118,7 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 from app.services.scm import ladder_steps, priority, spo_supply
 from app.services.scm.history_sources import SPO_HISTORY_SOURCE
 from app.services.scm.supply_origin import buy_origin_by_product
@@ -182,6 +186,10 @@ from app.services.scm.supply_assignment import (
 logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
+# STOCKDEBT-SHM-QUERY: refs per statement in the Stock Debt board's batched PO-received
+# read. /dev/shm ran out (PROD 27 Oct 2026) in a PARALLEL hash join, which that read now
+# never plans; the chunk stays as a size bound, one covers today's board (~10.8k refs).
+_REF_CHUNK = 20000
 
 #: The ladder that composed a proposal, stamped on every component frozen at confirm
 #: (`_proposed_component`). Read by the board so a suggestion made under an older rule can
@@ -595,6 +603,18 @@ class SupplyLinesRefused(AppException):
         return list(self.detail.get("failing_lines") or [])
 
 
+def _confirm_line_remark(entry: Any, carried: Optional[str]) -> Optional[str]:
+    """OI-SPLIT-GUIDE (UAC F33): the REMARK one Confirm line freezes, one rule for every caller
+    (the board, the per-order planning sheet, split-edit re-posts, batch applies, the API): a
+    line that sends no `remark` (or a null one) keeps `carried` (the one its line was confirmed
+    with); one that sends `remark: ""` clears it; any other text replaces it."""
+    sent = getattr(entry, "model_fields_set", None)
+    remark = getattr(entry, "remark", None)
+    if (sent is not None and "remark" not in sent) or remark is None:
+        return carried
+    return remark.strip() or None
+
+
 def _preview_row_facts(row: Any) -> Tuple[Any, ...]:
     """What purchasing reads of one inquiry row: a simulated press that leaves all of it as
     it was only re-filed the row, and writes nothing for purchasing. The note is read too,
@@ -629,6 +649,18 @@ def _error_detail(exc: Exception) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
         failing_lines = detail.get("failing_lines")
         return message, failing_lines
     return str(exc), None
+
+
+def _shown_days_late(event: Any, as_of: date) -> int:
+    """How late a counted document READS: from the published ETA when its delay is masked.
+
+    Wording only. Which documents are late, and so assumed, stays the engine's call on the
+    real date (`event.days_late`).
+    """
+    stated = getattr(event, "stated_at", None)
+    if isinstance(stated, spo_supply.MaskedEta):
+        return spo_supply.overdue_days(stated.published, as_of)
+    return int(getattr(event, "days_late", 0) or 0)
 
 
 @dataclass
@@ -852,6 +884,14 @@ class _LineFacts:
     @property
     def pool_code(self) -> Optional[str]:
         return self.pool.warehouse_code if self.pool else None
+
+    @property
+    def so_line_no(self) -> Optional[int]:
+        """The number a person reads for this line (`so_line_no` rule): the core line's
+        AutoCount number, `line_no` above only when the core carries none."""
+        from app.services.project_line_split_service import so_line_no
+
+        return so_line_no(self.core.line_no if self.core is not None else None, self.line_no)
 
 
 class _BorrowLedger:
@@ -1136,8 +1176,13 @@ def _location_only(candidate: Mapping[str, Any]) -> Dict[str, Any]:
 class ProjectSupplyService:
     """The supply sheet (`proposal_for`) and the atomic commit (`confirm`)."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, *, reveal_eta_delay: bool = True):
         self.db = db
+        # Whether this request's reader may see `eta_delay_date`, a
+        # `procurement.packing_lists.view_clearance` field (owner ruling 17 Oct 2026). The
+        # engine plans on the delay either way; False only makes it PRINT as the published
+        # ETA (`spo_supply.MaskedEta`). Only a read that prints to a viewer passes False.
+        self.reveal_eta_delay = reveal_eta_delay
         # Facts about THIS request, filled by `_facts_for` and read by the helpers below.
         # Per-request rather than per-call because one proposal asks the same "what is
         # free at that location" question once per line and once per borrow candidate.
@@ -1347,19 +1392,22 @@ class ProjectSupplyService:
             str((snap or {}).get("core_line_id"))
             for snap in (active.line_snapshots or [] if active is not None else [])
         }
+        from app.services.project_line_split_service import so_line_no
+
         for mirror, core, _reason in picked:
             if awaits_cancel_so(core):
                 continue
+            named = so_line_no(core.line_no, mirror.line_no)
             if core.line_status == "cancelled":
                 raise AppException(
                     status_code=409,
-                    message=f"Line {mirror.line_no} is already cancelled.",
+                    message=f"Line {named} is already cancelled.",
                     code="supply_cancel_already_cancelled",
                 )
             if str(core.id) in covered_ids:
                 raise AppException(
                     status_code=409,
-                    message=f"Line {mirror.line_no} is confirmed. Reject it first.",
+                    message=f"Line {named} is confirmed. Reject it first.",
                     code="supply_cancel_line_covered",
                 )
         now = datetime.utcnow()
@@ -1373,7 +1421,16 @@ class ProjectSupplyService:
             product_id = core.product_id or mirror.product_id
             if product_id:
                 code = self.db.query(Product.product_code).filter(Product.id == product_id).scalar()
-            echo.append({"line_no": mirror.line_no, "item_code": code})
+            # The reason rides back (PLAN-BATCH-HELD-CANCEL): an AutoCount Cancel SO draft's
+            # reason names its document, and the board's results say which one.
+            echo.append(
+                {
+                    "line_no": mirror.line_no,
+                    "so_line_no": so_line_no(core.line_no, mirror.line_no),
+                    "item_code": code,
+                    "reason": reason,
+                }
+            )
         self.db.flush()
         project_line_draft_service.delete_drafts_for_lines(
             self.db,
@@ -1553,11 +1610,13 @@ class ProjectSupplyService:
         never outside anything: there is no delivery date to be beyond, and deciding on a date
         nobody stated is exactly the guess the rest of this engine refuses to make.
 
-        PUBLIC because the verdict has three readers and must never have three answers: the
-        ladder that skips two rungs on it, the sheet that offers no donor beside it, and the
-        board that has to say so on the row and in the trail. The board read it as "nothing
-        free at L, and borrowing is possible from ..." on SO414341 precisely because it had no
-        way to ask.
+        PUBLIC because the verdict has readers that must never have different answers: the
+        ladder that skips two rungs on it, and the board that has to say so on the row and in
+        the trail. The board read it as "nothing free at L, and borrowing is possible from ..."
+        on SO414341 precisely because it had no way to ask.
+
+        The sheet's and the board's donor LISTS do not read it: a planner may still pick a
+        Borrow by hand beyond the window (owner ruling (b), 22 Oct 2026, BORROW-ZERO-FREE).
         """
         if fact.required_date is None:
             return False
@@ -2829,7 +2888,7 @@ class ProjectSupplyService:
                 str(fact.product_id)
             )
             memo = {
-                str(event.key): int(getattr(event, "days_late", 0) or 0)
+                str(event.key): _shown_days_late(event, as_of)
                 for event in (result.supply if result is not None else ())
                 if int(getattr(event, "days_late", 0) or 0) > 0
             }
@@ -3098,6 +3157,11 @@ class ProjectSupplyService:
         takes ITS received quantity as the landed figure, unless the PO line itself landed
         more (`_landed_for_refs`).
         """
+        # LINKAGE-UNIFY U5: the goods chain's own PO -> SPO key (PO number, trimmed line
+        # ref, product, company, or the allocation's own `po_line_id`), never the bare line
+        # ref. Local import: `goods_chain` reads this module at import time.
+        from app.services.scm import goods_chain
+
         refs = [ref for ref in {str(r).strip() for r in source_refs if r} if ref]
         if not refs or not product_id:
             return {}
@@ -3107,10 +3171,8 @@ class ProjectSupplyService:
                 SPOAllocation.quantity_received,
                 SPOAllocation.spo_number,
             )
-            .join(
-                SPOAllocation,
-                SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref,
-            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .join(SPOAllocation, goods_chain.po_spo_key_clause())
             .filter(
                 PurchaseOrderLine.from_so_line_ref.in_(refs),
                 PurchaseOrderLine.product_id == product_id,
@@ -3130,14 +3192,30 @@ class ProjectSupplyService:
             self._oi_linked_landed_by_ref(refs, product_id=product_id, company_id=company_id),
         )
 
+    @contextmanager
+    def _without_parallel_workers(self):
+        """`max_parallel_workers_per_gather` 0 for this transaction, restored after."""
+        previous = self.db.execute(
+            text("select current_setting('max_parallel_workers_per_gather')")
+        ).scalar()
+        self.db.execute(text("select set_config('max_parallel_workers_per_gather', '0', true)"))
+        yield
+        # Success path only: on any exception the setting is transaction-local, so the
+        # rollback ends it, and a restore on an aborted transaction would mask the error.
+        self.db.execute(
+            text("select set_config('max_parallel_workers_per_gather', :prev, true)"),
+            {"prev": previous},
+        )
+
     def _po_received_by_product(
         self, refs_by_product: Mapping[str, Iterable[str]]
     ) -> Dict[str, Dict[str, Tuple[Decimal, Optional[str]]]]:
         """`product_id -> _po_received_by_so_line_ref(refs, product_id=..., company_id=None)`
-        for many products in two reads, not two per product (STOCK-DEBT-PERF: the Stock
-        Debt board asked once per product, 1,258 of its 1,288 statements on the dev DB).
+        for many products in two reads per `_REF_CHUNK` refs, not two per product
+        (STOCK-DEBT-PERF: the Stock Debt board asked once per product, 1,258 of its 1,288
+        statements on the dev DB).
 
-        The same two joins over every product and ref at once. A row is kept only for the
+        The same two joins over every product and each chunk of refs. A row is kept only for the
         product it is for AND a ref asked about for that product, so each product's answer
         is the single-key read's own: the receipt JOIN pairs the SPO row with the PO line's
         product (the single-key read gets that by comparing both to one literal), and no
@@ -3151,39 +3229,57 @@ class ProjectSupplyService:
         wanted = {product_id: refs for product_id, refs in wanted.items() if refs}
         if not wanted:
             return {}
+        # LINKAGE-UNIFY U5: the goods chain's own PO -> SPO key, as the single-key read.
+        from app.services.scm import goods_chain
+
         all_refs = sorted(set().union(*wanted.values()))
         product_ids = sorted(wanted)
         received: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
-        rows = (
-            self.db.query(
-                PurchaseOrderLine.from_so_line_ref,
-                SPOAllocation.quantity_received,
-                SPOAllocation.spo_number,
-                PurchaseOrderLine.product_id,
-            )
-            .join(
-                SPOAllocation,
-                (SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref)
-                & (SPOAllocation.product_id == PurchaseOrderLine.product_id),
-            )
-            .filter(
-                PurchaseOrderLine.from_so_line_ref.in_(all_refs),
-                PurchaseOrderLine.product_id.in_(product_ids),
-            )
-            .all()
-        )
-        for ref, qty, spo_number, product_id in rows:
-            if str(ref) in wanted.get(str(product_id), ()):
-                _add_landed(received.setdefault(str(product_id), {}), str(ref), spo_number, qty)
         linked: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
-        for ref, product_id, _company, spo_number, placed, got in self._oi_placements(
-            all_refs, product_ids
-        ):
-            if str(ref) in wanted.get(str(product_id), ()):
-                _add_landed(
-                    linked.setdefault(str(product_id), {}), str(ref).strip(), spo_number,
-                    min(_dec(placed), _dec(got)),
+        # STOCKDEBT-SHM-QUERY: the refs in chunks, and the SPO side filtered by product
+        # (as the walk's own batched read does): without it the hash join built over every
+        # SPO row in the company. Each row's answer depends on its own ref only, so the
+        # chunked answer is the one-statement answer.
+        # Parallel hash joins are what fill /dev/shm; one statement without them costs
+        # ~0.3 s where 54 chunks cost ~2.6 s (dev copy, EXPLAIN).
+        with self._without_parallel_workers():
+            for start in range(0, len(all_refs), _REF_CHUNK):
+                refs = all_refs[start:start + _REF_CHUNK]
+                rows = (
+                    self.db.query(
+                        PurchaseOrderLine.from_so_line_ref,
+                        SPOAllocation.quantity_received,
+                        SPOAllocation.spo_number,
+                        PurchaseOrderLine.product_id,
+                    )
+                    .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                    .join(
+                        SPOAllocation,
+                        and_(
+                            goods_chain.po_spo_key_clause(),
+                            SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                        ),
+                    )
+                    .filter(
+                        PurchaseOrderLine.from_so_line_ref.in_(refs),
+                        PurchaseOrderLine.product_id.in_(product_ids),
+                        SPOAllocation.product_id.in_(product_ids),
+                    )
+                    .all()
                 )
+                for ref, qty, spo_number, product_id in rows:
+                    if str(ref) in wanted.get(str(product_id), ()):
+                        _add_landed(
+                            received.setdefault(str(product_id), {}), str(ref), spo_number, qty
+                        )
+                for ref, product_id, _company, spo_number, placed, got in self._oi_placements(
+                    refs, product_ids
+                ):
+                    if str(ref) in wanted.get(str(product_id), ()):
+                        _add_landed(
+                            linked.setdefault(str(product_id), {}), str(ref).strip(), spo_number,
+                            min(_dec(placed), _dec(got)),
+                        )
         return {
             product_id: _landed_for_refs(
                 received.get(product_id, {}), linked.get(product_id, {})
@@ -3342,6 +3438,8 @@ class ProjectSupplyService:
             .filter(
                 SalesOrderLine.sales_order_id.in_(order_ids),
                 SalesOrderLine.product_id.in_(product_ids),
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                SalesOrderLine.removed_unreferenced.is_(False),
             )
             .all()
         )
@@ -3368,6 +3466,9 @@ class ProjectSupplyService:
             # company that both happen to appear somewhere in that set would otherwise pair
             # across the join without ever being compared to each other (AC-6, fix-round
             # S2).
+            # LINKAGE-UNIFY U5: the goods chain's own PO -> SPO key (company inside it).
+            from app.services.scm import goods_chain
+
             rows = (
                 self.db.query(
                     PurchaseOrderLine.from_so_line_ref,
@@ -3376,11 +3477,13 @@ class ProjectSupplyService:
                     PurchaseOrderLine.company_id,
                     SPOAllocation.spo_number,
                 )
+                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
                 .join(
                     SPOAllocation,
-                    (SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref)
-                    & (SPOAllocation.product_id == PurchaseOrderLine.product_id)
-                    & (SPOAllocation.company_id == PurchaseOrderLine.company_id),
+                    and_(
+                        goods_chain.po_spo_key_clause(),
+                        SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                    ),
                 )
                 .filter(
                     PurchaseOrderLine.from_so_line_ref.in_(refs),
@@ -3454,6 +3557,8 @@ class ProjectSupplyService:
             .filter(
                 SalesOrderLine.sales_order_id == core_line.sales_order_id,
                 SalesOrderLine.product_id == core_line.product_id,
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                SalesOrderLine.removed_unreferenced.is_(False),
             )
             .all()
         )
@@ -4089,6 +4194,8 @@ class ProjectSupplyService:
         pool_codes = {
             (w.warehouse_code or "") for w in self._site_pool_warehouses().values()
         }
+        from app.services.project_line_split_service import so_line_no
+
         out: List[Dict[str, Any]] = []
         for row in result.lines:
             line = row.line
@@ -4121,7 +4228,7 @@ class ProjectSupplyService:
                         "location": code,
                         "qty": qty,
                         "donor_so_number": line.so_number or None,
-                        "donor_line_no": line.line_no,
+                        "donor_line_no": so_line_no(line.core_line_no, line.line_no),
                         "donor_agent_code": line.agent_code,
                         "donor_core_line_id": str(line.key),
                         "donor_required_date": line.required_date,
@@ -4134,7 +4241,9 @@ class ProjectSupplyService:
         out.sort(key=self._donor_order)
         if location_only or not self.borrow_from_order:
             # Same stock, same ranking (sorted above), told as a location (D2). Less a
-            # donor only its agent's authorisation could release (B1): confirm refuses it.
+            # donor only its agent's authorisation could release (B1). Confirm no longer
+            # refuses one a planner picks anyway (BORROW-CONFIRM-MATCH, 22 Oct 2026); the
+            # list still leaves it out (crew, 22 Oct: confirm-only, the list unchanged).
             return [
                 _location_only(candidate)
                 for candidate in out
@@ -4242,6 +4351,8 @@ class ProjectSupplyService:
         my_agent = mine.line.agent_code if mine is not None else None
         my_line_keys = {str(key) for key in self._unit_line_ids(fact)}
 
+        from app.services.project_line_split_service import so_line_no
+
         # What each event still has on the table: what nobody has spoken for (free plus this
         # asker's own share) first, then each eligible donor's hold of it in R19's order.
         # Keyed by event, because ONE document is the unit here.
@@ -4276,7 +4387,7 @@ class ProjectSupplyService:
                     {
                         "qty": qty,
                         "donor_so_number": row.line.so_number or None,
-                        "donor_line_no": row.line.line_no,
+                        "donor_line_no": so_line_no(row.line.core_line_no, row.line.line_no),
                         "donor_agent_code": row.line.agent_code,
                         "donor_core_line_id": str(row.line.key),
                         "donor_required_date": row.line.required_date,
@@ -4468,6 +4579,8 @@ class ProjectSupplyService:
             self._group_pile_members_cache[cache_key] = []
             return []
         warehouse_ids = [str(w.id) for w in locations.values()]
+        from app.services.project_line_split_service import so_line_no
+
         rows = (
             self.db.query(
                 SalesOrderLine, SalesOrder, SalesAgent.sales_agent,
@@ -4508,6 +4621,9 @@ class ProjectSupplyService:
                     "sales_order_id": str(line.sales_order_id),
                     "so_number": order.so_number or "",
                     "line_no": line_no,
+                    # What the donor's order calls the line; `line_no` stays the mirror's
+                    # (the pile order's tie-break reads it).
+                    "so_line_no": so_line_no(line.line_no, line_no),
                     "open_qty": open_qty,
                     "required_date": line.required_date or order.requested_delivery_date,
                     "order_date": order.order_date,
@@ -4595,7 +4711,7 @@ class ProjectSupplyService:
                     "location_rank": 0 if location == fact.own_code else 1,
                     "qty": member["open_qty"],
                     "donor_so_number": member.get("so_number") or None,
-                    "donor_line_no": member.get("line_no"),
+                    "donor_line_no": member.get("so_line_no"),
                     "donor_agent_code": member.get("donor_agent_code"),
                     "donor_core_line_id": member.get("line_id"),
                     "required_date": member.get("required_date"),
@@ -5013,6 +5129,7 @@ class ProjectSupplyService:
                 for option in options
             ],
             "line_no": line.line_no,
+            "so_line_no": fact.so_line_no,
             #: The PLANNING UNIT this line was composed in (ladder v6): this order's lines
             #: for the same item, location and delivery date are one quantity, covered whole
             #: from stock or bought whole. `1` and the line's own quantity when it was
@@ -5061,12 +5178,12 @@ class ProjectSupplyService:
             # Ranked against what this line still has to cover - the Buy the ladder just
             # proposed - because that is the quantity a donor would be asked for (13.11).
             # An unplannable line is offered nobody's stock: there is no need to rank against.
-            # Neither is a line beyond its reserve window (the ATP rule): rungs 4 and 5 are
-            # not walked for it, so a donor list beside it would OFFER the one thing the rule
-            # exists to refuse.
+            # A line beyond its reserve window IS offered the list (owner ruling (b), 22 Oct
+            # 2026, BORROW-ZERO-FREE): rungs 4 and 5 are still not walked for it, so nothing
+            # is composed, but a planner may pick a donor by hand and Confirm accepts it.
             "borrow_candidates": (
                 []
-                if fact.unplannable_reason or self.outside_reserve_window(fact)
+                if fact.unplannable_reason
                 else self._borrow_candidates(
                     fact,
                     need=sum(
@@ -5203,6 +5320,9 @@ class ProjectSupplyService:
                 "buy_reason": snapshot.get("buy_reason"),
                 "order_back": bool(snapshot.get("order_back")),
                 "cited_document": snapshot.get("cited_document"),
+                # OI-SPLIT-GUIDE (UAC F32): the planner's own REMARK the revision froze, so a
+                # covered line hands it back and a re-approve carries it unchanged.
+                "remark": (snapshot.get("remark") or None),
             }
         return out
 
@@ -5412,7 +5532,14 @@ class ProjectSupplyService:
         # read here at all - the change batch is the only thing that supersedes an active
         # revision now, and `_write_decision` below finds this one still active and
         # supersedes it in the same transaction the new composition is written in.
-        carried_holds = self._frozen_by_line(self.active_decision(str(order.id)))
+        active = self.active_decision(str(order.id))
+        carried_holds = self._frozen_by_line(active)
+        # The shortfall each line's revision recorded, so the credit is what was HELD
+        # (`_carried_component_qty`), not what was asked.
+        for snapshot in (active.line_snapshots or []) if active is not None else []:
+            held = carried_holds.get(str(snapshot.get("project_line_id") or ""))
+            if held is not None and snapshot.get("stock_short"):
+                held["stock_short"] = list(snapshot["stock_short"])
         self._lock_stock(payload_lines, lines)
 
         named = {str(entry.project_line_id) for entry in payload_lines}
@@ -5500,6 +5627,7 @@ class ProjectSupplyService:
                 invalid.append(
                     {
                         "line_no": line.line_no,
+                        "so_line_no": facts[str(line.id)].so_line_no,
                         "item_code": item_codes.get(str(line.id)),
                         "reason": "This line appears twice in the composition.",
                     }
@@ -5681,8 +5809,15 @@ class ProjectSupplyService:
         location: Optional[str],
         asked: Decimal,
         short: Decimal,
+        *,
+        warehouse_id: Optional[str] = None,
+        donor_project_id: Optional[str] = None,
     ) -> None:
-        """One component's shortfall, added to what an earlier check already found short."""
+        """One component's shortfall, added to what an earlier check already found short.
+
+        `warehouse_id` / `donor_project_id` are the keys `_snapshot` freezes the component
+        under, so a later confirm credits the shortfall back to that component only
+        (`_carried_component_qty`)."""
         if short <= _ZERO:
             return
         entries = self._stock_short.setdefault(line_id, [])
@@ -5695,6 +5830,8 @@ class ProjectSupplyService:
                 "kind": kind,
                 "index": index,
                 "location": location,
+                "warehouse_id": warehouse_id,
+                "donor_project_id": donor_project_id,
                 "asked": asked,
                 "short": min(short, asked),
             }
@@ -5724,6 +5861,14 @@ class ProjectSupplyService:
                 "asked": qty_text(entry["asked"]),
                 "short": qty_text(entry["short"]),
                 "note": self._short_sentence(entry),
+                **(
+                    {
+                        "warehouse_id": entry["warehouse_id"],
+                        "donor_project_id": entry["donor_project_id"],
+                    }
+                    if entry.get("warehouse_id")
+                    else {}
+                ),
             }
             for entry in (getattr(self, "_stock_short", None) or {}).get(line_id, ())
         ]
@@ -5897,9 +6042,10 @@ class ProjectSupplyService:
         (PLAN-so-book-diff-replanning.md section 10, defect A). `kind`/`source_warehouse_id`
         /`donor_project_id` are the same keys `_snapshot` freezes a component under.
         """
-        components = (carried_holds.get(line_id) or {}).get("components") or []
+        snapshot = carried_holds.get(line_id) or {}
         total = _ZERO
-        for component in components:
+        locations: set = set()
+        for component in snapshot.get("components") or []:
             if str(component.get("kind") or "") != kind:
                 continue
             if str(component.get("source_warehouse_id") or "") != warehouse_id:
@@ -5909,7 +6055,28 @@ class ProjectSupplyService:
             ) != (donor_project_id or ""):
                 continue
             total += _dec(component.get("qty"))
-        return total
+            locations.add(str(component.get("source_location") or ""))
+        # CONFIRM-DOUBLE-ROWS (owner, 28 Oct 2026): net of what that revision recorded
+        # SHORT there (OI-CLOSED-LINE). The component froze what was ASKED but only what
+        # existed was held, so crediting the asked quantity let a repeat press of the same
+        # decision skip the recheck and write in full what the first press found short.
+        # Matched on the component's own keys; a shortfall frozen before it carried them
+        # is matched on the location code.
+        short = _ZERO
+        for entry in snapshot.get("stock_short") or []:
+            if str(entry.get("kind") or "") != kind:
+                continue
+            if entry.get("warehouse_id"):
+                if str(entry["warehouse_id"]) != warehouse_id:
+                    continue
+                if kind == BORROW and str(
+                    entry.get("donor_project_id") or ""
+                ) != (donor_project_id or ""):
+                    continue
+            elif str(entry.get("location") or "") not in locations:
+                continue
+            short += _dec(entry.get("short"))
+        return max(total - short, _ZERO)
 
     def _check_line(
         self,
@@ -6259,16 +6426,16 @@ class ProjectSupplyService:
                 borrow_left.take_free(
                     fact.product_id, own_id, max(qty - reserve_credit[index], _ZERO)
                 )
-            ask = qty - carried if qty > carried else _ZERO
-            if ask <= _ZERO:
-                continue
             # OI-CLOSED-LINE (owner Q1, 11 Oct 2026): what the customer already received
             # needs no free stock to be "reserved", so the delivered quantity is credited
             # first and only the remainder is judged against live capacity. The hold cap
             # stays `_open_of`, so nothing is held for the delivered part.
-            covered = min(reserve_credit[index], ask)
-            ask -= covered
+            # CONFIRM-DOUBLE-ROWS: credited off the carried part too, which froze the same
+            # delivered units; crediting them a second time grew a repeat press's hold.
+            covered = min(reserve_credit[index], qty)
             qty -= covered
+            carried = max(carried - covered, _ZERO)
+            ask = qty - carried if qty > carried else _ZERO
             if ask <= _ZERO:
                 continue
             # TEMPORARY LIFT (the captain, 8 Sep 2026): an ownership group's net can be
@@ -6302,14 +6469,20 @@ class ProjectSupplyService:
                 # this line. OI-CLOSED-LINE (owner rule, 12 Oct 2026): confirmed as decided
                 # with the shortfall recorded, never a refusal of the order. Nothing new is
                 # held here; what the line already carries stays.
-                self._record_short(str(line.id), RESERVE, index, warehouse, qty, ask)
+                self._record_short(
+                    str(line.id), RESERVE, index, warehouse, qty, ask,
+                    warehouse_id=str(item.warehouse_id),
+                )
                 continue
             if qty > capacity[warehouse]:
                 # Short by what `capacity` cannot give. `capacity` never had the carried part
                 # subtracted (it was excluded, not credited), so the carried part is never
                 # counted short. Only what exists is taken and held.
                 short = min(ask, qty - max(capacity[warehouse], carried, _ZERO))
-                self._record_short(str(line.id), RESERVE, index, warehouse, qty, short)
+                self._record_short(
+                    str(line.id), RESERVE, index, warehouse, qty, short,
+                    warehouse_id=str(item.warehouse_id),
+                )
                 qty -= short
                 if qty <= _ZERO:
                     continue
@@ -6395,9 +6568,16 @@ class ProjectSupplyService:
                 item = item.model_copy(update={"qty": _dec(item.qty) - covered})
             self._check_borrow(
                 item, fact, borrow_left, refuse, stale, invalid, carried_holds,
-                record_short=lambda location, asked, short, _i=index: self._record_short(
-                    str(line.id), BORROW, _i, location, asked, short
+                record_short=lambda location, asked, short, _i=index, _item=item: (
+                    self._record_short(
+                        str(line.id), BORROW, _i, location, asked, short,
+                        warehouse_id=str(_item.warehouse_id),
+                        donor_project_id=(
+                            str(_item.donor_project_id) if _item.donor_project_id else None
+                        ),
+                    )
                 ),
+                delivered=covered,
             )
 
         total = timely + reserve_total + borrow_total + buy
@@ -6509,7 +6689,9 @@ class ProjectSupplyService:
         named: set,
     ) -> None:
         """No Reserve may exceed what is ON HAND at that location, less what OTHER lines
-        have already confirmed there (R14, captain 27 August 2026).
+        have already confirmed there (R14, captain 27 August 2026). Since BOARD-NO-HOLD only
+        other lines' Borrow holds count (a Reserve holds nothing); the same confirm's earlier
+        lines still count once, as below.
 
         The ladder already caps what it PROPOSES, but the board lets a planner compose an
         amendment by hand, so a hand-typed 15 against 10 on hand has to be bounded here.
@@ -6571,6 +6753,7 @@ class ProjectSupplyService:
                         warehouse.warehouse_code if warehouse else None,
                         _dec(item.qty) - reserve_credit[index],
                         qty - room,
+                        warehouse_id=warehouse_id,
                     )
                     qty = room
                 mine[key].append(
@@ -6691,7 +6874,10 @@ class ProjectSupplyService:
         invalid: List[Dict[str, Any]],
         carried_holds: Dict[str, Dict[str, Any]],
         record_short: Optional[Callable[[Optional[str], Decimal, Decimal], None]] = None,
+        delivered: Decimal = _ZERO,
     ) -> None:
+        """`delivered` is the delivered credit already taken off `item.qty`; the carried
+        part froze the same units, so it comes off that too (CONFIRM-DOUBLE-ROWS)."""
         qty = _dec(item.qty)
         if not (item.reason or "").strip():
             refuse(
@@ -6718,7 +6904,7 @@ class ProjectSupplyService:
         if item.source == ALLOC_SOURCE_OTHER_LOCATION and donor_core_line_id:
             self._check_group_borrow(
                 item, fact, warehouse, donor_core_line_id, refuse, stale, invalid,
-                carried_holds, borrow_left,
+                carried_holds, borrow_left, delivered=delivered,
             )
             return
 
@@ -6745,8 +6931,12 @@ class ProjectSupplyService:
             carried = (
                 _ZERO
                 if own
-                else self._carried_component_qty(
-                    carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+                else max(
+                    self._carried_component_qty(
+                        carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+                    )
+                    - delivered,
+                    _ZERO,
                 )
             )
             ask = qty - carried if qty > carried else _ZERO
@@ -6805,12 +6995,16 @@ class ProjectSupplyService:
         free = borrow_left.free(fact.product_id, str(warehouse.id), self._free_at)
         # What this order's own active revision already holds here FROM THIS SAME donor,
         # resubmitted: not a new ask (PLAN-so-book-diff-replanning.md section 10, defect A).
-        carried = self._carried_component_qty(
-            carried_holds,
-            str(fact.line.id),
-            BORROW,
-            str(warehouse.id),
-            donor_project_id=str(donor.id),
+        carried = max(
+            self._carried_component_qty(
+                carried_holds,
+                str(fact.line.id),
+                BORROW,
+                str(warehouse.id),
+                donor_project_id=str(donor.id),
+            )
+            - delivered,
+            _ZERO,
         )
         ask = qty - carried if qty > carried else _ZERO
         if ask <= _ZERO:
@@ -7042,6 +7236,8 @@ class ProjectSupplyService:
         invalid: List[Dict[str, Any]],
         carried_holds: Dict[str, Dict[str, Any]],
         borrow_left: Optional["_BorrowLedger"] = None,
+        *,
+        delivered: Decimal = _ZERO,
     ) -> None:
         """The group borrow a person picked in Amend (section 1c), re-read live (AC-C03).
 
@@ -7066,10 +7262,9 @@ class ProjectSupplyService:
         if fact.core is not None and str(line.id) == str(fact.core.id):
             refuse(invalid, "A line cannot borrow from itself.")
             return
-        # The CORE `SalesOrderLine` carries no line number of its own (that is the
-        # PROJECT mirror's `line_no`); named off the confirm payload's own
-        # `donor_line_no`, round-tripped from the proposal that offered this donor,
-        # the same way `_borrow_shortfalls` names it in the order-back note.
+        # Named off the confirm payload's own `donor_line_no` (the donor's SO line number),
+        # round-tripped from the proposal that offered this donor, the same way
+        # `_borrow_shortfalls` names it in the order-back note.
         donor_line_no = getattr(item, "donor_line_no", None)
         line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
         # "Borrow from another order" OFF (S2): a refusal names the location, never the
@@ -7118,16 +7313,16 @@ class ProjectSupplyService:
         # BELOW this line needs nothing extra - that is ordinary group borrow, which the v2
         # ladder took automatically - so demanding a reason for it would make a mandatory
         # field a rubber stamp.
-        if self._needs_authorisation(fact, donor_core_line_id):
-            if not by_order:
-                # B1: a location borrow asks nobody, so stock only an authorisation could
-                # release is not this line's to take. It is never offered under OFF.
-                refuse(
-                    invalid,
-                    f"{held} is held for an order ranked ahead of this line, so it "
-                    "cannot be borrowed.",
-                )
-                return
+        #
+        # A LOCATION borrow (`by_order` False) asks nobody and is not refused on rank
+        # either (BORROW-CONFIRM-MATCH, owner ruling 22 Oct 2026: "confirm should be lenient
+        # also, confirm should match the dropdown"). The planner picked it, so it confirms;
+        # the donor is not over-committed, because this line's hold pins the units first
+        # and the donor queues against what is left (`assign()`), reading short. With the
+        # switch ON, a borrow posted without the donor's SO is a location borrow too
+        # (`_names_its_order`), so it confirms the same way: only a borrow that NAMES the
+        # donor order is asked who authorised it.
+        if by_order and self._needs_authorisation(fact, donor_core_line_id):
             if not _states_an_authorisation(item.reason):
                 refuse(
                     invalid,
@@ -7163,8 +7358,12 @@ class ProjectSupplyService:
             # re-confirm reason as the Reserve draw. The ledger floors at 0.
             borrow_left.free(fact.product_id, str(warehouse.id), self._free_at)
             borrow_left.take_free(fact.product_id, str(warehouse.id), qty)
-        carried = self._carried_component_qty(
-            carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+        carried = max(
+            self._carried_component_qty(
+                carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+            )
+            - delivered,
+            _ZERO,
         )
         ask = qty - carried if qty > carried else _ZERO
         if ask <= _ZERO:
@@ -7266,6 +7465,12 @@ class ProjectSupplyService:
         line_changes: Optional[Mapping[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         previous = self.active_decision(str(order.id))
+        # OI-SPLIT-GUIDE (UAC F33): each line's remark as the revision being replaced froze it,
+        # carried by a Confirm line that sends no `remark` (`_snapshot`).
+        previous_remarks = {
+            str(snapshot.get("project_line_id") or ""): (snapshot.get("remark") or None)
+            for snapshot in ((previous.line_snapshots if previous is not None else None) or [])
+        }
         if previous is not None:
             previous.state = DECISION_SUPERSEDED
             previous.superseded_at = datetime.utcnow()
@@ -7295,7 +7500,11 @@ class ProjectSupplyService:
         # frozen (`confirm`): the same dicts, not a re-serialisation of them.
         snapshots = [
             self._snapshot(
-                line, entry, fact, proposed=proposals.get(str(line.id), ())
+                line,
+                entry,
+                fact,
+                proposed=proposals.get(str(line.id), ()),
+                carried_remark=previous_remarks.get(str(line.id)),
             )
             for line, entry, fact in checked
         ] + [entry.snapshot for entry in carried]
@@ -7502,6 +7711,7 @@ class ProjectSupplyService:
                 {
                     "project_line_id": str(line.id),
                     "line_no": line.line_no,
+                    "so_line_no": fact.so_line_no,
                     "item_code": fact.item_code,
                 }
                 for (line, _entry, fact) in checked
@@ -7680,7 +7890,7 @@ class ProjectSupplyService:
         sense if taking its stock also takes back the promise made against it: a decision
         that still says `Reserve 30 at MWH-IB` beside stock that has just been handed to
         somebody else is a lie the next board build would print. So the donor's active
-        revision is superseded with the borrower NAMED - `Borrowed by SO<asker> line <n>` -
+        revision is superseded with the borrower NAMED - `Borrowed by <asker ref> line <SO line>` -
         and its line is re-proposed the next time anybody looks at it (`_apply_frozen` has
         nothing to apply), with its ORDER_BACK already raised at its own required date by
         `_borrow_shortfalls`.
@@ -7731,6 +7941,9 @@ class ProjectSupplyService:
             )
             .all()
         )
+        from app.services.project_line_split_service import display_line_nos
+
+        borrower_nos = display_line_nos(self.db, [str(line.id) for line in by_donor.values()])
         for core_line_id, donor_line_id, decision in rows:
             borrower = by_donor.get(str(core_line_id))
             if borrower is None or decision.state != DECISION_ACTIVE:
@@ -7738,7 +7951,7 @@ class ProjectSupplyService:
             self._reissue_without_line(
                 decision,
                 str(donor_line_id),
-                reason=f"Borrowed by SO{reference} line {borrower.line_no}",
+                reason=f"Borrowed by {reference} line {borrower_nos.get(str(borrower.id))}",
             )
 
     def _reissue_without_line(
@@ -8146,7 +8359,7 @@ class ProjectSupplyService:
                         "stock_location": code,
                         "note": (
                             f"Order-back: {donor_so_number}{line_text} lent "
-                            f"{qty_text(qty)} to {reference} line {line.line_no}"
+                            f"{qty_text(qty)} to {reference} line {fact.so_line_no}"
                             f"{agent_text}"
                         ),
                     }
@@ -8196,7 +8409,7 @@ class ProjectSupplyService:
                     continue
                 pile = pile_for(line, fact, str(item.warehouse_id))
                 pile["borrowed"] += qty
-                pile["lines"].append(line.line_no)
+                pile["lines"].append(fact.so_line_no)
                 pile["group"] = donor_group
         if not piles:
             return order_backs
@@ -8270,12 +8483,13 @@ class ProjectSupplyService:
                         "qty": _ZERO,
                         "required_date": fact.required_date or line.delivery_date,
                         "stock_location": warehouse.warehouse_code if warehouse else "",
+                        "so_line_no": fact.so_line_no,
                     }
                 back["qty"] += qty
         for back in backs.values():
             back["note"] = (
                 f"Order-back: {back['stock_location']} lent {qty_text(back['qty'])} to "
-                f"{reference} line {back['line'].line_no}"
+                f"{reference} line {back['so_line_no']}"
             )
         return list(backs.values())
 
@@ -8286,6 +8500,7 @@ class ProjectSupplyService:
         fact: _LineFacts,
         *,
         proposed: Sequence[Component] = (),
+        carried_remark: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Freeze the line as it was decided, in the words it was decided in (AC-G01),
         AND what the engine had proposed for it at that moment (AC-D1).
@@ -8555,6 +8770,10 @@ class ProjectSupplyService:
             # sentence of the RULE that produced it, and on an amended line those sentences
             # explain a decision nobody took.
             "amend_reason": (getattr(entry, "amend_reason", None) or "").strip() or None,
+            # OI-SPLIT-GUIDE (UAC F26, F33): the planner's own REMARK for the purchasing email,
+            # in place of the default words; frozen so the email and Excel read what was
+            # decided. A line that sends no `remark` keeps the one it was confirmed with.
+            "remark": _confirm_line_remark(entry, carried_remark),
             # "This might be a system problem" (R10). Frozen for the same reason the reason
             # is: the board reads the decision back to draw its pill, and a flag that lived
             # only in the session's draft would say the doubt had been answered the moment
@@ -9454,7 +9673,8 @@ class ProjectSupplyService:
     def held_stock_by_location(
         self, product_ids: Iterable[str]
     ) -> Dict[Tuple[str, str], Decimal]:
-        """What CONFIRMED decisions are holding, per `(product_id, warehouse_id)`.
+        """What CONFIRMED Borrows are holding, per `(product_id, warehouse_id)`. A Reserve
+        holds nothing (BOARD-NO-HOLD, owner 27 Oct 2026: a plan, not a hold).
 
         The third term of the free-stock arithmetic, exposed so a screen can print it: on hand,
         less reserved, less THIS, is what `free_stock_by_location` answers. Without it a strip
@@ -9656,6 +9876,12 @@ class ProjectSupplyService:
     ):
         """The one predicate for "this allocation row is holding stock right now".
 
+        A decision is a plan, not a hold (BOARD-NO-HOLD 27 Oct 2026 for a Reserve,
+        BORROW-NO-HOLD 28 Oct 2026 for a Borrow): no decision row holds stock, so the
+        Reserve and Borrow sources are both excluded from the base,
+        `_decision_allocation_query`. That base already leaves out Buy, so this query now
+        matches no row; the readers are kept for now and a later cleanup removes them.
+
         A hold counts when its allocation belongs to no decision (every row written before
         Stage 1C) or to an ACTIVE one; the LINES being replaced (`exclude_line_ids`, project
         line ids) are excluded so their own previous revision does not compete with the one
@@ -9674,6 +9900,25 @@ class ProjectSupplyService:
         ask the same question and get the holder's name back with it (R14) without a second
         opinion about which rows are holding.
         """
+        return self._decision_allocation_query(
+            product_ids,
+            exclude_line_ids=exclude_line_ids,
+            entities=entities,
+        ).filter(
+            SOLineAllocation.source_type.notin_(
+                tuple(ALLOC_RESERVE_SOURCES) + tuple(ALLOC_BORROW_SOURCES)
+            )
+        )
+
+    def _decision_allocation_query(
+        self,
+        product_ids: Sequence[str],
+        *,
+        exclude_line_ids: Optional[Sequence[str]],
+        entities: Optional[Sequence[Any]] = None,
+    ):
+        """The base both of the above narrow by source: confirmed, located, not Buy, and
+        belonging to no decision or to an ACTIVE one."""
         query = (
             self.db.query(
                 *(
@@ -9940,9 +10185,17 @@ class ProjectSupplyService:
             balance = _dec(row.allocated_quantity) - _dec(row.quantity_received)
             if balance <= _ZERO:
                 continue
-            arrival = (
-                row.eta_delay_date or row.estimated_arrival_date or row.expected_date
-            )
+            published = row.estimated_arrival_date or row.expected_date
+            arrival = row.eta_delay_date or published
+            # How late it reads is wording, so it is worked from the date the viewer sees.
+            shown = arrival
+            if (
+                not self.reveal_eta_delay
+                and row.eta_delay_date
+                and row.eta_delay_date != published
+            ):
+                arrival = spo_supply.MaskedEta(row.eta_delay_date, published)
+                shown = published
             out.setdefault((str(row.product_id), str(row.warehouse_id)), []).append(
                 _SpoRow(
                     spo_number=str(row.spo_number or ""),
@@ -9950,7 +10203,7 @@ class ProjectSupplyService:
                     allocation_id=str(row.id),
                     arrival_date=arrival,
                     qty=balance,
-                    overdue_days=spo_supply.overdue_days(arrival, today),
+                    overdue_days=spo_supply.overdue_days(shown, today),
                     supplier_name=row.shipment_supplier_name or row.spo_supplier_name,
                     ordered_qty=_dec(row.allocated_quantity),
                     received_qty=_dec(row.quantity_received),
@@ -9968,6 +10221,28 @@ class ProjectSupplyService:
         and the engine come to different views of what is still to be bought.
         """
         return self._po_rows(product_ids, warehouse_ids)
+
+    @staticmethod
+    def open_po_line_clauses() -> tuple:
+        """The tests a PO line must pass to still be ON ORDER, for a query that has joined
+        `PurchaseOrder` onto `PurchaseOrderLine.purchase_order_id`.
+
+        `_po_rows` reads supply under exactly these, and `StockDebtService._holds` asks the
+        same question of a placement's PO line (SUPPLY-SPO-LINK): a line that fails them is
+        not supply, so a placement on it must not stand the PO back up. One spelling, so the
+        hold and the event cannot come to disagree.
+        """
+        return (
+            # The same open-PO rule `scm.po_ordered_v` and the container request read
+            # (`container_request_service.OPEN_PO_SQL`), so "on order" means one thing.
+            PurchaseOrder.status.in_(OPEN_PO_STATUSES),
+            PurchaseOrderLine.line_status == "open",
+            PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+            # The shipping leg, not an order (see `_po_rows`). Stamped on both the header
+            # and its lines by `spo_conversion_service`; read off the HEADER, because it is
+            # the DOCUMENT that is a shipping order.
+            func.coalesce(PurchaseOrder.source_system, "") != CRM_SPO_SOURCE_SYSTEM,
+        )
 
     def _po_rows(
         self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
@@ -10053,15 +10328,7 @@ class ProjectSupplyService:
             .filter(
                 PurchaseOrderLine.product_id.in_(pids),
                 PurchaseOrderLine.warehouse_id.in_(wids),
-                # The same open-PO rule `scm.po_ordered_v` and the container request read
-                # (`container_request_service.OPEN_PO_SQL`), so "on order" means one thing.
-                PurchaseOrder.status.in_(OPEN_PO_STATUSES),
-                PurchaseOrderLine.line_status == "open",
-                PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
-                # The shipping leg, not an order (see the docstring). Stamped on both the
-                # header and its lines by `spo_conversion_service`; read off the HEADER,
-                # because it is the DOCUMENT that is a shipping order.
-                func.coalesce(PurchaseOrder.source_system, "") != CRM_SPO_SOURCE_SYSTEM,
+                *self.open_po_line_clauses(),
             )
             .all()
         )
@@ -10219,6 +10486,8 @@ class ProjectSupplyService:
         replaced, whose own holds `_free_stock` deliberately does not net - see
         `_decided_elsewhere`.
         """
+        from app.services.project_line_split_service import so_line_no
+
         pids = [pid for pid in product_ids if pid]
         wids = [wid for wid in warehouse_ids if wid]
         if not pids or not wids:
@@ -10238,6 +10507,7 @@ class ProjectSupplyService:
                 SalesOrder.customer_id,
                 SalesOrder.requested_delivery_date,
                 ProjectSalesOrderLine.line_no,
+                SalesOrderLine.line_no.label("core_line_no"),
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(
@@ -10283,6 +10553,7 @@ class ProjectSupplyService:
                     "sales_order_id": str(row.sales_order_id),
                     "customer_id": str(row.customer_id) if row.customer_id else None,
                     "line_no": row.line_no,
+                    "so_line_no": so_line_no(row.core_line_no, row.line_no),
                     "line_id": str(row.id),
                     "open_qty": open_qty,
                     "required_date": row.required_date or row.requested_delivery_date,
@@ -10572,10 +10843,11 @@ class ProjectSupplyService:
         committed_at: Dict[str, Decimal] = {}
         for (held_warehouse, _project), qty in holds_here.items():
             committed_at[held_warehouse] = committed_at.get(held_warehouse, _ZERO) + qty
+        # BORROW-ZERO-FREE (owner, 22 Oct 2026, "not available also can borrow"): every
+        # location carrying a stock row for the item is a choice, 0 free included. Confirm
+        # records what is not free there short, the same as the own location below.
         warehouse_ids = [
-            warehouse_id
-            for warehouse_id, qty in free_here.items()
-            if qty > _ZERO and warehouse_id not in inside
+            warehouse_id for warehouse_id in free_here if warehouse_id not in inside
         ]
         warehouses = self._warehouses(warehouse_ids)
         for warehouse_id in sorted(warehouse_ids):
@@ -11052,6 +11324,13 @@ class ProjectSupplyService:
         """
 
         def compare(left: Dict[str, Any], right: Dict[str, Any]) -> int:
+            # BORROW-ZERO-FREE: a location with nothing free is listed, but behind every row
+            # with stock. Availability nets what the book owes, not what is reserved or held,
+            # so a fully spoken-for pile can read MORE available than one with 7 free, and
+            # recommending it recommends a borrow Confirm records short in full.
+            has_free = _dec(left["free_qty"]) > _ZERO, _dec(right["free_qty"]) > _ZERO
+            if has_free[0] != has_free[1]:
+                return -1 if has_free[0] else 1
             for name in ("available_after_need", "available_qty"):
                 a, b = _dec(left[name]), _dec(right[name])
                 if a != b:
@@ -11231,7 +11510,7 @@ class ProjectSupplyService:
         self,
         *,
         query: Optional[str] = None,
-        state: Optional[str] = None,
+        state: Optional[str | Sequence[str]] = None,
         agent_code: Optional[str] = None,
         sort: Optional[str] = None,
         dir: str = "desc",
@@ -11271,7 +11550,7 @@ class ProjectSupplyService:
             .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .outerjoin(User, User.id == SOSupplyDecision.confirmed_by)
-            .filter(SOSupplyDecision.state == (state or DECISION_ACTIVE))
+            .filter(SOSupplyDecision.state.in_(multi_values(state) or [DECISION_ACTIVE]))
         )
         if agent_code:
             base = base.filter(SalesAgent.sales_agent.ilike(agent_code.strip()))
@@ -11433,6 +11712,7 @@ class ProjectSupplyService:
         assert_can_act: Callable[[Session, ProjectSalesOrder], None],
         write: Optional[Callable[[ProjectSalesOrder, Any], Dict[str, Any]]] = None,
         can_hold_back: Optional[Callable[[Any], bool]] = None,
+        prepare: Optional[Callable[[ProjectSalesOrder, Any], Any]] = None,
         preview: bool = False,
         raw_errors: bool = False,
         describe_writes: bool = False,
@@ -11471,6 +11751,9 @@ class ProjectSupplyService:
 
         An entry's `only_line_ids` scopes the order to exactly those lines BEFORE the write:
         a line outside the list is neither confirmed, held back nor echoed.
+
+        `prepare` (OI-SPLIT-VIEW A11) completes an order's entry once, after that scoping and
+        BEFORE the hold-back, so what it adds is held back like any named line.
         """
         write = write or (
             lambda order, entry: self.confirm(order, entry, actor_user_id=actor_user_id)
@@ -11521,6 +11804,8 @@ class ProjectSupplyService:
                             ],
                         }
                     )
+                if prepare is not None:
+                    entry = prepare(order, entry)
                 before_decision_id = None
                 before_rows: Dict[str, Tuple[Any, ...]] = {}
                 before_moves: Dict[str, Tuple[Any, ...]] = {}
@@ -11557,6 +11842,8 @@ class ProjectSupplyService:
                         "lines_carried": body.get("lines_carried"),
                         "lines_withdrawn": body.get("lines_withdrawn") or [],
                         "lines_cancelled": body.get("lines_cancelled") or [],
+                        "planning_change_applied": body.get("planning_change_applied"),
+                        "lines_retired": body.get("lines_retired") or [],
                         # The board confirms every order in one press and reports one toast,
                         # so the movements and the flags have to come back PER ORDER or the
                         # toast has nothing to add up. `.get`, because the planning-change
@@ -11642,8 +11929,14 @@ class ProjectSupplyService:
 
         A row that existed and still reads exactly as it did (a carried line's row the press
         only re-filed under the new revision) is left out: nothing is written for purchasing
-        (owner hand test SO424764 line 416, 14 Oct 2026). A transfer is held to the same rule."""
+        (owner hand test SO424764 line 416, 14 Oct 2026). A transfer is held to the same rule.
+
+        OI-SPLIT-GUIDE (UAC C3): every row of the order whose facts this press changed is
+        listed, whichever revision raised it, so a row an OLDER revision raised and this press
+        retires (a drifted covered line, a book cancel, a batch auto-accept) reads CANCEL
+        (its `state`) beside the rows this revision raised; admin Simulate lists them."""
         from app.models.stock_transfer import StockTransfer
+        from app.services.project_line_split_service import display_line_nos
 
         decision = self.active_decision(str(order.id))
         if decision is None:
@@ -11655,9 +11948,27 @@ class ProjectSupplyService:
             for line in lines
             if line.core_sales_order_line_id
         }
+        # OI-SPLIT-GUIDE (UAC C2a): the number staff know a line by (AutoCount's core line
+        # number, the mirror's without a core), beside `line_no`, the planning address.
+        so_line_no_of = display_line_nos(self.db, line_no_of)
+        mirror_by_core = {
+            str(line.core_sales_order_line_id): str(line.id)
+            for line in lines
+            if line.core_sales_order_line_id
+        }
+        line_ids = list(line_no_of)
+        row_scope = OrderInquiryRow.supply_decision_id == str(decision.id)
+        if line_ids:
+            row_scope = or_(row_scope, OrderInquiryRow.so_line_id.in_(line_ids))
+        changed_rows = [
+            row
+            for row in self.db.query(OrderInquiryRow).filter(row_scope).all()
+            if before_rows.get(str(row.id)) != _preview_row_facts(row)
+        ]
         inquiry_rows = [
             {
                 "line_no": line_no_of.get(str(row.so_line_id or "")),
+                "so_line_no": so_line_no_of.get(str(row.so_line_id or "")),
                 "item_code": row.item_code,
                 "verb": row.verb,
                 "is_new": str(row.id) not in before_rows,
@@ -11665,11 +11976,9 @@ class ProjectSupplyService:
                 "delivery_date": row.delivery_date,
                 "stock_location": row.stock_location,
                 "note": row.note,
+                "state": row.state,
             }
-            for row in self.db.query(OrderInquiryRow)
-            .filter(OrderInquiryRow.supply_decision_id == str(decision.id))
-            .all()
-            if before_rows.get(str(row.id)) != _preview_row_facts(row)
+            for row in changed_rows
         ]
         inquiry_rows.sort(key=lambda entry: (entry["line_no"] is None, entry["line_no"] or 0))
         moves = (
@@ -11694,6 +12003,7 @@ class ProjectSupplyService:
         transfers = [
             {
                 "line_no": line_no_by_core.get(str(move.so_line_id or "")),
+                "so_line_no": so_line_no_of.get(mirror_by_core.get(str(move.so_line_id or ""), "")),
                 "is_new": str(move.id) not in before_moves,
                 "kind": move.kind,
                 "qty": move.qty,

@@ -54,6 +54,11 @@ POLL_INTERVAL_SECONDS = 0.5
 _CONCURRENT_WAIT_LIMIT = 8
 _wait_slots = threading.BoundedSemaphore(_CONCURRENT_WAIT_LIMIT)
 
+# CHAT-INBOX-QUEUE (IQ-24, IQ-30): on the inbox drain a read not finished within
+# `media_sync_wait_seconds` parks its row instead of answering "could not read it in
+# time" (a worker restart only delays the reply), until the read is this old.
+DRAIN_WAIT_CAP_SECONDS = 600.0
+
 # AC-1814: the sentence when the job outlives the sync wait. Two words differ by
 # modality; everything else is the plan's own wording, verbatim.
 _TIMEOUT_SENTENCE = {
@@ -94,6 +99,10 @@ class MediaIntakeOutcome:
     # console's diagnostic `media_error` field only (`console_service.py`); a real
     # WhatsApp turn has no equivalent surface and never reads this.
     extraction_error: str | None = None
+    # Owner ruling 27 Oct (MEDIA-JSON-TOLERANT option B): the photo read failed or read
+    # nothing, but the photo carried a caption, so the turn goes on as a plain text
+    # turn on that caption. No "I read ..." / "could not read" line is prefixed.
+    caption_fallback: bool = False
 
 
 def _modality_of(attachment: dict[str, Any]) -> str | None:
@@ -204,7 +213,12 @@ def _build_request(
         message_id=message_id or f"no-message-id-{turn_id}",
         modality=modality,
         media_url=jsc.js_string(jsc.get(attachment, "url")) if jsc.truthy(jsc.get(attachment, "url")) else "",
-        mime_type=jsc.js_string(jsc.get(attachment, "mimeType")) or None,
+        # Guarded like `url`: `js_string` is JS `String(v)`, so a missing mimeType read
+        # "null" and every stored (answered-ahead) photo was filed, and sent to the
+        # model, as mime "null" (24 Oct prod: "the image file appears corrupted").
+        mime_type=(
+            jsc.js_string(jsc.get(attachment, "mimeType")) if jsc.truthy(jsc.get(attachment, "mimeType")) else None
+        ),
         caption=caption or None,
         duration_ms=int(duration_ms) if isinstance(duration_ms, (int, float)) else None,
         bytes=int(size) if isinstance(size, (int, float)) else None,
@@ -214,6 +228,11 @@ def _build_request(
         # `console_service._upload_console_media`, so it must not store a second copy.
         context={"source": source},
     )
+
+
+def _caption_text(caption: str | None) -> str | None:
+    text = (caption or "").strip()
+    return text or None
 
 
 def _poll(job_id: str, timeout_seconds: float, session_factory) -> dict[str, Any] | None:
@@ -239,6 +258,33 @@ def _poll(job_id: str, timeout_seconds: float, session_factory) -> dict[str, Any
             db.close()
         if time.monotonic() >= deadline:
             return None
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+
+def _poll_on_drain(job_id: str, session_factory, wait_seconds: float) -> dict[str, Any] | None:
+    """The inbox drain's wait (IQ-24, IQ-30): up to the sync wait, a job the worker
+    abandoned read again once. Not finished by then, the turn is PARKED (`TurnYielded`: the
+    row goes back to `queued` with nothing written, the thread is freed, and the next run
+    resumes this same read); shutdown parks it at once. `None` (today's "could not read it
+    in time") only once the read is older than `DRAIN_WAIT_CAP_SECONDS`."""
+    from app.api.v1.external.media import job_abandoned, read_abandoned_job_again, read_age_seconds
+    from app.services.chatbot import inbox_queue
+
+    deadline = time.monotonic() + wait_seconds
+    read_again = False
+    while True:
+        snapshot = _poll(job_id, 0, session_factory)
+        if snapshot is not None:
+            return snapshot
+        if not read_again and job_abandoned(job_id):
+            read_again = True
+            read_abandoned_job_again(job_id)
+        if inbox_queue.shutting_down():
+            raise inbox_queue.TurnYielded("shutdown during a photo read")
+        if time.monotonic() >= deadline:
+            if read_age_seconds(job_id) >= DRAIN_WAIT_CAP_SECONDS:
+                return None
+            raise inbox_queue.TurnYielded("photo read still pending")
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
@@ -291,9 +337,12 @@ def run(
         caption=caption,
         turn_id=turn_id,
     )
+    from app.services.chatbot import inbox_queue
+
     db = session_factory()
     try:
-        fast = _decide_meter_record_and_enqueue(db, request)
+        # On the inbox drain a parked row's replay re-reads an abandoned job (IQ-46).
+        fast = _decide_meter_record_and_enqueue(db, request, reread_abandoned=inbox_queue.draining())
         # Read alongside the decision, on the same still-open session: the reply
         # prefix's truncated-note (AC-1818/AC-1821) needs the CAP by number, which
         # the job's own result only reports as a bool.
@@ -333,7 +382,10 @@ def run(
     # background one. A burst past `_CONCURRENT_WAIT_LIMIT` concurrent waits takes
     # the timeout arm immediately rather than queueing behind the ones already
     # holding a slot.
-    if _wait_slots.acquire(blocking=False):
+    if inbox_queue.draining():
+        # The drain thread is already one of the bounded pool, so it takes no wait slot.
+        snapshot = _poll_on_drain(fast.job_id, session_factory, fast.sync_wait_seconds)
+    elif _wait_slots.acquire(blocking=False):
         try:
             snapshot = _poll(fast.job_id, fast.sync_wait_seconds, session_factory)
         finally:
@@ -353,6 +405,25 @@ def run(
             reply_text=_TIMEOUT_SENTENCE.get(modality, _TIMEOUT_SENTENCE["image"]),
             job_id=fast.job_id,
             elapsed_ms=elapsed_ms,
+        )
+
+    caption_text = _caption_text(caption)
+    if snapshot["status"] == "failed" and modality == "image" and caption_text:
+        # Option B (owner ruling 27 Oct): prod turn #597a failed its read and told a
+        # dealer who had typed the code in the caption to type the code. The caption
+        # is the dealer's own words; answer them.
+        return MediaIntakeOutcome(
+            modality=modality,
+            decision=fast.decision,
+            status="failed",
+            stops_here=False,
+            rendered_text=caption_text,
+            job_id=fast.job_id,
+            elapsed_ms=elapsed_ms,
+            notices=fast.notices,
+            max_entities=max_entities,
+            extraction_error=snapshot.get("error"),
+            caption_fallback=True,
         )
 
     if snapshot["status"] == "failed":
@@ -386,12 +457,36 @@ def run(
     rendered_text = (
         result.get("rendered_text") or result.get("transcript") or raws_fallback or ""
     )
+    if modality == "image" and not rendered_text.strip():
+        # 24 Oct incident: a read that "completed" with no item and no caption
+        # (the model said the image looked corrupted) went on to the parser with
+        # empty text. Nothing was read, so the turn says so and stops here.
+        return MediaIntakeOutcome(
+            modality=modality,
+            decision=fast.decision,
+            status="completed",
+            stops_here=True,
+            turn_status="done",
+            reply_text=wording.nothing_read(),
+            job_id=fast.job_id,
+            elapsed_ms=elapsed_ms,
+            result=result,
+            notices=fast.notices,
+            attachment_id=result.get("attachment_id"),
+            attachment_error=result.get("attachment_error"),
+            max_entities=max_entities,
+        )
+    # Option B: a read that found no item on a captioned photo answers the caption
+    # alone, with no "I could not read anything" line on top of the answer.
+    read_nothing = modality == "image" and not any(
+        isinstance(e, dict) and e.get("raw") for e in entities
+    )
     return MediaIntakeOutcome(
         modality=modality,
         decision=fast.decision,
         status="completed",
         stops_here=False,
-        rendered_text=rendered_text,
+        rendered_text=caption_text if read_nothing and caption_text else rendered_text,
         job_id=fast.job_id,
         elapsed_ms=elapsed_ms,
         result=result,
@@ -399,6 +494,7 @@ def run(
         attachment_id=result.get("attachment_id"),
         attachment_error=result.get("attachment_error"),
         max_entities=max_entities,
+        caption_fallback=bool(read_nothing and caption_text),
     )
 
 
@@ -410,7 +506,10 @@ def run(
 
 def reply_prefix(outcome: MediaIntakeOutcome) -> str:
     """"I read A, B and C from that photo." / "I heard: <transcript>" - never a
-    count, never "+N more" (owner ruling Q2)."""
+    count, never "+N more" (owner ruling Q2). Empty on a caption fallback: nothing
+    was read, and the turn answers the caption as if it had been typed."""
+    if outcome.caption_fallback:
+        return ""
     if outcome.modality == "voice":
         transcript = (outcome.rendered_text or "").strip()
         if len(transcript) > _VOICE_PREFIX_MAX_CHARS:

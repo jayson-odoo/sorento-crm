@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.projects import (
     ProjectTaskCreate,
@@ -35,6 +35,10 @@ from app.services.uuid_path_param import validate_uuid_path
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 CONFIG_VIEW = "projects.types.view"
 CONFIG_EDIT = "projects.types.edit"
@@ -55,12 +59,12 @@ def _envelope(data: List[dict], total: Optional[int] = None, page: int = 1, limi
 @router.get(
     "/projects/{project_id}/tasks", response_model=ListResponse[ProjectTaskResponse]
 )
-async def list_project_tasks(
+def list_project_tasks(
     project_id: str,
     task_phase: Optional[str] = Query(
         None, description="pursuit | delivery. Omit for both."
     ),
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -84,7 +88,7 @@ async def list_project_tasks(
     response_model=ProjectTaskResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_project_task(
+def create_project_task(
     project_id: str,
     payload: ProjectTaskCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -118,7 +122,7 @@ async def create_project_task(
 @router.put(
     "/projects/{project_id}/tasks/{task_id}", response_model=ProjectTaskResponse
 )
-async def update_project_task(
+def update_project_task(
     project_id: str,
     task_id: str,
     payload: ProjectTaskUpdate,
@@ -157,7 +161,7 @@ async def update_project_task(
     "/projects/{project_id}/tasks/{task_id}/status",
     response_model=ProjectTaskResponse,
 )
-async def change_project_task_status(
+def change_project_task_status(
     project_id: str,
     task_id: str,
     payload: ProjectTaskStatusChangeRequest,
@@ -199,7 +203,7 @@ async def change_project_task_status(
 
 
 @router.delete("/projects/{project_id}/tasks/{task_id}")
-async def delete_project_task(
+def delete_project_task(
     project_id: str,
     task_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -229,10 +233,10 @@ async def delete_project_task(
     "/projects/{project_id}/tasks/{task_id}/history",
     response_model=ListResponse[ProjectTaskHistoryEntry],
 )
-async def project_task_history(
+def project_task_history(
     project_id: str,
     task_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """AC-N7. Read from the audit trail, not a bespoke history table."""
@@ -250,7 +254,7 @@ async def project_task_history(
 
 
 @router.get("/my-tasks", response_model=ListResponse[ProjectTaskResponse])
-async def list_my_tasks(
+def list_my_tasks(
     include_unassigned_owned: bool = Query(
         False,
         description=(
@@ -300,7 +304,7 @@ async def list_my_tasks(
     "/config/templates/{template_id}/tasks",
     response_model=ListResponse[ProjectTemplateTaskResponse],
 )
-async def list_template_tasks(
+def list_template_tasks(
     template_id: str,
     include_inactive: bool = Query(True),
     _user: dict = Depends(require_permission(CONFIG_VIEW)),
@@ -322,7 +326,7 @@ async def list_template_tasks(
     response_model=ProjectTemplateTaskResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_template_task(
+def create_template_task(
     template_id: str,
     payload: ProjectTemplateTaskCreate,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -349,7 +353,7 @@ async def create_template_task(
     "/config/templates/{template_id}/tasks/{template_task_id}",
     response_model=ProjectTemplateTaskResponse,
 )
-async def update_template_task(
+def update_template_task(
     template_id: str,
     template_task_id: str,
     payload: ProjectTemplateTaskUpdate,
@@ -374,7 +378,7 @@ async def update_template_task(
 
 
 @router.delete("/config/templates/{template_id}/tasks/{template_task_id}")
-async def delete_template_task(
+def delete_template_task(
     template_id: str,
     template_task_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),

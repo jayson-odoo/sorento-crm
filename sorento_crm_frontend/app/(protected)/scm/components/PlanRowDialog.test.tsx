@@ -102,6 +102,42 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// A condition's value is a multi-select now (FILTER-MULTISELECT PR5): the same native stand-in, a
+// multiple <select> labelled "Filter value".
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value = [],
+    onChange,
+    options = [],
+  }: {
+    value?: string[];
+    onChange?: (next: string[]) => void;
+    options?: { value: string; label: string }[];
+  }) => (
+    <select
+      multiple
+      aria-label="Filter value"
+      value={value}
+      onChange={(e) => onChange?.(Array.from(e.target.selectedOptions, (o) => o.value))}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
+/** Ticks exactly one option of the multi stand-in, the way a pick does. */
+function pickFilterValue(value: string) {
+  const el = screen.getByLabelText('Filter value') as HTMLSelectElement;
+  Array.from(el.options).forEach((o) => {
+    o.selected = o.value === value;
+  });
+  fireEvent.change(el);
+}
+
 import {
   IncomingPlTable,
   NO_SPO_TO_POOL,
@@ -1050,7 +1086,7 @@ describe('PoTakesPicker', () => {
     fireEvent.click(screen.getByRole('button', { name: /add condition/i }));
 
     fireEvent.change(screen.getByLabelText('Filter field'), { target: { value: 'supplier_name' } });
-    fireEvent.change(screen.getByLabelText('Filter value'), { target: { value: 'Kailu' } });
+    pickFilterValue('Kailu');
     fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
 
     expect(screen.getByText('PO-9000')).toBeTruthy();
@@ -1367,7 +1403,7 @@ describe('SoCoveragePicker', () => {
     fireEvent.click(screen.getByRole('button', { name: /add condition/i }));
 
     fireEvent.change(screen.getByLabelText('Filter field'), { target: { value: 'customer_name' } });
-    fireEvent.change(screen.getByLabelText('Filter value'), { target: { value: 'ANOTHER DEALER' } });
+    pickFilterValue('ANOTHER DEALER');
     fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
 
     expect(screen.getByText('SO404400')).toBeTruthy();

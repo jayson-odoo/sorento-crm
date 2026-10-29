@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
 import {
   ColumnDef,
   SortingState,
@@ -39,6 +40,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -62,6 +64,8 @@ import { purchaseOrdersPagerQuery } from '../../../hooks/usePurchaseOrders';
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { BookSoCell, bookSoSortValue } from '../../../components/BookSoCell';
+import { PoLineSpoCell } from '@/app/(protected)/project-sales/order-inquiries/components/orderInquiryDocumentPills';
+import { spoDetailHref } from '@/lib/spo-detail';
 import { PoLinePlacementsBody, placedQtyOf } from './PoLinePlacementsBody';
 import { PoPlanCard } from './PoPlanCard';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
@@ -76,8 +80,9 @@ import type {
   PurchaseOrderLine,
   PurchaseOrderLineAllocation,
 } from '../../../types/scm.types';
-import BackToList from '@/components/common/BackToList';
 import { codeWithName, distinctName } from '@/lib/product-display';
+import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
+import { useStableColumns } from '@/hooks/useStableColumns';
 
 /**
  * The purchase-order detail, built section for section as the twin of `SalesOrderDetail`.
@@ -226,6 +231,19 @@ function draftOrRow(
  * footer and the header total cannot disagree - and `null` rather than 0 when nobody priced
  * it, because an unpriced line is not a line worth nothing.
  */
+/** Qty ordered must be above 0 (the server refuses a zero or blank line). */
+const QTY_ORDERED_RULES = { min: 0, minExclusive: true } as const;
+
+/** An edit-session qty that is blank or unusable is pending ("-"), never 0. */
+function qtyIsPending(raw: string): boolean {
+  return numberFieldError(raw, QTY_ORDERED_RULES) !== undefined;
+}
+
+/** A quantity cell: the figure, or "-" while the figure is pending. */
+function fmtQtyCell(value: number | null): string {
+  return value === null ? '-' : fmtInt(value);
+}
+
 function lineAmount(
   qty: string,
   unitPrice: string,
@@ -296,6 +314,8 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const [expectedDate, setExpectedDate] = useState('');
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const [error, setError] = useState<string | null>(null);
+  // Set by a refused Save; from then on each quantity box re-checks itself live.
+  const [showQtyErrors, setShowQtyErrors] = useState(false);
   // Which LINE's "Placed" figure was pressed (R5, AC-L1) - one dialog for the whole grid,
   // replacing the "Allocated to" card that used to sit under it (AC-L3).
   const [placementsLineId, setPlacementsLineId] = useState<string | null>(null);
@@ -312,12 +332,14 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     setLineDrafts(drafts);
     originalLineSignatureRef.current = lineSignature(po.lines.map(seedDraft));
     setError(null);
+    setShowQtyErrors(false);
     setIsEditing(true);
   };
 
   const cancelEdit = () => {
     setIsEditing(false);
     setError(null);
+    setShowQtyErrors(false);
   };
 
   // `?edit=1` opens the session on arrival, so a bookmarked link lands in the same place a
@@ -377,9 +399,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
       if (!isEditing && row.outstanding_qty !== undefined && row.outstanding_qty !== null) {
         return row.outstanding_qty;
       }
-      const ordered = isEditing
-        ? Number(draftOrRow(lineDrafts, row).qty_ordered)
-        : Number(row.qty_ordered);
+      const draftQty = draftOrRow(lineDrafts, row).qty_ordered;
+      if (isEditing && qtyIsPending(draftQty)) return null;
+      const ordered = isEditing ? (parseNumberDraft(draftQty) as number) : Number(row.qty_ordered);
       if (!Number.isFinite(ordered)) return 0;
       // The received figure on screen is net of an AutoCount Cancel PO; the cancelled qty
       // is not coming either, so it is added back before the subtraction (AC-CONSIGN-CRM).
@@ -397,6 +419,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         );
       }
       const draft = draftOrRow(lineDrafts, row);
+      if (qtyIsPending(draft.qty_ordered)) return null;
       // The stated `line_total` is what the supplier's document charged, so it wins - until
       // one of the figures it was charged ON is edited, at which point it no longer
       // describes what is on the screen and the arithmetic does.
@@ -413,7 +436,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
 
   const qtyOrderedTotal = useMemo(
     () =>
-      lines.reduce((sum, l) => {
+      lines.reduce<number | null>((sum, l) => {
+        if (sum === null) return null;
+        if (isEditing && qtyIsPending(draftOrRow(lineDrafts, l).qty_ordered)) return null;
         const qty = isEditing
           ? Number(draftOrRow(lineDrafts, l).qty_ordered)
           : Number(l.qty_ordered);
@@ -426,7 +451,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     [lines],
   );
   const outstandingTotal = useMemo(
-    () => lines.reduce((sum, l) => sum + outstandingOf(l), 0),
+    () =>
+      lines.reduce<number | null>((sum, l) => {
+        const out = outstandingOf(l);
+        return sum === null || out === null ? null : sum + out;
+      }, 0),
     [lines, outstandingOf],
   );
 
@@ -448,9 +477,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   );
 
   const amountTotal = useMemo(() => {
+    // A blank or unusable qty on any line makes the total pending, not a sum that skips it.
+    if (isEditing && lines.some((l) => qtyIsPending(draftOrRow(lineDrafts, l).qty_ordered))) return null;
     const amounts = lines.map(amountOf).filter((a): a is string => a !== null);
     return amounts.length ? sumMoney(amounts) : null;
-  }, [lines, amountOf]);
+  }, [lines, amountOf, isEditing, lineDrafts]);
 
   /** The money cell's text, in the order's own currency: the figure, or a plain "-" for a
    *  line nobody priced. */
@@ -459,7 +490,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     [currency],
   );
 
-  const columns = useMemo<ColumnDef<PurchaseOrderLine>[]>(
+  const liveColumns = useMemo<ColumnDef<PurchaseOrderLine>[]>(
     () => [
       {
         accessorKey: 'sku',
@@ -527,11 +558,15 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           if (isEditing) {
             const draft = lineDrafts[row.original.id];
             return (
-              <Input
-                type="number"
+              <NumberInput
                 min={0}
                 aria-label={`Qty ordered on ${row.original.sku}`}
                 value={draft?.qty_ordered ?? String(row.original.qty_ordered)}
+                error={
+                  showQtyErrors
+                    ? numberFieldError(draft?.qty_ordered ?? String(row.original.qty_ordered), QTY_ORDERED_RULES)
+                    : undefined
+                }
                 onChange={(e) =>
                   setLineDrafts((prev) => ({
                     ...prev,
@@ -549,7 +584,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         },
         size: 130,
         // One `td` per column, so the sum sits UNDER the column it sums and needs no label.
-        footer: () => fmtInt(qtyOrderedTotal),
+        footer: () => fmtQtyCell(qtyOrderedTotal),
         meta: {
           headerTitle: 'Qty ordered',
           headerClassName: 'text-right',
@@ -557,14 +592,16 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         },
       },
       {
+        // LINKAGE-UNIFY U4 (owner ruling): AutoCount's TRANSFER of the line onto a shipping
+        // order, never a receipt - what landed is in the SPO column.
         id: 'qty_received',
         accessorFn: (line) => Number(line.qty_received),
-        header: ({ column }) => <DataGridColumnHeader title="Qty received" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Transferred" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty_received),
         size: 130,
         footer: () => fmtInt(qtyReceivedTotal),
         meta: {
-          headerTitle: 'Qty received',
+          headerTitle: 'Transferred',
           headerClassName: 'text-right',
           cellClassName: 'text-right tabular-nums',
         },
@@ -608,9 +645,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             0,
           ),
         header: ({ column }) => <DataGridColumnHeader title="Outstanding qty" column={column} />,
-        cell: ({ row }) => fmtInt(outstandingOf(row.original)),
+        cell: ({ row }) => fmtQtyCell(outstandingOf(row.original)),
         size: 140,
-        footer: () => fmtInt(outstandingTotal),
+        footer: () => fmtQtyCell(outstandingTotal),
         meta: {
           headerTitle: 'Outstanding qty',
           headerClassName: 'text-right',
@@ -657,12 +694,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           if (isEditing) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
-              <Input
-                type="number"
+              <NumberInput
                 min={0}
                 step="0.01"
                 aria-label={`Unit price on ${row.original.sku}`}
                 value={draft.unit_price}
+                error={numberFieldError(draft.unit_price, { min: 0, optional: true })}
                 onChange={(e) =>
                   setLineDrafts((prev) => ({
                     ...prev,
@@ -693,12 +730,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           if (isEditing) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
-              <Input
-                type="number"
+              <NumberInput
                 min={0}
                 step="0.01"
                 aria-label={`Discount on ${row.original.sku}`}
                 value={draft.discount}
+                error={numberFieldError(draft.discount, { min: 0, optional: true })}
                 onChange={(e) =>
                   setLineDrafts((prev) => ({
                     ...prev,
@@ -826,6 +863,31 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'S/O' },
       },
       {
+        // LINKAGE-UNIFY U4: the SPO line(s) this line was transferred onto, each with the
+        // order inquiry's own document pills (where its goods landed, red "SPO withdrawn"),
+        // through the piece the order inquiry's PO popup draws too. The number opens the
+        // SPO document and never truncates.
+        id: 'spos',
+        accessorFn: (line) => (line.spos ?? []).map((spo) => spo.spo_number ?? '').join(', '),
+        header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
+        cell: ({ row }) => (
+          <PoLineSpoCell
+            spos={row.original.spos}
+            lineDeadReason={row.original.dead_reason}
+            renderDocument={(spoNumber) => (
+              <Link
+                href={spoDetailHref(spoNumber)}
+                className="shrink-0 whitespace-nowrap font-medium tabular-nums text-primary hover:underline"
+              >
+                {spoNumber}
+              </Link>
+            )}
+          />
+        ),
+        size: 320,
+        meta: { headerTitle: 'SPO' },
+      },
+      {
         id: 'expected_date',
         // The ISO date, not the printed "04 Jul 2026": the display form sorts by
         // day-of-month and would put September before July. A line with no date sorts last
@@ -883,6 +945,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     [
       isEditing,
       lineDrafts,
+      showQtyErrors,
       warehouseSelectOptions,
       uomSelectOptions,
       outstandingOf,
@@ -897,6 +960,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     ],
   );
 
+  const columns = useStableColumns(liveColumns);
   const table = useReactTable({
     columns,
     data: lines,
@@ -922,18 +986,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   });
   const visibleLineCount = table.getFilteredRowModel().rows.length;
 
-  // Back and prev/next live on the RIGHT of the record header, next to each other, the way
-  // the sales-order and users screens do it.
-  // Back carries the list query the row click wrote (S3-01). It lives on the
-  // toolbar row now; the empty states below keep one of their own.
-  const backLink = (
-    <BackToList listPath="/scm/purchase-orders" label="Back to purchase orders" />
-  );
-
+  // Back is the page header's (`../page.tsx`) on every state; one here stacked a second
+  // Back under it while the order loaded (SO-DETAIL-DUP-BACK).
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-40 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -942,16 +999,13 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
 
   if (isError || !data) {
     return (
-      <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
-        <Card className="flex flex-col items-center gap-3 p-10 text-center">
-          <div className="text-sm font-semibold">Purchase order not found</div>
-          <p className="max-w-md text-sm text-muted-foreground">
-            This purchase order doesn&apos;t exist, or it was removed after this link was
-            made. Head back to the list to pick another.
-          </p>
-        </Card>
-      </div>
+      <Card className="flex flex-col items-center gap-3 p-10 text-center">
+        <div className="text-sm font-semibold">Purchase order not found</div>
+        <p className="max-w-md text-sm text-muted-foreground">
+          This purchase order doesn&apos;t exist, or it was removed after this link was
+          made. Head back to the list to pick another.
+        </p>
+      </Card>
     );
   }
 
@@ -977,8 +1031,20 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         ...(draft ?? {}),
       };
     });
-    if (cleanedLines.some((l) => !l.sku || !(Number(l.qty_ordered) > 0))) {
+    if (cleanedLines.some((l) => qtyIsPending(l.qty_ordered))) setShowQtyErrors(true);
+    if (cleanedLines.some((l) => !l.sku || qtyIsPending(l.qty_ordered))) {
       return setError('Every line needs a product and a quantity above zero.');
+    }
+    // The price and discount may stay blank (blank clears the figure), but a typed one is
+    // never negative.
+    if (
+      cleanedLines.some(
+        (l) =>
+          numberFieldError(l.unit_price, { min: 0, optional: true }) ||
+          numberFieldError(l.discount, { min: 0, optional: true }),
+      )
+    ) {
+      return setError('A unit price or discount cannot be negative.');
     }
     const linesUnchanged =
       originalLineSignatureRef.current !== null &&
@@ -1215,11 +1281,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             <section aria-label="Totals" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
               {/* A dash, never RM 0.00, for an order nobody priced. */}
               <Field label="Total amount">{fmtMoneyCell(amountTotal)}</Field>
-              <Field label="Total qty">{fmtInt(qtyOrderedTotal)}</Field>
+              <Field label="Total qty">{fmtQtyCell(qtyOrderedTotal)}</Field>
               {/* ALWAYS shown, even when it equals the total. On a wholly outstanding order
                   the two agree, and a reader who cannot see the figure at all has to work
                   out from its absence that nothing has arrived. */}
-              <Field label="Outstanding qty">{fmtInt(outstandingTotal)}</Field>
+              <Field label="Outstanding qty">{fmtQtyCell(outstandingTotal)}</Field>
               <Field label="Lines">{fmtInt(lineCount)}</Field>
             </section>
           </Card>
@@ -1305,16 +1371,18 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 </div>
               ) : qtyReceivedTotal > 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  {fmtInt(qtyReceivedTotal)} of {fmtInt(qtyOrderedTotal)} received.{' '}
-                  {fmtInt(outstandingTotal)} still to arrive.
+                  {/* LINKAGE-UNIFY U4 (owner ruling c): AutoCount's TRANSFER onto a
+                      shipping order, never a receipt. */}
+                  {fmtInt(qtyReceivedTotal)} of {fmtQtyCell(qtyOrderedTotal)} transferred.{' '}
+                  {fmtQtyCell(outstandingTotal)} still to arrive.
                 </p>
               ) : (
                 // No CTA back to the list: the Create GR button that lived there is gone,
                 // and pointing at a control that is not there is worse than saying nothing.
                 <p className="text-sm text-muted-foreground">
                   {isDraftPurchaseOrder(po.status)
-                    ? 'Nothing received yet. This order has not been placed.'
-                    : 'Nothing received yet. Receipts recorded against this order show here.'}
+                    ? 'Nothing transferred yet. This order has not been placed.'
+                    : 'Nothing transferred yet. Transfers recorded against this order show here.'}
                 </p>
               )}
             </div>

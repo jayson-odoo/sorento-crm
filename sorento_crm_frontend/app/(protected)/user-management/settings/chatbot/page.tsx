@@ -19,6 +19,10 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError } from '@/lib/number-field';
+import { Textarea } from '@/components/ui/textarea';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 
@@ -29,7 +33,12 @@ import {
   useSaveChatbotMemorySettings,
   useSaveChatbotTierOrder,
 } from './hooks/useChatbotMemoryAndTierOrder';
-import type { ChatbotMemorySettings, ChatbotSettings } from './services/chatbotSettingsService';
+import type {
+  ChatbotClosedListsMode,
+  ChatbotDirectIngressMode,
+  ChatbotMemorySettings,
+  ChatbotSettings,
+} from './services/chatbotSettingsService';
 import MemorySettingsCard from './components/MemorySettingsCard';
 import TierOrderCard from './components/TierOrderCard';
 import CrossDomainLadderCard, {
@@ -58,6 +67,25 @@ import type { ChatbotDomainInput } from '@/app/(protected)/system-management/cha
  * next WhatsApp message does.
  */
 
+// CHAT-SPEED: who the respond.io webhook starts turns for (owner ruling Q4 a).
+const DIRECT_INGRESS_OPTIONS: { value: ChatbotDirectIngressMode; label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'contacts', label: 'Listed contacts' },
+  { value: 'all', label: 'All contacts' },
+];
+
+// CHAT-RELEASE-1021: the two release switches (owner, 21 Oct 2026).
+const CLOSED_LISTS_OPTIONS: { value: ChatbotClosedListsMode; label: string }[] = [
+  { value: 'block', label: 'Block (full lists)' },
+  { value: 'index', label: 'Index (per-turn matches)' },
+];
+
+// Equal to the backend bounds (app/api/v1/user_management/settings.py), so a figure that
+// passes here is never refused by the server. Above ~7k the 20 s per-call timeout, not this
+// figure, ends a flash-lite answer (gpt-5.4-mini is slower); see PARSER_MAX_TOKENS in
+// app/services/chatbot/head/parser.py.
+const PARSER_MAX_TOKENS_RULES = { min: 1024, max: 32768, integer: true };
+
 export default function ChatbotSettingsPage() {
   const settingsQuery = useChatbotSettings();
   const save = useSaveChatbotSettings();
@@ -80,12 +108,21 @@ export default function ChatbotSettingsPage() {
   const [tierOrderDraft, setTierOrderDraft] = useState<string[] | null>(null);
   const [ladderDraft, setLadderDraft] = useState<string[] | null>(null);
   const [orderingConfirmOpen, setOrderingConfirmOpen] = useState(false);
+  // The field keeps what was typed; it becomes a number only in the save payload.
+  const [parserTokens, setParserTokens] = useState<string | null>(null);
+  // Set by a Save that found a wrong number; the sentence then follows the typing.
+  const [checked, setChecked] = useState(false);
 
   const ladderDomain = (domainsQuery.data ?? []).find((d) => d.name === DEFAULT_LADDER_DOMAIN);
 
   useEffect(() => {
     if (settingsQuery.data && draft === null) setDraft(settingsQuery.data);
   }, [settingsQuery.data, draft]);
+  useEffect(() => {
+    if (settingsQuery.data && parserTokens === null) {
+      setParserTokens(String(settingsQuery.data.chatbot_parser_max_output_tokens));
+    }
+  }, [settingsQuery.data, parserTokens]);
   useEffect(() => {
     if (memoryQuery.data && memoryDraft === null) setMemoryDraft(memoryQuery.data);
   }, [memoryQuery.data, memoryDraft]);
@@ -123,6 +160,9 @@ export default function ChatbotSettingsPage() {
       </div>
     );
   }
+
+  const parserTokensValue = parserTokens ?? String(draft.chatbot_parser_max_output_tokens);
+  const parserTokensError = numberFieldError(parserTokensValue, PARSER_MAX_TOKENS_RULES);
 
   const set = <K extends keyof ChatbotSettings>(key: K, value: ChatbotSettings[K]) =>
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -170,6 +210,84 @@ export default function ChatbotSettingsPage() {
               }}
             />
           </div>
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor="chatbot-composer" className="font-normal cursor-pointer">
+              Reply composer
+            </Label>
+            <Switch
+              id="chatbot-composer"
+              checked={draft.chatbot_composer_enabled}
+              onCheckedChange={(next) => set('chatbot_composer_enabled', next === true)}
+            />
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <Label htmlFor="chatbot-parser-max-output-tokens" className="font-normal">
+              Parser max output tokens
+            </Label>
+            <div className="w-full sm:w-56">
+              <NumberInput
+                id="chatbot-parser-max-output-tokens"
+                min={1024}
+                max={32768}
+                step={1}
+                value={parserTokensValue}
+                onChange={(e) => setParserTokens(e.target.value)}
+                error={checked ? parserTokensError : undefined}
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <Label htmlFor="chatbot-closed-lists" className="font-normal">
+              Closed lists
+            </Label>
+            <div className="w-full sm:w-56">
+              <SearchableSelect
+                id="chatbot-closed-lists"
+                value={draft.chatbot_closed_lists_mode}
+                options={CLOSED_LISTS_OPTIONS}
+                onChange={(next) =>
+                  set(
+                    'chatbot_closed_lists_mode',
+                    (next || 'block') as ChatbotClosedListsMode,
+                  )
+                }
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <Label htmlFor="chatbot-direct-ingress" className="font-normal">
+              Direct ingress
+            </Label>
+            <div className="w-full sm:w-56">
+              <SearchableSelect
+                id="chatbot-direct-ingress"
+                value={draft.chatbot_direct_ingress_mode}
+                options={DIRECT_INGRESS_OPTIONS}
+                onChange={(next) =>
+                  set(
+                    'chatbot_direct_ingress_mode',
+                    (next || 'off') as ChatbotDirectIngressMode,
+                  )
+                }
+              />
+            </div>
+          </div>
+          {draft.chatbot_direct_ingress_mode === 'contacts' ? (
+            <div className="space-y-2">
+              <Label htmlFor="chatbot-direct-ingress-contacts" className="font-normal">
+                Listed contacts
+              </Label>
+              <Textarea
+                id="chatbot-direct-ingress-contacts"
+                rows={3}
+                value={draft.chatbot_direct_ingress_contacts ?? ''}
+                placeholder="One respond.io contact id per line"
+                onChange={(event) =>
+                  set('chatbot_direct_ingress_contacts', event.target.value || null)
+                }
+              />
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -217,7 +335,11 @@ export default function ChatbotSettingsPage() {
           variant="outline"
           disabled={saving}
           onClick={() => {
-            if (settingsQuery.data) setDraft(settingsQuery.data);
+            if (settingsQuery.data) {
+              setDraft(settingsQuery.data);
+              setParserTokens(String(settingsQuery.data.chatbot_parser_max_output_tokens));
+              setChecked(false);
+            }
             if (memoryQuery.data) setMemoryDraft(memoryQuery.data);
             if (tierOrderQuery.data) setTierOrderDraft(tierOrderQuery.data);
             if (ladderDomain) setLadderDraft(ladderDomain.ladder);
@@ -229,9 +351,23 @@ export default function ChatbotSettingsPage() {
           type="button"
           disabled={saving}
           onClick={() => {
+            setChecked(true);
+            if (parserTokensError) {
+              // The field sits in the top card and Save at the page foot: take the operator to it.
+              document.getElementById('chatbot-parser-max-output-tokens')?.focus();
+              return;
+            }
             // Re-seed each draft from what came back, not from what was typed: the
             // row the backend returns is what was actually persisted.
-            save.mutate(draft, { onSuccess: (saved) => setDraft(saved) });
+            save.mutate(
+              { ...draft, chatbot_parser_max_output_tokens: Number(parserTokensValue) },
+              {
+                onSuccess: (saved) => {
+                  setDraft(saved);
+                  setParserTokens(String(saved.chatbot_parser_max_output_tokens));
+                },
+              },
+            );
             if (memoryDraft) {
               saveMemory.mutate(memoryDraft, { onSuccess: (saved) => setMemoryDraft(saved) });
             }

@@ -1680,3 +1680,79 @@ def test_the_wire_carries_the_cancelled_rows_reallocation_result_and_null_for_pe
         and "AutoCount" in item and f"{core_so.so_number} line {row.line_no}" in item
         for item in notices
     ), result
+
+
+# --------------------------------------------------------------------------- #
+# BOARD-NO-HOLD review B2: a rival is named only against stock the Reserve's bin
+# still has. A Reserve holds nothing now, so the bin can be empty under it.
+# --------------------------------------------------------------------------- #
+
+def _reserve_rival_world(db, *, bin_free):
+    """Line A holds a frozen confirmed Reserve of 36 at its own bin, and the bin then has
+    `bin_free` units. Order B has an EARLIER raised, unlinked ORDER row of 36 (its Buy).
+    Returns `(world, order_b, line_b, b_row, batch)` with A's date moved later."""
+    from tests.scm.test_planning_change_delta_seam import _add_stock
+
+    today = date.today()
+    world = _held_reserve_world(db, qty="36", required_date=today + timedelta(days=20))
+    order_b, line_b, _core_so_b, _core_line_b = _seed_order(
+        db, world["company_id"], world["project"], world["product"], world["own"],
+        qty="36", required_date=today + timedelta(days=30),
+    )
+    ProjectSupplyService(db).confirm(
+        order_b,
+        ConfirmSupplyBody(lines=[ConfirmLine(
+            project_line_id=line_b.id, buy_qty="36", buy_reason="ZZT no stock anywhere",
+        )]),
+        actor_user_id=world["actor"],
+    )
+    db.commit()
+    b_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_b.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    _add_stock(db, world["product"], world["own"], bin_free - 36)
+    db.commit()
+    batch = _change_and_batch(db, world, new_required_date=today + timedelta(days=45))
+    return world, order_b, line_b, b_row, batch
+
+
+def test_no_rival_is_named_when_the_reserves_bin_has_no_stock():
+    with blank_session() as db:
+        world, order_b, line_b, b_row, batch = _reserve_rival_world(db, bin_free=0)
+        assert batch is not None
+        row = _seam_only_row(db, batch)
+        components = row.suggestion_json["components"]
+        assert [c for c in components if c["action"] == "reallocate"] == [], components
+
+        planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "confirm")
+        result = planning_change_service.apply(db, str(batch.id), world["actor"])
+        db.commit()
+        assert result["failed_orders"] == [], result["failed_orders"]
+
+        db.expire_all()
+        b_row = db.get(OrderInquiryRow, b_row.id)
+        assert b_row.state == INQUIRY_RAISED, b_row.state
+        assert b_row.qty == Decimal("36")
+        b_allocations = (
+            db.query(SOLineAllocation)
+            .filter(SOLineAllocation.so_line_id == line_b.id,
+                    SOLineAllocation.confirmed_at.isnot(None))
+            .all()
+        )
+        assert [(a.source_type, a.qty) for a in b_allocations] == [("order", Decimal("36"))], (
+            "B's Buy is untouched: no Reserve moved onto it"
+        )
+
+
+def test_the_reallocation_names_only_what_the_reserves_bin_still_has():
+    with blank_session() as db:
+        world, order_b, line_b, b_row, batch = _reserve_rival_world(db, bin_free=10)
+        assert batch is not None
+        row = _seam_only_row(db, batch)
+        components = row.suggestion_json["components"]
+        reallocate = next((c for c in components if c["action"] == "reallocate"), None)
+        assert reallocate is not None, components
+        assert reallocate["source"] == "reserve", reallocate
+        assert reallocate["qty_now"] == "10", reallocate

@@ -43,6 +43,12 @@ const KIND_FIELDS: Record<PortalLandingKind, LandingField[]> = {
     { key: 'customer_name', label: 'Customer', type: 'text' },
     { key: 'purpose', label: 'Purpose', type: 'text' },
   ],
+  project_registration: [
+    { key: 'title', label: 'Project', type: 'text' },
+    { key: 'developer_name', label: 'Developer', type: 'text' },
+    { key: 'state', label: 'State', type: 'text' },
+    { key: 'ppf_no', label: 'PPF', type: 'text' },
+  ],
   complaint: [
     { key: 'product_code', label: 'Product', type: 'text' },
     { key: 'project_title', label: 'Project', type: 'text' },
@@ -51,6 +57,14 @@ const KIND_FIELDS: Record<PortalLandingKind, LandingField[]> = {
   price_tag_request: [
     { key: 'customer_name', label: 'Customer', type: 'text' },
     { key: 'needed_by_date', label: 'Need by', type: 'date' },
+  ],
+  sample_request: [
+    { key: 'customer_name', label: 'Customer', type: 'text' },
+    { key: 'project_title', label: 'Project', type: 'text' },
+  ],
+  new_product_application: [
+    { key: 'customer_name', label: 'Customer', type: 'text' },
+    { key: 'project_title', label: 'Project', type: 'text' },
   ],
   sales_opportunity: [
     { key: 'title', label: 'Title', type: 'text' },
@@ -67,9 +81,17 @@ export function landingFieldsFor(kind: PortalLandingKind): LandingField[] {
   return [...COMMON_FIELDS, ...(KIND_FIELDS[kind] ?? [])];
 }
 
+/**
+ * Whether a row reads as a Draft. A rejected project registration is still editable (the
+ * server sends is_draft true so the form opens), but the label comes from its status.
+ */
+export function isShownAsDraft(row: PortalSubmissionSummary): boolean {
+  return Boolean(row.is_draft) && (row.status || '').toLowerCase() !== 'rejected';
+}
+
 /** Draft or the real status label - same rule the card badge already uses. */
 export function submissionStatusLabel(row: PortalSubmissionSummary): string {
-  if (row.is_draft) return 'Draft';
+  if (isShownAsDraft(row)) return 'Draft';
   if (row.status_label) return row.status_label;
   return row.kind === 'complaint'
     ? complaintStatusLabel(row.status)
@@ -104,11 +126,18 @@ export interface LandingDateRange {
   to?: string;
 }
 
-export type LandingFilterValue = string | LandingDateRange;
+/** A text field holds one value or several (OR-ed): free text, so an array, never a comma-joined string. */
+export type LandingFilterValue = string | string[] | LandingDateRange;
 export type LandingFilters = Record<string, LandingFilterValue>;
 
 function isDateRange(v: LandingFilterValue): v is LandingDateRange {
-  return typeof v === 'object' && v !== null;
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** The picked values of a text filter; `[]` when none. */
+export function landingFilterValues(v: LandingFilterValue | undefined): string[] {
+  if (v === undefined || isDateRange(v)) return [];
+  return (Array.isArray(v) ? v : [v]).filter(Boolean);
 }
 
 export function activeLandingFilterCount(filters: LandingFilters): number {
@@ -116,7 +145,7 @@ export function activeLandingFilterCount(filters: LandingFilters): number {
   for (const v of Object.values(filters)) {
     if (isDateRange(v)) {
       if (v.from || v.to) n += 1;
-    } else if (v) {
+    } else if (landingFilterValues(v).length) {
       n += 1;
     }
   }
@@ -148,8 +177,10 @@ export function applyLandingFilters(
         if (value.to && rowDate > value.to) return false;
         return true;
       }
-      if (!value) return true;
-      return landingFieldValue(row, field) === value;
+      const picked = landingFilterValues(value);
+      if (!picked.length) return true;
+      const own = landingFieldValue(row, field);
+      return own !== null && picked.includes(own);
     }),
   );
 }

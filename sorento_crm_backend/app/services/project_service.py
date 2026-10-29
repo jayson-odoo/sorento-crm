@@ -12,9 +12,13 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.projects import (
+    APPROVAL_APPROVED,
+    APPROVAL_DRAFT,
+    APPROVAL_PENDING,
+    APPROVAL_REJECTED,
+    APPROVAL_RESUBMITTED,
     OUTCOME_OPEN,
     Project,
-    ProjectBrand,
     ProjectCollaborator,
     ProjectParty,
     ProjectPurchaseOrder,
@@ -28,6 +32,7 @@ from app.models.projects import (
 from app.models.status import Status
 from app.status_engine.registry import get_status_entity
 from app.schemas.common import MAX_PAGE_LIMIT
+from app.services import submission_status
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.project_clash_service import (
@@ -35,16 +40,187 @@ from app.services.project_clash_service import (
     find_clashes,
     normalise_project_title,
 )
+from app.services.submission_status import APPEALED_LABEL
 
 NUMBERING_DOC_TYPE = "project"
 
+#: What a project with no code yet (a portal registration before Approve) is called in every
+#: message and title, so nothing ever reads "None" (PROJECT-REG-PORTAL R2).
+AWAITING_APPROVAL_LABEL = "Awaiting approval"
+#: Lets an approver work a portal registration while it waits (R7, R8).
+APPROVE_REGISTRATIONS_PERMISSION = "projects.registrations.approve"
 
-def _describe_blockers(db: Session, blockers: List[ClashCandidate]) -> str:
+
+REJECTED_LABEL = "Rejected"
+RESUBMITTED_LABEL = APPEALED_LABEL
+
+
+def project_label(project) -> str:
+    """The project's code; while it has none, "Rejected" for a refused registration,
+    "Appealed" for one sent back after a rejection, and "Awaiting approval" for any other."""
+    code = (getattr(project, "project_code", None) or "").strip()
+    if code:
+        return code
+    state = getattr(project, "approval_state", None)
+    if state == APPROVAL_REJECTED:
+        return REJECTED_LABEL
+    if state == APPROVAL_RESUBMITTED:
+        return RESUBMITTED_LABEL
+    return AWAITING_APPROVAL_LABEL
+
+
+def is_approved(project) -> bool:
+    """A staff project (no approval state) or an approved portal registration."""
+    return getattr(project, "approval_state", None) in (None, APPROVAL_APPROVED)
+
+
+def approved_projects(query):
+    """Narrow a `Project` query to the rows that are projects yet (R4): staff-registered
+    ones and approved portal registrations. Every internal path (pickers, validators,
+    reports, the clash check, the sweeps, embeddings) reads through this."""
+    return query.filter(
+        or_(Project.approval_state.is_(None), Project.approval_state == APPROVAL_APPROVED)
+    )
+
+
+# Each opens with the label the project carries in place of a code (R2).
+_NOT_APPROVED_MESSAGES = {
+    APPROVAL_PENDING: (
+        f"{AWAITING_APPROVAL_LABEL}: nothing can be added to this project until it is approved."
+    ),
+    APPROVAL_RESUBMITTED: (
+        f"{AWAITING_APPROVAL_LABEL}: nothing can be added to this project until it is approved."
+    ),
+    APPROVAL_REJECTED: (
+        f"{REJECTED_LABEL}: this project registration is not approved, so nothing can be "
+        "added to it."
+    ),
+    APPROVAL_DRAFT: (
+        f"{AWAITING_APPROVAL_LABEL}: this project registration has not been submitted for "
+        "approval yet."
+    ),
+}
+
+
+def check_company_refs(
+    db: Session, company_id: str, payload: Dict[str, Any], *, code: str = "project_ref_invalid"
+) -> None:
+    """Every party, type and template id a caller sends must belong to the project's
+    company (security S10 / N1): the pickers are company scoped, the API must not trust that."""
+    from uuid import UUID
+
+    def is_uuid(value: Any) -> bool:
+        try:
+            UUID(str(value))
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    refuse = AppException(
+        status_code=422,
+        message="Pick the parties, type and template from this company.",
+        code=code,
+    )
+    for key in ("developer_party_id", "architect_party_id", "main_contractor_party_id"):
+        value = payload.get(key)
+        if value and not (
+            is_uuid(value)
+            and db.query(ProjectParty.id)
+            .filter(ProjectParty.id == str(value), ProjectParty.company_id == company_id)
+            .first()
+        ):
+            raise refuse
+    customer_id = payload.get("customer_id")
+    if customer_id:
+        from app.models.order import Customer
+
+        if not (
+            is_uuid(customer_id)
+            and db.query(Customer.id)
+            .filter(Customer.id == str(customer_id), Customer.company_id == company_id)
+            .first()
+        ):
+            raise AppException(
+                status_code=422, message="Pick the customer from this company.", code=code
+            )
+    for key, model in (("type_id", ProjectType), ("template_id", ProjectTemplate)):
+        value = payload.get(key)
+        if value and not (
+            is_uuid(value)
+            and db.query(model.id).filter(model.id == str(value), model.company_id == company_id).first()
+        ):
+            raise refuse
+
+
+def assert_linkable_project(
+    db: Session, project_id: Optional[str], current: Optional[str] = None, *, code: str
+) -> None:
+    """A record (complaint, purchase request) links to a PROJECT, never a portal
+    registration still waiting for approval (R4). Re-saving the link a record already has
+    is not a change, so an older link keeps saving."""
+    if not project_id or str(project_id) == str(current or ""):
+        return
+    if approved_projects(db.query(Project.id).filter(Project.id == str(project_id))).first() is None:
+        raise AppException(
+            status_code=422,
+            message="That project is not approved yet. Pick a project from the list.",
+            code=code,
+        )
+
+
+def _changed_refs(db: Session, project: Project, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """The ids in an edit that differ from what the project already links. The edit form
+    sends every field back, so checking unchanged ones would lock a legacy project that
+    already links a record of another company out of every save."""
+    stored = {
+        "developer_party_id": project.developer_party_id,
+        "type_id": project.type_id,
+        "template_id": project.template_id,
+    }
+    profile = db.query(ProjectSalesProfile).filter(ProjectSalesProfile.project_id == project.id).first()
+    stored["customer_id"] = getattr(profile, "customer_id", None)
+    stored["architect_party_id"] = getattr(profile, "architect_party_id", None)
+    stored["main_contractor_party_id"] = getattr(profile, "main_contractor_party_id", None)
+    out: Dict[str, Any] = {
+        key: payload[key]
+        for key in stored
+        if key in payload and str(payload[key] or "") != str(stored[key] or "")
+    }
+    return out
+
+
+def assert_project_approved(project) -> None:
+    """409 `project_not_approved` for a portal registration that is not a project yet: no
+    quotation, sample, PO, schedule, sales order, task, stakeholder or stage move (R4, R8)."""
+    if is_approved(project):
+        return
+    raise AppException(
+        status_code=409,
+        message=_NOT_APPROVED_MESSAGES.get(
+            project.approval_state, "This project is not approved yet."
+        ),
+        code="project_not_approved",
+    )
+
+
+def _describe_blockers(
+    db: Session, blockers: List[ClashCandidate], actor_user_id: Optional[str] = None
+) -> str:
     """The refusal message. Names the incumbent so the user knows who to talk to.
 
     "Already registered" on its own is a dead end; the point of the block is to
     route the second person to the first one, or to the request-to-join path.
+
+    Except to a user who may see only their own projects (PORTAL-P2-ONLY-THEIRS): naming a
+    project they cannot open would let them probe for other people's pursuits by
+    registering guesses, so they are sent to a manager instead.
     """
+    from app.services import own_scope
+
+    if actor_user_id and own_scope.user_is_limited(
+        db, str(actor_user_id), own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN
+    ):
+        return "This development is already registered. Ask a sales manager about it."
     owner_ids = [b.owner_user_id for b in blockers if b.owner_user_id]
     names = {}
     if owner_ids:
@@ -77,10 +253,10 @@ def register_project(
     type_id: Optional[str] = None,
     template_id: Optional[str] = None,
     details: Optional[dict] = None,
-    brand_ids: Optional[List[str]] = None,
     owner_user_id: Optional[str] = None,
     surface_threshold: Optional[float] = None,
     block_threshold: Optional[float] = None,
+    skip_clash_check: bool = False,
 ) -> Project:
     """Claim a development for ``actor_user_id``.
 
@@ -100,27 +276,53 @@ def register_project(
             code="project_title_required",
         )
 
-    blockers = [
-        candidate
-        for candidate in find_clashes(
-            db,
-            company_id=company_id,
-            developer_party_id=developer_party_id,
-            title=clean_title,
-            surface_threshold=surface_threshold,
-            block_threshold=block_threshold,
-        )
-        if candidate.blocks
-    ]
+    # `skip_clash_check` (PROJECT-REG-PORTAL D7): a possible duplicate is the caller's call,
+    # and only an exact developer + title repeat is refused (by the DB identity index). Staff
+    # registration keeps its lock.
+    blockers = (
+        []
+        if skip_clash_check
+        else [
+            candidate
+            for candidate in find_clashes(
+                db,
+                company_id=company_id,
+                developer_party_id=developer_party_id,
+                title=clean_title,
+                surface_threshold=surface_threshold,
+                block_threshold=block_threshold,
+            )
+            if candidate.blocks
+        ]
+    )
     if blockers:
         raise AppException(
             status_code=409,
-            message=_describe_blockers(db, blockers),
+            message=_describe_blockers(db, blockers, actor_user_id),
             code="project_already_registered",
         )
 
-    # commit_rule=False so drawing the number joins the caller's transaction: if the
-    # insert below fails, the sequence rolls back with it rather than leaving a hole.
+    project = Project(
+        company_id=company_id,
+        title=clean_title,
+        normalised_title=normalise_project_title(clean_title),
+        developer_party_id=developer_party_id,
+        type_id=type_id,
+        template_id=template_id,
+        outcome=OUTCOME_OPEN,
+        owner_user_id=owner_user_id or actor_user_id,
+        created_by=actor_user_id,
+    )
+    start_project(db, project, actor_user_id=actor_user_id, details=details)
+    return project
+
+
+def draw_project_code(db: Session) -> str:
+    """The next code from the `project` numbering rule (PPF, D6).
+
+    commit_rule=False so drawing the number joins the caller's transaction: if the
+    insert that follows fails, the sequence rolls back with it rather than leaving a hole.
+    """
     code = NumberingService(db).get_next_number(NUMBERING_DOC_TYPE, commit_rule=False)
     if not code:
         raise AppException(
@@ -131,20 +333,22 @@ def register_project(
             ),
             code="project_numbering_rule_missing",
         )
+    return code
 
-    project = Project(
-        company_id=company_id,
-        project_code=code,
-        title=clean_title,
-        normalised_title=normalise_project_title(clean_title),
-        developer_party_id=developer_party_id,
-        type_id=type_id,
-        template_id=template_id,
-        outcome=OUTCOME_OPEN,
-        owner_user_id=owner_user_id or actor_user_id,
-        created_by=actor_user_id,
-    )
-    db.add(project)
+
+def start_project(
+    db: Session,
+    project: Project,
+    *,
+    actor_user_id: str,
+    details: Optional[dict] = None,
+) -> Project:
+    """Give ``project`` its code, its first funnel rung, its details and its template
+    checklist. A staff registration runs it on a new row; Approve runs it on the portal
+    registration's own row (R9). Flushes, so the identity index answers here."""
+    project.project_code = draw_project_code(db)
+    if project not in db:
+        db.add(project)
     db.flush()
 
     # The initial funnel position comes from the graph, so it is configurable and a
@@ -160,8 +364,8 @@ def register_project(
     except AppException:
         project.status_id = None
 
-    if details or brand_ids is not None:
-        apply_sales_details(db, project, details or {}, brand_ids=brand_ids)
+    if details:
+        apply_sales_details(db, project, details)
 
     # The template's checklist lands with the project (AC-N1), so a new registration
     # already knows its next action instead of being an empty shell someone has to
@@ -181,6 +385,7 @@ def register_project(
 
 
 MANAGE_PERMISSION = "projects.projects.manage"
+EDIT_PERMISSION = "projects.projects.edit"
 CUSTOMERS_VIEW_PERMISSION = "order_management.customers.view"
 
 TAKEOVER_JOIN = "join"
@@ -207,12 +412,20 @@ def _is_collaborator(db: Session, project_id: str, user_id: str) -> bool:
 def can_edit_project(
     db: Session, project: Project, user_id: str, permissions: Set[str]
 ) -> bool:
-    """Owner, approved collaborator, or manager.
+    """Owner, approved collaborator, or manager; and, for a portal registration still
+    PENDING approval, whoever may approve it (R8: the approver fixes it up before Approve).
+    The approve grant opens nothing else: not a staff project, not an approved or a
+    rejected one.
 
     Reading is intentionally wide open (UAC Group J) and is NOT gated here: the module
     exists to make other people's pursuits visible, so a read filter would defeat it.
     """
     if MANAGE_PERMISSION in (permissions or set()):
+        return True
+    if (
+        submission_status.is_awaiting_review(project.approval_state, APPROVAL_PENDING)
+        and APPROVE_REGISTRATIONS_PERMISSION in (permissions or set())
+    ):
         return True
     if user_id and project.owner_user_id == user_id:
         return True
@@ -227,11 +440,20 @@ def assert_can_edit_project(
     raise AppException(
         status_code=403,
         message=(
-            f"{project.project_code} belongs to another salesperson. Ask to join it "
+            f"{project_label(project)} belongs to another salesperson. Ask to join it "
             "as a collaborator, or raise a dispute for a manager to decide."
         ),
         code="project_not_editable",
     )
+
+
+def assert_can_write_project(
+    db: Session, project: Project, user_id: str, permissions: Set[str]
+) -> None:
+    """The edit right plus R8: work hung on a project (quotations, samples, POs, schedules,
+    sales orders, tasks, stakeholders) waits until the project is approved."""
+    assert_can_edit_project(db, project, user_id, permissions)
+    assert_project_approved(project)
 
 
 def _add_collaborator(
@@ -264,6 +486,8 @@ def create_takeover_request(
     Hard blocking with no way out produces defensive land-grabbing and pushes the
     argument back into WhatsApp, so both routes exist and both leave a record.
     """
+    # Nobody joins or disputes a registration that is not a project yet (security N3).
+    assert_project_approved(project)
     if kind not in TAKEOVER_KINDS:
         raise AppException(
             status_code=422,
@@ -279,7 +503,7 @@ def create_takeover_request(
     if project.owner_user_id and project.owner_user_id == requester_user_id:
         raise AppException(
             status_code=422,
-            message=f"You already own {project.project_code}.",
+            message=f"You already own {project_label(project)}.",
             code="project_takeover_self",
         )
 
@@ -296,7 +520,7 @@ def create_takeover_request(
         raise AppException(
             status_code=409,
             message=(
-                f"You already have a request open on {project.project_code}. "
+                f"You already have a request open on {project_label(project)}. "
                 "Wait for it to be decided."
             ),
             code="project_takeover_already_open",
@@ -380,6 +604,24 @@ def decide_takeover_request(
             project.owner_user_id = request.requester_user_id
             if previous_owner and previous_owner != request.requester_user_id:
                 _add_collaborator(db, project.id, previous_owner, decider_user_id)
+            names = resolve_user_names(db, [previous_owner, request.requester_user_id])
+            from_name = names.get(str(previous_owner)) or "nobody"
+            to_name = names.get(str(request.requester_user_id)) or "a colleague"
+            from app.services import project_activity_service as activity
+
+            activity.record_project_event(
+                db,
+                project=project,
+                template="owner_reassigned",
+                payload={
+                    "from_user_id": str(previous_owner) if previous_owner else None,
+                    "to_user_id": str(request.requester_user_id),
+                    "from_name": from_name,
+                    "to_name": to_name,
+                },
+                actor_id=decider_user_id,
+                body_text=f"Reassigned from {from_name} to {to_name}",
+            )
 
     db.flush()
     return request
@@ -408,26 +650,6 @@ def _party_name_map(db: Session, party_ids) -> Dict[str, str]:
         p.id: p.name
         for p in db.query(ProjectParty).filter(ProjectParty.id.in_(ids)).all()
     }
-
-
-def _brands_for(db: Session, project_ids) -> Dict[str, List[tuple]]:
-    """``{project_id: [(brand_id, brand_name), ...]}`` in one query, not N."""
-    ids = [pid for pid in set(project_ids) if pid]
-    if not ids:
-        return {}
-    from app.models.product import Brand
-
-    rows = (
-        db.query(ProjectBrand.project_id, Brand.id, Brand.brand_name)
-        .join(Brand, Brand.id == ProjectBrand.brand_id)
-        .filter(ProjectBrand.project_id.in_(ids))
-        .order_by(Brand.brand_name)
-        .all()
-    )
-    out: Dict[str, List[tuple]] = {}
-    for project_id, brand_id, brand_name in rows:
-        out.setdefault(project_id, []).append((brand_id, brand_name))
-    return out
 
 
 def _days_since(moment: Optional[datetime]) -> Optional[int]:
@@ -462,7 +684,6 @@ def serialize_projects(
     party_names = _party_name_map(
         db, [p.developer_party_id for p in projects]
     )
-    brands = _brands_for(db, [p.id for p in projects])
 
     profiles = {
         row.project_id: row
@@ -520,11 +741,17 @@ def serialize_projects(
             for row in db.query(ProjectLead).filter(ProjectLead.id.in_(lead_ids)).all()
         }
 
-    # The customer is the lead's buyer (owner, 13 Oct): the Overview shows it and the
-    # quotation header defaults its name, phone and Attn from it. Bulk like the rest.
-    customers = _customers_for(
-        db, [lead.customer_id for lead in leads.values() if lead.customer_id]
-    )
+    # The customer is the one picked on the register form (sales_profile.customer_id);
+    # where none was, the linked lead's buyer. The Overview shows it and the quotation
+    # header defaults its name, phone and Attn from it (owner, 13 Oct). Bulk like the rest.
+    def _effective_customer_id(project_row):
+        pr = profiles.get(project_row.id)
+        if pr and pr.customer_id:
+            return pr.customer_id
+        lead = leads.get(project_row.lead_id) if project_row.lead_id else None
+        return getattr(lead, "customer_id", None)
+
+    customers = _customers_for(db, [_effective_customer_id(p) for p in projects])
     # The phone and the main contact are the customer master's, which sits behind its own
     # grant; a project reader without it sees the buyer's name only (security review, 13 Oct).
     can_see_customer_contact = CUSTOMERS_VIEW_PERMISSION in permissions
@@ -534,6 +761,22 @@ def serialize_projects(
     from app.services.project_task_service import next_action_for_projects
 
     next_actions = next_action_for_projects(db, [p.id for p in projects])
+
+    # A portal registration's legacy-only fields (R7), read-only under the detail header.
+    # The agent is shown by name, never only by code.
+    agent_ids = {
+        pr.sales_agent_id for pr in profiles.values() if pr.sales_agent_id
+    }
+    agent_names: Dict[str, Optional[str]] = {}
+    if agent_ids:
+        from app.models.sales_agent import SalesAgent
+        from app.services.project_registration_service import agent_display_name
+
+        agent_names = {
+            row.id: agent_display_name(row)
+            for row in db.query(SalesAgent).filter(SalesAgent.id.in_(agent_ids)).all()
+        }
+    may_approve = APPROVE_REGISTRATIONS_PERMISSION in permissions
 
     collaborating = set()
     if actor_user_id and not is_manager:
@@ -551,7 +794,6 @@ def serialize_projects(
     for project in projects:
         status = statuses.get(project.status_id) if project.status_id else None
         profile = profiles.get(project.id)
-        project_brands = brands.get(project.id, [])
         out.append(
             {
                 "id": project.id,
@@ -588,9 +830,7 @@ def serialize_projects(
                     else None
                 ),
                 **_customer_fields(
-                    customers.get(leads[project.lead_id].customer_id)
-                    if project.lead_id in leads
-                    else None,
+                    customers.get(_effective_customer_id(project)),
                     with_contact=can_see_customer_contact,
                 ),
                 "status_id": project.status_id,
@@ -607,6 +847,8 @@ def serialize_projects(
                 ),
                 "location": profile.location if profile else None,
                 "address": profile.address if profile else None,
+                "state": profile.state if profile else None,
+                "mukim": profile.mukim if profile else None,
                 "architect_party_id": profile.architect_party_id if profile else None,
                 "architect_name": (
                     profile_party_names.get(profile.architect_party_id)
@@ -631,8 +873,6 @@ def serialize_projects(
                 "expected_delivery_to": (
                     profile.expected_delivery_to if profile else None
                 ),
-                "brands": [name for _bid, name in project_brands],
-                "brand_ids": [bid for bid, _name in project_brands],
                 "last_meaningful_activity_at": project.last_meaningful_activity_at,
                 "days_since_last_activity": _days_since(
                     project.last_meaningful_activity_at
@@ -660,12 +900,56 @@ def serialize_projects(
                         and project.owner_user_id == actor_user_id
                     )
                     or project.id in collaborating
+                    or (
+                        may_approve
+                        and submission_status.is_awaiting_review(
+                            project.approval_state, APPROVAL_PENDING
+                        )
+                    )
                 ),
+                "approval_state": project.approval_state,
+                "reject_reason": project.reject_reason,
+                "submitted_at": project.submitted_at,
+                "decided_at": project.decided_at,
+                "registration": (
+                    _registration_block(profile, agent_names)
+                    if project.approval_state is not None
+                    else None
+                ),
+                # Filled for a pending project's detail only (the route): the list never
+                # pays an embedding call per row.
+                "possible_duplicates": [],
                 "created_at": project.created_at,
                 "updated_at": project.updated_at,
             }
         )
+    if "projects.registrations.submit" in permissions and "projects.projects.edit" not in permissions:
+        # A submit-only user edits only their own draft or rejected registration (J3b).
+        for row, project in zip(out, projects):
+            row["can_edit"] = bool(
+                actor_user_id
+                and project.owner_user_id == actor_user_id
+                and project.approval_state in (APPROVAL_DRAFT, APPROVAL_REJECTED)
+            )
     return out
+
+
+def _registration_block(
+    profile: Optional[ProjectSalesProfile], agent_names: Dict[str, Optional[str]]
+) -> Dict[str, Any]:
+    def value(key: str):
+        return getattr(profile, key, None) if profile is not None else None
+
+    return {
+        "sales_agent_name": agent_names.get(value("sales_agent_id")),
+        "distributor_name": value("distributor_name"),
+        "customer_name": value("customer_name"),
+        "your_ref": value("your_ref"),
+        "type_of_building": value("type_of_building"),
+        "developer_name": value("developer_name"),
+        "main_contractor_name": value("main_contractor_name"),
+        "architect_name": value("architect_name"),
+    }
 
 
 def serialize_project(
@@ -680,8 +964,29 @@ def serialize_project(
     )[0]
 
 
-def get_project_or_404(db: Session, project_id: str) -> Project:
-    project = db.query(Project).filter(Project.id == project_id).first()
+def _draft_visible_to(viewer_user_id: Optional[str]):
+    """Not a draft, or a draft its owner is looking at (PROJECT-REGISTER-V2 J3)."""
+    not_draft = or_(Project.approval_state.is_(None), Project.approval_state != APPROVAL_DRAFT)
+    if not viewer_user_id:
+        return not_draft
+    return or_(
+        not_draft,
+        (Project.approval_state == APPROVAL_DRAFT) & (Project.owner_user_id == str(viewer_user_id)),
+    )
+
+
+def get_project_or_404(
+    db: Session, project_id: str, viewer_user_id: Optional[str] = None
+) -> Project:
+    """The project for a STAFF route. A contact's unsent portal draft is nobody else's
+    business (security N2), so every staff route reads it as not found; the portal reaches
+    its own drafts through `project_registration_service._own`, never through here. A
+    salesperson's own draft (owner = ``viewer_user_id``) is the one draft a staff route shows."""
+    project = (
+        db.query(Project)
+        .filter(Project.id == project_id, _draft_visible_to(viewer_user_id))
+        .first()
+    )
     if project is None:
         raise AppException(
             status_code=404,
@@ -751,8 +1056,11 @@ def list_projects(
     developer_party_ids: Optional[List[str]] = None,
     project_ids: Optional[List[str]] = None,
     type_ids: Optional[List[str]] = None,
-    brand_ids: Optional[List[str]] = None,
     only_critical: bool = False,
+    approval_states: Optional[List[str]] = None,
+    approved_only: bool = False,
+    visible_to=None,
+    viewer_user_id: Optional[str] = None,
     page: int = 1,
     limit: int = 50,
     sort: str = "created_at",
@@ -760,11 +1068,28 @@ def list_projects(
 ) -> tuple:
     """``(projects, total)``.
 
+    ``visible_to`` (an ``own_scope.Me``) narrows to that user's own projects, for a user who
+    may only see their own (PORTAL-P2-ONLY-THEIRS); ``None`` is the wide-open read.
+
     Sorting is whitelisted rather than reflected off the model: an arbitrary
     ``sort`` string would let a caller order by any column, including ones the
     listing never exposes.
+
+    Pending and rejected portal registrations are listed (R6), a contact's unsent
+    draft never is, whatever the filter (a salesperson's own draft is listed to its owner). ``approved_only`` is the pickers' filter:
+    staff and approved projects only.
     """
-    query = db.query(Project).filter(Project.company_id == company_id)
+    query = db.query(Project).filter(
+        Project.company_id == company_id, _draft_visible_to(viewer_user_id)
+    )
+    if visible_to is not None:
+        from app.services import own_scope
+
+        query = query.filter(own_scope.project_clause(visible_to))
+    if approved_only:
+        query = approved_projects(query)
+    if approval_states:
+        query = query.filter(Project.approval_state.in_(approval_states))
 
     if search and search.strip():
         needle = f"%{search.strip().lower()}%"
@@ -786,14 +1111,6 @@ def list_projects(
         query = query.filter(Project.id.in_(project_ids))
     if type_ids:
         query = query.filter(Project.type_id.in_(type_ids))
-    if brand_ids:
-        query = query.filter(
-            Project.id.in_(
-                db.query(ProjectBrand.project_id).filter(
-                    ProjectBrand.brand_id.in_(brand_ids)
-                )
-            )
-        )
     if only_critical:
         query = query.filter(Project.is_critical.is_(True))
 
@@ -808,9 +1125,11 @@ def list_projects(
         "last_meaningful_activity_at": Project.last_meaningful_activity_at,
     }
     column = sortable.get(sort, Project.created_at)
-    query = query.order_by(
-        column.asc() if str(direction).lower() == "asc" else column.desc()
-    )
+    ordered = column.asc() if str(direction).lower() == "asc" else column.desc()
+    if column is Project.project_code:
+        # A project with no code yet sorts after every coded one, whichever the direction.
+        ordered = ordered.nulls_last()
+    query = query.order_by(ordered)
 
     page = max(1, int(page or 1))
     limit = max(1, min(int(limit or 50), MAX_PAGE_LIMIT))
@@ -835,9 +1154,12 @@ def _profile_for(db: Session, project_id: str) -> ProjectSalesProfile:
 
 
 _PROFILE_FIELDS = (
+    "customer_id",
     "registered_company_name",
     "location",
     "address",
+    "state",
+    "mukim",
     "architect_party_id",
     "main_contractor_party_id",
     "estimated_sales_value",
@@ -856,21 +1178,10 @@ _PROJECT_FIELDS = (
 )
 
 
-def _set_brands(db: Session, project_id: str, brand_ids: List[str]) -> None:
-    db.query(ProjectBrand).filter(ProjectBrand.project_id == project_id).delete(
-        synchronize_session=False
-    )
-    for brand_id in dict.fromkeys(brand_ids or []):
-        db.add(ProjectBrand(project_id=project_id, brand_id=brand_id))
-    db.flush()
-
-
 def apply_sales_details(
     db: Session,
     project: Project,
     payload: Dict[str, Any],
-    *,
-    brand_ids: Optional[List[str]] = None,
 ) -> None:
     """Write the Sorento-specific half plus the shared optional fields.
 
@@ -889,8 +1200,6 @@ def apply_sales_details(
         if key in payload:
             setattr(project, key, payload[key])
 
-    if brand_ids is not None:
-        _set_brands(db, project.id, brand_ids)
     db.flush()
 
 
@@ -909,6 +1218,7 @@ def update_project(
     the exact-key case, but only the matcher catches the near-duplicate.
     """
     assert_can_edit_project(db, project, actor_user_id, permissions)
+    check_company_refs(db, str(project.company_id), _changed_refs(db, project, payload))
 
     new_title = payload.get("title")
     new_developer = (
@@ -923,7 +1233,10 @@ def update_project(
 
     if retitling or redeveloping:
         effective_title = new_title or project.title
-        blockers = [
+        # A portal registration waiting for approval sits outside the lock (R3): fixing its
+        # title or developer is the approver's preparation, and a possible duplicate never
+        # blocks it (D7). Approve answers the exact repeat.
+        blockers = [] if not is_approved(project) else [
             candidate
             for candidate in find_clashes(
                 db,
@@ -936,7 +1249,7 @@ def update_project(
         if blockers:
             raise AppException(
                 status_code=409,
-                message=_describe_blockers(db, blockers),
+                message=_describe_blockers(db, blockers, actor_user_id),
                 code="project_already_registered",
             )
         if new_title:
@@ -959,9 +1272,30 @@ def update_project(
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
 
-    apply_sales_details(
-        db, project, payload, brand_ids=payload.get("brand_ids")
-    )
+    own_leads_only = "projects.registrations.submit" in permissions and EDIT_PERMISSION not in permissions
+    target_lead = payload["lead_id"] if "lead_id" in payload else project.lead_id
+    if target_lead:
+        # The lead governs the customer (LEAD-GOVERNS-REGISTER E4, E9). The right to link it is
+        # decided first, so a refused lead answers the same whatever customer came with it.
+        from app.services import project_lead_service as leads
+
+        changing = target_lead != project.lead_id
+        lead = leads.lead_for_registration(
+            db,
+            target_lead,
+            actor_user_id=actor_user_id,
+            own_leads_only=own_leads_only and changing,
+            permissions=permissions if changing else None,
+        )
+        if lead.customer_id:
+            # A null customer counts as absent: the lead's customer is never cleared (LGR-E9).
+            if "customer_id" in payload and not payload["customer_id"] and not changing:
+                payload = {k: v for k, v in payload.items() if k != "customer_id"}
+            elif changing or payload.get("customer_id"):
+                picked = leads.customer_from_lead(lead, payload.get("customer_id"))
+                if changing:
+                    payload = {**payload, "customer_id": picked}
+    apply_sales_details(db, project, payload)
 
     # Present-and-null is an unlink; absent leaves the link alone (#1339).
     if "lead_id" in payload:
@@ -973,7 +1307,11 @@ def update_project(
             payload["lead_id"],
             actor_user_id=actor_user_id,
             permissions=permissions,
+            own_leads_only=own_leads_only,
         )
+    from app.services.project_lead_service import fill_lead_customer
+
+    fill_lead_customer(db, project, actor_user_id=actor_user_id, permissions=permissions)
     return project
 
 
@@ -1000,6 +1338,7 @@ def _customers_for(db: Session, customer_ids: List[str]) -> Dict[str, Dict[str, 
         out[row.id] = {
             "customer_id": row.id,
             "customer_name": row.customer_name,
+            "customer_code": row.customer_code,
             # The office line first, then the mobile, then the main contact's own number.
             "customer_phone": row.phone_number
             or row.mobile_number
@@ -1019,6 +1358,7 @@ def _customer_fields(
     return {
         "customer_id": None,
         "customer_name": None,
+        "customer_code": None,
         "customer_phone": None,
         "customer_attn": None,
     }
@@ -1050,7 +1390,7 @@ def change_status(
     Server-side (AC-B4): an illegal drag on the board is rejected here regardless of
     what the client sends.
     """
-    assert_can_edit_project(db, project, actor_user_id, permissions)
+    assert_can_write_project(db, project, actor_user_id, permissions)
 
     from app.services import status_service
 
@@ -1068,7 +1408,7 @@ def change_status(
             raise AppException(
                 status_code=422,
                 message=(
-                    f"{project.project_code} has no status yet, so it can only start "
+                    f"{project_label(project)} has no status yet, so it can only start "
                     f"at '{initial.label}'."
                 ),
                 code="project_status_not_started",
@@ -1111,6 +1451,14 @@ def delete_project(
     action for that case.
     """
     assert_can_edit_project(db, project, actor_user_id, permissions)
+    # An approver may edit a pending registration but never delete one: a registration
+    # that should not stand is Rejected, so the salesperson reads why (security S2).
+    if not is_approved(project) and MANAGE_PERMISSION not in (permissions or set()):
+        raise AppException(
+            status_code=403,
+            message="Reject this registration instead: only a sales manager can delete it.",
+            code="project_delete_forbidden",
+        )
 
     # Through the ORM rather than raw SQL: the table is `projects.purchase_orders` and
     # `public.purchase_orders` is a DIFFERENT, supplier-side table (ADR-0002, ADR-0011),
@@ -1121,7 +1469,7 @@ def delete_project(
         raise AppException(
             status_code=409,
             message=(
-                f"{project.project_code} has {po_count} purchase order(s) "
+                f"{project_label(project)} has {po_count} purchase order(s) "
                 "recorded against it. Archive it instead of deleting."
             ),
             code="project_has_purchase_orders",
@@ -1175,7 +1523,6 @@ def serialize_clash_candidates(db: Session, candidates) -> List[Dict[str, Any]]:
                 "owner_name": row.get("owner_name"),
                 "developer_name": row.get("developer_name"),
                 "estimated_sales_value": row.get("estimated_sales_value"),
-                "brands": row.get("brands", []),
                 "last_activity_at": row.get("last_meaningful_activity_at"),
                 "similarity": candidate.similarity,
                 "blocks": candidate.blocks,

@@ -11,8 +11,9 @@ order raised rows that were reachable only from the one sales order that raised 
 `JAN - DEC 2026 ORDER.xlsx`, sheet title `ORDER INQUIRY`, columns SO DATE / S/O NO / ITEM
 CODE / QTY / TOTAL QTY / DELIVERY DATE / PROJECT/CUSTOMER / SUPPLIER / PO NO, one sheet
 per delivery MONTH plus a tab per day showing what was raised that day. The columns are
-read off that file rather than retyped, the month is the primary axis rather than one
-filter among many, and the export writes the same workbook back out.
+read off that file rather than retyped, and on screen the month is the primary axis rather
+than one filter among many. The export prints those columns on ONE sheet, never split by
+month (owner, 16 Oct 2026).
 
 **SUPPLIER and PO NO are never guessed.** On their sheet a blank in those two columns
 means "not placed yet", and that is exactly what the system knows: the only link the
@@ -36,7 +37,7 @@ from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, String, case, cast, func, or_, select, text
+from sqlalchemy import Date, String, and_, case, cast, func, or_, select, text
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session, aliased
 
@@ -58,6 +59,7 @@ from app.models.project_so import (
     ACK_LINKABLE,
     ACK_REJECTED,
     ACK_STATES,
+    DECISION_ACTIVE,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_PLACED,
@@ -81,6 +83,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_text, multi_values
 from app.services.product_companion_service import (
     bundled_with_item_codes_map,
     resolve_bundled_item_codes,
@@ -89,12 +92,14 @@ from app.services.order_inquiry_reserve_service import reserve_status_predicates
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
     arrives_outside_window,
+    cancel_plan_row,
     derived_spo_open_clauses,
     project_customer_label,
     project_title_with_note,
 )
+from app.services.project_line_split_service import remark_for_row  # noqa: F401 - AC-G5, the one REMARK function
 from app.services.project_supply_service import ProjectSupplyService
-from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm import goods_chain, order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.raise_event_matching import nearest_raise_event
 
@@ -186,10 +191,6 @@ MONTH_WORD = (
 )
 
 EXPORT_TITLE = "ORDER INQUIRY"
-#: Where the rows that have no delivery date go. They are not dropped: an instruction
-#: with no date is still an instruction, and one that vanishes from the file is one
-#: nobody places.
-EXPORT_UNDATED_SHEET = "NO DATE"
 #: Read off `JAN - DEC 2026 ORDER.xlsx` row 2, trailing space and all. Retyping it
 #: tidier is how a column their filters no longer find gets introduced.
 EXPORT_HEADINGS = (
@@ -197,14 +198,24 @@ EXPORT_HEADINGS = (
     "S/O NO",
     "ITEM CODE",
     "QTY",
+    # OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026, "we just need more
+    # visibility"): the reserve figures right beside QTY, so a 170 line with a 70 reserve
+    # request never reads as one number. Inserted, not appended, on that ruling; the
+    # planning-board worksheet keeps its own ten columns (`WORKSHEET_HEADINGS`). Checked
+    # first: nothing in this repo reads the sheet back by position - the importer finds
+    # every column by its heading (`project_order_inquiry_reader.py` `_header_map`).
+    "REQUESTED RESERVE",
+    "RESERVED",
     "TOTAL QTY",
     "DELIVERY DATE",
     "PROJECT/CUSTOMER",
     "SUPPLIER",
     "PO NO ",
     "LOCATION",
-    # APPENDED, never inserted: their own filters and habits are keyed on the columns
-    # above being where they have always been (`PLAN-scm-oi-handshake.md` section 4).
+    # APPENDED after LOCATION (`PLAN-scm-oi-handshake.md` section 4): their own filters
+    # and habits are keyed on the columns above. The one exception is the owner's own
+    # ruling above (REQUESTED RESERVE / RESERVED beside QTY, 21 Oct 2026); any other new
+    # column still goes after these, never between them.
     "ACKNOWLEDGED",
     # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
     # row-level Taken/Remaining the grid has shown since S3, never the retired
@@ -219,7 +230,37 @@ EXPORT_HEADINGS = (
     # only. APPENDED for the same reason ACKNOWLEDGED/TAKEN/REMAINING were: their own
     # filters are keyed on the columns before it being where they have always been.
     "SUGGESTED",
+    # OI-LINE-SPLIT round 3 (UAC AC-G7, mock section 6): a split line's rows, the owner's
+    # own Excel: QTY / DELIVERY DATE the line's (first row only), CHANGE QUANTITY / CHANGE
+    # DATE each row's. APPENDED before REMARK; no existing column moves or is renamed.
+    "CHANGE QUANTITY",
+    "CHANGE DATE",
+    # OI-LINE-SPLIT (UAC D2, AC-G7): the sheet's remark for the row, else the generated one.
+    "REMARK",
 )
+
+#: The planning-board OI worksheet's columns (Lane C, AC-C3): the sheet's first ten as they
+#: stood before the reserve figures went in, no ACKNOWLEDGED / TAKEN / REMAINING.
+WORKSHEET_HEADINGS = (
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "QTY",
+    "TOTAL QTY",
+    "DELIVERY DATE",
+    "PROJECT/CUSTOMER",
+    "SUPPLIER",
+    "PO NO ",
+    "LOCATION",
+)
+
+
+def _export_reserve_qty(value: Any) -> Optional[float]:
+    """A reserve figure for the sheet: the quantity, blank when there is none (the row
+    carries "0" when it has no open request / nothing reserved)."""
+    qty = _dec(value)
+    return float(qty) if qty else None
+
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
 # twice through two aliases of `customers`. The precedence is the same either way - the
@@ -463,6 +504,65 @@ _OPEN_REQUEST_QTY = (
     .order_by(OrderInquiryReserveRequest.ordinal.desc())
     .limit(1)
     .scalar_subquery()
+)
+#: OI-RESERVE-PILL-QTY (owner ruling 21 Oct 2026): what purchasing has ASKED CS to reserve
+#: off this row, kept once CS answers so a partial answer (asked 70, reserved 50) still
+#: shows both numbers - `_OPEN_REQUEST_QTY` above drops to nothing the moment the row is
+#: answered. A later balance request counts once, the same rule `commit_request` caps an
+#: amendment against (`order_inquiry_reserve_service.py`): the latest request row's own
+#: ask plus what CS kept on every earlier answered row, capped at the row's qty (asked 70,
+#: got 50, then 20 asked = 70, not 20). A request cancelled before its row was answered
+#: asks for nothing.
+_ASKED_REQUEST_ROW = and_(
+    OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+    or_(
+        OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
+        OrderInquiryReserveRequest.state != "cancelled",
+    ),
+)
+_ASKED_LATEST_ORDINAL = (
+    select(func.max(OrderInquiryReserveRequest.ordinal))
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(_ASKED_REQUEST_ROW)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_ASKED_LATEST_QTY = (
+    select(OrderInquiryReserveRequestRow.qty_requested)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(_ASKED_REQUEST_ROW, OrderInquiryReserveRequest.ordinal == _ASKED_LATEST_ORDINAL)
+    .correlate(OrderInquiryRow)
+    .limit(1)
+    .scalar_subquery()
+)
+_ASKED_EARLIER_KEPT = (
+    select(func.coalesce(func.sum(OrderInquiryReserveRequestRow.qty_reserved), 0))
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(
+        OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
+        OrderInquiryReserveRequest.ordinal < _ASKED_LATEST_ORDINAL,
+    )
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+# NULL when nothing was asked: Postgres LEAST skips a NULL argument, so it would
+# otherwise fall back to the row's own qty.
+_ASKED_RESERVE_QTY = case(
+    (_ASKED_LATEST_ORDINAL.is_(None), None),
+    else_=func.least(_ASKED_LATEST_QTY + _ASKED_EARLIER_KEPT, OrderInquiryRow.qty),
 )
 #: OI-BULK-RESERVE v4 (B2): the OPEN request row's warehouse id and code, same open-row
 #: conditions and latest ordinal as `_OPEN_REQUEST_QTY`, for the Lines page's Decide drafts.
@@ -846,6 +946,7 @@ _COLUMNS = (
     _HAS_OPEN_RESERVE_REQUEST.label("has_open_reserve_request"),
     # PLAN-oi-request-cs-reserve.md 6e.2: the open request row's own `qty_requested`.
     _OPEN_REQUEST_QTY.label("requested_qty"),
+    _ASKED_RESERVE_QTY.label("asked_reserve_qty"),
     _OPEN_REQUEST_WAREHOUSE_ID.label("reserve_warehouse_id"),
     _OPEN_REQUEST_LOCATION.label("reserve_location"),
     # 6e.4 (AC-RS-78c): the latest answer, so a declined line reads `declined`.
@@ -1002,10 +1103,75 @@ class OrderInquiryWorklistService:
 
     def __init__(self, db: Session):
         self.db = db
+        # LINKAGE-UNIFY U3: `_dead_document_rows` per reason, read once per service (the
+        # summary asks for both reasons, the list for one).
+        self._dead_rows: Dict[str, set] = {}
+
+    # -------------------------------------------------------------- dead documents
+
+    def _dead_document_rows(self, reason: str) -> set:
+        """LINKAGE-UNIFY U3 (owner ruling Q5): the ids of the rows holding a live link
+        whose document is dead for `reason` (`goods_chain.PO_CANCELLED` /
+        `SPO_WITHDRAWN`) - the "Dead document" filter.
+
+        Narrowed in SQL to the links that can be dead (a PO line off order that moved
+        nothing past what a Cancel PO took; an SPO line retired, or no longer incoming,
+        with nothing received), then confirmed by the goods chain in one batched read, so
+        the filter and the row's own red pill never disagree.
+        """
+        if reason in self._dead_rows:
+            return self._dead_rows[reason]
+        links = self.db.query(OrderInquiryLink.id).join(
+            OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id
+        )
+        if reason == goods_chain.PO_CANCELLED:
+            links = (
+                links.join(
+                    PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id
+                )
+                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .filter(
+                    ~and_(*ProjectSupplyService.open_po_line_clauses()),
+                    func.coalesce(PurchaseOrderLine.qty_received, 0)
+                    <= func.coalesce(PurchaseOrderLine.qty_cancelled, 0),
+                )
+            )
+        else:
+            links = (
+                links.join(
+                    SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id
+                )
+                .outerjoin(
+                    InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+                )
+                .filter(
+                    func.coalesce(SPOAllocation.quantity_received, 0) == 0,
+                    or_(
+                        SPOAllocation.retired_at.isnot(None),
+                        ~and_(*spo_supply.open_incoming_clauses()),
+                    ),
+                )
+            )
+        chains = goods_chain.chains_for_links(
+            self.db,
+            [link_id for (link_id,) in links.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)],
+            with_bins=False,
+        )
+        rows = {
+            chain.row_id
+            for chain in chains.values()
+            if any(
+                hop.state == goods_chain.DEAD and hop.reason == reason for hop in chain.hops
+            )
+        }
+        self._dead_rows[reason] = rows
+        return rows
 
     # -------------------------------------------------------------- derived SPO
 
-    def _derived_spo_query(self, *columns: Any, extra_where: tuple = ()) -> Any:
+    def _derived_spo_query(
+        self, *columns: Any, extra_where: tuple = (), every_state: bool = False
+    ) -> Any:
         """S5 (R-D/R-E/R-F): every OPEN SPO allocation this row's own PO LINKS' LINES
         became - `from_po_number = po_number AND trim(from_po_line_ref) =
         trim(po_line.source_ref) AND product_id = po_line.product_id`, open per
@@ -1034,7 +1200,22 @@ class OrderInquiryWorklistService:
         session. Every reader wraps it - an `EXISTS` (`kind=spo`, `linked=spo`,
         `spo_number`) or a `SUM` (`_derived_cover_qty`) - so the filters and the cards
         can never disagree about what counts as incoming.
+
+        `every_state` (LINKAGE-UNIFY U3, the `spo_number` filter only): the SPOs the
+        row's placements reach by the goods chain's own key in every state that is not
+        dead - in transit, or landed (received, arrived, or a received status) - so a
+        row reads under the SPO its goods landed on, as its derived entry shows. The
+        chain's key adds the company and the allocation's own `po_line_id` (a
+        CRM-raised SPO) to the text key. The cards (`kind`, `linked`) keep the open-only
+        reading: they count what is still incoming (owner: cards unchanged).
         """
+        same_text_key = and_(
+            SPOAllocation.from_po_number == PurchaseOrder.po_number,
+            func.btrim(SPOAllocation.from_po_line_ref)
+            == func.btrim(PurchaseOrderLine.source_ref),
+            func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
+            SPOAllocation.product_id == PurchaseOrderLine.product_id,
+        )
         reached_by_a_po_link = (
             select(OrderInquiryLink.id)
             .select_from(OrderInquiryLink)
@@ -1042,14 +1223,34 @@ class OrderInquiryWorklistService:
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .where(
                 OrderInquiryLink.row_id == OrderInquiryRow.id,
-                SPOAllocation.from_po_number == PurchaseOrder.po_number,
-                func.btrim(SPOAllocation.from_po_line_ref)
-                == func.btrim(PurchaseOrderLine.source_ref),
-                func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
-                SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                *(
+                    (
+                        SPOAllocation.company_id == PurchaseOrderLine.company_id,
+                        or_(same_text_key, SPOAllocation.po_line_id == PurchaseOrderLine.id),
+                    )
+                    if every_state
+                    else (same_text_key,)
+                ),
             )
             .correlate(OrderInquiryRow, SPOAllocation)
             .exists()
+        )
+        state_clauses = (
+            (
+                *spo_supply.visible_line_clauses(),
+                or_(
+                    and_(
+                        *spo_supply.open_incoming_clauses(),
+                        SPOAllocation.allocated_quantity
+                        > func.coalesce(SPOAllocation.quantity_received, 0),
+                    ),
+                    func.coalesce(SPOAllocation.quantity_received, 0) > 0,
+                    InboundShipment.actual_arrival_date.isnot(None),
+                    SPOAllocation.receipt_status.in_(spo_supply.RECEIVED_RECEIPT_STATUSES),
+                ),
+            )
+            if every_state
+            else derived_spo_open_clauses()
         )
         company_predicate = build_company_predicate(
             SPOAllocation, get_company_scope(self.db)
@@ -1062,7 +1263,7 @@ class OrderInquiryWorklistService:
             )
             .where(
                 reached_by_a_po_link,
-                *derived_spo_open_clauses(),
+                *state_clauses,
                 *((company_predicate,) if company_predicate is not None else ()),
                 *extra_where,
             )
@@ -1183,6 +1384,9 @@ class OrderInquiryWorklistService:
         inquiry_id: Optional[str] = None,
         # OI-BULK-RESERVE v4: keep a line when one of ITS request rows is in this status.
         reserve: Optional[str] = None,
+        # LINKAGE-UNIFY U3 (Q5): keep a row holding a link whose document is dead for
+        # this reason (`po_cancelled` / `spo_withdrawn`).
+        dead_document: Optional[str] = None,
         # Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C3): the OI worksheet's own
         # row set - a run's `run_scope_oi_rows` result, fed in as the row ids to print
         # rather than as a new set of filter clauses. `None` (the default) means "every
@@ -1265,17 +1469,22 @@ class OrderInquiryWorklistService:
             )
         if raised_date:
             base = base.filter(_RAISED_DAY == _as_day(raised_date))
-        if state:
-            base = base.filter(OrderInquiryRow.state == state)
+        # FILTER-MULTISELECT PR6: State, Project, Supplier, Raised by, Location and Agent take several
+        # values, OR-ed within the filter (a single string, a comma-joined one or a list all read).
+        states = multi_values(state)
+        if states:
+            base = base.filter(OrderInquiryRow.state.in_(states))
         elif not include_cancelled:
             # S5/AC-OH-50..51 (R2): a `cancelled` row is a revision that called the line
             # off - not owed, and not a row purchasing needs to see unless the State
             # filter specifically asks for it.
             base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
-        if project_id:
-            base = base.filter(ProjectSalesOrder.project_id == project_id)
-        if project:
-            base = base.filter(_PROJECT_TITLE == project)
+        project_ids = multi_values(project_id)
+        if project_ids:
+            base = base.filter(ProjectSalesOrder.project_id.in_(project_ids))
+        titles = multi_text(project)
+        if titles:
+            base = base.filter(_PROJECT_TITLE.in_(titles))
         if inquiry_id:
             base = base.filter(OrderInquiry.id == inquiry_id)
         if reserve:
@@ -1295,13 +1504,26 @@ class OrderInquiryWorklistService:
             )
         if row_ids is not None:
             base = base.filter(OrderInquiryRow.id.in_(list(row_ids)))
-        if supplier_id:
-            base = base.filter(Supplier.id == supplier_id)
-        if raised_by:
+        if dead_document:
+            if dead_document not in (goods_chain.PO_CANCELLED, goods_chain.SPO_WITHDRAWN):
+                raise AppException(
+                    422,
+                    f"'{dead_document}' is not a dead document. Use po_cancelled or "
+                    "spo_withdrawn.",
+                    code="invalid_dead_document_filter",
+                )
+            base = base.filter(
+                OrderInquiryRow.id.in_(sorted(self._dead_document_rows(dead_document)))
+            )
+        supplier_ids = multi_values(supplier_id)
+        if supplier_ids:
+            base = base.filter(Supplier.id.in_(supplier_ids))
+        raisers = multi_values(raised_by)
+        if raisers:
             # By id, off the ROW's own raiser (its revision's confirmer, the header only
             # when there is no revision). The screen picks the person from the summary's
             # own list, so this never has to guess which "Cindy" was meant.
-            base = base.filter(_RAISED_BY_ID == raised_by)
+            base = base.filter(_RAISED_BY_ID.in_(raisers))
         if linked:
             # WHERE the row is linked (AC-I5), which is a different question from what
             # STATE it is in: a buyer asking "what have I still not put on anything"
@@ -1398,10 +1620,12 @@ class OrderInquiryWorklistService:
                 base = base.filter(OrderInquiryRow.ack_state == ack)
         # S1, R-K: Location, Agent, SO month, PO number, SPO number - the five filters
         # the Excel parity batch adds to the Filters popover.
-        if location:
-            base = base.filter(_LOCATION == location)
-        if agent:
-            base = base.filter(SalesAgent.id == agent)
+        locations = multi_text(location)
+        if locations:
+            base = base.filter(_LOCATION.in_(locations))
+        agents = multi_values(agent)
+        if agents:
+            base = base.filter(SalesAgent.id.in_(agents))
         if so_month:
             first, following = _month_bounds(so_month)
             base = base.filter(_SO_DATE >= first, _SO_DATE < following)
@@ -1438,13 +1662,14 @@ class OrderInquiryWorklistService:
                         OrderInquiryLink.document.ilike(like, escape=_LIKE_ESCAPE),
                     ),
                     # AC-F6b (round 2): the row's only REAL link is a PO, but that PO
-                    # carries a derived SPO cover (S5, R-E) whose own number starts
-                    # with the typed text - `_has_derived_spo()`'s own read, narrowed to
-                    # this prefix rather than "any open allocation at all".
+                    # carries a derived SPO (S5, R-E) whose own number starts with the
+                    # typed text. LINKAGE-UNIFY U3: in every state that is not dead, so
+                    # a row whose goods landed on that SPO still answers to its number.
                     self._derived_spo_query(
                         extra_where=(
                             SPOAllocation.spo_number.ilike(like, escape=_LIKE_ESCAPE),
-                        )
+                        ),
+                        every_state=True,
                     ).exists(),
                 )
             )
@@ -1630,14 +1855,13 @@ class OrderInquiryWorklistService:
         anchor_headline_by_id = self._anchor_headline_by_id(rows, links)
         host_changes_by_row_id = self._host_changes_for_rows(rows, bundle_map)
         raise_events_by_row = self._raise_events_by_row(rows)
-        # AC-RR-6: one query for every PO line on the page that has an open SPO chained from it.
-        blocked = ProjectOrderInquiryService(self.db).po_lines_with_open_chained_spo(
-            [
-                link.get("po_line_id")
-                for row_links in links.values()
-                for link in row_links
-                if link.get("received") and link.get("po_line_id")
-            ]
+        # OI-LINE-SPLIT (UAC D3): every page row's line splits, in one read.
+        splits_by_line = ProjectOrderInquiryService(self.db).splits_for_lines(
+            [row.so_line_id for row in rows]
+        )
+        # OI-SPLIT-VIEW (UAC B1 to B5): every page row's line split popup, in one read.
+        split_views = ProjectOrderInquiryService(self.db).split_views_for_lines(
+            [row.so_line_id for row in rows]
         )
         return {
             "data": [
@@ -1652,7 +1876,8 @@ class OrderInquiryWorklistService:
                     host_changes_by_row_id,
                     suggested_links,
                     raise_events_by_row,
-                    blocked,
+                    splits_by_line,
+                    split_views,
                 )
                 for row in rows
             ],
@@ -1700,8 +1925,8 @@ class OrderInquiryWorklistService:
         open need (never a row on the SAME SO line), delivery date ascending then open
         need descending - the first candidate is the suggested target (ruling 17 Sep:
         list all, earliest first) - `{"kind": "unlink"}` when there is none, or `None`
-        on a received link, one still inside the window, or one of the two S3
-        exemptions below.
+        on a received link, a PO link with nothing left on order (LINKAGE-UNIFY U2), one
+        still inside the window, or one of the two S3 exemptions below.
 
         S3 (review round 1, `PLAN-oi-cascade-skip-early-arrival.md`): a link the
         automatic pass was TOLD to honour regardless of the window earns no pill
@@ -1742,6 +1967,11 @@ class OrderInquiryWorklistService:
             for link in row_links:
                 link["suggestion"] = None
                 if link.get("received"):
+                    continue
+                # LINKAGE-UNIFY U2: a PO link with nothing left on order (all of it moved
+                # onto an SPO still in transit) is not judged by the PO's date - the goods
+                # are no longer on it. Read off `links_for_rows`' own chain, no new query.
+                if link.get("kind") == "po" and link.get("on_order") is False:
                     continue
                 expected_date = link.get("expected_date")
                 if not product_id or not delivery_date or not expected_date:
@@ -2274,7 +2504,8 @@ class OrderInquiryWorklistService:
         host_changes_by_row_id: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         suggested_links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         raise_events_by_row: Optional[Dict[str, Dict[str, Any]]] = None,
-        blocked: Optional[set] = None,
+        splits_by_line: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        split_views: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -2288,14 +2519,15 @@ class OrderInquiryWorklistService:
         )
         # OI-RESERVE-RECEIVED (AC-RR-5): what a reserve request may still ask for -
         # `order_inquiry_reserve_service._requestable`, worked off the links already
-        # loaded: qty less the OPEN links, the reserve links and the bundle (a link on a
-        # fully received document does not count against it).
+        # loaded: qty less the OPEN links, the reserve links and the bundle (a fully
+        # received placement does not count against it). AC-RR-6's chained-SPO block is
+        # gone: `received` is the goods chain's (LINKAGE-UNIFY U2), so a PO link whose
+        # goods are still on an SPO in transit is not received in the first place.
         open_linked = sum(
             (
                 _dec(link["qty"])
                 for link in row_links
-                if not link.get("derived")
-                and (not link.get("received") or link.get("po_line_id") in (blocked or ()))
+                if not link.get("derived") and not link.get("received")
             ),
             _ZERO,
         )
@@ -2350,6 +2582,8 @@ class OrderInquiryWorklistService:
             # 6e.2: "0" when there is no open request row, same default shape as
             # `reserved_qty` above.
             "requested_qty": _qty_str(_dec(getattr(row, "requested_qty", None))),
+            # The last asked figure, kept after CS answers ("0" when nothing was asked).
+            "asked_reserve_qty": _qty_str(_dec(getattr(row, "asked_reserve_qty", None))),
             # OI-BULK-RESERVE v4 (B2): the open request row's warehouse, null without one.
             "reserve_warehouse_id": getattr(row, "reserve_warehouse_id", None),
             "reserve_location": getattr(row, "reserve_location", None),
@@ -2438,6 +2672,16 @@ class OrderInquiryWorklistService:
             # which drops this column outright, so the export's own `row` namedtuple
             # never carries the attribute at all.
             "raise_history": getattr(row, "raise_history", None) or [],
+            # OI-LINE-SPLIT (UAC D3): the splits of this row's SO line for the Lines tab's
+            # read-only expand, the same keys `serialize_rows` carries. `[]` when unsplit.
+            "splits": (
+                (splits_by_line or {}).get(str(row.so_line_id), []) if row.so_line_id else []
+            ),
+            # OI-SPLIT-VIEW (UAC B1 to B5): the line's split popup, the same value
+            # `serialize_rows` carries. Null when unsplit.
+            "split_view": (
+                (split_views or {}).get(str(row.so_line_id)) if row.so_line_id else None
+            ),
             "verb": row.verb,
             "note": row.note,
             "project_id": row.project_id,
@@ -2502,6 +2746,8 @@ class OrderInquiryWorklistService:
                 PurchaseOrderLine.qty_received,
                 Warehouse.warehouse_code,
                 PurchaseOrderLine.from_so_line_ref,
+                PurchaseOrderLine.line_status,
+                PurchaseOrderLine.cancelled_by_cancel_doc,
             )
             .select_from(PurchaseOrderLine)
             .outerjoin(Product, Product.id == PurchaseOrderLine.product_id)
@@ -2511,11 +2757,27 @@ class OrderInquiryWorklistService:
             .all()
         )
         line_ids = [str(line[0]) for line in lines]
+        spo_numbers_by_line = self._spo_numbers_by_po_line(po)
+        # LINKAGE-UNIFY U4: each line's SPO lines with where their goods landed (GR bins)
+        # or why they bring nothing - one read for the document, the goods chain's own.
+        spos_by_line = goods_chain.spo_lines_of(self.db, line_ids)
+        dead_ids = goods_chain.dead_po_line_ids(self.db, line_ids)
         # ONE query for the whole document (AC-A5's rule, on this THIRD surface), never one
         # per line - the same reader the SCM purchase-order detail's Lines tab already
         # calls, so the book's linkage reads identically wherever a line is shown.
+        # HIDE-REMOVED-LINE-SO: a line AutoCount removed shows no S/O, the same rule the SCM
+        # purchase-order detail applies (`order_link_service.book_so_ref_of`).
+        shown_ref = {
+            str(line.id): order_link_service.book_so_ref_of(
+                line.from_so_line_ref,
+                line_status=line.line_status,
+                cancelled_by_cancel_doc=line.cancelled_by_cancel_doc,
+                header_status=po.status,
+            )
+            for line in lines
+        }
         book_so_by_ref = order_link_service.book_so_numbers_by_ref(
-            self.db, [line[-1] for line in lines if line[-1]]
+            self.db, [ref for ref in shown_ref.values() if ref]
         )
         # Issue #1215 point 2: which LINE an order inquiry's placement sits on, not only
         # which document - a PO with two lines of the same item made the "Allocated to"
@@ -2568,7 +2830,14 @@ class OrderInquiryWorklistService:
                     # on both screens - through the SAME shared function
                     # (`order_link_service.book_so_fields`, review of PR #764, F5) rather
                     # than a second copy of the derivation.
-                    **order_link_service.book_so_fields(from_so_line_ref, book_so_by_ref),
+                    **order_link_service.book_so_fields(
+                        shown_ref[str(line_id)], book_so_by_ref
+                    ),
+                    "spo_numbers": spo_numbers_by_line.get(str(line_id), []),
+                    "spos": spos_by_line.get(str(line_id), []),
+                    # Owner Q5 (a): a placement on a dead PO line reads "PO cancelled", by
+                    # the chain's own rule (`goods_chain.po_line_is_dead`).
+                    "dead_reason": "po_cancelled" if str(line_id) in dead_ids else None,
                 }
                 for (
                     line_id,
@@ -2577,7 +2846,9 @@ class OrderInquiryWorklistService:
                     qty_ordered,
                     qty_received,
                     warehouse_code,
-                    from_so_line_ref,
+                    _from_so_line_ref,
+                    _line_status,
+                    _cancelled_by_cancel_doc,
                 ) in lines
             ],
             # WHO is holding this document's quantity (AC-D18). Drafts included and marked
@@ -2586,6 +2857,47 @@ class OrderInquiryWorklistService:
             # only - a suggestion never appears here (AC-LT-34).
             "allocations": self._allocations_on(po_line_ids=line_ids),
         }
+
+    def _spo_numbers_by_po_line(self, po: PurchaseOrder) -> Dict[str, List[str]]:
+        """SUPPLY-SPO-LINK: by PO line id, every SPO the line was transferred onto, sorted
+        and each once - one read for the whole document.
+
+        OI-SPO-EXACT, the key `_derived_spo_query` resolves a PO link's SPOs by:
+        `from_po_number = po_number AND trim(from_po_line_ref) = trim(source_ref) AND
+        product_id = line.product_id`. Every VISIBLE allocation (`visible_line_clauses()`),
+        not only the open ones: the popup states where the line's goods went, landed or
+        not. A line with no `source_ref` reaches nothing. The company predicate is stated
+        by hand for the same reason `_derived_spo_query` states it: the join is on plain
+        text off the AutoCount feed.
+        """
+        company_predicate = build_company_predicate(
+            SPOAllocation, get_company_scope(self.db)
+        )
+        rows = (
+            self.db.query(PurchaseOrderLine.id, SPOAllocation.spo_number)
+            .join(
+                SPOAllocation,
+                and_(
+                    SPOAllocation.from_po_number == po.po_number,
+                    func.btrim(SPOAllocation.from_po_line_ref)
+                    == func.btrim(PurchaseOrderLine.source_ref),
+                    SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                ),
+            )
+            .filter(
+                PurchaseOrderLine.purchase_order_id == po.id,
+                func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
+                *spo_supply.visible_line_clauses(),
+                *((company_predicate,) if company_predicate is not None else ()),
+            )
+            .distinct()
+            .all()
+        )
+        out: Dict[str, List[str]] = {}
+        for line_id, spo_number in sorted(rows, key=lambda row: (str(row[0]), row[1] or "")):
+            if spo_number:
+                out.setdefault(str(line_id), []).append(spo_number)
+        return out
 
     # -------------------------------------------------------------- spo detail
 
@@ -2808,8 +3120,11 @@ class OrderInquiryWorklistService:
         moment you use it cannot be used a second time.
         """
         visible = self._base(**filters)
+        # The State control's own counts are taken with its own filter dropped, so picking one state
+        # does not zero the others (the same rule every axis below follows).
+        state_scope = self._base(**{**filters, "state": None})
         state_rows = (
-            visible.with_entities(
+            state_scope.with_entities(
                 OrderInquiryRow.state,
                 func.count(OrderInquiryRow.id),
                 func.coalesce(func.sum(OrderInquiryRow.qty), 0),
@@ -2822,8 +3137,12 @@ class OrderInquiryWorklistService:
         total_qty = _ZERO
         for state, count, qty in state_rows:
             by_state[state] = int(count)
-            total_rows += int(count)
-            total_qty += _dec(qty)
+        # The totals describe what is on screen, so they honour the State filter.
+        total_rows, total_qty_value = visible.with_entities(
+            func.count(OrderInquiryRow.id), func.coalesce(func.sum(OrderInquiryRow.qty), 0)
+        ).one()
+        total_rows = int(total_rows or 0)
+        total_qty = _dec(total_qty_value)
         # S5/AC-OH-52: `visible` above already hides `cancelled` by default (AC-OH-50), so
         # `by_state["cancelled"]` would otherwise read 0 the moment the State filter most
         # needs to offer its real count. The State facet is the one reader that must see
@@ -2857,6 +3176,18 @@ class OrderInquiryWorklistService:
             # The four acknowledgement counts, computed with the ACK FILTER ITSELF
             # DROPPED, for the reason every other axis here drops its own.
             "ack": self._acks({**filters, "ack": None}),
+            # LINKAGE-UNIFY U3 (Q5): the "Dead document" filter's own counts, with that
+            # filter dropped for the reason every other axis here drops its own.
+            "dead_documents": {
+                reason: int(
+                    self._base(**{**filters, "dead_document": reason})
+                    .with_entities(func.count(OrderInquiryRow.id))
+                    .order_by(None)
+                    .scalar()
+                    or 0
+                )
+                for reason in (goods_chain.PO_CANCELLED, goods_chain.SPO_WITHDRAWN)
+            },
             # Where the page's "Link up to" date starts (AC-LH5). The latest completed
             # reorder run's own "Plan until", read off the run rather than guessed at on
             # the page: one date, so a plan that netted to October and a buyer linking to
@@ -3328,10 +3659,18 @@ class OrderInquiryWorklistService:
     def export_xlsx(
         self, *, columns: Sequence[str] = EXPORT_HEADINGS, **filters
     ) -> Tuple[str, bytes]:
-        """The filtered set as their own workbook: one sheet per delivery month.
+        """The filtered set as their own workbook, on ONE sheet.
 
-        Within a sheet the rows go SUPPLIER then ITEM CODE, which is the order their own
-        sheets are in and the order a buyer places in - one purchase order per factory.
+        Owner, 16 Oct 2026: "our OI excel cannot split by month, this applies to all
+        places where OI excel is printed" - the list export and the export tasks print
+        through here, so every delivery month and the undated rows share one sheet. The
+        handover attachment is one sheet too, written from the email's own lines instead
+        (`handover_xlsx`, OI-EMAIL-PURCHASING-FOCUS).
+        A row with no date is still an instruction and is never dropped from the file.
+
+        Within the sheet the rows go SUPPLIER then ITEM CODE then delivery date, which is
+        the order their own sheets are in and the order a buyer places in - one purchase
+        order per factory.
         TOTAL QTY prints on the last row of each supplier-and-item-code run and totals
         that run, which is the one thing on their sheet that is arithmetic rather than
         typing. The run is the pair, not the item code alone: the same item bought from
@@ -3344,45 +3683,36 @@ class OrderInquiryWorklistService:
 
         `columns` (Lane C, AC-C3): the heading tuple to print, defaulting to the full
         `EXPORT_HEADINGS` so the list page's own export is unchanged. The OI worksheet
-        passes `EXPORT_HEADINGS[:10]` (no ACKNOWLEDGED / TAKEN / REMAINING) - a prefix,
-        so the row values below can be cut to the same length.
+        passes `WORKSHEET_HEADINGS` (no reserve figures, ACKNOWLEDGED / TAKEN /
+        REMAINING); `_write_sheet` prints each row by heading.
         """
         import openpyxl
 
         rows = self._all_rows(**filters)
-        grouped: Dict[str, List[Dict[str, Any]]] = {}
-        for row in rows:
-            key = (
-                row["delivery_date"].strftime("%Y-%m")
-                if row["delivery_date"]
-                else ""
-            )
-            grouped.setdefault(key, []).append(row)
 
         workbook = openpyxl.Workbook()
-        # A new workbook opens with one blank sheet; every sheet here is named for a
-        # month, so the blank one goes rather than sitting in front of them called
-        # "Sheet".
+        # A new workbook opens with one blank sheet called "Sheet"; the one sheet here is
+        # written by `_write_sheet` under the file's own title instead. An empty result
+        # is still that sheet with its headings, rather than a file a spreadsheet refuses.
         default_sheet = workbook.active
         if default_sheet is not None:
             workbook.remove(default_sheet)
-        # Dated months in order, undated last: a row with no date is still an instruction
-        # and is never dropped from the file.
-        for key in sorted(month for month in grouped if month):
-            self._write_sheet(workbook, month_label(key), grouped[key], columns=columns)
-        if "" in grouped:
-            self._write_sheet(
-                workbook, EXPORT_UNDATED_SHEET, grouped[""], columns=columns
-            )
-        if not workbook.sheetnames:
-            # An empty result is still a workbook a person can open and see the headings
-            # of, rather than a file their spreadsheet refuses.
-            self._write_sheet(workbook, EXPORT_TITLE, [], columns=columns)
+        self._write_sheet(workbook, EXPORT_TITLE, rows, columns=columns)
 
         buffer = io.BytesIO()
         workbook.save(buffer)
         filename = f"order-inquiry-{date.today().isoformat()}.xlsx"
         return filename, buffer.getvalue()
+
+    def export_pdf(self, **filters) -> Tuple[str, bytes]:
+        """`export_xlsx`'s sheet as a PDF (OI-DOWNLOAD, owner: "the pdf needs to be like Excel
+        la, just in pdf format ... 1 table"): the same title, header row and rows, from the same
+        `_sheet_values`, in the house style (`app/services/order_inquiry_pdf.py`)."""
+        from app.services import order_inquiry_pdf
+
+        filename = f"order-inquiry-{date.today().isoformat()}.pdf"
+        values = self._sheet_values(self._all_rows(**filters))
+        return filename, order_inquiry_pdf.render_pdf(EXPORT_HEADINGS, values)
 
     def _all_rows(self, **filters) -> List[Dict[str, Any]]:
         """The same set the list serves, unpaged, in the workbook's own order.
@@ -3398,6 +3728,10 @@ class OrderInquiryWorklistService:
                 OrderInquiryRow.delivery_date.asc().nulls_last(),
                 Supplier.supplier_name.asc().nulls_last(),
                 OrderInquiryRow.item_code.asc().nulls_last(),
+                # Raised order, then the bigger row, before the random id: the same rows
+                # print in the same order.
+                OrderInquiryRow.created_at.asc(),
+                OrderInquiryRow.qty.desc(),
                 OrderInquiryRow.id.asc(),
             )
             .all()
@@ -3411,12 +3745,145 @@ class OrderInquiryWorklistService:
         suggested_links = ProjectOrderInquiryService(self.db).suggested_links_for_rows(
             [row.id for row in rows]
         )
-        return [
-            self._serialize(
-                row, bundle_map=bundle_map, links=links, suggested_links=suggested_links
+        return self._with_splits(
+            [
+                self._serialize(
+                    row, bundle_map=bundle_map, links=links, suggested_links=suggested_links
+                )
+                for row in rows
+            ]
+        )
+
+    def _own_remarks(self, order_ids: Sequence[str]) -> Dict[str, str]:
+        """`mirror line id -> the planner's own REMARK` off these orders' ACTIVE revisions
+        (OI-SPLIT-GUIDE UAC F26, F27); a line with none is left out."""
+        if not order_ids:
+            return {}
+        out: Dict[str, str] = {}
+        for (snapshots,) in self.db.query(SOSupplyDecision.line_snapshots).filter(
+            SOSupplyDecision.project_sales_order_id.in_(list(order_ids)),
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        ):
+            for snapshot in snapshots or []:
+                remark = ((snapshot or {}).get("remark") or "").strip()
+                if remark and snapshot.get("project_line_id"):
+                    out[str(snapshot["project_line_id"])] = remark
+        return out
+
+    def _with_splits(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """OI-LINE-SPLIT (UAC D2, AC-G7): a line splits touch (split itself, or other lines'
+        splits sit on it) prints its plan rows (`line_plans`), the same rows as the OI email:
+        one per split under its own line, its own row when it is not split, and the
+        AutoCount extra row. QTY / DELIVERY DATE are the line's on its first row (blank
+        under it), CHANGE QUANTITY / CHANGE DATE the row's, REMARK the sheet's remark else
+        the generated one. The line prints once, off its first OI row. Every other row
+        prints as today, REMARK empty."""
+        import dataclasses
+
+        from app.services.project_line_split_service import LineSplitService, line_plans
+        from app.services.project_order_inquiry_service import whole_buy_line_ids
+
+        line_ids = sorted({str(row["so_line_id"]) for row in rows if row.get("so_line_id")})
+        if not line_ids:
+            return rows
+        orders = sorted(
+            {
+                str(order_id)
+                for (order_id,) in self.db.query(ProjectSalesOrderLine.project_sales_order_id)
+                .filter(ProjectSalesOrderLine.id.in_(line_ids))
+                .distinct()
+                .all()
+            }
+        )
+        # OI-SPLIT-GUIDE (UAC F27): a row with no split plan prints the planner's own REMARK
+        # frozen with its line in the active revision (`ConfirmLine.remark`), as the email
+        # does; one read for the whole export.
+        own_remarks = self._own_remarks(orders)
+
+        def plain(row: Dict[str, Any]) -> Dict[str, Any]:
+            return {**row, "split_remark": own_remarks.get(str(row.get("so_line_id") or ""), "")}
+
+        service = LineSplitService(self.db)
+        facts = service._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(orders))
+        # AC-G13: only a line bought whole prints its plan; a line partly from stock prints
+        # what its rows hold, as without splits.
+        whole = whole_buy_line_ids(self.db, [i for i, f in facts.items() if f.splits])
+        facts = {
+            i: f if i in whole else dataclasses.replace(f, splits=[]) for i, f in facts.items()
+        }
+        stored = [split for f in facts.values() for split in f.splits]
+        if not stored:
+            return [plain(row) for row in rows]
+        sits = service.effective_sits_on(stored)
+        plans = line_plans(facts, sits, {target for target in sits.values() if target})
+        out: List[Dict[str, Any]] = []
+        printed: set = set()
+        for row in rows:
+            line_id = str(row.get("so_line_id") or "")
+            plan = plans.get(line_id)
+            if plan is None or not plan.involved:
+                out.append(plain(row))
+                continue
+            if line_id in printed:
+                continue
+            printed.add(line_id)
+            # The row's own TAKEN / REMAINING / SUGGESTED belong to the row, printed once on
+            # the line's first row; worked off the row as it stands.
+            figures = (_export_taken(row), _export_remaining(row), _export_suggested(row))
+            plan_rows = list(plan.rows)
+            dropped = ProjectOrderInquiryService(self.db).dropped_split_qty(
+                line_id, plan.facts.splits
             )
-            for row in rows
-        ]
+            if dropped > _ZERO:
+                # AC-G17: what a re-plan dropped, the line's CANCEL BALANCE, as the email says.
+                plan_rows.append(cancel_plan_row(dropped))
+            for index, plan_row in enumerate(plan_rows):
+                first = index == 0
+                own_row = plan_row.split is None and not plan_row.extra
+                # What the row itself asks for: the split's (or extra's) qty, the line's
+                # changed qty on its own row. The 10-column worksheet prints it in QTY.
+                row_qty = plan_row.new_qty if plan_row.new_qty is not None else plan.base_qty
+                row_date = plan_row.new_date or (plan.base_date if own_row else None)
+                split = plan_row.split
+                # TOTAL QTY adds what the rows ask for now: a split dropped on another line
+                # sits inside that line's qty, and a cancel asks for nothing (AC-G13).
+                target = plans.get(str(split.sits_on_line_id or "")) if split is not None else None
+                # Inside the qty of the line it sits on, when that line prints its own row (it
+                # is not split itself).
+                inside = (
+                    target is not None
+                    and str(split.sits_on_line_id) != line_id
+                    and not any(r.split is not None for r in target.rows)
+                )
+                live = (
+                    _ZERO
+                    if plan_row.is_cancel or (split is not None and inside)
+                    else row_qty
+                )
+                out.append(
+                    {
+                        **row,
+                        "qty": _qty_str(plan.base_qty) if first else None,
+                        "delivery_date": plan.base_date if first else None,
+                        "row_qty": row_qty,
+                        "row_date": row_date,
+                        "live_qty": live,
+                        # Not printed in the 10-column worksheet: inside another line's qty,
+                        # or a cancel (it asks for nothing).
+                        "inside": inside or plan_row.is_cancel,
+                        "change_qty": plan_row.new_qty,
+                        "change_date": plan_row.new_date,
+                        "split_remark": plan_row.remark,
+                        "split_figures": figures if first else ("", "", ""),
+                        # The line's reserve figures, like `split_figures`: on its first
+                        # row only, never repeated per split.
+                        "asked_reserve_qty": row.get("asked_reserve_qty") if first else None,
+                        "reserved_qty": row.get("reserved_qty") if first else None,
+                        # The line's rows stay together, in their own order.
+                        "plan_key": (plan.base_date or date.max, line_id, index),
+                    }
+                )
+        return out
 
     def _write_sheet(
         self,
@@ -3429,6 +3896,24 @@ class OrderInquiryWorklistService:
         sheet = workbook.create_sheet(title=title[:31])
         sheet.append([EXPORT_TITLE])
         sheet.append(list(columns))
+        for values in self._sheet_values(rows, columns=columns):
+            sheet.append(values)
+        _style_sheet(sheet, columns)
+
+    def _sheet_values(
+        self, rows: Sequence[Dict[str, Any]], *, columns: Sequence[str] = EXPORT_HEADINGS
+    ) -> List[List[Any]]:
+        """The sheet's data rows under `columns`, in the sheet's order - the ONE source the
+        workbook (`_write_sheet`) and the PDF (`export_pdf`, OI-DOWNLOAD owner ruling: "the pdf
+        needs to be like Excel la") both print."""
+        out: List[List[Any]] = []
+        # Without CHANGE QUANTITY (the 10-column worksheet) a split line's rows print each
+        # row's own qty and date (AC-G13), never a blank QTY.
+        own_figures = "CHANGE QUANTITY" not in columns
+        if own_figures:
+            # ... and a split already inside another line's qty is not printed again: the QTY
+            # cells add up to TOTAL QTY.
+            rows = [row for row in rows if not row.get("inside")]
         # `￿` sorts after every real string, so a missing supplier or item code
         # lands at the end rather than at the top where a buyer would read it first.
         ordered = sorted(
@@ -3436,7 +3921,9 @@ class OrderInquiryWorklistService:
             key=lambda row: (
                 (row.get("supplier") or "￿"),
                 (row.get("item_code") or "￿"),
-                row.get("delivery_date") or date.max,
+                # A split line's rows sort by the line's date and stay together (AC-G7).
+                row["plan_key"] if "plan_key" in row
+                else (row.get("delivery_date") or date.max, "", 0),
             ),
         )
         runs = groupby(
@@ -3444,31 +3931,200 @@ class OrderInquiryWorklistService:
         )
         for (_supplier, code), members in runs:
             run = list(members)
-            total = sum((_dec(row.get("qty")) for row in run), _ZERO)
+            total = sum(
+                (_dec(row["live_qty"] if "live_qty" in row else row.get("qty")) for row in run),
+                _ZERO,
+            )
             for index, row in enumerate(run):
                 last_of_run = index == len(run) - 1
                 # Only where it says something the QTY column does not: a single-row
                 # run has its own quantity as its total, and printing it twice is noise.
                 run_total = float(total) if last_of_run and len(run) > 1 else None
-                values = [
-                    row.get("so_date"),
-                    row.get("so_number") or "",
-                    code or "",
-                    float(_dec(row.get("qty"))),
-                    run_total,
-                    row.get("delivery_date"),
-                    row.get("project_customer") or "",
+                taken, remaining, suggested = (
+                    row["split_figures"]
+                    if "split_figures" in row
+                    else (_export_taken(row), _export_remaining(row), _export_suggested(row))
+                )
+                values = {
+                    "SO DATE": row.get("so_date"),
+                    "S/O NO": row.get("so_number") or "",
+                    "ITEM CODE": code or "",
+                    "QTY": float(_dec(row["row_qty"]))
+                    if own_figures and "row_qty" in row
+                    else float(_dec(row.get("qty"))) if row.get("qty") not in (None, "") else None,
+                    "REQUESTED RESERVE": _export_reserve_qty(row.get("asked_reserve_qty")),
+                    "RESERVED": _export_reserve_qty(row.get("reserved_qty")),
+                    "TOTAL QTY": run_total,
+                    "DELIVERY DATE": row["row_date"]
+                    if own_figures and "row_qty" in row
+                    else row.get("delivery_date"),
+                    "PROJECT/CUSTOMER": row.get("project_customer") or "",
                     # Blank means nobody has placed it, exactly as it does on their
                     # sheet.
-                    row.get("supplier") or "",
-                    row.get("po_number") or "",
-                    row.get("location") or "",
-                    ack_label(row),
-                    _export_taken(row),
-                    _export_remaining(row),
-                    _export_suggested(row),
-                ]
-                # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
-                # ACKNOWLEDGED / TAKEN / REMAINING) - cut the row to match so the sheet
-                # never carries more cells than it has headings for.
-                sheet.append(values[: len(columns)])
+                    "SUPPLIER": row.get("supplier") or "",
+                    "PO NO ": row.get("po_number") or "",
+                    "LOCATION": row.get("location") or "",
+                    "ACKNOWLEDGED": ack_label(row),
+                    "TAKEN": taken,
+                    "REMAINING": remaining,
+                    "SUGGESTED": suggested,
+                    "CHANGE QUANTITY": float(row["change_qty"])
+                    if row.get("change_qty") is not None
+                    else None,
+                    "CHANGE DATE": row.get("change_date"),
+                    "REMARK": row.get("split_remark") or "",
+                }
+                # Keyed by heading, so `columns` may name any of them in any order (the
+                # planning-board worksheet prints `WORKSHEET_HEADINGS` only).
+                out.append([values[heading] for heading in columns])
+        return out
+
+
+#: OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, Q5 (a)): the handover Excel's columns, the
+#: email's own line table plus the S/O facts each row needs on a sheet, in the owner's words for
+#: the change columns (QTY CHANGE TO / DELIVERY DATE CHANGE TO, ruled with Q5 (a)). The three
+#: change columns print only when a line in this email has one, as the email's own do.
+HANDOVER_HEADINGS = (
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "NEW ITEM CODE",
+    "QTY",
+    "QTY CHANGE TO",
+    "DELIVERY DATE",
+    "DELIVERY DATE CHANGE TO",
+    "PROJECT/CUSTOMER",
+    "LOCATION",
+    "REMARK",
+)
+_HANDOVER_CHANGE_KEYS = {
+    "NEW ITEM CODE": "item_code",
+    "QTY CHANGE TO": "qty",
+    "DELIVERY DATE CHANGE TO": "delivery_date",
+}
+
+
+def _sheet_date(value: Any) -> Any:
+    """A handover line's `21/07/2026` as a date, so the sheet formats it like every other."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value), "%d/%m/%Y").date()
+    except ValueError:
+        return value
+
+
+def _sheet_qty(value: Any) -> Optional[float]:
+    return float(_dec(value)) if value not in (None, "") else None
+
+
+def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
+    """The OI Excel a handover email attaches, written from that email's OWN lines
+    (`handover.lines`, `_build_handover_context`), so its rows are the email's rows: the same
+    lines, in the same order, with the same values (owner, 26 Oct 2026: "the rows in OI must be
+    truthful to the rows in the email"). One sheet, the house style."""
+    import openpyxl
+
+    from app.services.project_order_inquiry_service import project_customer_label
+
+    def was(line: Dict[str, Any], key: str) -> Any:
+        return (line.get("was") or {}).get(key)
+
+    columns = [
+        heading
+        for heading in HANDOVER_HEADINGS
+        if heading not in _HANDOVER_CHANGE_KEYS
+        or any(was(line, _HANDOVER_CHANGE_KEYS[heading]) for line in lines)
+    ]
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = EXPORT_TITLE
+    sheet.append([EXPORT_TITLE])
+    sheet.append(columns)
+    for line in lines:
+        # As the email prints a changed line: the old value, then the new one beside it.
+        values = {
+            "SO DATE": _sheet_date(line.get("so_date")),
+            "S/O NO": line.get("so_number") or "",
+            "ITEM CODE": was(line, "item_code") or line.get("item_code") or "",
+            "NEW ITEM CODE": line.get("item_code") if was(line, "item_code") else None,
+            "QTY": _sheet_qty(was(line, "qty") or line.get("qty")),
+            "QTY CHANGE TO": _sheet_qty(line.get("qty")) if was(line, "qty") else None,
+            "DELIVERY DATE": _sheet_date(was(line, "delivery_date") or line.get("delivery_date")),
+            "DELIVERY DATE CHANGE TO": _sheet_date(line.get("delivery_date"))
+            if was(line, "delivery_date")
+            else None,
+            "PROJECT/CUSTOMER": project_customer_label(line.get("customer"), line.get("project"))
+            or "",
+            "LOCATION": line.get("location") or "",
+            "REMARK": line.get("remark") or "",
+        }
+        if line.get("continued"):
+            # A split line's later rows, as the email prints them (`oihr_0009`, AC-G6):
+            # LOCATION, ITEM CODE, QTY and DELIVERY on the line's first row only.
+            for heading in ("LOCATION", "ITEM CODE", "QTY", "DELIVERY DATE"):
+                values[heading] = None
+        sheet.append([values[heading] for heading in columns])
+    _style_sheet(sheet, columns)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+#: OI-DOWNLOAD (owner, 21 Oct: "nicer, like the LOW STOCK REPORT"): each heading's width, by
+#: NAME so a cut column list (the 10-column worksheet) or a heading added later keeps its own;
+#: a heading not listed takes `_EXPORT_DEFAULT_WIDTH`.
+_EXPORT_WIDTHS = {
+    "SO DATE": 12,
+    "S/O NO": 14,
+    "ITEM CODE": 18,
+    "QTY": 9,
+    "REQUESTED RESERVE": 12,
+    "RESERVED": 11,
+    "TOTAL QTY": 11,
+    "DELIVERY DATE": 13,
+    "PROJECT/CUSTOMER": 40,
+    "SUPPLIER": 24,
+    "PO NO ": 16,
+    "LOCATION": 14,
+    "ACKNOWLEDGED": 16,
+    "TAKEN": 10,
+    "REMAINING": 12,
+    "SUGGESTED": 20,
+    "CHANGE QUANTITY": 12,
+    "CHANGE DATE": 13,
+    "NEW ITEM CODE": 18,
+    "QTY CHANGE TO": 11,
+    "DELIVERY DATE CHANGE TO": 14,
+    "REMARK": 30,
+}
+_EXPORT_DEFAULT_WIDTH = 14
+_EXPORT_DATE_HEADINGS = frozenset(
+    {"SO DATE", "DELIVERY DATE", "CHANGE DATE", "DELIVERY DATE CHANGE TO"}
+)
+
+
+def _style_sheet(sheet, columns: Sequence[str]) -> None:
+    """The house style (`app.services.excel_style`, the LOW STOCK REPORT's look) on the OI
+    sheet: the title row bold, the heading row (row 2) dark with white bold text, every table
+    cell bordered and wrapped, frozen under the headings, dates dd/mm/yyyy. Columns, their
+    order and every value are untouched."""
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    from app.services import excel_style
+
+    sheet["A1"].font = Font(bold=True, size=13)
+    excel_style.style_table(
+        sheet,
+        header_row=2,
+        widths={
+            get_column_letter(index): _EXPORT_WIDTHS.get(heading, _EXPORT_DEFAULT_WIDTH)
+            for index, heading in enumerate(columns, start=1)
+        },
+        date_columns=[
+            index
+            for index, heading in enumerate(columns, start=1)
+            if heading in _EXPORT_DATE_HEADINGS
+        ],
+    )

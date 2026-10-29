@@ -15,6 +15,7 @@ import {
   getPlanningHistory,
   confirmSupply,
   getReconciliation,
+  getQuotationLineStock,
   getStockDetail,
   getSupply,
   listFulfilmentPlanning,
@@ -60,8 +61,6 @@ import { BOARD_TRANSFERS_KEY } from './useBoardTransfers';
 // (applied_at, applied_by, the per-row applied state) is stale the moment it returns.
 import { PLANNING_CHANGE_BATCH_KEY } from './usePlanningChanges';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
-import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
-import { groupOfWarehouseCode } from '../lib/supplyVocabulary';
 
 export const FULFILMENT_PLANNING_KEY = 'project-fulfilment-planning';
 export const PLANNING_BOARD_KEY = 'project-fulfilment-board';
@@ -150,7 +149,20 @@ export function useFulfilmentPlanningMutations() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { adopt };
+  /**
+   * OI-SPLIT-CONFIRM-POLISH: the same idempotent adopt, run by the guided Confirm when it opens
+   * so every order's Review split is the editable sheet. Silent: the guide itself says when it
+   * could not start planning an order, and "ready to plan" would only be noise there.
+   */
+  const ensure = useMutation({
+    mutationFn: (salesOrderId: string) => adoptSalesOrder(salesOrderId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+      queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY] });
+    },
+  });
+
+  return { adopt, ensure };
 }
 
 /**
@@ -429,31 +441,13 @@ export function useStockDetail(
   });
 }
 
-/**
- * The ownership groups stock can be read over (`IB`, `BB`, ...): the group suffix of every active
- * warehouse that takes part in fulfilment planning, in warehouse-code order, each once. The
- * quotation's "Stock at" picker lists these, and `useStockDetail` reads a group by the same name.
- * A site pool (`BRW`, no suffix) is not a group; it is read through `pools`.
- */
-export function useStockGroups() {
+/** A quotation line's stock over the user's allowed locations; null data = show nothing. */
+export function useQuotationLineStock(productId: string) {
   return useQuery({
-    queryKey: ['fulfilment-planning-stock-groups'],
-    queryFn: async () => {
-      const response = await getWarehouses({
-        pageIndex: 0,
-        pageSize: 500,
-        sorting: [{ id: 'warehouse_code', desc: false }],
-        is_active: true,
-      });
-      const groups: string[] = [];
-      (response.data ?? []).forEach((warehouse) => {
-        if (warehouse.fulfilment_planning === false) return;
-        const group = groupOfWarehouseCode(warehouse.warehouse_code);
-        if (group && !groups.includes(group)) groups.push(group);
-      });
-      return groups;
-    },
-    staleTime: Infinity,
+    queryKey: [STOCK_DETAIL_KEY, 'quotation-line', productId],
+    queryFn: () => getQuotationLineStock(productId),
+    enabled: Boolean(productId),
+    retry: 1,
   });
 }
 

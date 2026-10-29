@@ -43,27 +43,7 @@ def test_sales_report_still_gets_the_focus_channel():
     assert _lane_out(v, Focus(sales_channel="dealer")).get("sales_channel") == "dealer"
 
 
-# AC-HT8-12
-def _top_selling_words(canonical):
-    from app.services.chatbot.turn import apply as ap
-    from app.services.chatbot.turn.decide import CARRY, Decision
-    from app.services.chatbot.turn.plan import Trace
-    from app.services.chatbot.turn.state import Focus
-
-    focus = Focus(status="top_selling", top_selling={"rank_by": "quantity"})
-    e = entity("马桶", "category", canonical_code=canonical)
-    ap._top_selling_rules(focus, verdict(order_status="top_selling", entities=[e]), Decision(CARRY, "x"), Trace())
-    return focus.top_selling["category_words"]
-
-
-def test_top_selling_reads_the_category_canonical_code_before_raw():
-    assert _top_selling_words("water closet") == ["water closet"]
-
-
-def test_top_selling_category_without_canonical_code_keeps_raw():
-    assert _top_selling_words(None) == ["马桶"]
-
-
+# AC-HT8-12 (the top selling slot went with that lane, REPORT-SMART-L R4a; the ranking reads the same key)
 def _ranking_words(canonical):
     from app.services.chatbot.lanes.business import report_ask as ra
 

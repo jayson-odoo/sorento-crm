@@ -380,6 +380,14 @@ CHATBOT_REPLY_PORTAL_LINK_SPONSORSHIP_FORM = {
     "zh": "这是您填写赞助表格的门户链接。",
 }
 
+# Release gate #1829, round 7 (crew ruling): the one acknowledgement of a reset turn ("clear
+# all"). Nothing is looked up on that turn, so the sentence promises nothing.
+CHATBOT_REPLY_RESET_ACK = {
+    "en": "Okay, I've cleared that. What would you like to check?",
+    "ms": "Baik, saya sudah kosongkan. Apa yang anda mahu semak?",
+    "zh": "好的，已清除。您想查询什么？",
+}
+
 #: `short name -> (per-language text, declared {{tokens}})`, expanded below into one
 #: registry key per language: `chatbot_reply_<name>` (English) and
 #: `chatbot_reply_<name>.ms` / `.zh`.
@@ -390,6 +398,7 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "portal_link_purchase_request": (CHATBOT_REPLY_PORTAL_LINK_PURCHASE_REQUEST, ()),
     "portal_link_sponsorship_form": (CHATBOT_REPLY_PORTAL_LINK_SPONSORSHIP_FORM, ()),
     "fallback_ack": (CHATBOT_REPLY_FALLBACK_ACK, ()),
+    "reset_ack": (CHATBOT_REPLY_RESET_ACK, ()),
     "fallback_offer": (CHATBOT_REPLY_FALLBACK_OFFER, ()),
     "fallback_last_time": (CHATBOT_REPLY_FALLBACK_LAST_TIME, ("summary",)),
     "fallback_offer_rerun": (CHATBOT_REPLY_FALLBACK_OFFER_RERUN, ()),

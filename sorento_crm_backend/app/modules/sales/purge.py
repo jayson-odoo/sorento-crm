@@ -16,14 +16,19 @@ from typing import Dict, List, Type
 from sqlalchemy.orm import Session
 
 from app.models.sales import (
+    SalesAgentClass,
     SalesOpportunity,
     SalesOpportunityLine,
+    SalesPointRatio,
     SalesTarget,
+    SalesTargetAccount,
     SalesTargetCommissionTier,
     SalesTargetPeriod,
     SalesTargetScope,
+    SalesTargetTierRate,
     SalesTeam,
     SalesTeamMember,
+    SetApartCustomer,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,10 +37,15 @@ logger = logging.getLogger(__name__)
 PURGE_ORDER: List[Type] = [
     SalesOpportunityLine,
     SalesOpportunity,
+    SalesTargetTierRate,
     SalesTargetCommissionTier,
+    SalesTargetAccount,
     SalesTargetScope,
     SalesTargetPeriod,
     SalesTarget,
+    SetApartCustomer,
+    SalesAgentClass,
+    SalesPointRatio,
     SalesTeamMember,
     SalesTeam,
 ]

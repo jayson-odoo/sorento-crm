@@ -22,13 +22,17 @@ state; the tail (S2) is what fills it.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
+import os
 import re
+import threading
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace as dataclasses_replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator, Mapping
 
 from sqlalchemy.exc import IntegrityError
@@ -38,12 +42,14 @@ from app.config import settings
 from app.models.base import set_brand_scope, set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services import llm_cassette
-from app.services.chatbot import dispatch, jsc, llm_call, media_intake, send_order, trace as trace_mod
+from app.services.reports.ask import SALES_CHANNELS
+from app.services.chatbot import direct_ingress, dispatch, inbox_queue, jsc, llm_call, media_intake, send_order, trace as trace_mod
+from app.services.chatbot import user_turn as user_turn_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     CRM_COMPLETED_BRANCH_KINDS,
+    DIRECT_INGRESS,
     ORDER_OR_SALES_DOMAINS,
-    SALES_DOMAIN,
     SELF_CLOSING_BRANCH_KINDS,
     TURN_FAILURE_STAGES,
     Envelope,
@@ -55,12 +61,19 @@ from app.services.chatbot.turn.reconcile import narrowed_miss_lines
 from app.services.chatbot.turn.state import is_staff_profile
 from app.services.customer_group_service import family_overrides
 from app.services.error_handler import AppException
+from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
-from app.services.chatbot.head import grounding, parser
+from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, lookup_lists, scheme_index
+from app.services.chatbot.head import list_resolver, span_extract
+from app.services.chatbot.head import access as access_mod
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
 from app.services.chatbot.lanes import fallback as fallback_mod
+# SALES-TARGET-CHAT slice 2: imported here, not only at its seam, so `OPPORTUNITY_ASK` is registered in
+# `required_fields.ASKS` the moment the engine is (a fresh process's first turn answering the lane's field
+# question must not read as `required_ask_dropped`).
+from app.services.chatbot.lanes import opportunity as opportunity_lane
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane, routing_line as escalation_routing_line
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.analytics import facts as chat_facts
@@ -70,7 +83,9 @@ from app.services.chatbot.usage import CLARIFIER_FEATURE, record_parser_usage, r
 # is everything that has to touch a database or a tool on its behalf.
 from app.services.chatbot import label_catalog, language as language_mod, session_state, turn_runtime
 from app.services.chatbot import quick_reply_guard
+from app.services.chatbot.composers import sets as composers_sets
 from app.services.chatbot.turn import pending as turn_pending
+from app.services.chatbot.turn import chat_state
 from app.services.chatbot.turn import question as turn_question
 from app.services.chatbot.turn import sub_asks as turn_sub_asks
 from app.services.chatbot.turn import state as turn_state
@@ -84,8 +99,8 @@ from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as _apply_state
 from app.services.chatbot.turn.apply import is_product_shaped_entity
-from app.services.chatbot.turn.apply import record_top_selling_asked
-from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level
+from app.services.chatbot.turn.apply import RESET_KEEPS
+from app.services.chatbot.turn.decide import domain_in_message, names_its_own_domain
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
@@ -143,6 +158,12 @@ _MARKED_PART_BREAK = re.compile(r"\n\n(?=\(\d+/\d+\)\n)")
 _MARKED_PART_HEAD = re.compile(r"\((\d+)/(\d+)\)\n")
 
 
+def _parser_prompt_sha256(config: Any) -> str | None:
+    """Hash of the exact system prompt text the parser was given, for run provenance."""
+    text = getattr(config, "system_prompt", None)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest() if isinstance(text, str) else None
+
+
 def split_marked_message(text: str) -> list[str]:
     """The presenter's marked parts of `text`, in order, or `[text]` when it carries
     none (TOP-N-UNCAP, owner 30 Sep 2026: a top 200 goes out as several messages, so
@@ -171,7 +192,7 @@ def split_marked_message(text: str) -> list[str]:
 
 #: WhatsApp's per-message ceiling as the MCP presenter keeps it
 #: (`sorento_crm_mcp.presenters.WHATSAPP_MESSAGE_MAX_CHARS`, under WhatsApp's own 4096).
-WHATSAPP_MESSAGE_MAX_CHARS = 3900
+WHATSAPP_MESSAGE_MAX_CHARS = composers_sets.MESSAGE_MAX_CHARS
 
 
 def _product_family(db: Any, code: str) -> list[dict[str, str]]:
@@ -486,7 +507,9 @@ _ETA_WORDS = re.compile(
 )
 
 
-def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> dict[str, Any]:
+def _as_a_stock_ask_by_its_own_words(
+    verdict: dict[str, Any], message: str, template: bool = False
+) -> dict[str, Any]:
     """AVAIL-MODE-REPLIES (tester re-run on 2eb2a00ef): the live parser intermittently read
     a plain "CWCX611 x 300" as `check_incoming` and the dealer was told "ETA not confirmed
     yet". A message whose own words name a product WITH a quantity and no ETA word is a
@@ -495,7 +518,12 @@ def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> d
 
     The cloud live-parser pass at 2ff7f5e9 saw the same misread the other way: "srt5764 xx
     10" read as a product-info ask (`check_product` / `master_products`), which answered
-    with the staff did-you-mean and an escalation offer. That reading is put back too."""
+    with the staff did-you-mean and an escalation offer. That reading is put back too.
+
+    PARSER-TEMPLATE F1-A: under the consolidated template (`template`) the prompt's own
+    R-P1-03 decides the domain of a stated quantity, so the parser's verdict stands."""
+    if template:
+        return verdict
     misread = {"incoming", "master_products"}
     incoming = (
         verdict.get("intent_hint") in ("check_incoming", "check_product")
@@ -667,7 +695,13 @@ def _exact_codes_only(
         # compared here ("TAP SRTWT5608" with canonical_code null: the token is
         # "tapsrtwt5608", the placed code "srtwt5608"); the maps stay keyed by the token.
         code = (read_values or {}).get(fold) or fold
-        exact = [c for c in candidates if code_of(c) == code]
+        # CHAT-CODE-LOOKUP R2: a member of the product set the customer typed (the gate puts
+        # `set_code` on its rows) belongs to that token.
+        exact = [
+            c for c in candidates
+            if code_of(c) == code
+            or any(turn_state.token_key(sc) == code for sc in (c.get("set_codes") or [c.get("set_code")]) if sc)
+        ]
         family: list[dict[str, Any]] = []
         if turn_task.code_or_number(code):
             family = [c for c in candidates if code_of(c).startswith(code)] or [
@@ -1070,6 +1104,423 @@ def _contact_brand_scope(factory: SessionFactory, contact_respond_id: str) -> fr
         db.close()
 
 
+_ENGINE_ENTITY_KEYS = ("listed", "certificate_uuids", "parent_kind", "parent_kind_uuid", "parent_kind_name", "class_hint")
+
+
+def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any]:
+    """CHAT-CLOSED-LISTS: a verdict parsed by a CLOSED LISTS version says so, so the lanes
+    read the parser's listed picks and none of the word fallbacks (card R2/R5). The key is
+    the engine's alone: one a harness emission carried is dropped when the gate is off."""
+    if gate:
+        return {**verdict, "closed_lists": True}
+    return {k: v for k, v in verdict.items() if k != "closed_lists"} if "closed_lists" in verdict else verdict
+
+
+def code_lookup_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any]:
+    """CHAT-CODE-LOOKUP: a verdict parsed by a CODE LOOKUP version says so, so later lanes
+    can read it. Like `closed_lists_verdict`, the key is the engine's alone."""
+    if gate:
+        return {**verdict, "code_lookup": True}
+    return {k: v for k, v in verdict.items() if k != "code_lookup"} if "code_lookup" in verdict else verdict
+
+
+def _strip_hidden_spec_entities(verdict: dict[str, Any], hidden: frozenset[str]) -> dict[str, Any]:
+    """H1: a spec entity on a contact-hidden key is dropped. Runs once, on the grounding output
+    (the parser's own emission and what grounding re-derives from raw words alike), before
+    `turn_apply`, the only writer of spec entities into the focus."""
+    entities = verdict.get("entities")
+    if not hidden or not isinstance(entities, list):
+        return verdict
+    # Grounding binds on the stripped key, so the compare is on the stripped key too.
+    kept = [e for e in entities if not (isinstance(e, dict) and str(e.get("spec_key") or "").strip() in hidden)]
+    return verdict if len(kept) == len(entities) else {**verdict, "entities": kept}
+
+
+def _candidate_lines(
+    db: Session,
+    user_turn: Any,
+    held_ids: list[str] | None = None,
+    hidden: frozenset[str] = frozenset(),
+    *,
+    code_lookup: bool = False,
+    index: bool = False,
+    matches_out: list | None = None,
+    failed_out: list | None = None,
+) -> tuple[list[str] | None, frozenset[str], dict[str, dict[str, Any]]]:
+    """The candidate block for the message's OWN line (`UserTurn.own_text`: the quoted reply
+    under it is not this message's words, the line grounding reads too). It only advises the
+    parser, so a failure leaves it out and the turn goes on (savepoint: the session stays usable).
+    Also the codes the block lists, for grounding's product pick check under CODE LOOKUP.
+
+    `index` (CLOSED-LISTS-INDEX-MODE): the block is `head/closed_lists_index.block` (the word
+    matches beside the candidate lines, the held products' own lines under their own heading),
+    built in its own savepoint so a failure there keeps the candidate lines. CHAT-INDEX-VIZ:
+    `matches_out` gets the matches `block_with_matches` reports; `failed_out` gets True when
+    the index step failed."""
+    message = user_turn.own_text
+    entries: list = []
+    try:
+        with db.begin_nested():
+            entries = (
+                candidates_mod.shortlist(db, message, held_ids, hidden=hidden, code_lookup=True)
+                if code_lookup
+                else candidates_mod.shortlist(db, message, held_ids, hidden=hidden)
+            )
+            lines, codes, picks = (
+                candidates_mod.candidate_lines(entries),
+                candidates_mod.listed_codes(entries),
+                candidates_mod.pick_info(entries) if code_lookup else {},
+            )
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: candidate shortlist failed; parsing without it", exc_info=True)
+        lines, codes, picks = None, frozenset(), {}
+    if not index:
+        return lines, codes, picks
+    try:
+        with db.begin_nested():
+            indexed, matches = closed_lists_index.block_with_matches(db, entries, message, held_ids, hidden)
+        if matches_out is not None:
+            matches_out.extend(matches)
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: closed lists index lines failed; parsing without them", exc_info=True)
+        indexed = []
+        if failed_out is not None:
+            failed_out.append(True)
+    return (indexed or lines), codes, picks
+
+
+def _may_see_salespeople(db: Session, resolved: str) -> bool:
+    """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
+    `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
+    the rule the report route shares). Raises on a lookup error; `_lookup_lines` runs it in a savepoint
+    and a failure means no block."""
+    from app.services import contact_asker, contact_field_reveal_service
+
+    granted = "sales_orders.sales_report" in contact_field_reveal_service.granted_keys(db, resolved)
+    return contact_asker.may_ask_sales_ranking(db, str(resolved), granted=granted)[0] != "not_granted"
+
+
+def _customer_visibility(db: Session, resolved: str) -> tuple[bool, frozenset[str] | None]:
+    """(include, ids) for the Customer block: office staff see every active customer; a dealer (linked
+    customers, no office access type, `ContactCustomerScope.enforced`) only its own links; a contact with
+    neither gets no Customer block. Raises on a lookup error (run in a savepoint by `_lookup_lines`)."""
+    from app.services import contact_customer_scope
+
+    scope = contact_customer_scope.contact_customer_scope(db, str(resolved))
+    if scope.staff:
+        return True, None
+    if scope.enforced:
+        return True, frozenset(scope.customer_ids)
+    return False, None
+
+
+def _guarded(db: Session, fn: Any, default: Any) -> Any:
+    """`fn()` in its own savepoint; `default` (fail closed) when it raises, with the session still usable."""
+    try:
+        with db.begin_nested():
+            return fn()
+    except Exception:  # noqa: BLE001 - fail closed
+        logger.warning("chatbot: lookup list check failed", exc_info=True)
+        return default
+
+
+def _lookup_visibility(
+    db: Session, contact_respond_id: str, space_id: Any
+) -> tuple[bool, bool, frozenset[str] | None]:
+    """(include_salespeople, include_customers, customer_ids) for the contact: the contact is resolved once and each
+    check runs in its own savepoint, so a database error in one drops only that block."""
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    resolved = _guarded(
+        db,
+        lambda: resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
+        ),
+        None,
+    )
+    include_salespeople = bool(resolved) and _guarded(db, lambda: _may_see_salespeople(db, str(resolved)), False)
+    include_customers, customer_ids = (
+        _guarded(db, lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
+    )
+    return include_salespeople, include_customers, customer_ids
+
+
+def _lookup_lines(
+    db: Session, message: str, config: Any, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
+    brands: list[dict[str, Any]] | None = None, held: dict[str, tuple[str, ...]] | None = None,
+) -> tuple[list[str], dict[str, Any]]:
+    """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line and the values the State already holds
+    (`held`, CHAT-V66-REGRESSIONS), plus the trace event
+    (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
+    leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
+    resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
+    database error in one drops only that block (fail closed)."""
+    group = bool(getattr(config, "category_pick", False))
+    try:
+        # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
+        embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
+        pieces_ready = lookup_lists.prefetch(message, embed)
+        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        with db.begin_nested():
+            rows = lookup_lists.load_rows(
+                db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group,
+            )
+            brand_words = lookup_lists.brand_words(db, brands)
+            lookup_lists.warm(rows, embed)
+            usable = lookup_lists.usable_embedder(rows, embed)
+            if usable is not None and not pieces_ready():
+                usable = None  # the round trip did not arrive in time: spelling only, never a second request
+            hits = lookup_lists.shortlist(message, rows, usable, brand_words=brand_words, held=held)
+            # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
+            numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
+            if numbers:
+                hits["spec"] = lookup_lists.with_numbers(numbers, hits.get("spec", []), hits.get("category"))
+        event = {
+            "pieces": lookup_lists.pieces(message),
+            "hits": [
+                {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
+                for name in hits
+                for h in hits[name]
+            ],
+        }
+        return lookup_lists.render(hits, group_categories=group, row_ids=bool(getattr(config, "row_ids", False))), event
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
+        return [], {"pieces": [], "hits": [], "failed": True}
+
+
+@dataclass
+class _SpanPrep:
+    """What the span pass needs from the turn's session, so the span call itself runs with none open."""
+
+    message: str
+    rows: list[lookup_lists.LookupRow]
+    spec_key_rows: list[lookup_lists.LookupRow]
+    brand_words: frozenset[str]
+    numbers: list[lookup_lists.Hit]
+    held: dict[str, tuple[str, ...]]
+    embed: Any
+    config: span_extract.SpanConfig | None
+    # EEM-CATEGORY-PICK: the parser prompt asks for a category pick, so the Category block is grouped by class.
+    group_categories: bool = False
+    # REPORT-UNIFY slice 3: the parser prompt asks for the row id (`parser.ROW_ID_ASK`), so a brand, salesperson or
+    # category line carries it. Off for a bare prep; `_span_prep` takes it from the prompt in use.
+    row_ids: bool = False
+
+
+def _span_prep(
+    db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
+    brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
+    group_categories: bool = False, row_ids: bool = False,
+) -> _SpanPrep | None:
+    """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
+    rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
+    try:
+        embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
+        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        with db.begin_nested():
+            from app.services.product_spec_registry import active_registry
+
+            rows = lookup_lists.load_rows(
+                db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group_categories,
+            )
+            spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
+            brand_words = lookup_lists.brand_words(db, brands)
+            numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
+        config = None
+        try:
+            with db.begin_nested():
+                config = span_extract.resolve_config(db, llm_choice=llm_choice)
+        except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
+            logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
+        lookup_lists.warm([*rows, *spec_keys], embed)
+        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories, row_ids)
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
+        return None
+
+
+def start_lookup_warm(session_factory: Any = None) -> threading.Thread | None:
+    """ENTITY-EXTRACT-MATCH S3: warm the lookup vectors (widest visibility plus the spec names) on a daemon thread at
+    API start-up, so the first turn finds them cached. Process start had a no-meaning window of more than 70 s on
+    Gemini until the first turn's lazy warm filled the cache. Off with `CHATBOT_LOOKUP_WARM_ENABLED` (the test suite
+    turns it off). Advisory: every failure is logged and swallowed. Returns the thread, or None when off."""
+    if os.getenv("CHATBOT_LOOKUP_WARM_ENABLED", "1").strip().lower() in ("0", "false", "off", "no"):
+        return None
+    if session_factory is None:
+        from app.database import SessionLocal as session_factory
+
+    def _run() -> None:
+        db = None
+        try:
+            db = session_factory()
+            set_company_scope(db, None)
+            embed = lookup_lists.embedder(db)
+            if embed is None:
+                return
+            from app.services import product_spec_registry
+
+            rows = lookup_lists.load_rows(
+                db, include_salespeople=True, include_customers=True, customer_ids=None, group_categories=False,
+            )
+            spec_keys = list_resolver.spec_key_rows(product_spec_registry.active_registry(db))
+            db.rollback()
+            db.close()
+            db = None
+            lookup_lists.warm([*rows, *spec_keys], embed)
+        except Exception:  # noqa: BLE001 - advisory, the first turn's lazy warm takes over
+            logger.warning("chatbot: start-up lookup warm failed", exc_info=True)
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    thread = threading.Thread(target=_run, name="lookup-lists-startup-warm", daemon=True)
+    thread.start()
+    return thread
+
+
+def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
+    """Trace only: the rows the resolver offered for one span, best first, the first 8 (`close`
+    carries the full count) so the event stays inside the trace entry cap."""
+    return [
+        {"list": c.row.list_name, "label": c.row.label, "score": round(c.score, 3), "signal": c.signal}
+        for c in res.candidates[:8]
+    ]
+
+
+def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[lookup_lists.Hit]]:
+    """The resolver's matched rows as lookup hits: per list, best first, one hit per row. Spec-name rows have no
+    block (`lookup_lists.render` knows no such list); they are in the resolver so "colour" is not read as a value."""
+    best: dict[str, dict[str, lookup_lists.Hit]] = {}
+    for res in resolutions:
+        for c in res.candidates:
+            seen = best.setdefault(c.row.list_name, {})
+            if c.row.key not in seen or seen[c.row.key].spelling + seen[c.row.key].meaning < c.score:
+                spelled = c.signal != "meaning"
+                seen[c.row.key] = lookup_lists.Hit(c.row, res.span.text, c.score if spelled else 0.0, 0.0 if spelled else c.score)
+    return {name: sorted(h.values(), key=lambda x: (-(x.spelling + x.meaning), x.row.label)) for name, h in best.items()}
+
+
+def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_respond_id: str, dry_run: bool,
+                 turn_id: str | None) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+    """The span call, then the lookup blocks. Runs with no DB session open. Returns (lines, `lookup_lists` event,
+    `span_extract` event). A call that fails or answers unreadably leaves today's n-gram lines (`fallback`)."""
+    config = prep.config
+    answer = span_extract.extract(config, prep.message) if config is not None else None
+    event: dict[str, Any] = {
+        "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
+        "provider": config.provider if config else None, "model": config.model if config else None,
+        "model_source": config.model_source if config else None,
+        "embedding_model": None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
+        "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
+    }
+    if answer is not None and answer.usage and not dry_run:
+        try:
+            with _session(session_factory) as db:
+                record_turn_llm_usage(
+                    db, feature=span_extract.FEATURE, usage=answer.usage, response_time_ms=answer.ms,
+                    contact_respond_id=contact_respond_id, answered=answer.spans is not None, chatbot_turn_id=turn_id,
+                )
+        except Exception:  # noqa: BLE001 - telemetry must never fail a customer's turn
+            logger.warning("chatbot turn %s: span usage log failed", turn_id, exc_info=True)
+    reason = "no_config" if answer is None else answer.failure
+    try:
+        hits: dict[str, list[lookup_lists.Hit]] | None = None
+        if answer is not None and answer.spans is not None:
+            try:
+                all_rows = [*prep.rows, *prep.spec_key_rows]
+                embed = lookup_lists.usable_embedder(all_rows, prep.embed)
+                event["embedding_model"] = getattr(embed, "model", None) if embed is not None else None
+                resolutions = list_resolver.resolve(answer.spans, all_rows, embed=embed)
+                # A merged mention ("zzsean zzsorento") resolves to one row; the words that row did not match are
+                # resolved as their own untyped span, one level only.
+                rest = [
+                    list_resolver.Span(left)
+                    for r in resolutions
+                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code" and r.matched_by == "text"
+                    for left in [list_resolver.unmatched_words(r.span.text, r.candidates[0].row, all_rows)]
+                    if left
+                ]
+                extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
+                hits = _hits_of([*resolutions, *extra])
+                span_keys = {h.row.key for hs in hits.values() for h in hs}
+                near_rows: list[dict[str, Any]] = []
+                # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
+                # only: no embedder is passed, so this makes no network call after the session closed.
+                near_exact = 0
+                for name, spelled in lookup_lists.shortlist(
+                    prep.message, prep.rows, None, brand_words=prep.brand_words
+                ).items():
+                    have = {h.row.key for h in hits.get(name, [])}
+                    added = [h for h in spelled if h.spelling >= lookup_lists.NEAR_EXACT_SPELLING and h.row.key not in have]
+                    near_exact += len(added)
+                    near_rows += [
+                        {"list": name, "label": h.row.label, "spelling": round(h.spelling, 3), "source": "near_exact"}
+                        for h in added
+                    ]
+                    hits[name] = [*hits.get(name, []), *added]
+                event["near_exact_rows"] = near_exact
+                event["near_exact"] = near_rows
+                held_keys: set[str] = set()
+                for name, held_hits in lookup_lists.shortlist("", prep.rows, None, held=prep.held).items():
+                    known = {h.row.key for h in held_hits}
+                    held_keys |= known
+                    hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
+                hits = {name: lookup_lists.cap_hits(name, hs) for name, hs in hits.items()}
+                event["spans"] = [
+                    {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates),
+                     "candidates": _candidates_of(r), "meaning": r.span.meaning, "matched_by": r.matched_by}
+                    for r in resolutions
+                ] + [
+                    {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True,
+                     "candidates": _candidates_of(r), "meaning": None, "matched_by": "text"}
+                    for r in extra
+                ]
+                lookup_event: dict[str, Any] = {"spans": [r.span.text for r in [*resolutions, *extra]]}
+            except Exception:  # noqa: BLE001 - the resolver or the adapter failed: today's n-gram lines take over
+                logger.warning("chatbot: span matching failed; using the n-gram lookup", exc_info=True)
+                hits, reason = None, "resolver_error"
+        if hits is None:
+            event["fallback"], event["fallback_reason"] = True, reason
+            hits = lookup_lists.shortlist(
+                prep.message, prep.rows, lookup_lists.usable_embedder(prep.rows, prep.embed),
+                brand_words=prep.brand_words, held=prep.held,
+            )
+            lookup_event = {"pieces": lookup_lists.pieces(prep.message), "fallback": True}
+        # Spec NUMBERS join the spec block on every path, as in `_lookup_lines`.
+        number_keys = {h.row.key for h in prep.numbers}
+        if prep.numbers:
+            hits["spec"] = lookup_lists.with_numbers(prep.numbers, hits.get("spec", []), hits.get("category"))
+        if not event["fallback"]:
+            # Trace only: where each row of the final block came from, in render order.
+            event["final_block"] = {
+                name: [
+                    {"label": h.row.label, "source": (
+                        "number" if h.row.key in number_keys else "held" if h.row.key in held_keys
+                        else "span" if h.row.key in span_keys else "near_exact")}
+                    for h in hs
+                ]
+                for name, hs in hits.items()
+            }
+        lines = lookup_lists.render(hits, group_categories=prep.group_categories, row_ids=prep.row_ids)
+        event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
+        lookup_event["hits"] = [
+            {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
+            for name in hits
+            for h in hits[name]
+        ]
+        return lines, lookup_event, event
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: span lookup failed; parsing without lookup lists", exc_info=True)
+        event["fallback"], event["fallback_reason"] = True, "resolver_error"
+        return [], {"pieces": [], "hits": [], "failed": True}, event
+
+
 def _scoped_factory(
     factory: SessionFactory, scope: frozenset, brand_scope: frozenset | None = None
 ) -> SessionFactory:
@@ -1156,6 +1607,17 @@ def _reply_to_message_id(envelope: Envelope) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
+def _typed_text(user_turn: Any) -> str:
+    """The folded text the customer typed this turn: every line of their own text up to the
+    `reply to:` block `build_latest_user_message` appends, plus the codes read from the media."""
+    own = [user_turn.own_text]
+    for line in user_turn.quoted_text.split("\n"):
+        if line.lstrip().lower().startswith("reply to:"):
+            break
+        own.append(line)
+    return turn_state.token_key(" ".join([*own, *user_turn.media]))
+
+
 def turn_apply(state_in: Any, *args: Any, **kwargs: Any) -> Any:
     """APPLY, keeping the QUOTED-REPLY live-question aside (R4) on the state it returns:
     APPLY builds a fresh `State`, which would otherwise drop it."""
@@ -1163,6 +1625,17 @@ def turn_apply(state_in: Any, *args: Any, **kwargs: Any) -> Any:
     live = getattr(state_in, "quoted_live", None)
     if live and getattr(out, "quoted_live", None) is None:
         out = dataclasses_replace(out, quoted_live=live)
+    # CHAT-STATE: the decision the parser's `state_changes` led rides to the tail too.
+    carried = {
+        name: getattr(state_in, name)
+        for name in ("state_led", "state_path", "held_aside", "slot_ask")
+        if getattr(state_in, name, None) and not getattr(out, name, None)
+    }
+    if carried:
+        out = dataclasses_replace(out, **carried)
+    if getattr(state_in, "slot_ask", None) is not None:
+        # An unclear held slot is asked, not fetched: the question is the plan's ask.
+        plan.ask, plan.fetch = state_in.slot_ask, []
     return out, plan
 
 
@@ -1215,8 +1688,11 @@ def _quoted_context(
         "open_question"
     )
     facts.update(found=True, via=found.via, turn_id=found.turn_id, same_as_live=same)
+    # CHAT-STATE r7: which bot turn the quote names rides on the State, swapped or not (a quote of
+    # the newest turn swaps nothing), so the list that turn showed can be the referent.
+    quoted_turn_no = found.turn_no if isinstance(found.turn_no, int) else None
     if same:
-        return state_in, facts
+        return dataclasses_replace(state_in, quoted_turn_no=quoted_turn_no), facts
     pending = turn_runtime.tick_pending(turn_pending.from_wire(found.open_question))
     if (
         pending is not None
@@ -1229,6 +1705,7 @@ def _quoted_context(
             state_in,
             focus=turn_state.focus_from_wire(found.focus),
             pending=pending,
+            quoted_turn_no=quoted_turn_no,
             quoted_live={
                 "pending": state_in.pending,
                 "focus": state_in.focus,
@@ -1539,6 +2016,7 @@ def _insert_turn(
     contact_respond_id: str,
     retrying: ChatbotTurn | None = None,
     queued: bool = False,
+    turn_id: str | None = None,
 ) -> ChatbotTurn:
     """The turn row. `retrying` is the failed row an operator asked to re-run (S2b).
 
@@ -1547,11 +2025,15 @@ def _insert_turn(
     (`send_order`). The request claims it back with `_claim_own_row` once its ticket
     comes up.
 
+    `turn_id`: an id chosen before the row exists (CHAT-SEND-ORDER: a stored photo's read is
+    filed under its own turn before the turn is inserted). None lets the column default.
+
     A retry is a NEW turn, not an edit of the old one: same message, next attempt, ingress
     `retry`. The old row keeps its trace and its failure - that is the record the operator
     was reading - and only loses its retry marker, so a second failure can be retried too.
     """
     row = ChatbotTurn(
+        **({"id": turn_id} if turn_id else {}),
         contact_respond_id=contact_respond_id,
         message_id=_message_id(envelope),
         ingress="retry" if retrying is not None else envelope.ingress,
@@ -1606,8 +2088,31 @@ def _close_turn(
         f"{stage!r} is not a declared turn stage - a typo here lands in the column and "
         f"reads as an unknown state on the trace screen. Declared: {TURN_FAILURE_STAGES}"
     )
+    # CHAT-INBOX-QUEUE: on the inbox drain a turn may still yield here (look-ahead), before
+    # anything is written, and its close leaves the row `processing`: the drain marks it
+    # with this status only once the sender POST has returned (`inbox_queue._finish`).
+    drain_run = inbox_queue.current_run(turn_id)
+    if drain_run is not None:
+        inbox_queue.checkpoint(turn_id)
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
     if row is None:  # pragma: no cover - the row was inserted two lines earlier
+        return
+    if drain_run is not None:
+        if drain_run.close is not None and drain_run.close[0] in _TERMINAL_STATUSES:
+            logger.debug("chatbot turn %s: refused a second close on the inbox drain", turn_id)
+            return
+        drain_run.close = (status, stage)
+        if status not in _TERMINAL_STATUSES:
+            # `delegated`: the in-process tail (`complete_turn`) runs from this state.
+            row.status = status
+            row.stage = stage
+        row.branch_kind = branch_kind
+        row.error = error
+        marker = [] if inbox_queue.inbox_records(records) else inbox_queue.inbox_records(row.trace)
+        row.trace = [*marker, *records]
+        row.response = trace_mod.cap_document(response)
+        row.finished_at = _now()
+        db.commit()
         return
     if row.finished_at is not None and row.status in _TERMINAL_STATUSES:
         # Debug, not warning: this is an EXPECTED sequence on the failure path (the tail
@@ -1825,6 +2330,43 @@ def _answer_earlier_messages(
     my_message_id = _message_id(envelope)
     out: list[dict[str, Any]] = []
     for item in taken:
+        # A stored-only message's own turn id, chosen now so its media read below is filed
+        # under that turn (ledger row, stored photo), not under this one.
+        own_id = str(uuid.uuid4()) if item.row_id is None and item.job_id is None else None
+        if item.row_id is None and item.job_id is None and item.carries_media:
+            # CHAT-SEND-ORDER: a stored-only photo or voice note is read FIRST, under the
+            # ledger key n8n's intake uses too, and answered ahead only once read: n8n's
+            # `media-route` replies on its own to a read that fails or runs out, and its
+            # later delivery would otherwise come back a duplicate of a timeout reply.
+            try:
+                attachment = send_order.stored_attachment(item)
+                detected = media_intake.detect({"attachment": attachment})
+                status = (
+                    media_intake.run(
+                        respond_io_id=contact_respond_id,
+                        message_id=item.message_id,
+                        modality=detected[0],
+                        attachment=attachment,
+                        caption=item.caption,
+                        turn_id=own_id,
+                        session_factory=session_factory,
+                    ).status
+                    if detected is not None
+                    else None
+                )
+            except Exception:  # noqa: BLE001 - see the docstring: best effort
+                logger.warning(
+                    "chatbot send order: could not read an earlier stored media message of "
+                    "%s; it is left to its own delivery",
+                    contact_respond_id,
+                    exc_info=True,
+                )
+                status = None
+            if status != "completed":
+                if "photo_not_read" not in reasons:
+                    reasons.append("photo_not_read")
+                left_count += 1
+                continue
         if item.row_id is None and item.job_id is not None:
             # Today's path (pre-S6): n8n's `media-route` replies on its own when its
             # extraction fails or outlives its wait. Answering such a photo here too
@@ -1855,8 +2397,11 @@ def _answer_earlier_messages(
         try:
             if item.row_id is not None:
                 earlier_envelope = Envelope.model_validate(item.envelope)
-            else:
+            elif item.job_id is not None:
                 earlier_envelope = Envelope.model_validate(send_order.ledger_envelope(mine, item))
+            else:
+                # CHAT-SEND-ORDER: only stored so far; its own intake reads it here.
+                earlier_envelope = Envelope.model_validate(send_order.stored_envelope(mine, item))
         except ValueError:
             logger.warning(
                 "chatbot send order: could not rebuild the envelope of an earlier message "
@@ -1874,7 +2419,12 @@ def _answer_earlier_messages(
                 else:
                     try:
                         earlier_id = str(
-                            _insert_turn(db, envelope=earlier_envelope, contact_respond_id=contact_respond_id).id
+                            _insert_turn(
+                                db,
+                                envelope=earlier_envelope,
+                                contact_respond_id=contact_respond_id,
+                                turn_id=own_id,
+                            ).id
                         )
                     except IntegrityError:
                         # Its own delivery reached the CRM in the meantime and owns it now.
@@ -2015,65 +2565,43 @@ def _roster_is_outstanding(verdict: dict[str, Any], focus: Any) -> bool:
     return jsc.nullish_str(getattr(focus, "status", None)).strip() in OUTSTANDING_ORDER_STATUS
 
 
-def _top_selling_dealer_scope(
-    db: Session,
-    parse_output: dict[str, Any],
-    focus: Any,
-    contact_respond_id: Any,
-    space_id: str | None,
-) -> dict[str, Any]:
-    """Reviewer S2 on PR #1273 (owner: a dealer sees only its own customers; ruling
-    pending owner confirmation). A linked dealer contact's top selling ask never
-    reaches the generic customer resolver, whose picker lists every matching
-    customer's name before the route could refuse. Its customer words are matched
-    against its OWN ledgers only (`business_services.top_selling_dealer_ledgers`):
-    all matched, the ranking runs on those ledgers (`dealer_customer_ids` on the slot);
-    any word matching none of them, the lane refuses with the plain line and fetches
-    nothing (`dealer_refused`). Staff and unlinked contacts are untouched here."""
-    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
-    if slot is not None:
-        slot.pop("dealer_refused", None)
-    own = business_services.top_selling_dealer_ledgers(db, contact_respond_id, space_id)
-    if own is None:
-        return parse_output
-    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
-
-    def _is_customer(e: dict[str, Any]) -> bool:
-        return e.get("hint") == "customer" or e.get("entity_type") == "customer"
-
-    words = [jsc.js_string(e.get("raw")) for e in entities if _is_customer(e) and jsc.truthy(e.get("raw"))]
-    focus.customers = []
-    if slot is None:
-        slot = focus.top_selling = {}
-    if words:
-        ids = business_services.top_selling_dealer_customer_ids(own, words)
-        if ids is None:
-            slot["dealer_refused"] = True
-            slot.pop("dealer_customer_ids", None)
-        else:
-            slot["dealer_customer_ids"] = ids
-    return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
-
-
-def _reference_scope(customer_scope: dict[str, Any] | None, profile: Any) -> list[Any] | None:
+def _reference_scope(
+    customer_scope: dict[str, Any] | None, profile: Any, *, doc_staff: bool = False
+) -> list[Any] | None:
     """REF-PROBES: the customer links a reference-number match must belong to, or None when
     no scope applies. Enforced dealers and any non-staff contact are held to their links (an
-    unlinked dealer has none, so another customer's sales order is never offered)."""
+    unlinked dealer has none, so another customer's sales order is never offered).
+    V1-DOC-SCOPE: for an SO / DO number staff is the tier OR the contact's `doc_staff` (an
+    active office access type or a staff CRM user, read with the scope by
+    `services.customer_scope_and_staff`). A linked staff user is enforced yet `doc_staff`,
+    and is not held to its links here; the tier alone never lifts an enforced scope. Called
+    without `doc_staff` this is the tier rule (`ref_staff`), which a customer PO ref keeps
+    (V1-DOC-SCOPE-SALES crew ruling, 14 Oct)."""
     scope = customer_scope or {}
-    if scope.get("enforced"):
+    if scope.get("enforced") and not doc_staff:
         return list(scope.get("linked") or [])
-    return None if is_staff_profile(profile) else list(scope.get("linked") or [])
+    return None if (doc_staff or is_staff_profile(profile)) else list(scope.get("linked") or [])
 
 
 def _reference_kinds(
-    ctx: dict[str, Any], customer_scope: dict[str, Any] | None, profile: Any, *, per_match_scope: bool = True
+    ctx: dict[str, Any],
+    customer_scope: dict[str, Any] | None,
+    profile: Any,
+    *,
+    per_match_scope: bool = True,
+    doc_staff: bool = False,
 ) -> list[str]:
     """The reference kinds this asker may have probed. A lane with no per-match scope drop
-    (`per_match_scope=False`, the casual clarifier) loses the customer-owned kinds (sales order,
-    PO ref) for any contact held to links."""
+    (`per_match_scope=False`, the casual clarifier) loses the customer-owned kinds for any
+    contact held to links: a sales order by the document staff rule, a customer PO ref by
+    the tier rule (V1-DOC-SCOPE-SALES), so no PO ref match reaches the clarifier for a
+    contact the tier rule holds."""
     kinds = visible_reference_kinds((ctx.get("access") or {}).get("attributes"), is_staff_profile(profile))
-    if not per_match_scope and _reference_scope(customer_scope, profile) is not None:
-        kinds = [k for k in kinds if k not in ("sales_order", "customer_po_ref")]
+    if not per_match_scope:
+        if _reference_scope(customer_scope, profile, doc_staff=doc_staff) is not None:
+            kinds = [k for k in kinds if k != "sales_order"]
+        if _reference_scope(customer_scope, profile) is not None:
+            kinds = [k for k in kinds if k != "customer_po_ref"]
     return kinds
 
 
@@ -2097,9 +2625,16 @@ def _customer_scope_gate(
     turn's customers: the matched ones, or all of them for a message naming none
     (`self_reference` and a bare ask alike). Words carried from an earlier turn are never
     matched, so a refusal cannot lock the turns after it. `self_reference` ("my", "me",
-    "our") means the links for staff too. Unlinked contacts, staff without "my" and top
-    selling (its own block, `_top_selling_dealer_scope`) are untouched."""
-    if not scope or focus.status == "top_selling":
+    "our") means the links for staff too. Unlinked contacts and staff without "my" are
+    untouched.
+
+    V1-DOC-SCOPE slice 3 (owner rule: unlinked != customer): an unlinked contact that is not
+    document staff owns no customer, but it is held AFTER the resolver, not here on the
+    parser's tag: `resolve_kinds(hide_customers=...)` drops every customer row before the
+    picker or its DO probe, and a word typed this message that only matched customers refuses
+    the turn with the no-link line. A brand the parser tagged a customer ("cabana stock",
+    owner Q1) is still the brand."""
+    if not scope:
         return parse_output, None, False, None
     self_reference = verdict.get("self_reference") is True
     enforced = bool(scope.get("enforced"))
@@ -2173,6 +2708,28 @@ def _customer_scope_gate(
     if not in_order:
         return parse_output, None, False, None
     return without_customers, ids, False, None
+
+
+def _typed_this_message(tokens: Any, verdict: dict[str, Any]) -> bool:
+    """Is any of the resolver's `tokens` a word the contact typed this message (an entity
+    with `current_message`), compared case and space folded?"""
+
+    def _fold(word: Any) -> str:
+        return " ".join(jsc.js_string(word).split()).lower()
+
+    typed = {
+        _fold(e.get("raw"))
+        for e in verdict.get("entities") or []
+        if isinstance(e, dict) and e.get("current_message") is True and jsc.truthy(e.get("raw"))
+    }
+    return any(_fold(t) in typed for t in jsc.array(tokens))
+
+
+def _no_link_refusal() -> str:
+    """The scope refusal over no links ("I can only check on your own account")."""
+    from app.services import contact_customer_scope as scope_mod
+
+    return scope_mod.refusal_line(scope_mod.ContactCustomerScope(linked=(), staff=False))
 
 
 def _with_account_answer(verdict: dict[str, Any], carried: Any) -> dict[str, Any]:
@@ -2366,679 +2923,29 @@ def _pass_scope_gate(
     return {**payload, "gate": gate}
 
 
-def _top_selling_narrowing(
-    db: Session, parse_output: dict[str, Any], focus: Any, *, dealer: bool
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Owner retest of top selling (27 Sep 2026, PR #1273): the words that narrow a
-    ranking never reach the generic resolver, which read "fanny" (a sales agent) and
-    "sorento" (a brand) as customers and answered "Could not find" for a brand under
-    `order`. Returns the resolver's input without them, and the slot updates this
-    message makes (`_apply_top_selling_updates` writes them after the resolver, so the
-    resolver's re-entry into APPLY cannot drop them).
-
-    * hint `category`: stripped; the lane resolves it (`category_words`, AC-1954).
-    * hint `brand`, or a `customer` word that IS a brand's name or code: the brand
-      filter (`brand_ids`); a word naming no brand is said once (`unknown`).
-    * hint `sales_agent`: the agent filter (`agent_ids`); unknown is said once.
-    * hint `customer` naming a sales agent: the agent, unless a customer carries the
-      word too, then one question asks which (`who`). A dealer never has the customer
-      table searched (its customer words are its own ledgers, `_top_selling_dealer_scope`).
-    Only this message's own words are resolved; a carried row of these hints is just
-    kept away from the resolver."""
-    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
-    updates: dict[str, Any] = {}
-    kept: list[dict[str, Any]] = []
-    unknown: list[list[str]] = []
-
-    def _add(key: str, ids: list[str]) -> None:
-        bucket = updates.setdefault(key, [])
-        bucket.extend(i for i in ids if i not in bucket)
-
-    for e in entities:
-        hint = jsc.js_string(e.get("hint") or e.get("entity_type") or "")
-        raw = jsc.js_string(e.get("raw") or "").strip()
-        current = e.get("current_message") is not False and not e.get("uuid")
-        if hint == "category":
-            continue
-        if hint not in ("brand", "sales_agent", "customer"):
-            kept.append(e)
-            continue
-        if not current or not raw:
-            if hint == "customer":
-                kept.append(e)
-            continue
-        if hint == "brand":
-            brands = business_services.resolve_brand_token(db, raw)
-            if brands:
-                _add("brand_ids", [b[0] for b in brands])
-            else:
-                unknown.append(["brand", raw])
-            continue
-        if hint == "sales_agent":
-            agents = business_services.resolve_sales_agent_token(db, raw)
-            if agents:
-                _add("agent_ids", [a[0] for a in agents])
-            else:
-                unknown.append(["sales agent", raw])
-            continue
-        brands = business_services.resolve_brand_token(db, raw, exact_only=True)
-        if brands:
-            _add("brand_ids", [b[0] for b in brands])
-            continue
-        agents = [] if dealer else business_services.resolve_sales_agent_token(db, raw)
-        if not agents:
-            kept.append(e)
-            updates["customer_named"] = True
-            continue
-        customers = business_services.customers_named(db, raw)
-        if customers:
-            updates["who"] = {
-                "word": raw,
-                "customer_ids": [c[0] for c in customers],
-                "customer_label": customers[0][1] if len(customers) == 1 else None,
-                "agent_ids": [a[0] for a in agents],
-                "agent_label": ", ".join(a[1] for a in agents),
-            }
-        else:
-            _add("agent_ids", [a[0] for a in agents])
-    if unknown:
-        updates["unknown"] = unknown
-    return {**parse_output, "entities": kept}, updates
-
-
-def _without_carried_words(parse_output: dict[str, Any]) -> dict[str, Any]:
-    """The resolver's input on a report a ranking handed over to (`focus.top_selling.
-    hop`, PR #1273 round 7). What the ranking resolved is carried as resolved entities
-    (the customer ids and labels on the focus); a word is never looked up again, least of
-    all under another kind: "Jayden", the ranking's sales agent, came back from the
-    customer resolver as SAMPLE JAYDEN, and "wt" as two customers whose names hold the
-    letters. So a sales agent, category or brand word (the report cannot filter by them;
-    `apply._hop_to_report` says so in one line) and any carried word with no id are
-    dropped here."""
-    kept = [
-        e
-        for e in (parse_output.get("entities") or [])
-        if isinstance(e, dict)
-        and jsc.js_string(e.get("hint") or e.get("entity_type") or "") not in ("sales_agent", "category", "brand")
-        and (e.get("current_message") is not False or e.get("uuid"))
-    ]
-    return {**parse_output, "entities": kept}
-
-
-def _apply_top_selling_updates(focus: Any, updates: dict[str, Any]) -> None:
-    """Write `_top_selling_narrowing`'s updates onto the ranking's slot. A new agent,
-    brand or customer word replaces that axis (the ranking is narrowed by what the
-    customer names NOW, owner retest 27 Sep 2026)."""
-    if not updates or focus.status != "top_selling":
-        return
-    slot = focus.top_selling if isinstance(focus.top_selling, dict) else {}
-    for key in ("agent_ids", "brand_ids"):
-        if key in updates:
-            slot[key] = list(updates[key])
-    if updates.get("customer_named"):
-        slot.pop("customer_ids", None)
-    if "who" in updates:
-        slot["who"] = dict(updates["who"])
-    if updates.get("unknown"):
-        slot["unknown"] = [*(slot.get("unknown") or []), *[list(u) for u in updates["unknown"]]]
-    focus.top_selling = slot
-
-
-#: The words of the options "Do you mean customer X or sales agent Y? Reply 1 for the
-#: customer, 2 for the sales agent." prints (`lanes/business._top_selling_ask_who`),
-#: and the option each names. A reply carrying one of them picks that option, as a typed
-#: label picks any other printed list (owner retest of round 4, 27 Sep 2026, R2).
-#: Round 9 (owner hand test after round 8, 28 Sep 2026): "salesman" and "saleman" fell
-#: to the low signal greeting; the other words people call either side mean the same.
-TOP_SELLING_WHO_WORDS = {
-    "customer": 1, "client": 1,
-    "sales": 2, "agent": 2, "salesman": 2, "salesmen": 2, "salesperson": 2, "rep": 2,
-}
-_WORD_RE = re.compile(r"[a-z]+")
-#: Words this short are matched exactly: one edit from "rep" is too many other words.
-_WHO_TYPO_MIN_LEN = 4
-
-
-def _words(text: str) -> list[str]:
-    return _WORD_RE.findall((text or "").lower())
-
-
-def _one_edit_apart(a: str, b: str) -> bool:
-    """One insertion, deletion, substitution or swap of two neighbouring letters."""
-    if a == b or abs(len(a) - len(b)) > 1:
-        return a == b
-    if len(a) == len(b):
-        diff = [i for i in range(len(a)) if a[i] != b[i]]
-        return len(diff) == 1 or (
-            len(diff) == 2 and diff[1] == diff[0] + 1 and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]]
-        )
-    short, long_ = (a, b) if len(a) < len(b) else (b, a)
-    return any(long_[:i] + long_[i + 1 :] == short for i in range(len(long_)))
-
-
-def _who_word(word: str, *, typos: bool) -> int | None:
-    """The option a word of the reply names, a typo one edit away included when `typos`."""
-    if word in TOP_SELLING_WHO_WORDS:
-        return TOP_SELLING_WHO_WORDS[word]
-    if not typos or len(word) < _WHO_TYPO_MIN_LEN:
-        return None
-    near = {
-        option
-        for known, option in TOP_SELLING_WHO_WORDS.items()
-        if len(known) >= _WHO_TYPO_MIN_LEN + 1 and _one_edit_apart(word, known)
-    }
-    return near.pop() if len(near) == 1 else None
-
-
-def _top_selling_who_answer(db: Session, text: str, verdict: dict[str, Any], who: dict[str, Any]) -> int | None:
-    """Which option of the open "customer or sales agent?" question this message
-    picks: 1, 2, 0 for "neither" (the parser's own `is_affirmative: false`), or None
-    when it answers something else. Round 9: a short reply is also read for typos of
-    the option words ("saleman") and for the customer name or the agent's code or
-    person label the question named ("WT", "SAMPLE - WILLIAM")."""
-    bare = (text or "").strip()
-    if bare in ("1", "2"):
-        return int(bare)
-    short = len(bare.split()) <= _TOP_SELLING_ANSWER_WORDS
-    picked = {p for p in (_who_word(w, typos=short) for w in _words(text)) if p is not None}
-    if 2 in picked:
-        return 2
-    if picked == {1}:
-        return 1
-    if short and bare:
-        agents = {i for i, _ in business_services.resolve_sales_agent_token(db, bare)} & set(who.get("agent_ids") or [])
-        customers = {i for i, _ in business_services.customers_named(db, bare)} & set(who.get("customer_ids") or [])
-        if agents and not customers:
-            return 2
-        if customers and not agents:
-            return 1
-    hints = {e.get("hint") for e in (verdict.get("entities") or []) if isinstance(e, dict)}
-    if "sales_agent" in hints:
-        return 2
-    if verdict.get("is_affirmative") is False:
-        return 0
-    return None
-
-
-#: The options each ranking question prints (`lanes/business._top_selling_question`,
-#: and the route's how-many reply), as the parser key its answer sets, the option words
-#: and the values in the order the question lists them, so "1" / "2" is that option
-#: (owner retest of round 5, 27 Sep 2026: "amount" under "By quantity or by amount?"
-#: was read as a new order ask and the order list ran).
-TOP_SELLING_OPTION_ANSWERS: dict[str, tuple[str, dict[str, str], tuple[str, ...]]] = {
-    "metric": (
-        "rank_by",
-        {"qty": "quantity", "quantity": "quantity", "units": "quantity",
-         "amount": "amount", "amt": "amount", "value": "amount", "rm": "amount"},
-        ("quantity", "amount"),
-    ),
-    "group": (
-        "rank_group",
-        {"item": "item", "items": "item", "product": "item", "products": "item",
-         "categories": "category", "category": "category"},
-        ("item", "category"),
-    ),
-    "basis": (
-        "basis",
-        {"delivered": "delivered", "delivery": "delivered", "transferred": "delivered", "do": "delivered",
-         "ordered": "ordered", "order": "ordered", "orders": "ordered", "booked": "ordered"},
-        ("delivered", "ordered"),
-    ),
-}
-#: An answer longer than this names more than the option; it is bound only when the
-#: parser itself read it as the ranking.
-_TOP_SELLING_ANSWER_WORDS = 4
-_COUNT_RE = re.compile(r"^(?:top\s+)?(\d{1,3})$")
-
-
-def _top_selling_question_answer(text: str, verdict: dict[str, Any], asked: Any) -> dict[str, Any] | None:
-    """The parser keys the answer to the ranking question the last reply asked
-    (`focus.top_selling.asked`), read off that question's own printed options, or None
-    when the message does not answer it. The question lives on the focus, which the
-    console carries between dry runs exactly as the contact's session does on WhatsApp,
-    so the answer binds the same way on both (owner retest of round 5, 27 Sep 2026)."""
-    bare = " ".join((text or "").lower().replace(",", " ").split()).strip(" .!?")
-    words = _words(text)
-    short = len(bare.split()) <= _TOP_SELLING_ANSWER_WORDS
-    own = jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
-    if asked in TOP_SELLING_OPTION_ANSWERS:
-        key, options, order = TOP_SELLING_OPTION_ANSWERS[asked]
-        if verdict.get(key) in order:
-            return None
-        if bare in ("1", "2"):
-            return {key: order[int(bare) - 1]}
-        picked = {options[w] for w in words if w in options}
-        if len(picked) == 1 and (short or own):
-            return {key: picked.pop()}
-        return None
-    if asked == "how_many":
-        match = _COUNT_RE.match(bare)
-        if match and verdict.get("top_n") is None and int(match.group(1)) >= 1:
-            return {"top_n": int(match.group(1))}
-        return None
-    if asked == "category":
-        # "Which category do you mean? Reply with one code: ..." - the reply is the code.
-        if bare and not bare.isdigit() and short and not verdict.get("entities"):
-            return {"entities": [{
-                "raw": (text or "").strip().strip(" .!?"), "hint": "category", "canonical_code": None,
-                "current_message": True, "confident": True, "hint_confident": True,
-            }]}
-        return None
-    return None
-
-
-def _as_ranking_answer(verdict: dict[str, Any], **keys: Any) -> dict[str, Any]:
-    """`verdict` re-read as a refinement of the ranking on screen: the top selling ask,
-    no ask of its own, only its category and brand words kept."""
-    kept = [
-        e for e in (verdict.get("entities") or [])
-        if isinstance(e, dict) and e.get("hint") in ("category", "brand")
-    ]
-    out = {
-        **verdict,
-        "message_type": "business_query",
-        "domain_hint": SALES_DOMAIN,
-        "intent_hint": "check_order",
-        "order_status": "top_selling",
-        "domain_in_message": None,
-        "reference_positions": [],
-        "entities": kept,
-        "asks": None,
-        # Never a document, a report status or a pick of the list on screen (PR #1273
-        # round 7: "sales order?" arrived as `open_question_answer` picking row 1).
-        "status": None,
-        "document": None,
-        "is_affirmative": None,
-        "open_question_answer": dict(_NO_OPEN_QUESTION_ANSWER),
-    }
-    out.update(keys)
-    return out
-
-
-_NO_OPEN_QUESTION_ANSWER = turn_question.NO_ANSWER
-
-
 def _positions_read_elsewhere(state: Any) -> bool:
     """Is a question that is NOT an `Open question:` object still waiting on a position
-    (`turn_question.without_phantom_answer`): the ideation media menu, or one of the top
-    selling questions the last reply asked (`focus.top_selling.asked`)."""
+    (`turn_question.without_phantom_answer`): the ideation media menu."""
     ideation = state.ideation if isinstance(state.ideation, dict) else {}
-    asked = (state.focus.top_selling or {}).get("asked") if isinstance(state.focus.top_selling, dict) else None
-    return bool(ideation.get("pending_media")) or bool(asked)
-
-#: Ranking words (PR #1273 round 7: "top 10 hot selling item by william in q1 2026" was
-#: read as an order ask and fell into "Could not find order"). A rank word, an optional
-#: count and up to two more words, then a selling word: "top 10 hot selling", "worst 20
-#: selling", "most sold", "best sellers". "sold to hanlim" or "what did we sell" alone is
-#: not a ranking and is left to the parser.
-_RANKING_WORDS_RE = re.compile(
-    r"\b(?:top|best|worst|worse|worsr|bottom|least|most|highest|lowest|hot|cold)\b"
-    r"(?:\s+\d{1,3})?(?:\s+[a-z]+){0,2}?\s+(?:selling|sold|sellers?)\b"
-)
-_RANKING_COUNT_RE = re.compile(r"\b(?:top|best|worst|worse|worsr|bottom|least|lowest)\s+(\d{1,3})\b")
-_RANKING_BOTTOM_WORDS = frozenset({"worst", "worse", "worsr", "bottom", "least", "lowest", "cold"})
-
-
-def _ranking_words_claim(verdict: dict[str, Any], text: str) -> dict[str, Any] | None:
-    """`verdict` re-read as the top selling ask when the message says one in so many
-    words and the parser read it as something else; None otherwise. The parser's own
-    entities and dates stand; the count and the direction are read off the words only
-    when the parser gave none. A person ask is never claimed."""
-    if jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling":
-        return None
-    if verdict.get("message_type") == "request_for_help":
-        return None
-    lowered = (text or "").lower()
-    if not _RANKING_WORDS_RE.search(lowered):
-        return None
-    out = {
-        **verdict,
-        "message_type": "business_query",
-        "domain_hint": SALES_DOMAIN,
-        "intent_hint": "check_order",
-        "order_status": "top_selling",
-        "domain_in_message": True,
-        "status": None,
-        "document": None,
-        "reference_positions": [],
-        "is_affirmative": None,
-        "open_question_answer": dict(_NO_OPEN_QUESTION_ANSWER),
-        "asks": None,
-    }
-    count = _RANKING_COUNT_RE.search(lowered)
-    if out.get("top_n") is None and count and int(count.group(1)) >= 1:
-        out["top_n"] = int(count.group(1))
-    if out.get("rank_direction") is None and _RANKING_BOTTOM_WORDS & set(_words(lowered)):
-        out["rank_direction"] = "bottom"
-    return out
-
-
-#: The basis words (PR #1273 round 7: "sales order?" was read as a pick of row 1, and
-#: "based on sales order" left the basis on Delivered). A message made of one of these
-#: and the filler below switches the ranking on screen to that basis. "can show me the
-#: DO" is not one (round 5: the delivery order report), and neither is anything naming
-#: more than the basis.
-TOP_SELLING_BASIS_WORDS: dict[tuple[str, ...], str] = {
-    ("sales", "order"): "ordered",
-    ("sales", "orders"): "ordered",
-    ("so",): "ordered",
-    ("ordered",): "ordered",
-    ("delivery", "order"): "delivered",
-    ("delivery", "orders"): "delivered",
-    ("do",): "delivered",
-    ("delivered",): "delivered",
-    ("delivery",): "delivered",
-}
-_BASIS_FILLER = frozenset({
-    "based", "base", "basis", "on", "by", "in", "use", "using", "terms", "of", "i", "mean", "what", "about",
-    "how", "then", "ok", "okay", "instead", "switch", "to", "please", "pls", "rank", "ranked", "ranking",
-})
-
-
-def _basis_words(text: str) -> str | None:
-    words = [w for w in _words(text) if w not in _BASIS_FILLER]
-    return TOP_SELLING_BASIS_WORDS.get(tuple(words))
-
-
-#: The words a period alone is said in ("2025?", "july", "q1 2026", "in 2024", "last
-#: year"), and the filler around them. PR #1273 round 7: over an open ranking a period
-#: re-runs the ranking for it (round 5 R7), whatever the parser made of the message.
-_MONTH_WORDS = frozenset({
-    "jan", "january", "feb", "february", "mar", "march", "apr", "april", "may", "jun", "june", "jul", "july",
-    "aug", "august", "sep", "sept", "september", "oct", "october", "nov", "november", "dec", "december",
-})
-_PERIOD_WORDS = _MONTH_WORDS | {"q1", "q2", "q3", "q4", "ytd", "quarter", "year", "month", "week", "today", "yesterday"}
-_PERIOD_FILLER = frozenset({
-    "in", "for", "of", "the", "what", "about", "how", "then", "ok", "okay", "i", "mean", "only", "just",
-    "and", "to", "from", "until", "till", "please", "pls", "last", "this", "next", "year", "month",
-    "quarter", "week",
-})
-_PERIOD_TOKEN_RE = re.compile(r"[a-z]+\d*|\d+")
-
-
-def _period_only(text: str) -> bool:
-    """Is the message only a period: a year, a month or a quarter (with filler)?"""
-    tokens = _PERIOD_TOKEN_RE.findall((text or "").lower())
-    if not tokens:
-        return False
-    named = False
-    for token in tokens:
-        if token.isdigit():
-            if len(token) == 4 and 1900 <= int(token) <= 2100:
-                named = True
-            elif not (len(token) <= 2 and any(t in _MONTH_WORDS for t in tokens)):
-                return False
-        elif token in _PERIOD_WORDS:
-            named = named or token not in _PERIOD_FILLER or token in ("year", "month", "quarter", "week")
-        elif token not in _PERIOD_FILLER:
-            return False
-    return named
-
-
-def _bare_year(text: str) -> int | None:
-    """"2025" or "2025?": a year, never a rank (owner retest of round 4, R7)."""
-    bare = (text or "").strip().rstrip("?").strip()
-    if len(bare) == 4 and bare.isdigit() and 1900 <= int(bare) <= 2100:
-        return int(bare)
-    return None
-
-
-def _split_noisy_token(db: Session, raw: str) -> tuple[list[dict[str, Any]], list[str]] | None:
-    """Owner retest of round 4 (27 Sep 2026, R4): one entity carrying several things
-    ("fanny water closet", "bathtub by sean") split into word groups, longest first,
-    each matched against sales agents, categories, brands and customers in turn
-    (`_classify_word_group`). The words the question's own options print ("sales
-    agent", "customer") mark the kind of the group before them, and a leftover of three
-    letters or more is returned to be said once. None when no group matches."""
-    words = raw.split()
-    if len(words) < 2:
-        return None
-    found: list[dict[str, Any]] = []
-    leftover: list[str] = []
-    i = 0
-    while i < len(words):
-        for size in range(len(words) - i, 0, -1):
-            group = " ".join(words[i : i + size])
-            hint = _classify_word_group(db, group)
-            if hint:
-                found.append({"raw": group, "hint": hint})
-                i += size
-                break
-        else:
-            word = words[i]
-            if word.lower() in TOP_SELLING_WHO_WORDS:
-                if TOP_SELLING_WHO_WORDS[word.lower()] == 2 and found and found[-1]["hint"] == "customer":
-                    found[-1]["hint"] = "sales_agent"
-            elif len(word) >= 3:
-                leftover.append(word)
-            i += 1
-    if not found:
-        return None
-    return found, leftover
-
-
-def _classify_word_group(db: Session, group: str) -> str | None:
-    """The kind one word group names, matched strictly (a category by its code, name or
-    class vocabulary term, never by containing a class word), so "fanny water closet"
-    is not taken whole as the Water Closet class."""
-    from app.services.product_class_signal import resolve_classes_for_term
-
-    if group.lower() in TOP_SELLING_WHO_WORDS:
-        return None
-    # A category or an exact brand beats a sales agent alias ("water closet", "sorento" are
-    # aliases of an agent on dev): customers stay last.
-    if business_services.resolve_category_token(db, group) or resolve_classes_for_term(db, group.lower()):
-        return "category"
-    if business_services.resolve_brand_token(db, group, exact_only=True):
-        return "brand"
-    if business_services.resolve_sales_agent_token(db, group):
-        return "sales_agent"
-    if business_services.customers_named(db, group):
-        return "customer"
-    return None
-
-
-def _resolves_whole(db: Session, raw: str, hint: str) -> bool:
-    if hint == "sales_agent":
-        return bool(business_services.resolve_sales_agent_token(db, raw))
-    if hint == "category":
-        return bool(business_services.resolve_category_token(db, raw)) or bool(
-            business_services.resolve_category_class(db, raw)[0]
-        )
-    if hint == "brand":
-        return bool(business_services.resolve_brand_token(db, raw))
-    if hint == "customer":
-        return bool(business_services.customers_named(db, raw))
-    return False
-
-
-def _noisy_split(db: Session, raw: str, hint: str) -> tuple[list[dict[str, Any]], list[str]] | None:
-    """The split of a noisy token, or None to keep it whole. A token naming a sales
-    agent or a brand beside another kind always splits ("fanny water closet"); any
-    other token splits only when it does not resolve whole under its own hint (so
-    "water tap" stays the Tap class and "SAMPLE - FANNY NG" stays one customer)."""
-    split = _split_noisy_token(db, raw)
-    if split is None:
-        return None
-    parts, _rest = split
-    kinds = {p["hint"] for p in parts}
-    if len(kinds) > 1 and kinds & {"sales_agent", "brand"}:
-        return split
-    if hint in ("customer", "sales_agent", "category", "brand") and _resolves_whole(db, raw, hint):
-        return None
-    return split
-
-
-def _top_selling_verdict(
-    db: Session, verdict: dict[str, Any], state: Any, text: str
-) -> tuple[dict[str, Any], Any, str | None]:
-    """Owner retest of top selling round 4 (27 Sep 2026, PR #1273): inside a ranking
-    conversation the message is read against the question the bot asked, before the
-    parser's reading can send it anywhere else. Returns the verdict to apply, the state
-    (a customer picker the correction dismisses is closed) and the rule that fired.
-
-    * R1/R2 an answer to "customer or sales agent?" ("2", "yeah sales agent", "fanny
-      sales agent", "neither") binds to that question only (`top_selling_who`).
-    * R3 "neither" or "customer is everyone" over a customer picker the ranking opened
-      clears the customer; it never picks every row of the picker.
-    * R7 over a ranked list only a bare 1 to N picks a rank; "2025" or "2025?" is the
-      year, anything else is a new message (the positions are dropped).
-    * R6 an out of scope reading inside a ranking asks one short question instead.
-    * R2/R4 a customer word the message calls an agent is the agent; a word carrying
-      several things splits into its parts, the leftover said once.
-
-    Round 7 (owner retest of round 5, part 2): ranking words ("top 10 hot selling") are
-    the ranking whatever the parser's status; an echoed word from an earlier turn is
-    dropped; basis words switch the basis; a period alone re-runs the ranking for it.
-    """
-    if jsc.js_string(verdict.get("order_status") or "").strip() == "sales_ranking":
-        # A new ask the parser named (owner held-state rule: a new intent always wins): never
-        # captured by an open top selling question.
-        return verdict, state, None
-    focus = state.focus
-    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
-    ranking = focus.status == "top_selling" or bool(slot and slot.get("hop"))
-    # An out of scope reading inside a ranking keeps round 5's one short question (R6).
-    claimed = None if ranking and verdict.get("message_type") == "out_of_scope" else _ranking_words_claim(verdict, text)
-    if claimed is not None:
-        verdict = claimed
-    if slot is not None:
-        # R1 (round 7): a word the parser echoes from an earlier turn (`current_message:
-        # false`, no id) is never read again: the ranking already resolved it, and the
-        # report it hands over to carries what it resolved (`apply._hop_to_report`).
-        entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
-        fresh = [e for e in entities if e.get("current_message") is not False or e.get("uuid")]
-        if len(fresh) != len(entities):
-            verdict = {**verdict, "entities": fresh}
-    asks_ranking = jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
-    if not (ranking or asks_ranking):
-        return verdict, state, None
-    pending = state.pending
-    if ranking and slot and slot.get("asked") == "who" and isinstance(slot.get("who"), dict):
-        answer = _top_selling_who_answer(db, text, verdict, slot["who"])
-        if answer is not None:
-            return _as_ranking_answer(verdict, top_selling_who=answer), state, "top_selling_who_answer"
-    if focus.status == "top_selling" and slot and slot.get("asked"):
-        answer_keys = _top_selling_question_answer(text, verdict, slot.get("asked"))
-        if answer_keys is not None:
-            return _as_ranking_answer(verdict, **answer_keys), state, "top_selling_question_answer"
-    if focus.status == "top_selling" and claimed is None:
-        # R3 (round 7): "sales order?", "based on sales order", "by SO", "ordered" switch
-        # the ranking on screen to Basis: Ordered; "delivered", "by DO" switch it back.
-        basis = _basis_words(text)
-        if basis is not None:
-            return _as_ranking_answer(verdict, basis=basis), state, "top_selling_basis_words"
-        # R2 (round 7): a year, a month or a quarter alone re-runs the ranking for it,
-        # whether or not a ranked list is open to pick from.
-        if _period_only(text):
-            if verdict.get("date_filter_start") or verdict.get("date_filter_end") or verdict.get("date_mode"):
-                return _as_ranking_answer(verdict), state, "top_selling_period"
-            year = _bare_year(text)
-            if year is not None:
-                return (
-                    _as_ranking_answer(
-                        verdict, date_filter_start=f"{year}-01-01", date_filter_end=f"{year}-12-31", date_mode=None
-                    ),
-                    state,
-                    "top_selling_period",
-                )
-    if ranking and pending is not None and pending.kind == "top_selling_pick":
-        year = _bare_year(text)
-        if year is not None:
-            return (
-                _as_ranking_answer(
-                    verdict, date_filter_start=f"{year}-01-01", date_filter_end=f"{year}-12-31", date_mode=None
-                ),
-                state,
-                "top_selling_year_not_rank",
-            )
-        bare = (text or "").strip()
-        in_list = bare.isdigit() and 1 <= int(bare) <= len(pending.options)
-        answer = verdict.get("open_question_answer")
-        if isinstance(answer, dict) and answer.get("mode") == "pick" and not in_list:
-            # The same rule for the parser's other way of picking a row (round 7).
-            verdict = {**verdict, "open_question_answer": dict(_NO_OPEN_QUESTION_ANSWER)}
-        if verdict.get("reference_positions") and not in_list:
-            verdict = {**verdict, "reference_positions": []}
-            if verdict.get("message_type") in ("casual", "clarification", "low_signal", None):
-                return _as_ranking_answer(verdict), state, "top_selling_not_a_rank"
-    if ranking and pending is not None and pending.kind == "customer_pick":
-        widens = broaden_level(verdict) == EVERYTHING and broaden_kind(verdict) in (None, "customer")
-        says_agent = any(TOP_SELLING_WHO_WORDS.get(w) == 2 for w in _words(text))
-        if widens or says_agent or verdict.get("is_affirmative") is False:
-            entities = [
-                {**e, "hint": "sales_agent"} if says_agent and e.get("hint") == "customer" else e
-                for e in (verdict.get("entities") or [])
-                if isinstance(e, dict)
-            ]
-            state = dataclasses_replace(state, pending=None)
-            return (
-                _as_ranking_answer(
-                    {**verdict, "entities": []},
-                    entities=[e for e in entities if e.get("hint") in ("category", "brand", "sales_agent")],
-                    broaden_axis="customer",
-                    broaden_to="all",
-                    correction=True,
-                ),
-                state,
-                "top_selling_customer_picker_dismissed",
-            )
-    if ranking and verdict.get("message_type") == "out_of_scope":
-        return _as_ranking_answer(verdict, top_selling_unclear=True), state, "top_selling_unclear"
-    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
-    says_agent = any(TOP_SELLING_WHO_WORDS.get(w) == 2 for w in _words(text))
-    rebuilt: list[dict[str, Any]] = []
-    leftover: list[str] = []
-    changed = False
-    for e in entities:
-        hint = jsc.js_string(e.get("hint") or "")
-        raw = " ".join(jsc.js_string(e.get("raw") or "").split())
-        current = e.get("current_message") is not False and not e.get("uuid")
-        if current and raw and hint == "specification" and not e.get("spec_key"):
-            # Merge of main into PR #833 (fix round 13): the specification kind splits
-            # "fanny water closet" into the class and an UNKNOWN specification "fanny"
-            # before this reading; inside a ranking such a word is a group like any other.
-            # A word that names nothing is the leftover said once ("marble").
-            kind = _classify_word_group(db, raw)
-            split = ([{"raw": raw, "hint": kind}], []) if kind else _split_noisy_token(db, raw)
-            if split is None:
-                split = ([], [w for w in raw.split() if len(w) >= 3 and w.lower() not in TOP_SELLING_WHO_WORDS])
-        elif not current or not raw or hint not in ("customer", "sales_agent", "category", "brand", "promotion", "product"):
-            rebuilt.append(e)
-            continue
-        else:
-            split = _noisy_split(db, raw, hint)
-        if split is None:
-            if hint == "customer" and says_agent and business_services.resolve_sales_agent_token(db, raw):
-                # "by sean salea agent": the message calls the name an agent (R2).
-                rebuilt.append({**e, "hint": "sales_agent"})
-                changed = True
-            else:
-                rebuilt.append(e)
-            continue
-        parts, rest = split
-        for part in parts:
-            if says_agent and part["hint"] == "customer" and business_services.resolve_sales_agent_token(db, part["raw"]):
-                part["hint"] = "sales_agent"
-            rebuilt.append({**e, "raw": part["raw"], "hint": part["hint"], "canonical_code": None, "hint_confident": True})
-        leftover.extend(rest)
-        changed = True
-    if not changed:
-        return verdict, state, "top_selling_ranking_words" if claimed is not None else None
-    out = {**verdict, "entities": rebuilt}
-    if leftover:
-        out["top_selling_leftover"] = leftover
-    if not asks_ranking and out.get("domain_hint") not in (None, "", *ORDER_OR_SALES_DOMAINS):
-        # A word the parser sent to a promotion or document lookup, inside a ranking.
-        out = _as_ranking_answer(out, entities=rebuilt)
-    return out, state, "top_selling_split_token"
+    return bool(ideation.get("pending_media"))
 
 
 def run_turn(
-    envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    offload: bool | None = None,
+    queued_turn_id: str | None = None,
 ) -> TurnResult:
     """One turn, then the final reply pass (`_localize_result`, called by `_run_turn` at its
-    one exit, just before the messages answered ahead are put in front of the actions)."""
+    one exit, just before the messages answered ahead are put in front of the actions).
+
+    `queued_turn_id` (CHAT-INBOX-QUEUE): the inbox drain runs a row it already claimed, in
+    this process (`inbox_queue.drain`)."""
+    if queued_turn_id is not None:
+        return _run_turn(
+            envelope, session_factory=session_factory, offload=False, queued_turn_id=queued_turn_id
+        )
     return _run_turn(envelope, session_factory=session_factory, offload=offload)
 
 
@@ -3105,7 +3012,11 @@ def _ai_allowed(session_factory: SessionFactory, contact_respond_id: str) -> boo
 
 
 def _ai_not_allowed_turn(
-    envelope: Envelope, *, session_factory: SessionFactory, contact_respond_id: str
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    contact_respond_id: str,
+    turn_id: str | None = None,
 ) -> TurnResult:
     """Close a turn for a contact the CRM does not let the AI answer, sending nothing.
 
@@ -3124,8 +3035,13 @@ def _ai_not_allowed_turn(
     dry_run = envelope.dry_run
     message_id = _message_id(envelope)
     with _session(session_factory) as db:
-        existing = _existing_turn(
-            db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+        # `turn_id`: the inbox drain's claimed row (CHAT-INBOX-QUEUE), closed in place.
+        existing = (
+            None
+            if turn_id is not None
+            else _existing_turn(
+                db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+            )
         )
         retrying = existing if _awaiting_retry(existing) else None
         if existing is not None and retrying is None:
@@ -3136,24 +3052,25 @@ def _ai_not_allowed_turn(
             .first()
             is not None
         )
-        try:
-            row = _insert_turn(
-                db,
-                envelope=envelope,
-                contact_respond_id=contact_respond_id,
-                retrying=retrying,
-                queued=False,
-            )
-        except IntegrityError:
-            # Same TOCTOU as `_run_turn`: a racing delivery inserted first; read its row.
-            db.rollback()
-            winner = _select_turn(
-                db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
-            )
-            if winner is None or _awaiting_retry(winner):
-                raise
-            return _duplicate_result(winner)
-        turn_id = str(row.id)
+        if turn_id is None:
+            try:
+                row = _insert_turn(
+                    db,
+                    envelope=envelope,
+                    contact_respond_id=contact_respond_id,
+                    retrying=retrying,
+                    queued=False,
+                )
+            except IntegrityError:
+                # Same TOCTOU as `_run_turn`: a racing delivery inserted first; read its row.
+                db.rollback()
+                winner = _select_turn(
+                    db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+                )
+                if winner is None or _awaiting_retry(winner):
+                    raise
+                return _duplicate_result(winner)
+            turn_id = str(row.id)
         turn_trace.record(
             "received",
             status="skipped",
@@ -3184,9 +3101,318 @@ def _ai_not_allowed_turn(
     )
 
 
+# WA-USERNAME-CONTACTS: asks per contact per rolling window (`PHONE_ASK_CAP`) before the chat goes to staff.
+PHONE_ASK_CAP = 3
+PHONE_WINDOW = timedelta(hours=24)
+
+
+def _phone_gate_applies(
+    envelope: Envelope, *, session_factory: SessionFactory, contact_respond_id: str
+) -> str | None:
+    """WA-USERNAME-CONTACTS: which side of the phone flow this turn is on, or None.
+
+    "card_linked": a contact card from a contact the CRM already knows (ignored, whatever
+    its flag). "unknown": a contact the CRM does not know AND whose envelope carries no
+    phone (a username-only WhatsApp contact). An unknown contact WITH a phone is not this
+    flow: it falls through to the AI-allowed gate unchanged.
+    """
+    from app.models.access import RespondContact
+    from app.services import wa_phone_link
+    from app.services.chat_history_ingest_service import normalise_channel
+
+    # WU20: Share Contact Info is a WhatsApp feature; any other channel is not this flow.
+    channel = envelope.message.get("channel")
+    channel = channel if isinstance(channel, dict) else {}
+    if normalise_channel(channel.get("source") or channel.get("type")) != "whatsapp":
+        return None
+
+    with _session(session_factory) as db:
+        linked = (
+            db.query(RespondContact.id)
+            .filter(RespondContact.respond_io_id == contact_respond_id)
+            .first()
+            is not None
+        )
+    if linked:
+        return "card_linked" if wa_phone_link.is_contact_card(envelope.message) else None
+    contact = envelope.contact
+    if jsc.truthy(contact.get("phone")) or jsc.truthy(contact.get("phoneNumber")):
+        return None
+    return "unknown"
+
+
+def _recent_turn_count(db: Session, *, contact_respond_id: str, branch_kind: str) -> int:
+    return (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.branch_kind == branch_kind,
+            ChatbotTurn.created_at >= _now() - PHONE_WINDOW,
+        )
+        .count()
+    )
+
+
+def _card_accepted_before(db: Session, *, contact_respond_id: str) -> bool:
+    """Has a live turn of this contact ever accepted a contact card (whatever the link did,
+    whatever branch the turn closed on)?"""
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.trace.contains([{"stage": "received", "facts": {"card": "accepted"}}]),
+        )
+        .first()
+        is not None
+    )
+
+
+def _recent_link_failure(db: Session, *, contact_respond_id: str) -> bool:
+    """Did a live turn of this contact hand a failed link to staff in the window?"""
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.branch_kind == "phone_handoff",
+            ChatbotTurn.created_at >= _now() - PHONE_WINDOW,
+            ChatbotTurn.trace.contains([{"stage": "received", "facts": {"link": "failed"}}]),
+        )
+        .first()
+        is not None
+    )
+
+
+def _phone_turn(
+    envelope: Envelope,
+    *,
+    side: str,
+    session_factory: SessionFactory,
+    contact_respond_id: str,
+    turn_id: str | None = None,
+) -> TurnResult:
+    """WA-USERNAME-CONTACTS: close a turn of the phone flow, sending the sender nothing.
+
+    Runs before the AI-allowed gate (an unknown contact would otherwise close silently
+    there). Same shape as `_ai_not_allowed_turn`: deduplicated, one recorded terminal turn,
+    empty reply, no actions. Every Respond.io output (the ask, the verified line, the staff
+    comment) is made by the CRM itself through `wa_phone_link`, because after a merge the
+    turn's own contact id no longer exists and the sender could not reach the survivor. A
+    test turn takes the same decision and makes no Respond.io call. The side effects run
+    only after the dedup read and the row insert, so a repeated delivery never repeats them.
+    """
+    turn_trace = trace_mod.TurnTrace()
+    turn_trace.start()
+    dry_run = envelope.dry_run
+    message_id = _message_id(envelope)
+    with _session(session_factory) as db:
+        existing = (
+            None
+            if turn_id is not None
+            else _existing_turn(
+                db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+            )
+        )
+        retrying = existing if _awaiting_retry(existing) else None
+        if existing is not None and retrying is None:
+            return _duplicate_result(existing)
+        if turn_id is None:
+            try:
+                row = _insert_turn(
+                    db,
+                    envelope=envelope,
+                    contact_respond_id=contact_respond_id,
+                    retrying=retrying,
+                    queued=False,
+                )
+            except IntegrityError:
+                db.rollback()
+                winner = _select_turn(
+                    db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+                )
+                if winner is None or _awaiting_retry(winner):
+                    raise
+                return _duplicate_result(winner)
+            turn_id = str(row.id)
+
+        facts: dict[str, Any] = {"lane": "wa_phone_link", "side": side}
+        try:
+            if side == "card_linked":
+                branch_kind, summary = "phone_ignored", "Contact card from a known contact; sent no reply"
+                why = "The CRM already knows this contact, so a shared contact card needs no answer."
+            else:
+                # IQ-27 / IQ-45: on the inbox drain the turn claims its place BEFORE any Respond.io
+                # call, so a yielded or lost claim never repeats a merge or a send.
+                inbox_queue.checkpoint(turn_id)
+                branch_kind, summary = _phone_unknown_decision(
+                    db, envelope, contact_respond_id=contact_respond_id, dry_run=dry_run, facts=facts, turn_id=turn_id
+                )
+                why = "A WhatsApp username-only contact has no phone, so the CRM cannot tell who it is until it shares one."
+        except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never left `processing`
+            from app.services import wa_phone_link
+
+            # WU18: the message can carry a phone; log and store the scrubbed text, no traceback.
+            message = wa_phone_link.scrub_phone(f"{type(exc).__name__}: {exc}")
+            logger.error("chatbot turn %s failed in the phone flow: %s", turn_id, message)
+            db.rollback()
+            turn_trace.record(
+                "received",
+                status="failed",
+                summary="The turn stopped before it could be answered.",
+                why="Something the turn depends on did not respond as expected.",
+                facts={"stage": "received"},
+                error=message,
+                raw=None,
+            )
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="received",
+                branch_kind=None,
+                error=message,
+                records=turn_trace.persisted(),
+            )
+            # Nothing is sent: a phone-flow failure must not answer a contact the CRM cannot yet identify.
+            failed = _failed_result(turn_id, "received", message, [], dry_run, reply_text="")
+            failed.actions = []
+            return failed
+        turn_trace.record(
+            "received",
+            status="skipped",
+            summary=summary,
+            why=why,
+            facts=facts,
+            raw=None,
+        )
+        _close_turn(
+            db,
+            turn_id,
+            status="done",
+            stage="received",
+            branch_kind=branch_kind,
+            error=None,
+            records=turn_trace.persisted(),
+            response={"actions": [], "reply": {"text": "", "quick_replies": None}},
+        )
+    return TurnResult(
+        turn_id=turn_id,
+        is_test=dry_run,
+        branch_kind=branch_kind,
+        delegate=None,
+        reply={"text": "", "quick_replies": None},
+        actions=[],
+        status="done",
+        stage="received",
+    )
+
+
+def _phone_unknown_decision(
+    db: Session,
+    envelope: Envelope,
+    *,
+    contact_respond_id: str,
+    dry_run: bool,
+    facts: dict[str, Any],
+    turn_id: str | None = None,
+) -> tuple[str, str]:
+    """The branch and trace summary for an unknown phoneless contact; makes the Respond.io calls."""
+    from app.services import wa_phone_link
+
+    def comment(client: Any, identifier: str, reason: str, phone: str | None = None) -> None:
+        text = f"WhatsApp phone link: {reason}."
+        if phone:
+            text += f" Phone shared: +{phone}."
+        try:
+            client.create_comment(identifier, text)
+        except Exception:  # noqa: BLE001 - a failed staff comment must not fail the turn
+            logger.warning("chatbot: phone-link staff comment failed", exc_info=True)
+
+    handoffs = _recent_turn_count(db, contact_respond_id=contact_respond_id, branch_kind="phone_handoff")
+    # Only a card that arrived through the CRM's own HMAC-signed webhook counts as proof (WU22):
+    # every other ingress can carry a body its caller wrote.
+    is_card = wa_phone_link.is_contact_card(envelope.message)
+    if not is_card:
+        refusal: str | None = "not_a_card"
+    elif envelope.ingress != DIRECT_INGRESS:
+        refusal = "not_signed"
+    else:
+        refusal = wa_phone_link.card_refusal(envelope.message)
+    phone = wa_phone_link.accepted_card_phone(envelope.message) if refusal is None else None
+    if phone:
+        facts["card"] = "accepted"
+        if dry_run:
+            return "phone_linked", "Accepted contact card; a test turn links nothing"
+        client = wa_phone_link.respond_client(db)
+        outcome = wa_phone_link.link_phone(db, client, contact_respond_id=contact_respond_id, phone=phone)
+        facts["link"] = outcome.status
+        if outcome.status == "failed":
+            facts["reason"] = outcome.reason
+            # WU21: one link-failure comment per 24 h. An earlier hand-off for another reason (the
+            # ask cap) told staff nothing about this phone, so it does not count.
+            if _recent_link_failure(db, contact_respond_id=contact_respond_id):
+                return "phone_ignored", "Phone link failed; staff already told in the last 24 hours"
+            # After a merge the turn's own id may no longer exist: the survivor gets the comment (WU26).
+            comment(
+                client,
+                outcome.survivor_respond_id or contact_respond_id,
+                f"could not link the shared phone ({outcome.reason})",
+                phone,
+            )
+            return "phone_handoff", "Phone link failed; handed to staff"
+        survivor = outcome.survivor_respond_id or contact_respond_id
+        if outcome.chatbot_allowed:
+            wa_phone_link.send_verified(db, client, identifier=survivor, turn_id=turn_id)
+        else:
+            # WA-PHONE-SHARE-LOOP: told once, on this turn; the contact now has a CRM row, so every
+            # later message closes silently at the AI-allowed gate.
+            wa_phone_link.send_verified(
+                db, client, identifier=survivor, turn_id=turn_id, line=wa_phone_link.NO_ACCESS_LINE
+            )
+            comment(client, survivor, "phone verified, AI off for this contact")
+        return "phone_linked", "Phone linked to the contact that holds its access"
+
+    facts["card"] = "none" if not is_card else "not_accepted"
+    if is_card:
+        facts["card_refusal"] = refusal
+    if handoffs:
+        return "phone_ignored", "Already handed to staff in the last 24 hours; sent nothing"
+    if _card_accepted_before(db, contact_respond_id=contact_respond_id):
+        # WA-PHONE-SHARE-LOOP: the contact already answered with a tap whose link failed and staff
+        # were told; asking again would loop. Only another tap retries the link (WU21).
+        return "phone_ignored", "Contact card already accepted and handed to staff; sent nothing"
+    asks = _recent_turn_count(db, contact_respond_id=contact_respond_id, branch_kind="phone_ask")
+    facts["asks_in_window"] = asks
+    if dry_run:
+        return ("phone_ask", "Asked for a phone number") if asks < PHONE_ASK_CAP else (
+            "phone_handoff",
+            "Ask cap reached; handed to staff",
+        )
+    client = wa_phone_link.respond_client(db)
+    if asks >= PHONE_ASK_CAP:
+        comment(client, contact_respond_id, f"asked for a phone number {PHONE_ASK_CAP} times in 24 hours with no answer")
+        return "phone_handoff", "Ask cap reached; handed to staff"
+    try:
+        sent = wa_phone_link.send_ask(db, contact_respond_id=contact_respond_id, turn_id=turn_id)
+        reason = "no template is mapped for the phone-share ask"
+    except Exception as e:  # noqa: BLE001 - a failed ask is a hand-off, not a failed turn
+        logger.warning("chatbot: phone-share ask failed", exc_info=True)
+        sent, reason = False, f"the phone-share ask could not be sent ({type(e).__name__})"
+    if sent:
+        return "phone_ask", "Asked for a phone number"
+    comment(client, contact_respond_id, reason)
+    return "phone_handoff", "Ask not sent; handed to staff"
+
+
 @_refer_tracked
 def _run_turn(
-    envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    offload: bool | None = None,
+    queued_turn_id: str | None = None,
 ) -> TurnResult:
     """Run the head of one turn. NEVER raises for a business failure; records it.
 
@@ -3204,6 +3430,10 @@ def _run_turn(
     `offload` exists for ONE caller: the RQ job (`app/tasks/chat_turns.py`) passes `False`
     so the worker actually runs the turn instead of enqueuing it to itself forever. Every
     other caller leaves it None and gets whatever `CHATBOT_TURN_ON_WORKER` says.
+
+    `queued_turn_id` (CHAT-INBOX-QUEUE): the row the inbox drain claimed. It already exists
+    and the drain holds the contact's mutex, so there is no dedup, no ticket, no insert and
+    no answering of earlier messages (the drain takes them in send order).
     """
     contact_respond_id = _contact_respond_id(envelope)
     # H56. BEFORE the offload branch, so the invariant reads the same on every entry:
@@ -3220,9 +3450,26 @@ def _run_turn(
     # database error inside `_ai_allowed` propagates (fails closed, the route answers 500 and
     # the integration log records it); no turn row exists for that call, accepted because
     # "could not tell" must never answer the customer.
+    # WA-USERNAME-CONTACTS: a username-only WhatsApp contact (no phone) or a contact card from a
+    # known contact. Before `_ai_allowed`, which would close an unknown contact silently.
+    phone_side = _phone_gate_applies(
+        envelope, session_factory=session_factory, contact_respond_id=contact_respond_id
+    )
+    if phone_side is not None:
+        return _phone_turn(
+            envelope,
+            side=phone_side,
+            session_factory=session_factory,
+            contact_respond_id=contact_respond_id,
+            turn_id=queued_turn_id,
+        )
+
     if not _ai_allowed(session_factory, contact_respond_id):
         return _ai_not_allowed_turn(
-            envelope, session_factory=session_factory, contact_respond_id=contact_respond_id
+            envelope,
+            session_factory=session_factory,
+            contact_respond_id=contact_respond_id,
+            turn_id=queued_turn_id,
         )
 
     if offload is None:
@@ -3258,12 +3505,28 @@ def _run_turn(
             # a real place in the queue the customer's next WhatsApp message waits on - and
             # a test turn must never delay a real customer. Nothing is lost: ordering
             # decides the order of REPLIES to one contact, and a dry run sends none.
-            ordered = _s7_mode(db, switches) and not dry_run
-            existing = _existing_turn(
-                db,
-                contact_respond_id=contact_respond_id,
-                message_id=message_id,
-                is_test=dry_run,
+            # CHAT-SPEED: with S7 off the n8n dispatcher is what serialises a contact, and it
+            # never sees a turn the respond.io webhook started. So while direct ingress covers
+            # this contact, EVERY live turn of it takes the ticket: the direct turn, and the
+            # n8n copy of a later message that would otherwise run beside it.
+            ordered = (
+                (
+                    _s7_mode(db, switches)
+                    or envelope.ingress == DIRECT_INGRESS
+                    or direct_ingress.covers(switches, contact_respond_id)
+                )
+                and not dry_run
+                and queued_turn_id is None
+            )
+            existing = (
+                None
+                if queued_turn_id is not None
+                else _existing_turn(
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    message_id=message_id,
+                    is_test=dry_run,
+                )
             )
             retrying = existing if _awaiting_retry(existing) else None
             if existing is not None and retrying is None:
@@ -3316,33 +3579,36 @@ def _run_turn(
                     )
                     ticket = None
 
-            try:
-                row = _insert_turn(
-                    db,
-                    envelope=envelope,
-                    contact_respond_id=contact_respond_id,
-                    retrying=retrying,
-                    queued=ticket is not None,
-                )
-            except IntegrityError:
-                # The SELECT above is a TOCTOU window, not a lock: a webhook delivery
-                # racing a poller re-delivery can both miss and both insert. The unique
-                # index is the real guarantee, so the loser reads the winner's row rather
-                # than 500ing. The ticket it took is released by the `finally` below.
-                db.rollback()
-                winner = _select_turn(
-                    db,
-                    contact_respond_id=contact_respond_id,
-                    message_id=message_id,
-                    is_test=dry_run,
-                )
-                if winner is None or _awaiting_retry(winner):
-                    # Either some OTHER constraint failed, or two retries of one message
-                    # raced - neither is a duplicate, and guessing would answer the
-                    # customer from a turn that never ran.
-                    raise
-                return _duplicate_result(winner)
-            turn_id = str(row.id)
+            if queued_turn_id is not None:
+                turn_id = str(queued_turn_id)
+            else:
+                try:
+                    row = _insert_turn(
+                        db,
+                        envelope=envelope,
+                        contact_respond_id=contact_respond_id,
+                        retrying=retrying,
+                        queued=ticket is not None,
+                    )
+                except IntegrityError:
+                    # The SELECT above is a TOCTOU window, not a lock: a webhook delivery
+                    # racing a poller re-delivery can both miss and both insert. The unique
+                    # index is the real guarantee, so the loser reads the winner's row rather
+                    # than 500ing. The ticket it took is released by the `finally` below.
+                    db.rollback()
+                    winner = _select_turn(
+                        db,
+                        contact_respond_id=contact_respond_id,
+                        message_id=message_id,
+                        is_test=dry_run,
+                    )
+                    if winner is None or _awaiting_retry(winner):
+                        # Either some OTHER constraint failed, or two retries of one message
+                        # raced - neither is a duplicate, and guessing would answer the
+                        # customer from a turn that never ran.
+                        raise
+                    return _duplicate_result(winner)
+                turn_id = str(row.id)
 
         # The stage the turn is currently in, for the catch-all below. A plain list because
         # the inner stages update it and the handler reads it.
@@ -3422,7 +3688,7 @@ def _run_turn(
             # Issue #1262: every earlier-SENT message of this contact the CRM already
             # knows about is answered before this one, on its own row, and its actions go
             # out ahead of this turn's. No timer: only messages the CRM has seen count.
-            if not dry_run:
+            if not dry_run and queued_turn_id is None:
                 earlier_actions, send_order_facts = _answer_earlier_messages(
                     envelope,
                     session_factory=session_factory,
@@ -3735,6 +4001,7 @@ def _memory_intake(
     dry_run: bool,
     turn_id: str | None = None,
     console: bool = False,
+    test_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Everything `context.assemble` needs beyond what `turn_runtime.load_profile`
     already reads, loaded once at intake and timed as `memory_ms` (contract section
@@ -3808,10 +4075,27 @@ def _memory_intake(
             started=started,
             turn_id=turn_id,
             console=console,
+            test_run_id=test_run_id,
         )
     except Exception:  # noqa: BLE001 - a memory read failure degrades, never fails the turn
         logger.warning("chatbot: memory intake failed", exc_info=True)
         return _degraded("intake_error")
+
+
+def _frame_in_run(db: Session, frame: Any, test_run_id: str) -> bool:
+    """Does this closed frame hold a turn of the console run `test_run_id`? (`turn_ids` joined to
+    the stored envelopes' `test_run_id`.)"""
+    from app.models.chatbot_turn import ChatbotTurn
+
+    ids = [str(i) for i in frame.turn_ids or []]
+    if not ids:
+        return False
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(ChatbotTurn.id.in_(ids), ChatbotTurn.envelope["test_run_id"].astext == str(test_run_id))
+        .first()
+        is not None
+    )
 
 
 def _memory_intake_resolved(
@@ -3824,6 +4108,7 @@ def _memory_intake_resolved(
     started: float,
     turn_id: str | None = None,
     console: bool = False,
+    test_run_id: str | None = None,
 ) -> dict[str, Any]:
     from app.models.access import RespondContact
     from app.models.chatbot_turn import ChatbotTurn
@@ -3856,6 +4141,9 @@ def _memory_intake_resolved(
             .limit(3)
             .all()
         )
+        if dry_run and console and test_run_id:
+            # REPORT-SMART-L S5-1: a console Reset starts fresh: only frames made of this run's turns.
+            frames = [f for f in frames if _frame_in_run(db, f, test_run_id)]
         summaries = [memory_mod.frame_line(f) for f in frames]
         read_frames = [{"id": f.id} for f in frames]
         newest_frame = frames[0] if frames else None
@@ -3883,6 +4171,8 @@ def _memory_intake_resolved(
             # The console's world is console turns only, not other dry runs of the
             # same contact (Prompts screen, API) - S15.
             live_query = live_query.filter(ChatbotTurn.ingress == "console")
+            if test_run_id:
+                live_query = live_query.filter(ChatbotTurn.envelope["test_run_id"].astext == str(test_run_id))
         if newest_frame is not None:
             live_query = live_query.filter(ChatbotTurn.created_at > newest_frame.last_activity_at)
         live_turns = live_query.order_by(ChatbotTurn.created_at.desc()).limit(3).all()
@@ -3971,6 +4261,395 @@ def _clarifier_memory_slice(memory_intake: dict[str, Any]) -> str:
             lines = []
 
 
+def _names_a_domain(verdict: dict[str, Any]) -> bool:
+    """Release gate #1829, round 8: did THIS message name a domain of its own
+    (`decide.names_its_own_domain`)? Not beside a widening to everything (`broaden_axis` all):
+    widening keeps the held `domain_hint` (parser R-P3-09), so that domain is the held one, the
+    shape "clear all" itself carried at contact 01 (domain inventory, `domain_in_message`). The
+    `new_subject` signal's reading; the stated-beside check reads `_states_a_domain`."""
+    return names_its_own_domain(verdict) and verdict.get("broaden_axis") != "all"
+
+
+def _states_a_domain(verdict: dict[str, Any], held_domains: tuple[str, ...]) -> bool:
+    """Release gate #1829, round 9 (reviewer S2, captain ruling option B): a domain stated beside
+    a reset. Beside a widening to everything it is the held one only when the session already
+    holds it (contact 01: inventory over an inventory session); "never mind, all promotions" over
+    a stock session names promotion of its own. Round 10: `scope_intent` broaden is the same
+    widening (a reset beside it is "clear all", crew audit 22 Oct)."""
+    held_widening = (
+        (verdict.get("broaden_axis") == "all" or verdict.get("scope_intent") == "broaden")
+        and not verdict.get("asks")
+        and verdict.get("domain_hint") in held_domains
+    )
+    return names_its_own_domain(verdict) and not held_widening
+
+
+def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
+    """Release gate #1829, round 12 (EVAL-BENCH contacts 01, 02, 30; captain ruling option A): an
+    all-broaden (`entity_op` clear or `broaden_axis` all) with `scope_intent` null and no domain or
+    asks of its own (any `domain_hint`, so an idea's ideate stays out), over a session with no open
+    question, no task of any status and no stored list, has nothing to widen: it is "clear all". A
+    held subject is allowed (the trace's turns held products and the inventory domain). Whether the
+    message states anything else is the seam's own `_stated_beside_a_reset`. Round 12b (reviewer
+    B1 / S1): a question the focus holds (`chat_state._focus_questions`: a set clarify, the count
+    question, the other-brands offer) or a set being listed is open too,
+    and a family widening (`broaden_to` other than all, `family` true) is stated; round 12c:
+    `family` false is the exact code alone, no widening."""
+    if state is None:
+        return False
+    focus = state.focus
+    return (
+        (verdict.get("entity_op") == "clear" or verdict.get("broaden_axis") == "all")
+        and not verdict.get("scope_intent")
+        and verdict.get("broaden_to") in (None, "", "all")
+        and verdict.get("family") is not True
+        and not chat_state._message_domains(verdict)
+        and state.pending is None
+        and not focus.tasks
+        and not focus.last_list
+        and not focus.required_ask
+        and not chat_state._focus_questions(focus)
+        and not focus.set_page
+    )
+
+
+#: Release gate #1829, round 14: the rosters whose v63 "all" answers are measured to carry a pick
+#: (the tier roster; the product roster, did-you-mean and stock picks).
+#: Extend a kind only once v63 is measured giving its real 'all' answers a pick.
+RESET_OVER_PICKER_KINDS: frozenset[str] = frozenset({"tier_pick", "product_pick"})
+
+
+def _clear_over_an_open_picker(verdict: dict[str, Any], answer: dict[str, Any], state: Any) -> bool:
+    """Release gate #1829, round 13 (EVAL-BENCH contacts 09 / 10, crew ruling option b): `entity_op`
+    clear that gives NO answer to the open roster (no pick, position or item; mode null or cancel)
+    is "clear all". Measured live (v63, 22 Oct): a real answer to a picker ("all", "semua", "all of
+    them", "1 and 2") always carries its picks. The roster's own domain may ride along when
+    `domain_in_message` is not true (contact 10); a held subject is allowed. Round 14: only the rosters
+    `RESET_OVER_PICKER_KINDS` names, the ones measured on v63. A question the focus
+    holds (round 12b) is no roster here. Whether the message states anything else is the seam's
+    own `_stated_beside_a_reset`."""
+    pending = getattr(state, "pending", None)
+    if pending is None or pending.kind not in RESET_OVER_PICKER_KINDS or not pending.options:
+        return False
+    if verdict.get("entity_op") != "clear":
+        return False
+    if answer.get("picked") or answer.get("items") or verdict.get("reference_positions"):
+        return False
+    if answer.get("mode") not in (None, "cancel"):
+        return False
+    asked_for = pending.payload.get("domains") or ([pending.payload["domain"]] if pending.payload.get("domain") else [])
+    named = chat_state._message_domains(verdict)
+    if named and (domain_in_message(verdict) is True or not set(named) <= set(asked_for)):
+        return False
+    return not chat_state._focus_questions(state.focus) and not state.focus.set_page
+
+
+def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None, state: Any = None) -> list[str]:
+    """Release gate #1829, rounds 7-8 (crew rulings, design note 6335681391): the parser fields
+    that mark a reset, one per line, so one can be dropped with a one-line change. Parser fields
+    only. The cancel is read off the parser's own emission: with nothing open the phantom drop
+    (`turn_question.without_phantom_answer`) has already taken it off the verdict. `entity_op`
+    clear (the "all" / broaden signal) and a `clear` op (one part of the subject) are no reset."""
+    said = parser_raw if isinstance(parser_raw, dict) else verdict
+    answer = said.get("open_question_answer") if isinstance(said.get("open_question_answer"), dict) else {}
+    ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
+    signals = {
+        "topic_reset": verdict.get("topic_reset") is True,
+        "cancel": answer.get("mode") == "cancel",
+        # The chat_state mirror rule: a new subject over which nothing carries IS a reset.
+        "new_subject_naming_no_domain": "new_subject" in ops and not _names_a_domain(verdict),
+        "all_broaden_over_nothing_open": _all_broaden_over_nothing_open(verdict, state),
+        "clear_over_an_open_picker": _clear_over_an_open_picker(verdict, answer, state),
+    }
+    return [name for name, on in signals.items() if on]
+
+
+#: The message types a reset may carry and still state nothing: the casual kinds and a plain
+#: business query. Any other (a hand-off, a history question, an idea) is an ask of its own.
+_RESET_MESSAGE_TYPES = frozenset({None, "", "business_query", "casual", "clarification", "confirmation", "unknown", "low_signal"})
+
+
+def _stated_beside_a_reset(
+    verdict: dict[str, Any], held_domains: tuple[str, ...] = (), signals: tuple[str, ...] = ()
+) -> list[str]:
+    """What the message states of its own, one per line: anything here makes a reset signal
+    the start of an ask, which keeps today's path. A carried echo (`current_message` false), a
+    carried domain and a plain business query state nothing; `broaden_axis` all is the "all" of
+    "clear all" itself (every measured v63 "clear all" carries it), a widening to everything is
+    `scope_intent` broaden when the parser read no `topic_reset` and no cancel (rounds 10-11).
+    `signals` are `_reset_signals`' own names for this verdict."""
+    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    low_stock = verdict.get("low_stock") if isinstance(verdict.get("low_stock"), dict) else {}
+    ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
+    stated = {
+        "entity": any(isinstance(e, dict) and e.get("current_message") is not False for e in verdict.get("entities") or []),
+        "status": bool(verdict.get("status") or verdict.get("order_status")),
+        "document": bool(verdict.get("document")),
+        "sales_channel": bool(verdict.get("sales_channel")),
+        "low_stock": any(v not in (None, "", []) for v in low_stock.values()),
+        "date_window": bool(verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end")),
+        "attributes": bool(verdict.get("requested_attributes")),
+        "quantity": verdict.get("demand_qty") is not None,
+        "positions": bool(verdict.get("reference_positions")),
+        "picked": bool(answer.get("picked")),
+        "item_qty": any(isinstance(i, dict) and i.get("qty") is not None for i in answer.get("items") or []),
+        "qty_for_all": answer.get("qty_for_all") is not None,
+        "domain": _states_a_domain(verdict, held_domains),
+        "top_n": verdict.get("top_n") is not None,
+        "rank_by": bool(verdict.get("rank_by")),
+        "basis": bool(verdict.get("basis")),
+        "sort_by": bool(verdict.get("sort_by")),
+        "group_by": bool(verdict.get("group_by")),
+        "broaden_axis": verdict.get("broaden_axis") not in (None, "", "all"),
+        # Rounds 10-11: a reset wins over broaden, `topic_reset` or a declared cancel (read as
+        # `_reset_signals` reads it); without either a broaden ("show me everything") is an ask.
+        "scope_intent": bool(verdict.get("scope_intent"))
+        and not ({"topic_reset", "cancel"} & set(signals) and verdict.get("scope_intent") == "broaden"),
+        "query_brands": bool(verdict.get("query_brands")),
+        "set_op": "set" in ops,
+        "message_type": verdict.get("message_type") not in _RESET_MESSAGE_TYPES,
+    }
+    return [name for name, on in stated.items() if on]
+
+
+def _close_the_episode(
+    db: Session,
+    envelope: Envelope,
+    *,
+    verdict: dict[str, Any],
+    this_domain: str | None,
+    dry_run: bool,
+    contact_respond_id: str,
+    turn_id: str,
+    remembered_before: dict[str, Any],
+) -> None:
+    """The one memory episode write of a turn, for the routed path and the reset seam alike
+    (release gate #1829, round 8: the seam answers before routing, and a reset still closes
+    the topic it ended). `this_domain` is the domain the turn's plan acted on (None on the
+    seam, which plans nothing). Stashes `_episode_written` and `_facts_tallied` on
+    `remembered_before` for the turn's memory trace."""
+    contact_pk = remembered_before.get("_contact_pk")
+    # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
+    # the topic that just CLOSED, and a topic closes because the customer changed
+    # subject - not because this turn's lane went on to answer. Written HERE, where
+    # the reset is decided, so a turn whose fetch failed or whose lane refused
+    # still remembers the topic it ended. Once per turn, never mid-topic.
+    #
+    # Human intervention closes nothing (Q2 ruling): the topic is whatever it was
+    # when the bot resumes. D14's third named exception (Q15) is the one write a
+    # dry run may make: a CONSOLE turn writes an `is_test=true` frame of its own
+    # world; every other dry run (clone/replay/harness) writes nothing.
+    is_console_dry_run = dry_run and envelope.ingress == "console"
+    written_frame = None
+    # Fix lane round 3 (R1, owner hand test 28 Sep 2026): the parser's
+    # `topic_reset` alone never closed "check stock X" then "incoming X" (same
+    # product, so it reads as a follow-up). A turn whose plan names a different
+    # domain from the open conversation's newest one is the other switch
+    # (`episode_digest.close_trigger`, the backfill's same rule).
+    may_write_episode = (not dry_run or is_console_dry_run) and not _is_human_intervened(envelope)
+    open_domain = None
+    if may_write_episode and this_domain and verdict.get("topic_reset") is not True:
+        try:
+            open_domain = memory_mod.open_topic_domain(
+                db,
+                contact_respond_id=contact_respond_id,
+                is_test=dry_run,
+                exclude_turn_id=turn_id,
+            )
+        except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+            logger.warning("chatbot: the open topic read did not run", exc_info=True)
+    close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
+    if close_trigger is not None and may_write_episode:
+        # CHAT-INBOX-QUEUE look-ahead: the episode is conversation state too.
+        inbox_queue.checkpoint(turn_id)
+        try:
+            written_frame = memory_mod.write_episode_for_reset(
+                db,
+                contact_respond_id=contact_respond_id,
+                is_test=dry_run,
+                resetting_turn_id=turn_id,
+            )
+        except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+            logger.warning("chatbot: the episode write did not run", exc_info=True)
+    # Stashed on the shared `before` box (the same object `_run_answer` and
+    # `_run_entities_only_arm` already receive as `remembered_before`) so
+    # `_record_memory_trace`, several call frames later, can report what THIS turn
+    # closed without a new parameter threaded through every arm between here and
+    # there.
+    remembered_before["_episode_written"] = (
+        {
+            "id": written_frame.id,
+            "turn_count": len(written_frame.turn_ids or []),
+            "close_reason": written_frame.close_reason,
+            "summary": written_frame.summary,
+            "trigger": close_trigger,
+            "domain": getattr(written_frame, "domain", None),
+        }
+        if written_frame is not None
+        else None
+    )
+
+    # AC-MEM032: the tally runs after the episode write above has committed -
+    # never before, since it reads the newest CLOSED frames and a frame this
+    # turn just wrote is one of them. Round 3 (PLAN 6.0, AC-MEM049): facts are
+    # learned and saved at EVERY context level, Off included - the level decides
+    # only what the bot READS, never what it LEARNS. Episodes themselves are
+    # ALSO written whatever the level, staff still see everything either way; the
+    # one gate that still applies is B2's own (never on a dry run).
+    # Stashed on `before` the same way `_episode_written` is, so `_run_answer`'s
+    # tail can fold it into the turn's own `facts_saved` trace line.
+    if written_frame is not None and not dry_run and contact_pk is not None:
+        try:
+            tallied = profile_facts_mod.tally(
+                db, contact_respond_id, is_test=dry_run, contact_pk=contact_pk
+            )
+            remembered_before["_facts_tallied"] = [
+                {"key": f["key"], "source": f["source"]} for f in tallied
+            ]
+        except Exception:  # noqa: BLE001 - a lost tally is never a lost turn
+            logger.warning("chatbot: the profile tally did not run", exc_info=True)
+
+
+def _reset_turn(
+    envelope: Envelope,
+    *,
+    parsed_language: Any = language_mod.NOT_PARSED,
+    verdict: dict[str, Any],
+    parser_raw: Any,
+    state_in: Any,
+    session_block: Any,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    user_turn: Any,
+    profile: Any,
+    known_phone: str | None,
+    parser_usage: dict[str, Any],
+    parse_started: Any,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    turn_id: str,
+    contact_respond_id: str,
+    dry_run: bool,
+    actions: list[dict[str, Any]],
+    stage: list[str],
+) -> TurnResult | None:
+    """Release gate #1829, round 7: ONE reset seam, right after the parse and before the state
+    applier, apply, routing or any lane, so nothing the parser carried beside the reset (a
+    domain, a message type) can route the turn. A reset that states nothing new closes the open
+    question (any kind, offers included), every task and the stored list, resets the focus to
+    RESET_KEEPS, saves the session and answers ONE fixed acknowledgement in the reply language:
+    no lane, fetch, tool, escalation, hand-off, small-talk model or recap. None for every other
+    turn (and for a contact the access check refuses), which runs today's path untouched."""
+    signals = _reset_signals(verdict, parser_raw, state_in)
+    if not signals or _stated_beside_a_reset(verdict, tuple(state_in.focus.domains or ()), tuple(signals)):
+        return None
+    routed = turn_runtime.with_routing_agent_default(verdict, pending=None)
+    suggested_agent = jsc.get(routed.get("routing"), "suggested_agent")
+    with _session(session_factory) as db:
+        access = check_access(db, agent_code=suggested_agent, contact_id=contact_respond_id, space_id=default_space_id(db))
+        if access.get("allowed") is not True:
+            # The refusal is the access stage's own answer, on today's path.
+            return None
+        stage[0] = "access"
+        _record_parser_usage(
+            db, usage=parser_usage, started=parse_started, contact_respond_id=contact_respond_id,
+            dry_run=dry_run, answered=True, turn_id=turn_id,
+        )
+        turn_trace.record(
+            "access",
+            summary=f"Access allowed for {access.get('agent_name') or suggested_agent}.",
+            why="The contact must be granted the agent this turn would use before anything is answered.",
+            facts={"agent": suggested_agent, "allowed": True, "decision": access.get("decision")},
+            raw=access,
+        )
+        from app.services.chatbot import copy as copy_mod
+
+        reply_language = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
+        ack = copy_mod.resolve(db).render_in("reset_ack", reply_language)
+        # Round 8: a reset closes the topic it ended, exactly as the routed reset did. A cancel or
+        # a new subject naming nothing is a topic reset too (the chat_state mirror rule).
+        verdict["topic_reset"] = True
+        _close_the_episode(
+            db,
+            envelope,
+            verdict=verdict,
+            this_domain=None,
+            dry_run=dry_run,
+            contact_respond_id=contact_respond_id,
+            turn_id=turn_id,
+            remembered_before=remembered_before,
+        )
+    stage[0] = "routed"
+    item = _stamp_item(access, "low_signal", {})
+    item["reply_language"] = reply_language
+    closed = {
+        "open_question": getattr(state_in.pending, "kind", None),
+        "tasks": len(state_in.focus.tasks or ()),
+        "last_list": bool(state_in.focus.last_list),
+    }
+    turn_trace.add("reset_turn", {"signals": signals, "closed": closed})
+    turn_trace.record(
+        "routed",
+        summary="Reset: the conversation was cleared and acknowledged.",
+        why="The parser read a reset that states nothing new, so nothing is looked up or handed on.",
+        facts={"lane": "low_signal", "rule": "reset_turn", "signals": signals, "closed": closed},
+        raw={"item": item},
+    )
+    reset_state = turn_state.State(
+        focus=turn_state.Focus(**{k: getattr(state_in.focus, k) for k in RESET_KEEPS}),
+        pending=None,
+        profile=state_in.profile,
+        turn_no=state_in.turn_no,
+        ideation=state_in.ideation,
+    )
+    ctx = build_ctx(
+        contact=_contact_block(envelope, known_phone),
+        text=_tf_message(envelope),
+        session=session_block,
+        parse={"output": verdict, "_parser_raw": parser_raw},
+        access=access,
+        media=getattr(envelope, "media", None),
+    )[0]["json"]["ctx"]
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="low_signal",
+        actions=actions,
+        answer=turn_compose.Answer(text=ack),
+        state=reset_state,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+        chat_console=_chat_console(envelope),
+    )
+
+
+def _small_talk_ctx(ctx: dict[str, Any], verdict: dict[str, Any], state: Any) -> dict[str, Any]:
+    """Release gate #1829 (contact 04): a reset's small talk is about the state the reset left, so
+    the model is shown that state (no open question, offer, team, task or stored list), never the
+    session from before the turn. Contacts 13 and 18: nor the parse's intent and domain, which
+    let the clarifier promise a check nobody runs. Every other turn's ctx is returned as it is."""
+    if verdict.get("topic_reset") is not True:
+        # Every reset wrote `topic_reset` (`apply._reset`); the state after apply is not the one
+        # `apply` judged, so the reading is never made again here.
+        return ctx
+    session = jsc.get(ctx, "session") or {}
+    after = {
+        **session_state.five_keys(session),
+        "focus": turn_state.focus_to_wire(state.focus),
+        "open_question": turn_pending.to_wire(state.pending),
+    }
+    parse = jsc.get(ctx, "parse") or {}
+    output = {**(jsc.get(parse, "output") or {}), "intent_hint": None, "domain_hint": None}
+    return {**ctx, "session": {**session, "session_vars": after}, "parse": {**parse, "output": output}}
+
+
 def _fallback_context(
     db: Session,
     *,
@@ -4009,6 +4688,15 @@ def _fallback_context(
         current_turn_id=turn_id,
         level=level,
     )
+    # "Last time" is a CLOSED episode: the open conversation is today's, never the time before.
+    last_time = memory_mod.history_items(
+        db,
+        contact_respond_id=contact_respond_id,
+        is_test=dry_run,
+        current_turn_id=turn_id,
+        level=level,
+        include_open=False,
+    )
     facts = memory_intake.get("profile_facts") if level == "full" else None
     usual_sites = _as_list(_fact_value(facts, "usual_sites"))
 
@@ -4038,7 +4726,7 @@ def _fallback_context(
         kind=kind,
         level=level,
         history=history if kind == "history" else [],
-        last_time=history[0] if history else None,
+        last_time=last_time[0] if last_time else None,
         usual_products=_as_list(_fact_value(facts, "usual_products")),
         usual_site=usual_sites[0] if usual_sites else None,
         customer=customer,
@@ -4250,6 +4938,9 @@ def _run_stages_body(  # noqa: PLR0915
         if dry_run:
             session_block = _inject_harness_session(session_block, envelope)
         latest_user_message = build_latest_user_message(envelope, session_block)
+        # CHAT-STATE r6 S6: what the customer sent, read ONCE for the turn (webhook and direct
+        # ingress alike); every first-line reader takes it rather than re-splitting the text.
+        user_turn = user_turn_mod.from_envelope(envelope, session_block)
         # -- stage A's three shelves (PLAN "State: three shelves, one writer each") --- #
         policy = load_policy(db)
         # Roster cap (PLAN-chatbot-answer-half-reattach.md, owner ruling 20 Sep 2026):
@@ -4281,6 +4972,7 @@ def _run_stages_body(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             ingress=envelope.ingress,
             is_test=bool(dry_run),
+            test_run_id=envelope.test_run_id,
         )
         # Chatbot memory lane A (contract section 3/6.6): the last 3 closed-frame
         # summaries, the live episode's earlier messages and the profile slice -
@@ -4292,6 +4984,7 @@ def _run_stages_body(  # noqa: PLR0915
             dry_run=dry_run,
             turn_id=turn_id,
             console=envelope.ingress == "console",
+            test_run_id=envelope.test_run_id,
         )
         # Security review 26 Sep 2026 (B1): the ONE contact this turn resolved to,
         # already workspace-scoped and lock-safe - every later fact write in this
@@ -4306,6 +4999,7 @@ def _run_stages_body(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             ingress=envelope.ingress,
             is_test=bool(dry_run),
+            test_run_id=envelope.test_run_id,
         )
         # `parser_config` is resolved AFTER media intake, not here: AC-1810's "no
         # parser call" means no parser SETUP either - a media-denied turn (no API
@@ -4395,6 +5089,8 @@ def _run_stages_body(  # noqa: PLR0915
             "media_intake",
             status="failed" if outcome.stops_here else "ok",
             summary=(
+                "Could not read the photo; answered its caption instead."
+            ) if outcome.caption_fallback else (
                 "Read the photo." if modality == "image" else "Heard the voice note."
             ) if not outcome.stops_here else (
                 "Could not read the photo." if modality == "image" else "Could not hear the voice note."
@@ -4434,7 +5130,7 @@ def _run_stages_body(  # noqa: PLR0915
                 "replied",
                 summary=f"Replied: {reply_text}" if reply_text else "Sent no reply; the burst repeat stayed silent.",
                 why="The reply is the media intake's own denial text, never the customer's words.",
-                facts={"lane": "media_denied", "sections": 0, "asking": None, "files": 0},
+                facts={"lane": "media_denied", "sections": 0, "asking": None, "files": 0, "shown_codes": None},
                 raw={"reply": {"text": reply_text}},
             )
             turn_trace.record(
@@ -4474,15 +5170,19 @@ def _run_stages_body(  # noqa: PLR0915
         # (`needs_clarification` no longer nulls it - service.py's own change), or
         # the transcript verbatim - never the url, never the envelope's own text.
         latest_user_message = outcome.rendered_text or ""
+        user_turn = user_turn_mod.with_media_read(user_turn, latest_user_message)
 
     # Resolved HERE, not inside the `received` session block above: a media-denied
     # turn returned before this line and never needed a provider configured for a
     # parser it will not call (AC-1810's "no parser call" reading extended to setup).
     with _session(session_factory) as db:
+        # A turn without a model choice makes main's exact call (AC-M-8).
+        choice_kw = {"llm_choice": profile.llm_choice} if getattr(profile, "llm_choice", None) else {}
         parser_config = parser.resolve_config(
             db,
             current_date=_current_date_directive(),
             override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
+            **choice_kw,
         )
         # #1262 slice 9 (F1a): the live brand list for the `Known brands:` line,
         # read in the SAME session as the config above (already scoped to this
@@ -4490,8 +5190,58 @@ def _run_stages_body(  # noqa: PLR0915
         # no cache, so an operator's table edit reaches the very next turn.
         brands = turn_runtime.active_brands(db)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
-        product_types = turn_runtime.product_type_names(db)
-        product_details = turn_runtime.product_detail_values(db)
+        # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
+        # candidate lines name the product types and spec values the words say; the index
+        # lines the held products' own values), so index mode reads neither.
+        # CHAT-SLIM-INDEX: a version with the LOOKUP LISTS line gets the blocks instead of the five lists.
+        lists_free = parser_config.closed_lists_index or parser_config.lookup_lists
+        product_types = None if lists_free else turn_runtime.product_type_names(db)
+        product_details = None if lists_free else turn_runtime.product_detail_values(db)
+        # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
+        # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
+        # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
+        # applied at the parser's two entries (the block it is shown, the spec entities it emits).
+        hidden_spec = (
+            frozenset(access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db)))
+            if parser_config.closed_lists or parser_config.lookup_lists
+            else frozenset()
+        )
+        lookup_lines, lookup_event, span_prep, span_event = None, None, None, None
+        if parser_config.lookup_spans:
+            # ENTITY-EXTRACT-MATCH S2: the rows are read here; the span call runs once this session is closed.
+            span_prep = _span_prep(
+                db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
+                lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
+                group_categories=parser_config.category_pick, row_ids=parser_config.row_ids,
+            )
+            lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
+        elif parser_config.lookup_lists:
+            lookup_lines, lookup_event = _lookup_lines(
+                db, user_turn.own_text, parser_config, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
+                lookup_lists.held_values(chat_state._subject(state_in.focus)),
+            )
+        index_matches: list[dict] = []
+        index_failed: list[bool] = []
+        candidate_lines, listed_codes, pick_info = (
+            _candidate_lines(
+                db,
+                user_turn,
+                [str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+                hidden_spec,
+                code_lookup=parser_config.code_lookup,
+                index=parser_config.closed_lists_index,
+                matches_out=index_matches,
+                failed_out=index_failed,
+            )
+            if parser_config.closed_lists
+            else (None, frozenset(), {})
+        )
+
+    if span_prep is not None:
+        lookup_lines, lookup_event, span_event = _span_lookup(
+            span_prep, session_factory=session_factory, contact_respond_id=str(contact_respond_id), dry_run=dry_run,
+            turn_id=turn_id,
+        )
 
     # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
     # One call, one schema. What comes back IS the verdict - a plain dict, validated once
@@ -4513,6 +5263,12 @@ def _run_stages_body(  # noqa: PLR0915
     current_subject = (
         subject_full[len(subject_prefix) :] if subject_full and subject_full.startswith(subject_prefix) else subject_full
     )
+    # CHAT-STATE: the same render the S4 state log keeps as `shown`, so what the parser was
+    # given and what the trace says it was given cannot differ. `open_question` stays the one
+    # source for the block and for `without_phantom_answer`.
+    state_block = (
+        chat_state.render(chat_state.view(state_in, open_question)) if parser_config.state_block else None
+    )
     context_layers = context_mod.ContextLayers(
         level=effective_level,
         profile_facts=memory_intake["profile_facts"],
@@ -4528,11 +5284,19 @@ def _run_stages_body(  # noqa: PLR0915
         media_line=None,
         task_lines=parser.open_task_lines(state_in.focus, open_question),
         open_question_line=parser.open_question_line(open_question),
-        brands=brands,
-        promotion_kinds=promotion_kinds,
+        brands=None if parser_config.lookup_lists else brands,
+        promotion_kinds=None if parser_config.lookup_lists else promotion_kinds,
+        # REPORT-SMART-L R9: printed only when the prompt names the line (`ParserConfig.sales_channels`; owner ruling
+        # 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule that names it).
+        sales_channels=(
+            list(SALES_CHANNELS) if parser_config.sales_channels and not parser_config.lookup_lists else None
+        ),
         product_types=product_types,
         product_details=product_details,
         recent_exchanges=recent,
+        candidate_lines=candidate_lines,
+        lookup_lines=lookup_lines,
+        state_block=state_block,
     )
     user_block, context_report = context_mod.assemble(context_layers)
     # AC-MEM052/056 (round 3): where the level itself came from, alongside what it
@@ -4559,6 +5323,15 @@ def _run_stages_body(  # noqa: PLR0915
             # because this is the seam that skipped it.
             parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
+        # `listed`, `certificate_uuids`, `class_hint` and the `parent_kind*` keys are the ENGINE's own entity keys
+        # (grounding and the scheme index set them). One the parser emitted (the Anthropic path does not enforce
+        # additionalProperties) is dropped before any reader.
+        verdict.pop("dropped_kinds", None)
+        if isinstance(verdict.get("entities"), list):
+            verdict["entities"] = [
+                {k: v for k, v in e.items() if k not in _ENGINE_ENTITY_KEYS} if isinstance(e, dict) else e
+                for e in verdict["entities"]
+            ]
         # CHATBOT-EMPTY-ROUTE-PICK: a declared answer to a question that was never
         # asked (no `Open question:` line went to the parser) is dropped before any
         # reader, and the `understood` record below shows the drop as `derived`.
@@ -4580,6 +5353,14 @@ def _run_stages_body(  # noqa: PLR0915
             facts={
                 "prompt_version": parser_config.prompt_version,
                 "model": parser_config.model,
+                "prompt_sha256": _parser_prompt_sha256(parser_config),
+                "provider": getattr(parser_config, "provider", None),
+                "model_source": getattr(parser_config, "model_source", "global"),
+                # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
+                "reasoning_effort": parser.sent_reasoning_effort(parser_config),
+                # PARSER-GEMINI-LITE: the call's wall clock, even when it never returned.
+                "latency_ms": getattr(exc, "latency_ms", None),
+                "code_sha": GIT_SHA,
                 # A replay miss fails here: the console check must not read it as a live
                 # spend (LLM-TEST-COST).
                 "llm_cassette": llm_cassette.mode_label(),
@@ -4646,6 +5427,24 @@ def _run_stages_body(  # noqa: PLR0915
             "intent": verdict.get("intent_hint"),
             "entities": len(verdict.get("entities") or []),
             "prompt_version": parser_config.prompt_version,
+            # PARSER-GEMINI-LITE: which model answered and how. `model` is the one the
+            # label asked for, `model_answered` the id the provider says ran (empty on a
+            # bypassed or replayed parse), `latency_ms` the call's wall clock.
+            "model": parser_usage.get("model") or parser_config.model,
+            "model_answered": parser_usage.get("model_answered") or None,
+            "latency_ms": parser_usage.get("latency_ms"),
+            "prompt_sha256": _parser_prompt_sha256(parser_config),
+            "provider": parser_usage.get("provider") or getattr(parser_config, "provider", None),
+            # MODEL-PER-CONTACT: which rung of the ladder chose the model, and for a tag, which tags.
+            "model_source": getattr(parser_config, "model_source", "global"),
+            **(
+                {"model_tags": list(profile.llm_choice.tags)}
+                if getattr(parser_config, "model_source", None) == "tag" and getattr(profile, "llm_choice", None)
+                else {}
+            ),
+            # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
+            "reasoning_effort": parser_usage.get("reasoning_effort") or parser.sent_reasoning_effort(parser_config),
+            "code_sha": GIT_SHA,
             "tokens": int(parser_usage.get("total_tokens") or 0),
             # Chatbot memory lane A (contract section 6): the provider's own split,
             # alongside the total the trace already carried.
@@ -4654,6 +5453,12 @@ def _run_stages_body(  # noqa: PLR0915
             # LLM-TEST-COST: the prompt-cache hit, and whether this parse was live,
             # recorded or replayed (`off` everywhere but a test run).
             "cached_tokens": int(parser_usage.get("cached_tokens") or 0),
+            # LEAN: the part of completion_tokens spent reasoning, only when the provider reported it.
+            **(
+                {"reasoning_tokens": parser_usage["reasoning_tokens"]}
+                if parser_usage.get("reasoning_tokens") is not None
+                else {}
+            ),
             "llm_cassette": llm_cassette.mode_label(),
             "parser_bypassed": parser_bypassed,
             "recalled_frames": len(recalled),
@@ -4663,6 +5468,15 @@ def _run_stages_body(  # noqa: PLR0915
         raw={"parser_raw": parser_raw, "derived": verdict},
     )
     turn_trace.add("prompt_text", {"text": user_block})
+    if lookup_event is not None:
+        turn_trace.add("lookup_lists", lookup_event)
+    if span_event is not None:
+        turn_trace.add("span_extract", span_event)
+    if parser_config.closed_lists_index:
+        turn_trace.add(
+            "closed_lists_index",
+            {"words": candidates_mod._tokens(user_turn.own_text), "matches": index_matches, "failed": bool(index_failed)},
+        )
     if phantom_answer:
         raw_positions = parser_raw.get("reference_positions")
         positions_kept = bool(raw_positions) and verdict.get("reference_positions") == raw_positions
@@ -4687,6 +5501,167 @@ def _run_stages_body(  # noqa: PLR0915
     # stage (AC-105/R5/H44's own "no routing" shape).
     turn_trace.add("context", context_report)
 
+    # EEM-CATEGORY-PICK: the parser's own reading of the message language, only for a prompt that asks for it.
+    parsed_language = (
+        verdict.get("message_language") if parser_config.message_language and not parser_bypassed else language_mod.NOT_PARSED
+    )
+    # Release gate #1829, round 7: the ONE reset seam, before the state applier, apply, routing
+    # and every lane (`_reset_turn`).
+    reset_result = _reset_turn(
+        envelope,
+        parsed_language=parsed_language,
+        verdict=verdict,
+        parser_raw=parser_raw,
+        state_in=state_in,
+        session_block=session_block,
+        remembered_before=remembered_before,
+        recalled=recalled,
+        user_turn=user_turn,
+        profile=profile,
+        known_phone=known_phone,
+        parser_usage=parser_usage,
+        parse_started=parse_started,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        dry_run=dry_run,
+        actions=actions,
+        stage=stage,
+    )
+    if reset_result is not None:
+        return reset_result
+
+    # Q1 (owner ruling (a), 23 Oct 2026): what the stored question lets a typed word answer, read
+    # before the state applier closes or rewrites it. A raw that is one of its option codes, or a
+    # turn that answers it by position or pick, is a pick, never a corrected typo (`grounding.ground`).
+    near_code_roster = frozenset(
+        turn_state.token_key(str(option.get(field)))
+        for option in (getattr(state_in.pending, "options", None) or [])
+        if isinstance(option, dict)
+        for field in ("code", "label")
+        if option.get(field)
+    )
+    stored_answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    near_code_answering = state_in.pending is not None and bool(
+        verdict.get("reference_positions") or stored_answer.get("picked")
+    )
+
+    # A sales ranking's `status` that is a report basis ("by qty, outstanding") is its basis, not a document status.
+    from app.services.chatbot.lanes.business import report_ask as _report_ask_basis
+
+    verdict = _report_ask_basis.status_as_basis(verdict)
+    # REPORT-SMART-L R8 review: the domains the last ask was on, read BEFORE the State applier writes this turn's
+    # own (`chat_state.apply_changes`); `report_ask.with_held` gates on them, so an order list's window never reaches a
+    # ranking on the State path either (owner Q3).
+    held_domains = list(state_in.focus.domains or [])
+
+    # CHAT-STATE seam: the parser's `state_changes`, applied ONCE, before every post-parse
+    # rewrite, APPLY and both of its re-entries (they all read `state_in` / `verdict`, so
+    # writing the change into those two makes the re-entries idempotent). On when the
+    # prompt in use asks for the key or the emission is a dry-run mock; off, the turn is
+    # today's turn untouched.
+    # A dry-run mock emission opts in by carrying the key (null counts as present).
+    state_path = bool(parser_config.state_block or (parser_bypassed and "state_changes" in verdict))
+    # CHAT-STATE r6 S4: the contact's document scope and the verdict drawn from it (may it see
+    # other customers' rows or documents), decided ONCE on the state path, from one profile,
+    # here for the Subject, and reused below by the customer scope read and by
+    # `customer_docs_hidden`, so the Subject never disagrees with what the turn hides. None off
+    # the state path.
+    turn_doc_scope: tuple[Any, bool] | None = None
+    turn_docs_hidden: bool | None = None
+    if state_path:
+        state_in = dataclasses_replace(state_in, state_path=True)
+        with _session(session_factory) as hygiene_db:
+            state_in = dataclasses_replace(
+                state_in,
+                focus=dataclasses_replace(
+                    state_in.focus,
+                    customers=_readable_customers(
+                        hygiene_db, state_in.focus.customers, contact_respond_id, bool(contact_scope)
+                    ),
+                ),
+            )
+            turn_doc_scope = business_services.customer_scope_and_staff(
+                hygiene_db, contact_respond_id, business_services.fetch_space_id(hygiene_db)
+            )
+        # Who this contact is, for the applier to write onto the Subject: its company scope, and
+        # `customer` hidden when it may not see other customers' rows or documents (the verdict
+        # `customer_docs_hidden` below reuses, V1-DOC-SCOPE). Nothing is scoped or hidden here.
+        turn_docs_hidden = _customer_docs_hidden(*turn_doc_scope, state_in.profile)
+        state_in = dataclasses_replace(
+            state_in,
+            company_scope=frozenset(str(c) for c in contact_scope or ()),
+            hidden_keys=frozenset({"customer"}) if turn_docs_hidden else frozenset(),
+        )
+        shown_view = chat_state.view(state_in, open_question)
+        state_log: dict[str, Any] = {
+            "shown": chat_state.render(shown_view),
+            "before": shown_view,
+            "changes": None,
+            "rejected": [],
+        }
+        if verdict.get("state_changes") is not None:
+            applied = chat_state.apply_changes(
+                state_in,
+                verdict,
+                open_question=open_question,
+                domains=[d.name for d in policy.domains],
+                kinds=[k.kind for k in policy.kinds],
+                brands=brands,
+                positions_read_elsewhere=_positions_read_elsewhere(state_in),
+            )
+            state_log = {**applied.log, "shown": state_log["shown"], "before": shown_view}
+            if applied.valid:
+                # A slot the parser said `skip` for is off the focus for this turn only; the
+                # tail puts it back, so the stored focus keeps it.
+                state_in = chat_state.set_aside(applied.state, applied.log.get("slots") or {})
+                verdict = applied.verdict
+            else:
+                # A rejected change set changes nothing, but the turn is still on the state
+                # path: the input State with its Subject (held axes, this message's said values).
+                state_in = applied.state
+                verdict = applied.verdict
+            # R4-A on any state turn, a rejected one included (S5: it replaces the text
+            # rewriter `with_brand_from_offer` there): a brand the parser read that the last
+            # answer offered.
+            picked = chat_state.offered_brand_picks(state_in, verdict, brands)
+            if picked:
+                # R4-A: the held products' brands are read here; the narrow-or-re-run decision
+                # and the Subject it leaves are the applier module's (`pick_offered_brands`).
+                brand_of: dict[str, str] = {}
+                held_keys = [str(r["uuid"]) for r in chat_state.held_products(state_in)]
+                if held_keys:
+                    from app.models.product import Brand, Product
+
+                    try:
+                        with _session(session_factory) as brand_db:
+                            brand_of = {
+                                str(pid): name
+                                for pid, name in brand_db.query(Product.id, Brand.brand_name)
+                                .join(Brand, Brand.id == Product.brand_id)
+                                .filter(Product.id.in_(held_keys))
+                                .all()
+                            }
+                    except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+                        logger.warning("chatbot: offered brand narrowing failed; the turn goes on without it", exc_info=True)
+                state_in, verdict = chat_state.pick_offered_brands(state_in, verdict, picked, brand_of)
+            class_rows = chat_state.class_said_over_held(state_in)
+            if class_rows:
+                # Lead decision S3 / review round 4: a class said over held products, whatever the
+                # op, keeps the members of that class (read from the data here) and drops the
+                # others (`keep_class_members`).
+                try:
+                    with _session(session_factory) as class_db:
+                        members = _class_members(class_db, class_rows, list(state_in.subject.product_ids))
+                except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+                    logger.warning("chatbot: class membership read failed; the held products stay", exc_info=True)
+                    members = set(state_in.subject.product_ids)
+                state_in = chat_state.keep_class_members(state_in, members)
+        remembered_before["_chat_state"] = state_log
+    state_led = state_in.state_led is not None
+    answering = state_in.state_led == "answer"
+
     # The routing default lands ONCE, here, after the last parse and before the access
     # read (finding 2b): every reader downstream - access, the lanes, the trace - sees
     # the same `suggested_agent`. SRTSC07 (prod transcript, 22 Sep 2026): `pending=` lets
@@ -4703,31 +5678,47 @@ def _run_stages_body(  # noqa: PLR0915
     # #865 round 6 (R3): a reply naming one of the companies an open escalation offer
     # showed ("mocha", "srt", "yes please escalate to sorento team") picks it - n8n's
     # deterministic company-pick tier, with the parser's own pick as the validated fallback.
-    verdict = turn_runtime.with_company_pick(
-        verdict, pending=state_in.pending, message=latest_user_message
-    )
-    # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest on
-    # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
-    # its positional rule pulls a bare number toward `reference_positions`.
-    # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
-    verdict = turn_runtime.with_clarify_answer(
-        verdict, latest_user_message, carried=state_in.focus.set_clarify
-    )
-    verdict = _with_account_answer(verdict, state_in.focus.set_clarify)
-    verdict = turn_runtime.with_set_count_from_text(
-        verdict, latest_user_message, carried=state_in.focus.set_page
-    )
-    # Round 7 on PR #833 (owner hand test, item 6): a brand the last set answer offered
-    # narrows that set.
-    verdict = turn_runtime.with_brand_from_offer(
-        verdict, latest_user_message, carried=state_in.focus.set_page
-    )
+    # CHAT-STATE r6 S5 (AC-S5-1): under the state gate (`State.state_gate`: the applier read
+    # the ops over a shown State, a rejected change set included) no text rewriter runs; each outcome comes from an op or a
+    # parse field instead: the company pick and the clarify answer from the `answer` op filling
+    # the asked slot, the row count from the parser's `top_n`, the offered brand from the R4-A
+    # pick (`chat_state.pick_offered_brands`), a class word's new set from `new_subject` / a
+    # class said over the held set. Off the state path every rewriter runs as before.
+    state_gate = state_in.state_gate
+    if not state_led or answering:
+        if not state_gate:
+            verdict = turn_runtime.with_company_pick(
+                verdict, pending=state_in.pending, message=latest_user_message
+            )
+            # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest
+            # on the parser filling `top_n` for a bare "10" - its prompt has no example of
+            # one, and its positional rule pulls a bare number toward `reference_positions`.
+            # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
+            verdict = turn_runtime.with_clarify_answer(
+                verdict, latest_user_message, carried=state_in.focus.set_clarify
+            )
+        verdict = _with_account_answer(verdict, state_in.focus.set_clarify)
+        # CHAT-STATE: an option the parser declared picked is not a row count.
+        if not state_gate and not (state_led and (verdict.get("open_question_answer") or {}).get("mode") == "pick"):
+            verdict = turn_runtime.with_set_count_from_text(
+                verdict, latest_user_message, carried=state_in.focus.set_page
+            )
+        # Round 7 on PR #833 (owner hand test, item 6): a brand the last set answer offered
+        # narrows that set.
+        if not state_led and not state_gate:
+            verdict = turn_runtime.with_brand_from_offer(
+                verdict, latest_user_message, carried=state_in.focus.set_page
+            )
+    # CHAT-COMPOSER: a "more" pages the set the last reply listed, on a state-led turn too.
+    verdict = turn_runtime.with_set_more(verdict, carried=state_in.focus.set_page)
     # ATTACH-SET-BRAND-FOLLOWUP round 2 (live console pass, 7 Oct 2026): an echo of a row
     # the focus already holds settled is the carry restated, not an axis to rewrite with
     # an unsettled copy.
     verdict = turn_runtime.without_restated_rows(verdict, state_in.focus)
-    # Round 3 W3 on PR #833: a class word of this message's own starts a new set.
-    verdict = turn_runtime.with_new_set_words(verdict)
+    if not state_gate:
+        # Round 3 W3 on PR #833: a class word of this message's own starts a new set. On the
+        # state path the applier already dropped the parser's echoes of earlier rows.
+        verdict = turn_runtime.with_new_set_words(verdict)
     # Fix round 8 on PR #833 (owner retest of round 7): every descriptor the parser
     # emitted is grounded against the specification registry, after the clarify answer
     # is substituted (so "p trap" answering "t trap" is read as the choice it is) and
@@ -4742,13 +5733,103 @@ def _run_stages_body(  # noqa: PLR0915
     # so grounding never splits one ("ZZT SINK" into the class SINK plus a spec word).
     from app.services.chatbot.lanes.business import report_ask as _report_ask
 
+    # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
+    verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
+    # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
+    verdict = _report_ask.by_capability(verdict)
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
         verdict, grounding_notes = grounding.ground(
-            grounding_db, verdict, message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None
+            grounding_db,
+            verdict,
+            message=user_turn.own_text,
+            closed_lists=parser_config.closed_lists,
+            lookup_lists=parser_config.lookup_lists,
+            closed_lists_index=parser_config.closed_lists_index,
+            listed_codes=listed_codes if parser_config.code_lookup else None,
+            pick_info=pick_info if parser_config.code_lookup else None,
+            held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+            hidden_keys=hidden_spec,
+            roster_codes=near_code_roster,
+            answers_question=near_code_answering,
         )
+    # H1: the ONE strip, on the grounding output: grounding re-derives specs from the raw words
+    # over the whole registry, so this covers the parser's own emission too.
+    verdict = _strip_hidden_spec_entities(verdict, hidden_spec)
+    verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
+    verdict = code_lookup_verdict(verdict, gate=parser_config.code_lookup)
+    held_none_match: dict[str, Any] | None = None
+    scheme_none_in_scope: str | None = None
+    # The held products the two seams below read, taken once before either changes the verdict.
+    held_for_family = _held_for_the_seams(state_in, verdict, for_family=True)
+    held_for_scheme = _held_for_the_seams(state_in, verdict, for_family=False)
+    if parser_config.closed_lists and held_for_family:
+        # SPEC-OVER-HELD: a spec said about a held product narrows that product's family
+        # (`head/held_family.py`). A read failure leaves the verdict as it was.
+        try:
+            with _session(session_factory) as family_db:
+                verdict, family_note = held_family.narrow_held_family(family_db, verdict, held_for_family, hidden_keys=hidden_spec)
+        except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+            logger.warning("chatbot: held family narrowing failed; the turn goes on without it", exc_info=True)
+            family_note = None
+        if family_note:
+            if state_in.subject is not None:
+                # The members it landed on are the held subject now, the held quantity on each
+                # (AC-S3-4, the applier module). Off the state path nothing carries a quantity.
+                state_in, verdict = chat_state.held_family_landed(state_in, verdict, family_note.get("matched") or [])
+            if family_note.get("matched"):
+                # The narrowing named exact members (full codes): the resolver's prefix probe
+                # must not widen them again ("SRTWC286-SH-P" also placed SRTWC286-SH-PP), so
+                # the turn reads exact codes only (`_exact_codes_only`, `family: false`).
+                verdict = {**verdict, "family": False}
+            turn_trace.add("held_family", family_note)
+            if family_note.get("none_match"):
+                held_none_match = {
+                    "held": [p.get("canonical_code") for p in state_in.focus.products if isinstance(p, dict) and p.get("canonical_code")],
+                    "said": [
+                        str(e.get("raw") or "").strip()
+                        for e in verdict.get("entities") or []
+                        if isinstance(e, dict)
+                        and e.get("current_message") is not False
+                        and str(e.get("hint") or "").strip().lower() in ("specification", "spec", "brand")
+                        and str(e.get("raw") or "").strip()
+                    ],
+                }
+    if parser_config.closed_lists:
+        # SCHEME-INDEX: a listed scheme about products indexes their certificates, never
+        # empties the answer (`head/scheme_index.py`). A read failure leaves the verdict.
+        try:
+            with _session(session_factory) as scheme_db:
+                # Under the state gate a listed scheme the focus holds is indexed again for the
+                # products asked now (its certificates are derived from scheme and products).
+                held_scheme = next(
+                    (r for r in (state_in.focus.extra or {}).get("certificate") or []
+                     if isinstance(r, dict) and r.get("listed") == "cert_scheme"),
+                    None,
+                ) if state_in.state_gate else None
+                verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, held_for_scheme, held_scheme)
+                # Held products are only added to the verdict later, so a held one (a uuid) is
+                # read here: the scheme path with no product never runs over a held subject.
+                if scheme_note is None and not any(isinstance(p, dict) and p.get("uuid") for p in held_for_scheme):
+                    verdict, scheme_note = scheme_index.scheme_without_product(scheme_db, verdict)
+        except Exception:  # noqa: BLE001 - an advisory reading, never a failed turn
+            logger.warning("chatbot: scheme index failed; the turn goes on without it", exc_info=True)
+            scheme_note = None
+        if scheme_note:
+            turn_trace.add("scheme_index", scheme_note)
+            if scheme_note.get("none_in_scope"):
+                scheme_none_in_scope = scheme_note["scheme"]
+            if scheme_note.get("none_match") and scheme_note.get("products"):
+                held_none_match = {"held": list(scheme_note["products"]), "said": [], "scheme": scheme_note["scheme"]}
+    if state_in.subject is not None:
+        # The words a `keep` set aside were read by the seams above; they are not a change, so
+        # they leave the verdict here with their mark (no later step, store or session sees either).
+        verdict = chat_state.without_kept_aside(verdict)
     if _ranking_words:
-        verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
+        # The words held out of grounding skipped the hidden-key strip above: run it over them before they go back, so
+        # a spec the contact may not see never rides the report ask (security review S2).
+        _held_back = _strip_hidden_spec_entities({"entities": _ranking_words}, hidden_spec)["entities"]
+        verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_held_back]}
     if grounding_notes:
         turn_trace.add("grounding", {"changes": grounding_notes})
     # Fix round 12 on PR #833 (owner ruling 28 Sep 2026): once grounding has read the ask
@@ -4812,27 +5893,103 @@ def _run_stages_body(  # noqa: PLR0915
         # when the parser declared one; a fresh low stock ask keeps only the entities that
         # scope the run. Read before every other seam below.
         from app.services.chatbot import required_fields
-        from app.services.chatbot.lanes.business import chat_report, low_stock_ask, report_ask
+        from app.services.chatbot.lanes.business import chat_report, low_stock_ask, report_ask, sales_company_ask
 
         _message_text = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         # Security S1: these keys are the ENGINE's own; one the parser emitted (the
         # Anthropic path does not enforce the schema's additionalProperties) is dropped.
         verdict = {k: v for k, v in verdict.items() if k not in required_fields.ENGINE_KEYS}
+        # REPORT-SMART-L S3: a word the parser put in a field of this verdict (the channel, the
+        # period year) is that field, never an entity: dropped once, before any reader counts it.
+        verdict = report_ask.drop_field_words(verdict)
         open_ask = state_in.focus.required_ask
         state_in.focus.required_ask = None
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and report_ask.names_its_own_ask(verdict, open_ask):
-            open_ask = None  # a new sales ranking ask, not the answer to the open question
+        asked_before, replaced_ask = open_ask, None
+        # SALES-TARGET-CHAT slice 2: a salesperson logging an opportunity. The parser's
+        # `log_opportunity` status, a declared answer to the lane's own field question, or a
+        # yes / no to its read-back is the lane's turn, answered whole before any other seam
+        # reads the verdict (`lanes/opportunity.py`). Any other ask drops an open read-back.
+        # Reachable only when the active parser prompt carries the LOG OPPORTUNITY line
+        # (`ParserConfig.opportunity`): a prompt without it (production v63) never offers the lane.
+        if (
+            access.get("allowed") is True
+            and parser_config.opportunity
+            and opportunity_lane.takes_turn(verdict, open_ask, state_in.pending)
+        ):
+            return _run_opportunity_arm(
+                db,
+                parsed_language=parsed_language,
+                turn_id=turn_id,
+                envelope=envelope,
+                verdict=verdict,
+                parser_verdict=parser_verdict,
+                open_ask=open_ask,
+                state=state_in,
+                access=access,
+                actions=actions,
+                dry_run=dry_run,
+                session_factory=session_factory,
+                turn_trace=turn_trace,
+                stage=stage,
+                contact_respond_id=contact_respond_id,
+                session_block=session_block,
+                known_phone=known_phone,
+                remembered_before=remembered_before,
+                recalled=recalled,
+                user_turn=user_turn,
+                profile=profile,
+            )
+        if opportunity_lane.own_pending(state_in.pending) is not None:
+            state_in = dataclasses_replace(state_in, pending=None)
+        parser_ops = (remembered_before.get("_chat_state") or {}).get("changes")
+        _company_pick = False
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "company":
+            # The company question's pick from the parser's own output (`sales_company`, `reference_positions`) is the
+            # answer, whatever stray axis the reply also carried: only when the reply types no axis of its own
+            # (`by_words` null or absent, so its `group_by` is a guess) and no count, direction or ranked measure.
+            _candidate = sales_company_ask.as_answer(verdict, open_ask)
+            _typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
+                verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
+            )
+            _declared = _candidate.get("open_question_answer")
+            if not _typed and (_candidate is not verdict or (isinstance(_declared, dict) and _declared.get("mode") == "pick")):
+                # An untyped `group_by` on the answering turn is a guess (R6): the held ask's axis stands.
+                verdict, _company_pick = {**_candidate, "group_by": None}, _candidate is not verdict
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
+            verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and report_ask.names_its_own_ask(
+            verdict, open_ask, parser_ops=parser_ops
+        ):
+            replaced_ask, open_ask = open_ask, None  # a new sales ranking ask, not the answer to the open question
         if (open_ask or {}).get("ask") == chat_report.ASK_NAME and not verdict.get("order_status"):
             # The reply to a chat report question is read ONCE by the extractor, with the open ask;
             # the lane reuses the reading (`chat_report_reading`, empty when it could not read).
             verdict = {**verdict, "chat_report_reading": chat_report.read_reply(db, open_ask, _message_text) or {}}
         if (open_ask or {}).get("ask") == chat_report.ASK_NAME and chat_report.names_its_own_ask(verdict, open_ask):
             open_ask = None  # a new chat report, not the answer to the open question
+        # SALES-COMPANY: a reply naming an offered company ("Sorento" as the parser's company,
+        # its escalation company pick, or a brand word) is that company's pick.
+        verdict = sales_company_ask.as_answer(verdict, open_ask)
         verdict, required_rule = required_fields.reply_verdict(verdict, open_ask, _message_text)
         if required_rule:
             turn_trace.add("required_ask", {"verdict_rule": required_rule, "ask": (open_ask or {}).get("ask")})
         if required_rule == "required_ask_answer":
             state_in = dataclasses_replace(state_in, pending=None)
+        else:
+            # Chat fix PR-B S3: a refine of the report on screen re-runs it, whatever report
+            # type the parser named (`report_ask.as_held_refine`).
+            verdict = report_ask.as_held_refine(verdict, state_in.focus.sales_ranking_frame)
+            # REPORT-SMART-L R8 (crew ruling): a ranking reply to a held sales report total, or to the open ask it
+            # replaced, keeps the period, product, measure and basis that total showed. Owner Q3 stays the rule
+            # (PLAN-report-engine.md:50 "Period (Q3). Required. No catalogue default"; turn_runtime.py:3519-3521,
+            # `_spec_window`: "A sales ranking never borrows the carried window"): this window is the period the
+            # user just SAW on a sales figure, the S6b "kept on screen" rule with one more source, never a default.
+            verdict = report_ask.with_held(
+                verdict, state_in.focus, open_ask=asked_before, replaced=replaced_ask, parser_ops=parser_ops,
+                held_domains=held_domains,
+                # R9: the open sales report drill offer says the last answer was a sales report total.
+                held_offer=getattr(state_in.pending, "kind", None),
+            )
         # MULTI-ASK-PLAN round 6 (G1): the reply to the scope question re-runs the asked
         # multi-ask turn's own verdict from HERE, with the scope the parser read settled, so
         # it continues exactly as if the scope had been said.
@@ -4840,6 +5997,13 @@ def _run_stages_body(  # noqa: PLR0915
         if scope_verdict is not None:
             turn_trace.add("sub_asks", {"scope_answered": scope_verdict.get("family")})
             verdict = scope_verdict
+            state_in = dataclasses_replace(state_in, pending=None)
+        # Chat fix PR-B S7: the reply to the sales analysis's company question re-runs the
+        # asked analysis for the company it picked, the same way.
+        company_verdict = business.sales_analysis_company_reply(verdict, state_in.pending)
+        if company_verdict is not None:
+            turn_trace.add("sales_analysis", {"company_answered": company_verdict.get("sales_company")})
+            verdict = company_verdict
             state_in = dataclasses_replace(state_in, pending=None)
         # What the scope question stores to re-run, taken at the same point.
         scope_replay = copy.deepcopy(verdict)
@@ -4856,36 +6020,16 @@ def _run_stages_body(  # noqa: PLR0915
         # back (below), so it never outlives the reply it describes.
         state_in.focus.low_stock = None
 
-        # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
-        # is read against the question the bot asked before anything routes it.
-        # R2 (round 7): read before the verdict below can change the conversation.
-        in_ranking_conversation = _in_ranking_conversation(state_in.focus)
-        verdict, state_in, top_selling_rule = _top_selling_verdict(
-            db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-        )
-        if in_ranking_conversation and _asks_for_a_person(verdict):
-            in_ranking_conversation = False
-        if top_selling_rule:
-            turn_trace.add("top_selling", {"verdict_rule": top_selling_rule})
-        if state_in.focus.status == "top_selling" or state_in.focus.top_selling or (
-            jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
-        ):
-            # R8: inside a ranking no picker lists more than five options.
-            roster_caps = {
-                kind: min(cap, turn_compose.MAX_MENU_OPTIONS)
-                if isinstance(cap, int) and cap > 0
-                else turn_compose.MAX_MENU_OPTIONS
-                for kind, cap in roster_caps.items()
-            }
-
         # #1262 fix lane round 7 (R3 to R5): inside an order list the message is read
         # against the list before the parser's reading can send it anywhere else.
         from app.services.chatbot import order_list as order_list_mod
 
         order_list_was_open = order_list_mod.is_open_order_list(state_in.focus)
-        verdict, state_in, order_list_rule = order_list_mod.order_list_verdict(
-            db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-        )
+        order_list_rule = None
+        if not state_led and not state_gate:
+            verdict, state_in, order_list_rule = order_list_mod.order_list_verdict(
+                db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+            )
         if order_list_rule:
             turn_trace.add("order_list", {"verdict_rule": order_list_rule})
         # SO-NUMBER-ASK: "all my sales orders" is the SO list whatever the parser read (the
@@ -4902,7 +6046,7 @@ def _run_stages_body(  # noqa: PLR0915
             turn_trace.add("so_status", {"verdict_rule": typed_so_rule})
         # Same pass: the report status and document the parser carried onto "1" under the
         # outstanding offer, or onto a period answering the SO list, are not the message's.
-        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
+        if not state_led:
             verdict, carried_rule = so_status_mod.carried_status_verdict(
                 verdict,
                 jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""),
@@ -4912,14 +6056,9 @@ def _run_stages_body(  # noqa: PLR0915
             )
             if carried_rule:
                 turn_trace.add("so_list", {"verdict_rule": carried_rule})
-        # Never inside a top selling ranking: there "by sales order" / "SO basis" switch the
-        # ranking's basis (`_top_selling_verdict` above, round 7 R3), and the list must not
-        # take the ranking's question or its status away.
-        so_list_rule = None
-        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
-            verdict, so_list_rule = so_status_mod.so_list_verdict(
-                verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-            )
+        verdict, so_list_rule = so_status_mod.so_list_verdict(
+            verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        )
         if so_list_rule:
             turn_trace.add("so_list", {"verdict_rule": so_list_rule})
             # Owner hand test, 3 Oct 2026: over an open outstanding summary, "find all my
@@ -4934,28 +6073,28 @@ def _run_stages_body(  # noqa: PLR0915
                 focus=_dc.replace(state_in.focus, status=None),
                 pending=None if open_kind in ("outstanding_detail", "outstanding_scope") else state_in.pending,
             )
-        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
-            # The month and the "outstanding" an SO ask types, when the parser dropped them.
-            from app.services.chatbot import do_ask as _do_ask
+        # The month and the "outstanding" an SO ask types, when the parser dropped them.
+        from app.services.chatbot import do_ask as _do_ask
 
-            verdict, typed_rule = so_status_mod.typed_words_verdict(
-                verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""), _do_ask.today_myt()
-            )
-            if typed_rule:
-                turn_trace.add("so_list", {"verdict_rule": typed_rule})
+        verdict, typed_rule = so_status_mod.typed_words_verdict(
+            verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""), _do_ask.today_myt()
+        )
+        if typed_rule:
+            turn_trace.add("so_list", {"verdict_rule": typed_rule})
 
         # PR #1353 fix round 3: a bare position over an open roster is read by the
         # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).
         # Not while a stock quantity asked AFTER the roster is the current question:
-        # there the bare number is that quantity (`apply._stock_task_is_the_current_question`).
-        from app.services.chatbot.turn.apply import (
-            _stock_task_is_the_current_question,
-            _stock_task_owed_a_number,
+        # there the bare number is that quantity (`chat_state.stock_task_is_the_current_question`).
+        from app.services.chatbot.turn.chat_state import (
+            stock_task_is_the_current_question as _stock_task_is_the_current_question,
+            stock_task_owed_a_number as _stock_task_owed_a_number,
         )
 
         if getattr(getattr(state_in, "profile", None), "stock_availability_only", False):
             typed = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-            stock_ask = _as_a_stock_ask_by_its_own_words(verdict, typed)
+            # S5: the stock-ask regex stands down under the state gate (the parser's intent).
+            stock_ask = verdict if state_gate else _as_a_stock_ask_by_its_own_words(verdict, typed, template=parser_config.template)
             if stock_ask is not verdict:
                 turn_trace.add("stock_ask_by_its_own_words", {"parser_intent": verdict.get("intent_hint")})
                 verdict = stock_ask
@@ -4971,7 +6110,9 @@ def _run_stages_body(  # noqa: PLR0915
                 verdict = summed
 
         owed_task = _stock_task_owed_a_number(state_in.focus)
-        if owed_task is None or not _stock_task_is_the_current_question(state_in, owed_task, verdict):
+        if not state_led and (
+            owed_task is None or not _stock_task_is_the_current_question(state_in, owed_task, verdict)
+        ):
             engine_verdict = _with_the_engine_pick(
                 verdict, state_in.pending, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
             )
@@ -5164,16 +6305,22 @@ def _run_stages_body(  # noqa: PLR0915
             access=access,
             media=getattr(envelope, "media", None),
         )[0]["json"]["ctx"]
-        if in_ranking_conversation:
-            # Read by the tail: no escalate offer and no routing picker (round 7).
-            ctx["top_selling_no_offer"] = True
         # PLAN-chatbot-customer-scope-29sep.md D3: the contact's customer scope, read once
         # per turn; the gate below and (through `make_tool_runner`) the lane read it.
-        # Lazily: only a turn on a domain a customer scope matters to (the order domain
-        # owns every customer-scoped tool; purchase_order is screened for customer words)
-        # or one saying "my" pays for the lookup.
+        # V1-DOC-SCOPE: read on EVERY turn (a reference number can be typed on any turn, and
+        # who may see ANY customer's documents is decided here), but still only APPLIED as
+        # `customer_scope` on a domain a customer scope matters to (the order domain owns
+        # every customer-scoped tool; purchase_order is screened for customer words) or on
+        # one saying "my". Document staff is the operator-set tier OR `doc_staff` (an active
+        # office access type, or a staff CRM user: V1-DOC-SCOPE-SALES). Everyone else is held
+        # to its links for documents (a linked staff user too, but for the in-process
+        # number lookups), and a contact with none sees no customer document (owner rule:
+        # unlinked != customer). A customer PO ref keeps the tier rule.
+        doc_scope, doc_staff = turn_doc_scope if turn_doc_scope is not None else (
+            business_services.customer_scope_and_staff(db, contact_respond_id, space_id_for_turn)
+        )
         customer_scope = (
-            business_services.customer_scope(db, contact_respond_id, space_id_for_turn)
+            doc_scope
             if verdict.get("self_reference") is True
             or {*ORDER_OR_SALES_DOMAINS, "purchase_order", "chat_analytics"} & {*(plan.domains or ()), *(spec.domain for spec in plan.fetch)}
             else None
@@ -5214,6 +6361,7 @@ def _run_stages_body(  # noqa: PLR0915
         # run_fetch`'s own `_SALES_REPORT_GRANT` check stays as the second line of
         # defence, for a re-entry path that calls it directly.
         from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
+        from app.services.chatbot.lanes.business import report_ask as _report_ask_lane
 
         from app.services.chatbot.contracts import SALES_FIGURE_STATUSES
 
@@ -5221,8 +6369,24 @@ def _run_stages_body(  # noqa: PLR0915
         # the same money under the same key, refused at the same seam.
         sales_report_grant_refused = (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
-            and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
+            and _report_ask_lane.grant_key(parsed_output) not in set(access.get("attributes") or [])
         )
+        if sales_report_grant_refused:
+            # REPORT-SMART-L: the sales ranking has ONE 'may ask' rule, shared with the route
+            # (`contact_asker.may_ask_sales_ranking`): a live salesperson with a book passes.
+            from app.services.chatbot.lanes.business import sales_figure_decision
+
+            _decision = sales_figure_decision(
+                db, contact_respond_id, default_space_id(db), granted=False,
+                order_status=jsc.js_string(parsed_output.get("order_status") or "").strip(),
+                parse_output=parsed_output,
+            )
+            sales_report_grant_refused = _decision != "salesperson_book"
+            if not sales_report_grant_refused:
+                turn_trace.add(
+                    "domain_grant",
+                    {"domain": verdict.get("domain_hint"), "decision": _decision, "needs": _SALES_REPORT_GRANT},
+                )
         if sales_report_grant_refused:
             # Same event shape `lanes.business.run_fetch`'s own sales-report grant
             # check emits (`__init__.py:1216`), so an operator reading the trace sees
@@ -5236,11 +6400,41 @@ def _run_stages_body(  # noqa: PLR0915
                 },
             )
 
-        top_selling_updates: dict[str, Any] = {}
+        # V1-DOC-SCOPE slice 3: an unlinked contact that is not document staff owns no
+        # customer (`resolve_kinds(hide_customers=...)` and the typed-word refusal below).
+        # Crew ruling 15 Oct, keeping the owner's CA-3 Q5(a): a GRANTED report turn is exempt,
+        # picker included: the chat report under `chatbot.analytics`, and the sales report
+        # (every SALES_FIGURE_STATUSES ask, top selling and the ranking included) under
+        # `sales_orders.sales_report`, each granted per contact by the owner.
+        from app.services.chatbot.lanes.business.chat_report import GRANT as _CHAT_REPORT_GRANT
+
+        _granted = set(access.get("attributes") or [])
+        granted_report_turn = bool(
+            plan.fetch
+            and all(spec.domain == "chat_analytics" for spec in plan.fetch)
+            and _CHAT_REPORT_GRANT in _granted
+        ) or (
+            jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
+            and _report_ask_lane.grant_key(parsed_output) in _granted
+        ) or (
+            # SALES-TARGET-CHAT: the target ask is exempt under its own grant; whose customer
+            # it may name is the route's call (403 customer_not_permitted).
+            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_target"
+            and "sales.sales_target" in _granted
+        )
+        # The grant opens the report's customers, never their delivery orders: the picker's DO
+        # probe stays off for any unlinked contact that is not document staff.
+        customer_docs_hidden = (
+            turn_docs_hidden if turn_docs_hidden is not None
+            else _customer_docs_hidden(doc_scope, doc_staff, state_out.profile)
+        )
+        unlinked_held = customer_docs_hidden and not granted_report_turn
+
         customer_scope_refused = False
         gate_input: dict[str, Any] | None = None
         account_question: str | None = None
         resolved_kinds: dict[str, dict[str, int]] = {}
+        exact_kinds: dict[str, dict[str, int]] = {}
         compatible_entities: list[dict[str, Any]] = []
         predicate: dict[str, Any] | None = None
         resolved_candidates: dict[str, list[dict[str, Any]]] = {}
@@ -5313,40 +6507,27 @@ def _run_stages_body(  # noqa: PLR0915
             # product lookup. That rule lives where the predicate is attached to a fetch
             # (`turn_runtime.make_tool_runner`: a fetch already scoped to a resolved
             # product takes no set predicate), not here.
-            resolver_parse_output = turn_runtime.with_carried_entities(
-                (ctx.get("parse") or {}).get("output") or {},
-                state_out.focus,
-                unsettled_only=plan.ask is None,
-            )
+            if state_in.subject is not None:
+                # CHAT-STATE r6 S2: on the state path the fetch input is the Subject's, one
+                # mapping; no carried-entities rule runs (AC-S2-4).
+                resolver_parse_output = chat_state.fetch_entities(
+                    state_in.subject,
+                    (ctx.get("parse") or {}).get("output") or {},
+                    state_out.focus,
+                    unsettled_only=plan.ask is None,
+                )
+            else:
+                resolver_parse_output = turn_runtime.with_carried_entities(
+                    (ctx.get("parse") or {}).get("output") or {},
+                    state_out.focus,
+                    unsettled_only=plan.ask is None,
+                )
             resolver_parse_output = _without_carried_domain_on_a_roster_pick(
                 resolver_parse_output, plan.trace.rules_fired
             )
             resolver_parse_output = _without_the_drill_pick_words(
                 resolver_parse_output, state_in.pending, plan.trace
             )
-            # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4 (AC-1954): under `order`
-            # the generic resolver re-types a category token as a customer
-            # (`entity_resolver._DOMAIN_HINT_EXPANSIONS["order"]["category"]`), which
-            # would filter the ranking by a customer nobody named or open a customer
-            # picker. A top selling ask resolves its category words itself, against
-            # `product_categories` (`lanes/business._top_selling_category_ids`), so the
-            # resolver is never asked about them.
-            # Owner retest (27 Sep 2026): read off the FOCUS, not the verdict, so a
-            # message that only narrows the ranking ("sold by fanny", no ask word of
-            # its own) is kept away from the resolver too.
-            if state_out.focus.status == "top_selling":
-                dealer = (
-                    business_services.top_selling_dealer_ledgers(db, contact_respond_id, space_id_for_turn)
-                    is not None
-                )
-                resolver_parse_output, top_selling_updates = _top_selling_narrowing(
-                    db, resolver_parse_output, state_out.focus, dealer=dealer
-                )
-                resolver_parse_output = _top_selling_dealer_scope(
-                    db, resolver_parse_output, state_out.focus, contact_respond_id, space_id_for_turn
-                )
-            elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
-                resolver_parse_output = _without_carried_words(resolver_parse_output)
             # REPORT-ENGINE 1b fix round F1: a dealer's sales ranking never has a location
             # word looked up (the resolver's miss line would probe warehouse codes); the
             # lane refuses the ask off the word itself (`report_ask._dealer_outside`).
@@ -5386,6 +6567,24 @@ def _run_stages_body(  # noqa: PLR0915
                         **resolver_parse_output,
                         "domain_hint": fanout_domain,
                     }
+            # REPORT-SMART-L S2 (A''): a word whose hint is not an entity kind but is one of the
+            # parser's own verdict fields (a channel word read as `sales_channel`) is never probed,
+            # so it can never arm a kind pick. Word hints the resolver expands (product_type,
+            # certificate) and the policy's own kinds (sales agent, brand, category) are not fields.
+            kind_names = {k.kind for k in policy.kinds}
+            resolver_parse_output = {
+                **resolver_parse_output,
+                "entities": [
+                    e
+                    for e in resolver_parse_output.get("entities") or []
+                    if not (
+                        isinstance(e, dict)
+                        and e.get("hint")
+                        and e.get("hint") not in kind_names
+                        and e.get("hint") in parser.PARSE_OUTPUT_JSON_SCHEMA["properties"]
+                    )
+                ],
+            }
             resolver_ctx = {
                 **ctx,
                 "parse": {**(ctx.get("parse") or {}), "output": resolver_parse_output},
@@ -5420,6 +6619,7 @@ def _run_stages_body(  # noqa: PLR0915
                             if isinstance(e, dict)
                         )
                         and not _roster_is_outstanding(verdict, state_out.focus)
+                        and not customer_docs_hidden
                     ),
                     # Rows 1 and 7: the promotion and purchase-order product rosters carry
                     # has promo / no promo and has PO / no PO, read the same way
@@ -5431,10 +6631,17 @@ def _run_stages_body(  # noqa: PLR0915
                     ),
                     roster_caps=roster_caps,
                     enforced_scope=bool((gate_scope or {}).get("enforced")),
-                    scope_linked=_reference_scope(customer_scope, state_out.profile),
+                    hide_customers=unlinked_held,
+                    skip_customer_probe=customer_docs_hidden,
+                    scope_linked=_reference_scope(doc_scope, state_out.profile, doc_staff=doc_staff),
+                    po_ref_scope_linked=_reference_scope(doc_scope, state_out.profile),
+                    # Under the state gate a listed scheme's rows stay beside an unplaced word: the
+                    # Subject (round 6) says what the fetch is about, the guess rule does not.
+                    listed_scheme_placed=state_in.state_gate,
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds
+            exact_kinds = resolve_outcome.exact_kinds
             compatible_entities = resolve_outcome.compatible_entities
             predicate = resolve_outcome.predicate
             resolved_candidates = resolve_outcome.resolved_candidates
@@ -5484,6 +6691,8 @@ def _run_stages_body(  # noqa: PLR0915
                                 "compatible_entities": compatible_entities,
                             },
                         }
+            # V1-DOC-SCOPE slice 3: a word the resolver could only read as another customer.
+            hidden_customer_tokens = ((resolver_payload or {}).get("resolved") or {}).get("hidden_customer_tokens")
             # ACCOUNT-LEDGER Q4: staff asked a level the typed name lacks.
             staff_account_refusal = ((resolver_payload or {}).get("resolved") or {}).get("account_refusal")
             if staff_account_refusal and not (gate_scope or {}).get("enforced"):
@@ -5501,6 +6710,11 @@ def _run_stages_body(  # noqa: PLR0915
                     )
                 )
                 scope_refused = scope_refused or screened_refused
+            if unlinked_held and _typed_this_message(hidden_customer_tokens, verdict):
+                # V1-DOC-SCOPE slice 3: the resolver could only read a word typed THIS
+                # message as another customer (its rows were dropped before the picker).
+                screened_refused = scope_refused = True
+                account_question = account_question or _no_link_refusal()
             if scope_refused:
                 # ONE refusal for the whole turn (a fan-out says it once): nothing below
                 # fetches or asks; the fixed line is the answer.
@@ -5638,6 +6852,8 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_kinds,
                     resolved_candidates,
                     frozenset(unplaced_tokens),
+                    exact=exact_kinds,
+                    typed=_typed_text(user_turn),
                 )
                 state_out.focus.relation = seat_relation
             if (
@@ -5695,6 +6911,8 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_kinds,
                     resolved_candidates,
                     frozenset(unplaced_tokens),
+                    exact=exact_kinds,
+                    typed=_typed_text(user_turn),
                 )
                 state_out.focus.relation = seat_relation
             # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer
@@ -5704,7 +6922,6 @@ def _run_stages_body(  # noqa: PLR0915
             )
             if clarify is not None:
                 state_out.focus.set_clarify = clarify
-            _apply_top_selling_updates(state_out.focus, top_selling_updates)
             if scope_refused:
                 # A refusal must not lock the next turns: nothing the refused message
                 # named (the foreign word, unresolved) stays on the focus or the plan.
@@ -5730,6 +6947,15 @@ def _run_stages_body(  # noqa: PLR0915
                     for cid, name, code in customer_scope["linked"]
                     if cid in scope_ids
                 ]
+
+        if state_in.subject is not None:
+            # CHAT-STATE r6 AC-S1-8 / AC-S1-11: the one settle step, after the resolver and its
+            # re-entry: a token it placed makes the Subject `ids`, one it could not place is kept
+            # in `unplaced` (the trace logs the settled Subject).
+            state_out = chat_state.settle_subject(
+                state_out, state_in.subject, unplaced_tokens=unplaced_tokens,
+                log=remembered_before.get("_chat_state"),
+            )
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
         # agent (contract 58, fail closed) and the stock-denial switch, which is decided
@@ -5790,7 +7016,7 @@ def _run_stages_body(  # noqa: PLR0915
         # CHAT-LANGUAGE: this turn's reply language, from the message's own words first. Pure,
         # so every arm has it (`run_tail` carries `item["reply_language"]` to the next turn);
         # the business lane below recomputes it once its codes and names are known.
-        item["reply_language"] = _turn_language(latest_user_message, remembered_before, profile)
+        item["reply_language"] = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
 
         # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
         # replay.py::TestHandPass10PromotionAskRepeatsAfterATierPick`): a fresh
@@ -5802,86 +7028,17 @@ def _run_stages_body(  # noqa: PLR0915
         # special-case it: `profile_facts.set_tier` and this call site are gone,
         # a resolved tier is never persisted onto the contact row, and every ask
         # still resolves fresh off `narrow.py`'s own turn-scoped state.
-        contact_pk = remembered_before.get("_contact_pk")
-
-        # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
-        # the topic that just CLOSED, and a topic closes because the customer changed
-        # subject - not because this turn's lane went on to answer. Written HERE, where
-        # the reset is decided, so a turn whose fetch failed or whose lane refused
-        # still remembers the topic it ended. Once per turn, never mid-topic.
-        #
-        # Human intervention closes nothing (Q2 ruling): the topic is whatever it was
-        # when the bot resumes. D14's third named exception (Q15) is the one write a
-        # dry run may make: a CONSOLE turn writes an `is_test=true` frame of its own
-        # world; every other dry run (clone/replay/harness) writes nothing.
-        is_console_dry_run = dry_run and envelope.ingress == "console"
-        written_frame = None
-        # Fix lane round 3 (R1, owner hand test 28 Sep 2026): the parser's
-        # `topic_reset` alone never closed "check stock X" then "incoming X" (same
-        # product, so it reads as a follow-up). A turn whose plan names a different
-        # domain from the open conversation's newest one is the other switch
-        # (`episode_digest.close_trigger`, the backfill's same rule).
         this_domain = str(plan.domains[0]) if plan.domains else None
-        may_write_episode = (not dry_run or is_console_dry_run) and not _is_human_intervened(envelope)
-        open_domain = None
-        if may_write_episode and this_domain and verdict.get("topic_reset") is not True:
-            try:
-                open_domain = memory_mod.open_topic_domain(
-                    db,
-                    contact_respond_id=contact_respond_id,
-                    is_test=dry_run,
-                    exclude_turn_id=turn_id,
-                )
-            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
-                logger.warning("chatbot: the open topic read did not run", exc_info=True)
-        close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
-        if close_trigger is not None and may_write_episode:
-            try:
-                written_frame = memory_mod.write_episode_for_reset(
-                    db,
-                    contact_respond_id=contact_respond_id,
-                    is_test=dry_run,
-                    resetting_turn_id=turn_id,
-                )
-            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
-                logger.warning("chatbot: the episode write did not run", exc_info=True)
-        # Stashed on the shared `before` box (the same object `_run_answer` and
-        # `_run_entities_only_arm` already receive as `remembered_before`) so
-        # `_record_memory_trace`, several call frames later, can report what THIS turn
-        # closed without a new parameter threaded through every arm between here and
-        # there.
-        remembered_before["_episode_written"] = (
-            {
-                "id": written_frame.id,
-                "turn_count": len(written_frame.turn_ids or []),
-                "close_reason": written_frame.close_reason,
-                "summary": written_frame.summary,
-                "trigger": close_trigger,
-                "domain": getattr(written_frame, "domain", None),
-            }
-            if written_frame is not None
-            else None
+        _close_the_episode(
+            db,
+            envelope,
+            verdict=verdict,
+            this_domain=this_domain,
+            dry_run=dry_run,
+            contact_respond_id=contact_respond_id,
+            turn_id=turn_id,
+            remembered_before=remembered_before,
         )
-
-        # AC-MEM032: the tally runs after the episode write above has committed -
-        # never before, since it reads the newest CLOSED frames and a frame this
-        # turn just wrote is one of them. Round 3 (PLAN 6.0, AC-MEM049): facts are
-        # learned and saved at EVERY context level, Off included - the level decides
-        # only what the bot READS, never what it LEARNS. Episodes themselves are
-        # ALSO written whatever the level, staff still see everything either way; the
-        # one gate that still applies is B2's own (never on a dry run).
-        # Stashed on `before` the same way `_episode_written` is, so `_run_answer`'s
-        # tail can fold it into the turn's own `facts_saved` trace line.
-        if written_frame is not None and not dry_run and contact_pk is not None:
-            try:
-                tallied = profile_facts_mod.tally(
-                    db, contact_respond_id, is_test=dry_run, contact_pk=contact_pk
-                )
-                remembered_before["_facts_tallied"] = [
-                    {"key": f["key"], "source": f["source"]} for f in tallied
-                ]
-            except Exception:  # noqa: BLE001 - a lost tally is never a lost turn
-                logger.warning("chatbot: the profile tally did not run", exc_info=True)
 
         turn_trace.add(
             "apply",
@@ -5979,7 +7136,7 @@ def _run_stages_body(  # noqa: PLR0915
                 # heard: X" followed by "I have X."). `None` on a patched-upstream
                 # turn (no outcome ran here at all - S3), which still needs this arm's
                 # own lead.
-                media_prefixed=bool(media_box.get("outcome")),
+                media_prefixed=bool(media_box.get("outcome")) and not media_box["outcome"].caption_fallback,
                 # AC-23: a contact refused the agent gets no fit line on the arm's reply.
                 refused=branch_kind == "access_denied",
             )
@@ -6002,13 +7159,34 @@ def _run_stages_body(  # noqa: PLR0915
         if branch_kind == "low_signal" and completes_here:
             try:
                 resolved_for_prompt = casual.resolve_for_prompt(
-                    db, ctx={**ctx, "reference_kinds": _reference_kinds(ctx, customer_scope, state_out.profile, per_match_scope=False)}
+                    db, ctx={**ctx, "reference_kinds": _reference_kinds(
+                        ctx, doc_scope, state_out.profile, per_match_scope=False, doc_staff=doc_staff
+                    )}
                 )
-                clarifier_prompt = casual.construct_user_prompt(ctx, resolved_for_prompt)
+                # V1-DOC-SCOPE: the clarifier prompt names every match, so another customer's
+                # document numbers are dropped from it the way the business lane drops them.
+                clarifier_scope = _reference_scope(doc_scope, state_out.profile, doc_staff=doc_staff)
+                if clarifier_scope is not None and isinstance(resolved_for_prompt, dict):
+                    resolved_for_prompt = turn_runtime._without_foreign_sales_orders(
+                        db, {"resolved": resolved_for_prompt}, clarifier_scope
+                    )["resolved"]
+                if unlinked_held and isinstance(resolved_for_prompt, dict):
+                    # V1-DOC-SCOPE slice 3: the clarifier asks the resolver itself, so a held
+                    # contact's customer rows are dropped here too.
+                    resolve_gate._without_customer_rows(resolved_for_prompt)
+                clarifier_prompt = casual.construct_user_prompt(
+                    _small_talk_ctx(ctx, verdict, state_out), resolved_for_prompt
+                )
+                # A turn without a model choice makes main's exact call (AC-M-8).
                 clarifier_config = casual.resolve_clarifier_config(
                     db,
                     override_version_id=_prompt_override(
                         envelope, casual.PROMPT_KEY, dry_run=dry_run
+                    ),
+                    **(
+                        {"llm_choice": state_out.profile.llm_choice}
+                        if getattr(state_out.profile, "llm_choice", None)
+                        else {}
                     ),
                 )
             except Exception as exc:  # noqa: BLE001 - AC-403: the lane's own failure shape
@@ -6063,9 +7241,10 @@ def _run_stages_body(  # noqa: PLR0915
             pre_question: Any = None
             if vague or (verdict.get("family") is None and len(turn_sub_asks._sub_asks(verdict)) >= 2):
                 reply_language = _turn_language(
-                    latest_user_message,
+                    user_turn,
                     remembered_before,
                     state_out.profile,
+                    parsed=parsed_language,
                     strip=[
                         str(e[k])
                         for e in verdict.get("entities") or []
@@ -6121,9 +7300,10 @@ def _run_stages_body(  # noqa: PLR0915
             and turn_sub_asks.wants(verdict, state_in.pending)
         ):
             reply_language = _turn_language(
-                latest_user_message,
+                user_turn,
                 remembered_before,
                 state_out.profile,
+                parsed=parsed_language,
                 strip=[
                     str(e[k])
                     for e in verdict.get("entities") or []
@@ -6159,6 +7339,9 @@ def _run_stages_body(  # noqa: PLR0915
                 turn_trace.add("sub_asks", sub_result.trace)
                 answer = turn_compose.Answer(text=pack_parts(sub_result.text), question=sub_result.question)
                 bridge_answered = True
+                # Chat fix PR-B S3: the report the runner ran is the one on screen, so the next
+                # refine re-runs it; a turn that ran none holds none.
+                state_out.focus.sales_ranking_frame = sub_result.report_frame
                 if turn_sub_asks.resumes(verdict, state_in.pending):
                     # The runner's own question is answered, or a new multi-ask moved on
                     # from it (G4b): closed here, whatever form the parser's reply took
@@ -6404,6 +7587,17 @@ def _run_stages_body(  # noqa: PLR0915
         # already says whether a pick is needed or a tier settles automatically, so this
         # fetch runs from a ONE-SPEC plan built for the occasion rather than waiting on
         # `narrow.py`'s now-shadowed ask.
+        if (
+            scheme_none_in_scope
+            and answer is None
+            and branch_kind == "business_query"
+            and completes_here
+            and not (sales_report_grant_refused or customer_scope_refused)
+        ):
+            # SCHEME-NONE-IN-SCOPE: nothing held, and no certificate of the listed scheme in
+            # this contact's scope. Said plainly; nothing is fetched.
+            answer = turn_compose.Answer(text=f"No {scheme_none_in_scope} certificate on record.")
+            turn_trace.add("scheme_none_in_scope", {"scheme": scheme_none_in_scope})
         fetch_plan = plan
         if (
             answer is None
@@ -6451,9 +7645,10 @@ def _run_stages_body(  # noqa: PLR0915
             # CHAT-LANGUAGE: the words of this turn that are data (codes, customer names) must
             # not decide the language, and the catalog is read once, here, with the db open.
             reply_language = _turn_language(
-                latest_user_message,
+                user_turn,
                 remembered_before,
                 state_out.profile,
+                parsed=parsed_language,
                 strip=[
                     str(e[k])
                     for e in compatible_entities
@@ -6501,6 +7696,7 @@ def _run_stages_body(  # noqa: PLR0915
                     # what this message's token is, not the parser's hint.
                     resolved_kinds=resolved_kinds,
                     customer_scope=customer_scope,
+                    doc_staff=doc_staff,
                     # MULTI-CODE-DYM: each unplaced token's did-you-mean, the same
                     # candidates a lone miss of that token offers.
                     unplaced_suggestions=_unplaced_suggestions(resolver_payload, unplaced_tokens),
@@ -6698,6 +7894,7 @@ def _run_stages_body(  # noqa: PLR0915
                         dealer_stock_ask=_dealer_stock_ask(state_out, plan),
                         dealer_incoming_ask=_dealer_incoming_ask(state_out, plan),
                         product_token_missed=miss_on_typed_product,
+                        localizer=localizer,
                     )
                     if answer is not None:
                         bridge_answered = True
@@ -6894,23 +8091,15 @@ def _run_stages_body(  # noqa: PLR0915
                 class_terms = turn_runtime.class_scope_terms(verdict)
                 qualifying = int((predicate or {}).get("qualifying_total") or 0)
                 asked = named_count(verdict.get("top_n"))
-                withheld = (
-                    predicate is not None
-                    and plan.fetch
-                    and spec_tier
-                    and qualifying > business_answer.SET_LIST_MAX
-                    and asked is None
-                    and bool((predicate or {}).get("breakdown"))
-                )
-                # Fix round 9 on PR #833: a long set nothing splits lists what fits, and
-                # is carried like a named count so "another N" continues it.
+                # Fix round 9 on PR #833: a long set lists what fits, and is carried like
+                # a named count so "another N" continues it (SET-STOCK-RENDER, owner 16
+                # Oct 2026: every long set, never withheld for a breakdown).
                 listed_to_the_limit = (
                     predicate is not None
                     and plan.fetch
                     and spec_tier
                     and qualifying > business_answer.SET_LIST_MAX
                     and asked is None
-                    and not withheld
                 )
                 # W4 (owner hand test round 2): a set listed only in part (the customer
                 # named fewer than qualify) is carried too, so their own "another N"
@@ -6922,6 +8111,33 @@ def _run_stages_body(  # noqa: PLR0915
                     and asked is not None
                     and min(asked, business_answer.SET_LIST_MAX) < qualifying
                 )
+                # CHAT-COMPOSER: a page cut by the one-message budget leaves products unlisted even
+                # in a set of 50 or fewer; a described set whose leg qualifies nothing names the
+                # first page of its matching products. Both are carried so a bare "more" pages.
+                from app.services.chatbot import composers
+
+                window = envelopes[0].get("set_window") if envelopes else None
+                window_last = (
+                    int(window["last"]) if isinstance(window, dict) and window.get("last") else None
+                )
+                members = (predicate or {}).get("members") if isinstance(predicate, dict) else None
+                members_total = int((members or {}).get("total") or 0) if isinstance(members, dict) else 0
+                members_listed = len((members or {}).get("codes") or []) if isinstance(members, dict) else 0
+                cut_small = bool(
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and window_last is not None
+                    and window_last < qualifying
+                    and not (listed_to_the_limit or partly_listed)
+                )
+                members_paged = bool(
+                    composers.enabled()
+                    and predicate is not None
+                    and plan.fetch
+                    and not qualifying
+                    and members_total > members_listed > 0
+                )
                 paged = bool(plan.fetch) and isinstance(plan.fetch[0].filters.get("set_page"), dict)
                 # ROGUE-CONVO-REVIEW (owner ruling Q4): a set the spec tier read off the
                 # words INSIDE an unplaced product token is not what the customer asked
@@ -6932,9 +8148,19 @@ def _run_stages_body(  # noqa: PLR0915
                 # has cert ZZQ9917") is listed by the reply and stays carried, so the
                 # follow-up count continues it; only the missed code is named beside it.
                 # `miss_on_typed_product` is the one computation beside the resolve outcome.
-                if paged:
+                # CHAT-COMPOSER: a page cut to one message listed fewer than the limit; the carry
+                # moves past what was actually printed.
+                lane_carry = window.get("carry") if isinstance(window, dict) else None
+                if composers.enabled() and plan.fetch and isinstance(lane_carry, dict):
+                    # CHAT-COMPOSER Lists: the lane that printed the "more" line wrote its own carry.
+                    state_out.focus.set_page = {"set_key": {**lane_carry, "domain": plan.fetch[0].domain}}
+                elif paged:
                     # A page of a carried set: the runner hands back where it stopped.
                     state_out.focus.set_page = envelopes[0].get("set_carry") if envelopes else None
+                    if window_last is not None and isinstance(state_out.focus.set_page, dict):
+                        key = state_out.focus.set_page.get("set_key")
+                        if isinstance(key, dict) and int(key.get("shown") or 0) > window_last:
+                            state_out.focus.set_page = {"set_key": {**key, "shown": window_last}}
                     # ATTACH-SET-BRAND-FOLLOWUP round 2 (owner hand test on the local
                     # copy, 7 Oct 2026): the rows the page LISTED are the subject now.
                     # The page turn never ran the resolver, so nothing settled the focus
@@ -6952,7 +8178,22 @@ def _run_stages_body(  # noqa: PLR0915
                             state_out.focus.extra.pop(kind, None)
                 elif miss_on_typed_product and not class_terms:
                     state_out.focus.set_page = None
-                elif withheld or partly_listed or listed_to_the_limit:
+                elif members_paged:
+                    state_out.focus.set_page = turn_runtime.set_page_carry(
+                        {**predicate, "qualifying_total": members_total},
+                        plan.fetch[0],
+                        class_terms,
+                        access_levels=(envelopes[0].get("access_levels_used") if envelopes else None),
+                        shown=members_listed,
+                    )
+                    if isinstance(state_out.focus.set_page, dict):
+                        # The leg stays in the key: the next page is this miss list's next members.
+                        state_out.focus.set_page["set_key"]["miss_list"] = True
+                        # ...and the offer's team is the first page's, not the "more" message's.
+                        first_team = (verdict.get("routing") or {}).get("suggested_team")
+                        if first_team:
+                            state_out.focus.set_page["set_key"]["offer_team"] = first_team
+                elif partly_listed or listed_to_the_limit or cut_small:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
                         predicate,
                         plan.fetch[0],
@@ -6961,8 +8202,8 @@ def _run_stages_body(  # noqa: PLR0915
                             envelopes[0].get("access_levels_used") if envelopes else None
                         ),
                         shown=(
-                            0
-                            if withheld
+                            window_last
+                            if window_last is not None
                             else business_answer.SET_LIST_MAX
                             if listed_to_the_limit
                             else min(asked, business_answer.SET_LIST_MAX)
@@ -7027,13 +8268,21 @@ def _run_stages_body(  # noqa: PLR0915
                 # executor.
                 answer.files.extend(_stock_ask_packing_list_files(envelopes))
                 stock_ask_entries = _stock_ask_answered_entries(envelopes)
-                record_top_selling_asked(state_out.focus, envelopes)
                 # LOWSTOCK-FILTER-ASK: a lane that asked for a required field hands its
                 # slot back; it stays open for the next message only.
                 state_out.focus.required_ask = next(
                     (e["required_ask"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("required_ask"), dict)),
                     None,
                 )
+                if (
+                    (state_out.focus.required_ask or {}).get("ask") == sales_company_ask.ASK_NAME
+                    and state_out.pending is not None
+                ):
+                    # SALES-COMPANY: the company question is the newest one on the table, so
+                    # an offer still stored from an earlier turn (a sales report's drill offer)
+                    # closes; left open, the reply "Sorento" would answer it. Only this ask:
+                    # every other required ask keeps the stored question as before.
+                    state_out = dataclasses_replace(state_out, pending=None)
                 # The frame lives only through sales ranking turns (one that ran replaces it,
                 # one that asked a required field keeps it); any other ask clears it.
                 state_out.focus.sales_ranking_frame = next(
@@ -7042,6 +8291,16 @@ def _run_stages_body(  # noqa: PLR0915
                     if jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_ranking"
                     else None,
                 )
+                if (
+                    state_out.focus.sales_ranking_frame
+                    and jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_ranking"
+                    and not state_out.focus.required_ask
+                    and not any(isinstance(e, dict) and isinstance(e.get("sales_ranking_frame"), dict) for e in envelopes or [])
+                ):
+                    # REPORT-SMART-L S2 (C): a sales ranking turn that neither ran nor asked a
+                    # field failed (a line was said), so the held frame is from an earlier ranking;
+                    # the lane never reads a new axis against it as a drill.
+                    state_out.focus.sales_ranking_frame = {**state_out.focus.sales_ranking_frame, "stale": True}
                 # LOWSTOCK-SEMANTIC (crew root cause, 4 Oct 2026): the filters a low stock
                 # report was built with outlive the turn, so "taiyang only" narrows it.
                 low_stock_frame = next(
@@ -7049,15 +8308,6 @@ def _run_stages_body(  # noqa: PLR0915
                     None,
                 )
                 state_out.focus.low_stock = low_stock_frame
-                if (
-                    (state_out.focus.top_selling or {}).get("asked")
-                    and state_out.pending is not None
-                    and state_out.pending.kind == "top_selling_pick"
-                ):
-                    # Owner retest (27 Sep 2026): the lane asked a question over a
-                    # ranking still on screen, so the "2" that answers it must not
-                    # pick row 2 of the old list. The question closes the list.
-                    state_out = dataclasses_replace(state_out, pending=None)
                 if (
                     state_out.pending is not None
                     and state_out.pending.kind in ("outstanding_detail", "outstanding_scope")
@@ -7124,17 +8374,39 @@ def _run_stages_body(  # noqa: PLR0915
                     focus=dataclasses_replace(state_out.focus, customers=focus_customers_named),
                 )
             ask = plan.ask
-            if ask.kind == "customer_pick" and not _roster_is_outstanding(verdict, state_out.focus):
+            if parser_config.closed_lists and ask.kind == "attachment_type_ask":
+                # CHAT-CLOSED-LISTS card R3: the file types the product really has, as the
+                # roster the tail stores, so the reply's numbers are what "2" answers.
+                offered = turn_runtime.file_type_ask(db, ask, state_out.focus)
+                if offered is not ask:
+                    # The tail stores the question the Answer carries, so the options
+                    # printed here are the ones a bare "2" answers.
+                    ask = offered
+                    turn_trace.add("file_type_ask", {"options": len(offered.options)})
+            if (
+                ask.kind == "customer_pick"
+                and not _roster_is_outstanding(verdict, state_out.focus)
+                and not customer_docs_hidden
+            ):
                 # PICKER-ONE (owner, 13 Oct 2026): a customer roster the narrower raised
                 # off the focus or off typed words carries the same has DO / no DO stamp
                 # every other customer picker does, through the one helper. R20 stands:
-                # an outstanding ask's roster is stamped with nothing.
+                # an outstanding ask's roster is stamped with nothing. V1-DOC-SCOPE slice 3:
+                # nor is the roster of a contact that sees no delivery order.
                 ask = turn_runtime.stamp_customer_ask(
                     db, ask, ctx=ctx, payload=resolver_payload, space_id=space_id_for_turn
                 )
-            answer = turn_compose.compose_question(
-                ask, subject_state, _ask_localizer(ask, db, item, dry_run=dry_run)
-            )
+            same_stamp = turn_runtime.same_stamp_answer(ask, verdict)
+            if same_stamp is not None:
+                # Chat fix PR-B S9: a DO ask where every account reads "no DO": that is the
+                # answer and nothing is asked (no roster is armed).
+                stage[0] = "replied"
+                answer = turn_compose.Answer(text=same_stamp)
+                state_out = dataclasses_replace(state_out, pending=None)
+            else:
+                answer = turn_compose.compose_question(
+                    ask, subject_state, _ask_localizer(ask, db, item, dry_run=dry_run)
+                )
 
         # -- the REFUSAL: a denied stock check is an answer, not silence ------- #
         # `stock_denied` is one of the three business branch kinds, so it is outside
@@ -7160,10 +8432,10 @@ def _run_stages_body(  # noqa: PLR0915
         # nothing else composed it, exactly the shape `stock_denied` handles the
         # same way just above.
         if answer is None and sales_report_grant_refused and completes_here:
-            from app.services.chatbot.lanes.business import SALES_REPORT_NOT_ENABLED_MESSAGE
+            from app.services.chatbot.lanes.business import report_ask as _refusal_lane
 
             stage[0] = "replied"
-            answer = turn_compose.Answer(text=SALES_REPORT_NOT_ENABLED_MESSAGE)
+            answer = turn_compose.Answer(text=_refusal_lane.not_enabled_line(parsed_output))
 
         # -- the REFUSAL: a customer word outside a scoped contact's links -------- #
         # Once for the whole turn, however many domains the plan fans out to; no picker,
@@ -7174,6 +8446,25 @@ def _run_stages_body(  # noqa: PLR0915
                 text=account_question or str((customer_scope or {}).get("refusal") or "")
             )
 
+        if (
+            held_none_match
+            and answer is not None
+            and lane_error_text is None
+            and branch_kind == "business_query"
+            and not (customer_scope_refused or sales_report_grant_refused)
+        ):
+            # FILTER-OVER-HELD (crew ruling (a), 18 Oct 2026): no member of the held family
+            # carries what the message names. Said plainly, from that data check alone; never
+            # the held products' own rows as if they matched, never the catalogue's set.
+            held_codes = ", ".join(dict.fromkeys(held_none_match["held"]))
+            said = " ".join(dict.fromkeys(held_none_match["said"])) or "that"
+            # HELD-WITHOUT-SCHEME: the filter was a certificate scheme the products hold none of.
+            scheme_none = held_none_match.get("scheme")
+            answer = turn_compose.Answer(
+                text=f"{held_codes}: no {scheme_none} certificate on record." if scheme_none else f"{held_codes}: none on record with {said}."
+            )
+            turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
+
     if answer is not None and lane_error_text is None:
         if _dealer_stock_ask(state_out, plan) or _dealer_incoming_ask(state_out, plan):
             # Owner ruling 26 Sep 2026 (hand test F1): whatever composed this stock
@@ -7183,8 +8474,6 @@ def _run_stages_body(  # noqa: PLR0915
             answer = _dealer_refers_to_salesman(answer, localizer)
             if _dealer_incoming_ask(state_out, plan):
                 answer = _dealer_names_the_miss(answer, envelopes)
-        elif in_ranking_conversation:
-            answer = _without_escalation_offer(answer)
         return _run_answer(
             turn_id=turn_id,
             ctx=ctx,
@@ -7232,6 +8521,7 @@ def _run_stages_body(  # noqa: PLR0915
                 contact_respond_id=contact_respond_id,
                 turn_trace=turn_trace,
                 state=state_out,
+                remembered_before=remembered_before,
             )
             actions = [*actions, *extra_actions]
             _close_turn(
@@ -7287,7 +8577,14 @@ def _run_stages_body(  # noqa: PLR0915
                     "delegate_error": lane_error_text,
                 },
             )
-        elif delegate is not None and s7_mode and not dry_run:
+        elif (
+            delegate is not None
+            and (s7_mode or envelope.ingress == DIRECT_INGRESS or inbox_queue.draining())
+            and not dry_run
+        ):
+            # CHAT-INBOX-QUEUE (IQ-44): a queued turn has no n8n spine waiting on it either.
+            # CHAT-SPEED: a webhook-started turn has no n8n spine behind it either, so a lane
+            # that still delegates is closed the S7 way rather than left as a ghost.
             # S7 mode retires the n8n tail: a turn that still delegates has NOBODY to
             # finish it, so it is closed here rather than left as a ghost.
             orphan_error = (
@@ -7296,6 +8593,15 @@ def _run_stages_body(  # noqa: PLR0915
                 f"completed in the CRM. Add {branch_kind!r} to "
                 f"system_settings.chatbot_completed_lanes on a build that can complete "
                 f"it, or turn S7 mode off."
+                if s7_mode
+                else f"This turn ran on the inbox queue, which has no n8n spine to finish "
+                f"the {delegate!r} lane. Leave this lane's messages to n8n by turning "
+                f"direct ingress off until the CRM completes {branch_kind!r}."
+                if inbox_queue.draining()
+                else f"This turn came through direct ingress (the respond.io webhook), "
+                f"which has no n8n spine to finish the {delegate!r} lane. Leave this "
+                f"lane's messages to n8n by turning direct ingress off until the CRM "
+                f"completes {branch_kind!r}."
             )
             logger.error("chatbot turn %s: %s", turn_id, orphan_error)
             turn_trace.record(
@@ -7306,7 +8612,7 @@ def _run_stages_body(  # noqa: PLR0915
                     "S7 mode retires the n8n tail, so a lane that still delegates has "
                     "nobody left to complete it."
                 ),
-                facts={"lane": delegate, "s7_mode": True, "lane_completed_by_crm": False},
+                facts={"lane": delegate, "s7_mode": s7_mode, "ingress": envelope.ingress, "lane_completed_by_crm": False},
                 error=orphan_error,
                 raw={"item": item},
             )
@@ -7428,6 +8734,8 @@ def _run_stages_body(  # noqa: PLR0915
             recalled=recalled,
             fallback=fallback_ctx,
             chat_console=_chat_console(envelope),
+            user_turn=user_turn,
+            parsed_language=parsed_language,
         )
 
     return TurnResult(
@@ -7479,33 +8787,37 @@ def _dealer_asks(state_out: Any, plan: Any, domain: str) -> bool:
     return domain in domains
 
 
-def _in_ranking_conversation(focus: Any) -> bool:
-    """Is the conversation inside a ranking, or a report a ranking handed over to?"""
-    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
-    return focus.status == "top_selling" or bool(slot and slot.get("hop"))
+def _only_shown(codes: list[str] | None, text: Any) -> list[str] | None:
+    """The codes this reply's own text shows (case-insensitive whole code token), de-duplicated, in order."""
+    shown = str(text or "")
+    kept = [
+        code
+        for code in dict.fromkeys(codes or [])
+        if re.search(rf"(?<![\w-]){re.escape(code)}(?![\w-])", shown, re.IGNORECASE)
+    ]
+    return kept or None
 
 
-def _asks_for_a_person(verdict: dict[str, Any]) -> bool:
-    escalation = verdict.get("escalation") if isinstance(verdict.get("escalation"), dict) else {}
-    return verdict.get("message_type") == "request_for_help" or escalation.get("is_escalation_confirmation") is True
+def _replied_shown_codes(answer: Any) -> list[str] | None:
+    """CHAT-CODE-LOOKUP R2-7 (trace only): the question's listed codes plus the answer's own list, kept
+    only when this turn's reply text shows them (a re-armed carried roster lists more than the reply)."""
+    codes = [*(_shown_codes(answer.question) or []), *(getattr(answer, "shown_codes", None) or [])]
+    return _only_shown(codes, answer.text)
 
 
-def _without_escalation_offer(answer: Any) -> Any:
-    """PR #1273 round 7 (round 5 R6, restated): inside a ranking or the report it handed
-    over to, a reply offers no escalation and no routing picker unless the customer asked
-    for a person. The sentence, the offer and an escalation question all go; a pick the
-    reply also asked stays, without the offer attached to it."""
-    from app.services.chatbot import dealer_stock as dealer_mod
-    from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
-
-    text, _had = dealer_mod.refers_to_salesman(getattr(answer, "text", "") or "")
-    question = getattr(answer, "question", None)
-    if question is not None:
-        if question.kind in ESCALATION_OFFER_KINDS:
-            question = None
-        elif (question.payload or {}).get("escalate_offered") is True:
-            question = dataclasses_replace(question, payload={**question.payload, "escalate_offered": False})
-    return dataclasses_replace(answer, text=text, question=question, offer=None)
+def _shown_codes(question: Any) -> list[str] | None:
+    """CHAT-CODE-LOOKUP R2-7 (trace only): the product codes a picker, did-you-mean or related list
+    shows, in display order, read off the question built from that same list; None when none."""
+    if question is None:
+        return None
+    # The escalation lane's own product did-you-mean is a team_pick over product options that keep
+    # their code in the payload.
+    codes = []
+    for o in question.options:
+        code = o.get("code") or (o.get("payload") or {}).get("product_code")
+        if o.get("entity_type") in ("product", "product_set") and code:
+            codes.append(str(code))
+    return codes or None
 
 
 def _dealer_refers_to_salesman(answer: Any, localizer: Any = None) -> Any:
@@ -7560,8 +8872,37 @@ def _stock_ask_reply(
         ],
         demand_qty=verdict.get("demand_qty"),
     )
-    state_out.focus.tasks = reply.tasks
-    if [spec.domain for spec in fetch_plan.fetch] != ["inventory"]:
+    from app.services.chatbot import composers
+
+    domains = [spec.domain for spec in fetch_plan.fetch]
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    # CHAT-COMPOSER Q1: a stock leg carried from an earlier turn (no entity of this message)
+    # beside another domain's answer opens no quantity task and prints no bare question.
+    carried_leg = bool(
+        composers.enabled()
+        and domains != ["inventory"]
+        and entities
+        and all(e.get("current_message") is False for e in entities)
+        and not (verdict.get("domain_in_message") is True and verdict.get("domain_hint") == "inventory")
+    )
+    removed = False
+    if carried_leg:
+        from app.services.chatbot.composers import misses as composers_misses
+
+        # The bare question, in English or as the catalogue words it, wherever it sits.
+        asked_forms = composers_misses.bare_question_forms()
+        paragraphs = getattr(answer, "text", "").split("\n\n")
+        kept = [p for p in paragraphs if p.strip() not in asked_forms]
+        removed = len(kept) != len(paragraphs)
+        if removed:
+            answer = dataclasses_replace(answer, text="\n\n".join(kept))
+    # A task is dropped only with its question: never a question without its task.
+    state_out.focus.tasks = (
+        tuple(t for t in reply.tasks if not (t.kind == "stock_qty" and t.opened_at_turn == turn_no))
+        if removed
+        else reply.tasks
+    )
+    if domains != ["inventory"]:
         return answer
     block_seen = any(
         isinstance(envelope, dict) and envelope.get("stock_availability")
@@ -7592,9 +8933,14 @@ def _stock_ask_reply(
     misses = _unplaced_tokens(envelopes)
     if not text and not misses:
         return answer
-    parts = _stock_answer_lines(envelopes)
+    from app.services.chatbot import composers
+    from app.services.chatbot.composers import stock as composers_stock
+
+    parts = _stock_answer_lines(envelopes, full=composers.enabled())
     if misses:
-        parts.append(f"Couldn't find: {', '.join(misses)}.")
+        miss_line = composers_stock.miss_line(misses)
+        if miss_line:
+            parts.append(miss_line)
     if text:
         parts.append(text)
     question = (
@@ -7616,13 +8962,20 @@ def _dealer_names_the_miss(answer: Any, envelopes: list[dict[str, Any]]) -> Any:
     line). A reply without that line (a total miss, already named) is left as it is."""
     text = getattr(answer, "text", "") or ""
     misses = _unplaced_tokens(envelopes)
-    if not misses or not _COMPOSE_MISS.search(text):
+    # CHAT-COMPOSER: compose stamped the exact miss sentence it printed (gate on only).
+    stamped = getattr(answer, "miss_text", "") or ""
+    if stamped and not text.rstrip().endswith(stamped):
+        stamped = ""
+    if not misses or not (stamped or _COMPOSE_MISS.search(text)):
         return answer
     from app.services.chatbot.turn import refer
     from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
-    blocks = _COMPOSE_MISS.sub("", text).rstrip().split("\n\n")
-    line = f"Couldn't find: {', '.join(misses)}."
+    stripped = text.rstrip()[: -len(stamped)] if stamped else _COMPOSE_MISS.sub("", text)
+    blocks = stripped.rstrip().split("\n\n")
+    from app.services.chatbot.composers import stock as composers_stock
+
+    line = composers_stock.miss_line(misses)
     if blocks and blocks[-1].strip() == REFER_TO_SALESMAN:
         # The refer line stays last, printed through its one helper.
         head = "\n\n".join(b for b in blocks[:-1] if b.strip())
@@ -7630,8 +8983,9 @@ def _dealer_names_the_miss(answer: Any, envelopes: list[dict[str, Any]]) -> Any:
     return dataclasses_replace(answer, text="\n\n".join(p for p in (*blocks, line) if p.strip()))
 
 
-def _stock_answer_lines(envelopes: list[dict[str, Any]]) -> list[str]:
-    """The answered lines the presenter printed ("<code> x <Q>: ..."), in the order asked."""
+def _stock_answer_lines(envelopes: list[dict[str, Any]], *, full: bool = False) -> list[str]:
+    """The answered lines the presenter printed ("<code> x <Q>: ..."), in the order asked.
+    `full` (CHAT-COMPOSER) prints each as its whole block: marker and alternatives too."""
     lines: list[str] = []
     for envelope in envelopes or []:
         if not isinstance(envelope, dict) or not envelope.get("stock_availability"):
@@ -7640,7 +8994,12 @@ def _stock_answer_lines(envelopes: list[dict[str, Any]]) -> list[str]:
             flags = item.get("flags") if isinstance(item, dict) else None
             title = item.get("title") if isinstance(item, dict) else None
             if isinstance(flags, dict) and flags.get("branch") and not flags.get("needs_quantity") and title:
-                lines.append(str(title))
+                if full:
+                    from app.services.chatbot.composers import stock as composers_stock
+
+                    lines.append(composers_stock.dealer_block(item))
+                else:
+                    lines.append(str(title))
     return lines
 
 
@@ -7772,6 +9131,7 @@ def _run_answer(
             # any of them did not go as links (owner hand test, 9 Oct 2026).
             "file_mode": file_mode,
             "file_mode_fallback": file_fallback,
+            "shown_codes": _replied_shown_codes(answer),
         },
         raw={"reply": reply},
     )
@@ -7829,7 +9189,7 @@ def _run_answer(
             written=written,
             facts_saved=facts_saved,
         )
-        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
+        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run, reply=reply)]
         turn_trace.record(
             "sent",
             summary="Handed the reply to the caller to send.",
@@ -7963,6 +9323,94 @@ def _dropped_reason(db: Session, key: str, value: Any) -> str:
     if profile_facts_mod._normalize_for_stated(key, spec, value, db) is None:
         return "invalid value"
     return "outranked"
+
+
+def _run_opportunity_arm(
+    db: Session,
+    *,
+    parsed_language: Any = language_mod.NOT_PARSED,
+    turn_id: str,
+    envelope: Envelope,
+    verdict: dict[str, Any],
+    parser_verdict: dict[str, Any],
+    open_ask: Any,
+    state: Any,
+    access: dict[str, Any],
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+    contact_respond_id: str,
+    session_block: Any,
+    known_phone: str | None,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    user_turn: Any,
+    profile: Any,
+) -> TurnResult:
+    """SALES-TARGET-CHAT slice 2: the `log_opportunity` arm. The lane answers the whole turn
+    (`lanes/opportunity.run`: who may log, the field asked, the read-back or the save); this
+    routes it, carries its open field question (`focus.required_ask`) and its read-back
+    (`pending`) to the next message, and hands the reply to the ONE answer tail. A dry run
+    calls the lane too: the write goes with `dry_run`, so nothing is saved (LESSONS-LEARNT 101)."""
+    branch_kind = opportunity_lane.BRANCH_KIND
+    space_id = default_space_id(db)
+    salesperson = opportunity_lane.is_salesperson(db, contact_respond_id, space_id)
+    item = _stamp_item(access, branch_kind, {})
+    item["reply_language"] = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
+    turn_trace.record(
+        "routed",
+        summary=f"Routed to {trace_mod.lane_words(branch_kind, verdict.get('domain_hint'))}.",
+        why="The parser read the message as logging a sales opportunity, or as the answer to its question.",
+        facts={"lane": branch_kind, "salesperson": salesperson, "domains": ["sales"]},
+        raw={"item": item},
+    )
+    stage[0] = "looked_up"
+    lane = opportunity_lane.run(
+        verdict,
+        open_ask=open_ask,
+        pending=state.pending,
+        salesperson=salesperson,
+        contact_respond_id=contact_respond_id,
+        space_id=space_id,
+        dry_run=dry_run,
+        turn_no=state.turn_no,
+    )
+    turn_trace.add("opportunity", {"called": list(lane.called), "asking": (lane.slot or {}).get("asking"),
+                                   "read_back": lane.pending is not None, "dry_run": dry_run})
+    state_out = dataclasses_replace(state, pending=lane.pending)
+    state_out.focus.required_ask = lane.slot
+    ctx = build_ctx(
+        contact=_contact_block(envelope, known_phone),
+        text=_tf_message(envelope),
+        session=session_block,
+        parse={"output": verdict, "_parser_raw": parser_verdict},
+        access=access,
+        media=getattr(envelope, "media", None),
+    )[0]["json"]["ctx"]
+    # The routing session read only; it is done before the answer tail writes, as on the main
+    # path (whose tail runs after that session's block has closed it).
+    db.close()
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind=branch_kind,
+        actions=actions,
+        answer=turn_compose.Answer(text=lane.text),
+        state=state_out,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+        chat_console=_chat_console(envelope),
+        refused=not salesperson,
+    )
 
 
 def _run_entities_only_arm(
@@ -8152,8 +9600,9 @@ def _run_entities_only_arm(
     )
 
 
-def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
-    """What the caller executes: the message, then any files, in that order."""
+def _answer_actions(answer: Any, *, dry_run: bool, reply: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the caller executes: the message, then any files, in that order. The files
+    action carries the persisted `reply`, as the tail's and the formatter's do."""
     built: list[dict[str, Any]] = []
     words = getattr(answer, "text", "") or ""
     if words.strip():
@@ -8166,7 +9615,12 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
         )
     if answer.files:
         built.append(
-            {"kind": "send_attachments", "attachments_src": answer.files, "dry_run": dry_run}
+            {
+                "kind": "send_attachments",
+                "attachments_src": answer.files,
+                "reply": dict(reply),
+                "dry_run": dry_run,
+            }
         )
     return built
 
@@ -8229,9 +9683,11 @@ def _apply_media_reply_prefix(result: TurnResult, outcome: Any) -> None:
         return
     prefix = media_intake.reply_prefix(outcome)
     notices = media_intake.notice_texts(outcome)
+    if not prefix and not notices:
+        return
     reply = result.reply or {}
     body = reply.get("text") or ""
-    lines = [prefix, *([body] if body else []), *notices]
+    lines = [*([prefix] if prefix else []), *([body] if body else []), *notices]
     full_text = "\n".join(lines)
     result.reply = {**reply, "text": full_text}
     for action in result.actions or []:
@@ -8293,7 +9749,8 @@ def _media_source_modality(media_box: dict[str, Any]) -> str | None:
     the same either way."""
     outcome = media_box.get("outcome")
     if outcome is not None:
-        return outcome.modality
+        # A caption fallback answers the caption as typed text, not "that photo".
+        return None if outcome.caption_fallback else outcome.modality
     return media_box.get("patched_modality")
 
 
@@ -8341,6 +9798,8 @@ def _media_intake_facts(outcome: media_intake.MediaIntakeOutcome) -> dict[str, A
         facts["attachment_error"] = outcome.attachment_error
     if outcome.extraction_error:
         facts["extraction_error"] = outcome.extraction_error
+    if outcome.caption_fallback:
+        facts["caption_fallback"] = True
     return facts
 
 
@@ -8369,6 +9828,148 @@ def _demand_qty_missing(verdict: dict[str, Any]) -> bool:
     return jsc.is_empty(verdict.get("demand_qty")) or verdict.get("demand_qty") == 0
 
 
+def _readable_customers(db: Any, rows: Any, contact_respond_id: Any, has_company_scope: bool) -> list[Any]:
+    """CHAT-STATE S7: the carried customer rows this contact can still read, at turn start.
+    One read through the contact's scope-stamped session (company scope applies), narrowed to
+    the current customer links for an enforced contact. A row whose keys are all unreadable is
+    dropped; a row with no code and no key is dropped; token-only rows travel to the resolver."""
+    keys_of = lambda r: [  # noqa: E731
+        str(k) for k in ([r.get("uuid")] if r.get("uuid") else []) + list(r.get("uuids") or []) if k
+    ]
+    from app.services.identifier_resolver import is_uuid
+
+    every_key = {k for r in rows or [] if isinstance(r, dict) for k in keys_of(r)}
+    wanted = {k for k in every_key if is_uuid(k)}
+    # A key that is not a UUID can name nothing readable.
+    unreadable: set[str] = every_key - wanted
+    if wanted:
+        try:
+            from app.models.base import company_scope
+            from app.models.order import Customer
+
+            # A key nothing holds names no data and is left to the resolver; a key a customer
+            # holds but this contact's scope cannot read is dropped.
+            with company_scope(db, None):
+                existing = {str(i) for (i,) in db.query(Customer.id).filter(Customer.id.in_(wanted)).all()}
+            readable = (
+                {str(i) for (i,) in db.query(Customer.id).filter(Customer.id.in_(wanted)).all()}
+                if has_company_scope
+                else set()
+            )
+            scope = business_services.customer_scope(db, contact_respond_id, business_services.fetch_space_id(db))
+            if scope and scope.get("enforced"):
+                readable &= {str(i) for i in scope["ids"]}
+            # With no company scope at all nothing is readable, whether or not the key exists.
+            unreadable |= (existing - readable) if has_company_scope else set(wanted)
+        except Exception:  # noqa: BLE001 - fail closed: no keyed row is trusted when the read fails
+            logger.warning("chatbot: the carried-customer read failed; keyed customer rows dropped", exc_info=False)
+            unreadable = set(every_key)
+    kept: list[Any] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        keys = keys_of(row)
+        if keys:
+            live = [k for k in keys if k not in unreadable]
+            if not live:
+                continue
+            if len(live) != len(keys):
+                row = {**row, "uuid": live[0], **({"uuids": live} if row.get("uuids") else {})}
+        elif not (row.get("canonical_code") or row.get("raw") or row.get("name")):
+            continue
+        kept.append(row)
+    return kept
+
+
+def _customer_docs_hidden(doc_scope: Any, doc_staff: bool, profile: Any) -> bool:
+    """V1-DOC-SCOPE: an unlinked contact that is not document staff (nor office tier) owns no
+    customer, so it may not see other customers' rows or documents. The ONE rule both the
+    Subject's hidden keys and the turn's `customer_docs_hidden` are drawn from."""
+    return doc_scope is None and not (doc_staff or is_staff_profile(profile))
+
+
+def _held_for_the_seams(state_in: Any, verdict: dict[str, Any], *, for_family: bool) -> list[dict[str, Any]]:
+    """The held products the held-family narrowing and the scheme index read. On the state path
+    the Subject's, as the ops left them (`chat_state.held_products`). Off the state path the rule
+    those seams always had, unchanged (state-off is byte-identical): a message whose own entity
+    the parser hinted `category` / `product_type` is about that class, so no held product. The
+    rule of `class_named.py` (CHAT-CLOSED-LISTS R6-3): a spec grounding made out of that class
+    keeps it as `class_hint`, so it names the class too."""
+    if state_in.subject is not None:
+        return chat_state.held_products(state_in, for_family=for_family)
+    from app.services.chatbot import class_named
+
+    names_a_class = class_named.names_own_class(verdict.get("entities") or [])
+    return [] if names_a_class else list(state_in.focus.products)
+
+
+def _class_members(db: Session, class_rows: list[dict[str, Any]], held_ids: list[str]) -> set[str]:
+    """The held products whose category is of the class the rows name, through the catalogue's
+    class vocabulary (`services.resolve_category_class`, the stock ask's own); a row carrying a
+    category key counts it directly, and a row whose word does not resolve is tried by its
+    code. A class the catalogue does not know says nothing about membership: every held
+    product stays. Data only: membership is never read off the word itself."""
+    from sqlalchemy import func, or_
+
+    from app.models.product import Product, ProductCategory
+
+    category_ids: set[str] = {str(r["uuid"]) for r in class_rows if r.get("uuid")}
+    labels: set[str] = set()
+    for row in class_rows:
+        for word in (row.get("value"), row.get("canonical_code")):
+            ids, names = business_services.resolve_category_class(db, str(word or ""))
+            if ids or names:
+                category_ids.update(ids)
+                labels.update(n.casefold() for n in names)
+                break
+    if not held_ids:
+        return set()
+    if not (category_ids or labels):
+        return set(held_ids)
+    member_of = [
+        *([Product.category_id.in_(sorted(category_ids))] if category_ids else []),
+        *([func.lower(ProductCategory.class_label).in_(sorted(labels))] if labels else []),
+    ]
+    rows = (
+        db.query(Product.id)
+        .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        .filter(Product.id.in_(held_ids), or_(*member_of))
+        .all()
+    )
+    return {str(pid) for (pid,) in rows}
+
+
+def _state_log(before: dict[str, Any], state: Any, answer: Any) -> dict[str, Any]:
+    """CHAT-STATE: the memory event's `state` key, `{shown, before, changes, rejected, after}`;
+    empty off the state path. `after` is the view of the state this turn leaves behind."""
+    log = before.get("_chat_state")
+    if not log or state is None:
+        return {}
+    from app.services.chatbot.turn import tail as turn_tail
+
+    state = chat_state.restored(state)
+    focus = state.focus
+    if getattr(state, "state_path", False):
+        focus = dataclasses_replace(
+            focus,
+            last_list=turn_tail.last_list_after(
+                focus.last_list,
+                question=getattr(answer, "question", None),
+                sections=getattr(answer, "sections", None) or [],
+                turn_no=state.turn_no,
+            ),
+        )
+    # The view as the NEXT turn's parser sees it: the turn counter has moved on by one.
+    after_state = dataclasses_replace(
+        state, focus=focus, pending=getattr(answer, "question", None) or state.pending,
+        turn_no=(state.turn_no or 0) + 1, quoted_turn_no=None,  # the next turn quotes nothing yet
+    )
+    after = chat_state.view(
+        after_state, turn_question.open_question(after_state.pending, focus.tasks, focus.required_ask)
+    )
+    return {"state": json.loads(json.dumps({**log, "after": after}, default=str))}
+
+
 def _record_memory_trace(
     db: Session,
     turn_trace: Any,
@@ -8394,6 +9995,7 @@ def _record_memory_trace(
     from app.services.chatbot.turn.pending import to_wire
     from app.services.chatbot.turn.state import focus_to_wire
 
+    state = chat_state.restored(state) if state is not None else None
     # The contact intake resolved (workspace-scoped, by primary key), never a second
     # `respond_io_id` lookup; the profile BEFORE is intake's snapshot, the AFTER is
     # read now, once this turn's writes are in (reviewer pass at d89110c0, S22).
@@ -8437,6 +10039,7 @@ def _record_memory_trace(
             },
             "written": written,
             "dry_run": dry_run,
+            **_state_log(before, state, answer),
         },
     )
     if not record_remembered:
@@ -8472,6 +10075,8 @@ def _remember_on_delegated_arm(
     write to `complete_turn` (casual, escalation): apply the verdict's statements and
     record the `memory` event, so a statement-only turn is remembered and traced like
     any other (reviewer pass at d89110c0, B1 and S22)."""
+    # CHAT-INBOX-QUEUE (IQ-45): on the inbox drain the turn gives way BEFORE it commits facts.
+    inbox_queue.checkpoint(turn_id)
     if verdict is None or remembered_before is None or contact_respond_id is None:
         return
     facts_saved = _apply_profile_statements(
@@ -8518,6 +10123,8 @@ def _run_casual_lane(
     recalled: list[dict[str, Any]] | None = None,
     fallback: Any = None,
     chat_console: bool = False,
+    user_turn: Any,
+    parsed_language: Any = language_mod.NOT_PARSED,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -8576,7 +10183,7 @@ def _run_casual_lane(
             answer_shape = said.shape
             text = said.text
             if fallback is not None and (said.shape == "ack" or fallback.kind == "history"):
-                reply_language = _fallback_language(ctx, fallback, remembered_before, said.language)
+                reply_language = _fallback_language(user_turn, fallback, remembered_before, said.language, parsed_language)
                 ack = said.text.strip()
                 # AC-MEM081: an ack stating a figure, code, price or date its own
                 # input never had is replaced by the canned one for the language.
@@ -8617,7 +10224,7 @@ def _run_casual_lane(
             logger.warning("chatbot turn %s: clarifier usage log failed", turn_id, exc_info=True)
     if failed is not None and fallback is not None and fallback.kind == "history" and fallback.copy is not None:
         # The history list needs no model: behind the canned ack it still answers.
-        reply_language = _fallback_language(ctx, fallback, remembered_before, None)
+        reply_language = _fallback_language(user_turn, fallback, remembered_before, None, parsed_language)
         text = fallback_mod.compose(
             fallback.copy.render_in("fallback_ack", reply_language), fallback, fallback.copy, reply_language
         )
@@ -8875,6 +10482,9 @@ def _run_escalation_arm(
     # or a newer product already replaced it). The lane reads its brand off the product
     # row. On the lane's item only: the row keeps the route-turn item it always had.
     lane_item = {**item, "focus_products": _focus_products(state)}
+    # CHAT-INBOX-QUEUE (IQ-27): the lane commits an SLA row and a round-robin draw it cannot
+    # undo, so on the inbox drain the turn gives way to an earlier-sent message HERE.
+    inbox_queue.checkpoint(turn_id)
     try:
         # The lane opens its OWN session (its writes are a unit of work of their own), and
         # it opens it off THIS factory rather than `SessionLocal`, so the contact's company
@@ -9000,6 +10610,17 @@ def _run_escalation_arm(
                     a["quick_replies"]
                     for a in all_actions
                     if a.get("kind") == "send_message" and jsc.truthy(a.get("quick_replies"))
+                ),
+                None,
+            ),
+            # The lane's own customer message, for the same reason: the tail composes no
+            # text on this arm, and the persisted reply must not be blank while the
+            # action carries the handover (owner rule, never a blank reply).
+            "lane_text": next(
+                (
+                    a["text"]
+                    for a in all_actions
+                    if a.get("kind") == "send_message" and jsc.truthy(a.get("text"))
                 ),
                 None,
             ),
@@ -9274,6 +10895,9 @@ class _TurnSwitches:
     # ladder in by hand, so nothing saw it. This is the "a new DB column must reach every
     # manual builder" lesson one builder further along than the two it usually names.
     chatbot_crossdomain_ladder: Any = None
+    # CHAT-SPEED: which contacts the respond.io webhook starts turns for (`direct_ingress`).
+    chatbot_direct_ingress_mode: str = "off"
+    chatbot_direct_ingress_contacts: str | None = None
 
 
 def _read_switches(db: Session) -> _TurnSwitches:
@@ -9292,6 +10916,8 @@ def _read_switches(db: Session) -> _TurnSwitches:
         ),
         chatbot_ordering_enabled=bool(getattr(row, "chatbot_ordering_enabled", False)),
         chatbot_crossdomain_ladder=getattr(row, "chatbot_crossdomain_ladder", None),
+        chatbot_direct_ingress_mode=str(getattr(row, "chatbot_direct_ingress_mode", None) or "off"),
+        chatbot_direct_ingress_contacts=getattr(row, "chatbot_direct_ingress_contacts", None),
     )
 
 
@@ -9548,14 +11174,20 @@ def _ask_localizer(ask: Any, db: Session, item: Mapping[str, Any], *, dry_run: b
 
 
 def _fallback_language(
-    ctx: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None
+    user_turn: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None,
+    parsed: Any = language_mod.NOT_PARSED,
 ) -> str:
-    """The fallback reply's language: one the contact STATED this turn, then the message's own
-    words, the clarifier's reading, the conversation's last language, the saved fact."""
+    """The fallback reply's language: one the contact STATED this turn, then (a parsed turn) the parser's own
+    reading of the message and the saved fact, else the message's own words (`UserTurn.typed_line`, what they
+    typed), the clarifier's reading, the conversation's last language, the saved fact."""
     stated = next((s.get("value") for s in fallback.noted if s.get("key") == "language"), None)
+    if parsed is not language_mod.NOT_PARSED:
+        return fallback_mod.pick_language(
+            stated, parsed, fallback.saved_language, (remembered_before or {}).get("reply_language"),
+        )
     return fallback_mod.pick_language(
         stated,
-        language_mod.detect(_ctx_message_text(ctx).split("\n")[0]),
+        language_mod.detect(user_turn.typed_line),
         said_language,
         (remembered_before or {}).get("reply_language"),
         fallback.saved_language,
@@ -9563,17 +11195,18 @@ def _fallback_language(
 
 
 def _turn_language(
-    latest_user_message: str,
+    user_turn: Any,
     remembered_before: Mapping[str, Any],
     profile: Any,
     *,
     strip: Any = (),
+    parsed: Any = language_mod.NOT_PARSED,
 ) -> str:
-    """`language.for_turn` on the typed line (the quoted `reply to:` line is not the customer's
-    words), against a copy so `remembered_before` stays the state the turn started with."""
+    """`language.for_turn` on the customer's own line (`UserTurn.own_text`: the quoted
+    `reply to:` line is not their words), against a copy so `remembered_before` stays the
+    state the turn started with."""
     carried = {"reply_language": remembered_before.get("reply_language")}
-    first_line = (latest_user_message or "").split("\n")[0]
-    return language_mod.for_turn(first_line, carried, getattr(profile, "language", None), strip=strip)
+    return language_mod.for_turn(user_turn.own_text, carried, getattr(profile, "language", None), strip=strip, parsed=parsed)
 
 
 def _ctx_message_text(ctx: Any) -> str:
@@ -9892,26 +11525,9 @@ def _label_attachments(files: list, rows: list[tuple[Any, list[str]]]) -> list:
     PHOTO-SEND-CAP R2: every file is one WhatsApp message, and the same picture uploaded
     twice has two urls and one `fileHash` (sha256 of the bytes). An entry with no hash
     dedupes on its url alone, exactly as before."""
-    kept: list[Any] = []
-    seen_urls: set[Any] = set()
-    seen_hashes: set[str] = set()
-    for entry in files:
-        if not isinstance(entry, dict):
-            kept.append(entry)
-            continue
-        url = entry.get("url")
-        if not jsc.truthy(url):
-            # D9 (8 Sep 2026): a file with no link is listed in the answer (the presenter
-            # says "(file link unavailable right now)") but never sent - a send with no
-            # url is a dead action, not a delivery.
-            continue
-        file_hash = jsc.nullish_str(entry.get("fileHash")).strip()
-        if url in seen_urls or (file_hash and file_hash in seen_hashes):
-            continue
-        seen_urls.add(url)
-        if file_hash:
-            seen_hashes.add(file_hash)
-        kept.append(entry)
+    from app.services.chatbot.composers import files as composers_files
+
+    kept = composers_files.sendable(files)
 
     groups: dict[str, list[int]] = {}
     for index, entry in enumerate(kept):
@@ -9947,6 +11563,7 @@ def run_tail(
     turn_trace: trace_mod.TurnTrace,
     write_session: bool = True,
     lane_quick_replies: Any = None,
+    lane_text: Any = None,
     state: Any = None,
     question: Any = None,
     remembered_before: Mapping[str, Any] | None = None,
@@ -10004,16 +11621,6 @@ def run_tail(
             gate=values["gate"],
             offer_hold=values["offer_hold"],
         )
-        if ctx.get("top_selling_no_offer") and catalog.get("is_escalate_offer") is True:
-            # PR #1273 round 7: inside a ranking, or the report it handed over to, no
-            # escalate offer and no routing picker unless the customer asked for a person.
-            from app.services.chatbot import dealer_stock as dealer_mod
-
-            catalog = {
-                **catalog,
-                "response": dealer_mod.refers_to_salesman(jsc.js_string(catalog.get("response") or ""))[0],
-                "is_escalate_offer": False,
-            }
         producers["escalate-catalog"] = catalog
         outcome_input = catalog
         # ESCALATION-CONTROL: no CS roster is built for a barred contact at all (its rows
@@ -10035,6 +11642,13 @@ def run_tail(
     composed = reply_ladder.compose_reply(outcome)
     if question is None:
         question = _question_offered(ctx, values, outcome, composed)
+    if isinstance(lane_text, str) and lane_text.strip() and not jsc.truthy(composed.get("text")):
+        # Owner rule, never a blank reply (crew eval, 12 Oct 2026): the `out_of_scope` arm
+        # composes no text here (`escalate-catalog`'s `includeResponse: false`), but its
+        # lane already built the one message the customer is sent. Without this the turn's
+        # reply, which the console, the next turn's `Previous response:` and the
+        # chat-history link read, is null while the action carries the handover.
+        composed = {**composed, "text": lane_text}
     # QUICK-REPLY-NAMES: the one seam every tail-composed set leaves through - at most
     # three buttons, none over 20 characters, no duplicates. Guarded BEFORE the lane
     # fallback is chosen, so a set the guard drops falls back the same way an absent one
@@ -10107,6 +11721,7 @@ def run_tail(
             "file_mode": file_mode,
             "file_mode_fallback": file_fallback,
             "files": len(src_files) if isinstance(src_files, list) else 0,
+            "shown_codes": _only_shown(_shown_codes(question), reply["text"]),
         },
         raw={"reply": reply},
     )
@@ -10133,8 +11748,17 @@ def run_tail(
         applied = state = turn_tail.carry_live_state(
             applied, question is not None, applied.quoted_live, non_answer=True
         )
+    tail_focus = chat_state.restored(state).focus
+    if getattr(state, "state_path", False):
+        # CHAT-STATE: a turn the parser's `state_changes` led records the list it showed.
+        tail_focus = dataclasses_replace(
+            tail_focus,
+            last_list=turn_tail.last_list_after(
+                tail_focus.last_list, question=question, sections=[], turn_no=state.turn_no
+            ),
+        )
     payload = {
-        "focus": turn_state.focus_to_wire(state.focus),
+        "focus": turn_state.focus_to_wire(tail_focus),
         # The lane's OWN question, else the one APPLY carried - the same rule the
         # composed arms run through `turn/tail.py::session_payload` ("no new question"
         # is not "no question", AC-1532). A lane that answers nothing and clears nothing
@@ -10167,6 +11791,17 @@ def run_tail(
             "turn_no": getattr(state, "turn_no", 0),
         },
     )
+    if before.get("_chat_state") and not turn_trace.has_event("memory"):
+        # CHAT-STATE: an arm that hands the memory event nowhere else still shows the state log.
+        import types as _types
+
+        turn_trace.add(
+            "memory",
+            {
+                "dry_run": dry_run,
+                **_state_log(before, state, _types.SimpleNamespace(question=question, sections=[])),
+            },
+        )
 
     written = (not dry_run) and write_session
     if written:
@@ -10442,6 +12077,7 @@ def _complete_canned_lane(
     contact_respond_id: str,
     turn_trace: trace_mod.TurnTrace,
     state: Any = None,
+    remembered_before: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]]]:
     """One of S3's eight lanes, answered inside the turn. `(reply, patch, actions)`.
 
@@ -10476,7 +12112,7 @@ def _complete_canned_lane(
             "replied",
             summary=f"Refused: {trace_mod.lane_words(branch_kind).lower()}.",
             why="The contact is not granted the agent this turn would have used.",
-            facts={"lane": branch_kind},
+            facts={"lane": branch_kind, "shown_codes": None},
             raw={"reply": reply},
         )
         turn_trace.record(
@@ -10517,6 +12153,7 @@ def _complete_canned_lane(
             contact_respond_id=contact_respond_id,
             turn_trace=turn_trace,
             state=state,
+            remembered_before=remembered_before,
         )
         reply = {**reply, **reply_extras}
 
@@ -10673,6 +12310,8 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 # from, and this is one value the tail could not have composed for itself
                 # - what the lane already decided the customer can tap.
                 lane_quick_replies=fragments.get("lane_quick_replies"),
+                # Same reason: the text of the message the lane already built.
+                lane_text=fragments.get("lane_text"),
                 # ESCALATION-CONTROL (security review S1): n8n's `/complete` hands over no
                 # APPLY state, so the contact's own profile is read here, or a blocked
                 # contact would be offered the team and the CS roster on this path.

@@ -7,8 +7,10 @@ import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
+import { IndexMatchSection } from './IndexMatchSection';
+import { SpanPassSection } from './SpanPassSection';
 import { useChatbotTurn } from '../hooks/useChatbotTurns';
-import { shortTurnId } from '../turnPresentation';
+import { factText, shortTurnId } from '../turnPresentation';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type {
   TurnDetail,
@@ -21,26 +23,6 @@ import type {
   TurnDetailOrder,
   TurnDetailOrderNeighbor,
 } from '../types/chatbotTurn.types';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** A nested fact value: a UUID (and any `turn_id`) reads shortened, never in full. */
-function nestedText(key: string, value: unknown): string {
-  if (value !== null && typeof value === 'object') return JSON.stringify(value);
-  const text = String(value);
-  return key === 'turn_id' || UUID_RE.test(text) ? shortTurnId(text) : text;
-}
-
-/** A stage fact as readable text: a plain object reads as "key: value" pairs (never
- * "[object Object]"); everything else keeps its `String` form. */
-function factText(value: unknown): string {
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    return Object.entries(value as Record<string, unknown>)
-      .map(([k, v]) => `${k}: ${nestedText(k, v)}`)
-      .join(', ');
-  }
-  return String(value);
-}
 
 /**
  * Turn detail trace view (chatbot growth r1, Slice D2, AC-972, AC-973).
@@ -107,8 +89,16 @@ function Sections({ detail }: { detail: TurnDetail }) {
       <Section title="Parse" testId="section-parse">
         <ParseSection parse={detail.parse} />
       </Section>
+      <Section title="Index match" testId="section-index-match">
+        <IndexMatchSection indexMatch={detail.index_match ?? null} />
+      </Section>
+      {detail.span_extract && (
+        <Section title="Span pass" testId="section-span-pass">
+          <SpanPassSection spanExtract={detail.span_extract} promptText={detail.prompt_text ?? null} />
+        </Section>
+      )}
       <Section title="Apply" testId="section-apply">
-        <ApplySection apply={detail.apply ?? null} />
+        <ApplySection apply={detail.apply ?? null} promptText={detail.prompt_text ?? null} />
       </Section>
       <Section title="Memory" testId="section-memory">
         <MemorySection memory={detail.memory ?? null} />
@@ -327,7 +317,7 @@ function decisionWords(kind: string): string {
   return DECISION_WORDS[kind] ?? kind;
 }
 
-function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
+function ApplySection({ apply, promptText }: { apply: TurnDetail['apply']; promptText: string | null }) {
   if (!apply) return <Empty>Not recorded on this turn (APPLY shipped in S3).</Empty>;
   const stateDiff = diffEntries(apply.state_diff);
   const narrowing = apply.narrowing ?? [];
@@ -392,14 +382,14 @@ function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
           <Code value={apply.plan} />
         )}
       </div>
-      {apply.prompt_text && (
+      {promptText && (
         <Collapsible>
           <CollapsibleTrigger className="text-primary underline-offset-2 hover:underline">
             Prompt text sent to the parser
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="mt-1 overflow-x-auto">
-              <SearchableCode text={apply.prompt_text} />
+              <SearchableCode text={promptText} />
             </div>
           </CollapsibleContent>
         </Collapsible>

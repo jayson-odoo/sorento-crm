@@ -134,7 +134,9 @@ _WRITE_TOOL_SUFFIXES = (
 #
 # Add a name here only when it genuinely mutates state; a tool that ends in a
 # verb is already covered and does not need a second declaration.
-_WRITE_TOOL_NAMES = frozenset({"crm_ideation_turn"})
+# SALES-TARGET-CHAT slice 2: `crm_sales_opportunity_log` creates an opportunity, and its name
+# ends in no write verb, so it is named here.
+_WRITE_TOOL_NAMES = frozenset({"crm_ideation_turn", "crm_sales_opportunity_log"})
 
 
 def _is_write_tool(tool_name: str) -> bool:
@@ -461,6 +463,8 @@ class AIAssistantConfigService:
             row.anthropic_api_key_ciphertext = data.anthropic_api_key.strip()
         if data.gemini_api_key is not None and data.gemini_api_key.strip():
             row.gemini_api_key_ciphertext = data.gemini_api_key.strip()
+        if data.openai_api_key is not None and data.openai_api_key.strip():
+            row.openai_api_key_ciphertext = data.openai_api_key.strip()
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -475,6 +479,7 @@ class AIAssistantConfigService:
             "api_key_masked": _mask_key(row.api_key_ciphertext),
             "anthropic_api_key_masked": _mask_key(row.anthropic_api_key_ciphertext),
             "gemini_api_key_masked": _mask_key(row.gemini_api_key_ciphertext),
+            "openai_api_key_masked": _mask_key(row.openai_api_key_ciphertext),
             "enabled_tools": list(row.enabled_tools or []),
             "rag_enabled": bool(row.rag_enabled),
             "is_enabled": bool(row.is_enabled),
@@ -1826,6 +1831,9 @@ class AIAssistantChatService:
         # it through the assistant. No new slug, so no grant sweep - migration 411
         # already grants this to superadmin and admin.
         "crm_ideation_turn": "ideation.board.view",
+        # SALES-TARGET-CHAT slice 2: it creates a sales opportunity, so the confirming user
+        # needs the CRM's own create permission for one.
+        "crm_sales_opportunity_log": "sales.opportunities.add",
     }
     # Args that are plumbing, not user intent - never shown in a confirm summary.
     _WRITE_INTERNAL_ARGS = frozenset({

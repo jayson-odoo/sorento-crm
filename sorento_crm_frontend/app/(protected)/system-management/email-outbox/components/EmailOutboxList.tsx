@@ -26,7 +26,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,10 +57,11 @@ import {
   useRetryEmailOutboxRow,
 } from '../hooks/useEmailOutbox';
 import type { EmailOutboxRow } from '../types/emailOutbox.types';
+import EmailOutboxAttachments from './EmailOutboxAttachments';
 
 export default function EmailOutboxList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [status, setStatus] = useState<string>('__all__');
+  const [status, setStatus] = useState<string>('');
   const {
     value: queryInput,
     setValue: setQueryInput,
@@ -83,7 +85,7 @@ export default function EmailOutboxList() {
   const { data, isLoading, isPlaceholderData, refetch, isFetching } = useEmailOutbox({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
-    status: status === '__all__' ? undefined : status,
+    status: status || undefined,
     query: query || undefined,
   });
 
@@ -308,15 +310,14 @@ export default function EmailOutboxList() {
             }
             filters={{
               kind: 'custom',
-              active: status !== '__all__',
-              activeCount: status !== '__all__' ? 1 : 0,
+              active: status !== '',
+              activeCount: status ? 1 : 0,
               content: (
                 <div className="space-y-3">
-                  <SearchableSelect
-                    value={status}
-                    onChange={setStatus}
+                  <SearchableMultiSelect
+                    value={splitMulti(status)}
+                    onChange={(v) => setStatus(joinMulti(v))}
                     options={[
-                      { value: '__all__', label: 'All statuses' },
                       { value: 'pending', label: 'Pending' },
                       { value: 'sending', label: 'Sending' },
                       { value: 'sent', label: 'Sent' },
@@ -325,13 +326,14 @@ export default function EmailOutboxList() {
                       { value: 'deferred', label: 'Deferred' },
                     ]}
                     placeholder="Status"
+                    clearable
                   />
-                  {status !== '__all__' && (
+                  {status && (
                     <Button
                       variant="ghost"
                       size="sm"
                       className="w-full"
-                      onClick={() => setStatus('__all__')}
+                      onClick={() => setStatus('')}
                     >
                       Clear filters
                     </Button>
@@ -421,6 +423,7 @@ export default function EmailOutboxList() {
                   )}
                 </div>
               </div>
+              <EmailOutboxAttachments rowId={detail.id} attachments={detail.attachments ?? []} />
               {detail.metadata && (
                 <div>
                   <div className="text-muted-foreground text-sm mb-1">Metadata</div>

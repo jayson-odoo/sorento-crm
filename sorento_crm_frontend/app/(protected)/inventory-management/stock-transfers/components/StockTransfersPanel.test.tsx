@@ -334,4 +334,35 @@ describe('StockTransfersPanel - the state Back hands back', () => {
       ),
     );
   });
+
+  /**
+   * SO-TRANSFERS-SORT-422. Pinned to a record, the panel sits inside that record's
+   * detail page, whose query string is the HOST list's state carried for the prev/next
+   * pager (`SalesOrdersGrid` sends `sort=order_date`). Adopting it sent the transfers
+   * list a sort it does not have, and the page toasted a 422.
+   */
+  it.each([
+    ['sales order', { salesOrderId: 'so-1' }],
+    ['sales agent', { salesAgentId: 'sa-1' }],
+  ])('pinned to a %s, ignores the host page query string', async (_label, pin) => {
+    listSearch =
+      'page=3&limit=10&sort=order_date&dir=asc&query=SO273125&state=approved&status=completed';
+
+    renderPanel({ ...pin, showFilters: false });
+
+    await screen.findByText('TR-000001');
+    // Every request, not only the first: one carrying the host's sort is the 422.
+    for (const [params] of listStockTransfers.mock.calls) {
+      expect(params).toMatchObject({
+        ...('salesOrderId' in pin ? { sales_order_id: 'so-1' } : { sales_agent_id: 'sa-1' }),
+        sort: 'proposed_at',
+        dir: 'desc',
+        page: 1,
+        limit: 25,
+      });
+      expect(params.query).toBeUndefined();
+      expect(params.state).toBeUndefined();
+    }
+    expect(listStockTransfers).toHaveBeenCalledTimes(1);
+  });
 });

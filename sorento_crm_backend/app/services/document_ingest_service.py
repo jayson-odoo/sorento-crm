@@ -1051,6 +1051,9 @@ class DocumentIngestService(MasterRefResolver):
             po_ref = (payload.po_ref or "").strip() or None
             values["po_ref"] = po_ref
             values["po_ref_key"] = po_ref_key(po_ref)
+        # `ship_info` (FULFIL-SO-REMARK): same shape rule as `po_ref`, own column.
+        if "ship_info" in getattr(payload, "model_fields_set", ()) and hasattr(payload, "ship_info"):
+            values["ship_info"] = (payload.ship_info or "").strip() or None
         # PO currency default (D1): only a spec that carries a `currency`
         # header column reaches this, which today is `purchase_orders` alone -
         # so the fill is shape-driven rather than a hardcoded entity check.
@@ -1167,7 +1170,10 @@ class DocumentIngestService(MasterRefResolver):
             values["order_type"] = stated_order_type
 
         agent_id = values.get("sales_agent_id")
-        agent_demand_class = self._agent_demand_class(agent_id)
+        # SALES-UNIFIED Q8 (a): the agent's class IN EFFECT ON THE ORDER'S DATE (dated rows,
+        # `sales.agent_classes`), not today's.
+        order_day = values.get("order_date") or getattr(header, "order_date", None)
+        agent_demand_class = self._agent_demand_class(agent_id, order_day)
         stored_class = getattr(header, "demand_class", None)
         agent_arriving = bool(
             stored_class and not getattr(header, "sales_agent_id", None) and agent_demand_class
@@ -1191,25 +1197,28 @@ class DocumentIngestService(MasterRefResolver):
             debtor_code=debtor_code,
             company_id=self.company_id,
             segment_cache=self._segment_cache,
+            # Never the customer's segment for a sales order (SALES-UNIFIED Q8 (a)).
+            use_segment=False,
         )
         if cls is not None:
             values["demand_class"] = cls
         else:
             warnings.append(WARN_UNCLASSIFIED_DEMAND)
 
-    def _agent_demand_class(self, agent_id: Optional[str]) -> Optional[str]:
-        """Perf round 5: memoised per batch - a busy batch names the same
-        handful of agents on hundreds of documents, and nothing in this
-        ingest writes `sales_agents.demand_class`."""
+    def _agent_demand_class(self, agent_id: Optional[str], day: Any = None) -> Optional[str]:
+        """The agent's class on `day` from its dated rows (SALES-UNIFIED Q6/Q8 (a)). Perf
+        round 5: memoised per batch - a busy batch names the same handful of agents on
+        hundreds of documents, and nothing in this ingest writes an agent's class."""
         if not agent_id:
             return None
-        if agent_id not in self._agent_class_cache:
-            self._agent_class_cache[agent_id] = (
-                self.db.query(SalesAgent.demand_class)
-                .filter(SalesAgent.id == agent_id)
-                .scalar()
-            )
-        return self._agent_class_cache[agent_id]
+        from app.services.sales.agent_class_service import ClassCache
+
+        cache = self._agent_class_cache.get("__dated__")
+        if cache is None:
+            cache = self._agent_class_cache["__dated__"] = ClassCache(self.db)
+        if hasattr(day, "date") and callable(day.date):
+            day = day.date()
+        return cache.class_on(str(agent_id), day)
 
     def _customer_code_of(self, customer_id: str) -> Optional[str]:
         """Perf round 5: memoised per batch, same reason as `_agent_demand_class`."""
@@ -1390,6 +1399,11 @@ class DocumentIngestService(MasterRefResolver):
         # re-push must never clear what an earlier push recorded - proven
         # by an explicit `null`, which DOES clear (S1 review fix), since
         # `model_fields_set` is presence, not truthiness.
+        # FULFIL-SO-REMARK: sales-order lines only; absent leaves the stored value alone.
+        if spec.entity_type == "sales_orders":
+            for column in ("line_remark", "section_heading"):
+                if column in line.model_fields_set:
+                    values[column] = (getattr(line, column) or "").strip() or None
         if "from_so_line_ref" in line.model_fields_set:
             values["from_so_line_ref"] = line.from_so_line_ref
         if "from_po_line_ref" in line.model_fields_set:
@@ -1456,8 +1470,9 @@ class DocumentIngestService(MasterRefResolver):
         `updated` (matched by its own existing `source_ref`), `adopted` (an
         xlsx-era ref-less row claimed by `_adopt_lines`'s three-step match),
         `created` (neither matched, so a fresh row), `deleted` (an unmatched
-        leftover row nothing points at) and `cancelled` (an unmatched leftover
-        row something still points at).
+        ref-less leftover row nothing points at) and `cancelled` (any other
+        unmatched leftover: one with an AutoCount `source_ref`, or one something
+        still points at).
 
         A line whose `source_ref` is NULL was written by the extract importer
         before AutoCount owned this document, and leaving it counted would
@@ -1469,9 +1484,17 @@ class DocumentIngestService(MasterRefResolver):
         physical line, matched by what it actually is rather than replaced,
         keeps every allocation, claim and GRN link that already hangs off it.
         """
+        # AC-REMOVED-KEEP-CANCELLED review fix: a duplicate-ref row is now kept (cancelled)
+        # rather than deleted, so which row wins `by_ref` must not depend on scan order -
+        # a live row first, then the oldest - or the two could swap on a later push.
         existing = (
             self.db.query(spec.line_model)
             .filter(getattr(spec.line_model, spec.line_fk) == str(header.id))
+            .order_by(
+                spec.line_model.line_status == CANCELLED,
+                spec.line_model.created_at,
+                spec.line_model.id,
+            )
             .all()
         )
         by_ref: dict[str, Any] = {}
@@ -1594,6 +1617,10 @@ class DocumentIngestService(MasterRefResolver):
                         values["line_status"] = CANCELLED
                 for column, value in values.items():
                     setattr(row, column, value)
+                # AC-REMOVED-KEEP-CANCELLED: AutoCount sends a line it had removed again. The
+                # old sweep would have deleted it and this push recreated it, counted again.
+                if row.removed_unreferenced:
+                    row.removed_unreferenced = False
                 counts["updated"] += 1
                 if spec.entity_type == "sales_orders":
                     self._sync_mirror_line(row, values)
@@ -1628,13 +1655,31 @@ class DocumentIngestService(MasterRefResolver):
         # same thing for every row of THIS line table in THIS sweep - fetched
         # once here rather than once per row inside `is_referenced`.
         line_referrers = referrers_of(self.db, line_table)
+        # AC-REMOVED-LINES (owner, 26 Oct 2026): an AutoCount line (`by_ref`: it has a DtlKey
+        # this push no longer carries) that ends cancelled on a header this push does NOT
+        # cancel was REMOVED, not cancelled. Pool, duplicate-ref and already-cancelled rows
+        # are not removed AutoCount lines, and the TRANSITION guard keeps a later push of the
+        # same reduced document from releasing again.
+        removed_ids = {id(row) for row in by_ref.values()}
+        removed_lines: list[Any] = []
         for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
             prior_line_status = row.line_status
-            if is_referenced(self.db, line_table, row.id, referrers=line_referrers):
+            # AC-REMOVED-KEEP-CANCELLED (owner, 27 Oct 2026): a line carrying an AutoCount
+            # DtlKey is NEVER deleted, referenced or not - it stays as a Cancelled record and
+            # only its linkage goes. Without this, the release above left it unreferenced
+            # and the NEXT push deleted it. Only a ref-less (xlsx-era) leftover nothing
+            # points at is still deleted: it is the duplicate count this sweep exists for.
+            referenced = is_referenced(self.db, line_table, row.id, referrers=line_referrers)
+            if row.source_ref or referenced:
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built
                 # from, and rewriting it would falsify that record.
                 row.line_status = CANCELLED
+                # Owner via crew, 27 Oct: a line kept ONLY because of the rule above (the old
+                # sweep would have deleted it here) counts in no total. Sticky until AutoCount
+                # sends the line again; every other cancelled line counts exactly as before.
+                if not referenced:
+                    row.removed_unreferenced = True
                 counts["cancelled"] += 1
                 # PLAN-oi-cancelled-line-used-confirm.md (3.2a): this loop walks
                 # `already_cancelled` on EVERY push (its whole reason to be there is
@@ -1644,10 +1689,27 @@ class DocumentIngestService(MasterRefResolver):
                 # re-confirmed on every later push of the same reduced document.
                 if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
                     newly_cancelled_so_line_ids.append(row.id)
+                if (
+                    id(row) in removed_ids
+                    and prior_line_status != CANCELLED
+                    and header.status != CANCELLED
+                ):
+                    removed_lines.append(row)
             else:
                 self.db.delete(row)
                 counts["deleted"] += 1
         self.db.flush()
+        # AC-RL-07: a push carrying no lines at all (header-only, failed detail) releases
+        # nothing; the sweep above still runs as before.
+        if removed_lines and (line_values or dropped_refs):
+            from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+            oi_service = ProjectOrderInquiryService(self.db)
+            if spec.entity_type == "purchase_orders":
+                oi_service.release_removed_lines(po_line_ids=[r.id for r in removed_lines])
+            elif spec.entity_type == "sales_orders":
+                # Retire BEFORE the flag below, which then only meets actioned rows.
+                oi_service.retire_rows_for_removed_so_lines(removed_lines)
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,

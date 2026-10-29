@@ -332,6 +332,16 @@ def _own_bin_world(db):
         so_number=f"ZZT-SO-DONOR{_uid()[:4]}",
     )
     _decide(db, donor_order, donor_line, own, "30", eling)
+    # Since BOARD-NO-HOLD / BORROW-NO-HOLD (27 and 28 Oct 2026) no decision holds stock, so
+    # nothing blocks the own bin and the engine no longer proposes a step-2 borrow from it:
+    # the asker's own-location Borrow is posted by hand (see the test below). The donor's
+    # decision is flipped to a BORROW in place only to keep the shape of the case.
+    from app.models.project_so import SOLineAllocation
+
+    db.query(SOLineAllocation).filter(
+        SOLineAllocation.so_line_id == donor_line.id
+    ).update({"source_type": "other_location"}, synchronize_session=False)
+    db.commit()
     asker, asker_line, _cso, _cline = _seed_line(
         db, company_id, project, product, own, qty_ordered="30", line_no=1,
         so_number=f"ZZT-SO-ASK{_uid()[:5]}",
@@ -346,13 +356,16 @@ def _own_bin_world(db):
 def test_off_borrowing_at_the_lines_own_location_raises_an_order_back_on_this_line():
     with blank_session() as db:
         world = _own_bin_world(db)
-        # Measured on today's code: the engine DOES offer the own bin's pinned stock, as a
-        # step-2 order_borrow with the donor sitting at the same warehouse.
-        component = _step_two_borrow(db, world)
-        assert component["source_warehouse_id"] == str(world["own"].id)
-        for field in DONOR_FIELDS:
-            assert component[field] is None, (field, component[field])
-        payload = _component_to_payload(component, warehouse=world["own"])
+        # The own bin is free (a decision holds nothing), so the engine proposes a plain
+        # Reserve there and no step-2 borrow. A planner can still pick the own-location
+        # Borrow by hand (BORROW-OWN-LOC); it names the later order's line as its donor.
+        payload = {
+            "source": "other_location",
+            "warehouse_id": str(world["own"].id),
+            "qty": "30",
+            "reason": "Ladder v7.1 step 2.",
+            "donor_core_line_id": str(world["donor_cline"].id),
+        }
         _confirm_borrow(db, world, payload)
 
         rows = _order_backs(db)
@@ -569,14 +582,21 @@ def test_settings_api_reads_false_by_default_and_a_put_persists_true(api, api_db
 # --------------------------------------------------------------------------- fix round 1
 
 
-def test_b1_off_a_donor_needing_authorisation_is_not_offered_and_a_crafted_confirm_names_no_so():
+def test_b1_off_a_donor_needing_authorisation_is_not_offered():
     """B1: under OFF nobody can be asked "who authorised it", so a same-agent donor ranked
-    above this line is not offered, and a confirm naming it anyway is refused in the
-    location's words (S2), authorisation or not."""
-    from .test_project_supply_service_ladder import _borrow_body, _same_agent_world
+    above this line is not offered. Confirm would take it (BORROW-CONFIRM-MATCH), but the
+    owner kept the list as it was ("confirm should match the dropdown"), so this guards that.
+
+    The donor's 90 are on the floor, or there is nothing for any list to offer and the test
+    proves nothing."""
+    from app.models.product import Product
+
+    from .test_project_supply_service_ladder import _same_agent_world
 
     with blank_session() as db:
-        _company_id, eling, order, line, donor_cline, own = _same_agent_world(db)
+        _company_id, _eling, order, _line, donor_cline, own = _same_agent_world(db)
+        _stock(db, db.get(Product, donor_cline.product_id), own, on_hand=90)
+        db.commit()
         proposal = ProjectSupplyService(db).proposal_for(order)
         offered = [
             c
@@ -585,18 +605,118 @@ def test_b1_off_a_donor_needing_authorisation_is_not_offered_and_a_crafted_confi
         ]
         assert offered == [], offered
 
-        with pytest.raises(AppException) as refused:
-            ProjectSupplyService(db).confirm(
-                order,
-                _borrow_body(
-                    line, own, donor_cline, "Authorised by agent CYNDI: on the phone."
-                ),
-                actor_user_id=eling,
-            )
 
-    reason = refused.value.detail["failing_lines"][0]["reason"]
-    assert "SO920001" not in reason, reason
-    assert own.warehouse_code in reason, reason
+def test_off_a_same_agent_donor_ranked_ahead_confirms_and_the_donor_stays_covered():
+    """BORROW-CONFIRM-MATCH (owner, 22 Oct 2026, prod SO401624 line 304): Confirm refused
+    "Later-order stock at BRW-BB is held for an order ranked ahead of this line, so it
+    cannot be borrowed." for a Borrow the planner had picked. Owner: "confirm should be
+    lenient also, confirm should match the dropdown". Under OFF a location borrow asks
+    nobody, so rank is not a reason to refuse it - and no "authorised by" either.
+
+    The donor is not over-committed: a Borrow is a plan, not a hold (BORROW-NO-HOLD, 28 Oct
+    2026), so the donor ranked ahead keeps the bin's units at ITS date and stays covered,
+    and the order-back hangs on this line, as for any location borrow."""
+    from app.models.product import Product
+    from app.services.scm.supply_assignment import STATUS_COVERED
+
+    from .test_project_supply_service_ladder import _borrow_body, _same_agent_world
+
+    with blank_session() as db:
+        _company_id, eling, order, line, donor_cline, own = _same_agent_world(db)
+        product = db.get(Product, donor_cline.product_id)
+        _stock(db, product, own, on_hand=90)
+        db.commit()
+
+        def status_of(core_line_id):
+            result = ProjectSupplyService(db).planning_assignments([str(product.id)])[
+                str(product.id)
+            ]
+            return next(r.status for r in result.lines if r.line.key == str(core_line_id))
+
+        assert status_of(donor_cline.id) == STATUS_COVERED, "ranked ahead, it had the 90"
+
+        ProjectSupplyService(db).confirm(
+            order,
+            _borrow_body(line, own, donor_cline, "Site is waiting, planner's call."),
+            actor_user_id=eling,
+        )
+        db.commit()
+
+        assert status_of(donor_cline.id) == STATUS_COVERED, "a Borrow takes nothing off it"
+        rows = _order_backs(db)
+        assert [str(r.so_line_id) for r in rows] == [str(line.id)], rows
+        assert rows[0].stock_location == own.warehouse_code
+        assert "SO920001" not in (rows[0].note or ""), rows[0].note
+
+
+def _ahead_later_order_world(db):
+    """SO401624's shape: this line and a later order of the SAME agent at this line's bin,
+    BOTH past the reserve window, the donor dated first so it ranks AHEAD and holds the
+    bin's 90. Step 2 judges a later order by date alone, so only the B1 filter keeps this
+    donor off the list."""
+    from .test_project_supply_service_ladder import _agent
+
+    company_id, eling, project, product = _world(db)
+    group, sites = _group_sites(db)
+    own, _pool = sites["BRW"]
+    agent = _agent(db, f"AGT{_uid()[:4]}", location_group=group)
+    _stock(db, product, own, on_hand=90)
+    _lead_time(db, product, LEAD_DAYS)
+    _policy(db)
+    db.commit()
+    _donor, _dl, _dcso, donor_cline = _seed_line(
+        db, company_id, project, product, own, qty_ordered="90",
+        required_date=date.today() + timedelta(days=WINDOW_DAY + 30), line_no=2,
+        so_number=f"ZZTSO-AHEAD{_uid()[:4]}", sales_agent_id=agent.id,
+    )
+    order, line, _cso, _cline = _seed_line(
+        db, company_id, project, product, own, qty_ordered="90",
+        required_date=date.today() + timedelta(days=WINDOW_DAY + 90), line_no=1,
+        so_number=f"ZZTSO-ASK{_uid()[:4]}", sales_agent_id=agent.id,
+    )
+    db.commit()
+    return eling, order, line, donor_cline, own, product
+
+
+def test_off_a_same_agent_later_order_ranked_ahead_stays_off_the_list_but_confirms():
+    """The list is unchanged (step 2's B1 filter still leaves this donor out) and Confirm
+    takes it anyway when a planner posts it, the donor still reading covered (a Borrow holds
+    nothing, BORROW-NO-HOLD, 28 Oct 2026)."""
+    from app.services.scm.supply_assignment import STATUS_COVERED
+
+    with blank_session() as db:
+        eling, order, line, donor_cline, own, product = _ahead_later_order_world(db)
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        offered = [
+            c
+            for c in proposal["lines"][0]["borrow_candidates"]
+            if str(c.get("donor_core_line_id") or "") == str(donor_cline.id)
+        ]
+        assert offered == [], offered
+
+        def status_of(core_line_id):
+            result = ProjectSupplyService(db).planning_assignments([str(product.id)])[
+                str(product.id)
+            ]
+            return next(r.status for r in result.lines if r.line.key == str(core_line_id))
+
+        assert status_of(donor_cline.id) == STATUS_COVERED
+        ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(lines=[ConfirmLine(
+                project_line_id=line.id,
+                borrow=[{
+                    "source": "other_location",
+                    "warehouse_id": str(own.id),
+                    "qty": "90",
+                    "reason": "Site is waiting.",
+                    "donor_core_line_id": str(donor_cline.id),
+                }],
+            )]),
+            actor_user_id=eling,
+        )
+        db.commit()
+        assert status_of(donor_cline.id) == STATUS_COVERED
 
 
 def _second_asker(db, world, *, line_no=1):

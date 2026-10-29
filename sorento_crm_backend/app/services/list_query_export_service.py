@@ -9,11 +9,15 @@ from sqlalchemy import and_, exists, not_, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.marketing import Promotion, PromotionProduct
+from app.services.marketing_service import attachment_state_clause, validated_attachment_states
+from app.services.order_service import resolve_order_status_ids
+from app.utils.multi_value import multi_values
 from app.models.order import Customer, Order, OrderLine
 from app.models.product import Product
 from app.models.procurement import Supplier
 from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
 from app.schemas.list_query import ListExportRequest
+from app.services.finance import billing_document_query_service
 from app.services.list_query_metadata_service import ListQueryMetadataService
 from app.services.list_query_registry import require_adapter
 from app.services.product_service import malaysia_day_start_utc
@@ -126,6 +130,20 @@ class ListQueryExportService:
 
     def export_rows(self, req: ListExportRequest) -> List[Dict[str, Any]]:
         require_adapter(req.resource)
+        if req.resource == "finance_billing_documents":
+            return billing_document_query_service.export_rows(
+                self.db,
+                [sel.field_key for sel in req.fields],
+                quick_search=req.quick_search,
+                record_ids=_dedupe_record_ids(req.record_ids),
+                customer_id=req.customer_id if req.customer_id != "all" else None,
+                document_type=req.document_type,
+                status=req.status,
+                agent_code=req.agent_code,
+                date_from=req.date_from,
+                date_to=req.date_to,
+                open_only=bool(req.open_only),
+            )
         resource = self.meta.get_resource(req.resource)
         if not resource:
             raise ValueError(f"Unknown resource: {req.resource}")
@@ -166,8 +184,9 @@ class ListQueryExportService:
         q = self.db.query(Order).filter(Order.deleted_at.is_(None))
         if req.customer_id and req.customer_id != "all":
             q = q.filter(Order.customer_id == req.customer_id)
-        if req.order_status_id and req.order_status_id != "all":
-            q = q.filter(Order.order_status_id == req.order_status_id)
+        status_ids = resolve_order_status_ids(self.db, req.order_status_id)
+        if status_ids is not None:
+            q = q.filter(Order.order_status_id.in_(status_ids))
         hol = (req.has_order_lines or "").strip().lower()
         if hol == "yes":
             q = q.filter(exists().where(OrderLine.order_id == Order.id))
@@ -233,10 +252,13 @@ class ListQueryExportService:
         from decimal import Decimal
 
         q = self.db.query(Product)
-        if req.category_id and req.category_id != "all":
-            q = q.filter(Product.category_id == req.category_id)
-        if req.brand_id and req.brand_id != "all":
-            q = q.filter(Product.brand_id == req.brand_id)
+        # Several categories / brands (comma-joined, like the list) are OR-ed; ids, as before.
+        category_ids = [v for v in (multi_values(req.category_id) or []) if v != "all"]
+        if category_ids:
+            q = q.filter(Product.category_id.in_(category_ids))
+        brand_ids = [v for v in (multi_values(req.brand_id) or []) if v != "all"]
+        if brand_ids:
+            q = q.filter(Product.brand_id.in_(brand_ids))
         if req.product_status and req.product_status != "all":
             q = q.filter(Product.is_active == (req.product_status == "active"))
         if req.item_type:
@@ -340,8 +362,10 @@ class ListQueryExportService:
             elif pst == "inactive":
                 q = q.filter(Promotion.is_active.is_(False))
 
-        if req.promotion_access_level and (ut := (req.promotion_access_level or "").strip()):
-            q = q.filter(Promotion.access_levels.contains([ut]))
+        if levels := multi_values(req.promotion_access_level):
+            q = q.filter(or_(*[Promotion.access_levels.contains([lv]) for lv in levels]))
+        if (state_clause := attachment_state_clause(validated_attachment_states(req.promotion_attachment_state))) is not None:
+            q = q.filter(state_clause)
 
         if req.quick_search and (qs := req.quick_search.strip()):
             search_term = f"%{qs}%"

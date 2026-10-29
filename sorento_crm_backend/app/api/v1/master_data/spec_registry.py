@@ -18,6 +18,7 @@ offered, because that is the one edit that breaks the two consumers apart.
 """
 import hashlib
 import json
+import re
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Request, Response, status
@@ -25,6 +26,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_text, multi_values
 from app.database import get_db
 from app.dependencies import (
     require_any_permission_with_api_key,
@@ -44,10 +46,12 @@ from app.services.product_spec_registry import (
     default_match_window,
     find_similar_key,
     find_similar_value,
+    find_word_on_other_key,
     merged_allowed_values,
     merged_synonyms,
     normalise_vocabulary,
     seed_search_policy,
+    vocabulary_owners,
 )
 
 router = APIRouter()
@@ -69,8 +73,33 @@ def _effective_rules(row) -> list[dict]:
     return [{"builder": rule["builder"]} for rule in rules if isinstance(rule.get("builder"), dict)]
 
 
-def _serialise(row) -> dict:
+def _also_on(row, owners: dict) -> dict[str, list[str]]:
+    """{word: [other field labels]} for every word of this row another row also owns.
+
+    Words with no overlap are absent. Built from the same index the save guard reads, so
+    the note and the refusal cannot disagree.
+    """
+    out: dict[str, list[str]] = {}
+    for words in merged_synonyms(row).values():
+        for word in words or []:
+            labels = [
+                o.label
+                for o in owners.get(normalise_vocabulary(word), [])
+                if o.id != row.id
+            ]
+            if labels:
+                out[word] = list(dict.fromkeys(labels))
+    return out
+
+
+def _serialise(row, owners: Optional[dict] = None) -> dict:
+    if owners is None:
+        from sqlalchemy.orm import object_session
+
+        owners = vocabulary_owners(object_session(row))
     return {
+        # Never shown: the History tab needs it to read this row's audit trail.
+        "id": str(row.id),
         "spec_key": row.spec_key,
         "label": row.label,
         "data_type": row.data_type,
@@ -101,6 +130,8 @@ def _serialise(row) -> dict:
         # Merged view: consumers see one vocabulary, not the seed/user split.
         "synonyms": merged_synonyms(row),
         "applies_when": row.applies_when or {},
+        # A size given alone (no dimension named) can mean this key (CHAT-CLOSED-LISTS R6-1).
+        "matches_bare_size": bool(row.matches_bare_size),
         # Rules, for every key without exception (#425): the dimensions used to be read
         # out of a measurement block outside the rule list, and are rules now.
         "read_from": "rules",
@@ -121,12 +152,15 @@ def _serialise(row) -> dict:
         # value -> display label ("pp" -> "PP"), purely cosmetic (#423, D/E). Editable
         # on seed AND user rows, like user_synonyms.
         "value_labels": row.value_labels or {},
+        "parser_hint": row.parser_hint,
+        "label_owned": bool(row.label_owned),
+        "also_on": _also_on(row, owners),
     }
 
 
 @router.get("")
 @router.get("/")
-async def get_spec_registry(
+def get_spec_registry(
     request: Request,
     response: Response,
     current_user: dict = Depends(
@@ -140,7 +174,8 @@ async def get_spec_registry(
     """The active spec vocabulary, with an ETag so the parser can skip re-reading it."""
     try:
         rows = active_registry(db)
-        keys = [_serialise(row) for row in rows]
+        owners = vocabulary_owners(db)
+        keys = [_serialise(row, owners) for row in rows]
         stamps = [r.updated_at or r.created_at for r in rows]
         updated_at = max(stamps).isoformat() if stamps else None
 
@@ -213,11 +248,15 @@ class SpecKeyUpdate(BaseModel):
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
     applies_when: Optional[dict[str, list[str]]] = None
+    matches_bare_size: Optional[bool] = None
     # Ignore readings above this. Seeded 5000 on millimetre keys, because the catalogue
     # carries "540X440180MM" - a separator typo that parses as a 440-metre sink. Blank
     # is a real answer and means no cap, which is why it is `Optional` on a payload that
     # only applies the fields it was sent.
     max_value: Optional[float] = Field(default=None, ge=0)
+    # What this field means to the chatbot: one line, max 200 once cleaned (checked in the
+    # route so the refusal carries its own code). Blank stores NULL.
+    parser_hint: Optional[str] = Field(default=None, max_length=2000)
 
 
 class SpecKeyCreate(BaseModel):
@@ -230,6 +269,7 @@ class SpecKeyCreate(BaseModel):
     allowed_values: list[str] = Field(default_factory=list)
     user_synonyms: dict[str, list[str]] = Field(default_factory=dict)
     applies_when: dict[str, list[str]] = Field(default_factory=dict)
+    matches_bare_size: bool = False
     rank_weight: float = Field(default=1.0, ge=0, le=100)
     is_active: bool = True
 
@@ -253,6 +293,32 @@ def _similar_refusal(message: str, match: dict) -> JSONResponse:
     question each, with nothing on any screen saying why.
     """
     return JSONResponse(status_code=422, content={"error": message, "match": match})
+
+
+def _word_refusal(
+    db: Session, row, word: str, owners: dict, value: Optional[str] = None
+) -> None:
+    """409 when `word` already belongs to another field (one word, one field).
+
+    `details` lets the grid put the message under the word: `value` is the value key the
+    word was added under (`_self` for an other-name), None for a new value."""
+    other = find_word_on_other_key(db, row, word, owners)
+    if other is not None:
+        raise AppException(
+            status_code=409,
+            message=f"\"{word}\" is already a word for {other.label}.",
+            code="spec_registry_word_on_other_key",
+            details={"word": word, "other_label": other.label, "value": value},
+        )
+
+
+def _held_words(row) -> set[str]:
+    """Everything this row already says, normalised: judged only for what is NEW."""
+    held = {normalise_vocabulary(v) for v in merged_allowed_values(row)}
+    held |= {normalise_vocabulary(v) for v in (row.user_values or [])}
+    for words in merged_synonyms(row).values():
+        held |= {normalise_vocabulary(w) for w in words or []}
+    return held
 
 
 def _validate_reachable(data_type: str, allowed_values, synonyms) -> None:
@@ -280,7 +346,7 @@ class PolicyUpdate(BaseModel):
 
 
 @router.get("/policy")
-async def get_search_policy(
+def get_search_policy(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
     db: Session = Depends(get_db),
 ):
@@ -305,7 +371,7 @@ async def get_search_policy(
 
 
 @router.patch("/policy/{policy_key}")
-async def update_search_policy(
+def update_search_policy(
     policy_key: str,
     payload: PolicyUpdate,
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
@@ -343,7 +409,7 @@ def _validate_rules(
 
 
 @router.get("/coverage")
-async def get_spec_coverage(
+def get_spec_coverage(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
     db: Session = Depends(get_db),
 ):
@@ -387,7 +453,7 @@ async def get_spec_coverage(
 
 
 @router.get("/applicable-keys")
-async def applicable_keys(
+def applicable_keys(
     code: str,
     # `products.view`, for the same reason `GET /spec-registry` runs on it 300 lines
     # above: this is asked BY THE PRODUCT PAGE, on behalf of somebody editing a
@@ -417,7 +483,7 @@ async def applicable_keys(
 
 
 @router.get("/similar")
-async def similar_spec_key(
+def similar_spec_key(
     label: str,
     current_user: dict = Depends(
         require_any_permission_with_api_key(
@@ -439,7 +505,7 @@ async def similar_spec_key(
 
 
 @router.get("/keys-for-product")
-async def keys_for_product(
+def keys_for_product(
     code: str,
     # Relaxed from `master_data.spec_registry.view` alone, which is granted to zero
     # roles (M1), to EITHER grant. Same precedent and reasoning as `GET /spec-registry`
@@ -493,7 +559,7 @@ async def keys_for_product(
 
 
 @router.get("/catalogue-status")
-async def get_catalogue_status(
+def get_catalogue_status(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
     db: Session = Depends(get_db),
 ):
@@ -502,7 +568,7 @@ async def get_catalogue_status(
 
 
 @router.post("/reread-catalogue")
-async def reread_catalogue(
+def reread_catalogue(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
     db: Session = Depends(get_db),
 ):
@@ -516,14 +582,14 @@ async def reread_catalogue(
 
 
 @router.get("/{spec_key}/products")
-async def products_carrying_spec(
+def products_carrying_spec(
     spec_key: str,
-    value: Optional[str] = None,
+    value: Optional[list[str]] = Query(None),
     q: Optional[str] = None,
-    class_label: Optional[str] = Query(
-        None, description="Narrows to one product class (`class`), e.g. \"Kitchen Sink\"."
+    class_label: Optional[list[str]] = Query(
+        None, description="Narrows to these product classes (`class`), e.g. \"Kitchen Sink\"; several = any of them."
     ),
-    source_filter: Optional[str] = Query(
+    source_filter: Optional[list[str]] = Query(
         None,
         alias="source",
         description="Narrows to one provenance source, e.g. \"derived\" or \"human\".",
@@ -576,8 +642,7 @@ async def products_carrying_spec(
         .filter(ProductSpecifications.values.has_key(spec_key))  # noqa: W601
         .filter(Product.is_active.is_(True))
     )
-    if value is not None:
-        base = base.filter(stored_value == value)
+    values = multi_text(value)
     if q and q.strip():
         # Searched in the database rather than in the page, because the list is
         # paginated: filtering the hundred rows on screen would report "no matches" for
@@ -591,6 +656,11 @@ async def products_carrying_spec(
                 ProductSpecifications.provenance[spec_key]["evidence"].astext.ilike(needle),
             )
         )
+    # The Value options follow the search box but are counted BEFORE the value filter, so picking one
+    # leaves the others on offer.
+    base_all_values = base
+    if values:
+        base = base.filter(stored_value.in_(values))
 
     # Counted over `base` before `class_label`/`source` narrow it further, so the
     # dropdown options describe everything there is to pick, not just what is already
@@ -599,7 +669,7 @@ async def products_carrying_spec(
     tallies = {
         "by_value": [
             {"value": v, "count": n}
-            for v, n in base.with_entities(stored_value, func.count()).group_by(stored_value)
+            for v, n in base_all_values.with_entities(stored_value, func.count()).group_by(stored_value)
             .order_by(func.count().desc()).limit(30).all()
         ],
         "by_class": [
@@ -614,10 +684,11 @@ async def products_carrying_spec(
         ],
     }
 
-    if class_label is not None:
-        base = base.filter(stored_class == class_label)
-    if source_filter is not None:
-        base = base.filter(stored_source == source_filter)
+    class_labels, sources = multi_text(class_label), multi_values(source_filter)
+    if class_labels:
+        base = base.filter(stored_class.in_(class_labels))
+    if sources:
+        base = base.filter(stored_source.in_(sources))
 
     total = base.count()
     rows = (
@@ -775,7 +846,7 @@ def try_spec_key(
 
 
 @router.post("/{spec_key}/preview")
-async def preview_spec_key(
+def preview_spec_key(
     spec_key: str,
     payload: SpecPreviewRequest = Body(...),
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
@@ -807,7 +878,7 @@ async def preview_spec_key(
 
 
 @router.get("/{spec_key}/preview/{job_id}")
-async def get_spec_key_preview(
+def get_spec_key_preview(
     spec_key: str,
     job_id: str,
     # `edit`, matching the POST that started the job (UAC AC-B.2) - a preview is
@@ -826,7 +897,7 @@ async def get_spec_key_preview(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_spec_key(
+def create_spec_key(
     payload: SpecKeyCreate,
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.add")),
     db: Session = Depends(get_db),
@@ -877,6 +948,7 @@ async def create_spec_key(
             synonyms={},
             user_synonyms=payload.user_synonyms,
             applies_when=payload.applies_when,
+            matches_bare_size=payload.matches_bare_size,
             rank_weight=payload.rank_weight,
             is_active=payload.is_active,
             match_tolerance=tolerance,
@@ -959,6 +1031,39 @@ def update_spec_key(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Permission required: master_data.spec_registry.edit",
                 )
+
+        # The meaning and the cross-field word guard are judged before anything below is
+        # applied, so a refused save stores nothing.
+        hint = None
+        if "parser_hint" in fields:
+            # Control characters (NUL included) go first: Postgres refuses NUL in text,
+            # and none of them belongs on a one-line prompt entry.
+            hint = re.sub(r"[\x00-\x08\x0e-\x1f\x7f]", "", fields["parser_hint"] or "")
+            hint = re.sub(r"\s+", " ", hint).strip()
+            if len(hint) > 200:
+                raise AppException(
+                    status_code=422,
+                    message="The chatbot meaning is at most 200 characters.",
+                    code="spec_registry_hint_too_long",
+                )
+        owners = None
+        if "user_synonyms" in fields or "user_values" in fields:
+            owners = vocabulary_owners(db)
+        if "user_synonyms" in fields:
+            held = _held_words(row)
+            for value_key, words in (fields["user_synonyms"] or {}).items():
+                for word in words:
+                    if word and word.strip() and normalise_vocabulary(word) not in held:
+                        _word_refusal(db, row, word.strip(), owners, value_key)
+        if "user_values" in fields:
+            # Judged here, before any suppression below touches the row, so a refused
+            # save changes nothing. A value the row already holds is not judged.
+            present = {str(v) for v in merged_allowed_values(row)} | {
+                str(v) for v in (row.user_values or [])
+            }
+            for proposed in fields["user_values"] or []:
+                if proposed and proposed.strip() and proposed not in present:
+                    _word_refusal(db, row, proposed.strip(), owners)
 
         # Suppressions land BEFORE the near-duplicate guard below, so the guard judges the
         # vocabulary as this save leaves it. Renaming a value - take `floor_standing`
@@ -1110,9 +1215,15 @@ def update_spec_key(
                 if str(key).strip() and [v for v in (values or []) if str(v).strip()]
             }
 
-        for field in ("label", "rank_weight", "is_active", "match_tolerance", "match_decay"):
+        if "label" in fields and fields["label"] is not None and fields["label"] != row.label:
+            # The owner's name from here on: the seed repair leaves it alone.
+            row.label_owned = True
+        for field in ("label", "rank_weight", "is_active", "match_tolerance", "match_decay", "matches_bare_size"):
             if field in fields and fields[field] is not None:
                 setattr(row, field, fields[field])
+
+        if "parser_hint" in fields:
+            row.parser_hint = hint or None
 
         # Cleared ON PURPOSE is a real answer here ("stop dropping numbers on this
         # key"), so this one applies a None it was actually sent rather than skipping it
@@ -1270,6 +1381,8 @@ def add_spec_value(
                 f"\"{proposed}\" is already {match['value']} on {row.label}.", match
             )
 
+        _word_refusal(db, row, proposed, vocabulary_owners(db))
+
         row.user_values = [*(row.user_values or []), proposed]
 
         # A value nobody can say is unsearchable, and a new one has no words yet. Give
@@ -1292,7 +1405,7 @@ def add_spec_value(
 
 
 @router.delete("/{spec_key}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_spec_key(
+def delete_spec_key(
     spec_key: str,
     current_user: dict = Depends(
         require_permission_with_api_key("master_data.spec_registry.delete")

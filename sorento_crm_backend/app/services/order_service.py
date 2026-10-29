@@ -27,6 +27,7 @@ from app.services.import_log_service import ImportLogService
 from app.services.contact_brand_scope import product_in_scope_clauses
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
+from app.utils.multi_value import multi_values
 from app.services.company_scope import (
     DEFAULT_COMPANY_ID,
     build_company_predicate,
@@ -34,9 +35,12 @@ from app.services.company_scope import (
     pending_company_id,
     stamp_lookup_companies,
 )
+from sqlalchemy import inspect as _sa_inspect
+
 from app.services.embedding_change_listener import (
     suppress_embedding_events,
     bulk_enqueue_embedding_events,
+    embedded_fields_changed,
 )
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 from app.services.order_field_ownership import (
@@ -481,6 +485,9 @@ def stamp_so_outstanding_rows(
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(Customer, _cust_on)
+            # AC-REMOVED-KEEP-CANCELLED: a line AutoCount removed that the ingest used to
+            # delete is kept now, but never counts (owner via crew, 27 Oct).
+            .filter(SalesOrderLine.removed_unreferenced.is_(False))
         )
         if customer_ids:
             q = q.filter(SalesOrder.customer_id.in_([str(c) for c in customer_ids]))
@@ -821,6 +828,20 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
         logger.warning("stamp_order_summary skipped: %s", exc)
 
 
+
+def resolve_order_status_ids(db, order_status_id):
+    """Order status ids for the `order_status_id` filter: one value or several (comma-joined or a
+    list), each an id or a status code/name, OR-ed. `None` is "no filter", `[]` is "matches no
+    status". Shared by the delivery-orders list and its export so they cannot disagree."""
+    status_ids = None
+    for value in multi_values(order_status_id) or []:
+        resolved = resolve_identifier(
+            db, value, OrderStatus, code_fields=("status_code", "status_name")
+        )
+        if resolved is not None:
+            status_ids = [*(status_ids or []), *resolved]
+    return status_ids
+
 class OrderService:
     """Service for order operations."""
     
@@ -836,7 +857,7 @@ class OrderService:
         product_query: Optional[str] = None,
         transporter_query: Optional[str] = None,
         customer_id: Optional[str] = None,
-        order_status_id: Optional[str] = None,
+        order_status_id: Optional[list[str] | str] = None,
         order_status: Optional[str] = None,
         has_order_lines: Optional[str] = None,
         has_actual_delivery_date: Optional[str] = None,
@@ -975,12 +996,8 @@ class OrderService:
             filters.append(Order.customer_id.in_(customer_ids))
             _customer_scoped = True
 
-        status_ids = resolve_identifier(
-            self.db,
-            order_status_id,
-            OrderStatus,
-            code_fields=("status_code", "status_name"),
-        )
+        # Several statuses are OR-ed; each may be an id or a code/name (FILTER-MULTISELECT).
+        status_ids = resolve_order_status_ids(self.db, order_status_id)
         if status_ids is not None:
             if not status_ids:
                 if ids_only:
@@ -1446,6 +1463,7 @@ class OrderService:
         if not order:
             raise handle_not_found("Order", order_id)
         self._attach_remarks_cs_locked(order)
+        self._attach_sales_order_links(order)
         order.autocount_owned_fields = (
             sorted(AUTOCOUNT_OWNED_ORDER_COLUMNS) if is_autocount_owned(order) else []
         )
@@ -1467,6 +1485,45 @@ class OrderService:
             ).is_remarks_cs_locked(order)
         except Exception:
             order.remarks_cs_locked = False
+
+    def _attach_sales_order_links(self, order) -> None:
+        """Stamp the transient ``sales_order`` ref each DO line exposes (DO-SO-LINK-SURFACE).
+
+        Explicit AutoCount links only: the stored ``sales_order_line_id`` (its SO and line no),
+        else the SO numbered ``from_doc_no`` in the DO's own company, with no line. Never a
+        product or qty match. Two reads for the whole DO.
+        """
+        from app.models.order import SalesOrder, SalesOrderLine
+
+        lines = list(order.lines or [])
+        linked_ids = {str(ln.sales_order_line_id) for ln in lines if ln.sales_order_line_id}
+        by_line = {}
+        if linked_ids:
+            rows = (
+                self.db.query(SalesOrderLine.id, SalesOrderLine.line_no, SalesOrder.id, SalesOrder.so_number)
+                .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+                .filter(SalesOrderLine.id.in_(linked_ids), SalesOrder.company_id == order.company_id)
+                .all()
+            )
+            by_line = {str(lid): {"id": str(sid), "so_number": no, "line_no": line_no}
+                       for lid, line_no, sid, no in rows}
+        numbers = {
+            ln.from_doc_no for ln in lines
+            if ln.from_doc_no and str(ln.sales_order_line_id or "") not in by_line
+        }
+        by_number = {}
+        if numbers:
+            rows = (
+                self.db.query(SalesOrder.id, SalesOrder.so_number)
+                .filter(SalesOrder.so_number.in_(numbers), SalesOrder.company_id == order.company_id)
+                .all()
+            )
+            by_number = {no: {"id": str(sid), "so_number": no, "line_no": None} for sid, no in rows}
+        for line in lines:
+            ref = by_line.get(str(line.sales_order_line_id or ""))
+            if ref is None and line.from_doc_type in (None, "SO"):
+                ref = by_number.get(line.from_doc_no)
+            line.sales_order = ref
 
     # ------------------------------------------------------------------ #
     # Aggregation / analytics
@@ -3333,11 +3390,19 @@ class OrderService:
             }
 
         try:
+            # Only orders whose embedded fields changed are queued (EMBED-QUEUE-DEDUPE): the
+            # Master sheet re-imports the full order history every run, so "touched" is nearly
+            # every order. Decided before the flush, which clears attribute history. A change
+            # an earlier flush in this import wrote was queued by the listener at that flush.
+            changed_orders = [
+                o for o in touched_orders
+                if _sa_inspect(o).pending or embedded_fields_changed(o, "order")
+            ]
             with suppress_embedding_events("order"):
                 self.db.flush()
                 seen: set[str] = set()
                 touched_ids: list[str] = []
-                for o in touched_orders:
+                for o in changed_orders:
                     oid = getattr(o, "id", None)
                     if oid is None:
                         continue
@@ -3350,8 +3415,8 @@ class OrderService:
                     self.db, "order", touched_ids, event_type="order.updated"
                 )
                 logger.info(
-                    "Order tracking import: bulk-enqueued %s embedding events (touched=%s)",
-                    enqueued, len(touched_orders),
+                    "Order tracking import: bulk-enqueued %s embedding events (changed=%s, touched=%s)",
+                    enqueued, len(touched_ids), len(touched_orders),
                 )
                 self.db.commit()
             _import_commit_ok = True
@@ -3544,7 +3609,8 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
-        customer_group_id: Optional[str] = None,
+        customer_group_id: Optional[list[str] | str] = None,
+        status: Optional[str] = None,
     ):
         """Build the filtered + sorted customers query shared by ``list_customers``
         and ``neighbours`` so the two can never drift.
@@ -3558,8 +3624,15 @@ class CustomerService:
         if sales_agent_id is not None:
             q = q.filter(Customer.sales_agent_id == sales_agent_id)
 
-        if customer_group_id is not None:
-            q = q.filter(Customer.customer_group_id == customer_group_id)
+        if customer_group_id:
+            groups = [customer_group_id] if isinstance(customer_group_id, str) else customer_group_id
+            q = q.filter(Customer.customer_group_id.in_(groups))
+
+        # `active` / `inactive`; anything else (or nothing) is every customer.
+        if status == "active":
+            q = q.filter(Customer.is_active.is_(True))
+        elif status == "inactive":
+            q = q.filter(Customer.is_active.is_(False))
 
         if query:
             q = q.filter(
@@ -3584,7 +3657,8 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
-        customer_group_id: Optional[str] = None,
+        customer_group_id: Optional[list[str] | str] = None,
+        status: Optional[str] = None,
     ):
         """List customers with pagination, search, and sorting.
 
@@ -3596,6 +3670,7 @@ class CustomerService:
             sort_dir=sort_dir,
             sales_agent_id=sales_agent_id,
             customer_group_id=customer_group_id,
+            status=status,
         )
 
         total = q.count()
@@ -3781,9 +3856,11 @@ class OrderStatusService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_order_statuses(self, page: int = 1, limit: int = 50):
-        """List order statuses."""
+    def list_order_statuses(self, page: int = 1, limit: int = 50, is_final_status: Optional[bool] = None):
+        """List order statuses; `is_final_status` narrows the whole table (total and paging)."""
         q = self.db.query(OrderStatus).order_by(OrderStatus.sequence)
+        if is_final_status is not None:
+            q = q.filter(OrderStatus.is_final_status.is_(is_final_status))
         
         total = q.count()
         offset = (page - 1) * limit

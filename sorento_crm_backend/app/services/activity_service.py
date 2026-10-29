@@ -102,19 +102,21 @@ _BY_FE: dict[str, _EntityCfg] = {cfg.fe_type: cfg for cfg in _REGISTRY}
 # Action mapping (stored <-> FE verb)                                         #
 # --------------------------------------------------------------------------- #
 # The audit listener writes "CREATE"; older/manual calls may write "INSERT".
+# LINK / UNLINK: a person linked or unlinked a product's file (product_link_audit). They read
+# as added / removed, so their id-only values are never diffed into chips.
 _STORED_ACTIONS_FOR_FE = {
-    "created": ("INSERT", "CREATE"),
+    "created": ("INSERT", "CREATE", "LINK"),
     "updated": ("UPDATE",),
-    "deleted": ("DELETE",),
+    "deleted": ("DELETE", "UNLINK"),
     "imported": ("IMPORT",),
 }
 
 
 def _fe_action(stored: Optional[str]) -> str:
     s = (stored or "").upper()
-    if s in ("INSERT", "CREATE"):
+    if s in ("INSERT", "CREATE", "LINK"):
         return "created"
-    if s == "DELETE":
+    if s in ("DELETE", "UNLINK"):
         return "deleted"
     if s == "IMPORT":
         return "imported"
@@ -330,8 +332,8 @@ def _apply_filters(
     query,
     *,
     stored_types: Optional[list[str]],
-    action: Optional[str],
-    user_id: Optional[str],
+    action: Optional[list[str] | str],
+    user_id: Optional[list[str] | str],
     date_from: Optional[date],
     date_to: Optional[date],
     q: Optional[str],
@@ -341,13 +343,17 @@ def _apply_filters(
     if stored_types:
         query = query.filter(AuditLog.entity_type.in_(stored_types))
     if action:
-        stored_actions = _STORED_ACTIONS_FOR_FE.get(action.lower())
+        fe_actions = [action] if isinstance(action, str) else action
+        stored_actions = [
+            s for a in fe_actions for s in (_STORED_ACTIONS_FOR_FE.get(a.lower()) or [])
+        ]
         if stored_actions:
             query = query.filter(AuditLog.action.in_(stored_actions))
     if include_user and user_id:
+        user_ids = [user_id] if isinstance(user_id, str) else user_id
         # Either column (plan 8.1): an admin's impersonated writes carry them as
         # real_user_id, with the target as user_id.
-        query = query.filter(or_(AuditLog.user_id == user_id, AuditLog.real_user_id == user_id))
+        query = query.filter(or_(AuditLog.user_id.in_(user_ids), AuditLog.real_user_id.in_(user_ids)))
     if date_from:
         query = query.filter(AuditLog.changed_at >= datetime.combine(date_from, datetime.min.time()))
     if date_to:
@@ -397,8 +403,8 @@ def get_activity_feed(
     db: Session,
     *,
     entity_types: Optional[list[str]] = None,
-    action: Optional[str] = None,
-    user_id: Optional[str] = None,
+    action: Optional[list[str]] = None,
+    user_id: Optional[list[str]] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     q: Optional[str] = None,
@@ -499,9 +505,13 @@ def get_activity_feed(
         trace_id=trace_id,
         include_user=False,
     ).distinct()
-    # Admins who only acted while impersonating appear as real_user_id (plan 8.1).
+    # Admins who only acted while impersonating appear as real_user_id (plan 8.1). Same
+    # company predicate as the user_id half, or another company's admin is listed.
+    real_base = db.query(AuditLog.real_user_id).filter(AuditLog.real_user_id.isnot(None))
+    if scope_filter is not None:
+        real_base = real_base.filter(scope_filter)
     real_scope = _apply_filters(
-        db.query(AuditLog.real_user_id).filter(AuditLog.real_user_id.isnot(None)),
+        real_base,
         stored_types=stored_types,
         action=action,
         user_id=None,

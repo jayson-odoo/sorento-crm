@@ -39,7 +39,7 @@ from tests.chatbot.test_outstanding_lane import (
     _present_response,
     _seed_contact,
 )
-from tests.chatbot.test_top_selling_round6 import _seed_borrowable_envelope
+from tests.chatbot._turn_helpers import seed_borrowable_envelope as _seed_borrowable_envelope
 
 TOOL = "crm_low_stock_report"
 GRANT = "scm.low_stock_report"

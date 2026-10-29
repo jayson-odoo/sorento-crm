@@ -184,6 +184,10 @@ class Customer(Base, CompanyScopedMixin):
     # project | project_cash | cash_sales (app/services/debtor_type.py). NULL = not set; the
     # insert listener below fills it on create, so only a hand-cleared row stays blank.
     debtor_type = Column(String(20), nullable=True)
+    # AutoCount `Debtor.DebtorType` as the customers push sends it (`market_segment_code`),
+    # upper and trimmed: the sales reports' debtor type axis (SALES-UNIFIED 2.3). Not the CRM's
+    # own `debtor_type` above, which is a different, office-owned concept.
+    autocount_debtor_type = Column(String(50), nullable=True)
     # The group this ledger belongs to (see `CustomerGroup`). NULL = ungrouped.
     customer_group_id = Column(
         UUID(as_uuid=False),
@@ -703,6 +707,9 @@ class SalesOrder(Base, CompanyScopedMixin):
     # only by the ESB ingest, never touches `project_label`. Migration sopr_0001.
     po_ref = Column(String(255), nullable=True)
     po_ref_key = Column(String(255), nullable=True)
+    # AutoCount `SO.ShipInfo` (FULFIL-SO-REMARK): the customer PO number, or the words
+    # PURCHASE REQUEST / SPONSORSHIP. Read only by `so_remark_rules.remark_type`.
+    ship_info = Column(String(255), nullable=True)
     # AC-CONSIGN-CRM (owner ruling 1, 13 Oct): `consignment` is an AutoCount Consignment (CG)
     # written as demand by the consignments ingest; every other order is `sales_order`. It
     # labels the order "Consignment" and keeps it out of the SO-based sales figures (Q5 a).
@@ -766,6 +773,11 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     # of it. Only such a line reopens when the cancel lowers (a removed, CRM-cancelled or
     # header-cancelled line never does).
     cancelled_by_cancel_doc = Column(Boolean, default=False, server_default="false", nullable=False)
+    # AC-REMOVED-KEEP-CANCELLED: True while the ingest keeps this line (cancelled) only because a
+    # DtlKey line is never deleted any more - AutoCount removed it and nothing pointed at it, so
+    # the old sweep would have deleted it. Excluded from every total (owner via crew, 27 Oct);
+    # cleared when AutoCount sends the line again.
+    removed_unreferenced = Column(Boolean, default=False, server_default="false", nullable=False)
     # AC-CONSIGN-CRM (ruling 2): on a consignment line, what live AutoCount Consignment Returns
     # matched to it add up to, capped at ordered, derived on every sync. Reporting only: no
     # planned, delivered or status reader looks at it.
@@ -776,6 +788,11 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     # did not carry it at all. Mapped now because the demand drill quotes it: "who ordered
     # it and at what price" is the question the buyer opens that popover with.
     unit_price = Column(Numeric(15, 2), nullable=True)
+    # FULFIL-SO-REMARK: AutoCount's line remark (`SODTL.FurtherDescription`, RTF stripped at
+    # the edge) and the text-only heading line above this one (`section_heading`). Read only
+    # by `so_remark_rules.is_mockup_line`.
+    line_remark = Column(Text, nullable=True)
+    section_heading = Column(Text, nullable=True)
     # The rest of the money the sales book states per line, and the reason the detail page
     # could only ever print a unit price beside a quantity. Both NULL when the file said
     # nothing: a discount of 0 claims a discount of nothing was given, and a line total of

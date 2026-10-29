@@ -93,7 +93,8 @@ export interface ActivityFeedResponse {
 /** Client-side filter state shared between the toolbar and the hook. */
 export interface ActivityFilters {
   entity_types: ActivityEntityType[];
-  action?: ActivityAction;
+  /** One or several actions, comma-joined. */
+  action?: string;
   user_id?: string;
   date_from?: string; // yyyy-MM-dd
   date_to?: string; // yyyy-MM-dd

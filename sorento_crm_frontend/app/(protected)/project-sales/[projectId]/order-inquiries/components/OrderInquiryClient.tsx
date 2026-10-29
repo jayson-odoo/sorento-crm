@@ -25,7 +25,8 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -442,7 +443,10 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             </InfoHint>
           </div>
           {project.data && (
-            <p className="mt-0.5 text-sm text-muted-foreground break-words">
+            <p
+              className="mt-0.5 line-clamp-2 text-sm text-muted-foreground break-words"
+              title={project.data.title}
+            >
               {project.data.title}
             </p>
           )}
@@ -515,9 +519,9 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <Label className="text-xs text-muted-foreground">Instruction</Label>
-                      <SearchableSelect
-                        value={verbFilter}
-                        onChange={setVerbFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(verbFilter)}
+                        onChange={(value) => setVerbFilter(joinMulti(value))}
                         clearable
                         options={VERB_OPTIONS}
                         placeholder="Every instruction"
@@ -525,9 +529,9 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs text-muted-foreground">State</Label>
-                      <SearchableSelect
-                        value={stateFilter}
-                        onChange={setStateFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(stateFilter)}
+                        onChange={(value) => setStateFilter(joinMulti(value))}
                         clearable
                         options={STATE_OPTIONS}
                         placeholder="Every state"

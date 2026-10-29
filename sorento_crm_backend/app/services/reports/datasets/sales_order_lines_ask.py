@@ -21,6 +21,7 @@ from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
+from app.services.reports import ask_params as ap
 from app.services.reports import registry as reg
 from app.services.reports.datasets.delivery_order_lines import NO_AGENT
 from app.services.reports.datasets.sales_order_lines import channel_label
@@ -124,6 +125,13 @@ def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
 
 # ------------------------------------------------------------------------ catalog
 
+#: The count measures: key, label, the id counted.
+COUNT_COLUMNS = (
+    ("customers", "Customers", SalesOrder.customer_id),
+    ("orders", "Orders", SalesOrder.id),
+    ("products", "Products", SalesOrderLine.product_id),
+)
+
 #: Basis -> definition title. The qty and amount expressions come from `_figures`, top selling's own.
 _TITLES = {"delivered": "Delivered sales", "ordered": "Ordered sales", "outstanding": "Outstanding orders"}
 
@@ -155,10 +163,27 @@ def _definition(basis: str) -> reg.ReportDefinition:
         reg.Column(
             "channel", "Channel", "text", "dimension", lambda c: channel_label(SalesOrder.demand_class), size=120
         ),
+        # Owner 28 Oct 09:30: the open sales orders behind an undelivered-orders figure. Outstanding only, so the
+        # list is the figure's own population by construction.
+        *(
+            (reg.Column("sales_order", "Sales order", "text", "dimension", lambda c: SalesOrder.so_number, size=140),)
+            if basis == "outstanding" else ()
+        ),
         reg.Column("month", "Month", "text", "dimension", lambda c: sa.func.to_char(_bucket_expr(), "YYYY-MM"), size=110),
+        reg.Column("year", "Year", "text", "dimension", lambda c: sa.cast(sa.cast(sa.extract("year", _bucket_expr()), sa.Integer), sa.Text), size=90),
         reg.Column("all", "All", "text", "dimension", lambda c: sa.cast(sa.literal("all"), sa.Text), size=80),
         reg.Column("amount", "RM", "money", "measure", lambda c: amount_expr, size=130),
         reg.Column("qty", "Qty", "integer", "measure", lambda c: qty_expr, size=100),
+        # REPORT-SMART-1021: how many customers, orders and products, counting only lines
+        # with a figure on this basis (a line nothing was delivered on sold nothing).
+        *(
+            reg.Column(
+                key, label, "integer", "measure",
+                (lambda col: lambda c: sa.case((sa.or_(qty_expr != 0, amount_expr != 0), col)))(column),
+                size=110, agg="count_distinct",
+            )
+            for key, label, column in COUNT_COLUMNS
+        ),
     )
     dataset = reg.Dataset(
         key=key,
@@ -176,24 +201,30 @@ def _definition(basis: str) -> reg.ReportDefinition:
         dataset=dataset,
         params=(
             reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
-            reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
-            reg.SelectParam("customer", "Customer", True, (), _no_options, customer_condition),
-            reg.SelectParam("product", "Product", True, (), _no_options, product_condition),
-            reg.SelectParam("brand", "Brand", True, (), _no_options, brand_condition),
-            reg.SelectParam("category", "Category", True, (), _no_options, category_condition),
-            reg.SelectParam("sales_agent", "Sales agent", True, (), _no_options, sales_agent_condition),
-            reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition),
-            reg.SelectParam("location", "Location", True, (), _no_options, location_condition),
-            reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition),
+            reg.PeriodParam(
+                key="period", label="Period",
+                # An open basis counts every date when no period is named, as the chatbot does.
+                default=reg.all_dates_period if basis == "outstanding" else reg.current_year_period,
+            ),
+            reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
+            reg.SelectParam("product", "Product", True, (), _no_options, product_condition, hidden=True),
+            reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
+            reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),
+            reg.SelectParam("sales_agent", "Sales agent", True, (), ap.agent_options, sales_agent_condition),
+            reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition, hidden=True),
+            reg.SelectParam("location", "Location", True, (), _no_options, location_condition, hidden=True),
+            reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition, hidden=True),
+            reg.SelectParam("spec", "Specification", True, (), ap.spec_options, ap.spec_condition),
         ),
         detail=reg.DetailLayout(
             title="Sales order lines",
             order_by=lambda c: [SalesOrder.order_date.desc(), SalesOrder.so_number.asc(), SalesOrderLine.id.asc()],
+            cap="truncate",  # the summary is the answer: the detail is cut at the cap, never refused (crew 28 Oct)
         ),
         pivot=reg.PivotLayout(title=_TITLES[basis]),
         default_view={
             "params": {"date_basis": "order_date"},
-            "detail": {"columns": [], "order": []},
+            "detail": {"columns": list(ap.DETAIL_COLUMNS), "order": list(ap.DETAIL_COLUMNS)},
             "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]},
         },
         workbook=reg.WorkbookSpec(company_name=""),

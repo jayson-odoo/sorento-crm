@@ -1,18 +1,18 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   SearchableSelect,
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Button } from '@/components/ui/button';
+import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { useContactAccessTypes } from '../../contact-access-types/hooks/useContactAccessTypes';
-import {
-  getCustomer,
-  searchCustomersSelect,
-} from '@/app/(protected)/order-management/customers/services/customerService';
+import { searchCustomersSelect } from '@/app/(protected)/order-management/customers/services/customerService';
 import { getContact, getContacts } from '../[id]/services/contactService';
+import { customerFilterLabel, customerFilterLabelKey } from '../lib/customerFilterLabel';
 import { PACKING_LIST_REGION_OPTIONS } from '@/lib/packing-list-regions';
 import type { ContactAccessFilters as Filters } from '../lib/listQuery';
 
@@ -39,29 +39,52 @@ const TIER_OPTIONS: SearchableSelectOption[] = [
 const contactLabel = (c: { name?: string | null; phone_number: string }) =>
   c.name ? `${c.name} (${c.phone_number})` : c.phone_number;
 
+/**
+ * FILTER-MULTISELECT: the names of the customers a Customer filter holds, one per id, never an id.
+ * Each id reads through the shared label key, so the options the picker fetched (cached below) and the
+ * toolbar chip answer from the same entries, and an id restored from the URL is read back once.
+ */
+export function useCustomerFilterNames(customerIds: string[]): string[] {
+  const results = useQueries({
+    queries: customerIds.map((id) => ({
+      queryKey: customerFilterLabelKey(id),
+      queryFn: () => customerFilterLabel(id),
+      staleTime: Infinity,
+      retry: 0,
+    })),
+  });
+  return customerIds.map((_, i) => results[i]?.data ?? 'Selected customer');
+}
+
+/** A multi-select trigger that names itself like its single siblings: "Tier: Dealer, Office". */
+function multiTrigger(title: string, chosen: { label: string }[]) {
+  return chosen.length ? (
+    <span className="block truncate" title={chosen.map((o) => o.label).join(', ')}>
+      {multiChipLabel(title, chosen.map((o) => o.label))}
+    </span>
+  ) : (
+    <span className="text-muted-foreground">{title}: any</span>
+  );
+}
+
 interface Props {
   value: Filters;
   onChange: (next: Filters) => void;
+  /** The Filters popover owns Clear filters for all of its controls. */
+  hideClear?: boolean;
 }
 
-export default function ContactAccessFilters({ value, onChange }: Props) {
+export default function ContactAccessFilters({ value, onChange, hideClear = false }: Props) {
   const { data: accessTypes = [] } = useContactAccessTypes();
-  const [customerOption, setCustomerOption] = useState<SearchableSelectOption | undefined>();
+  const queryClient = useQueryClient();
   const [differsOption, setDiffersOption] = useState<SearchableSelectOption | undefined>();
 
   const set = (field: keyof Filters) => (v: string) => onChange({ ...value, [field]: v || null });
 
-  // Label read-back for an id restored from the URL.
-  const customerLabel = useQuery({
-    queryKey: ['contact-filter-customer-label', value.customerId],
-    queryFn: async () => {
-      const c = await getCustomer(value.customerId as string);
-      return `${c.customer_code} - ${c.customer_name}`;
-    },
-    enabled: !!value.customerId && customerOption?.value !== value.customerId,
-    staleTime: Infinity,
-    retry: 0,
-  });
+  const setMulti = (field: keyof Filters) => (ids: string[]) =>
+    onChange({ ...value, [field]: joinMulti(ids) || null });
+  const customerIds = splitMulti(value.customerId);
+  const customerNames = useCustomerFilterNames(customerIds);
   const differsLabel = useQuery({
     queryKey: ['contact-filter-differs-label', value.accessDiffersFrom],
     queryFn: async () => contactLabel(await getContact(value.accessDiffersFrom as string)),
@@ -71,9 +94,17 @@ export default function ContactAccessFilters({ value, onChange }: Props) {
   });
 
   const fetchCustomers = useCallback(
-    async (query: string) =>
-      (await searchCustomersSelect(query, 0)).map((o) => ({ value: o.value, label: o.label })),
-    [],
+    async (query: string) => {
+      // Every granted company, each option tagged with its company (codes repeat across them).
+      const options = (await searchCustomersSelect(query, 0, { companyScope: 'grants' })).map((o) => ({
+        value: o.value,
+        label: o.label,
+      }));
+      // Remember the names of what was offered, so a pick is named at once (chip and trigger).
+      for (const o of options) queryClient.setQueryData(customerFilterLabelKey(o.value), o.label);
+      return options;
+    },
+    [queryClient],
   );
   const fetchContacts = useCallback(async (query: string) => {
     const page = await getContacts(
@@ -96,33 +127,31 @@ export default function ContactAccessFilters({ value, onChange }: Props) {
   };
 
   const active = Object.values(value).some(Boolean);
-  const cls = 'w-full sm:w-44';
+  const cls = 'w-full';
 
   return (
     // Phones: a one-column grid (`minmax(0,1fr)`), so a long chosen label truncates instead of
     // widening the toolbar past the screen; from `sm` up the fixed-width triggers wrap in a row.
     <div
-      className="grid w-full min-w-0 grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center"
+      className="grid w-full min-w-0 grid-cols-1 gap-2"
       data-testid="contact-access-filters"
     >
-      <SearchableSelect
+      <SearchableMultiSelect
         triggerClassName={cls}
-        truncateTriggerLabel
-        value={value.accessType ?? ''}
-        onChange={set('accessType')}
+        value={splitMulti(value.accessType)}
+        onChange={setMulti('accessType')}
         options={accessTypes.map((t) => ({ value: t.code, label: t.name }))}
         placeholder="Access type: any"
-        renderTriggerLabel={(opt) => `Access type: ${opt.label}`}
+        renderTriggerLabel={(chosen) => multiTrigger('Access type', chosen)}
         clearable
       />
-      <SearchableSelect
+      <SearchableMultiSelect
         triggerClassName={cls}
-        truncateTriggerLabel
-        value={value.tier ?? ''}
-        onChange={set('tier')}
+        value={splitMulti(value.tier)}
+        onChange={setMulti('tier')}
         options={TIER_OPTIONS}
         placeholder="Tier: any"
-        renderTriggerLabel={(opt) => `Tier: ${opt.label}`}
+        renderTriggerLabel={(chosen) => multiTrigger('Tier', chosen)}
         clearable
       />
       <SearchableSelect
@@ -175,31 +204,28 @@ export default function ContactAccessFilters({ value, onChange }: Props) {
         renderTriggerLabel={(opt) => `Stock checks: ${opt.label}`}
         clearable
       />
-      <SearchableSelect
+      <SearchableMultiSelect
         triggerClassName={cls}
-        truncateTriggerLabel
-        value={value.region ?? ''}
-        onChange={set('region')}
+        value={splitMulti(value.region)}
+        onChange={setMulti('region')}
         options={PACKING_LIST_REGION_OPTIONS}
         placeholder="Region: any"
-        renderTriggerLabel={(opt) => `Region: ${opt.label}`}
+        renderTriggerLabel={(chosen) => multiTrigger('Region', chosen)}
         clearable
       />
-      <SearchableSelect
-        triggerClassName="w-full sm:w-56"
-        truncateTriggerLabel
-        value={value.customerId ?? ''}
-        onChange={set('customerId')}
-        onOptionChange={(opt) => setCustomerOption(opt ?? undefined)}
-        selectedOption={selected(value.customerId, customerOption, customerLabel, 'Selected customer')}
+      <SearchableMultiSelect
+        triggerClassName="w-full"
+        value={customerIds}
+        onChange={setMulti('customerId')}
+        selectedOptions={customerIds.map((id, i) => ({ value: id, label: customerNames[i] }))}
         fetchOptions={fetchCustomers}
         placeholder="Customer: any"
-        renderTriggerLabel={(opt) => `Customer: ${opt.label}`}
+        renderTriggerLabel={(chosen) => multiTrigger('Customer', chosen)}
         emptyMessage="No customers match."
         clearable
       />
       <SearchableSelect
-        triggerClassName="w-full sm:w-64"
+        triggerClassName="w-full"
         truncateTriggerLabel
         value={value.accessDiffersFrom ?? ''}
         onChange={set('accessDiffersFrom')}
@@ -211,7 +237,7 @@ export default function ContactAccessFilters({ value, onChange }: Props) {
         emptyMessage="No contacts match."
         clearable
       />
-      {active ? (
+      {active && !hideClear ? (
         <Button variant="ghost" size="sm" onClick={() => onChange({})}>
           Clear filters
         </Button>

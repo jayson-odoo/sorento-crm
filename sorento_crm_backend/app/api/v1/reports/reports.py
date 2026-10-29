@@ -139,7 +139,7 @@ def _params_meta(
                     years=_years(db, definition),
                 )
             )
-        elif isinstance(param, reg.SelectParam):
+        elif isinstance(param, reg.SelectParam) and not param.hidden:
             metas.append(
                 ReportSelectParamMeta(
                     key=param.key,
@@ -211,6 +211,7 @@ def get_report_meta(
                 unavailable_for=lacking[c.key],
             )
             for c in definition.catalog()
+            if not c.hidden
         ],
         default_view=default_view,
         can_publish=_holds(db, current_user, PUBLISH_PERMISSION),

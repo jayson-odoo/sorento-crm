@@ -40,6 +40,7 @@ from app.services.media_extract import transcribe as transcribe_module
 from app.services.media_extract.schema import MediaEntity, MediaExtraction, empty_result_body
 from app.services.media_extract.service import (
     MediaExtractService,
+    MediaExtractionError,
     MediaJobInput,
     build_image_result_body,
     build_voice_result_body,
@@ -517,7 +518,7 @@ def test_image_lane_produces_the_confirmation_and_stamps_the_ledger_cost(monkeyp
 
         monkeypatch.setattr(
             "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-image-bytes", "image/jpeg"),
+            lambda url: (JPEG_HEAD, "image/jpeg"),
         )
 
         canned = json.dumps(
@@ -575,6 +576,126 @@ def test_image_lane_produces_the_confirmation_and_stamps_the_ledger_cost(monkeyp
         assert usage.model == "gpt-4o"
         assert usage.prompt_tokens == 120
         assert usage.completion_tokens == 40
+
+
+def _image_job(usage_id):
+    return MediaJobInput(
+        job_id=str(uuid.uuid4()),
+        modality="image",
+        tier="standard",
+        media_url="https://cdn.respond.io/x.jpg",
+        mime_type="image/jpeg",
+        caption="SRTKS6547",
+        usage_id=usage_id,
+    )
+
+
+def _stub_image_provider(monkeypatch, result):
+    class _StubProvider:
+        def chat(self, **kwargs):
+            return result
+
+    monkeypatch.setattr(
+        "app.services.media_extract.service.fetch_media_bytes",
+        lambda url: (JPEG_HEAD, "image/jpeg"),
+    )
+    monkeypatch.setattr(
+        MediaExtractService,
+        "_resolve_image_provider",
+        lambda self, tier, settings: (_StubProvider(), "openai", "gpt-4o"),
+    )
+
+
+def test_image_lane_reads_an_extraction_the_model_wrapped_in_a_list(monkeypatch):
+    """Prod 27 Oct: `[{...}]` failed the whole turn instead of being read."""
+    from app.services.llm_provider import ChatResult
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        canned = json.dumps(
+            [{"entities": [{"raw": "SRTKS6547", "hint": "product", "confident": True}]}]
+        )
+        _stub_image_provider(
+            monkeypatch,
+            ChatResult(content=canned, prompt_tokens=10, completion_tokens=5, total_tokens=15),
+        )
+
+        outcome = MediaExtractService(db).extract(_image_job(usage.id))
+
+        assert [e["raw"] for e in outcome.result["entities"]] == ["SRTKS6547"]
+
+
+def test_image_lane_parse_failure_names_model_finish_reason_and_raw_output_and_logs_usage(
+    monkeypatch,
+):
+    """A parse failure used to lose everything but "non-object JSON value": no
+    model, no finish reason, no raw text, and no usage row (it was only written
+    after a successful parse). The job error now carries all three and the spend
+    still lands on the usage dashboard, marked unanswered."""
+    from types import SimpleNamespace
+
+    from app.models.ai_assistant import AIAssistantUsageLog
+    from app.services.llm_provider import ChatResult
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        raw = SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="length")]
+        )
+        _stub_image_provider(
+            monkeypatch,
+            ChatResult(
+                content='{"entities": [{"raw": "SRTKS65',
+                prompt_tokens=900,
+                completion_tokens=1200,
+                total_tokens=2100,
+                raw=raw,
+            ),
+        )
+
+        with pytest.raises(MediaExtractionError) as exc:
+            MediaExtractService(db).extract(_image_job(usage.id))
+
+        message = str(exc.value)
+        assert "gpt-4o" in message
+        assert "length" in message
+        assert '{"entities": [{"raw": "SRTKS65' in message
+
+        rows = (
+            db.query(AIAssistantUsageLog)
+            .filter(AIAssistantUsageLog.contact_id == usage.contact_id)
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].model == "gpt-4o"
+        assert rows[0].prompt_tokens == 900
+        assert rows[0].completion_tokens == 1200
+        assert rows[0].was_answered is False
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (None, None),
+        ({"candidates": [{"finishReason": "STOP"}]}, "STOP"),  # Gemini: a dict body
+        ({"candidates": []}, None),
+    ],
+)
+def test_finish_reason_reads_the_gemini_body(raw, expected):
+    from app.services.media_extract.service import _finish_reason
+
+    assert _finish_reason(raw) == expected
+
+
+def test_finish_reason_reads_the_openai_and_anthropic_responses():
+    from types import SimpleNamespace
+
+    from app.services.media_extract.service import _finish_reason
+
+    openai_raw = SimpleNamespace(choices=[SimpleNamespace(finish_reason="length")])
+    anthropic_raw = SimpleNamespace(stop_reason="max_tokens")
+    assert _finish_reason(openai_raw) == "length"
+    assert _finish_reason(anthropic_raw) == "max_tokens"
 
 
 def test_voice_lane_transcribes_and_defaults_to_the_pinned_english_strategy(
@@ -869,7 +990,10 @@ def test_a_clip_whose_length_cannot_be_read_is_refused_with_a_clear_error(monkey
 
     with blank_session() as db:
         usage = _seed_usage(db, "voice")
-        calls = _wire_voice(monkeypatch, b"RIFFnot-really-a-wave-file" * 40)
+        # A WAVE header (so it passes the audio sniff) over a body mutagen cannot parse.
+        calls = _wire_voice(
+            monkeypatch, b"RIFF\x00\x00\x00\x00WAVE" + b"not-really-a-wave-file" * 40
+        )
 
         with pytest.raises(MediaClipLengthError) as raised:
             MediaExtractService(db).extract(_voice_job(usage.id))
@@ -1056,7 +1180,7 @@ def test_image_lane_on_gemini_uses_the_gemini_key_column_and_its_own_default_mod
 
         assert isinstance(provider, GeminiProvider)
         assert provider_name == "gemini"
-        assert model_name == "gemini-2.5-flash"
+        assert model_name == "gemini-3.5-flash"
         assert provider.api_key == "ZZT-gemini-key"
 
 
@@ -1599,7 +1723,7 @@ def test_image_lane_never_inherits_the_assistants_model_across_providers():
         )
 
         assert provider_name == "gemini"
-        assert model_name == "gemini-2.5-flash"
+        assert model_name == "gemini-3.5-flash"
 
 
 def test_image_lane_inherits_the_assistants_model_when_the_provider_matches():
@@ -1618,3 +1742,176 @@ def test_image_lane_inherits_the_assistants_model_when_the_provider_matches():
             MediaExtractService(db)._resolve_image_provider(None, settings)[2]
             == "gemini-2.5-pro"
         )
+
+
+# ----- MEDIA-INTAKE-GUARD: the bytes must be what the lane expects -------------
+
+JPEG_HEAD = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\x00" * 64
+
+
+@pytest.mark.parametrize(
+    "data, expected",
+    [
+        (b"\xff\xd8\xff\xe0" + b"\x00" * 20, "image/jpeg"),
+        (b"\x89PNG\r\n\x1a\n" + b"\x00" * 20, "image/png"),
+        (b"GIF89a" + b"\x00" * 20, "image/gif"),
+        (b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 20, "image/webp"),
+        (b"\x00\x00\x00\x18ftypheic" + b"\x00" * 20, "image/heic"),
+        (b"%PDF-1.7\n" + b"\x00" * 20, "application/pdf"),
+        (b"\x00\x00\x00\x18ftypisom" + b"\x00" * 20, "video/mp4"),
+        (b"\x00\x00\x00\x18ftypM4A " + b"\x00" * 20, "audio/mp4"),
+        (b"OggS\x00\x02" + b"\x00" * 20, "audio/ogg"),
+        (b"RIFF\x00\x00\x00\x00WAVEfmt " + b"\x00" * 20, "audio/wav"),
+        (b"ID3\x04\x00" + b"\x00" * 20, "audio/mpeg"),
+        (b"<!DOCTYPE html><html>", None),
+        (b"", None),
+    ],
+)
+def test_sniff_mime_reads_the_first_bytes(data, expected):
+    from app.services.media_extract.sniff import sniff_mime
+
+    assert sniff_mime(data) == expected
+
+
+def _wire_image(monkeypatch, data: bytes, content_type: str):
+    """Stub the download and a provider that records whether it was called."""
+    from app.services.llm_provider import ChatResult
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.services.media_extract.service.fetch_media_bytes",
+        lambda url: (data, content_type),
+    )
+
+    class _StubProvider:
+        def chat(self, **kwargs):
+            calls.append(kwargs)
+            return ChatResult(
+                content=json.dumps({"image_kind": "label", "entities": []}),
+                prompt_tokens=1, completion_tokens=1, total_tokens=2,
+            )
+
+    monkeypatch.setattr(
+        MediaExtractService,
+        "_resolve_image_provider",
+        lambda self, tier, settings: (_StubProvider(), "gemini", "gemini-test"),
+    )
+    return calls
+
+
+def _image_job(usage_id, mime_type="image/jpeg"):
+    return MediaJobInput(
+        job_id=str(uuid.uuid4()),
+        modality="image",
+        tier="standard",
+        media_url="https://cdn.example/x.jpg",
+        mime_type=mime_type,
+        caption=None,
+        usage_id=usage_id,
+    )
+
+
+def test_a_download_that_is_not_an_image_fails_with_the_reason_before_the_model(monkeypatch):
+    """24 Oct incident: an HTML body labelled image/jpeg reached the vision model.
+    The job now fails before any provider call, naming what actually arrived."""
+    from app.services.media_extract.service import MediaExtractionError
+
+    body = b"<html><body>Access denied</body></html>"
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        calls = _wire_image(monkeypatch, body, "text/html; charset=utf-8")
+
+        with pytest.raises(MediaExtractionError) as raised:
+            MediaExtractService(db).extract(_image_job(usage.id))
+
+    assert str(raised.value) == (
+        "Downloaded file is not an image: content-type text/html; charset=utf-8, "
+        f"{len(body)} bytes, first bytes {body[:16].hex()}"
+    )
+    assert calls == []
+
+
+def test_a_pdf_turn_whose_bytes_are_not_a_pdf_names_the_pdf_modality(monkeypatch):
+    from app.services.media_extract.service import MediaExtractionError
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        calls = _wire_image(monkeypatch, JPEG_HEAD, "application/pdf")
+
+        with pytest.raises(MediaExtractionError) as raised:
+            MediaExtractService(db).extract(_image_job(usage.id, "application/pdf"))
+
+    assert str(raised.value).startswith("Downloaded file is not a pdf: content-type application/pdf")
+    assert calls == []
+
+
+def test_a_png_labelled_jpeg_reaches_the_model_as_png(monkeypatch):
+    """A real image passes, and the model is told what the bytes really are."""
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        calls = _wire_image(monkeypatch, png, "image/jpeg")
+
+        MediaExtractService(db).extract(_image_job(usage.id))
+
+    assert len(calls) == 1
+    assert calls[0]["images"][0].mime == "image/png"
+
+
+def test_a_voice_download_that_is_not_audio_is_refused_with_the_reason(monkeypatch):
+    from app.services.media_extract.service import MediaClipLengthError
+
+    body = b"<html>expired link</html>"
+    with blank_session() as db:
+        usage = _seed_usage(db, "voice")
+        calls = _wire_voice(monkeypatch, body)
+
+        with pytest.raises(MediaClipLengthError) as raised:
+            MediaExtractService(db).extract(_voice_job(usage.id))
+
+    assert str(raised.value).startswith(
+        f"Downloaded file is not an audio file: content-type audio/wav, {len(body)} bytes"
+    )
+    assert raised.value.notice["kind"] == "unreadable"
+    assert calls == []
+
+
+def test_a_turn_with_no_specific_mime_reads_a_pdf_by_its_bytes(monkeypatch):
+    """A stored file rebuilt without a mime (or served as octet-stream) is still
+    read: with no specific label the bytes pick image, pdf or video."""
+    pdf = b"%PDF-1.7\n" + b"\x00" * 64
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        _wire_image(monkeypatch, pdf, "application/octet-stream")
+        rendered: list = []
+
+        from app.services.ai_extract.extract_service import AIExtractService
+
+        monkeypatch.setattr(
+            AIExtractService,
+            "_render_files",
+            lambda self, files: rendered.extend(files) or [],
+        )
+
+        with pytest.raises(Exception) as raised:
+            MediaExtractService(db).extract(_image_job(usage.id, mime_type=None))
+
+    assert "Nothing readable" in str(raised.value)
+    assert rendered[0].mime == "application/pdf"
+
+
+def test_a_turn_with_no_specific_mime_still_refuses_html(monkeypatch):
+    from app.services.media_extract.service import MediaExtractionError
+
+    body = b"<html>gone</html>"
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        calls = _wire_image(monkeypatch, body, "text/html")
+
+        with pytest.raises(MediaExtractionError) as raised:
+            MediaExtractService(db).extract(_image_job(usage.id, mime_type=None))
+
+    assert str(raised.value).startswith(
+        "Downloaded file is not an image, pdf or video: content-type text/html"
+    )
+    assert calls == []

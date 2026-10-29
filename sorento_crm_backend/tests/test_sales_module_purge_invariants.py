@@ -121,6 +121,11 @@ def test_purge_empties_the_module_and_leaves_sales_agents():
                 "sales.target_commission_tiers": 0,
                 "sales.target_scope": 0,
                 "sales.targets": 0,
+                "sales.target_tier_rates": 0,
+                "sales.target_accounts": 0,
+                "sales.point_ratios": 0,
+                "sales.set_apart_customers": 0,
+                "sales.agent_classes": 0,
             }
             assert set(counts) == {m.__table__.fullname for m in PURGE_ORDER}
             assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).count() == 1

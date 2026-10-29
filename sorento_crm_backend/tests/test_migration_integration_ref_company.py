@@ -73,7 +73,7 @@ def _company(bind, code_stem: str) -> str:
     cid = str(uuid.uuid4())
     bind.execute(
         text("INSERT INTO companies (id, name, code, is_active) VALUES (:i, :n, :c, true)"),
-        {"i": cid, "n": f"{MARKER} {code_stem}", "c": f"{MARKER[:6]}{code_stem}{uuid.uuid4().hex[:4]}"},
+        {"i": cid, "n": f"{MARKER} {code_stem}", "c": f"{MARKER[:6]}{code_stem}{uuid.uuid4().hex}"},
     )
     return cid
 

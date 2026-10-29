@@ -60,7 +60,9 @@ from app.services.portal_service import (
     PORTAL_ATTACHMENT_TYPE_CODE,
     PortalAuthError,
     PortalService,
+    GENERIC_SUBMISSION_TYPES,
     SUPPORTED_TYPES,
+    parse_allowed_extensions,
 )
 from app.utils.http import content_disposition
 
@@ -186,6 +188,10 @@ class OtpResponse(BaseModel):
 class TokenResponse(BaseModel):
     token: str
     expires_at: str
+    # PORTAL-P1-SESSION-LINK: one-time, only for a contact with an eligible CRM user; the
+    # verify card exchanges it for a CRM session. Absent (not null) for everyone else, so a
+    # contact without a user gets byte-identical bodies (response_model_exclude_none).
+    portal_link_secret: Optional[str] = None
 
 
 @router.post("/request-otp", response_model=OtpResponse)
@@ -211,10 +217,16 @@ def portal_request_otp(payload: OtpRequestPayload, request: Request, db: Session
     return PortalService(db).request_otp(payload.contact_id, payload.space_id)
 
 
-@router.post("/verify-otp", response_model=TokenResponse)
+@router.post("/verify-otp", response_model=TokenResponse, response_model_exclude_none=True)
 def portal_verify_otp(payload: OtpVerifyPayload, db: Session = Depends(get_db)):
+    from app.services.phone_signin_service import issue_portal_link_secret
+
     token = PortalService(db).verify_otp(payload.contact_id, payload.space_id, payload.code)
-    return TokenResponse(token=token.token, expires_at=token.expires_at.isoformat())
+    return TokenResponse(
+        token=token.token,
+        expires_at=token.expires_at.isoformat(),
+        portal_link_secret=issue_portal_link_secret(db, token.contact_id),
+    )
 
 
 class PortalTokenInfoResponse(BaseModel):
@@ -327,6 +339,20 @@ class PortalMeResponse(BaseModel):
     # overrides). The landing reads it to decide which entry points to show;
     # every form route still enforces the same rule server-side.
     visible_form_types: list[str] = []
+    # ATTACH-ACCEPT: the portal_submission type's allowed extensions (no dots,
+    # sorted). The file picker's `accept` is built from this, so it offers
+    # exactly what the upload check below lets through. Empty = no limit set.
+    attachment_allowed_extensions: list[str] = []
+    # PROJECT-REG-PORTAL D4: the contact's first active sales agent as a name, so the project
+    # registration form can show who the project is registered for before its first save.
+    sales_agent_name: Optional[str] = None
+
+
+def _sales_agent_name(db: Session, contact_id: str) -> Optional[str]:
+    from app.services.project_registration_service import _active_agents, _agent_name
+
+    agents = _active_agents(db, contact_id)
+    return _agent_name(agents[0]) if agents else None
 
 
 @router.get("/me", response_model=PortalMeResponse)
@@ -383,6 +409,8 @@ def portal_me(
         visible_form_types=sorted(
             resolve_visible_form_types(db, token.contact_id)
         ),
+        attachment_allowed_extensions=service.portal_allowed_extensions(),
+        sales_agent_name=_sales_agent_name(db, token.contact_id),
     )
 
 
@@ -499,9 +527,15 @@ class DebtorLookupItem(BaseModel):
 def lookup_debtors(
     q: str = Query(""),
     limit: int = Query(20, ge=1, le=50),
+    kind: Optional[str] = Query(None),
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
+    if kind == "project_registration":
+        # The registration form takes only the agent's own debtors (what the save accepts).
+        from app.services import project_registration_service
+
+        return project_registration_service.portal_debtors(db, token, q, limit)
     from app.services.debtor_type import lookup_customers
 
     return lookup_customers(db, q, limit)
@@ -516,7 +550,7 @@ class ProjectLookupItem(BaseModel):
     """
 
     id: str
-    project_code: str
+    project_code: Optional[str] = None
     title: str
     company_name: Optional[str] = None
 
@@ -686,6 +720,9 @@ _PORTAL_LOOKUP_SET_WHITELIST = {
     "complaints_defects_discovered",
     "procurement_sponsor_subject",
     "procurement_sales_type",
+    # The project registration form's two dropdowns (PROJECT-REG-PORTAL D3).
+    "project_building_type",
+    "my_state",
 }
 
 
@@ -768,9 +805,17 @@ def _flatten_payload(payload: SubmissionPayload) -> dict:
     return body
 
 
+def _check_comment_kind(kind: str, db: Session, token: PortalToken) -> str:
+    """The comment routes serve the legacy kinds only: a project registration has no comments."""
+    k = _check_kind(kind, db, token)
+    if k not in SUPPORTED_TYPES:
+        raise handle_validation_error("Comments are not available for this form.")
+    return k
+
+
 def _check_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
-    if k not in SUPPORTED_TYPES:
+    if k not in GENERIC_SUBMISSION_TYPES:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
     require_form_visible(db, token.contact_id, k)
     return k
@@ -781,7 +826,7 @@ def _check_kind(kind: str, db: Session, token: PortalToken) -> str:
 # PortalService's generic CRUD) but shares this generic attachments plumbing
 # (D3) - so only the kind check and the ownership check below widen for it;
 # `_check_kind` above stays exactly as it was for the generic submissions routes.
-_ATTACHMENT_ONLY_KINDS = ("price_tag_request",)
+_ATTACHMENT_ONLY_KINDS = ("price_tag_request", "new_product_application")
 
 
 def _check_revisable_kind(kind: str, db: Session, token: PortalToken) -> str:
@@ -792,7 +837,7 @@ def _check_revisable_kind(kind: str, db: Session, token: PortalToken) -> str:
     from app.services.portal_revision_service import ADAPTERS
 
     k = (kind or "").strip().lower()
-    if k not in SUPPORTED_TYPES and k not in ADAPTERS:
+    if k not in GENERIC_SUBMISSION_TYPES and k not in ADAPTERS:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
     require_form_visible(db, token.contact_id, k)
     return k
@@ -830,10 +875,35 @@ def _revision_submission_detail(
 
 def _check_attachment_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
+    # The project registration is exactly its legacy fields: it takes no attachments.
     if k not in SUPPORTED_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
     require_form_visible(db, token.contact_id, k)
     return k
+
+
+def _require_own_npa(
+    db: Session,
+    token: PortalToken,
+    submission_id: str,
+    *,
+    require_editable: bool = False,
+    check_visibility: bool = True,
+) -> None:
+    """The contact's own new product application, or a 404. The attachment WRITES pass
+    ``require_editable`` so a Submitted / Approved one refuses them (locked, 422); reading
+    does not. ``check_visibility=False`` is for the row-derived lookups that gate it later."""
+    from app.api.v1.public.portal_price_tag import _resolve_company
+    from app.models.base import company_scope
+    from app.services import new_product_application_service as npa
+
+    submission_id = validate_uuid_path(submission_id, resource="New product application")
+    if check_visibility:
+        require_form_visible(db, token.contact_id, "new_product_application")
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        row = npa.get_for(db, submission_id, contact_id=str(token.contact_id))
+        if require_editable:
+            npa.assert_unlocked(row)
 
 
 def _require_own_price_tag_request(
@@ -986,7 +1056,7 @@ def portal_get_submission(
     db: Session = Depends(get_db),
 ):
     k = _check_kind(kind, db, token)
-    detail = PortalService(db).get_submission(token, k, submission_id)
+    detail = PortalService(db).get_submission(token, k, submission_id, full=True)
     detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
     # One call, no extra round trip (UAC B1).
     detail["revision"] = _revision_policy_block(db, k, submission_id)
@@ -1248,14 +1318,10 @@ def _check_quota(
     incoming_size: int,
     incoming_ext: str,
 ) -> None:
-    allowed_exts = {
-        e.strip().lower().lstrip(".")
-        for e in (attachment_type.allowed_extensions or "").split(",")
-        if e.strip()
-    }
+    allowed_exts = parse_allowed_extensions(attachment_type.allowed_extensions)
     if allowed_exts and incoming_ext not in allowed_exts:
         raise handle_validation_error(
-            f"Unsupported file type. Allowed: {', '.join(sorted(allowed_exts))}."
+            f"Unsupported file type. Allowed: {', '.join(allowed_exts)}."
         )
     max_bytes = (attachment_type.max_file_size_mb or 0) * 1024 * 1024
     if max_bytes and incoming_size > max_bytes:
@@ -1304,6 +1370,8 @@ def portal_list_attachments(
     # Ensures the contact owns this submission.
     if k == "price_tag_request":
         _require_own_price_tag_request(db, token, submission_id)
+    elif k == "new_product_application":
+        _require_own_npa(db, token, submission_id)
     else:
         PortalService(db).get_submission(token, k, submission_id)
     return {"items": _list_attachments_for(db, _entity_type_for(k), submission_id)}
@@ -1345,6 +1413,8 @@ def _attachment_is_on_own_submission(
                     _require_own_price_tag_request(
                         db, token, entity_id, check_visibility=False
                     )
+                elif kind == "new_product_application":
+                    _require_own_npa(db, token, entity_id, check_visibility=False)
                 else:
                     portal.get_submission(token, kind, entity_id)
             except HTTPException:
@@ -1470,7 +1540,7 @@ def portal_download_attachment(
 
 
 @router.post("/attachments")
-async def portal_upload_attachment(
+def portal_upload_attachment(
     kind: Annotated[str, Form()],
     submission_id: Annotated[str, Form()],
     file: Annotated[UploadFile, File(...)],
@@ -1481,11 +1551,13 @@ async def portal_upload_attachment(
     k = _check_attachment_kind(kind, db, token)
     if k == "price_tag_request":
         _require_own_price_tag_request(db, token, submission_id, require_editable=True)
+    elif k == "new_product_application":
+        _require_own_npa(db, token, submission_id, require_editable=True)
     else:
         portal.get_submission(token, k, submission_id)  # ownership check
     attachment_type = portal.get_portal_attachment_type()
 
-    contents = await file.read()
+    contents = file.file.read()
     incoming_size = len(contents)
     extension = _ext(file.filename, file.content_type)
     _check_quota(
@@ -1579,7 +1651,7 @@ def portal_list_comments(
 ):
     from app.services.form_comment_service import FormCommentService
 
-    k = _check_kind(kind, db, token)
+    k = _check_comment_kind(kind, db, token)
     sid = validate_uuid_path(submission_id, resource="Submission")
     svc = FormCommentService(db)
     # 404 unless the contact owns the row (list_comments below has no contact filter)
@@ -1588,7 +1660,7 @@ def portal_list_comments(
 
 
 @router.post("/submissions/{kind}/{submission_id}/comments", status_code=status.HTTP_201_CREATED)
-async def portal_add_comment(
+def portal_add_comment(
     kind: str,
     submission_id: str,
     body: Annotated[str, Form()] = "",
@@ -1606,7 +1678,7 @@ async def portal_add_comment(
     acting_user_id = (
         resolve_impersonating_admin(db, token) if getattr(token, "is_impersonation", False) else None
     )
-    k = _check_kind(kind, db, token)
+    k = _check_comment_kind(kind, db, token)
     sid = validate_uuid_path(submission_id, resource="Submission")
     # Per token plus one ceiling across tokens: checked first, charged only on a saved comment.
     buckets = (
@@ -1621,7 +1693,7 @@ async def portal_add_comment(
                 detail="Too many comments. Try again later.",
                 headers={"Retry-After": str(result.retry_after_seconds or _COMMENT_RATE_WINDOW_SECONDS)},
             )
-    uploads = await read_uploads(files)
+    uploads = read_uploads(files)
     out = FormCommentService(db).add_contact_comment(
         k, sid, token.contact_id, token.space_id, body, uploads, acting_user_id, parent_id or None
     )
@@ -1647,7 +1719,7 @@ def portal_edit_comment(
 
     if getattr(token, "is_impersonation", False):
         resolve_impersonating_admin(db, token)
-    k = _check_kind(kind, db, token)
+    k = _check_comment_kind(kind, db, token)
     sid = validate_uuid_path(submission_id, resource="Submission")
     svc = FormCommentService(db)
     row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)
@@ -1666,7 +1738,7 @@ def portal_delete_comment(
 
     if getattr(token, "is_impersonation", False):
         resolve_impersonating_admin(db, token)
-    k = _check_kind(kind, db, token)
+    k = _check_comment_kind(kind, db, token)
     sid = validate_uuid_path(submission_id, resource="Submission")
     svc = FormCommentService(db)
     row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)
@@ -1718,6 +1790,9 @@ def portal_delete_attachment(
             db, token, link.entity_id, require_editable=True, check_visibility=False
         )
         require_form_visible(db, token.contact_id, "price_tag_request")
+    elif raw_kind == "new_product_application":
+        _require_own_npa(db, token, link.entity_id, require_editable=True, check_visibility=False)
+        require_form_visible(db, token.contact_id, "new_product_application")
     else:
         portal.get_submission(token, raw_kind, link.entity_id)
         require_form_visible(db, token.contact_id, raw_kind)

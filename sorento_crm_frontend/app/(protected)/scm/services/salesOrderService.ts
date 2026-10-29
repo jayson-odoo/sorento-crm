@@ -37,7 +37,7 @@
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
-import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { apiError, buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
 import type { SalesOrder, SalesOrderDeliveries, SalesOrderFormData } from '../types/scm.types';
 
@@ -153,8 +153,11 @@ export async function getSalesOrders(
 
 /** One sales order with its lines. `linked_purchase_orders` is a LIST-only field. */
 export async function getSalesOrder(id: string): Promise<SalesOrder> {
-  const res = await apiFetch(`${BASE}/${id}`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the sales order'));
+  // 15 s, not the 30 s read default: a timeout is never retried, so a hung read ends on
+  // the page's error state and its Retry in at most this long.
+  const res = await apiFetch(`${BASE}/${id}`, { timeoutMs: 15_000 });
+  // `apiError` keeps the status, so the page can tell a 404 from a refusal or a fault.
+  if (!res.ok) throw await apiError(res, 'Failed to load the sales order');
   return res.json();
 }
 

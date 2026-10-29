@@ -17,6 +17,7 @@ and nobody would find out until the invoice.
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from typing import Sequence
 
 from sqlalchemy.exc import IntegrityError
@@ -25,7 +26,9 @@ from sqlalchemy.orm import Session
 from app.models.access import RespondContact, RespondContactCustomer
 from app.models.order import Customer
 from app.models.sales_agent import SalesAgent
-from app.services.company_scope_resolver import company_name_map
+from app.models.base import get_company_scope
+from app.models.company import Company
+from app.services.company_scope_resolver import company_name_map, grants_scope
 from app.services.error_handler import handle_not_found
 from app.utils.phone_normalize import normalize_phone
 
@@ -238,22 +241,55 @@ def links_with_customers(
     )
 
 
-def customer_codes_by_contact(db: Session, contact_ids: Sequence[str]) -> dict[str, list[str]]:
+def customer_codes_by_contact(
+    db: Session, contact_ids: Sequence[str], viewer_id: str | None = None
+) -> dict[str, list[str]]:
     """Linked customer codes (sorted asc) per contact, ONE query for the whole page.
 
     Customer is company-scoped, so the join sees only the caller's customers, the same
-    as the contact card's payload."""
+    as the contact card's payload. With ``viewer_id`` (Internal Users, company-less) it reads
+    every company that user is granted, and a code outside the active company carries its
+    company (``300-1001 (MCH)``): codes repeat across companies."""
     if not contact_ids:
         return {}
-    rows = (
-        db.query(RespondContactCustomer.contact_id, Customer.customer_code)
-        .join(Customer, Customer.id == RespondContactCustomer.customer_id)
-        .filter(RespondContactCustomer.contact_id.in_(list(contact_ids)))
-        .all()
+    home = get_company_scope(db)
+    with grants_scope(db, viewer_id) if viewer_id else nullcontext(db):
+        rows = (
+            db.query(RespondContactCustomer.contact_id, Customer.customer_code, Customer.company_id)
+            .join(Customer, Customer.id == RespondContactCustomer.customer_id)
+            .filter(RespondContactCustomer.contact_id.in_(list(contact_ids)))
+            .all()
+        )
+    away = {str(cid) for _, _, cid in rows if cid and isinstance(home, frozenset) and str(cid) not in home}
+    company_codes = (
+        {str(i): c for i, c in db.query(Company.id, Company.code).filter(Company.id.in_(away))} if away else {}
     )
     out: dict[str, list[str]] = {}
-    for contact_id, code in rows:
-        out.setdefault(str(contact_id), []).append(code)
+    for contact_id, code, company_id in rows:
+        other = company_codes.get(str(company_id))
+        out.setdefault(str(contact_id), []).append(f"{code} ({other})" if other else code)
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def customer_companies_by_contact(
+    db: Session, contact_ids: Sequence[str], viewer_id: str | None = None
+) -> dict[str, list[str]]:
+    """The distinct company names of each contact's linked customers (sorted asc), ONE query for
+    the page. Same reach as ``customer_codes_by_contact``: the viewer's granted companies."""
+    if not contact_ids:
+        return {}
+    with grants_scope(db, viewer_id) if viewer_id else nullcontext(db):
+        rows = (
+            db.query(RespondContactCustomer.contact_id, Company.name)
+            .join(Customer, Customer.id == RespondContactCustomer.customer_id)
+            .join(Company, Company.id == Customer.company_id)
+            .filter(RespondContactCustomer.contact_id.in_(list(contact_ids)))
+            .distinct()
+            .all()
+        )
+    out: dict[str, list[str]] = {}
+    for contact_id, name in rows:
+        out.setdefault(str(contact_id), []).append(name)
     return {k: sorted(v) for k, v in out.items()}
 
 

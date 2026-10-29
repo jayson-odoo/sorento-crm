@@ -68,6 +68,8 @@ class ListSearchRequest(BaseModel):
     # Promotions (list-query + UI quick filters)
     promotion_status: Optional[str] = None
     promotion_access_level: Optional[str] = None
+    # Comma separated, like `promotion_access_level`.
+    promotion_attachment_state: Optional[str] = None
 
     @field_validator("resource")
     @classmethod
@@ -106,6 +108,16 @@ class ListExportRequest(BaseModel):
     workflow_submission_state_code: Optional[str] = None
     promotion_status: Optional[str] = None
     promotion_access_level: Optional[str] = None
+    # Comma separated, like `promotion_access_level`.
+    promotion_attachment_state: Optional[str] = None
+    # finance_billing_documents (AC-BILLING S2): the list's own filters; `document_type` is
+    # comma separated. `customer_id` above is shared.
+    document_type: Optional[str] = None
+    status: Optional[str] = None
+    agent_code: Optional[str] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    open_only: Optional[bool] = None
 
     @field_validator("resource")
     @classmethod

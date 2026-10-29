@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -16,9 +16,11 @@ import {
   CalendarRange,
   Columns3,
   FileText,
+  Link2,
   ListOrdered,
   LoaderCircleIcon,
   Move,
+  Receipt,
   Plus,
   Trash2,
   Truck,
@@ -44,6 +46,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StockTransfersPanel } from '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
@@ -52,6 +56,11 @@ import { DEMAND_CLASS_OPTIONS } from '@/app/(protected)/master-data-management/s
 // The SAME pill the order-inquiry worklist reads, not a second one worded differently:
 // "Placed" has to mean the same thing on both screens or the two disagree in a glance.
 import { OrderInquiryStatePill } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryVerbPill';
+import {
+  LineSplitInfo,
+  splitCount,
+  OrderSplitsDialog,
+} from '@/app/(protected)/project-sales/_shared/components/LineSplitInfo';
 import { OrderInquiryRejectedBadge } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryRejectedBadge';
 import {
   formatMyrExact,
@@ -76,7 +85,12 @@ import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { SoLineLinksBody } from './SoLineLinksBody';
-import { SoLineHistoryBody } from './SoLineHistoryBody';
+import {
+  DeliveriesLoadError,
+  DeliveriesTable,
+  SoLineHistoryBody,
+  soDeliveryRows,
+} from './SoLineHistoryBody';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
 import { ConsignmentBadge } from '../../../lib/docType';
@@ -103,7 +117,9 @@ import type {
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
 import { BoardChangeTable } from '@/app/(protected)/project-sales/fulfilment-planning/components/BoardChangeTable';
 import { lineChangeAnnotation } from './salesOrderLineChange';
-import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import { useBackToListHref } from '@/components/common/BackToList';
+import { QueryErrorState } from '@/components/common/LoadErrorState';
+import { isNotFound } from '@/lib/api-client';
 import { useSalesOrderActions } from '../../actions';
 import { PLAN_PERMISSION } from '../../lib/planActions';
 // Aliased: this file already has its own header-scoped `SOURCE_LABELS` above, worded
@@ -113,6 +129,9 @@ import { PLAN_PERMISSION } from '../../lib/planActions';
 import { SOURCE_LABELS as LINE_SOURCE_LABELS } from '../../lib/sourceLabels';
 import { cancelSourcesTitle, isPartlyCancelled, PARTLY_CANCELLED } from '@/app/(protected)/scm/lib/autocountCancel';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { OrderInvoices } from '@/app/(protected)/finance/billing-documents/components/OrderInvoices';
+import { RelatedDocumentsPanel } from '@/app/(protected)/order-management/shared/related/RelatedDocumentsPanel';
+import { BILLING_VIEW_SLUG } from '@/app/(protected)/finance/billing-documents/lib/permissions';
 import { distinctName } from '@/lib/product-display';
 
 /**
@@ -293,6 +312,74 @@ function draftOrRow(
   return drafts[row.id] ?? seedDraft(row);
 }
 
+/**
+ * The Qty ordered box reads its draft through a context, so its grid cell function stays
+ * the same across keystrokes. A new cell function would remount the box and drop focus
+ * (and the typed text) on every digit.
+ */
+const QtyDraftContext = createContext<{
+  isEditing: boolean;
+  lineDrafts: Record<string, LineDraft>;
+  showErrors: boolean;
+  setLineDrafts: React.Dispatch<React.SetStateAction<Record<string, LineDraft>>>;
+} | null>(null);
+
+function QtyOrderedCell({ line }: { line: SalesOrderLine }) {
+  const ctx = useContext(QtyDraftContext);
+  if (!ctx || !ctx.isEditing || isCancelledLine(line)) return <>{fmtInt(line.qty_ordered)}</>;
+  const value = ctx.lineDrafts[line.id]?.qty_ordered ?? String(line.qty_ordered);
+  return (
+    <NumberInput
+      min={0}
+      value={value}
+      error={ctx.showErrors ? numberFieldError(value, { min: 0 }) : undefined}
+      onChange={(e) =>
+        ctx.setLineDrafts((prev) => ({
+          ...prev,
+          [line.id]: { ...draftOrRow(prev, line), qty_ordered: e.target.value },
+        }))
+      }
+      className="h-8 text-right tabular-nums"
+    />
+  );
+}
+
+// Module level on purpose: the same function every render keeps the box mounted.
+function renderQtyOrderedCell({ row }: { row: { original: SalesOrderLine } }) {
+  return <QtyOrderedCell line={row.original} />;
+}
+
+/** Unit price and discount: same context route as the quantity, so a keystroke never remounts the box. */
+function LinePriceCell({ line, field }: { line: SalesOrderLine; field: 'unit_price' | 'discount' }) {
+  const ctx = useContext(QtyDraftContext);
+  if (!ctx || !ctx.isEditing || isCancelledLine(line)) return <>{fmtMoneyCell(line[field])}</>;
+  const value = draftOrRow(ctx.lineDrafts, line)[field];
+  return (
+    <NumberInput
+      min={0}
+      step="0.01"
+      aria-label={`${field === 'unit_price' ? 'Unit price' : 'Discount'} on ${line.sku}`}
+      value={value}
+      error={ctx.showErrors ? numberFieldError(value, PRICE_RULES) : undefined}
+      onChange={(e) =>
+        ctx.setLineDrafts((prev) => ({
+          ...prev,
+          [line.id]: { ...draftOrRow(prev, line), [field]: e.target.value },
+        }))
+      }
+      className="h-8 text-right tabular-nums"
+    />
+  );
+}
+
+function renderUnitPriceCell({ row }: { row: { original: SalesOrderLine } }) {
+  return <LinePriceCell line={row.original} field="unit_price" />;
+}
+
+function renderDiscountCell({ row }: { row: { original: SalesOrderLine } }) {
+  return <LinePriceCell line={row.original} field="discount" />;
+}
+
 function seedDraft(row: SalesOrderLine): LineDraft {
   return {
     sku: row.sku,
@@ -343,6 +430,19 @@ function lineAmount(
   return discount ? subtractMoney(gross, discount) : gross;
 }
 
+/** A quantity cell's text: the figure, or "-" while the qty is blank or invalid. */
+/** An edit-session qty that is blank or unusable (below 0) is pending ("-"), never a figure. */
+function qtyIsPending(raw: string): boolean {
+  return numberFieldError(raw, { min: 0 }) !== undefined;
+}
+
+/** Unit price and discount may stay blank (blank clears the figure); a typed one is never negative or unreadable. */
+const PRICE_RULES = { min: 0, optional: true } as const;
+
+function fmtQtyCell(value: number | null): string {
+  return value === null ? '-' : fmtInt(value);
+}
+
 /** The money cell's text: the figure, or a plain "-" for a line nobody priced. */
 function fmtMoneyCell(value: string | null | undefined): string {
   return value ? formatMyrExact(value) : '-';
@@ -387,14 +487,16 @@ export function SalesOrderDetail({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { data, isLoading, isError } = useSalesOrder(id);
+  const { data, isLoading, isError, error: loadError, refetch, isFetching } = useSalesOrder(id);
   const isConsignmentRoute = docType === 'consignment';
   const listPath = isConsignmentRoute ? '/scm/consignments' : '/scm/sales-orders';
-  const listLabel = isConsignmentRoute ? 'Back to consignments' : 'Back to sales orders';
+  const docNoun = isConsignmentRoute ? 'Consignment' : 'Sales order';
   // Read here rather than off `so` below, which is narrowed after the loading and error
   // returns: the Lines columns are built above them, and the What-changed dialog titles
   // itself with the order this line belongs to.
   const soNumber = data?.so_number ?? '';
+  // OI-SPLIT-VIEW (UAC E5): the split sheet the read-only popups draw, carried on this read.
+  const lineSplits = data?.line_splits ?? null;
   const backHref = useBackToListHref(listPath);
   // Same gate the list's own "Plan selected" carries (S2, R3): a door that answers 403
   // is worse than not offering it, so the primary is simply absent without it.
@@ -404,7 +506,7 @@ export function SalesOrderDetail({
   const [deliveriesRequested, setDeliveriesRequested] = useState(false);
   const canPlan = useHasPermission(PLAN_PERMISSION);
   const canOpenDo = useHasPermission('order_management.orders.view');
-  const deliveries = useSalesOrderDeliveries(id, deliveriesRequested);
+  const canSeeInvoices = useHasPermission(BILLING_VIEW_SLUG);
   const searchParams = useSearchParams();
   // A consignment opened by a sales-orders link lands on its own page.
   const isConsignmentOnSalesOrderRoute = !docType && data?.doc_type === 'consignment';
@@ -444,6 +546,8 @@ export function SalesOrderDetail({
   );
 
   const [isEditing, setIsEditing] = useState(false);
+  // Set by a refused Save; from then on each quantity box re-checks itself live.
+  const [showQtyErrors, setShowQtyErrors] = useState(false);
   // The PLANNING CLASS, not `order_type`: this is the value the read view renders, so it is
   // the value the edit form seeds from and writes back.
   const [demandClass, setDemandClass] = useState('');
@@ -506,6 +610,7 @@ export function SalesOrderDetail({
       })),
     );
     setError(null);
+    setShowQtyErrors(false);
     setIsEditing(true);
   };
 
@@ -513,14 +618,20 @@ export function SalesOrderDetail({
   // list and nothing at all here, so a record could only be removed by finding it again in
   // the list. Edit moved in here too (S2, R3): the header's primary slot is now Plan, and
   // the list surface calls this same hook with no `onEdit`, so its row menu shows no Edit.
+  // OI-SPLIT-VIEW (UAC D1): the gear's "View splits", every split line of this order.
+  const [viewSplitsOpen, setViewSplitsOpen] = useState(false);
+  // UAC B8: the gear, where the View splits popup hands focus back on close.
+  const gearRef = useRef<HTMLButtonElement | null>(null);
   const { actions, pending: deletionPending } = useSalesOrderActions(data, {
     onDeleted: () => router.push(backHref),
     onEdit: () => beginEdit(data as SalesOrder),
+    onViewSplits: () => setViewSplitsOpen(true),
   });
 
   const cancelEdit = () => {
     setIsEditing(false);
     setError(null);
+    setShowQtyErrors(false);
     setRemovedLineIds(new Set());
     setNewLines([]);
   };
@@ -564,6 +675,13 @@ export function SalesOrderDetail({
   // `?line=<id>` deep link always lands on Lines, whatever `tab` says - the only tab that
   // line could ever be found on.
   const tab = searchParams.get('line') ? 'lines' : searchParams.get('tab') || 'general';
+  // The truck lightbox and the Delivery tab's DO list (DO-SO-LINK-SURFACE R3) read the same
+  // rows: fetched on the first of the two, then shared.
+  const deliveries = useSalesOrderDeliveries(id, deliveriesRequested || tab === 'delivery');
+  const deliveryRows = useMemo(
+    () => soDeliveryRows(data?.lines ?? [], deliveries.data),
+    [data, deliveries.data],
+  );
   const handleTabChange = useCallback(
     (next: string) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -593,10 +711,11 @@ export function SalesOrderDetail({
       if (!isEditing && row.outstanding_qty !== undefined && row.outstanding_qty !== null) {
         return row.outstanding_qty;
       }
-      const ordered = isEditing
-        ? Number(draftOrRow(lineDrafts, row).qty_ordered)
-        : Number(row.qty_ordered);
-      if (!Number.isFinite(ordered)) return 0;
+      const draftQty = draftOrRow(lineDrafts, row).qty_ordered;
+      // A blank or invalid draft qty is pending ("-"), never 0.
+      if (isEditing && qtyIsPending(draftQty)) return null;
+      const ordered = isEditing ? parseNumberDraft(draftQty) : Number(row.qty_ordered);
+      if (ordered === null || !Number.isFinite(ordered)) return null;
       return Math.max(ordered - Number(row.qty_delivered), 0);
     },
     [isEditing, lineDrafts],
@@ -610,6 +729,7 @@ export function SalesOrderDetail({
         );
       }
       const draft = draftOrRow(lineDrafts, row);
+      if (qtyIsPending(draft.qty_ordered)) return null;
       // The stated `line_total` is what the source document charged, so it wins - until one
       // of the figures it was charged ON is edited, at which point it no longer describes
       // what is on the screen and the arithmetic does.
@@ -699,10 +819,13 @@ export function SalesOrderDetail({
 
   const qtyOrderedTotal = useMemo(
     () =>
-      countedLines.reduce((sum, l) => {
+      countedLines.reduce<number | null>((sum, l) => {
+        if (sum === null) return null;
+        if (isEditing && qtyIsPending(draftOrRow(lineDrafts, l).qty_ordered)) return null;
         const qty = isEditing
-          ? Number(draftOrRow(lineDrafts, l).qty_ordered)
+          ? parseNumberDraft(draftOrRow(lineDrafts, l).qty_ordered)
           : Number(l.qty_ordered);
+        if (qty === null) return null;
         return sum + (Number.isFinite(qty) ? qty : 0);
       }, 0),
     [countedLines, isEditing, lineDrafts],
@@ -712,13 +835,24 @@ export function SalesOrderDetail({
     [lines],
   );
   const outstandingTotal = useMemo(
-    () => countedLines.reduce((sum, l) => sum + outstandingOf(l), 0),
+    () =>
+      countedLines.reduce<number | null>((sum, l) => {
+        const out = outstandingOf(l);
+        return sum === null || out === null ? null : sum + out;
+      }, 0),
     [countedLines, outstandingOf],
   );
   const amountTotal = useMemo(() => {
+    // A blank qty on any counted line makes the total pending, not a sum that skips it.
+    if (
+      isEditing &&
+      countedLines.some((l) => qtyIsPending(draftOrRow(lineDrafts, l).qty_ordered))
+    ) {
+      return null;
+    }
     const amounts = countedLines.map(amountOf).filter((a): a is string => a !== null);
     return amounts.length ? sumMoney(amounts) : null;
-  }, [countedLines, amountOf]);
+  }, [countedLines, amountOf, isEditing, lineDrafts]);
 
   const columns = useMemo<ColumnDef<SalesOrderLine>[]>(
     () => [
@@ -829,7 +963,22 @@ export function SalesOrderDetail({
             distinctName(row.original.sku, row.original.product_name) !== null;
           return (
             <div className="flex min-w-0 flex-col">
-              <span className="font-medium">{row.original.sku}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="truncate font-medium" title={row.original.sku}>
+                  {row.original.sku}
+                </span>
+                {row.original.mockup_label ? (
+                  <Badge
+                    variant="warning"
+                    appearance="light"
+                    size="sm"
+                    className="shrink-0"
+                    data-testid="so-line-mockup-badge"
+                  >
+                    Mockup
+                  </Badge>
+                ) : null}
+              </div>
               {showProductName && (
                 <span
                   className="truncate text-xs text-muted-foreground"
@@ -844,37 +993,37 @@ export function SalesOrderDetail({
         size: 260,
         meta: { headerTitle: 'Product' },
       },
+      // OI-SPLIT-VIEW (UAC B1): "Split N" and the (i) popup in their own column right after
+      // Product, on Columns like the rest; empty for a line with no splits.
+      {
+        id: 'split',
+        // B7a: sorts by the chip's N (the AutoCount extra row not counted).
+        accessorFn: (line) => splitCount(line.split_view),
+        header: ({ column }) => <DataGridColumnHeader title="Split" column={column} />,
+        cell: ({ row }) => (
+          <LineSplitInfo
+            lineNo={row.original.line_no}
+            itemCode={row.original.sku}
+            soNumber={soNumber}
+            view={row.original.split_view}
+            payload={lineSplits}
+          />
+        ),
+        size: 110,
+        meta: { headerTitle: 'Split' },
+      },
       {
         id: 'qty_ordered',
         // The sort value is the NUMBER, never the printed string: a quantity read off the
         // API as "1200.0000" would otherwise order before "45" the way a word does.
         accessorFn: (line) => Number(line.qty_ordered),
         header: ({ column }) => <DataGridColumnHeader title="Qty ordered" column={column} />,
-        cell: ({ row }) => {
-          if (isEditing && !isCancelledLine(row.original)) {
-            const draft = lineDrafts[row.original.id];
-            return (
-              <Input
-                type="number"
-                min={0}
-                value={draft?.qty_ordered ?? String(row.original.qty_ordered)}
-                onChange={(e) =>
-                  setLineDrafts((prev) => ({
-                    ...prev,
-                    [row.original.id]: { ...draftOrRow(prev, row.original), qty_ordered: e.target.value },
-                  }))
-                }
-                className="h-8 text-right tabular-nums"
-              />
-            );
-          }
-          return fmtInt(row.original.qty_ordered);
-        },
+        cell: renderQtyOrderedCell,
         size: 130,
         // One `td` per column, so the sum sits UNDER the column it sums and needs no label.
         // Rendered by the shared grid (`DataGridTable`) as soon as any column declares a
         // `footer`, which is why this is a column property rather than a hand-rolled tfoot.
-        footer: () => fmtInt(qtyOrderedTotal),
+        footer: () => fmtQtyCell(qtyOrderedTotal),
         meta: {
           headerTitle: 'Qty ordered',
           headerClassName: 'text-right',
@@ -955,9 +1104,9 @@ export function SalesOrderDetail({
         accessorFn: (line) =>
           Math.max(Number(line.qty_ordered) - Number(line.qty_delivered), 0),
         header: ({ column }) => <DataGridColumnHeader title="Outstanding qty" column={column} />,
-        cell: ({ row }) => fmtInt(outstandingOf(row.original)),
+        cell: ({ row }) => fmtQtyCell(outstandingOf(row.original)),
         size: 140,
-        footer: () => fmtInt(outstandingTotal),
+        footer: () => fmtQtyCell(outstandingTotal),
         meta: {
           headerTitle: 'Outstanding qty',
           headerClassName: 'text-right',
@@ -997,31 +1146,7 @@ export function SalesOrderDetail({
         id: 'unit_price',
         accessorFn: (line) => Number(line.unit_price ?? 0),
         header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
-        cell: ({ row }) => {
-          if (isEditing && !isCancelledLine(row.original)) {
-            const draft = draftOrRow(lineDrafts, row.original);
-            return (
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                aria-label={`Unit price on ${row.original.sku}`}
-                value={draft.unit_price}
-                onChange={(e) =>
-                  setLineDrafts((prev) => ({
-                    ...prev,
-                    [row.original.id]: {
-                      ...draftOrRow(prev, row.original),
-                      unit_price: e.target.value,
-                    },
-                  }))
-                }
-                className="h-8 text-right tabular-nums"
-              />
-            );
-          }
-          return fmtMoneyCell(row.original.unit_price);
-        },
+        cell: renderUnitPriceCell,
         size: 140,
         meta: {
           headerTitle: 'Unit price',
@@ -1033,31 +1158,7 @@ export function SalesOrderDetail({
         id: 'discount',
         accessorFn: (line) => Number(line.discount ?? 0),
         header: ({ column }) => <DataGridColumnHeader title="Discount" column={column} />,
-        cell: ({ row }) => {
-          if (isEditing && !isCancelledLine(row.original)) {
-            const draft = draftOrRow(lineDrafts, row.original);
-            return (
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                aria-label={`Discount on ${row.original.sku}`}
-                value={draft.discount}
-                onChange={(e) =>
-                  setLineDrafts((prev) => ({
-                    ...prev,
-                    [row.original.id]: {
-                      ...draftOrRow(prev, row.original),
-                      discount: e.target.value,
-                    },
-                  }))
-                }
-                className="h-8 text-right tabular-nums"
-              />
-            );
-          }
-          return fmtMoneyCell(row.original.discount);
-        },
+        cell: renderDiscountCell,
         size: 130,
         meta: {
           headerTitle: 'Discount',
@@ -1428,6 +1529,7 @@ export function SalesOrderDetail({
       amountTotal,
       handleRemoveLine,
       soNumber,
+      lineSplits,
       data?.doc_type,
     ],
   );
@@ -1465,36 +1567,40 @@ export function SalesOrderDetail({
     enabled: !isLoading,
   });
 
-  // Back and prev/next live on the RIGHT of the record header, next to each other, the way
-  // the purchase-order and users screens do it.
-  // Back carries the list query the row click wrote (S3-01). It lives on the
-  // toolbar row now; the empty states below keep one of their own.
-  const backLink = (
-    <BackToList listPath={listPath} label={listLabel} />
-  );
-
+  // Back is the page header's (`../page.tsx`, the consignment twin likewise), on every
+  // state: drawing another here stacked a second Back under it while the order loaded
+  // (SO-DETAIL-DUP-BACK). `listPath` above still serves Delete's landing and the pager.
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-40 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     );
   }
 
-  if (isError || !data) {
-    return (
-      <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
+  // Every failure ends in a state that says which one it is (NEVER-STUCK-UI): only a 404
+  // reads "not found"; a refusal is AccessDenied; a fault or a timeout carries its reason
+  // and a Retry. A background refetch that fails over an order already shown keeps it.
+  if (!data) {
+    if (!isError || isNotFound(loadError)) {
+      return (
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
-          <div className="text-sm font-semibold">Sales order not found</div>
+          <div className="text-sm font-semibold">{docNoun} not found</div>
           <p className="max-w-md text-sm text-muted-foreground">
-            This sales order doesn&apos;t exist, or it was removed after this link was made.
-            Head back to the list to pick another.
+            This {docNoun.toLowerCase()} doesn&apos;t exist, or it was removed after this link was
+            made. Head back to the list to pick another.
           </p>
         </Card>
-      </div>
+      );
+    }
+    return (
+      <QueryErrorState
+        error={loadError}
+        title={`Could not load this ${docNoun.toLowerCase()}`}
+        onRetry={() => void refetch()}
+        retrying={isFetching}
+      />
     );
   }
 
@@ -1511,6 +1617,31 @@ export function SalesOrderDetail({
     // on an empty one made most orders un-editable; an empty class means "leave the stored
     // classification alone", which is what the BE does with it.
     if (!customerCode) return setError('Select a customer.');
+    // A blank or non-numeric quantity is refused here, before it can turn into 0 (which
+    // cancels an existing line). The message sits on the box itself. A new row keeps the
+    // older "every line needs a product and a quantity" refusal below.
+    const liveLines = so.lines.filter((ln) => !removedLineIds.has(ln.id) && !isCancelledLine(ln));
+    if (
+      liveLines.some((ln) =>
+        numberFieldError(lineDrafts[ln.id]?.qty_ordered ?? String(ln.qty_ordered), { min: 0 }),
+      )
+    ) {
+      setShowQtyErrors(true);
+      return;
+    }
+    const pricedLines = [...liveLines, ...newLines.filter((ln) => !isCancelledLine(ln))];
+    if (
+      pricedLines.some((ln) => {
+        const d = lineDrafts[ln.id];
+        return (
+          numberFieldError(d?.unit_price ?? ln.unit_price ?? '', PRICE_RULES) ||
+          numberFieldError(d?.discount ?? ln.discount ?? '', PRICE_RULES)
+        );
+      })
+    ) {
+      setShowQtyErrors(true);
+      return;
+    }
     // `id` is sent so the BE matches this line by id rather than falling back to SKU.
     // Location / delivery date / UoM / price / discount ride the SAME upsert as SKU/qty -
     // see the class docstring - carrying either what the person typed or, for an untouched
@@ -1587,6 +1718,7 @@ export function SalesOrderDetail({
   };
 
   return (
+    <QtyDraftContext.Provider value={{ isEditing, lineDrafts, showErrors: showQtyErrors, setLineDrafts }}>
     <div className="space-y-4">
       {/* The record header - what the order IS, and what can be done to it. Above the tabs,
           because it belongs to the whole record rather than to any one of its concerns. */}
@@ -1659,6 +1791,7 @@ export function SalesOrderDetail({
                 actions={actions}
                 pendingAction={deletionPending}
                 gearLabel="Sales order options"
+                gearRef={gearRef}
                 // The main action on this page is now PLAN, not Edit (S2, R3): this is the
                 // same board the list's "Plan selected" opens, on this one order, and it
                 // wears the main colour for the same reason an Add does on every list. Edit
@@ -1735,9 +1868,19 @@ export function SalesOrderDetail({
             <Truck />
             <span>Delivery</span>
           </TabsTrigger>
+          {canSeeInvoices ? (
+            <TabsTrigger value="invoices">
+              <Receipt />
+              <span>Invoices</span>
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger value="transfers">
             <Move />
             <span>Transfers</span>
+          </TabsTrigger>
+          <TabsTrigger value="related">
+            <Link2 />
+            <span>Related</span>
           </TabsTrigger>
         </TabsList>
 
@@ -1924,6 +2067,18 @@ export function SalesOrderDetail({
               <Field label="PO ref">
                 {so.po_ref ? <span title={so.po_ref}>{so.po_ref}</span> : '-'}
               </Field>
+              {/* FULFIL-SO-REMARK (AC-17): what the purchasing email prints beside this SO, and
+                  AutoCount's Shipping Info. Read-only in both views. */}
+              <div data-testid="so-remark-field">
+                <Field label="Remark">
+                  {so.remark ? <span title={so.remark}>{so.remark}</span> : '-'}
+                </Field>
+              </div>
+              <div data-testid="so-ship-info-field">
+                <Field label="Shipping Info">
+                  {so.ship_info ? <span title={so.ship_info}>{so.ship_info}</span> : '-'}
+                </Field>
+              </div>
               {/* What purchasing has been told to do about this order. Read-only in both
                   views, so nothing moves between them: it is a record of what happened,
                   not a field anybody sets here. Empty states as "-", never hidden. */}
@@ -2152,6 +2307,11 @@ export function SalesOrderDetail({
                 <CardTitle>Delivery</CardTitle>
               </CardHeading>
             </CardHeader>
+            {/* DOC-RELATIONS bug 5 (owner, mock v2): the sentence reads the order lines'
+                `qty_delivered` while the table below reads the DO lines, so a stale line said
+                "Nothing delivered yet" over a full table. With DO rows the table is the answer
+                and no sentence is shown; the sentences stay for an order with none. */}
+            {deliveryRows.length > 0 || deliveries.isLoading ? null : (
             <div className="p-4">
               {so.total_qty > 0 && so.committed_qty === 0 ? (
                 <div className="flex items-center gap-2 text-sm">
@@ -2173,8 +2333,34 @@ export function SalesOrderDetail({
                 </p>
               )}
             </div>
+            )}
+            {/* DO-SO-LINK-SURFACE R3: every DO line under this SO, the truck lightbox's own
+                rows and columns plus SKU. Nothing (not an empty table) when there is none. */}
+            {deliveries.isError && !deliveries.data ? (
+              <div className="border-t border-border p-4">
+                <DeliveriesLoadError onRetry={() => void deliveries.refetch()} />
+              </div>
+            ) : null}
+            {deliveryRows.length > 0 ? (
+              <section aria-label="Delivery orders" className="border-t border-border">
+                <DeliveriesTable
+                  rows={deliveryRows}
+                  canOpenDo={canOpenDo}
+                  emptyMessage="No DO in the CRM for this order."
+                  withSku
+                  onPage
+                />
+              </section>
+            ) : null}
           </Card>
         </TabsContent>
+
+        {/* PLAN-finance-billing-documents S3-1: billing documents pointing at this order's lines. */}
+        {canSeeInvoices ? (
+          <TabsContent value="invoices" className="mt-0 focus-visible:outline-none">
+            <OrderInvoices salesOrderId={so.id} />
+          </TabsContent>
+        ) : null}
 
         {/* AC-E6: the movements this order's supply decision asked for. The SAME grid the
             Transfers page is, pinned to this order - so a transfer cannot read one way here
@@ -2185,6 +2371,11 @@ export function SalesOrderDetail({
             listingKey="scm.sales_orders.view::stock-transfers"
             showFilters={false}
           />
+        </TabsContent>
+
+        {/* DOC-RELATIONS: the delivery orders and billing documents of this order, one table. */}
+        <TabsContent value="related" className="mt-0 focus-visible:outline-none">
+          <RelatedDocumentsPanel kind="sales_order" id={so.id} />
         </TabsContent>
       </Tabs>
 
@@ -2224,7 +2415,16 @@ export function SalesOrderDetail({
           />
         </PlanRowDialog>
       ) : null}
+
+      <OrderSplitsDialog
+        title={`${soNumber}: splits`}
+        payload={lineSplits}
+        open={viewSplitsOpen}
+        onOpenChange={setViewSplitsOpen}
+        returnFocusRef={gearRef}
+      />
     </div>
+    </QtyDraftContext.Provider>
   );
 }
 

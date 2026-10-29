@@ -5,11 +5,13 @@ Sales teams (#1260, plan 3.7) and the chatbot's sales analysis
 routes (`/reports/{key}`)."""
 from fastapi import APIRouter
 
-from app.api.v1.sales import analysis, customer_asks, opportunities, targets, teams
+from app.api.v1.sales import analysis, customer_asks, opportunities, set_apart, target_progress, targets, teams
 
 router = APIRouter()
 router.include_router(teams.router, prefix="/teams", tags=["sales-teams"])
 router.include_router(targets.router, prefix="/targets", tags=["sales-targets"])
 router.include_router(opportunities.router, prefix="/opportunities", tags=["sales-opportunities"])
 router.include_router(customer_asks.router, prefix="/customer-asks", tags=["sales-customer-asks"])
+router.include_router(set_apart.router, prefix="/set-apart-customers", tags=["sales-set-apart"])
 router.include_router(analysis.router)
+router.include_router(target_progress.router)

@@ -24,7 +24,9 @@ from app.schemas.scm_orders import (
     SalesOrderListResponse,
     SalesOrderUpdate,
 )
+from app.services.document_relations import RELATED_SORT_PATTERN
 from app.services.scm.sales_order_service import SalesOrderService
+from app.utils.multi_value import multi_uuids, multi_values
 
 router = APIRouter()
 
@@ -79,9 +81,9 @@ def list_sales_orders(
     sort: Optional[str] = Query(None),
     dir: str = Query("desc"),
     query: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    priority: Optional[str] = Query(None),
-    source: Optional[str] = Query(
+    status: Optional[list[str]] = Query(None),
+    priority: Optional[list[str]] = Query(None),
+    source: Optional[list[str]] = Query(
         None,
         description=(
             "Where the order came from: autocount | inquiry | upload | history | manual. "
@@ -90,7 +92,7 @@ def list_sales_orders(
     ),
     date_from: Optional[date] = Query(None, description="Earliest order date, inclusive."),
     date_to: Optional[date] = Query(None, description="Latest order date, inclusive."),
-    customer_code: Optional[str] = Query(
+    customer_code: Optional[list[str]] = Query(
         None,
         description="Keep only this customer's orders. By code, which several legal entities "
                     "can share, so it means all of them.",
@@ -98,10 +100,10 @@ def list_sales_orders(
     outstanding: bool = Query(
         False, description="Keep only orders with quantity still owed. Off narrows nothing."
     ),
-    sales_agent_id: Optional[str] = Query(
-        None, description="Keep only this sales agent's orders."
+    sales_agent_id: Optional[list[str]] = Query(
+        None, description="Keep only these sales agents' orders."
     ),
-    demand_class: Optional[str] = Query(
+    demand_class: Optional[list[str]] = Query(
         None,
         description="Keep only this planning class: project | retail | unclassified "
                     "(demand_class IS NULL). Omit for all.",
@@ -131,10 +133,11 @@ def list_sales_orders(
     """
     svc = SalesOrderService(db)
     out = svc.list(
-        page, limit, sort, dir, query, status, priority, source,
-        date_from=date_from, date_to=date_to, customer_code=customer_code,
-        outstanding=outstanding, sales_agent_id=sales_agent_id,
-        demand_class=demand_class, transferable=transferable, doc_type=doc_type,
+        page, limit, sort, dir, query, multi_values(status), multi_values(priority),
+        multi_values(source),
+        date_from=date_from, date_to=date_to, customer_code=multi_values(customer_code),
+        outstanding=outstanding, sales_agent_id=multi_uuids(sales_agent_id, "Sales agent"),
+        demand_class=multi_values(demand_class), transferable=transferable, doc_type=doc_type,
     )
     out["data"] = svc.with_planning_state(
         svc.with_planning_changes(
@@ -196,6 +199,31 @@ def get_sales_order_deliveries(so_id: str, db: Session = Depends(get_db), _user:
     except ValueError:
         raise AppException(404, "Sales order not found", code="SO_NOT_FOUND")
     return so_line_history(db, SalesOrderService(db)._get_or_404(so_id))
+
+
+@router.get("/sales-orders/{so_id}/related")
+def get_sales_order_related(
+    so_id: str,
+    sort: str = Query("doc_date", pattern=RELATED_SORT_PATTERN),
+    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(_READ),
+):
+    """DOC-RELATIONS: the delivery orders and billing documents of this order, each kind null
+    without its view slug, plus the visible ones as one table sorted server side."""
+    import uuid
+
+    from app.services import document_relations as relations
+    from app.services.error_handler import AppException
+
+    try:
+        uuid.UUID(str(so_id))
+    except ValueError:
+        raise AppException(404, "Sales order not found", code="SO_NOT_FOUND")
+    so = SalesOrderService(db)._get_or_404(so_id)
+    return relations.related_response(
+        db, user["id"], relations.relations_for_sales_order(db, so), sort=sort, dir=dir
+    )
 
 
 @router.post("/sales-orders", response_model=SalesOrder, status_code=status.HTTP_201_CREATED)

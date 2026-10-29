@@ -10,6 +10,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 class ResizeObserverStub {
   observe() {}
@@ -64,12 +65,53 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// The filters are multi-selects now (FILTER-MULTISELECT PR3): the same native stand-in, a multiple <select>.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: (props: {
+    id?: string;
+    'aria-label'?: string;
+    value: string[];
+    onChange: (v: string[]) => void;
+    options?: { value: string; label: string }[];
+    fetchOptions?: (q: string) => Promise<{ value: string; label: string }[]>;
+    placeholder?: string;
+  }) => {
+    const [options, setOptions] = React.useState(props.options ?? []);
+    React.useEffect(() => {
+      if (props.fetchOptions) props.fetchOptions('').then(setOptions);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const shown = props.fetchOptions ? options : (props.options ?? []);
+    return (
+      <select
+        multiple
+        id={props.id}
+        aria-label={props['aria-label'] ?? props.id ?? 'select'}
+        value={props.value}
+        onChange={(e) => props.onChange(Array.from(e.target.selectedOptions, (o) => o.value))}
+      >
+        {shown.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    );
+  },
+}));
+
 const perms = vi.hoisted(() => ({ granted: new Set<string>() }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => perms.granted.has(slug),
 }));
 
-const hooks = vi.hoisted(() => ({ useSalesTargets: vi.fn() }));
+const hooks = vi.hoisted(() => ({
+  useSalesTargets: vi.fn(),
+  usePointRatios: () => ({ data: { rows: [] }, isLoading: false }),
+  useSavePointRatio: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useImportDealerTargets: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDownloadDealerTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock('../hooks/useSalesTargets', () => hooks);
 
 import SalesTargetsView from './SalesTargetsView';
@@ -111,7 +153,7 @@ describe('SalesTargetsView', () => {
   it('opens on the Teams tab, before Agents (S1-15)', () => {
     render(<SalesTargetsView />);
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.trim());
-    expect(tabs).toEqual(['Teams', 'Agents']);
+    expect(tabs).toEqual(['Teams', 'Agents', 'Dealers']);
     expect(screen.getByRole('tab', { name: 'Teams' }).getAttribute('aria-selected')).toBe('true');
   });
 
@@ -176,7 +218,7 @@ describe('SalesTargetsView', () => {
     expect(screen.queryByRole('button', { name: /set target/i })).toBeNull();
   });
 
-  it('Agents lists agent targets with an Agent and a Team column, and a Team filter in Filters', () => {
+  it('Agents lists agent targets with an Agent and a Team column, and a Team filter in Filters', async () => {
     withRows([
       row({
         target_id: 'ta1', target_no: 'TGT-000002', name: 'Ali Oct', subject_kind: 'agent',
@@ -193,7 +235,7 @@ describe('SalesTargetsView', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: /filters/i }), { key: 'Enter' });
     const team = screen.getByLabelText('Team') as HTMLSelectElement;
     expect(Array.from(team.options).map((o) => o.textContent)).toContain('No team');
-    fireEvent.change(team, { target: { value: 'none' } });
+    await userEvent.setup().selectOptions(team, ['none']);
     expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'agent', salesTeamId: 'none' });
   });
 
@@ -210,4 +252,29 @@ describe('SalesTargetsView', () => {
     render(<SalesTargetsView />);
     expect(screen.getByText('No team targets yet')).toBeTruthy();
   });
+
+  it('Dealers lists dealer targets with Counts, Pays to and the current commission (lane SALES-TARGET-DEALER)', () => {
+    perms.granted = new Set(['sales.targets.view', 'sales.targets.add', 'sales.targets.edit']);
+    withRows([
+      row({
+        target_id: 'td1', target_no: 'TGT-000214', name: 'Dealer A 2026 quarterly', subject_kind: 'dealer',
+        sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
+        product_scope: 'all', scope_labels: [], account_labels: ['A/C I', 'A/C III'],
+        account_codes: ['300-A0123', '300-A0124'], payout_label: 'A/C I', commission_earned: 5400,
+      }),
+    ]);
+    render(<SalesTargetsView />);
+    openTab('Dealers');
+    expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'dealer' });
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim()).filter(Boolean);
+    expect(headers).toEqual([
+      'Number', 'Name', 'Dealer', 'Counts', 'Pays to', 'Measures', 'Dates', 'Target',
+      'Achieved (provisional, incl. tax)', '%', 'Commission',
+    ]);
+    expect(screen.getByText('Dealer A Sdn Bhd')).toBeTruthy();
+    expect(screen.getByText('5,400')).toBeTruthy();
+    // Import and Point ratio are list actions on the Dealers tab only.
+    expect(screen.getAllByText(/Import from Excel|Point ratio|Actions/).length).toBeGreaterThan(0);
+  });
 });
+

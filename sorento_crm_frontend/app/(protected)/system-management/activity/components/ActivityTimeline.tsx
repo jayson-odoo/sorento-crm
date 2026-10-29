@@ -17,11 +17,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateTime, getInitials, timeAgo } from '@/lib/helpers';
 import { useActivityFeed } from '../hooks/useActivityFeed';
 import type {
-  ActivityAction,
   ActivityEntityType,
   ActivityItem,
 } from '../types/activity.types';
@@ -34,12 +34,10 @@ import {
   groupByDay,
 } from './activityPresenters';
 
-const ANY = '__any__';
-
 export default function ActivityTimeline() {
   const [entityTypes, setEntityTypes] = useState<ActivityEntityType[]>([]);
-  const [action, setAction] = useState<string>(ANY);
-  const [userId, setUserId] = useState<string>(ANY);
+  const [action, setAction] = useState('');
+  const [userId, setUserId] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const {
@@ -53,8 +51,8 @@ export default function ActivityTimeline() {
   const { data, isLoading, isError, error, refetch, isFetching } =
     useActivityFeed({
       entity_types: entityTypes,
-      action: action !== ANY ? (action as ActivityAction) : undefined,
-      user_id: userId !== ANY ? userId : undefined,
+      action: action || undefined,
+      user_id: userId || undefined,
       date_from: dateFrom || undefined,
       date_to: dateTo || undefined,
       q: q.trim() || undefined,
@@ -65,16 +63,16 @@ export default function ActivityTimeline() {
 
   const activeFilterCount =
     entityTypes.length +
-    (action !== ANY ? 1 : 0) +
-    (userId !== ANY ? 1 : 0) +
+    (action ? 1 : 0) +
+    (userId ? 1 : 0) +
     (dateFrom ? 1 : 0) +
     (dateTo ? 1 : 0);
   const hasAnyFilter = activeFilterCount > 0 || q.trim().length > 0;
 
   const resetFilters = () => {
     setEntityTypes([]);
-    setAction(ANY);
-    setUserId(ANY);
+    setAction('');
+    setUserId('');
     setDateFrom('');
     setDateTo('');
     resetQ('');
@@ -233,29 +231,25 @@ function FilterBar(props: FilterBarProps) {
           </Popover>
 
           {/* Action */}
-          <SearchableSelect
-            value={props.action}
-            onChange={props.onActionChange}
-            options={[
-              { value: ANY, label: 'All actions' },
-              ...ACTION_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
-            ]}
+          <SearchableMultiSelect
+            value={splitMulti(props.action)}
+            onChange={(v) => props.onActionChange(joinMulti(v))}
+            options={ACTION_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
             placeholder="Action"
             triggerClassName="w-[130px]"
             size="sm"
+            clearable
           />
 
           {/* User */}
-          <SearchableSelect
-            value={props.userId}
-            onChange={props.onUserChange}
-            options={[
-              { value: ANY, label: 'All users' },
-              ...props.actors.map((actor) => ({ value: actor.id, label: actor.name })),
-            ]}
+          <SearchableMultiSelect
+            value={splitMulti(props.userId)}
+            onChange={(v) => props.onUserChange(joinMulti(v))}
+            options={props.actors.map((actor) => ({ value: actor.id, label: actor.name }))}
             placeholder="User"
             triggerClassName="w-[150px]"
             size="sm"
+            clearable
           />
 
           {/* Date range */}

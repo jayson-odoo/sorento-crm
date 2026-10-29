@@ -54,9 +54,11 @@ const WHAT_VARIANT: Record<LineHistoryEntry['what'], 'primary' | 'secondary' | '
 
 function documentsText(entry: LineHistoryEntry): string {
   if (entry.noDocuments) return '';
-  return [...documentsOf(entry.row, 'po'), ...documentsOf(entry.row, 'spo')]
-    .map((doc) => doc.document)
-    .join(', ');
+  // One chip per document LINE since LINKAGE-UNIFY U3; the history names documents.
+  const names = [...documentsOf(entry.row, 'po'), ...documentsOf(entry.row, 'spo')].map(
+    (doc) => doc.document,
+  );
+  return [...new Set(names)].join(', ');
 }
 
 function Truncated({ text }: { text: string }) {

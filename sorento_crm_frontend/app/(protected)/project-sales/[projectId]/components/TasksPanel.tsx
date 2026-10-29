@@ -31,6 +31,7 @@ import { TaskFormDialog } from './TaskFormDialog';
 import { TaskHistoryDialog } from './TaskHistoryDialog';
 import { TaskStatusDialog } from './TaskStatusDialog';
 import { TaskTimelineView } from './TaskTimelineView';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 const PHASE_TABS: { id: TaskPhase | 'all'; label: string }[] = [
   { id: 'pursuit', label: 'Pursuit' },
@@ -112,7 +113,7 @@ export function TasksPanel({ project }: { project: Project }) {
                   onClick={() => setPhase(tab.id)}
                   className={
                     phase === tab.id
-                      ? 'rounded px-2.5 py-1 text-xs font-medium bg-muted text-foreground'
+                      ? 'rounded px-2.5 py-1 text-xs font-medium bg-primary text-primary-foreground'
                       : 'rounded px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground'
                   }
                 >
@@ -134,7 +135,7 @@ export function TasksPanel({ project }: { project: Project }) {
                   onClick={() => setView(option.id)}
                   className={
                     view === option.id
-                      ? 'rounded px-2.5 py-1 text-xs font-medium bg-muted text-foreground'
+                      ? 'rounded px-2.5 py-1 text-xs font-medium bg-primary text-primary-foreground'
                       : 'rounded px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground'
                   }
                 >
@@ -142,7 +143,7 @@ export function TasksPanel({ project }: { project: Project }) {
                 </button>
               ))}
             </div>
-            {project.can_edit && (
+            {canWorkOnProject(project) && (
               <Button type="button" size="sm" onClick={() => setCreating(true)}>
                 <Plus className="size-4" aria-hidden />
                 Add task
@@ -189,7 +190,7 @@ export function TasksPanel({ project }: { project: Project }) {
                   : `No ${phase} tasks on this project`}
               </h3>
               {/* No button here: the header's Add task is the one CTA (owner, 13 Oct). */}
-              {project.can_edit && (
+              {canWorkOnProject(project) && (
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                   Use Add task to create one.
                 </p>

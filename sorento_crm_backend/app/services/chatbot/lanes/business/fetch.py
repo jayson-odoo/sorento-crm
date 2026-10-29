@@ -54,13 +54,15 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.label_catalog import IDENTITY, Localizer
+from app.services.chatbot.composers import format as composers_format
+from app.services.chatbot.label_catalog import IDENTITY, Localizer, defaults as label_defaults
 from app.services.chatbot.contracts import (
     SALES_REPORT_GROUP_BYS,
     UNDOMAINED_CHATBOT_TOOLS,
     is_timeline,
     named_count,
 )
+from app.services.chatbot.turn.pending import SALES_ANALYSIS_COMPANY_KIND
 from app.services.chatbot.turn.policy import default_policy
 from app.services.chatbot.turn import policy_rows
 from app.services.product_spec_registry import display_spec_value
@@ -435,8 +437,8 @@ SCALAR_PARAMS: frozenset[str] = frozenset()
 #: The sales analysis's `group_by` -> the route's `rows` (the years are always across).
 #: "month" is months down the side; "year" and no axis said are one line per channel.
 SALES_ANALYSIS_GROUP_BY = {"": "channel", "year": "channel", "month": "month"}
-#: The bases `GET /sales/analysis` answers (finance S1 added invoiced); anything else,
-#: or none, is Delivered, the report's default.
+#: The bases `GET /sales/analysis` answers (finance S1 added invoiced). The lane asks one when the
+#: message names none (`sales_basis_ask`).
 SALES_ANALYSIS_BASES = ("ordered", "delivered", "invoiced")
 
 DATE_PARAMS: dict[str, tuple[str, str]] = {
@@ -460,15 +462,12 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     # PLAN-chatbot-sales-report.md S4 wiring point 5: the report's own contract, on
     # the bucket date (required_date, else order_date) - never actual_delivery_date.
     "crm_sales_report": ("date_from", "date_to"),
-    # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 6: the same bucket date. No date
-    # sends none: the ROUTE defaults to the current calendar year and echoes it (as
-    # built on PR #1263, superseding the plan's lane-side default).
-    "crm_top_selling_report": ("date_from", "date_to"),
     # AC-71: the low stock report's window narrows which sales orders the fresh plan
     # counts as demand - the run's own "plan until" pair, under the route's names.
     "crm_low_stock_report": ("date_from", "date_to"),
     # PLAN-retail-sales-reports-26sep S1: the period of the sales analysis, by order date.
     "crm_sales_analysis": ("date_from", "date_to"),
+    "crm_sales_target_progress": ("date_from", "date_to"),
 }
 
 def _current_myt_year() -> int:
@@ -496,6 +495,10 @@ ORDER_STATUS_TO_SCOPE: dict[str, str] = {
 # (`lanes/business/__init__.py::run_fetch`). One literal, not two, so the two
 # refusals can never drift apart in wording.
 SO_NOT_ENABLED_MESSAGE = "Sales order figures are not enabled for your account."
+
+#: The outstanding report's group page size, pinned equal to the MCP presenter's
+#: `OUTSTANDING_GROUP_CAP` (the backend image cannot import that package).
+OUTSTANDING_GROUP_PAGE = 20
 
 ORDER_TOOLS: frozenset[str] = frozenset(
     {"crm_order_management_orders_list", "crm_order_management_orders_by_product_list"}
@@ -600,13 +603,251 @@ def _set_named_count(semantic_input: Any) -> int | None:
     return named_count(jsc.get(semantic_input, "top_n"))
 
 
+def _row_code(it: Any) -> str:
+    """The product code a printed row is about (a row's "Product Code", else its title)."""
+    for f in jsc.get(it, "fields") or []:
+        if isinstance(f, dict) and f.get("label") == "Product Code":
+            return jsc.nullish_str(f.get("value")).strip()
+    return jsc.nullish_str(jsc.get(it, "title")).strip()
+
+
+def _set_page(
+    *,
+    e: dict[str, Any],
+    msg: str,
+    rows_start: int,
+    rows_end: int,
+    row_ends: list[int],
+    row_items: list[Any],
+    row_idx: list[int],
+    question_at: int | None,
+    links_from: int | None,
+    source: list[Any],
+    loc: Any,
+    footer: str,
+    other_brands: str,
+    shown: int,
+    offset: int,
+    total: int,
+    build_header: Any,
+    cap: int,
+    end_note: str = "",
+    file_cap: int | None = None,
+) -> tuple[str | None, dict[str, int], list[Any] | None]:
+    """CHAT-COMPOSER: one set page as ONE WhatsApp message. The page ends where the product
+    code changes (every company row of a listed code rides with it) at the last block that keeps
+    the reply (header, rows, the "more" line, other brands, footer) within
+    `sets.MESSAGE_MAX_CHARS`, also after ms / zh localization; the header states the range of
+    codes actually listed and the "more" line the products the next page will show. Returns
+    `(reply, window, answers)`; `reply` is None when nothing differs from the plain page.
+
+    `file_cap` (CHAT-RELEASE-1021): the page also ends where the files of its rows would pass
+    it, so a page never sends more than one page of files (`_page_files`)."""
+    from app.services.chatbot.composers import sets as composers_sets
+
+    pre, post = msg[:rows_start], msg[rows_end:]
+    n_rows = len(row_ends)
+
+    def assemble(k: int) -> tuple[str, int]:
+        cut = k < n_rows
+        end = row_ends[k - 1] if cut else rows_end
+        rows = msg[rows_start:end]
+        if cut and links_from is not None:
+            rows += msg[links_from:rows_end]
+        listed = row_items[:k] if cut else (row_items or (e.get("items") or []))
+        counted = _rendered_product_count(listed)
+        n = min(shown, counted) if counted is not None else shown
+        more = composers_sets.next_count(total, offset, n, cap)
+        more_text = composers_sets.more_line(more) if more else end_note
+        if question_at is not None and not cut:
+            # A dealer page that still asks a quantity: the "more" line, then the question last.
+            mid = msg[rows_start:question_at] + (more_text + "\n\n" if more_text else "") + msg[question_at:rows_end]
+            core, more_text = (pre + mid + post).strip(), ""
+        else:
+            core = (pre + rows + post).strip()
+        has_footer = bool(footer) and core.endswith(footer)
+        parts = [core[: -len(footer)].strip() if has_footer else core, more_text, other_brands]
+        if has_footer:
+            parts.append(footer)
+        return build_header(n) + "\n\n" + "\n\n".join(p for p in parts if p), n
+
+    localizers: list[Any] = []
+
+    def width(text: str) -> int:
+        """The longest the reply gets: as built, and (where the lane does not localize) in ms / zh."""
+        longest = len(text)
+        if loc is IDENTITY and longest > composers_sets.MESSAGE_MAX_CHARS * 3 // 4:
+            if not localizers:
+                localizers.extend(Localizer(lang, label_defaults(lang)) for lang in ("ms", "zh"))
+            longest = max(longest, *(len(lz.reply(text)) for lz in localizers))
+        return longest
+
+    # Valid page ends: a row boundary where the next row is another code.
+    ends = [
+        k
+        for k in range(n_rows, 0, -1)
+        if k == n_rows or _row_code(row_items[k - 1]) != _row_code(row_items[k])
+    ]
+    def files_fit(k: int) -> bool:
+        return file_cap is None or len(_row_file_urls(row_items[:k])) <= file_cap
+
+    full, n_full = assemble(n_rows)
+    text, n, k = full, n_full, n_rows
+    for candidate in ends:
+        text, n = assemble(candidate) if candidate != n_rows else (full, n_full)
+        k = candidate
+        if width(text) <= composers_sets.MESSAGE_MAX_CHARS and files_fit(candidate):
+            break
+    window = {
+        "first": offset + 1,
+        "last": offset + n,
+        "total": total,
+        "next": composers_sets.next_count(total, offset, n, cap),
+    }
+    cut = n_rows and k < n_rows
+    answers = list(source[: row_idx[k - 1] + 1]) if cut else None
+    unchanged = text == f"{build_header(n_full)}\n\n{msg.strip()}" and not cut
+    return (None if unchanged else text), window, answers
+
+
+def _row_file_urls(rows: list[Any]) -> list[str]:
+    """The distinct file urls of printed rows, in row order (the presenter's `file_urls`)."""
+    urls: dict[str, None] = {}
+    for it in rows:
+        for u in jsc.array(jsc.get(it, "file_urls")):
+            if isinstance(u, str) and u:
+                urls.setdefault(u, None)
+    return list(urls)
+
+
+def _page_files(attachments: list[Any], rows: list[Any], cap: int) -> list[Any]:
+    """CHAT-RELEASE-1021 (crew review of #1809): what a counted set's page sends. Only the files
+    of the rows it lists, and no more than `cap` of them (the capped-list page size), cut at a
+    product boundary so a product's files go out together or on its own page. Rows that carry
+    no `file_urls` say nothing about which file is whose, so then only the cap applies."""
+    if not any(jsc.array(jsc.get(it, "file_urls")) for it in rows):
+        return list(attachments[:cap])
+    keep: list[str] = []
+    for it in rows:
+        urls = [u for u in jsc.array(jsc.get(it, "file_urls")) if isinstance(u, str) and u and u not in keep]
+        if keep and len(keep) + len(urls) > cap:
+            break
+        keep.extend(urls)
+    wanted = set(keep[:cap])
+    return [a for a in attachments if isinstance(a, dict) and a.get("url") in wanted]
+
+
 def _set_list_size(semantic_input: Any) -> int:
     """How many products of a counted set one reply lists: the named count, never past
     `answer.SET_LIST_MAX`. Deferred import: `answer.py` imports from this module."""
     from app.services.chatbot.lanes.business import answer as answer_mod
 
-    named = _set_named_count(semantic_input)
-    return min(named, answer_mod.SET_LIST_MAX) if named else answer_mod.SET_LIST_MAX
+    from app.services.chatbot.composers import sets as composers_sets
+
+    return composers_sets.page_size(_set_named_count(semantic_input), answer_mod.SET_LIST_MAX)
+
+
+#: The tools whose multi-match answer is a code-lookup list: product cards, one per code.
+CODE_LIST_TOOLS = frozenset({"crm_master_products_list", *SET_ROW_LIMIT} - {"crm_marketing_promotion_products_list"})
+
+
+def _code_list_ids(row_items: list[Any], entities: Any) -> list[dict[str, Any]] | None:
+    """CHAT-COMPOSER Lists L1: the product ids behind each printed code, in printed order, or None
+    when the list is not one a later "more" can page: fewer than two codes, a code whose rows are
+    not together, or a code with no product entity."""
+    if isinstance(entities, str):
+        entities = _safe_json(entities)
+    by_code: dict[str, list[str]] = {}
+    for ent in jsc.array(entities):
+        if not isinstance(ent, dict) or ent.get("entity_type") != "product" or not ent.get("uuid"):
+            continue
+        for field in ("code", "canonical_code"):
+            code = jsc.nullish_str(ent.get(field)).strip().casefold()
+            if code and ent["uuid"] not in by_code.setdefault(code, []):
+                by_code[code].append(ent["uuid"])
+    codes: list[str] = []
+    for it in row_items:
+        code = _row_code(it)
+        if not codes or codes[-1] != code:
+            codes.append(code)
+    if len(codes) < 2 or len(set(codes)) != len(codes):
+        return None
+    if any(not by_code.get(code.casefold()) for code in codes):
+        return None
+    return [{"code": code, "ids": by_code[code.casefold()]} for code in codes]
+
+
+def _without_total(header: str) -> str:
+    """A set header without its total: "(20, showing 10 to 20)" reads "(showing 10 to 20)"."""
+    return re.sub(r"\((\d[\d,]*), showing ", "(showing ", header, count=1)
+
+
+def _code_list_page(
+    *,
+    e: dict[str, Any],
+    msg: str,
+    rows_start: int,
+    rows_end: int,
+    row_ends: list[int],
+    row_items: list[Any],
+    row_idx: list[int],
+    ts: Any,
+    loc: Any,
+    ctx: dict[str, Any],
+    code_ids: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any] | None, list[Any] | None]:
+    """CHAT-COMPOSER Lists L1: a code-lookup list cut to ONE message on a card boundary, the intro
+    gaining the range, the page ending with the "more" line and carrying the matched product ids so a
+    bare "more" prints the rest (`turn_runtime.page_the_set`). `(msg, window, answers)`; the plain
+    reply with no window when the whole list fits."""
+    from app.services.chatbot.composers import sets as composers_sets
+    from app.services.chatbot.lanes.business import answer as answer_mod
+    lz = ctx.get("localizer") or IDENTITY
+    total = len(code_ids)
+    intro = msg[:rows_start].strip()
+    english_intro = jsc.js_string(e.get("intro") or "Here are the results.").strip()
+
+    def header(n: int) -> str:
+        if n >= total:
+            return intro
+        return composers_sets.ranged(
+            lz.text(english_intro), lz.fill(composers_sets.RANGE_CAPPED, first="1", last=str(n))
+        )
+
+    rows_msg = msg[rows_start:]
+    footer = f"_{loc.text(f'Data last updated: {ts}')}_" if ts else ""
+    paged, window, answers = _set_page(
+        e=e,
+        msg=rows_msg,
+        rows_start=0,
+        rows_end=rows_end - rows_start,
+        row_ends=[x - rows_start for x in row_ends],
+        row_items=row_items,
+        row_idx=row_idx,
+        question_at=None,
+        links_from=None,
+        source=e.get("items") or [],
+        loc=loc,
+        footer=footer,
+        other_brands="",
+        shown=total,
+        offset=0,
+        total=total,
+        build_header=header,
+        cap=answer_mod.SET_LIST_MAX,
+    )
+    if paged is None:
+        return msg, None, None
+    if answers is None:
+        return paged, None, None
+    carry = {
+        "code_list": True,
+        "set_noun": "matching products",
+        "code_ids": code_ids,
+        "total": total,
+        "shown": window["last"],
+    }
+    return paged, {**window, "carry": carry}, answers
 
 
 def _names_the_ask(attribute: str) -> bool:
@@ -741,10 +982,15 @@ def entity_ids_transformer(
     # named no product (`turn_runtime.promo_filter`), so any product ids here are the set the
     # resolver described from the brand / class words, never the subject: they are dropped.
     # A typed product code carries no `scope_terms` and keeps the product_ids path alone.
-    if tool_name == TIER_PROBE_TOOL and jsc.array(jsc.get(semantic_input, "scope_terms")):
+    # CHAT-PROMO-BRAND-FLYER: `brand_subject` is the same verdict for a brand + kind / flyer
+    # ask: the product ids are the brand's described set or a set an earlier turn held.
+    brand_subject = bool(jsc.array(jsc.get(semantic_input, "brand_subject")))
+    if tool_name == TIER_PROBE_TOOL and (jsc.array(jsc.get(semantic_input, "scope_terms")) or brand_subject):
         out.pop("product_ids", None)
     if tool_name == TIER_PROBE_TOOL and (
-        jsc.array(jsc.get(semantic_input, "scope_terms")) or jsc.array(jsc.get(semantic_input, "promotion_types"))
+        jsc.array(jsc.get(semantic_input, "scope_terms"))
+        or jsc.array(jsc.get(semantic_input, "promotion_types"))
+        or brand_subject
     ):
         # Promotions the resolver matched by NAME off other words are never the subject: a
         # subject or kind ask is answered by explicit links and the kind (AC-22, owner rule).
@@ -759,211 +1005,6 @@ def entity_ids_transformer(
             narrowed = jsc.get(semantic_input, key)
             if isinstance(narrowed, list) and narrowed:
                 out[key] = list(narrowed)
-
-    # S4 points 2/7/9 (PLAN-chatbot-outstanding-report.md): crm_outstanding_report's
-    # OWN contract (`product_code` a string, `scope`, `customer_ids`, `warehouse_codes`
-    # csv, `order_date_from/to` above) is not the generic UUID-list shape every other
-    # order tool takes, so it is built here rather than through TYPE_TO_PARAM.
-    if tool_name == "crm_outstanding_report":
-        out.pop("product_ids", None)
-        out.pop("warehouse_ids", None)
-        # AC-1119: one rule for which code this report is about, shared with both filter
-        # builders (`outstanding_product_codes`).
-        picked_codes = outstanding_product_codes(entities, semantic_input)
-        if len(picked_codes) == 1:
-            out["product_code"] = picked_codes[0]
-        elif picked_codes:
-            # The SEVERAL-code form, only when there are several: one code keeps the
-            # argument it has always travelled under, so an ordinary outstanding ask is
-            # byte-identical to before.
-            out["product_codes"] = picked_codes
-        scope = jsc.get(semantic_input, "outstanding_scope")
-        if jsc.truthy(scope):
-            out["scope"] = jsc.js_string(scope)
-        warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
-        if isinstance(warehouse_codes, list) and warehouse_codes:
-            out["warehouse_codes"] = warehouse_codes
-        # #1262 slice 9 (F1a): the brand word(s) this turn named, already resolved to
-        # ids by `_resolve_report_product_and_location`'s own brand step (the token
-        # never reached the shared resolver, so this is the only place it becomes an
-        # id) - a brand alone is a valid subject for this report (AC-S9-4).
-        # N1 (security review, 26 Sep 2026): only real uuids ever forward - the same
-        # `is_uuid` guard every other `<entity>_ids` argument in this function uses,
-        # never a bare `isinstance(..., list)` check that would let a non-uuid string
-        # reach the tool call.
-        brand_ids = _resolved_brand_ids(semantic_input)
-        if brand_ids:
-            out["brand_ids"] = brand_ids
-        # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
-        # the route onto its own body so the presenter can render "IB (BRW-IB, MWH-IB)".
-        # The lane never re-renders that header itself: one writer, one wording.
-        location_token = jsc.js_string(jsc.get(semantic_input, "outstanding_location_token") or "")
-        # The route caps it at 32 characters (it is a word, not a filter). `warehouse_code`
-        # is `String(50)`, so an exact match on a very long code could otherwise 422 the
-        # whole report over a header echo; the codes still travel, the word just does not.
-        if location_token and len(location_token) <= 32 and isinstance(warehouse_codes, list) and warehouse_codes:
-            out["location_token"] = location_token
-        # D13/AC-1141: the same wire trip for the withheld SO half, so the refusal line
-        # prints IN PLACE (after the header, before the DO block) rather than in front
-        # of the whole reply.
-        if jsc.truthy(jsc.get(semantic_input, "outstanding_so_refused")):
-            out["so_refused"] = True
-        # AC-1132: the scope-answer's carried customer_ids are ALREADY resolved UUIDs
-        # (restored by `head/output_exchange.py`, never re-parsed) - they win over
-        # whatever THIS turn's own (empty) entity list produced.
-        # #1262 slice 2 (F1c): a session's carried customer subject is a resolved
-        # uuid or it is nothing - a kind-pick's printed label ("Sorento (customer)")
-        # riding on this same key must never reach the tool as a `customer_ids` filter.
-        carried_customers = [
-            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
-        ]
-        if carried_customers and not _self_reference(semantic_input):
-            out["customer_ids"] = carried_customers
-        # AC-1138 (D10 on main): "1"/"2" against an open detail offer re-runs THIS
-        # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
-        # (S4 point 5); the route's own computation is unchanged by it.
-        detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
-        if detail_pick in ("so", "do", "both"):
-            out["detail"] = detail_pick
-
-    # PLAN-chatbot-sales-report.md S4 wiring point 5: `crm_sales_report`'s OWN
-    # contract - the SAME shape `crm_outstanding_report` above builds by hand
-    # (`product_code` a string, `customer_ids`, `warehouse_codes` csv, `date_from`/
-    # `date_to` above), plus `channel` (S4 point 5's `sales_channel` -> `channel`).
-    if tool_name == "crm_sales_report":
-        out.pop("product_ids", None)
-        out.pop("warehouse_ids", None)
-        picked_code = sales_report_product_code(entities, semantic_input)
-        if jsc.truthy(picked_code):
-            out["product_code"] = picked_code
-        warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
-        if isinstance(warehouse_codes, list) and warehouse_codes:
-            out["warehouse_codes"] = warehouse_codes
-        location_token = jsc.js_string(jsc.get(semantic_input, "outstanding_location_token") or "")
-        if location_token and len(location_token) <= 32 and isinstance(warehouse_codes, list) and warehouse_codes:
-            out["location_token"] = location_token
-        # AC-1132-equivalent: the offer's carried customer_ids are ALREADY resolved
-        # UUIDs (restored by `head/output_exchange.py`, never re-parsed) - they win
-        # over whatever THIS turn's own (empty) entity list produced.
-        # #1262 slice 2 (F1c): same uuid-only rule as `crm_outstanding_report` above.
-        carried_customers = [
-            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
-        ]
-        if carried_customers and not _self_reference(semantic_input):
-            out["customer_ids"] = carried_customers
-        # R-B3 (reviewer finding, Phase 3 fix round): the turn's OWN sales_channel wins
-        # when given; a pick or a refinement of an open sales_report_detail offer names
-        # no channel of its own, so the offer's CARRIED channel (restored by
-        # `head/output_exchange.py::_apply_outstanding_pending`) is the fallback.
-        channel = jsc.get(semantic_input, "sales_channel")
-        if not jsc.truthy(channel):
-            channel = jsc.get(semantic_input, "outstanding_carried_channel")
-        if jsc.truthy(channel):
-            out["channel"] = jsc.js_string(channel)
-        # AC-SR-28: a drill-down picked off the open `sales_report_detail` offer re-runs
-        # this SAME tool with that `group_by` (the offer's own value, `SALES_REPORT_GROUP_BYS`);
-        # the window, accounts, location and channel ride on the carried keys above.
-        detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
-        if detail_pick in SALES_REPORT_GROUP_BYS:
-            out["group_by"] = detail_pick
-
-        # S18 (owner ruling, mid-lane): a PRODUCT-ONLY ask (a resolved product, no
-        # customer) with no date window defaults to the CURRENT CALENDAR YEAR
-        # (Malaysia time) - a customer ask, or a customer+product ask, with no date
-        # stays all dates (S4, unchanged). Built HERE, in the lane, never the route:
-        # `date_from`/`date_to` absent still means all dates when the route is
-        # called directly (e.g. n8n). "All dates" said in words (`broaden_axis ==
-        # "date"`, the SAME field R15's date-window-drop already reads) turns the
-        # default off - no word table, the parser already decided it.
-        if (
-            jsc.truthy(out.get("product_code"))
-            and not jsc.truthy(out.get("customer_ids"))
-            and not jsc.truthy(out.get("date_from"))
-            and not jsc.truthy(out.get("date_to"))
-            and jsc.lower_or_empty(jsc.get(semantic_input, "broaden_axis")) != "date"
-        ):
-            year = _current_myt_year()
-            out["date_from"] = f"{year}-01-01"
-            out["date_to"] = f"{year}-12-31"
-            # Mutated onto `semantic_input` too (not just `out`, this function's own
-            # return value): `output_structurer` -> `_sales_report_output` ->
-            # `_sales_report_filters_from_ctx` reads `ctx["semantic_input"]` - the
-            # SAME dict object `run_fetch` built `trigger` with - to arm the detail
-            # offer's stored filter set, so the default has to land there too, or a
-            # later "1" would list every date instead of the year just answered.
-            if isinstance(semantic_input, dict):
-                semantic_input["date_filter_start"] = out["date_from"]
-                semantic_input["date_filter_end"] = out["date_to"]
-
-    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 7:
-    # `crm_top_selling_report`'s own contract. Everything comes off the parser's own
-    # fields, carried on the focus slot `semantic_input["top_selling"]`
-    # (`turn/apply._top_selling_rules`), never the message text.
-    if tool_name == "crm_top_selling_report":
-        out.pop("product_ids", None)
-        out.pop("warehouse_ids", None)
-        slot = jsc.get(semantic_input, "top_selling")
-        slot = slot if isinstance(slot, dict) else {}
-        out["rank_by"] = jsc.js_string(slot.get("rank_by"))
-        # Always explicit: the lane asks the basis (`_top_selling_question`) and never fetches
-        # without one. Only a picked row's older slot can reach here with none, and the
-        # ranking it came from ran delivered.
-        if slot.get("basis") in ("delivered", "ordered"):
-            out["basis"] = slot["basis"]
-        elif slot.get("detail_code"):
-            out["basis"] = "delivered"
-        category_grain = slot.get("rank_group") == "category"
-        if category_grain:
-            out["group"] = "category"
-        # A category grain ranks categories against each other, so a category FILTER
-        # has nothing to narrow (plan, filters matrix: ignored, the header prints all).
-        category_ids = jsc.get(semantic_input, "top_selling_category_ids")
-        if isinstance(category_ids, list) and category_ids and not category_grain:
-            out["category_ids"] = category_ids
-        chosen = slot.get("customer_ids")
-        if isinstance(chosen, list) and chosen:
-            # "1" to "customer or sales agent?" (owner retest, 27 Sep 2026).
-            out["customer_ids"] = [jsc.js_string(i) for i in chosen]
-        dealer_ids = slot.get("dealer_customer_ids")
-        if isinstance(dealer_ids, list) and dealer_ids:
-            # A linked dealer's own ledgers its words named (`engine._top_selling_dealer_scope`).
-            out["customer_ids"] = [jsc.js_string(i) for i in dealer_ids]
-        # The agent and brand the ranking is narrowed by (`engine._top_selling_narrowing`,
-        # owner retest 27 Sep 2026), never a customer.
-        agent_ids = [jsc.js_string(i) for i in (slot.get("agent_ids") or []) if jsc.truthy(i)]
-        agent_ids += [
-            jsc.get(e, "uuid")
-            for e in jsc.array(entities)
-            if isinstance(e, dict) and e.get("entity_type") == "sales_agent" and e.get("uuid")
-        ]
-        if agent_ids:
-            out["sales_agent_ids"] = list(dict.fromkeys(agent_ids))
-        brand_ids = [jsc.js_string(i) for i in (slot.get("brand_ids") or []) if jsc.truthy(i)]
-        if brand_ids:
-            out["brand_ids"] = brand_ids
-        if slot.get("rank_direction") == "bottom":
-            # "cold selling", "least sold": the least sold first.
-            out["direction"] = "bottom"
-        channel = jsc.get(semantic_input, "sales_channel")
-        if jsc.truthy(channel):
-            out["channel"] = jsc.js_string(channel)
-        detail_code = jsc.js_string(slot.get("detail_code") or "").strip()
-        top_n = slot.get("top_n")
-        if detail_code:
-            # A picked row: that code's customers and months, same filters and basis.
-            out["detail_code"] = detail_code
-        elif isinstance(top_n, (int, float)) and not isinstance(top_n, bool) and top_n >= 1:
-            # Owner, 30 Sep 2026: no 100 cap ("100, 200"). Only the shared safety ceiling
-            # bounds it, and never silently: the lane notes it above the reply
-            # (`lanes/business.top_selling_ceiling_note`).
-            from app.services.sales_report_service import TOP_SELLING_N_CEILING
-
-            out["n"] = min(int(top_n), TOP_SELLING_N_CEILING)
-        else:
-            # No N named: the full count and no rows, so the reply states the total
-            # and asks how many (owner, PR #1258 05:32Z) without the whole book being
-            # sent to be counted (review N1). One row comes back as is.
-            out["count_only"] = True
 
     # PLAN-low-stock-report S6 (AC-66/AC-71): this tool's own contract is CODES too - the
     # route resolves warehouse and product CODES, and a UUID would silently match nothing.
@@ -1031,9 +1072,10 @@ def entity_ids_transformer(
         channel = jsc.get(semantic_input, "sales_channel")
         if channel in ("dealer", "project"):
             out["channel"] = channel
+        # SALES-TOTAL-ASK: the basis is the one the person named or answered (`sales_basis_ask`), never
+        # defaulted here.
         basis = jsc.get(semantic_input, "sales_basis")
-        out["basis"] = "delivered"  # the sales analysis route's own default basis
-        if basis in SALES_ANALYSIS_BASES:
+        if basis in SALES_ANALYSIS_BASES:  # never defaulted: `run_fetch` asks the basis first (owner, 27 Oct)
             out["basis"] = basis
         company = jsc.get(semantic_input, "sales_company")
         if jsc.truthy(company):
@@ -1054,6 +1096,12 @@ def entity_ids_transformer(
         out["space_id"] = space_id_or_default(
             space_id if space_id is not None else jsc.get(semantic_input, "space_id")
         )
+
+    # SALES-TARGET-CHAT: the target tool names a period and, at most, customers; never a
+    # product, a warehouse or a row limit.
+    if tool_name == "crm_sales_target_progress":
+        for key in ("product_ids", "warehouse_ids", "limit", "group_by", "top_n"):
+            out.pop(key, None)
 
     # REPORT-ENGINE slice 1b: `crm_report_ask`'s params are settled whole by the lane
     # (`report_ask.route_args`, put on `semantic_input` by `run_fetch`, which hands no
@@ -1229,16 +1277,38 @@ def entity_ids_transformer(
     # per warehouse, a cert answer a row per file), so it is left alone and the list is
     # cut by slicing `product_ids` itself - to the count the customer named (`top_n`),
     # else to `answer.SET_LIST_MAX` (owner ruling, 26 Sep 2026: a set that fits one
-    # message is listed in full; a longer one is answered with its count and a question,
-    # `output_structurer` below). No paging: nothing is kept for a "more".
+    # message is listed in full; SET-STOCK-RENDER, 16 Oct 2026: a longer one lists its
+    # first `SET_LIST_MAX`, `output_structurer` below).
     if trig.get("predicate") is not None and isinstance(out.get("product_ids"), list):
-        out["product_ids"] = out["product_ids"][: _set_list_size(semantic_input)]
+        # Counted in product codes: the same code in another company rides with it
+        # (SET-STOCK-RENDER R4).
+        code_of = {jsc.get(e, "uuid"): jsc.get(e, "code") for e in jsc.array(entities)}
+        listed_codes: list[Any] = []
+        kept: list[Any] = []
+        for pid in out["product_ids"]:
+            code = code_of.get(pid) or pid
+            if code not in listed_codes:
+                if len(listed_codes) >= _set_list_size(semantic_input):
+                    continue
+                listed_codes.append(code)
+            kept.append(pid)
+        out["product_ids"] = kept
         # Reviewer B3 on PR #833: the tool's own DEFAULT row cap (50) cut a listed set
         # short - a stock row per location, a cert row per file - so 40 basins came back
         # as about 8. The listed products need all their rows: ask for the tool's
         # maximum. The header still counts what actually rendered (`output_structurer`).
         if tool_name in SET_ROW_LIMIT:
             out["limit"] = SET_ROW_LIMIT[tool_name]
+        # SET-STOCK-RENDER (owner, 16 Oct 2026): a DESCRIBED set asked "with stock"
+        # prints no location holding none; every other answer, a typed code's included,
+        # keeps the contact's policy.
+        set_predicate = trig.get("predicate")
+        if (
+            tool_name == "crm_inventory_stock_balance_list"
+            and jsc.get(jsc.get(set_predicate, "require"), "stock")
+            and jsc.array(jsc.get(set_predicate, "description"))
+        ):
+            out["hide_zero_locations"] = True
 
     # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids
     # ride the SAME predicate block, straight through under the SAME arg
@@ -1269,7 +1339,8 @@ def entity_ids_transformer(
         # REPORT-ENGINE 1b code review N3: `crm_report_ask`'s route forces the dealer's own
         # links itself (`enforce_customer_scope`), so the lane sends only what was named
         # (no 50-id cap hit, no header listing every account); the check above stays.
-        if requested or tool_name != "crm_report_ask":
+        # SALES-TARGET-CHAT: the target route scopes the contact itself the same way.
+        if requested or tool_name not in ("crm_report_ask", "crm_sales_target_progress"):
             out["customer_ids"] = requested or list(scope_ids)
         out.pop("customer_query", None)
 
@@ -1354,7 +1425,7 @@ CUSTOMER_SCOPED_TOOLS: frozenset[str] = frozenset(
         "crm_order_management_orders_by_product_list",
         "crm_outstanding_report",
         "crm_sales_report",
-        "crm_top_selling_report",
+        "crm_sales_target_progress",
         "crm_report_ask",
         "crm_order_analytics",
         "crm_master_customers_list",
@@ -1445,7 +1516,7 @@ def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
 # output-structurer
 # --------------------------------------------------------------------------- #
 
-_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+_ISO_RE = composers_format.ISO_RE
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
 # Identity is an ALLOW-LIST, not a label test: short, stable, and shared with the renderers.
@@ -1610,62 +1681,10 @@ def _extract_envelope(j: Any) -> dict[str, Any]:
     return empty
 
 
-def _fmt_ts(iso: Any) -> str | None:
-    """`new Date(iso)` then local `getDate()`/`getMonth()`/... - components, verbatim.
-
-    Every captured `last_updated_at` is a NAIVE ISO string, which `new Date` reads as local
-    time and `getDate()` then reads straight back, so the rendered components equal the
-    input's (measured on all 20 `output-structurer` captures). Implemented as a component
-    read rather than through a timezone, which is also what makes it deterministic.
-    """
-    if not jsc.truthy(iso):
-        return None
-    text = jsc.js_string(iso)
-    match = re.match(
-        r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}):(\d{2}))?", text
-    )
-    if not match:
-        return None
-    year, month, day = match.group(1), match.group(2), match.group(3)
-    date = f"{day}/{month}/{year}"
-    hour, minute, second = match.group(4), match.group(5), match.group(6)
-    if hour is None:
-        return date
-    if (int(hour), int(minute), int(second)) == (0, 0, 0):
-        return date  # midnight -> date only
-    return f"{date} {hour}:{minute}:{second}"
-
-
-# The JS renders an empty value and an object joiner with an EM DASH, and the access note
-# with one too. Written as escapes, not as the character: the repo forbids an em dash in
-# anything WE write, and these are neither ours nor prose - they are three literals from a
-# node body that ships, and changing them would change what a customer is sent. Nothing in
-# the 20 graded captures reaches any of the three, so this is faithfulness, not evidence.
-_EM_DASH = "\u2014"
-
-
-def _fmt_value(v: Any) -> str:
-    if v is None or v == "":
-        return _EM_DASH
-    if isinstance(v, bool):
-        return "Yes" if v else "No"
-    if isinstance(v, str):
-        # DO-ASK-SIMPLIFY tester pass 2: a value's own '*' (a product code "*REPLACE")
-        # would pair with the next label's bold marker and leave a stray '*' in WhatsApp.
-        # It prints as the look-alike U+2217, which WhatsApp does not read as formatting.
-        return ((_fmt_ts(v) or v) if _ISO_RE.match(v) else v).replace("*", "\u2217")
-    if isinstance(v, (int, float)):
-        return jsc.js_string(v)
-    if isinstance(v, list):
-        return ", ".join(_fmt_value(x) for x in v)
-    if isinstance(v, dict):
-        parts = [
-            (_fmt_value(x) if isinstance(x, (dict, list)) else jsc.js_string(x))
-            for x in v.values()
-            if x is not None and x != ""
-        ]
-        return f" {_EM_DASH} ".join(parts) if parts else _EM_DASH
-    return jsc.js_string(v)
+# Moved byte for byte into `composers/format.py` (CHAT-COMPOSER S0); the old names stay.
+_fmt_ts = composers_format.timestamp
+_EM_DASH = composers_format.EM_DASH
+_fmt_value = composers_format.value
 
 
 def _has_key(f: Any) -> bool:
@@ -1846,6 +1865,39 @@ _PRODUCT_IDENTITY_LABELS: frozenset[str] = frozenset(
     {"Product Code", "Product Name", "Description", "List Price", "Dimensions", "Company"}
 )
 
+#: Price fields a product set answer drops (CHAT-CODE-LOOKUP R2), by key; the product list's
+#: price pair carries no key, so its label stands in.
+_SET_PRICE_KEYS: frozenset[str] = frozenset({"list_price", "selling_price"})
+_SET_PRICE_LABELS: frozenset[str] = frozenset({"List Price", "Selling Price"})
+
+
+def _group_set_rows(e: dict[str, Any], set_by_code: dict[str, list[str]]) -> None:
+    """CHAT-CODE-LOOKUP R2 (U2.3): the rows that are members of a typed product set drop their
+    price and sit under their own "Set <code>" heading, one block per set; a plain product's
+    row keeps its price and sits under no set (its block comes first, with no heading)."""
+    plain: list[Any] = []
+    by_set: dict[str, list[Any]] = {}
+    for row in e.get("items") or []:
+        fields = row.get("fields") if isinstance(row, dict) else None
+        code = next(
+            (jsc.js_string(f.get("value")).casefold() for f in fields or [] if isinstance(f, dict) and f.get("label") == "Product Code"),
+            None,
+        )
+        owners = set_by_code.get(code) if code else None
+        if not owners:
+            plain.append(row)
+            continue
+        row["fields"] = [
+            f for f in fields
+            if not (isinstance(f, dict) and (f.get("key") in _SET_PRICE_KEYS or (not _has_key(f) and f.get("label") in _SET_PRICE_LABELS)))
+        ]
+        for owner in owners:  # a member of two typed sets sits under each
+            by_set.setdefault(owner, []).append(row)
+    if not by_set:
+        return
+    groups = [{"label": f"Set {code}", "items": rows} for code, rows in by_set.items()]
+    e["groups"] = ([{"label": "", "items": plain}] if plain else []) + groups
+
 _SPEC_KEY_PREFIX = "spec:"
 
 
@@ -1876,9 +1928,19 @@ def _names_a_base_property(norm: str) -> bool:
     return False
 
 
+def _base_property_column(norm: str) -> str | None:
+    """The column an asked base word names (`list_price`, `dimensions`, ...), by the same match
+    `_names_a_base_property` makes."""
+    words = default_policy().kind("product")
+    for w, column in (words.base_property_words if words is not None else {}).items():
+        if norm == w or (" " in w and w in norm):
+            return column
+    return None
+
+
 def _asks_discontinued(req_attrs: list[Any]) -> bool:
-    """DISCONTINUED-ASK: the parser's closed `requested_attributes` vocabulary carries
-    "discontinued" for a status question (`chatbot_parser_prompt.py`, REQUESTED ATTRIBUTES).
+    """DISCONTINUED-ASK: the parser emits the attribute "discontinued" for a status question
+    (whether a product is still sold, still made or discontinued; parser_template.py R-P3-05).
     A parsed field, compared as emitted; nothing here reads the user's message."""
     return any(_normalize_spec_word(a) == "discontinued" for a in req_attrs)
 
@@ -1995,6 +2057,9 @@ def _project_product_specs(
     available", instead of the ordinary "not recorded" line - and instead of, not
     in addition to it.
     """
+    from app.services.chatbot import composers
+
+    composers_on = composers.enabled()
     hidden = frozenset(str(k) for k in (hidden_spec_keys or []))
     vocab_raw = e.get("spec_vocabulary")
     vocab: dict[str, str] = vocab_raw if isinstance(vocab_raw, dict) else {}
@@ -2120,6 +2185,11 @@ def _project_product_specs(
             # per key. A product with no spec fields at all keeps exactly the fields
             # it has today: `base` IS `fields` there.
             fields_out = list(base)
+            if composers_on:
+                # CHAT-COMPOSER P1 (Q3): an EMPTY un-asked base field is left out.
+                fields_out = [
+                    f for f in fields_out if not isinstance(f, dict) or composers_format.present(f.get("value"))
+                ]
             if spec_fields:
                 summary = ", ".join(f"{f.get('label')}: {f.get('value')}" for f in spec_fields)
                 fields_out.append({"key": "specs_summary", "label": "Specs", "value": summary})
@@ -2131,6 +2201,19 @@ def _project_product_specs(
         kept_base = [
             f for f in base if isinstance(f, dict) and f.get("label") in _PRODUCT_IDENTITY_LABELS
         ]
+        missing_lines: list[str] = []
+        if composers_on:
+            # CHAT-COMPOSER P1 / P2 (Q3, R4): an empty base field is left out; one that was
+            # asked for (price, size) says so in one line instead.
+            empty_labels = {f.get("label") for f in kept_base if not composers_format.present(f.get("value"))}
+            kept_base = [f for f in kept_base if f.get("label") not in empty_labels]
+            for norm, _asked_word in asked:
+                column = _base_property_column(norm)
+                label = {"list_price": "List Price", "dimensions": "Dimensions"}.get(column or "")
+                if label and label in empty_labels:
+                    line = composers_format.missing_line(composers_format.noun(label), jsc.js_string(code))
+                    if line not in missing_lines:
+                        missing_lines.append(line)
         spec_norms: list[tuple[dict[str, Any], str, str]] = []  # (field, norm_key, norm_label)
         for f in spec_fields:
             raw_key = jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):]
@@ -2167,7 +2250,13 @@ def _project_product_specs(
             # 2. a spec miss - UNLESS the word names a base property, which is already
             #    on the page (kept_base, above) and needs no "not recorded" line.
             if not hit and not _names_a_base_property(norm):
-                missed_codes[norm].append(jsc.js_string(code))
+                if composers_on:
+                    word = composers_format.noun(vocab_label_for(norm) or _asked_word)
+                    missing_lines.append(composers_format.missing_line(word, jsc.js_string(code)))
+                else:
+                    missed_codes[norm].append(jsc.js_string(code))
+        if missing_lines:
+            it["missing_lines"] = missing_lines
         it["fields"] = kept_base + matched
 
     # 3. one miss line per asked word, rendered ONCE after the items - ordinary
@@ -2298,11 +2387,24 @@ def sales_report_product_code(entities: Any, semantic_input: Any) -> str:
         return ""
     if len(codes) == 1:
         return codes[0]
+    shared = shared_code_prefix(codes)
+    return shared if len(shared) >= _SALES_REPORT_MIN_PREFIX else codes[0]
+
+
+def is_mixed_code_set(codes: list[str]) -> bool:
+    """Several codes that share no usable prefix: a word that fanned out to unrelated products."""
+    return len(codes) > 1 and len(shared_code_prefix(codes)) < _SALES_REPORT_MIN_PREFIX
+
+
+def shared_code_prefix(codes: list[str]) -> str:
+    """The longest prefix every code shares, or "" when there is none (or no code)."""
+    if not codes:
+        return ""
     shared = codes[0]
     for code in codes[1:]:
         while shared and not code.upper().startswith(shared.upper()):
             shared = shared[:-1]
-    return shared if len(shared) >= _SALES_REPORT_MIN_PREFIX else codes[0]
+    return shared
 
 
 #: The offer BLOCK the presenter appended, in either form: R9's single sentence, or the
@@ -2428,7 +2530,7 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         if offer
         else None
     )
-    return {
+    out = {
         # Review round (26 Sep 2026), SF1: `has_result: False` alone did not stop
         # `turn/compose.py` printing this same bare string VERBATIM whenever it rode
         # in on `lane_text` (only the literal substring "Error executing tool" was
@@ -2455,6 +2557,24 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         # prints above a delivery-order answer. Read there off this marker.
         "outstanding_report": True,
     }
+    window = envelope.get("group_window")
+    if isinstance(window, dict):
+        from app.services.chatbot import composers
+
+        if composers.enabled():
+            # CHAT-COMPOSER Lists L2: the engine arms the carry so a bare "more" pages the groups.
+            o, k, t = window.get("offset"), window.get("shown"), window.get("total")
+            if all(isinstance(v, int) and not isinstance(v, bool) for v in (o, k, t)):
+                nxt = max(0, min(OUTSTANDING_GROUP_PAGE, t - o - k))
+                if nxt > 0 or o > 0:
+                    out["set_window"] = {
+                        "first": o + 1,
+                        "last": o + k,
+                        "total": t,
+                        "next": nxt,
+                        "carry": {"report_groups": True, "total": t, "shown": o + k if k else o},
+                    }
+    return out
 
 
 def _sales_report_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -2579,6 +2699,56 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: SALES-TARGET-CHAT: the lane's own words for the target route's refusals (T4-2, T4-6). The
+#: route's `sales_target_not_available` (staff, unclassified) reads as not enabled.
+SALES_TARGET_NOT_ENABLED_MESSAGE = "Sales target is not enabled for your account."
+SALES_TARGET_OWN_ACCOUNTS_MESSAGE = "I can only share targets for your own accounts."
+_SALES_TARGET_ERROR_TEXT = "I could not fetch the sales target just now, please try again."
+_SALES_TARGET_REFUSALS = {
+    "customer_not_permitted": SALES_TARGET_OWN_ACCOUNTS_MESSAGE,
+    "sales_target_not_enabled": SALES_TARGET_NOT_ENABLED_MESSAGE,
+    "sales_target_not_available": SALES_TARGET_NOT_ENABLED_MESSAGE,
+}
+
+
+def sales_target_refusal(envelope: Any) -> str | None:
+    """The lane's line for a target route refusal (an MCP error envelope with a 403), else None."""
+    if not isinstance(envelope, dict) or envelope.get("status_code") != 403:
+        return None
+    detail = envelope.get("detail") if isinstance(envelope.get("detail"), dict) else {}
+    return _SALES_TARGET_REFUSALS.get(jsc.js_string(detail.get("code") or ""))
+
+
+def _sales_target_output(result: Any) -> dict[str, Any]:
+    """`crm_sales_target_progress` never goes through the generic envelope: the presenter's
+    text is the reply, a route refusal arrives as the MCP error envelope (`detail.code`) and
+    is worded here, and a result or a refusal is a final answer (no escalate offer)."""
+    envelope = result if isinstance(result, dict) else {}
+    refusal = sales_target_refusal(envelope)
+    if refusal:
+        text, has_result = refusal, True
+    elif envelope.get("has_result") is True and jsc.truthy(envelope.get("response")):
+        text, has_result = jsc.js_string(envelope.get("response")), True
+    else:
+        text, has_result = _SALES_TARGET_ERROR_TEXT, False
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_ask": None,
+        "outstanding_report": True,
+    }
+
+
 #: The heading the presenter prints above the drill-down options (`_sales_report`).
 _SALES_REPORT_DRILL_HEADING = "*Drill down:*"
 
@@ -2599,6 +2769,34 @@ _SALES_ANALYSIS_ERROR_TEXT = "Could not run the sales report right now."
 #: The presenter's own miss line for `crm_sales_report` (`presenters.SALES_REPORT_MISS_MESSAGE`,
 #: AC-1607): the one way a rendered report says it found no month.
 SALES_REPORT_MISS_MESSAGE = "No sales found."
+
+
+#: Chat fix PR-B S7 (AC-B9): the sales analysis's "Sorento or Mocha?" as an open question
+#: (`compose._lane_question` arms it; `lanes.business.sales_analysis_company_reply` reads the
+#: answer), and the parser fields the asked analysis re-runs with.
+SALES_ANALYSIS_HELD_KEYS = (
+    "date_filter_start", "date_filter_end", "group_by", "sales_channel", "sales_basis", "top_n",
+)
+
+
+def _sales_analysis_company_ask(result: Any, ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """The route's company question (`status: clarify` with its `options`), as the lane's own
+    question: one option per company, and the analysis it was asked about held to re-run.
+    None for every other answer."""
+    names = result.get("company_options") if isinstance(result, dict) else None
+    names = [jsc.js_string(n).strip() for n in jsc.array(names) if jsc.js_string(n).strip()]
+    if len(names) < 2:
+        return None
+    semantic_input = ctx.get("semantic_input") if isinstance(ctx.get("semantic_input"), dict) else {}
+    return {
+        "kind": SALES_ANALYSIS_COMPANY_KIND,
+        "last_result_set": [{"idx": i, "label": name} for i, name in enumerate(names, start=1)],
+        # `offer_text`: a re-ask prints the route's own question again (`compose_question`).
+        "filters": {
+            **{key: semantic_input.get(key) for key in SALES_ANALYSIS_HELD_KEYS},
+            "offer_text": jsc.js_string(result.get("response") or "").strip() or None,
+        },
+    }
 
 
 def _low_stock_report_output(result: Any, *, fallback: str = _LOW_STOCK_ERROR_TEXT) -> dict[str, Any]:
@@ -2690,90 +2888,68 @@ def _forms_browse_ask(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] 
     }
 
 
-def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
-    """PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 9. The
-    presenter's minimal envelope (`presenters._top_selling_envelope`) is the reply
-    verbatim, beside the two sibling reports: the ranking carries its own header, so
-    the generic search-scope header is skipped (`outstanding_report`, AC-1958).
-
-    * A ranking hit arms its printed rows as a sticky `top_selling_pick` roster (owner,
-      PR #1258 05:32Z: the list behaves like the customer and product pickers), through
-      the same `outstanding_ask` hand-off the detail offers use; `compose._lane_question`
-      builds it with `turn/pending.top_selling_pick`.
-    * The how-many reply, the detail reply and a refusal arm nothing (`result_set` is
-      empty on all three), so an open list stays open across a detail.
-    * `has_result: false` is the miss (AC-1957): the not-found path, escalate offer and
-      all."""
-    envelope = result if isinstance(result, dict) else {}
-    semantic_input = ctx.get("semantic_input") if isinstance(ctx.get("semantic_input"), dict) else {}
-    if "response" in envelope:
-        text = jsc.js_string(envelope.get("response") or "")
-        # Owner retest (27 Sep 2026): a ranking with no sales is an ANSWER ("No sales
-        # found." under its own header), never "Could not find order" and never the
-        # escalation offer with its routing picker.
-        has_result = envelope.get("has_result") is True or (
-            envelope.get("result_type") == "top_selling" and bool(text.strip())
-        )
-    else:
-        text = result if isinstance(result, str) else jsc.js_string(result)
-        has_result = bool(text.strip())
-    notes = [jsc.js_string(n) for n in jsc.array(semantic_input.get("top_selling_notes")) if jsc.truthy(n)]
-    if notes and text.strip():
-        text = "\n".join(notes) + "\n\n" + text
-    rows = [r for r in jsc.array(envelope.get("result_set")) if isinstance(r, dict)]
-    slot = semantic_input.get("top_selling") if isinstance(semantic_input.get("top_selling"), dict) else {}
-    outstanding_ask = (
-        {
-            "kind": "top_selling_pick",
-            "last_result_set": rows,
-            "filters": {"tool": "crm_top_selling_report", **{k: v for k, v in slot.items() if k != "detail_code"}},
-        }
-        if rows and envelope.get("result_type") == "top_selling"
-        else None
-    )
-    return {
-        # CHAT-LANGUAGE slice 3: the roster above came from the English envelope; the notes and
-        # the ranking are localized last, line by line.
-        "response": (ctx.get("localizer") or IDENTITY).lines(text),
-        "response_intro": None,
-        "answers": [],
-        "attachments": [],
-        "action_links": [],
-        "last_updated_at": None,
-        "has_result": has_result,
-        "alternatives": [],
-        "relaxed_axis": None,
-        "field_access": None,
-        "requested_attributes": [],
-        "keys_served": False,
-        "outstanding_ask": outstanding_ask,
-        "outstanding_report": True,
-        # The how-many reply ASKS (reviewer B2, PR #1273): recorded on the slot so the
-        # next bare number is its count, while a list or a single row asks nothing and
-        # the next ask naming the ranking starts fresh.
-        "top_selling_asked": "how_many" if envelope.get("result_type") == "top_selling_how_many" else None,
-        # The item codes the ranking listed, in rank order: an outstanding ask after it
-        # asks about exactly these (fix lane round 8, `apply._hop_to_report`). An empty
-        # list on a ranking that listed none (how many, no sales, a category ranking),
-        # None on a detail or a refusal, which leave the listed ranking standing.
-        "top_selling_codes": (
-            [jsc.js_string(r.get("code")) for r in rows if r.get("entity_type") == "product" and jsc.truthy(r.get("code"))]
-            if envelope.get("result_type") in ("top_selling", "top_selling_how_many")
-            else None
-        ),
-        "top_selling_drop": list(semantic_input.get("top_selling_drop") or []) or None,
-    }
-
-
 #: The line for a `crm_report_ask` body the presenter never rendered.
 _REPORT_ASK_ERROR_TEXT = "Could not run the sales report right now."
+
+
+#: The row-pick offers the presenter appends to a ranking (`presenters._REPORT_ASK_OFFERS`), mirrored once so a
+#: reply that arms no pick (a row's detail, a comparison) can drop the one it must not promise.
+_ROW_PICK_OFFERS = (
+    "Reply with a rank number to see that item's customers and months.",
+    "Reply with a rank number to see that category's top items.",
+    "Reply with a rank number to see that sales agent's customers and months.",
+    "Reply with a rank number to see that customer's products and months.",
+)
+
+#: An undelivered-orders total's own offer (owner 28 Oct 09:30; `presenters._ASK_SO_LIST_OFFER`), dropped the same way.
+_SO_LIST_OFFER = "Reply 1 for the sales order list."
+
+
+#: The filter word the route's `not_applied` names each route param by.
+_ARG_FILTERS = {
+    "product_code": "product", "product_ids": "product", "brand_ids": "brand", "category_ids": "category",
+    "spec": "spec", "warehouse_codes": "location", "channel": "channel", "customer_ids": "customer",
+    "sales_agent_ids": "sales_agent", "customer_agent_ids": "customer_agent",
+}
+
+
+def _sole_subject_question(envelope: dict[str, Any], args: Any) -> str | None:
+    """REPORT-UNIFY Q4: when every filter the ask named is one the route could not apply (a product on unpaid
+    invoices) and nothing is grouped, the figure is not what was asked: ask instead of printing it."""
+    skipped = [n for n in jsc.array(envelope.get("not_applied")) if isinstance(n, dict)]
+    if not skipped or not isinstance(args, dict) or args.get("group_by"):
+        return None
+    named = {word for key, word in _ARG_FILTERS.items() if args.get(key)}
+    if not named or not named <= {n.get("filter") for n in skipped}:
+        return None
+    labels = ", ".join(dict.fromkeys(jsc.js_string(n.get("label") or "") for n in skipped))
+    words = "; ".join(dict.fromkeys(jsc.js_string(n.get("words") or "") for n in skipped))
+    return f"{labels}: {words}. Which customer or sales agent do you want?"
+
+
+def _with_not_applied(text: str, words: list[str]) -> str:
+    """REPORT-UNIFY (plan 2.4): the parsed filters the route has no param for, said once under the header: they
+    join the presenter's own "Not applied:" line when it printed one, else a line of their own after the header."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("Not applied:"):
+            lines[i] = line + "; " + "; ".join(words)
+            return "\n".join(lines)
+    lines.insert(1, "Not applied: " + "; ".join(words))
+    return "\n".join(lines)
+
+
+def _without_row_offers(text: str) -> str:
+    for offer in _ROW_PICK_OFFERS:
+        text = text.replace("\n\n" + offer, "")
+    return text.replace("\n\n" + _SO_LIST_OFFER, "")
 
 
 def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """REPORT-ENGINE slice 1b: the presenter's text (`presenters._report_ask`) is the reply,
     verbatim. It names its own scope (basis, filters, period), so the generic search-scope
     header is skipped (`outstanding_report`), and a ranking with no sales ("No sales found
-    for ...") is an answer, never the miss lane (the top selling ruling, 27 Sep 2026)."""
+    for ...") is an answer, never the miss lane (owner ruling, 27 Sep 2026)."""
     envelope = result if isinstance(result, dict) else {}
     text = jsc.js_string(envelope.get("response") or "").strip() if "response" in envelope else ""
     # The args a ranking that ran was asked with, held for a refine (`Focus.sales_ranking_frame`).
@@ -2782,17 +2958,54 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     note = semantic_input.get("report_ask_note") if isinstance(semantic_input, dict) else None
     if note and text:
         text = f"{note}\n\n{text}"
+    unapplied = semantic_input.get("report_ask_not_applied") if isinstance(semantic_input, dict) else None
+    if unapplied and text:
+        text = _with_not_applied(text, [jsc.js_string(u) for u in jsc.array(unapplied)])
     # REPORT-DRILLDOWN: the rows the ranking printed, with their keys, ride on the frame
     # (`shown`), so "these agents" next turn means exactly them. Never a route param.
     drill = envelope.get("drill_rows")
-    frame = dict(args) if text and isinstance(args, dict) else None
+    detail = isinstance(semantic_input, dict) and bool(semantic_input.get("report_ask_detail"))
+    frame = dict(args) if text and isinstance(args, dict) and not detail else None  # a detail leaves the ranking on screen
+    pick = None
     if frame is not None:
         frame.pop("shown", None)
         if isinstance(drill, dict) and drill.get("group_by") == frame.get("group_by") and drill.get("rows"):
             frame["shown"] = drill
+            if frame.get("group_by") in ("product", "category", "sales_agent", "customer") and not frame.get("compare_to"):
+                # REPORT-SMART-L R3c (owner Q2 b), R5 B (owner b2): an item / category / sales agent / customer ranking
+                # is a pick list; a rank number opens that row's detail, on this engine
+                # (`turn/pending.top_selling_pick`, `apply._answer_top_selling_pick`).
+                pick = {
+                    "kind": "top_selling_pick",
+                    "last_result_set": [
+                        # A category is printed (and so picked) by its code.
+                        {"idx": i, "label": r.get("code") or r.get("name"), "code": r.get("code") or r.get("name"),
+                         "entity_type": {"category": "category", "sales_agent": "sales_agent", "customer": "customer"}.get(frame["group_by"], "product"), "keys": list(r.get("keys") or [])}
+                        for i, r in enumerate(jsc.array(drill.get("rows")), start=1) if isinstance(r, dict)
+                    ],
+                    "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
+                }
+        if not frame.get("group_by") and frame.get("basis") == "outstanding" and _SO_LIST_OFFER in text:
+            # Owner 28 Oct 09:30 (AC-RU-17a): an undelivered-orders total offers the open sales orders behind it; "1"
+            # re-runs THIS frame grouped by sales order (`report_ask.settle`, `so_list_outcome`).
+            from app.services.chatbot.lanes.business.report_ask import SO_LIST
+
+            pick = {
+                "kind": "top_selling_pick",
+                "last_result_set": [{"idx": 1, "label": "Sales order list", "code": SO_LIST, "entity_type": "sales_order", "keys": []}],
+                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": SO_LIST}},
+            }
+    question = _sole_subject_question(envelope, args)
+    if question:
+        text, frame, pick = question, None, None
+    if pick is None:
+        text = _without_row_offers(text)  # an offer for a list this reply never armed would hand the next number to an older list
     return {
+        "outstanding_ask": pick,
         "sales_ranking_frame": frame,
-        "response": text or _REPORT_ASK_ERROR_TEXT,
+        # REPORT-SMART-L R3a: the fixed lines (filter labels, header words) follow the contact's language, as
+        # every other answer's do (AC-CL33); rank lines and figures pass through unchanged, English is byte-identical.
+        "response": ((ctx or {}).get("localizer") or IDENTITY).lines(text or _REPORT_ASK_ERROR_TEXT),
         "response_intro": None,
         "answers": [],
         "attachments": [],
@@ -2831,6 +3044,11 @@ _LOCALIZED_TOOLS = frozenset(
 
 def _field_label(loc: Localizer, f: Any) -> str:
     """The printed label of a field: translated when the localizer knows it, else as sent."""
+    from app.services.chatbot import composers
+
+    if isinstance(f, dict) and "label" in f and composers.enabled():
+        # CHAT-COMPOSER: one label for the same key across incoming views.
+        f = {**f, "label": composers_format.label(f)}
     label = jsc.js_string(jsc.get(f, "label", jsc.UNDEFINED))
     return loc.label(f) if isinstance(f, dict) and "label" in f else label
 
@@ -2942,10 +3160,10 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         return _outstanding_report_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_sales_report":
         return _sales_report_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_sales_target_progress":
+        return _sales_target_output(result)
     if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
         return _low_stock_report_output(result)
-    if jsc.js_string(ctx.get("tool") or "") == "crm_top_selling_report":
-        return _top_selling_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_report_ask":
         return _report_ask_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_sales_analysis":
@@ -2955,6 +3173,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         return {
             **_low_stock_report_output(result, fallback=_SALES_ANALYSIS_ERROR_TEXT),
             "own_header": True,
+            "outstanding_ask": _sales_analysis_company_ask(result, ctx),
         }
     e = _file_rows(_extract_envelope(result), links=bool(ctx.get("files_as_links")))
     if ctx.get("portal_intro") and any(isinstance(a, dict) and a.get("type") == "portal_link" for a in e.get("action_links") or []):
@@ -3052,6 +3271,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         if axis_perm is not None and axis_perm not in granted:
             e["groups"] = []
             e["group_by_dropped"] = axis
+
+    if ctx.get("set_by_code") and not e.get("groups"):
+        _group_set_rows(e, ctx["set_by_code"])
 
     # -- requested-attribute projection ------------------------------------- #
     # The CRM dumps every clearance field the caller may see, by design: it prevents the
@@ -3346,8 +3568,14 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         and isinstance(e.get("items"), list)
         and len(e["items"])
     )
+    rows_start = len(msg)  # CHAT-COMPOSER: where this set's rows begin (page cut below)
+    row_ends: list[int] = []  # the message offset each printed row ends at
+    row_items: list[Any] = []  # the item behind each printed row
+    row_idx: list[int] = []  # its index in the answers list (the summary list on a summary page)
+    question_at: int | None = None  # where a dealer quantity question starts
+    links_from: int | None = None  # where a summary page's action links begin
     if qs_render:
-        for si in e["summary_items"]:
+        for si_pos, si in enumerate(e["summary_items"]):
             if not isinstance(si, dict) or not isinstance(si.get("fields"), list):
                 continue  # a hostile entry is skipped, never thrown on
             summary_lines = "\n".join(
@@ -3359,6 +3587,10 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             )
             if summary_lines:
                 msg += summary_lines + "\n\n"
+                row_ends.append(len(msg))
+                row_items.append(si)
+                row_idx.append(si_pos)
+        links_from = len(msg)  # the action links that follow stay on a cut page
 
     action_links = e.get("action_links") or []
     for i, link in enumerate(action_links):
@@ -3380,9 +3612,12 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     set_row_offset = int(jsc.get(set_predicate, "offset") or 0) if set_predicate is not None else 0
 
     def _item_line(position: int, it: Any, *, numbered: bool = True) -> str:
+        from app.services.chatbot import composers
+
+        composers_on = composers.enabled()
         field_lines = "\n".join(
             f"*{_field_label(loc, f)}:* "
-            f"{_fmt_value(jsc.get(f, 'value'))}"
+            f"{_fmt_value(composers_format.money_field(f) if composers_on else jsc.get(f, 'value'))}"
             for f in (jsc.get(it, "fields") or [])
         )
         # An item with no fields at all is named by its own title: the stock tool's
@@ -3396,6 +3631,10 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # `availability` item's title already starts "<code> x <Q>:", so it is not
         # numbered (plan sample (g) shows plain lines, not a numbered list).
         line = field_lines if not numbered else f"{position}. {field_lines}"
+        if composers_on:
+            # CHAT-COMPOSER P2: an asked attribute with no value, one line in this product's block.
+            for missing in jsc.array(jsc.get(it, "missing_lines")):
+                line += f"\n{jsc.nullish_str(missing)}"
         flags = jsc.get(it, "flags")
         if status_ask:
             # Q1 (a): the status alone is the status line; beside another property it is a
@@ -3448,6 +3687,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             for it in grp["items"]:
                 position += 1
                 msg += _item_line(position, it) + "\n\n"
+                row_ends.append(len(msg))
+                row_items.append(it)
+                row_idx.append(position - 1)
 
     # Ported from PR #1118 (not merged), review round 3 (Observation B): while ANY
     # product still needs a quantity (D14), `intro` (`_noted_and_missing_question`)
@@ -3482,6 +3724,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                 msg += f"{i + 1 + set_row_offset}. {title}\n\n"
         question = jsc.js_string(e.get("intro") or "").strip()
         if question:
+            question_at = len(msg)
             msg += question + "\n\n"
     printed_status: set[str] = set()
     for i, it in enumerate(
@@ -3494,6 +3737,10 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                 continue
             printed_status.add(item_text)
         msg += item_text + "\n\n"
+        row_ends.append(len(msg))
+        row_items.append(it)
+        row_idx.append(i)
+    rows_end = len(msg)
     if dealer_incoming and jsc.truthy(e.get("closing")):
         # The presenter's dealer closing is the refer line (`presenters.py`, `closing`);
         # printed through `turn/refer.py` so the turn is marked for Customer asks
@@ -3503,7 +3750,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         msg += refer.sentence() + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
-    for miss in e.get("spec_misses") or []:
+    # A set ask's hidden key the customer named (the route's `predicate.spec_hidden`) is the same
+    # `spec_hidden:<key>` miss, once per key (owner a35818889 (b)).
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    set_hidden = answer_mod.spec_hidden_misses(ctx.get("predicate"))
+    seen_misses = {m.get("key") for m in e.get("spec_misses") or [] if isinstance(m, dict)}
+    for miss in [*(e.get("spec_misses") or []), *(m for m in set_hidden if m["key"] not in seen_misses)]:
         if isinstance(miss, dict):
             msg += f"*{jsc.js_string(miss.get('label', jsc.UNDEFINED))}:* {_fmt_value(miss.get('value'))}\n\n"
 
@@ -3591,9 +3844,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # would render with no leading count/attribute line at all.
     predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
     set_header: str | None = None
-    # A set too long for one message is answered with its count and a question, and no
-    # rows (owner ruling, 26 Sep 2026) - `answers` and the files go with them below, so
-    # neither a positional pick nor an attachment send can reach a row nobody was shown.
+    set_window: dict[str, int] | None = None
+    page_items: list[Any] | None = None
+    # CHAT-RELEASE-1021 (crew answer (b) on #1809): composer off, a file / certificate set
+    # longer than one page is withheld as main withholds it - the count, no rows, no files -
+    # since nothing there pages it and listing it would send every listed product's files.
     set_withheld = False
     if predicate is not None:
         from app.services.chatbot.lanes.business import answer as answer_mod
@@ -3622,26 +3877,26 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # W4: a page that continues a list starts past what was already listed.
         offset = int(jsc.get(predicate, "offset") or 0)
         remaining = max(qualifying_total - offset, 0)
-        if named is None and qualifying_total > answer_mod.SET_LIST_MAX and jsc.get(predicate, "breakdown"):
-            # Fix round 9 on PR #833: the count and the breakdown by the next attribute.
+        from app.services.chatbot import composers
+
+        file_leg = bool(jsc.get(require, "certificate") or jsc.get(require, "attachment_type"))
+        if named is None and file_leg and qualifying_total > answer_mod.SET_LIST_MAX and not composers.enabled():
             shown = 0
             set_withheld = True
-        elif named is None and qualifying_total > answer_mod.SET_LIST_MAX:
-            # Nothing splits the set (one brand, every key alike): list what fits rather
-            # than a bare count with nothing to pick from.
-            shown = min(answer_mod.SET_LIST_MAX, remaining)
         elif named is None:
-            shown = remaining
+            # SET-STOCK-RENDER (owner, 16 Oct 2026: "it should be unified" with the code
+            # answer): a set longer than one reply lists its first `SET_LIST_MAX`, never a
+            # breakdown by the next attribute; the header says "showing 1 to 50".
+            shown = min(answer_mod.SET_LIST_MAX, remaining)
         else:
             shown = min(named, answer_mod.SET_LIST_MAX, remaining)
-        if not set_withheld:
-            # Reviewer B3 on PR #833 (R8/AC-1330 restored): the header states what the
-            # rows show, never what was asked for. A tool that still cut rows at its
-            # cap rendered fewer PRODUCTS than were sent, and the header must say
-            # "Here are the first N" over those, never claim the list is complete.
-            rendered = _rendered_product_count(e.get("items") or [])
-            if rendered is not None and rendered < shown:
-                shown = rendered
+        # Reviewer B3 on PR #833 (R8/AC-1330 restored): the header states what the
+        # rows show, never what was asked for. A tool that still cut rows at its
+        # cap rendered fewer PRODUCTS than were sent, and the header must say
+        # "Here are the first N" over those, never claim the list is complete.
+        rendered = _rendered_product_count(e.get("items") or [])
+        if rendered is not None and rendered < shown and not set_withheld:
+            shown = rendered
         header = answer_mod.build_set_header(
             qualifying_total,
             shown,
@@ -3651,7 +3906,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             not_understood=jsc.get(predicate, "unrecognized_terms"),
             offset=offset,
             previous_total=jsc.get(predicate, "previous_total"),
-            breakdown=jsc.get(predicate, "breakdown"),
+            dimension_fallback=jsc.get(predicate, "dimension_fallback"),
         )
         set_header = header
         # Round 3 W4: the default brand answered, so the reply closes with the others -
@@ -3666,19 +3921,84 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             )
             if line
         )
+        body = msg.strip()
+        footer = f"_{loc.text(f'Data last updated: {ts}')}_" if ts else ""
+        from app.services.chatbot import composers
+
+        paged_msg = None
+        # CHAT-COMPOSER Lists L1 (LD7): a code list never states a total; its last page ends with the
+        # narrow sentence where the "more" line would be.
+        end_note = ""
+        code_list = bool(composers.enabled() and predicate.get("code_list"))
+        if code_list:
+            from app.services.chatbot.composers import sets as composers_sets
+
+            lz = ctx.get("localizer") or IDENTITY
+            end_note = lz.fill(composers_sets.NARROW, n=f"{qualifying_total:,}")
+            header = _without_total(header)
+            if predicate.get("exhausted"):
+                paged_msg = end_note
+        if paged_msg is None and composers.enabled() and shown > 0:
+            paged_msg, set_window, page_items = _set_page(
+                e=e,
+                msg=msg,
+                rows_start=rows_start,
+                rows_end=rows_end,
+                row_ends=row_ends,
+                row_items=row_items,
+                row_idx=row_idx,
+                question_at=question_at,
+                links_from=links_from,
+                source=(
+                    e["summary_items"]
+                    if qs_render
+                    else _rendered_answers(e) if groups_render else (e.get("items") or [])
+                ),
+                loc=loc,
+                footer=footer,
+                other_brands=other_brands,
+                shown=shown,
+                offset=offset,
+                total=qualifying_total,
+                build_header=lambda n: (_without_total if code_list else str)(
+                    answer_mod.build_set_header(
+                        qualifying_total,
+                        n,
+                        set_noun,
+                        require,
+                        description=jsc.get(predicate, "description"),
+                        not_understood=jsc.get(predicate, "unrecognized_terms"),
+                        offset=offset,
+                        previous_total=jsc.get(predicate, "previous_total"),
+                        dimension_fallback=jsc.get(predicate, "dimension_fallback"),
+                    )
+                ),
+                cap=answer_mod.SET_LIST_MAX,
+                end_note=end_note,
+                file_cap=answer_mod.SET_LIST_MAX,
+            )
         if set_withheld:
-            msg = header
+            msg = f"{header}\n\n{other_brands}" if other_brands else header
+        elif paged_msg is not None:
+            msg = paged_msg
+            set_header = msg.split("\n\n", 1)[0]
         else:
-            body = msg.strip()
-            footer = f"_{loc.text(f'Data last updated: {ts}')}_" if ts else ""
             if other_brands:
                 if footer and body.endswith(footer):
                     body = f"{body[: -len(footer)].strip()}\n\n{other_brands}\n\n{footer}"
                 else:
                     body = f"{body}\n\n{other_brands}"
             msg = f"{header}\n\n{body}"
-        if set_withheld and other_brands:
-            msg = f"{msg.strip()}\n\n{other_brands}"
+    else:
+        from app.services.chatbot import composers
+
+        if composers.enabled() and ctx.get("tool") in CODE_LIST_TOOLS and not (plain_lines or stock_ask_render or qs_render or groups_render):
+            code_ids = _code_list_ids(row_items, ctx.get("entities")) if row_items else None
+            if code_ids is not None:
+                msg, set_window, page_items = _code_list_page(
+                    e=e, msg=msg, rows_start=rows_start, rows_end=rows_end, row_ends=row_ends,
+                    row_items=row_items, row_idx=row_idx, ts=ts, loc=loc, ctx=ctx, code_ids=code_ids,
+                )
 
     final_response = msg.strip()
     if so_bucket_refusal:
@@ -3700,16 +4020,39 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # numbered 2 on screen (review, should-fix 4). Flattened in RENDER order, which is
         # the only order the customer can be talking about. Ungrouped, this is `items`
         # unchanged, so nothing else moves.
-        "answers": [] if set_withheld else (_rendered_answers(e) if groups_render else e.get("items")),
+        "answers": (
+            [it for it in (e.get("items") or []) if _row_code(it) in {_row_code(s) for s in page_items}]
+            if qs_render and page_items is not None
+            else page_items
+            if page_items is not None
+            else (_rendered_answers(e) if groups_render else e.get("items"))
+        ),
     }
+    if set_window is not None:
+        out["set_window"] = set_window
+    from app.services.chatbot import composers
+
+    set_files: list[Any] | None = [] if set_withheld else None
+    if set_withheld:
+        out["answers"] = []
+    elif predicate is not None and e.get("attachments") and composers.enabled():
+        from app.services.chatbot.lanes.business import answer as answer_mod
+
+        # CHAT-RELEASE-1021: a counted set sends the files of the products this page lists, at
+        # most one page of them; the rest is never sent at once (crew review of #1809).
+        set_files = _page_files(
+            e.get("attachments") or [],
+            page_items if page_items is not None else (e.get("items") or []),
+            answer_mod.SET_LIST_MAX,
+        )
     # Spread-in, not defaulted: a reply with no summary keeps EXACTLY the keys it has today.
     if qs_render:
-        out["summary_items"] = e["summary_items"]
+        out["summary_items"] = page_items if page_items is not None else e["summary_items"]
     if groups_render:
         out["groups"] = e["groups"]
     out.update(
         {
-            "attachments": [] if set_withheld else (e.get("attachments") or []),
+            "attachments": set_files if set_files is not None else (e.get("attachments") or []),
             "action_links": e.get("action_links") or [],
             "last_updated_at": e.get("last_updated_at") or None,
             "has_result": bool(jsc.truthy(e.get("has_result"))),

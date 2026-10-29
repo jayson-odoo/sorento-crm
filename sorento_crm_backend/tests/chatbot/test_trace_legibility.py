@@ -221,6 +221,70 @@ class TestTraceLegibilityAcrossBranchKinds:
         assert records[0]["summary"] == "AI not allowed for this contact; sent no reply"
         _assert_trace_is_legible(trace)
 
+    def _phone_trace(self, session_factory, monkeypatch, kind, *, template="ok", seed=None, tap=False):
+        from tests.chatbot.test_wa_phone_link_gate import World, _env, _install, _seed_phone_row
+
+        world = World()
+        world.template = template
+        _install(world, monkeypatch)
+        if seed == "row":
+            _seed_phone_row(session_factory, allowed=True)
+        envelope = _env("tap" if tap else "text")
+        result, trace = _run(session_factory, envelope)
+        assert result.branch_kind == kind, result.branch_kind
+        _assert_trace_is_legible(trace)
+        return result, trace
+
+    def test_phone_ask(self, session_factory, stub_parser, stub_access, monkeypatch):
+        stub_parser()
+        stub_access()
+        self._phone_trace(session_factory, monkeypatch, "phone_ask")
+
+    def test_phone_linked(self, session_factory, stub_parser, stub_access, monkeypatch):
+        stub_parser()
+        stub_access()
+        self._phone_trace(session_factory, monkeypatch, "phone_linked", seed="row", tap=True)
+
+    def test_phone_ignored(self, session_factory, seeded, stub_parser, stub_access, monkeypatch):
+        stub_parser()
+        stub_access()
+        self._phone_trace(session_factory, monkeypatch, "phone_ignored", tap=True)
+
+    def test_phone_handoff(self, session_factory, stub_parser, stub_access, monkeypatch):
+        stub_parser()
+        stub_access()
+        self._phone_trace(session_factory, monkeypatch, "phone_handoff", template="skipped")
+
+    def test_log_opportunity(self, session_factory, monkeypatch):
+        """SALES-TARGET-CHAT slice 2: a salesperson logging an opportunity gets the read-back,
+        and the trace of that turn reads as sentences with the lane's own branch label."""
+        from tests.chatbot.test_opportunity_lane import (
+            BATH,
+            _all_four,
+            _install,
+            _options,
+            _salesperson,
+            _say,
+        )
+
+        _salesperson(session_factory)
+        _install(monkeypatch, options={"Bath Idea": _options(BATH)})
+        turn = _say(
+            session_factory,
+            monkeypatch,
+            _all_four(),
+            "log an opportunity: Bath Idea, condo job Taman X, RM 40k, closing mid Dec",
+        )
+        assert turn.result.error is None, turn.result.error
+        assert turn.result.branch_kind == "log_opportunity"
+        row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == turn.result.turn_id).first()
+        trace = row.trace
+        stages = [entry["stage"] for entry in trace if entry.get("kind") is None]
+        assert "received" in stages and "replied" in stages, stages
+        replied = next(entry for entry in trace if entry.get("stage") == "replied")
+        assert "Logging a sales opportunity" in json.dumps(trace), replied
+        _assert_trace_is_legible(trace)
+
     def test_every_declared_branch_kind_has_a_test_above(self) -> None:
         """A new BRANCH_KINDS entry must add a scenario here, not silently go untested.
 
@@ -241,6 +305,11 @@ class TestTraceLegibilityAcrossBranchKinds:
             "business_query",
             "media_denied",
             "ai_not_allowed",
+            "log_opportunity",
+            "phone_ask",
+            "phone_linked",
+            "phone_ignored",
+            "phone_handoff",
         }
         retired_elsewhere_or_flagged = {
             "escalate_offer",

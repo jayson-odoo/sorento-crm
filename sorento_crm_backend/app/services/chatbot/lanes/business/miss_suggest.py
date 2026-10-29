@@ -32,6 +32,7 @@ import re
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
+from app.services.chatbot.head.grounding import NEAR_PICK_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -256,8 +257,14 @@ def _token_candidates(res: Any, *, allowed_types: Any, uuid_keyed: bool) -> list
     Dedupe key is the CODE for every domain except `product_attachment` on the D1 / picker
     lanes, where it is the UUID - a cross-company code twin is then no longer thrown away
     here and survives as its own candidate, which is the whole point of Fix 4.
+
+    Q1: the parser's corrected pick (`NEAR_PICK_KEY`) leads, ahead of any non-exact match, as
+    in the composer's own `answer.miss_token_candidates`; its own row further down is deduped.
     """
     acc: list = []
+    near_pick = jsc.get(res, NEAR_PICK_KEY)
+    if isinstance(near_pick, dict):
+        acc.append(near_pick)
     matches = jsc.get(res, "matches")
     if isinstance(matches, list):
         acc.extend(matches)

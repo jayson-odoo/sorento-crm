@@ -98,7 +98,7 @@ def _second_company(db) -> str:
             "insert into companies (id, code, name, is_active) "
             "values (:i, :c, :n, true)"
         ),
-        {"i": company_id, "c": f"Z{_uid()[:3]}", "n": f"{MARKER} other co"},
+        {"i": company_id, "c": f"Z{uuid.uuid4().hex}", "n": f"{MARKER} other co"},
     )
     db.flush()
     return company_id
@@ -230,7 +230,10 @@ def test_the_picker_lists_only_the_contacts_companies_projects_with_the_company_
         assert mine.id in ids
         assert theirs.id not in ids
         assert rows[0]["company_name"]
-        assert rows[0]["project_code"].startswith("PRJ-")
+        # Staff projects draw from the PPF series too (owner ruling 3, 25 Oct): PPF<yy><mm><nnn>.
+        import re
+
+        assert re.fullmatch(r"PPF\d{4}\d{3}", rows[0]["project_code"]), rows[0]["project_code"]
 
 
 def test_the_picker_spans_every_company_the_contact_is_linked_to():

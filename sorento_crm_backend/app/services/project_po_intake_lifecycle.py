@@ -37,6 +37,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 from app.services.error_handler import AppException
+from app.services.document_extraction import page_failure_reason
 from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     STATE_QUEUED,
     STATE_RUNNING,
@@ -810,7 +811,8 @@ class POIntakeLifecycleMixin:
             version.extraction_error = (
                 "No page of this document could be read. The file is stored; the lines "
                 "can be filled in by hand."
-            )
+                + page_failure_reason(blob["error"] for blob in page_blobs)
+            )[:500]
         else:
             version.extraction_state = STATE_DONE
             version.extraction_error = (

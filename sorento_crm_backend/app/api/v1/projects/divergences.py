@@ -33,7 +33,9 @@ from app.schemas.project_so_divergence import (
     ResolveRowRequest,
 )
 from app.services import project_service as projects
-from app.services.error_handler import AppException, handle_internal_error
+from app.models.project_so import DIVERGENCE_OPEN, DIVERGENCE_RESOLVED
+from app.services.error_handler import AppException, handle_internal_error, handle_unprocessable
+from app.utils.multi_value import multi_values
 from app.services.project_so_divergence_service import ProjectSODivergenceService
 from app.services.project_so_ingest_service import (
     IngestDocument,
@@ -82,7 +84,7 @@ def _assert_can_resolve(db: Session, divergence_id: str, current_user: dict):
     service = ProjectSODivergenceService(db)
     detail = service.get_divergence(divergence_id)
     project = projects.get_project_or_404(db, detail["project_id"])
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
     return service
@@ -92,7 +94,7 @@ def _assert_can_resolve(db: Session, divergence_id: str, current_user: dict):
 
 
 @router.post("/sales-orders/ingest", response_model=IngestResponse)
-async def ingest_sales_order(
+def ingest_sales_order(
     payload: IngestDocumentPayload,
     current_user: dict = Depends(require_permission_with_api_key(EDIT)),
     db: Session = Depends(get_db),
@@ -114,14 +116,14 @@ async def ingest_sales_order(
 
 
 @router.post("/sales-orders/ingest-file", response_model=IngestResponse)
-async def ingest_sales_order_file(
+def ingest_sales_order_file(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
     """Stage 1: the export a CS takes out of AutoCount, read by column heading."""
     try:
-        payload = await file.read()
+        payload = file.file.read()
         if not payload:
             raise AppException(
                 status_code=422, message="That file is empty.", code="so_ingest_empty_file"
@@ -149,8 +151,9 @@ async def ingest_sales_order_file(
 
 
 @router.get("/divergences", response_model=ListResponse[DivergenceRowSummary])
-async def list_divergences(
-    status: Optional[str] = Query(default="open"),
+def list_divergences(
+    # No state is every state (the screen's "Any"); several are OR-ed (FILTER-MULTISELECT PR6).
+    status: Optional[list[str]] = Query(default=None),
     project_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=MAX_PAGE_LIMIT),
@@ -158,18 +161,22 @@ async def list_divergences(
     db: Session = Depends(get_db),
 ):
     """AC-N6: with the age of each, so a stack is visible rather than discovered."""
+    states = multi_values(status)
+    for value in states or []:
+        if value not in (DIVERGENCE_OPEN, DIVERGENCE_RESOLVED):
+            raise handle_unprocessable(f"status: unknown value {value}")
     try:
         if project_id:
             validate_uuid_path(project_id, resource="Project")
         return ProjectSODivergenceService(db).list_divergences(
-            status=status or None, project_id=project_id, page=page, limit=limit
+            status=states, project_id=project_id, page=page, limit=limit
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.get("/divergences/{divergence_id}", response_model=DivergenceDetail)
-async def get_divergence(
+def get_divergence(
     divergence_id: str,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -189,7 +196,7 @@ async def get_divergence(
 @router.post(
     "/divergences/{divergence_id}/rows/{row_id}/resolve", response_model=DivergenceDetail
 )
-async def resolve_divergence_row(
+def resolve_divergence_row(
     divergence_id: str,
     row_id: str,
     payload: ResolveRowRequest,
@@ -215,7 +222,7 @@ async def resolve_divergence_row(
 
 
 @router.get("/divergences/{divergence_id}/corrective-import-file")
-async def corrective_import_file(
+def corrective_import_file(
     divergence_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),

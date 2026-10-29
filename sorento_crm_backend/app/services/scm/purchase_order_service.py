@@ -142,11 +142,22 @@ class PurchaseOrderService:
             self.db, [ln.from_so_line_ref for ln in lines if ln.from_so_line_ref]
         )
 
+    @staticmethod
+    def _shown_book_ref(ln: PurchaseOrderLine, po: PurchaseOrder) -> Optional[str]:
+        # HIDE-REMOVED-LINE-SO: a line AutoCount removed shows no S/O; the stored ref stays.
+        return order_link_service.book_so_ref_of(
+            ln.from_so_line_ref,
+            line_status=ln.line_status,
+            cancelled_by_cancel_doc=ln.cancelled_by_cancel_doc,
+            header_status=po.status,
+        )
+
     def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None, *,
                   allocated_qty: float = 0.0,
                   allocations: Optional[list[dict]] = None,
                   spo_plan: Optional[dict] = None,
-                  book_so_by_ref: Optional[dict[str, str]]) -> dict:
+                  book_so_by_ref: Optional[dict[str, str]],
+                  spos_by_line: Optional[dict[str, list]] = None) -> dict:
         """`book_so_by_ref` is REQUIRED, with no default (review of PR #764, F2/F4). A
         caller that forgot it used to get `book_so_unresolved=True` on every linked line -
         the CRM reading "linked, not held" for orders it actually holds - rather than a
@@ -172,7 +183,13 @@ class PurchaseOrderService:
         # line's `qty_cancelled`, and how each was matched. One read for the order.
         from app.models.autocount_cancel import AutocountCancelLine
         from app.services.autocount_cancel_ingest_service import cancel_sources
+        from app.services.scm import goods_chain
 
+        dead_ids = (
+            goods_chain.dead_po_line_ids(self.db, [ln.id for ln in po.lines])
+            if spos_by_line is not None
+            else set()
+        )
         cancels = cancel_sources(
             self.db, AutocountCancelLine.purchase_order_line_id,
             [ln.id for ln in po.lines if getattr(ln, "qty_cancelled", None)],
@@ -190,7 +207,9 @@ class PurchaseOrderService:
             # count open lines only, exactly as ``scm.on_order_v`` does. Every line is listed
             # either way, each carrying its ``line_status``, so the screen can show a closed
             # line as closed instead of rendering it as one still coming.
-            total_qty += float(ln.qty_ordered or 0)
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            if not ln.removed_unreferenced:
+                total_qty += float(ln.qty_ordered or 0)
             if _is_open_line(ln):
                 open_qty += float(ln.qty_ordered or 0)
                 open_lines += 1
@@ -206,7 +225,7 @@ class PurchaseOrderService:
                 else max(float(ln.qty_ordered or 0) - float(ln.qty_received or 0), 0.0)
             )
             outstanding_qty += line_outstanding
-            if wh_code is None and ln.warehouse is not None:
+            if wh_code is None and ln.warehouse is not None and not ln.removed_unreferenced:
                 wh_code = ln.warehouse.warehouse_code
                 wh_name = ln.warehouse.warehouse_name or ln.warehouse.warehouse_code
             lines.append({
@@ -256,7 +275,17 @@ class PurchaseOrderService:
                 # shared function both surfaces use, `order_link_service.book_so_fields`
                 # (review of PR #764, F5) - it also carries the FOURTH, list-only state
                 # `book_so_by_ref is BOOK_SO_NOT_RESOLVED`.
-                **order_link_service.book_so_fields(ln.from_so_line_ref, book_so_by_ref),
+                **order_link_service.book_so_fields(
+                    self._shown_book_ref(ln, po), book_so_by_ref
+                ),
+                # LINKAGE-UNIFY U4: every SPO line this line was transferred onto, with
+                # where its goods landed or why it brings nothing (`goods_chain`). Only the
+                # detail and update routes pass it; the list leaves the column empty.
+                "spos": (spos_by_line or {}).get(str(ln.id), []),
+                # Owner Q5 (a): the chain's own dead-PO-line rule, so a placement on this
+                # line reads "PO cancelled" here as on the popup. None on the list, which
+                # does not resolve `spos`.
+                "dead_reason": "po_cancelled" if str(ln.id) in dead_ids else None,
             })
         return {
             "id": po.id,
@@ -271,7 +300,8 @@ class PurchaseOrderService:
             ),
             "expected_date": po.expected_date.isoformat() if po.expected_date else None,
             "total_qty": total_qty,
-            "line_count": len(po.lines),
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            "line_count": len([ln for ln in po.lines if not ln.removed_unreferenced]),
             "open_qty": open_qty,
             "open_line_count": open_lines,
             # What is still to ARRIVE across the order, summed off the same per-line rule the
@@ -280,11 +310,13 @@ class PurchaseOrderService:
             "outstanding_qty": outstanding_qty,
             # What the order is worth, summed from the SAME line figures the Lines tab
             # prints, so the header total and the column under it cannot disagree.
-            "total_amount": _order_amount(list(po.lines)),
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            "total_amount": _order_amount([ln for ln in po.lines if not ln.removed_unreferenced]),
             # The currency the order is written IN. The header's own, or the first line
             # that names one - the import states it per row and older orders carry none.
             "currency": po.currency or next(
-                (ln.currency for ln in po.lines if ln.currency), None
+                (ln.currency for ln in po.lines if ln.currency and not ln.removed_unreferenced),
+                None,
             ),
             "lines": lines,
             # What order inquiries have OCCUPIED on this order (section 3.G). The SUM is on
@@ -686,7 +718,7 @@ class PurchaseOrderService:
         )
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[str], supplier: Optional[str],
+             query: Optional[str], status: Optional[Sequence[str] | str], supplier: Optional[str],
              *, product_code: Optional[str] = None,
              outstanding: Optional[bool] = None,
              allocated: Optional[bool] = None,
@@ -704,8 +736,9 @@ class PurchaseOrderService:
             q = q.filter(PurchaseOrder.po_number.in_(
                 [str(number).strip() for number in documents if str(number).strip()]
             ))
-        if status:
-            q = q.filter(PurchaseOrder.status == status)
+        statuses = [status] if isinstance(status, str) else list(status or [])
+        if statuses:
+            q = q.filter(PurchaseOrder.status.in_(statuses))
         if outstanding is not None:
             # The buyer's "at a glance" question (the captain, 20 Aug). The EXACT
             # predicate `_is_on_order` answers per row, so this filter and that row's own
@@ -850,6 +883,8 @@ class PurchaseOrderService:
             .filter(
                 func.lower(func.btrim(Product.product_code)) == product_code.strip().lower(),
                 PurchaseOrderLine.unit_cost.isnot(None),
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                PurchaseOrderLine.removed_unreferenced.is_(False),
             )
             .order_by(
                 PurchaseOrder.issue_date.desc().nullslast(),
@@ -887,6 +922,7 @@ class PurchaseOrderService:
             allocations=self._allocations_for(po),
             spo_plan=spo_plan,
             book_so_by_ref=book_so_by_ref,
+            spos_by_line=self._spos_for(po),
         )
 
     def list_supplier_options(
@@ -997,8 +1033,20 @@ class PurchaseOrderService:
         # Resolved here too, or the S/O column blanks out the moment the buyer saves an
         # unrelated edit and the screen renders this response.
         return self.serialize(
-            po, gr_refs.get(po.id), book_so_by_ref=self._book_so_for(po.lines)
+            po,
+            gr_refs.get(po.id),
+            book_so_by_ref=self._book_so_for(po.lines),
+            spos_by_line=self._spos_for(po),
         )
+
+    def _spos_for(self, po: PurchaseOrder) -> dict[str, list]:
+        """LINKAGE-UNIFY U4: by line id, the SPO lines each line was transferred onto, one
+        read for the order - the same reader the order inquiry's PO popup calls."""
+        # Local import: `goods_chain` pulls in the supply engine, which this module must
+        # not load at import time.
+        from app.services.scm import goods_chain
+
+        return goods_chain.spo_lines_of(self.db, [str(ln.id) for ln in po.lines])
 
     def _upsert_lines(self, po: PurchaseOrder, incoming: list) -> None:
         """Reconcile ``po.lines`` against the payload IN PLACE, never delete + recreate.

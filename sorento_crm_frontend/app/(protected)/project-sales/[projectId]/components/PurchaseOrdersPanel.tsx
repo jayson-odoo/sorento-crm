@@ -2,8 +2,10 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import type { ColumnDef } from '@tanstack/react-table';
+import type { ColumnDef, ExpandedState } from '@tanstack/react-table';
 import {
+  ChevronDown,
+  ChevronRight,
   Pencil,
   Plus,
   Trash2,
@@ -13,7 +15,17 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { toast } from '@/lib/toast';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
@@ -21,10 +33,17 @@ import {
   usePurchaseOrders,
 } from '../../_shared/hooks/useProjects';
 import type { Project, ProjectPurchaseOrder } from '../../_shared/types/project.types';
+import { useDeliverySchedules } from '../../_shared/hooks/useDeliverySchedules';
+import { useProjectSalesOrders } from '../../_shared/hooks/useProjectSalesOrders';
+import type { ProjectSalesOrderRow } from '../../_shared/types/projectSalesOrder.types';
+import type { DeliverySchedule } from '../../_shared/types/deliverySchedule.types';
+import { DeliveryScheduleUploadDialog } from './DeliveryScheduleUploadDialog';
+import { formatUnits } from './POLinesProgressGrid';
 import { formatMyr } from './QuotationsPanel';
 import { PurchaseOrderDialog } from './PurchaseOrderDialog';
 import { POIntakeUploadDialog } from './POIntakeUploadDialog';
 import { projectTabOriginHref } from '../../_shared/lib/reviewOrigin';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 /** Shared with the PO detail page, so a source reads the same in the list and on the record. */
 export const SOURCE_LABELS: Record<string, string> = {
@@ -32,7 +51,27 @@ export const SOURCE_LABELS: Record<string, string> = {
   trading_house: 'Trading house',
 };
 
+/** What this PO still needs, from the list row and its sales orders (no extra request). */
+export function describeNextStep(
+  po: ProjectPurchaseOrder,
+  orders: ProjectSalesOrderRow[] = [],
+): string {
+  if (po.has_document && !po.po_confirmed) return 'Confirm PO';
+  if (!po.has_document && po.line_count === 0) return 'Add the lines';
+  if (!po.schedule_confirmed) return 'Add or confirm the schedule';
+  if (orders.length === 0) return 'Build sales orders';
+  const unpublished = orders.filter(
+    (order) => !['published', 'amended', 'adopted'].includes(order.status),
+  ).length;
+  if (unpublished > 0) return `Publish ${unpublished} sales order${unpublished === 1 ? '' : 's'}`;
+  return 'Sales orders out';
+}
+
 /**
+ * The project's Orders tab (PM-SIMPLIFY AC-O1, AC-O2): one row per customer PO. A row
+ * expands to its schedule and its sales orders; right-click for the row's actions; the PO
+ * number opens the PO's own page, where everything about it lives.
+ *
  * Customer POs against this project (AC-F8).
  *
  * The two signals AC-F9 and AC-F9a ask for are shown side by side and read differently
@@ -56,11 +95,84 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
   const [uploadingFor, setUploadingFor] = React.useState<{
     po: ProjectPurchaseOrder | null;
   } | null>(null);
+  const [scheduleFor, setScheduleFor] = React.useState<ProjectPurchaseOrder | null>(null);
+  const [expanded, setExpanded] = React.useState<ExpandedState>({});
+  const [menuPo, setMenuPo] = React.useState<ProjectPurchaseOrder | null>(null);
+  const schedules = useDeliverySchedules(project.id);
+  const salesOrders = useProjectSalesOrders(project.id, { page: 1, limit: 1000 });
 
-  const rows = React.useMemo(() => purchaseOrders.data ?? [], [purchaseOrders.data]);
+  const [search, setSearch] = React.useState('');
+  // Client-side on purpose, as on the Quotations tab: a project's POs are all in memory and
+  // unpaged. The box lives in the shared list toolbar so the card header stays one row.
+  const rows = React.useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const all = purchaseOrders.data ?? [];
+    if (!needle) return all;
+    return all.filter((row) =>
+      [row.po_number, row.issuing_party_name, row.scope_label, row.po_source]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [purchaseOrders.data, search]);
+  const schedulesByPo = React.useMemo(() => {
+    const out = new Map<string, DeliverySchedule[]>();
+    for (const schedule of schedules.data ?? []) {
+      out.set(schedule.purchase_order_id, [...(out.get(schedule.purchase_order_id) ?? []), schedule]);
+    }
+    return out;
+  }, [schedules.data]);
+  const ordersByPo = React.useMemo(() => {
+    const out = new Map<string, ProjectSalesOrderRow[]>();
+    for (const order of salesOrders.data?.data ?? []) {
+      if (!order.purchase_order_id) continue;
+      out.set(order.purchase_order_id, [...(out.get(order.purchase_order_id) ?? []), order]);
+    }
+    return out;
+  }, [salesOrders.data]);
 
   const columns = React.useMemo<ColumnDef<ProjectPurchaseOrder>[]>(
     () => [
+      {
+        id: 'expand',
+        header: () => <span className="sr-only">Schedule and sales orders</span>,
+        cell: ({ row }) => (
+          <Button
+            mode="icon"
+            variant="ghost"
+            size="sm"
+            className="size-6"
+            onClick={(event) => {
+              event.stopPropagation();
+              row.toggleExpanded();
+            }}
+            aria-label={
+              row.getIsExpanded()
+                ? `Hide the schedule and sales orders of ${row.original.po_number}`
+                : `Show the schedule and sales orders of ${row.original.po_number}`
+            }
+          >
+            {row.getIsExpanded() ? (
+              <ChevronDown className="size-4" />
+            ) : (
+              <ChevronRight className="size-4" />
+            )}
+          </Button>
+        ),
+        size: 44,
+        enableHiding: false,
+        enableResizing: false,
+        meta: {
+          headerTitle: 'Schedule and sales orders',
+          expandedContent: (po: ProjectPurchaseOrder) => (
+            <POExpansion
+              schedules={schedulesByPo.get(po.id) ?? []}
+              orders={ordersByPo.get(po.id) ?? []}
+            />
+          ),
+        },
+      },
       {
         id: 'po_number',
         accessorFn: (row) => row.po_number,
@@ -111,6 +223,48 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           ),
         size: 140,
         meta: { headerTitle: 'Value' },
+      },
+      {
+        id: 'delivered',
+        accessorFn: (row) => Number(row.delivered_units ?? 0),
+        header: ({ column }) => <DataGridColumnHeader title="Delivered" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm tabular-nums">
+            {`${formatUnits(row.original.delivered_units)} of ${formatUnits(row.original.ordered_units)}`}
+          </span>
+        ),
+        size: 150,
+        meta: { headerTitle: 'Delivered' },
+      },
+      {
+        id: 'next_delivery_date',
+        accessorFn: (row) => row.next_delivery_date ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Next delivery" column={column} />,
+        cell: ({ row }) =>
+          row.original.next_delivery_date ? (
+            <span className="truncate text-sm">
+              {formatDateInMalaysia(row.original.next_delivery_date)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 130,
+        meta: { headerTitle: 'Next delivery' },
+      },
+      {
+        id: 'next_step',
+        accessorFn: (row) => describeNextStep(row, ordersByPo.get(row.id)),
+        header: ({ column }) => <DataGridColumnHeader title="Next step" column={column} />,
+        cell: ({ row }) => (
+          <span
+            className="truncate text-sm"
+            title={describeNextStep(row.original, ordersByPo.get(row.original.id))}
+          >
+            {describeNextStep(row.original, ordersByPo.get(row.original.id))}
+          </span>
+        ),
+        size: 200,
+        meta: { headerTitle: 'Next step' },
       },
       {
         id: 'issuing_party_name',
@@ -198,7 +352,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         size: 180,
         meta: { headerTitle: 'Drift from v1' },
       },
-      ...(project.can_edit
+      ...(canWorkOnProject(project)
         ? [
             {
               id: 'actions',
@@ -251,55 +405,135 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           ]
         : []),
     ],
-    [project.can_edit, project.id, router],
+    [ordersByPo, project.can_edit, project.approval_state, project.id, router, schedulesByPo],
   );
+
+  const openPo = (po: ProjectPurchaseOrder) => router.push(`/project-sales/${project.id}/pos/${po.id}`);
 
   return (
     <>
+      <ContextMenu modal={false}>
+        <ContextMenuTrigger asChild>
+          <div
+            // Capture phase: a right-click outside a PO row stops here, so the browser's own
+            // menu shows instead of an empty one.
+            onContextMenuCapture={(event) => {
+              const rowEl = (event.target as Element).closest('[data-po-id]');
+              const po = rows.find((row) => row.id === rowEl?.getAttribute('data-po-id'));
+              if (!po) {
+                event.stopPropagation();
+                return;
+              }
+              setMenuPo(po);
+            }}
+          >
       <PanelDataGrid
         title="Purchase orders"
         // The total is a footer row INSIDE the table now, under the Value column it sums, and
         // the count comes from the standard pagination bar ("1 - 1 of 1"). "N with something to
         // check" is gone outright: it named no PO and led nowhere, and the To check COLUMN
         // already says which row and what about it.
-        toolbar={
-          <>
-            {project.can_edit && (
-              <>
+        // The app's list toolbar, as on the Quotations tab: Columns on the left, then the
+        // Actions menu and the primary at the right end. Recording by hand is the rarer way
+        // in, so it sits in Actions and the upload stays the one primary button.
+        toolbar={({ table }) => (
+          <DataGridListToolbar
+            table={table}
+            exportConfig={false}
+            alignActionsEnd
+            searchSlot={
+              <ListSearchInput
+                type="search"
+                inputClassName="[&::-webkit-search-cancel-button]:appearance-none"
+                value={search}
+                onChange={setSearch}
+                placeholder="Search POs"
+                aria-label="Search POs"
+                className="w-full sm:w-64"
+              />
+            }
+            secondaryActionsAsMenu
+            secondaryActions={
+              canWorkOnProject(project)
+                ? [
+                    {
+                      key: 'record',
+                      label: 'Record a PO',
+                      icon: Plus,
+                      onClick: () => setCreating(true),
+                    },
+                  ]
+                : []
+            }
+            primaryAction={
+              canWorkOnProject(project) ? (
                 <Button type="button" size="sm" onClick={() => setUploadingFor({ po: null })}>
                   <Upload className="size-4" aria-hidden />
                   Upload a PO document
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setCreating(true)}
-                >
-                  <Plus className="size-4" aria-hidden />
-                  Record a PO
-                </Button>
-              </>
-            )}
-          </>
-        }
+              ) : undefined
+            }
+          />
+        )}
         columns={columns}
         rows={rows}
         getRowId={(row) => row.id}
         listingKey="projects.projects.view::project-purchase-orders"
         isLoading={purchaseOrders.isLoading}
         error={purchaseOrders.isError ? purchaseOrders.error : undefined}
-        emptyTitle="No PO received yet"
-        searchPlaceholder="Search POs"
-        searchOf={(row) =>
-          [row.po_number, row.issuing_party_name, row.scope_label, row.po_source]
-            .filter(Boolean)
-            .join(' ')
+        emptyTitle={
+          search.trim() && (purchaseOrders.data ?? []).length > 0
+            ? 'Nothing matches that search'
+            : 'No PO received yet'
         }
+        pageResetKey={search}
         // The row is the way in, and it goes to the PO's own page. The documents, the
         // readiness step and ninety lines do not belong under a list.
-        onRowClick={(row) => router.push(`/project-sales/${project.id}/pos/${row.id}`)}
+        onRowClick={openPo}
+        rowAttributes={(row) => ({ 'data-po-id': row.id })}
+        expanded={expanded}
+        onExpandedChange={setExpanded}
+        initialColumnVisibility={{ po_source: false, scope: false }}
       />
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-56">
+          {menuPo && (
+            <>
+              <ContextMenuItem onSelect={() => openPo(menuPo)}>Open purchase order</ContextMenuItem>
+              {canWorkOnProject(project) && (
+                <>
+                  <ContextMenuItem onSelect={() => setScheduleFor(menuPo)}>
+                    Upload delivery schedule
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => setUploadingFor({ po: menuPo })}>
+                    Upload a new PO version
+                  </ContextMenuItem>
+                </>
+              )}
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onSelect={() => {
+                  void navigator.clipboard
+                    ?.writeText(menuPo.po_number)
+                    .then(() => toast.success(`${menuPo.po_number} copied`));
+                }}
+              >
+                Copy PO number
+              </ContextMenuItem>
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+
+      {scheduleFor && (
+        <DeliveryScheduleUploadDialog
+          project={project}
+          purchaseOrder={scheduleFor}
+          onDone={() => setScheduleFor(null)}
+          originHref={`/project-sales/${project.id}/pos/${scheduleFor.id}?tab=deliveries`}
+        />
+      )}
 
 
       {uploadingFor && (
@@ -308,7 +542,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           purchaseOrderId={uploadingFor.po?.id ?? null}
           purchaseOrderNumber={uploadingFor.po?.po_number ?? null}
           onDone={() => setUploadingFor(null)}
-          originHref={projectTabOriginHref(project.id, 'pos')}
+          originHref={projectTabOriginHref(project.id, 'orders')}
         />
       )}
 
@@ -342,4 +576,53 @@ export function describeDrift(po: ProjectPurchaseOrder): string {
   const percent = Number(po.drift_percent);
   const direction = percent < 0 ? 'below' : 'above';
   return `${Math.abs(percent).toFixed(1)}% ${direction} v1 (${formatMyr(po.v1_total)})`;
+}
+
+/** The expanded row: the PO's latest schedule and its sales orders, by status. */
+function POExpansion({
+  schedules,
+  orders,
+}: {
+  schedules: DeliverySchedule[];
+  orders: ProjectSalesOrderRow[];
+}) {
+  const latest = [...schedules].sort((a, b) =>
+    (b.created_at ?? '').localeCompare(a.created_at ?? ''),
+  )[0];
+  const live = orders.filter((order) =>
+    ['published', 'amended', 'adopted'].includes(order.status),
+  ).length;
+  const refs = orders.map((order) => order.autocount_doc_no || order.provisional_ref).sort();
+  return (
+    <dl className="grid gap-3 px-4 py-3 text-sm sm:grid-cols-2">
+      <div className="min-w-0">
+        <dt className="text-xs text-muted-foreground">Delivery schedule</dt>
+        <dd className="break-words">
+          {latest ? (
+            <>
+              {latest.latest_revision_label ?? `Version ${latest.latest_version_no ?? 1}`}
+              {latest.schedule_date ? ` · dated ${formatDateInMalaysia(latest.schedule_date)}` : ''}
+              {' · '}
+              {latest.confirmed_at ? 'confirmed' : 'not confirmed yet'}
+            </>
+          ) : (
+            <span className="text-muted-foreground">None uploaded yet</span>
+          )}
+        </dd>
+      </div>
+      <div className="min-w-0">
+        <dt className="text-xs text-muted-foreground">Sales orders</dt>
+        <dd className="break-words">
+          {orders.length === 0 ? (
+            <span className="text-muted-foreground">Not built yet</span>
+          ) : (
+            <>
+              {refs.length > 2 ? `${refs[0]} to ${refs[refs.length - 1]}` : refs.join(', ')}
+              {` · ${live} published, ${orders.length - live} not yet`}
+            </>
+          )}
+        </dd>
+      </div>
+    </dl>
+  );
 }

@@ -4,14 +4,18 @@ import * as React from 'react';
 import { TriangleAlert } from 'lucide-react';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import type { BoardContribution } from '../../_shared/types/fulfilmentPlanning.types';
+import { useLineSplitOpener } from './lineSplitOpener';
 import { changedFieldsOf } from '../../_shared/lib/boardChangeAnnotations';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -35,7 +39,13 @@ export function BoardChangeTable({
   column,
   compact = false,
   className,
+  contribution,
 }: {
+  /**
+   * OI-LINE-SPLIT (UAC A2): the board line these changes are about. With it, and inside the
+   * board (`LineSplitOpenerContext`), the lightbox offers "Split delivery" for that line.
+   */
+  contribution?: BoardContribution;
   /** ONE change - the shape every caller but the list view's own columns passes. */
   annotation?: BoardChangeAnnotation;
   /**
@@ -56,6 +66,8 @@ export function BoardChangeTable({
   className?: string;
 }) {
   const [open, setOpen] = React.useState(false);
+  const splitOpener = useLineSplitOpener();
+  const canSplit = Boolean(splitOpener && contribution && splitOpener.canOpen(contribution));
   // One list either way, so nothing below has to ask which prop it was called with.
   const changes = annotations ?? (annotation ? [annotation] : []);
   // The icon is addressed by the FIRST change's row (`board-change-icon-<rowId>`) - the only
@@ -109,6 +121,22 @@ export function BoardChangeTable({
           <DialogBody>
             <BoardChangeSummary annotations={changes} />
           </DialogBody>
+          {canSplit ? (
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                Close
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  if (contribution) splitOpener?.open(contribution);
+                }}
+              >
+                Split delivery
+              </Button>
+            </DialogFooter>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>
@@ -167,6 +195,8 @@ export function BoardChangeSummary({
               index > 0 && 'border-t border-border pt-2',
             )}
           >
+            {/* A product swap (S7) is the table's own Product row (PRODUCT-CHANGE-TALLY), so
+                a swap alone still draws the table and never reads as "moved nothing". */}
             {changedFieldsOf(change).length === 0 ? (
               <p className="text-muted-foreground">
                 The book moved this line without changing its quantity, its date or its
@@ -175,18 +205,6 @@ export function BoardChangeSummary({
             ) : (
               <BoardChangeWasNowTable annotation={change} omitHeader onlyMovedFields />
             )}
-
-            {/* The product this line used to be (S7): ONE line, not a cancelled plus an
-                added pair, so the swap reads as the one thing it is. */}
-            {change.productChangedFrom ? (
-              <p
-                data-testid={`board-change-product-${change.rowId}`}
-                className="truncate font-medium"
-                title={`Product changed, was ${change.productChangedFrom}`}
-              >
-                {`Product changed, was ${change.productChangedFrom}`}
-              </p>
-            ) : null}
 
             {/* WHERE IT WENT, once Apply has run (Slice D). Under the change it belongs to,
                 because it answers the question that change raises - the held quantity had to
@@ -319,7 +337,13 @@ export function BoardChangeWasNowTable({
   const moved = onlyMovedFields
     ? new Set(changedFieldsOf(annotation).map((field) => field.key))
     : null;
-  const shows = (field: 'qty' | 'date' | 'decision') => !moved || moved.has(field);
+  const shows = (field: 'product' | 'qty' | 'date' | 'decision') => !moved || moved.has(field);
+  // PRODUCT-CHANGE-TALLY (owner, 28 Oct 2026): a product swapped in place is the FIRST row,
+  // the old code under Was and the line's own (new) code under Now.
+  const productFrom =
+    annotation.productChangedFrom && annotation.productChangedFrom !== annotation.itemCode
+      ? annotation.productChangedFrom
+      : null;
   return (
     <div
       data-testid={`board-change-${annotation.rowId}`}
@@ -356,6 +380,23 @@ export function BoardChangeWasNowTable({
             </tr>
           </thead>
           <tbody className="text-amber-900">
+            {productFrom && shows('product') ? (
+              <tr data-testid="change-row-product">
+                <th scope="row" className="text-start font-normal text-amber-800">
+                  Product
+                </th>
+                <td className="truncate" data-testid="change-was-product" title={productFrom}>
+                  {productFrom}
+                </td>
+                <td
+                  className="truncate font-medium"
+                  data-testid="change-now-product"
+                  title={annotation.itemCode}
+                >
+                  {annotation.itemCode}
+                </td>
+              </tr>
+            ) : null}
             {shows('qty') ? (
               <tr>
                 <th scope="row" className="text-start font-normal text-amber-800">

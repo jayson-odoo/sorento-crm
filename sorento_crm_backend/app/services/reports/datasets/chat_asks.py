@@ -102,6 +102,11 @@ BRANCH_WORDS: Tuple[Tuple[str, str], ...] = (
     ("demand_qty", "Asked for a quantity"),
     ("business_query", "Business query"),
     ("ai_not_allowed", "AI not allowed"),
+    ("log_opportunity", "Logging a sales opportunity"),
+    ("phone_ask", "Asked for a phone number"),
+    ("phone_linked", "Phone linked"),
+    ("phone_ignored", "Phone card ignored"),
+    ("phone_handoff", "Phone handed to staff"),
 )
 
 AUDIENCE_LABELS: Tuple[Tuple[str, str], ...] = (

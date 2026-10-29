@@ -483,7 +483,8 @@ def test_spo_number_prefix_also_matches_a_derived_spo_on_the_rows_po(api):
     """AC-F6b: the row's only REAL link is a purchase order, but that PO carries an
     open SPO allocation for the same product (S5's derived SPO) - `spo_number` has to
     reach it, the same way `po_number` reaches an SPO link's `source_po_number`
-    (AC-F5b). Not when the allocation's shipment has already landed."""
+    (AC-F5b). LINKAGE-UNIFY Q1 (owner, 26 Oct): also when the allocation's shipment has
+    already landed - the row shows its received SPO, so the filter finds it."""
     client, db, company_id, seeded = api
 
     product = seeded["product"]
@@ -518,7 +519,7 @@ def test_spo_number_prefix_also_matches_a_derived_spo_on_the_rows_po(api):
 
     ids = {row["id"] for row in body["data"]}
     assert row_po_only.id in ids
-    assert row_landed.id not in ids
+    assert row_landed.id in ids
 
 
 # ------------------------------------------------------------------------ AC-F7 query
@@ -622,13 +623,13 @@ def test_export_carries_row_level_taken_and_remaining_matching_the_grid(api):
             break
 
     assert target_row is not None, "row_po_match not found in any export sheet"
-    # Review round (22 Sep): APPENDED after ACKNOWLEDGED, never inserted before it - the
-    # columns purchasing's own filters already point at keep the positions they have had.
-    assert headers[10] == "ACKNOWLEDGED", headers
-    assert headers[11] == "TAKEN", headers
-    assert headers[12] == "REMAINING", headers
-    assert target_row[11] == "10", target_row
-    assert target_row[12] == "0", target_row
+    # Review round (22 Sep): APPENDED after ACKNOWLEDGED. OI-RESERVE-PILL-QTY round 2 (owner,
+    # 21 Oct 2026) put REQUESTED RESERVE / RESERVED beside QTY, so the three are read by
+    # heading; their order relative to each other is unchanged.
+    at = headers.index("ACKNOWLEDGED")
+    assert list(headers[at : at + 3]) == ["ACKNOWLEDGED", "TAKEN", "REMAINING"], headers
+    assert target_row[headers.index("TAKEN")] == "10", target_row
+    assert target_row[headers.index("REMAINING")] == "0", target_row
 
 
 def test_export_taken_and_remaining_include_reserved_qty(api):
@@ -655,6 +656,7 @@ def test_export_taken_and_remaining_include_reserved_qty(api):
 
     target_row = None
     for sheet in book.worksheets:
+        headers = [cell.value for cell in sheet[2]]
         for values in sheet.iter_rows(min_row=3, values_only=True):
             if values[2] == row_reserved.item_code:
                 target_row = values
@@ -663,8 +665,8 @@ def test_export_taken_and_remaining_include_reserved_qty(api):
             break
 
     assert target_row is not None, "row_reserved not found in any export sheet"
-    assert target_row[11] == "90", target_row
-    assert target_row[12] == "49", target_row
+    assert target_row[headers.index("TAKEN")] == "90", target_row
+    assert target_row[headers.index("REMAINING")] == "49", target_row
 
 
 # --------------------------------------------------------------- delivery range

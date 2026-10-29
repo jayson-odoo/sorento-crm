@@ -214,7 +214,9 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
       toast.success(
         record.approval_status_key === 'pending_approval'
           ? 'Sent to a manager for approval'
-          : `Moved to ${record.approval_status_label ?? 'draft'}`,
+          : record.approval_status_key === 'resubmitted'
+            ? 'Appealed to a manager for approval'
+            : `Moved to ${record.approval_status_label ?? 'draft'}`,
       );
     },
     onError: (error: Error) => toast.error(error.message),

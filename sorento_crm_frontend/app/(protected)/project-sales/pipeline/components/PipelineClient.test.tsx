@@ -79,6 +79,20 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   };
 });
 
+const granted = new Set(['projects.projects.edit', 'projects.registrations.submit']);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => granted.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => granted.has(s)),
+  usePermissions: () => ({
+    permissions: [...granted],
+    permissionSet: granted,
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    refetch: vi.fn(),
+  }),
+}));
+
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },
 }));
@@ -110,6 +124,34 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// Developer, Type and Approval are multi-selects now (FILTER-MULTISELECT PR6); a one-value pick stands in here.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+  }) => (
+    <select
+      aria-label={placeholder ?? 'select'}
+      value={value[0] ?? ''}
+      onChange={(event) => onChange(event.target.value ? [event.target.value] : [])}
+    >
+      <option value="">{placeholder ?? ''}</option>
+      {(options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 import { PipelineClient } from './PipelineClient';
 
 function project(overrides: Partial<Project> = {}): Project {
@@ -119,8 +161,6 @@ function project(overrides: Partial<Project> = {}): Project {
     title: 'Setia Alam Phase 3B',
     outcome: 'open',
     is_critical: false,
-    brands: [],
-    brand_ids: [],
     can_edit: true,
     open_task_count: 0,
     ...overrides,
@@ -306,19 +346,6 @@ describe('PipelineClient', () => {
     expect(screen.getByText('SP Setia')).toBeInTheDocument();
   });
 
-  it('shows brands as one line of pills that fold into +N, never a comma list (owner, 13 Oct)', async () => {
-    listProjects.mockResolvedValue({
-      data: [project({ id: 'p9', title: 'Brand row', brands: ['Hafele', 'Blum', 'Grohe'] })],
-      pagination: { total: 1, page: 1, limit: 50 },
-    });
-
-    renderClient();
-    switchToGrid();
-
-    expect(await screen.findByTestId('project-brands-p9')).toBeInTheDocument();
-    expect(screen.queryByText('Hafele, Blum, Grohe')).toBeNull();
-  });
-
   it('gives board view the same search box and Filters button, in one row', async () => {
     renderClient();
 
@@ -393,5 +420,36 @@ describe('PipelineClient, Start menu (S2)', () => {
 
     const row = (await screen.findByText('Setia Alam Phase 3B')).closest('tr') as HTMLElement;
     expect(within(row).queryByRole('button', { name: /^start/i })).toBeNull();
+  });
+});
+
+describe('PipelineClient: the approval filter (R6, review round 3)', () => {
+  it.each([
+    ['Awaiting approval', 'pending'],
+    ['Rejected', 'rejected'],
+  ])('narrows the grid to %s registrations through the Filters popover', async (label, state) => {
+    renderClient();
+    switchToGrid();
+    await screen.findByPlaceholderText(/Search title or code/i);
+
+    openFilters();
+    const select = (await screen.findByLabelText('Any approval state')) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(
+      expect.arrayContaining(['Awaiting approval', 'Rejected']),
+    );
+    fireEvent.change(select, { target: { value: state } });
+
+    await waitFor(() =>
+      expect(listProjects).toHaveBeenCalledWith(expect.objectContaining({ approval_state: state })),
+    );
+    expect(label).toBeTruthy();
+  });
+
+  it('asks for no approval state until one is picked', async () => {
+    renderClient();
+    await waitFor(() => expect(listProjects).toHaveBeenCalled());
+    for (const call of listProjects.mock.calls) {
+      expect(call[0].approval_state).toBeUndefined();
+    }
   });
 });

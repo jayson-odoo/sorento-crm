@@ -56,9 +56,10 @@ CHATBOT_TOOL_DOMAINS: dict[str, str] = {
     # domain's (migration `pdyn_0001_status_words_sales`). The `order` seed row still lists
     # them as allow-list members; this map names the domain they answer FROM.
     "crm_sales_report": "sales",
-    "crm_top_selling_report": "sales",
     "crm_report_ask": "sales",
     "crm_sales_analysis": "sales",
+    "crm_sales_target_progress": "sales",
+    "crm_sales_opportunity_customer_options": "sales",
     "crm_incoming_stock_list": "incoming",
     "crm_incoming_stock_by_product": "incoming",
     "crm_incoming_stock_shipments": "incoming",

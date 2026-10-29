@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Catalogue Photos Mock</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1f2328;--mute:#6b7280;--line:#e5e7eb;--pri:#1b84ff;--ok:#17c653;--warn:#f6b100;--bad:#f8285a;--map:#7239ea}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1014;--card:#17181d;--ink:#e6e7ea;--mute:#9aa0aa;--line:#2a2c33}}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,sans-serif}
+main{max-width:1200px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:24px 0 4px}h2{font-size:15px;margin:0}
+.map{font:11px ui-monospace,monospace;color:var(--map);display:block;margin-top:2px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:12px 0}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.sp{flex:1}
+.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:6px;padding:6px 12px;font-size:13px}
+.btn.p{background:var(--pri);border-color:var(--pri);color:#fff}
+.pill{display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600}
+.hi{background:#e6f9ee;color:#0b8a3e}.md{background:#fff6dc;color:#8a6400}.lo{background:#ffe8ee;color:#b0103a}.no{background:#eef0f3;color:#555}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin:8px 0 0;overflow-x:auto}
+.tabs span{padding:8px 0;color:var(--mute);white-space:nowrap}.tabs .on{color:var(--ink);border-bottom:2px solid var(--pri)}
+.grid{width:100%;border-collapse:collapse;table-layout:fixed}
+.grid th,.grid td{border-bottom:1px solid var(--line);padding:8px;text-align:left;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grid th{font-size:12px;color:var(--mute);font-weight:600}
+.thumb{width:64px;height:64px;border-radius:6px;background:linear-gradient(135deg,#d9dde3,#bcc3cc);display:flex;align-items:center;justify-content:center;font-size:10px;color:#555}
+.sel{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:13px;display:inline-block;min-width:150px}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:28px;text-align:center;color:var(--mute)}
+.tiles{display:flex;gap:10px;flex-wrap:wrap}.tile{border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:120px}
+.tile b{display:block;font-size:20px}
+.scroll{overflow-x:auto}
+.ph{color:var(--bad);font-weight:600}
+@media (max-width:640px){.hide-s{display:none}}
+</style></head><body><main>
+
+<p>Mock v1, CATALOG-IMAGES (27 Oct). Three screens: upload, review, after confirm. Every element names, in purple, the existing component it reuses. The rows come from the owner's example page as described in the brief.</p>
+
+<h1>1. Upload</h1>
+<span class="map">Assumes Q1 (a): the existing flyer reading upload. UploadFlyerDialog app/(protected)/dealer-kit/flyer-readings/components/UploadFlyerDialog.tsx, built on FormDialogScaffold + FileDropzone (components/common)</span>
+<div class="card">
+  <div class="row"><h2>Upload Flyer</h2><span class="sp"></span><span class="btn">✕</span></div>
+  <div class="drop" style="margin-top:12px">Drop a catalogue PDF here, or browse<br><small>PDF only, up to 50 MB</small></div>
+  <div class="row" style="margin-top:12px"><span class="sp"></span><span class="btn">Cancel</span><span class="btn p">Upload</span></div>
+</div>
+<p class="map">Then: FlyerReadingsList row with status Badge "Processing" until the worker finishes (flyer_read queue), then "Done", which opens the review.</p>
+
+<h1>2. Review: "Product photos" section</h1>
+<span class="map">PageHeader "Review Flyer" (components/common/PageHeader.tsx) + a new section in MatchReportSections.tsx using Section/Empty from ReportSection.tsx; the grid is ReportGrid.tsx (DataGrid, tableLayout fixed + columnsResizable)</span>
+<div class="card">
+  <div class="row"><h2>Review Flyer</h2><span class="sp"></span><span class="btn p">Attach 3 photos</span></div>
+  <span class="map">The one header CTA. The count follows the ticked rows. Disabled at 0.</span>
+  <div class="tabs"><span class="on">All 6</span><span>Ready 3</span><span>Needs a product 1</span><span>Already on file 1</span><span>Skipped 1</span></div>
+  <span class="map">Line tabs: components/ui/tabs.tsx (variant line)</span>
+  <div class="tiles" style="margin:12px 0"><div class="tile"><b>6</b>photos found</div><div class="tile"><b>4</b>matched</div><div class="tile"><b>1</b>unmatched</div><div class="tile"><b>2</b>icons skipped</div></div>
+  <span class="map">CountTile components/common/CountTile.tsx</span>
+  <div class="scroll"><table class="grid" style="min-width:860px">
+    <colgroup><col style="width:40px"><col style="width:84px"><col style="width:60px"><col style="width:230px"><col style="width:110px"><col style="width:220px"><col style="width:110px"></colgroup>
+    <thead><tr><th>☐</th><th>Photo</th><th>Page</th><th>Product</th><th>Confidence</th><th>Also in this block</th><th>Replace</th></tr></thead>
+    <tbody>
+      <tr><td>☑</td><td><div class="thumb">set photo</div></td><td>12</td>
+        <td><span class="sel">SRTBF12613 · Basin cabinet ▾</span></td><td><span class="pill hi">High</span></td>
+        <td title="SRTW2600 pop-up waste, basin placeholder">☐ SRTW2600 · <span class="ph">SRTWB_____</span></td><td>n/a</td></tr>
+      <tr><td>☑</td><td><div class="thumb">open view</div></td><td>12</td>
+        <td><span class="sel">SRTBF12613 · Basin cabinet ▾</span> <small>(2)</small></td><td><span class="pill hi">High</span></td>
+        <td>☐ SRTW2600</td><td>n/a</td></tr>
+      <tr><td>☑</td><td><div class="thumb">photo</div></td><td>12</td>
+        <td><span class="sel">SRTW5112-MW · Basin mixer ▾</span></td><td><span class="pill md">Medium</span><br><small>printed SRTW5112</small></td>
+        <td>-</td><td>☑ old catalogue photo</td></tr>
+      <tr><td>☐</td><td><div class="thumb">photo</div></td><td>13</td>
+        <td><span class="sel" style="color:var(--mute)">Choose a product ▾</span><br><small>printed SRTBF12999, nearest: SRTBF12998 (0.71)</small></td><td><span class="pill lo">Low</span></td>
+        <td>-</td><td>n/a</td></tr>
+      <tr><td>☐</td><td><div class="thumb">photo</div></td><td>13</td>
+        <td>SRTBF12540 · Vanity set</td><td><span class="pill no">Already on file</span></td><td>-</td><td>n/a</td></tr>
+      <tr><td>☐</td><td><div class="thumb">photo</div></td><td>14</td>
+        <td><span class="sel">SRTWC286-SH ▾</span></td><td><span class="pill no">Skipped</span></td><td>-</td><td>n/a</td></tr>
+    </tbody></table></div>
+  <span class="map">Product cell: SearchableSelect (components/common/SearchableSelect.tsx, clearable) over the product lookup, which is the "reassign" action. Confidence: Badge pill (components/ui/badge.tsx). Thumbnail click: AttachmentPreviewModal (components/common/AttachmentPreviewModal.tsx). Row select: data-grid-select-column.tsx. Codes and names only, no UUIDs.</span>
+  <p class="map">Per-row overflow "Skip / Unskip": DetailActionsMenu pattern. Rows are illustrative (the real PDF is pending); SRTBF12999/12998, SRTBF12540 and SRTWC286-SH stand in for E3-E5.</p>
+  <p class="map">Empty state when the PDF holds no product photos: Empty from ReportSection.tsx. Heading "No product photos found", hint "This PDF has no images placed next to a product code", no button.</p>
+</div>
+
+<h1>3. After Attach</h1>
+<div class="card">
+  <div class="row"><span>Toast: "3 photos attached to 2 products"</span></div>
+  <span class="map">sonner toast via the shared mutation hook pattern (useUpdateMutation). Rows move to "Already on file".</span>
+  <p>Product detail > Attachments tab now lists the photo. Brochure image stays as it was unless the product had none (Q3 a).</p>
+  <span class="map">ProductAttachmentsTab app/(protected)/master-data-management/products/components/ProductAttachmentsTab.tsx; main image picker BrochureImagePicker app/(protected)/dealer-kit/brochure-images/components/BrochureImagePicker.tsx (unchanged)</span>
+</div>
+</main></body></html>

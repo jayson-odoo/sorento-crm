@@ -18,6 +18,8 @@ from app.services.chatbot.turn.plan import FetchSpec
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import Focus, Profile, State
 
+from tests.chatbot._turn_helpers import make_office_access_type
+from tests.chatbot.test_engine import CONTACT_ID
 from tests.chatbot._turn_helpers import TIER_ORDER_FIXTURE, _domain_row
 
 CODES = [f"ZZTCAP{i:02d}" for i in range(1, 61)]
@@ -218,6 +220,17 @@ def test_a_tasks_own_dropped_slot_is_named_once_per_turn():
 # --------------------------------------------------------------------------- #
 
 
+def _orders_hit() -> str:
+    """The orders list's route body through the real presenter (a hit, so the reply is the answer, not a miss)."""
+    import json
+
+    from tests.chatbot.test_outstanding_lane import _present_response
+
+    body = {"data": [{"order_number": "DO-ZZT-1", "debtor_name": "ZZT CUSTOMER", "order_date": "2026-09-20",
+                      "order_status": "in transit"}], "total": 1}
+    return _present_response()("crm_order_management_orders_list", json.dumps(body))
+
+
 class TestRealResolverCeiling:
     """60 typed codes through `engine.run_turn` with the real resolver: the first fifty
     are answered, the last ten are named as not checked, none is "could not find"."""
@@ -225,22 +238,25 @@ class TestRealResolverCeiling:
     def test_sixty_codes_name_the_ten_not_checked(self, session_factory, monkeypatch):
         from app.services.company_scope import DEFAULT_COMPANY_ID
         from tests._mc_lookup_seed import product as seed_product
-        from tests.chatbot.test_outstanding_lane import REPORT_HIT, _qf, _run_turn, _seed_contact
+        from tests.chatbot._turn_helpers import do_window
+        from tests.chatbot.test_outstanding_lane import _qf, _run_turn, _seed_contact
 
         db = session_factory()
         for code in CODES:
             seed_product(db, company_id=DEFAULT_COMPANY_ID, code=code)
         db.commit()
         _seed_contact(session_factory, variables={})
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_access_type(session_factory, CONTACT_ID)
 
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="so_outstanding", entities=[_entity(c) for c in CODES]),
-            text_body=" ".join(CODES) + " sales order outstanding",
+            qf=_qf(order_status=None, **do_window(), entities=[_entity(c) for c in CODES]),
+            text_body=" ".join(CODES) + " delivery orders",
             msg_id="ZZT-cap-60",
             attributes=["sales_orders.outstanding"],
-            mcp_response={**REPORT_HIT, "product_code": CODES[0]},
+            mcp_response=_orders_hit(),
             real_resolver=True,
         )
 
@@ -253,7 +269,8 @@ class TestRealResolverCeiling:
     def test_nineteen_codes_are_all_looked_up(self, session_factory, monkeypatch):
         from app.services.company_scope import DEFAULT_COMPANY_ID
         from tests._mc_lookup_seed import product as seed_product
-        from tests.chatbot.test_outstanding_lane import REPORT_HIT, _qf, _run_turn, _seed_contact
+        from tests.chatbot._turn_helpers import do_window
+        from tests.chatbot.test_outstanding_lane import _qf, _run_turn, _seed_contact
 
         codes = CODES[:19]
         db = session_factory()
@@ -261,15 +278,17 @@ class TestRealResolverCeiling:
             seed_product(db, company_id=DEFAULT_COMPANY_ID, code=code)
         db.commit()
         _seed_contact(session_factory, variables={})
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_access_type(session_factory, CONTACT_ID)
 
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="so_outstanding", entities=[_entity(c) for c in codes]),
-            text_body=" ".join(codes) + " sales order outstanding",
+            qf=_qf(order_status=None, **do_window(), entities=[_entity(c) for c in codes]),
+            text_body=" ".join(codes) + " delivery orders",
             msg_id="ZZT-cap-19",
             attributes=["sales_orders.outstanding"],
-            mcp_response={**REPORT_HIT, "product_code": codes[0]},
+            mcp_response={"has_result": True, "response": "ZZT DO ROWS"},
             real_resolver=True,
         )
 

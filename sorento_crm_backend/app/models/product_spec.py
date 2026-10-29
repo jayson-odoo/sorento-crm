@@ -71,6 +71,13 @@ class ProductSpecRegistry(Base):
     # shape is round or square. Ungated, diameter would be proposed for a rectangular
     # product, where it is meaningless.
     applies_when = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # A size given alone (no dimension named) matches the numeric keys flagged here, as an OR
+    # (width or length); a key scoped to a class by `applies_when` is read for that class only.
+    matches_bare_size = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # DIMENSION-ANY: the other units a customer writes this key's quantity in, each as how many of
+    # `unit` it holds ({"cm": 10, "in": 25.4} on a millimetre key). Data, never a list in code: the
+    # candidate block offers "15cm" as "size 150 mm" off it, and the parser decides what was meant.
+    unit_aliases = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     # Multiplier on this key's contribution to the match score. Hand-tuned against the
     # eval baseline, so the seed must never overwrite it.
     rank_weight = Column(Numeric(6, 3), nullable=False, server_default=text("1.0"))
@@ -152,6 +159,12 @@ class ProductSpecRegistry(Base):
     # AND user rows, like user_synonyms: staff-owned, never seed-repaired (nothing in
     # `_seed_values` names this column, so the repair loop cannot touch it).
     value_labels = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    # What this field means to the chatbot: one line (max 200) printed on its line in the
+    # parser's `{{specs}}`. Staff-owned and never seed-repaired (`_seed_values` does not
+    # name it).
+    parser_hint = Column(Text, nullable=True)
+    # True once staff edited `label`: the seed repair then leaves the name alone.
+    label_owned = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
 

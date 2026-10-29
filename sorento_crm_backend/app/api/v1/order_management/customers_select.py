@@ -1,4 +1,6 @@
 """Customer select endpoint for dropdowns."""
+import uuid
+
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -23,13 +25,17 @@ MAX_LIMIT = 200
 
 
 @router.get("/select")
-async def get_customers_select(
+def get_customers_select(
     query: Optional[str] = Query(None),
     limit: Optional[int] = Query(None, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
     company_scope: Optional[Literal["grants"]] = Query(
         None,
         description="`grants` reads every company the caller is granted (staff sessions only) and tags each row with its company.",
+    ),
+    customer_id: Optional[uuid.UUID] = Query(
+        None,
+        description="Read back the label of this one customer (active or not), e.g. a filter restored from the URL.",
     ),
     request: Request = None,
     current_user: dict = Depends(get_current_user),
@@ -58,13 +64,22 @@ async def get_customers_select(
     """
     try:
         with widen_if_requested(db, request, current_user, company_scope):
-            return _customers_select(db, query, limit, offset, tag=grants_requested(request, current_user, company_scope))
+            return _customers_select(
+                db, query, limit, offset, tag=grants_requested(request, current_user, company_scope),
+                customer_id=str(customer_id) if customer_id else None,
+            )
     except Exception as e:
         raise handle_internal_error(str(e))
 
 
-def _customers_select(db: Session, query: Optional[str], limit: Optional[int], offset: int, tag: bool):
-    q = db.query(Customer).filter(Customer.is_active == True)  # noqa: E712
+def _customers_select(
+    db: Session, query: Optional[str], limit: Optional[int], offset: int, tag: bool,
+    customer_id: Optional[str] = None,
+):
+    q = db.query(Customer)
+    # A read-back names the customer a filter already holds, closed or not; a search offers
+    # only active ones.
+    q = q.filter(Customer.id == customer_id) if customer_id else q.filter(Customer.is_active == True)  # noqa: E712
 
     if query:
         needle = f"%{query.strip()}%"
@@ -119,7 +134,7 @@ def _customers_select(db: Session, query: Optional[str], limit: Optional[int], o
 
 
 @router.get("/sales-agents-select")
-async def get_customer_sales_agents_select(
+def get_customer_sales_agents_select(
     query: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission("order_management.customers.view")),
     db: Session = Depends(get_db),

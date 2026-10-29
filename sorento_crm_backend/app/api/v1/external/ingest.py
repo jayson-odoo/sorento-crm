@@ -49,6 +49,11 @@ from app.models.project_so import OrderInquiryRow, ProjectSalesOrderLine
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
 from app.services.deletion_service import DeletionService
+from app.services.finance.ar_outstanding_ingest_service import (
+    AR_OUTSTANDING_ENTITIES,
+    ArOutstandingIngestService,
+    ArOutstandingReadService,
+)
 from app.services.finance.billing_document_ingest_service import (
     BILLING_DOCUMENT_ENTITIES,
     BillingDocumentIngestService,
@@ -142,6 +147,8 @@ INGEST_PERMISSIONS = {
     # AC-CONSIGN-CRM (2.9): a consignments push writes a sales order marked Consignment.
     "consignments": "scm.consignments.edit",
     "consignment_returns": "scm.consignment_returns.edit",
+    # AC-BILLING (2.10): outstanding is a finance figure; pushed with the billing slugs.
+    "ar_outstanding": "finance.billing_documents.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -166,7 +173,10 @@ READ_PERMISSIONS = {
     "cancel_purchase_orders": "scm.cancel_purchase_orders.view",
     "consignments": "scm.consignments.view",
     "consignment_returns": "scm.consignment_returns.view",
+    "ar_outstanding": "finance.billing_documents.view",
 }
+# `ar_outstanding` has no entry below: no deletions door (a debtor with nothing open is pushed
+# with a zero total), and the path guard answers an unmapped entity 404.
 # Deleting through the ESB is its own act, so it takes its own slug on top of the
 # ingest guard the router already carries (group A4 mounts the route). Declared
 # here rather than there because this is the one file that says what an entity
@@ -266,6 +276,7 @@ SUPPORTED_ENTITIES = (
     | set(SHIPPING_ORDER_ENTITIES)
     | set(STOCK_BALANCE_ENTITIES)
     | set(BILLING_DOCUMENT_ENTITIES)
+    | set(AR_OUTSTANDING_ENTITIES)
     | set(AUTOCOUNT_DOC_ENTITIES)
     | set(AUTOCOUNT_BRANCH_ENTITIES)
     | set(AUTOCOUNT_CANCEL_ENTITIES)
@@ -318,7 +329,12 @@ SUPPORTED_ENTITIES = (
 # CONSIGN-DELIVERED-FIX (14 Oct): the order is delivered in full and closed at issue, and
 # TransferedQty is the returned qty, not delivered. Same wire shape.
 # Additive.
-CONTRACT_VERSION = "2.9"
+# "2.10" (AC-BILLING): `ar_outstanding` joins as a push entity, one record per debtor with the
+# debtor's total and its open billing documents; writes `customers.ar_outstanding` / `ar_as_of`
+# and `billing_documents.outstanding` / `due_date`, sets a stored open document the push omits
+# to 0, never creates. `documents_unknown` joins `warnings`. Read door yes, deletions door no.
+# Additive.
+CONTRACT_VERSION = "2.10"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
@@ -721,51 +737,39 @@ def _refs_from_written_spo_allocations(
 ) -> set[str]:
     """The SO line refs the book states for these allocations - each one's own
     `from_so_line_ref`, or, when it names only a purchase-order line, that
-    line's own `from_so_line_ref` (matched on `from_po_number` AND the line's
-    own `source_ref` - `_chain_allocations`'s exact-key reasoning:
-    `purchase_order_lines.source_ref` is not unique, the August extract wrote
-    bare ordinals onto hundreds of lines each).
+    line's own `from_so_line_ref`.
 
-    `from_po_line_ref` is stripped before it becomes part of the key (review
-    round item 6), the same way `_chain_allocations` itself strips it: a
-    trailing/leading space on either side of the match would otherwise miss
-    silently rather than resolve."""
+    LINKAGE-UNIFY U5: the allocation reaches its PO line through the goods
+    chain's own key (`goods_chain.po_spo_key_clause`: PO number, BOTH line refs
+    trimmed, same product, same company, or the allocation's own `po_line_id`),
+    never a looser spelling. `purchase_order_lines.source_ref` is not unique
+    (the August extract wrote bare ordinals onto hundreds of lines each), so the
+    PO number and the product stay part of the match."""
+    from app.services.scm import goods_chain
+
     wanted = sorted({str(i) for i in allocation_ids if i})
     if not wanted:
         return set()
     rows = (
-        db.query(
-            SPOAllocation.from_so_line_ref,
-            SPOAllocation.from_po_line_ref,
-            SPOAllocation.from_po_number,
-        )
+        db.query(SPOAllocation.id, SPOAllocation.from_so_line_ref)
         .filter(SPOAllocation.id.in_(wanted), SPOAllocation.company_id == company_id)
         .all()
     )
-    refs = {r[0] for r in rows if r[0]}
-    chain_keys = {
-        (r[2], (r[1] or "").strip()) for r in rows if not r[0] and (r[1] or "").strip() and r[2]
-    }
-    if not chain_keys:
+    refs = {from_so_ref for _id, from_so_ref in rows if from_so_ref}
+    chained = sorted({str(allocation_id) for allocation_id, from_so_ref in rows if not from_so_ref})
+    if not chained:
         return refs
-    po_numbers = sorted({key[0] for key in chain_keys})
-    line_refs = sorted({key[1] for key in chain_keys})
-    po_lines = (
-        db.query(
-            PurchaseOrderLine.source_ref,
-            PurchaseOrderLine.from_so_line_ref,
-            PurchaseOrder.po_number,
-        )
+    for (from_so_ref,) in (
+        db.query(PurchaseOrderLine.from_so_line_ref)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .join(SPOAllocation, goods_chain.po_spo_key_clause())
         .filter(
-            PurchaseOrder.po_number.in_(po_numbers),
-            PurchaseOrderLine.source_ref.in_(line_refs),
+            SPOAllocation.id.in_(chained),
             PurchaseOrderLine.company_id == company_id,
         )
         .all()
-    )
-    for source_ref, from_so_ref, po_number in po_lines:
-        if from_so_ref and (po_number, source_ref) in chain_keys:
+    ):
+        if from_so_ref:
             refs.add(from_so_ref)
     return refs
 
@@ -1061,6 +1065,9 @@ def ingest_masters(
     elif entity in BILLING_DOCUMENT_ENTITIES:
         # Finance S0: a sibling of the shipping-order service, no post-write hooks.
         ingester = BillingDocumentIngestService
+    elif entity in AR_OUTSTANDING_ENTITIES:
+        # AC-BILLING S5: a sibling of the billing service, one record per debtor.
+        ingester = ArOutstandingIngestService
     elif entity in STOCK_BALANCE_ENTITIES:
         ingester = StockBalanceIngestService
         # Fix round 2 (#1257): its Stock Ledger rows name the integration's
@@ -1374,6 +1381,8 @@ def read_current_state(
         reader = ShippingOrderReadService
     elif entity in BILLING_DOCUMENT_ENTITIES:
         reader = BillingDocumentReadService
+    elif entity in AR_OUTSTANDING_ENTITIES:
+        reader = ArOutstandingReadService
     elif entity in DOCUMENT_ENTITIES:
         reader = DocumentReadService
     else:

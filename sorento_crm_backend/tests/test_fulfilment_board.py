@@ -1819,7 +1819,7 @@ def _lead_time(db, product, days: int) -> None:
 
 
 @pytest.mark.usefixtures("ladder_steps_on")
-def test_a_line_beyond_the_reserve_window_says_so_and_offers_no_donor():
+def test_a_line_beyond_the_reserve_window_says_so_and_proposes_no_borrow():
     """The captain, on SO414341: two lines due 15 February and 15 March 2027, roughly 174
     days out on a product whose lead time is well inside that, read "Nothing free at BRW-BB
     by the delivery date, so the quantity is bought. Borrowing is possible from BRW-IB,
@@ -1832,8 +1832,9 @@ def test_a_line_beyond_the_reserve_window_says_so_and_offers_no_donor():
         sentence over the top of it, and "nothing free at L" is not why this line is bought -
         it is bought because purchasing can still get it here in time and the stock at L is
         kept for nearer orders;
-      * the DONORS are not offered at all. Rungs 4 and 5 are not walked for this line, so a
-        donor list beside it is an offer of the one thing the rule forbids.
+      * the DONORS are not PROPOSED. Rungs 4 and 5 are not walked for this line and the
+        Buy's sentence names nobody to borrow from. The donor LIST is still offered for a
+        hand-picked Borrow (owner ruling (b), 22 Oct 2026, BORROW-ZERO-FREE).
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -1860,9 +1861,12 @@ def test_a_line_beyond_the_reserve_window_says_so_and_offers_no_donor():
         )
         assert "Borrowing is possible" not in buy["reason"]
 
-        # Nothing to borrow is OFFERED either - not on the row, not in its total.
-        assert contribution["borrow_candidates"] == []
-        assert contribution["qty_borrow_available"] == "0"
+        # The donor list is offered for a hand-picked Borrow (owner ruling (b), 22 Oct 2026):
+        # the location with stock first, the own location last.
+        assert [c["warehouse_code"] for c in contribution["borrow_candidates"]] == [
+            elsewhere.warehouse_code, own.warehouse_code,
+        ]
+        assert contribution["qty_borrow_available"] == "650"
 
         # And the trail says the two rungs were not walked, rather than pretending they were
         # checked and found empty.
@@ -2227,16 +2231,19 @@ def test_the_pressure_figure_and_the_free_figure_are_read_from_the_same_facts():
         assert location["qty_owed_confirmed"] == "0"
 
 
-def test_a_confirmed_decision_shows_up_as_both_a_hold_and_covered_demand():
+def test_a_confirmed_decision_shows_up_as_covered_demand_and_holds_nothing():
     """Two different facts, and the strip owes both.
 
-    `qty_held_by_decisions` is the STOCK side - the quantity a confirmed decision is holding
-    at this location, which is exactly what `_free_stock` subtracts, so on hand minus reserved
-    minus held is the free figure and the arithmetic on screen closes.
+    `qty_held_by_decisions` is the STOCK side - what a confirmed decision is holding at this
+    location, which is exactly what `_free_stock` subtracts. A decision holds nothing
+    (BORROW-NO-HOLD, 28 Oct 2026), so it reads 0 and on hand minus reserved is the free figure.
 
     `qty_owed_confirmed` is the DEMAND side - how much of what is owed here sits on lines a
     confirmed decision already covers, so a planner can tell committed pressure from
     uncommitted pressure.
+
+    The seeded decision is a BORROW (`other_location`); a confirmed Reserve reads the same
+    (`tests/scm/test_board_no_hold.py`).
     """
     from datetime import datetime
 
@@ -2284,7 +2291,7 @@ def test_a_confirmed_decision_shows_up_as_both_a_hold_and_covered_demand():
         db.add(
             SOLineAllocation(
                 id=_uid(), company_id=company_id, so_line_id=mirror.id,
-                source_type="own", warehouse_id=warehouse.id, qty=Decimal("15"),
+                source_type="other_location", warehouse_id=warehouse.id, qty=Decimal("15"),
                 decision_id=decision.id, confirmed_at=datetime.utcnow(),
             )
         )
@@ -2294,9 +2301,9 @@ def test_a_confirmed_decision_shows_up_as_both_a_hold_and_covered_demand():
 
         location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
         assert location["qty_on_hand"] == "100"
-        assert location["qty_held_by_decisions"] == "15"
+        assert location["qty_held_by_decisions"] == "0"
         # On hand, less reserved, less held, IS the free figure the proposal was computed from.
-        assert location["qty_free"] == "85"
+        assert location["qty_free"] == "100"
         assert location["qty_owed_all_orders"] == "75"
         # Of that 75, the 40 owed on the confirmed order is committed pressure.
         assert location["qty_owed_confirmed"] == "40"
@@ -3313,12 +3320,11 @@ def test_one_bin_still_reads_one_bin():
         assert [row["location"] for row in detail["sales_orders"]] == [first.warehouse_code]
 
 
-def test_a_hold_taken_from_outside_the_group_is_listed_and_one_from_inside_is_not():
-    """R40: cross-group stock moves only as a PINNED hold.
-
-    Such a hold is in no sales-order row of the group whose pile it draws from, so a walk
-    without it counts a pile nobody can draw on. A hold whose own line IS in the set is
-    already one of those rows, and listing it again would subtract it twice.
+def test_a_decision_from_outside_the_group_is_listed_as_no_hold():
+    """R40, superseded by BORROW-NO-HOLD (28 Oct 2026): cross-group stock used to move only
+    as a PINNED hold, listed in the group drill-down. A decision (a Borrow, seeded here as
+    `other_location`, from another group or from inside this one) is now a route and holds
+    nothing, so the drill-down lists none, in the group read or the per-bin read.
     """
     from datetime import datetime
 
@@ -3354,7 +3360,7 @@ def test_a_hold_taken_from_outside_the_group_is_listed_and_one_from_inside_is_no
         db.flush()
         db.add(
             SOLineAllocation(
-                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="own",
+                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="other_location",
                 warehouse_id=warehouse.id, qty=Decimal(qty), decision_id=decision.id,
                 confirmed_at=datetime.utcnow(),
             )
@@ -3381,12 +3387,8 @@ def test_a_hold_taken_from_outside_the_group_is_listed_and_one_from_inside_is_no
 
         detail = _service(db).stock_detail(str(product.id), None, group="QQ")
 
-        assert [
-            (row["so_number"], row["location"], row["qty"], row["required_date"])
-            for row in detail["holds"]
-        ] == [("ZZT-SO-OTHERGROUP", first.warehouse_code, "6", date(2026, 8, 2))]
-        # The per-bin reading raises none of this: it is read beside its own Available, which
-        # nets no holds either.
+        assert detail["holds"] == []
+        # The per-bin reading raises none of this either.
         assert _service(db).stock_detail(str(product.id), str(first.id))["holds"] == []
 
 
@@ -3788,6 +3790,10 @@ def test_demand_a_confirmed_decision_already_holds_is_not_subtracted_twice():
 
     So `so_qty_ahead` counts only demand that is NOT yet covered by an active decision - the
     same per-line test `scm.committed_v` applies.
+
+    BORROW-NO-HOLD (28 Oct 2026): the seeded decision is a BORROW (`other_location`); it
+    holds no stock, so the covered line is neither ranked ahead nor subtracted from the pile:
+    the whole 100 is what is left for us.
     """
     from datetime import datetime
 
@@ -3832,7 +3838,7 @@ def test_demand_a_confirmed_decision_already_holds_is_not_subtracted_twice():
         db.flush()
         db.add(
             SOLineAllocation(
-                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="own",
+                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="other_location",
                 warehouse_id=warehouse.id, qty=Decimal("40"), decision_id=decision.id,
                 confirmed_at=datetime.utcnow(),
             )
@@ -3845,12 +3851,12 @@ def test_demand_a_confirmed_decision_already_holds_is_not_subtracted_twice():
         board = _service(db).build(["ZZT-SO-OURS"], granularity="week", as_of=TODAY)
 
         contribution = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
-        # 100 on hand, 40 held by the confirmed decision -> 60 free. The confirmed line is NOT
-        # counted again in what is ranked ahead, so 60 is what is left for us - read-only, since
-        # ladder v2 (section E rule 7) never reserves at the own location: with no pool here the
-        # whole 70 is bought instead.
+        # 100 on hand, nothing held by the confirmed decision -> 100 free. The confirmed line is
+        # NOT counted again in what is ranked ahead either (so_qty_ahead 0), so 100 is what is
+        # left for us - read-only, since ladder v2 (section E rule 7) never reserves at the own
+        # location: with no pool here the whole 70 is bought instead.
         assert contribution["so_qty_ahead"] == "0"
-        assert contribution["available_to_this_line"] == "60"
+        assert contribution["available_to_this_line"] == "100"
         assert contribution["qty_proposed_reserve"] == "0"
         assert contribution["qty_proposed_buy"] == "70"
 
@@ -5948,18 +5954,46 @@ def test_a_covered_line_still_carries_the_donors_it_could_be_amended_to():
         assert contribution["trail"] == []
         assert contribution["so_qty_ahead"] is None
         candidates = contribution["borrow_candidates"]
-        # The frozen donor's 43 is now a confirmed hold and out of its free stock, so it is
-        # not offered again; the spare location is. The line's own location is offered last
-        # as a plain location borrow (BORROW-OWN-LOC, owner 13 Oct 2026).
+        # BORROW-NO-HOLD (28 Oct 2026): the frozen donor's 43 is a plan, not a hold, so it is
+        # still the donor's FREE stock and is offered in full, AHEAD of the spare location's
+        # 7. The line's own location is offered last as a plain location borrow
+        # (BORROW-OWN-LOC, owner 13 Oct 2026).
         assert [c["warehouse_code"] for c in candidates] == [
-            spare.warehouse_code, world["own"].warehouse_code,
+            world["donor"].warehouse_code, spare.warehouse_code, world["own"].warehouse_code,
         ]
-        assert candidates[0]["warehouse_id"] == str(spare.id)
-        assert candidates[0]["free_qty"] == "7"
+        assert candidates[0]["free_qty"] == "43"
+        assert [c["warehouse_code"] for c in candidates if c.get("recommended")] == [
+            world["donor"].warehouse_code
+        ]
+        assert candidates[1]["warehouse_id"] == str(spare.id)
+        assert candidates[1]["free_qty"] == "7"
         # Nothing is still being bought on a wholly borrowed line, so the ranking has no
         # residual to measure damage against - stated as 0, never invented.
         assert candidates[0]["need_qty"] == "0"
-        assert contribution["qty_borrow_available"] == "7"
+        assert contribution["qty_borrow_available"] == "50"
+
+
+def test_a_covered_line_beyond_the_reserve_window_still_carries_its_donors():
+    """Owner ruling (b), 22 Oct 2026: a decided line beyond the window can be amended to a
+    Borrow too, so its donor list is read like any covered line's."""
+    with blank_session() as db:
+        world = _covered_world(db)
+        spare = _warehouse(db, f"ZZTX{_uid()[:6]}"[:20])
+        _stock(db, world["product"], spare, on_hand=7)
+        _lead_time(db, world["product"], 1)
+        _decide_line_one(db, world)
+        # Seen from 1 March: 1 + 14 days of window, and line 1 is due 4 September.
+        early = date(2026, 3, 1)
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=early
+        )
+
+        contribution = _covered_contribution(board, world)
+        assert contribution["covered"] is True
+        codes = [c["warehouse_code"] for c in contribution["borrow_candidates"]]
+        assert spare.warehouse_code in codes, codes
+        assert codes[-1] == world["own"].warehouse_code, codes
 
 
 def test_the_pile_queue_names_no_leading_factor_on_a_row_behind_the_asked_line():
@@ -6175,14 +6209,22 @@ def _order_already_holding_at_the_pool(db):
             }
         ],
     )
+    # The Reserve is flipped to a BORROW (`other_location`) in place: since BORROW-NO-HOLD
+    # (28 Oct 2026) neither holds, so the pool still reads its whole 7 either way.
+    from app.models.project_so import SOLineAllocation
+
+    db.query(SOLineAllocation).filter(
+        SOLineAllocation.so_line_id == mirror.id
+    ).update({"source_type": "other_location"}, synchronize_session=False)
+    db.flush()
     return {"actor": actor, "product": product, "own": own, "pool": pool, "pso_id": pso_id}
 
 
-def test_a_hold_the_same_order_carries_forward_is_netted_by_the_confirm_as_the_board_nets_it():
-    """Owner rule 12 Oct 2026 (OI-CLOSED-LINE): a stock shortfall is a warning, never a
-    refusal. The sibling asks 5 of a pool whose other 3 its own order still holds: it is
-    held 4 and recorded 1 short, so the order together never holds more than the 7 on hand.
-    """
+def test_a_decision_the_same_order_carries_forward_does_not_net_the_pool_for_the_confirm():
+    """Owner rule 12 Oct 2026 (OI-CLOSED-LINE), under BORROW-NO-HOLD (28 Oct 2026): our own
+    order's earlier line carries a decision of 3 at the pool, which holds nothing, so the
+    pool still reads its whole 7 on the board and at the confirm. The sibling is shown
+    the whole 7 and, hand-composed as a Reserve of 5, confirms with no short notice."""
 
     with blank_session() as db:
         world = _order_already_holding_at_the_pool(db)
@@ -6191,31 +6233,23 @@ def test_a_hold_the_same_order_carries_forward_is_netted_by_the_confirm_as_the_b
         board = _service(db).build(["ZZT-SO-HOLDS"], granularity="week", as_of=TODAY)
         sibling = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
         assert sibling["covered"] is False
-        # Ladder v3's whole-line rule: 4 of the sibling's 5 is all the pool has left, so the
-        # auto-ladder proposes a plain Buy for the whole line. An un-netted pool would show 7
-        # and reserve the lot, so this assertion IS the read-side proof.
-        assert [
-            (s["kind"], s["qty"], s["location"]) for s in sibling["sources"]
-        ] == [("buy", "5", None)]
+        # Nothing is held, so the pool shows its whole 7 (it showed 4 when the 3 were held);
+        # the project's half of that is still under the 5 asked, so the whole line is a Buy.
+        assert [(s["kind"], s["qty"]) for s in sibling["sources"]] == [("buy", "5")]
         pile = _step(sibling, "pool")["pool"]
-        assert pile["left"] == "4"
+        assert pile["left"] == "7"
 
         pso_id, lines = _board_payload_for(board, "ZZT-SO-HOLDS")
         assert len(lines) == 1, "the covered line is carried, not re-posted"
 
-        # And the write side agrees: a hand-composed Amend taking the whole 5 from the pool
-        # holds only the 4 that are left, and the notice says the 3 are line 1's own hold,
-        # carried by this same confirmation (7 on hand, 3 held, so only 4 free).
         lines[0]["reserve"] = [{"warehouse_id": str(pool.id), "qty": "5"}]
         lines[0]["buy_qty"] = "0"
         body = _confirm(db, pso_id, world["actor"], lines)
-        [notice] = body["stock_short_notices"]
-        assert notice["line_no"] == 2, notice
-        assert f"only 4 free at {pool.warehouse_code}" in notice["reason"], notice
-        assert ", 1 short" in notice["reason"], notice
-        held = _holds_at(db, pso_id, pool)
-        assert sorted(held.values()) == [Decimal("3"), Decimal("4")], held
-        assert sum(held.values()) <= Decimal("7")
+        assert not body.get("stock_short_notices")
+        assert _holds_at(db, pso_id, pool), "the decision rows are written"
+        from app.services.project_supply_service import ProjectSupplyService
+
+        assert ProjectSupplyService(db).held_stock_by_location([str(product.id)]) == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -7591,7 +7625,7 @@ def test_partial_delivered_undecided_line_asks_full_qty_and_holds_only_owed():
     back - while the hold a confirmation writes is capped at the 2 still owed.
 
     So a Reserve of 1 on this line takes 1 out of free stock for everybody else, not 0 and
-    not 3.
+    not 3 - until BOARD-NO-HOLD (27 Oct 2026), after which a Reserve takes none at all.
     """
     with blank_session() as db:
         actor = _user(db, f"{MARKER} Eling")
@@ -7626,8 +7660,11 @@ def test_partial_delivered_undecided_line_asks_full_qty_and_holds_only_owed():
         )
         db.commit()
 
-        assert _free_at(db, product, pool) == Decimal("9"), (
-            "min(reserve 1, owed 2) = 1 comes out of free stock, and nothing more"
+        # BOARD-NO-HOLD (owner, 27 Oct 2026): a Reserve is a plan and takes nothing out of
+        # free stock, whatever it is capped at (was 9: min(reserve 1, owed 2) = 1 held). The
+        # owed cap on a HOLD is pinned on a Borrow in `test_project_supply_holds.py`.
+        assert _free_at(db, product, pool) == Decimal("10"), (
+            "a Reserve holds nothing, so all 10 stay free"
         )
 
 

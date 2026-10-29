@@ -42,6 +42,7 @@ from app.services.crockford import (
     CROCKFORD_TOKEN_LEN,
     crockford_token,
 )
+from app.services import submission_status
 from app.services.document_number import display_document_number
 from app.services.error_handler import (
     AppException,
@@ -80,6 +81,12 @@ OTP_DAILY_CAP = 10
 # tag writes.
 SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorship_form")
 
+# What the generic submission routes, neighbours, list and attachments accept: the always-visible
+# base plus `project_registration` (PROJECT-REG-PORTAL D1). SUPPORTED_TYPES stays the VISIBILITY
+# base (`portal_form_visibility_service`), so the registration kind shows only when granted.
+PROJECT_REGISTRATION_KIND = "project_registration"
+GENERIC_SUBMISSION_TYPES = SUPPORTED_TYPES + (PROJECT_REGISTRATION_KIND,)
+
 # The kinds an ADMIN may grant on a contact access type, which is a different
 # question: it is about what the portal LANDING offers a contact, and the price
 # tag request has a landing card like the rest. `portal_form_types` is validated
@@ -93,12 +100,31 @@ CONVERSATION_FORM_TYPE = "conversation"
 # The kinds only a contact linked to a sales agent can hold, whatever the switch says.
 AGENT_ONLY_FORM_TYPES = (CUSTOMER_ASKS_FORM_TYPE, CONVERSATION_FORM_TYPE)
 GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + (
+    PROJECT_REGISTRATION_KIND,
     "price_tag_request",
     "sales_opportunity",
+    "sample_request",
+    "new_product_application",
     CUSTOMER_ASKS_FORM_TYPE,
     CONVERSATION_FORM_TYPE,
 )
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
+
+
+def parse_allowed_extensions(raw: Optional[str]) -> list[str]:
+    """An attachment type's ``allowed_extensions`` text as sorted, unique,
+    lowercase extensions without dots. Admins type the list by hand, so
+    spaces, capitals, a leading dot and empty entries all occur. Both the
+    portal upload check and the file picker's list (``/me``) read this, so
+    the picker never offers a file the server refuses or greys out one it
+    accepts. Empty means the type sets no limit."""
+    return sorted(
+        {
+            e.strip().lower().lstrip(".")
+            for e in (raw or "").split(",")
+            if e.strip().lstrip(".")
+        }
+    )
 
 # Crockford base32 alphabet - excludes I, L, O, U to eliminate look-alike
 # transcription errors (I↔l↔1, O↔0, U↔V). Tokens are user-visible in URLs and
@@ -816,8 +842,12 @@ class PortalService:
         q: Optional[str] = None,
     ) -> list[dict]:
         kind = (kind or "").strip().lower()
-        if kind not in SUPPORTED_TYPES:
+        if kind not in GENERIC_SUBMISSION_TYPES:
             raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_list(self.db, token, q)
         like = f"%{q.strip()}%" if q and q.strip() else None
         if kind == "complaint":
             query = self.db.query(Complaint).filter(
@@ -952,8 +982,16 @@ class PortalService:
             )
         raise handle_not_found(entity_name, submission_id)
 
-    def get_submission(self, token: PortalToken, kind: str, submission_id: str) -> dict:
+    def get_submission(
+        self, token: PortalToken, kind: str, submission_id: str, *, full: bool = False
+    ) -> dict:
+        """The contact's own submission. Most callers use this only to prove ownership; the
+        project registration builds its possible duplicates only for `full` (the detail page)."""
         kind = kind.strip().lower()
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_get(self.db, token, submission_id, full=full)
         if kind == "complaint":
             row = (
                 self.db.query(Complaint)
@@ -1009,7 +1047,12 @@ class PortalService:
         submission_id: Optional[str] = None,
     ) -> dict:
         kind = kind.strip().lower()
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_save(self.db, token, payload, submission_id)
         if submission_id is None:
+            self._check_line_numbers(kind, payload)
             row = self._instantiate(kind, token, payload)
             row.portal_draft_at = _utcnow()
             self.db.add(row)
@@ -1051,6 +1094,10 @@ class PortalService:
         payload: Optional[dict] = None,
     ) -> dict:
         kind = kind.strip().lower()
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_submit(self.db, token, submission_id, payload)
         row = self._fetch_for_edit(kind, token, submission_id)
         if payload:
             self._apply_payload(kind, row, payload)
@@ -1074,7 +1121,9 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit complaint with status {previous_status!r}."
                 )
-            row.status = "submitted"
+            row.status = submission_status.status_on_submit(
+                was_rejected=previous_status == "rejected"
+            )
         elif kind == "stock_inquiry":
             # A `responded` inquiry is read-only on this path - it changes only
             # through the revision endpoint (`PortalRevisionService.revise`).
@@ -1084,8 +1133,12 @@ class PortalService:
                 )
             # Portal submit mirrors the system "submit for project sales" flow:
             # advance directly to pending_project_sales so the Project Sales
-            # team is queued for review (notification fires below).
-            row.status = "pending_project_sales"
+            # team is queued for review (notification fires below). After a
+            # rejection it is `resubmitted`, which stands in for that stage.
+            row.status = submission_status.status_on_submit(
+                was_rejected=previous_status == "rejected",
+                stage=submission_status.SI_REVIEW_STAGE,
+            )
             row.rejection_reason = None
             row.rejected_at = None
             row.rejected_by = None
@@ -1110,6 +1163,24 @@ class PortalService:
                 # so a bare resubmit of an already-saved draft is checked too, not only
                 # a submit that also sends a fresh `products` payload.
                 self._require_sponsorship_unit_prices(row)
+            elif getattr(row, "project_id", None):
+                # A purchase request may name a project too: never a registration still
+                # waiting for approval (PROJECT-REG-PORTAL R4). Checked on submit, as
+                # sponsorship's link is, because a draft may be incomplete.
+                from app.models.projects import Project
+                from app.services.project_service import approved_projects
+
+                if (
+                    approved_projects(
+                        self.db.query(Project.id).filter(Project.id == str(row.project_id))
+                    ).first()
+                    is None
+                ):
+                    raise AppException(
+                        status_code=422,
+                        message="That project is not approved yet. Pick a project from the list.",
+                        code="purchase_request_project_not_approved",
+                    )
             approval_rejected = (
                 (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
             )
@@ -1117,7 +1188,9 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit {kind} with status {previous_status!r}."
                 )
-            row.status = "submitted"
+            row.status = submission_status.status_on_submit(
+                was_rejected=previous_status == "rejected" or approval_rejected
+            )
             # Top "Date" on the document = submitted date. Re-stamp on every submit,
             # including resubmit-after-rejection, so it reflects the latest submission
             # (mirrors approved_at, which also resets per approval cycle).
@@ -1318,6 +1391,11 @@ class PortalService:
     def delete_draft(self, token: PortalToken, kind: str, submission_id: str) -> None:
         """Hard-delete a draft submission. Only drafts (portal_draft_at IS NOT NULL) are deletable."""
         kind = kind.strip().lower()
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            registrations.portal_delete(self.db, token, submission_id)
+            return
         row = self._fetch_for_edit(kind, token, submission_id)
         if row.portal_draft_at is None:
             raise handle_validation_error("Only drafts can be deleted.")
@@ -1510,6 +1588,15 @@ class PortalService:
             row.sponsor_subject_other = (
                 explicit_other if norm_subject == "others" and explicit_other else norm_other
             )
+
+    def _check_line_numbers(self, kind: str, payload: dict) -> None:
+        """Refuse a bad line figure before the header is written."""
+        if kind not in ("purchase_request", "sponsorship_form"):
+            return
+        for line_data in payload.get("products") or []:
+            if isinstance(line_data, dict):
+                for key in ("quantity", "unit_price", "total"):
+                    self._coerce_decimal(line_data.get(key))
 
     def _replace_request_lines_if_needed(self, kind: str, row: Any, payload: dict) -> None:
         if kind == "complaint":
@@ -1726,12 +1813,15 @@ class PortalService:
     def _coerce_decimal(value: Any) -> Optional[Decimal]:
         if value is None or value == "":
             return None
-        if isinstance(value, Decimal):
-            return value
         try:
-            return Decimal(str(value))
+            number = value if isinstance(value, Decimal) else Decimal(str(value))
         except (InvalidOperation, ValueError):
             return None
+        if not number.is_finite():
+            raise handle_validation_error("Enter a valid number.")
+        if number >= 10**13 or number <= -(10**13):
+            raise handle_validation_error("Quantity is too large.")
+        return number
 
     # ---------- Requestor ("requested by" / "salesperson") options ----------
     #
@@ -1790,8 +1880,12 @@ class PortalService:
         into another contact's submissions.
         """
         kind = (kind or "").strip().lower()
-        if kind not in SUPPORTED_TYPES:
+        if kind not in GENERIC_SUBMISSION_TYPES:
             raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_neighbours(self.db, token, submission_id)
         self.get_submission(token, kind, submission_id)  # ownership check; raises on miss
 
         if kind == "complaint":
@@ -1866,20 +1960,25 @@ class PortalService:
             except Exception:  # noqa: BLE001
                 pass
             try:
+                sentence = (
+                    "A previously rejected stock inquiry has been appealed via the "
+                    "user portal and requires your review."
+                    if is_resubmission
+                    else "A new stock inquiry has been submitted via the user portal and "
+                    "requires your review."
+                )
                 service._notify_team_stock_inquiry(  # noqa: SLF001
                     inquiry_id=str(row.id),
                     agent_code="lead_time_enquiries",
                     team_assignment_code="project_sales",
-                    title="New Stock Inquiry created",
-                    intro_plain=(
-                        "Dear Project Sales Team,\n\nA new stock inquiry has been "
-                        "submitted via the user portal and requires your review."
+                    title=(
+                        "Stock inquiry appealed"
+                        if is_resubmission
+                        else "New Stock Inquiry created"
                     ),
-                    intro_html=(
-                        "Dear Project Sales Team,<br /><br />A new stock inquiry has been "
-                        "submitted via the user portal and requires your review."
-                    ),
-                    event_type="portal_submitted",
+                    intro_plain=f"Dear Project Sales Team,\n\n{sentence}",
+                    intro_html=f"Dear Project Sales Team,<br /><br />{sentence}",
+                    event_type="portal_resubmitted" if is_resubmission else "portal_submitted",
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("Stock inquiry submit notify failed: %s", e)
@@ -1899,12 +1998,23 @@ class PortalService:
                     request_number=row.request_number or "N/A",
                     project_title=row.project_title or "N/A",
                     base_url_override=None,
-                    integration_action="created",
+                    integration_action="resubmitted" if is_resubmission else "created",
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("Purchase request submit notify failed: %s", e)
 
     # ---------- Attachment policy ----------
+
+    def portal_allowed_extensions(self) -> list[str]:
+        """The portal type's extension list for the file picker. Unlike
+        ``get_portal_attachment_type`` this never raises: a missing type row
+        must not break ``/me``; the upload route still refuses on its own."""
+        row = (
+            self.db.query(AttachmentType.allowed_extensions)
+            .filter(AttachmentType.code == PORTAL_ATTACHMENT_TYPE_CODE)
+            .first()
+        )
+        return parse_allowed_extensions(row[0] if row else None)
 
     def get_portal_attachment_type(self) -> AttachmentType:
         row = (

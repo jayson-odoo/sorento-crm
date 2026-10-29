@@ -20,7 +20,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { useImportJobRows } from '../hooks/useImportJobs';
 import { downloadImportJobRowsCsv } from '../services/importJobService';
 import type {
@@ -30,7 +31,6 @@ import type {
 } from '../types/importJob.types';
 
 const OUTCOME_OPTIONS = [
-  { value: '', label: 'All outcomes' },
   { value: 'created', label: 'Created' },
   { value: 'updated', label: 'Updated' },
   { value: 'unchanged', label: 'Unchanged' },
@@ -113,10 +113,7 @@ export function ImportJobRowsCard({
         if (!seen.has(entry.code)) seen.set(entry.code, entry.label || entry.code);
       });
     });
-    return [
-      { value: '', label: 'All reasons' },
-      ...[...seen.entries()].map(([value, label]) => ({ value, label })),
-    ];
+    return [...seen.entries()].map(([value, label]) => ({ value, label }));
   }, [result]);
 
   const columns = useMemo<ColumnDef<ImportJobRow>[]>(
@@ -274,15 +271,16 @@ export function ImportJobRowsCard({
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="w-full sm:w-48">
-              <SearchableSelect
-                value={outcomeFilter}
-                onChange={(value) => {
-                  onChangeOutcome?.(value);
+              <SearchableMultiSelect
+                value={splitMulti(outcomeFilter)}
+                onChange={(values) => {
+                  onChangeOutcome?.(joinMulti(values));
                   resetPage();
                 }}
                 options={OUTCOME_OPTIONS}
                 placeholder="All outcomes"
                 size="sm"
+                clearable
               />
             </div>
             {/* E1 (small-fix track, fix round 2): options come from `result.breakdown` -
@@ -290,17 +288,18 @@ export function ImportJobRowsCard({
                 only "All reasons" with nothing to pick, so the select is skipped rather
                 than shown inert. A generic job whose breakdown happens to have no reasons
                 loses the same empty select, which is fine. */}
-            {codeOptions.length > 1 && (
+            {codeOptions.length > 0 && (
               <div className="w-full sm:w-64">
-                <SearchableSelect
-                  value={codeFilter}
-                  onChange={(value) => {
-                    onChangeCode?.(value);
+                <SearchableMultiSelect
+                  value={splitMulti(codeFilter)}
+                  onChange={(values) => {
+                    onChangeCode?.(joinMulti(values));
                     resetPage();
                   }}
                   options={codeOptions}
                   placeholder="All reasons"
                   size="sm"
+                  clearable
                 />
               </div>
             )}

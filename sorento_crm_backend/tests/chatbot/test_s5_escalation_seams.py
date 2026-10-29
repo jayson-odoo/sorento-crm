@@ -16,9 +16,9 @@ Three things live here, and none of them is covered there:
    `out_of_scope` to `chatbot_completed_lanes`, i.e. in production, on a real customer.
    The smoke test drives `production_services()` over a blank-schema session with the two
    CRM services stubbed at THEIR boundary (`post_next_assignee`, the SLA service's
-   `create_tracking`), so the wiring - the import paths, the argument names, the
-   `asyncio.run`, and above all `ConversationSLATrackingCreate(**body)` accepting the
-   lane's own body - runs for real.
+   `create_tracking`), so the wiring - the import paths, the argument names, and above
+   all `ConversationSLATrackingCreate(**body)` accepting the lane's own body - runs for
+   real.
 
 3. **The clarify arm end to end.** AC-505 has zero live captures (the arm did not fire once
    in the 33-execution window), so the only way to know `complete_turn` surfaces
@@ -541,7 +541,7 @@ class TestProductionSeams:
 
         seen: dict[str, Any] = {}
 
-        async def fake_post_next_assignee(*, body, current_user, db):
+        def fake_post_next_assignee(*, body, current_user, db):
             seen["next_assignee_body"] = body
             seen["next_assignee_user"] = current_user
             return {
@@ -997,8 +997,8 @@ def test_a_clarifys_quick_replies_reach_the_persisted_reply(
 
     Team names short enough to be buttons (QUICK-REPLY-NAMES: a title is cut at 20
     characters by the transport; the long-name twin is the test below). The persisted
-    TEXT is the separate, still-open gap `_XFAIL_CLARIFY_TEXT_IS_NONE` names, pinned by
-    `test_a_clarifys_text_reaches_the_persisted_reply` so it stays visible.
+    TEXT is pinned by `test_a_clarifys_text_reaches_the_persisted_reply` (CHAT-SPARSE:
+    the tail falls back to the lane's own message, so it is no longer blank).
     """
     result, row = _run_nurain_team_clarify(
         session_factory, system_settings_row, monkeypatch,
@@ -1020,14 +1020,13 @@ def test_a_clarifys_quick_replies_reach_the_persisted_reply(
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_CLARIFY_TEXT_IS_NONE)
 def test_a_clarifys_text_reaches_the_persisted_reply(
     session_factory, system_settings_row, monkeypatch
 ) -> None:
     """The half of prod turn 9dd4cd0f still open: the tail composes no text on the
     clarify arm, so the persisted reply's `text` is null while the action carries the
-    question. Kept as the xfail it was before QUICK-REPLY-NAMES split the buttons half
-    (now green above) out of it."""
+    question. Green since CHAT-SPARSE (12 Oct 2026): the tail falls back to the lane's own
+    message text when it composed none (owner rule, never a blank reply)."""
     result, row = _run_nurain_team_clarify(
         session_factory, system_settings_row, monkeypatch,
         teams=(("do_customer_service", "DO Customer Service"), ("project_customer_service", "Project CS")),

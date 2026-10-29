@@ -250,7 +250,10 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # SUB_ASKS_ADDENDUM (2,387 chars), so the prompt defines them with no glossary rows: 53,400 est.
 # tokens without MEMORY_ADDENDUM (+223), so CEILING is 53,404 (+4). Then the counting rule (each measure
 # named is one thing asked, live check on the prod line): 53,442 (+38), so CEILING is 53,446 (+4).
-CEILING = 53_446
+# REPORT-SMART-L 22 Oct: `compare_to` + count measure lines (owner ruling allowing the two additive parser fields). Measured: production prompt 53,467, whole prompt 53,983 (= CEILING + 512).
+# REPORT-SMART-L R6 (24 Oct): the `by_words` key line in REPORT_ASK_ADDENDUM (the schema guard needs every declared key
+# in the prompt). Measured: production prompt 53,514 (+43), so CEILING is 53,518 (+4).
+CEILING = 53_518
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

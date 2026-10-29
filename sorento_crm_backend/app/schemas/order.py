@@ -93,6 +93,8 @@ class CustomerResponse(CustomerBase):
     customer_group_id: Optional[str] = None
     customer_group_name: Optional[str] = None
     debtor_type: Optional[DebtorTypeValue] = None
+    # AutoCount `Debtor.DebtorType` (SALES-UNIFIED 2.3), read-only: the master ingest writes it.
+    autocount_debtor_type: Optional[str] = None
     # Shown as columns on a sales agent's Customers tab.
     region: Optional[str] = None
     market_segment_code: Optional[str] = None
@@ -321,7 +323,15 @@ class OrderLineBase(BaseModel):
 
 
 class OrderLineCreate(OrderLineBase):
-    pass
+    @field_validator("quantity")
+    @classmethod
+    def _quantity_not_null(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        # order_lines.quantity is NOT NULL: an explicit null can only become 0 or a 500.
+        if v is None:
+            raise ValueError("Quantity cannot be blank.")
+        if v >= 10**11:
+            raise ValueError("Quantity is too large.")
+        return v
 
 
 class OrderLineUpdate(BaseModel):
@@ -332,6 +342,15 @@ class OrderLineUpdate(BaseModel):
     tax: Optional[Decimal] = None
     total_excluding_tax: Optional[Decimal] = None
     total_including_tax: Optional[Decimal] = None
+
+    @field_validator("quantity")
+    @classmethod
+    def _quantity_not_null(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v is None:
+            raise ValueError("Quantity cannot be blank.")
+        if v >= 10**11:
+            raise ValueError("Quantity is too large.")
+        return v
 
 
 class ProductSimpleRef(BaseModel):
@@ -353,6 +372,14 @@ class WarehouseSimpleRef(BaseModel):
         from_attributes = True
 
 
+class SalesOrderLinkRef(BaseModel):
+    """The SO a DO line delivers (DO-SO-LINK-SURFACE). ``line_no`` only when AutoCount named
+    the exact SO line; the SO alone when it named the SO + product."""
+    id: str
+    so_number: str
+    line_no: Optional[int] = None
+
+
 class OrderLineResponse(OrderLineBase):
     id: str
     order_id: str
@@ -361,6 +388,11 @@ class OrderLineResponse(OrderLineBase):
     updated_at: datetime
     product: Optional[ProductSimpleRef] = None
     warehouse: Optional[WarehouseSimpleRef] = None
+    # AutoCount's own source document number, as sent; ``sales_order`` is it resolved to a
+    # CRM sales order (only on the single-DO read, stamped by OrderService.get_order).
+    from_doc_no: Optional[str] = None
+    from_doc_type: Optional[str] = None
+    sales_order: Optional[SalesOrderLinkRef] = None
 
     class Config:
         from_attributes = True

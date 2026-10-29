@@ -1096,8 +1096,8 @@ function columnDefs() {
 // "redirected" and "received" as visible cell text before writing these; every
 // remaining "redirected" occurrence below is a `queryByText`/`not.toMatch` guard, never
 // an assertion that it renders.
-describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings): a received document is the word "received", one muted pill', () => {
-  it('a received link shows the word "received" as a muted pill, and clicking it opens the dialog reading "Received 158 of 158" for it and nothing for an open link', () => {
+describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings) as amended by LINKAGE-UNIFY Q1 (owner, 26 Oct): a received SPO reads "Received <qty> at <bin>", one muted pill; a PO chip never says received', () => {
+  it('a received SPO link shows "Received 158 at BRW-IR" as a muted pill off its receipts, and clicking it opens the dialog reading "Received 158 of 158" for it and nothing for an open link', () => {
     renderRows(
       [
         worklistRow({
@@ -1113,7 +1113,8 @@ describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings): a re
               location: 'BRW-IR',
               received: true,
               received_qty: '158',
-            },
+              receipts: [{ qty: '158', bin: 'BRW-IR' }],
+            } as never,
             {
               id: 'l2',
               kind: 'po',
@@ -1131,7 +1132,7 @@ describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings): a re
 
     const row = screen.getByTestId('row-row-mixed');
     const mark = within(row).getByTestId('backing-documents-received-spo-row-mixed');
-    expect(mark.textContent).toBe('received');
+    expect(mark.textContent).toBe('Received 158 at BRW-IR');
     // One line: no block-level child hides the row height.
     expect(row.querySelectorAll('div')).toHaveLength(0);
 
@@ -1139,6 +1140,25 @@ describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings): a re
     const dialog = screen.getByTestId('backing-documents-row-mixed');
     expect(within(dialog).getByText('Received 158 of 158')).toBeInTheDocument();
     expect(within(dialog).queryByText(/Received 20/)).not.toBeInTheDocument();
+  });
+
+  it('a PO chip never carries a "received" pill, even on a received PO line', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-po-rcv',
+        qty: '40',
+        linked_qty: '40',
+        links: [
+          { id: 'l1', kind: 'po', document: '202607-S0105', qty: '40', received: true, received_qty: '40', receipts: [] } as never,
+        ],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-po-rcv');
+    expect(
+      within(row).queryByTestId('backing-documents-received-row-po-rcv'),
+    ).not.toBeInTheDocument();
+    expect(within(row).queryByText(/received/i)).not.toBeInTheDocument();
   });
 
   it('an OPEN link carries no "received" pill', () => {
@@ -1920,7 +1940,7 @@ describe('the Raised at cell carries its own history in a tooltip (PLAN-oi-workl
  * wiring that produces it (S3).
  */
 describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as a received link does today', () => {
-  it('a row settled in place under Path B (redirected_to_pool false, note carries "Was N on date") still shows the "received" pill on its linked document', () => {
+  it('a row settled in place under Path B (redirected_to_pool false, note carries "Was N on date") still shows "Received 40 at BRW-BB" on its linked SPO (LINKAGE-UNIFY Q1)', () => {
     renderRows(
       [
         worklistRow({
@@ -1938,7 +1958,8 @@ describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as 
               location: 'BRW-BB',
               received: true,
               received_qty: '40',
-            },
+              receipts: [{ qty: '40', bin: 'BRW-BB' }],
+            } as never,
           ],
         }),
       ],
@@ -1949,7 +1970,7 @@ describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as 
     const mark = within(row).getByTestId(
       'backing-documents-received-spo-row-own-arrival-retained',
     );
-    expect(mark.textContent).toBe('received');
+    expect(mark.textContent).toBe('Received 40 at BRW-BB');
     // Path B is a RETAIN, never a redirect: the row stays active, not muted.
     expect(row.className).not.toContain('opacity-60');
   });
@@ -2138,5 +2159,105 @@ describe('AC-DT-5/AC-DT-6 (PLAN-oi-decision-trail-ui.md, round 2): the decision 
   it('hidden by default: `raise_event` is in `DEFAULT_HIDDEN_COLUMNS`', async () => {
     const { DEFAULT_HIDDEN_COLUMNS } = await import('./orderInquiryWorklistColumns');
     expect(DEFAULT_HIDDEN_COLUMNS).toContain('raise_event');
+  });
+});
+
+describe('OI-RESERVE-PILL-QTY (CS report 21 Oct 2026): the Instruction cell reserve pill prints its qty', () => {
+  it('a requested row reads "Request to reserve 70", the open request qty the detail page already prints', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-requested',
+          reserve_state: 'requested',
+          requested_qty: '70',
+          reserved_qty: '0',
+        }),
+      ],
+      'verb',
+    );
+
+    const row = screen.getByTestId('row-row-requested');
+    expect(within(row).getByText('Request to reserve 70')).toBeInTheDocument();
+  });
+
+  it('a reserved row reads "Reserved 12"', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-reserved',
+          reserve_state: 'reserved',
+          reserved_qty: '12',
+          requested_qty: '0',
+        }),
+      ],
+      'verb',
+    );
+
+    const row = screen.getByTestId('row-row-reserved');
+    expect(within(row).getByText('Reserved 12')).toBeInTheDocument();
+  });
+});
+
+/**
+ * OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026: "we just need more visibility"):
+ * the line Qty, the requested reserve qty and the reserved qty side by side, so a 170 line
+ * with a 70 reserve request never reads as one number. ONE shared column factory
+ * (`orderInquiryReserveQtyColumns`), used here and on the OI detail Lines tab.
+ */
+describe('OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit beside Qty', () => {
+  it('the two columns follow Qty directly', () => {
+    let captured: ColumnDef<OrderInquiryWorklistRow>[] | null = null;
+    function Capture() {
+      captured = useOrderInquiryWorklistColumns();
+      return null;
+    }
+    render(<Capture />);
+    const ids = (captured as unknown as { id?: string; accessorKey?: string }[]).map(
+      (column) => column.id ?? column.accessorKey,
+    );
+    const qtyAt = ids.indexOf('qty');
+    expect(qtyAt).toBeGreaterThan(-1);
+    expect(ids.slice(qtyAt, qtyAt + 3)).toEqual(['qty', 'reserve_requested', 'reserved']);
+  });
+
+  it('a 170 line with an open request of 70 reads 170 / 70 / nothing reserved', () => {
+    const row = worklistRow({
+      id: 'row-cb315',
+      qty: '170',
+      reserve_state: 'requested',
+      requested_qty: '70',
+      asked_reserve_qty: '70',
+      reserved_qty: '0',
+    });
+    renderRows([row], 'reserve_requested');
+    expect(within(screen.getByTestId('row-row-cb315')).getByText('70')).toBeInTheDocument();
+  });
+
+  it('the Reserved cell prints the reserved qty', () => {
+    renderRows(
+      [worklistRow({ id: 'row-res', qty: '170', reserve_state: 'reserved', reserved_qty: '70', requested_qty: '0' })],
+      'reserved',
+    );
+    expect(within(screen.getByTestId('row-row-res')).getByText('70')).toBeInTheDocument();
+  });
+
+  it('a partial answer keeps both numbers: asked 70, reserved 50 (owner ruling 21 Oct 2026)', () => {
+    const row = worklistRow({
+      id: 'row-partial',
+      qty: '170',
+      reserve_state: 'reserved',
+      requested_qty: '0',
+      asked_reserve_qty: '70',
+      reserved_qty: '50',
+    });
+    renderRows([row], 'reserve_requested');
+    expect(within(screen.getByTestId('row-row-partial')).getByText('70')).toBeInTheDocument();
+  });
+
+  it('a zero or missing figure reads a muted dash, never "0"', () => {
+    renderRows([worklistRow({ id: 'row-none', requested_qty: '0', asked_reserve_qty: '0' })], 'reserve_requested');
+    const row = screen.getByTestId('row-row-none');
+    expect(within(row).queryByText('0')).not.toBeInTheDocument();
+    expect(within(row).getByText('-')).toBeInTheDocument();
   });
 });

@@ -15,6 +15,8 @@ from app.services.chatbot.turn.compose import compose
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import Focus, Profile, State
 
+from tests.chatbot._turn_helpers import make_office_access_type
+from tests.chatbot.test_engine import CONTACT_ID
 from tests.chatbot._turn_helpers import TIER_ORDER_FIXTURE, _domain_row
 
 SUGGEST = [
@@ -422,6 +424,8 @@ class TestRealResolverPartialMiss:
             seed_product(db, company_id=DEFAULT_COMPANY_ID, code=code)
         db.commit()
         _seed_contact(session_factory, variables={})
+        # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+        make_office_access_type(session_factory, CONTACT_ID)
 
         def entity(raw: str) -> dict[str, Any]:
             return {"raw": raw, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}
@@ -439,7 +443,8 @@ class TestRealResolverPartialMiss:
 
         reply = (result.reply or {}).get("text") or ""
         assert captured, "the placed code must still be fetched"
-        assert f"Product: {placed}" in reply, reply
+        # REPORT-UNIFY: the answer for the placed code is the report ask run on it (its header is the presenter's).
+        assert captured[0][1].get("product_code") == placed, captured
         assert f'Couldn\'t find "{typo}" (product). Did you mean:' in reply, reply
         assert near_a in reply and near_b in reply, reply
         assert f"I could not find {typo}" not in reply, reply

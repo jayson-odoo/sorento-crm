@@ -53,8 +53,6 @@ function project(overrides: Partial<Project> = {}): Project {
     developer_name: 'SP Setia',
     owner_name: 'Ali',
     is_critical: false,
-    brands: [],
-    brand_ids: [],
     can_edit: true,
     ...overrides,
   } as Project;
@@ -124,7 +122,6 @@ describe('PipelineBoard', () => {
             stale_reason: 'no_activity',
             days_since_last_activity: 45,
             estimated_sales_value: '1250000.00',
-            brands: ['Sorento', 'Mocha', 'Third'],
           }),
         ]}
         onMove={vi.fn()}
@@ -133,8 +130,6 @@ describe('PipelineBoard', () => {
     expect(screen.getByText('Critical')).toBeInTheDocument();
     expect(screen.getByText('Falling behind')).toBeInTheDocument();
     expect(screen.getByText('RM 1.3m')).toBeInTheDocument();
-    // Only the first two brands, then a count -- a card is a glance, not a list.
-    expect(screen.getByText('+1')).toBeInTheDocument();
   });
 
   it('shows the derived next action, flagged when it is overdue (AC-N6)', () => {

@@ -178,22 +178,33 @@ export interface OrderInquiryLink {
    */
   derived_po?: boolean;
   /**
-   * The document this link points at is FULLY received (`PLAN-oi-replan-received-links.md`
-   * S1, AC-RL-17): a PO line whose `qty_received >= qty_ordered` or `line_status =
-   * 'closed'`, or an SPO allocation that fails `open_incoming_clauses()`. Goods that have
-   * landed are location stock, not a promise still in transit - the PO/SPO chip and the
-   * backing-documents dialog mark it so purchasing reads it as history rather than as
-   * something still to chase. Absent or false on an open document.
+   * The placement is FULLY received (`PLAN-oi-replan-received-links.md` S1, AC-RL-17;
+   * LINKAGE-UNIFY U2, owner ruling Q3): every unit of it landed in a bin by the goods
+   * chain - a PO link once its goods land on the SPO the line was transferred onto, or
+   * straight into a bin when no SPO names the line; never on the transfer, never on a
+   * dead document. The backing-documents dialog and the reserve chip read it. Absent or
+   * false while anything is still in transit or on order.
    */
   received?: boolean;
   /**
-   * How much of THIS link's document line has been received: `PurchaseOrderLine.
-   * qty_received` for a `po`-kind link, `SPOAllocation.quantity_received` for `spo`.
-   * Present on every link regardless of `received` - a partly received document states
-   * the figure too, even though `received` itself only flips true once the WHOLE line is
-   * done. Null or absent when the book states no receipt yet.
+   * How much of THIS placement has landed - its own share, not the document's receipt.
+   * Stated regardless of `received`, so a partly landed placement says the figure too.
    */
   received_qty?: string | null;
+  /**
+   * LINKAGE-UNIFY U3 (owner rulings Q1, Q4, Q6): where the goods were received, one entry
+   * per GR bin - an SPO entry's own receipts, or a PO entry's (a PO line no SPO names).
+   * The SPO chip reads "Received <qty> at <bin>" off it; a PO chip only ever does for a
+   * PO entry's own receipts. Empty when nothing landed; absent on an older answer.
+   */
+  receipts?: OrderInquiryLinkReceipt[];
+  /**
+   * Q5: the document brings nothing - `po_cancelled` (PO line cancelled or closed with
+   * nothing transferred) or `spo_withdrawn` (SPO line retired with nothing received, or
+   * closed with nothing landed). The link stays placed; the chip says it in red. Null on a
+   * live link.
+   */
+  dead_reason?: OrderInquiryDeadReason | null;
   /**
    * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): a concrete
    * instruction on an open link that has drifted outside the product's lead-time
@@ -414,6 +425,54 @@ export interface OrderInquiryListEnvelope {
  * screen and the file can be read side by side.
  */
 
+/** OI-LINE-SPLIT (UAC D3): one split of a row's SO line, as the Lines tab lists it. */
+export interface OrderInquiryLineSplit {
+  id: string;
+  qty: string;
+  delivery_date: string | null;
+  is_cancel: boolean;
+  /** REMAIN / DELAY / ADVANCE / CANCEL BALANCE against the line's base date. */
+  change: string;
+  sits_on_line_id: string | null;
+  /** What the screen prints for the line it sits on; the id is addressing only. */
+  sits_on_line_no: number | null;
+  remark: string;
+}
+
+/**
+ * OI-SPLIT-VIEW (UAC B2): one row of a line's split popup, a saved split or the AutoCount
+ * extra (`sits_on: 'extra'`). Quantities and dates are strings; `sits_on_line_no` is the
+ * AutoCount line number.
+ */
+export interface LineSplitViewRow {
+  qty: string;
+  delivery_date: string | null;
+  /** The email's REMARK word: ADVANCE / REMAIN / DELAY / CANCEL BALANCE / ORDER n. */
+  change: string;
+  sits_on: 'own' | 'line' | 'new' | 'extra';
+  sits_on_line_no: number | null;
+  remark: string;
+  is_cancel: boolean;
+  /** Not in the applied plan while the edit waits (UAC B4); `was_*` only when exact. */
+  changed: boolean;
+  was_qty: string | null;
+  was_date: string | null;
+}
+
+/** OI-SPLIT-VIEW (UAC B2 to B4): a split line as the popup reads it, the same value on the
+ * SO and OI reads (server `LineSplitService.split_views`); null on a line with no splits. */
+export interface LineSplitView {
+  status: 'confirmed' | 'saved' | 'autocount_changed';
+  revision_no: number | null;
+  confirmed_on: string | null;
+  base_qty: string;
+  base_date: string | null;
+  now_qty: string;
+  now_date: string | null;
+  total_qty: string;
+  rows: LineSplitViewRow[];
+}
+
 export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   id: string;
   /** OI-BULK-RESERVE v4: the header this row belongs to; the Lines page commits per order inquiry. */
@@ -517,6 +576,13 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * on every row before this plan.
    */
   line_cancelled?: boolean;
+  /**
+   * OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the Lines tab's
+   * read-only expand; empty when the line is not split.
+   */
+  splits?: OrderInquiryLineSplit[];
+  /** OI-SPLIT-VIEW (UAC B1): the line's split popup; null when the line has no splits. */
+  split_view?: LineSplitView | null;
   /** `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20): `requested` while an open reserve
    * request row exists, `reserved` once CS has actually reserved something (and no open
    * request), `declined` when CS's latest answer was 0 (6e.4), else null. */
@@ -529,6 +595,10 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * The Lines grid's `Request to reserve N` pill and the tick's default stage both
    * read N off this. */
   requested_qty?: string;
+  /** OI-RESERVE-PILL-QTY (owner, 21 Oct 2026): what purchasing last asked CS to reserve
+   * off this row, kept after CS answers so a partial answer shows both numbers; "0" when
+   * nothing was asked. The Reserve requested column reads this, not `requested_qty`. */
+  asked_reserve_qty?: string;
   /** OI-BULK-RESERVE v4: the open request row's warehouse id and code; null with no open
    * request. The Lines page's Decide drafts read them. */
   reserve_warehouse_id?: string | null;
@@ -617,6 +687,15 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   po_id?: string | null;
 }
 
+/** LINKAGE-UNIFY U3: one GR bin a placement's goods were received at. */
+export interface OrderInquiryLinkReceipt {
+  qty: string;
+  bin: string | null;
+}
+
+/** LINKAGE-UNIFY U3 (Q5): why a link's document brings nothing. */
+export type OrderInquiryDeadReason = 'po_cancelled' | 'spo_withdrawn';
+
 export interface OrderInquiryWorklistParams {
   query?: string;
   /**
@@ -638,9 +717,10 @@ export interface OrderInquiryWorklistParams {
    * S5 (`PLAN-oi-project-label-from-so.md` section 5): the Project column's own text,
    * exact match - a registered project's title or an adopted order's SO-level label,
    * off the summary's own `projects` facet. Separate from `project_id`, which stays
-   * UUID-only for an existing deep link; the filter picker sends this one now.
+   * UUID-only for an existing deep link; the filter picker sends this one now. One title or
+   * several (OR-ed), each sent whole.
    */
-  project?: string;
+  project?: string | string[];
   supplier_id?: string;
   /** The id of the person who raised the rows, picked off the summary's own list. */
   raised_by?: string;
@@ -666,7 +746,8 @@ export interface OrderInquiryWorklistParams {
    */
   ack?: OrderInquiryAckState | 'to_confirm';
   /** The row's Location column, equality (S1, R-K). Warehouse code, never a UUID. */
-  location?: string;
+  /** One location, or several (free text, each sent whole). */
+  location?: string | string[];
   /** The row's Agent column, equality (S1, R-K). The sales agent's id. */
   agent?: string;
   /** `YYYY-MM` on the SO date (S1, R-K) - the "SO month" filter. */
@@ -680,6 +761,8 @@ export interface OrderInquiryWorklistParams {
   spo_number?: string;
   /** OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status. */
   reserve?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved';
+  /** LINKAGE-UNIFY U3 (Q5): keep a row holding a link whose document is dead this way. */
+  dead_document?: OrderInquiryDeadReason;
   /**
    * The bounds of one schedule-matrix cell's own period (S3): a click's drilldown asks
    * the list for exactly this cell's axis + period rather than reading rows back out of
@@ -791,6 +874,12 @@ export interface OrderInquiryWorklistSummary {
    * here. Optional so a page rendered against an older answer still reads.
    */
   ack?: OrderInquiryAckCounts;
+  /**
+   * LINKAGE-UNIFY U3 (Q5): rows holding a dead-document link, by reason - the "Dead
+   * document" filter's own counts, with that filter dropped. Optional so a page rendered
+   * against an older answer still reads (the options then carry no count).
+   */
+  dead_documents?: Partial<Record<OrderInquiryDeadReason, number>>;
   /**
    * Where the page's "Link up to" date starts (AC-LH5): the latest completed reorder
    * run's own "Plan until", `YYYY-MM-DD`. Read from here rather than invented on the page,
@@ -1123,8 +1212,8 @@ export interface UnplaceAllRequest {
   delivery_month?: string;
   raised_date?: string;
   project_id?: string;
-  /** S5: text, exact match on the Project column - separate from `project_id`. */
-  project?: string;
+  /** S5: text, exact match on the Project column - separate from `project_id`. One or several. */
+  project?: string | string[];
   supplier_id?: string;
   raised_by?: string;
 }
@@ -1192,6 +1281,26 @@ export interface OrderInquiryPoDetailLine {
   book_so_number?: string | null;
   /** True when the book named a sales order this CRM does not hold. */
   book_so_unresolved?: boolean | null;
+  /** SUPPLY-SPO-LINK: every SPO this line was transferred onto, sorted; empty when none. */
+  spo_numbers?: string[];
+  /**
+   * LINKAGE-UNIFY U4: one entry per SPO line this line was transferred onto, with where its
+   * goods landed (`receipts`, per GR bin) or why it brings nothing (`dead_reason`). The
+   * popup's SPO column draws them with the document pills.
+   */
+  spos?: OrderInquiryPoLineSpo[];
+  /** Owner Q5 (a): `po_cancelled` when the line itself brings nothing; the SPO cell draws
+   *  the red pill. */
+  dead_reason?: 'po_cancelled' | null;
+}
+
+/** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto. */
+export interface OrderInquiryPoLineSpo {
+  spo_number: string | null;
+  /** `L12` when the book numbered the line. */
+  line_label: string | null;
+  receipts: OrderInquiryLinkReceipt[];
+  dead_reason: OrderInquiryDeadReason | null;
 }
 
 /**
@@ -1358,11 +1467,12 @@ export interface OrderInquiryHeaderListParams {
   state?: OrderInquiryHeaderStatus | 'all';
   query?: string;
   raised_by?: string;
-  agent?: string;
+  /** One agent name, or several (free text, each sent whole). */
+  agent?: string | string[];
   /** Exact match on the Project column's own text (reviewer B2, fix round 22 Sep
    * 2026) - never a `projects.id`: 0 of 738 headers on the prod copy carry a
-   * registered project. */
-  project?: string;
+   * registered project. One title or several (OR-ed), each sent whole. */
+  project?: string | string[];
   /** OIs with a reserve request row in this status (AC-SN-30). */
   reserve?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved';
   page?: number;

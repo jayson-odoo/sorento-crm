@@ -6,7 +6,7 @@ ordinary CRUD.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from app.models.projects import (
 )
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 
 PARTY_TYPES = (
     "developer",
@@ -49,15 +50,16 @@ def list_parties(
     db: Session,
     *,
     company_id: str,
-    party_type: Optional[str] = None,
+    party_type: Optional[str | Sequence[str]] = None,
     search: Optional[str] = None,
     include_inactive: bool = False,
     page: int = 1,
     limit: int = 50,
 ) -> tuple:
     query = db.query(ProjectParty).filter(ProjectParty.company_id == company_id)
-    if party_type:
-        query = query.filter(ProjectParty.party_type == party_type)
+    types = multi_values(party_type)
+    if types:
+        query = query.filter(ProjectParty.party_type.in_(types))
     if not include_inactive:
         query = query.filter(ProjectParty.is_active.is_(True))
     if search and search.strip():
@@ -151,7 +153,8 @@ def _assert_party_type(party_type: str) -> None:
 
 def create_party(
     db: Session, *, company_id: str, payload: Dict[str, Any], actor_user_id: str
-) -> ProjectParty:
+) -> tuple:
+    """``(party, created)``: an active party of the same type and name comes back as is."""
     _assert_party_type(payload.get("party_type"))
     name = (payload.get("name") or "").strip()
     if not name:
@@ -161,23 +164,23 @@ def create_party(
             code="project_party_name_required",
         )
 
-    # Same-name, same-type duplicates are what destroy the reuse the table exists
-    # for, so they are refused with a pointer to the existing row rather than merged.
+    # Same-name, same-type duplicates are what destroy the reuse the table exists for, so
+    # the existing row comes back instead of a second one (PROJECT-REGISTER-V2 B4); case and
+    # repeated spaces do not make a name different.
+    name = " ".join(name.split())
     existing = (
         db.query(ProjectParty)
         .filter(
             ProjectParty.company_id == company_id,
             ProjectParty.party_type == payload["party_type"],
-            func.lower(ProjectParty.name) == name.lower(),
+            ProjectParty.is_active.is_(True),
+            func.lower(func.regexp_replace(func.btrim(ProjectParty.name), r"\s+", " ", "g"))
+            == name.lower(),
         )
         .first()
     )
     if existing:
-        raise AppException(
-            status_code=409,
-            message=f'"{existing.name}" already exists. Use the existing record.',
-            code="project_party_duplicate",
-        )
+        return existing, False
 
     party = ProjectParty(
         company_id=company_id,
@@ -194,7 +197,7 @@ def create_party(
     )
     db.add(party)
     db.flush()
-    return party
+    return party, True
 
 
 def get_party_or_404(db: Session, party_id: str) -> ProjectParty:

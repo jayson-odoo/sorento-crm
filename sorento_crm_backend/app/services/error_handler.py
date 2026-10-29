@@ -1,4 +1,6 @@
 """Error handling utilities."""
+import logging
+
 from fastapi import HTTPException, status
 from typing import Optional
 
@@ -11,16 +13,18 @@ class AppException(HTTPException):
         status_code: int,
         message: str,
         detail: Optional[str] = None,
-        code: Optional[str] = None
+        code: Optional[str] = None,
+        details: Optional[dict] = None,
     ):
-        super().__init__(
-            status_code=status_code,
-            detail={
-                "message": message,
-                "detail": detail,
-                "code": code
-            }
-        )
+        body = {
+            "message": message,
+            "detail": detail,
+            "code": code
+        }
+        # Serialised only when given, so every existing error body is unchanged.
+        if details is not None:
+            body["details"] = details
+        super().__init__(status_code=status_code, detail=body)
         # Also as plain attributes: the wire shape above is what the handler
         # serialises, and a caller that catches this (a service guard's own
         # test, a retry that only acts on one code) should not have to dig
@@ -80,8 +84,36 @@ def handle_conflict(message: str) -> AppException:
     )
 
 
-def handle_internal_error(message: str = "Oops! Something went wrong. Please try again in a moment.") -> AppException:
-    """Create a 500 Internal Server Error exception."""
+_GENERIC_INTERNAL_MESSAGE = "Oops! Something went wrong. Please try again in a moment."
+
+# Text only a database driver or SQLAlchemy writes. Most routes call
+# `handle_internal_error(str(e))`, so a DB error's own text (the SQL, constraint
+# and table names, row ids) used to reach the toast verbatim (CONTACT-DELETE-FK).
+# The constraint phrases cover a bare `str(e.orig)`; "statement on table" and
+# " at 0x" cover the ORM's StaleDataError / FlushError, which carry no link.
+_DB_ERROR_MARKERS = (
+    "[SQL:",
+    "psycopg",
+    "sqlalche.me",
+    "(sqlalchemy.",
+    "violates foreign key constraint",
+    "violates unique constraint",
+    "violates not-null constraint",
+    "violates check constraint",
+    "DETAIL:  Key (",
+    "statement on table",
+    " at 0x",
+)
+
+
+def handle_internal_error(message: str = _GENERIC_INTERNAL_MESSAGE) -> AppException:
+    """Create a 500 Internal Server Error exception.
+
+    A message carrying database error text is logged here and replaced with the
+    generic one, so the client never sees it."""
+    if any(marker in message for marker in _DB_ERROR_MARKERS):
+        logging.getLogger(__name__).error("Internal error (hidden from client): %s", message)
+        message = _GENERIC_INTERNAL_MESSAGE
     return AppException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         message=message,
