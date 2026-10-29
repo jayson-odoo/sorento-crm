@@ -100,7 +100,10 @@ class TestTwoUnplacedTokensAreBothNamed:
         assert captured, "the placed code must still be fetched and answered"
         reply = (result.reply or {}).get("text") or ""
         # REPORT-UNIFY: the answer for the placed code is the report ask run on it (its header is the presenter's).
-        assert captured[0][1].get("product_code") == PLACED_CODE, captured
+        # REPORT-OUTSTANDING-SUMMARY item 8: an outstanding ask sends the resolver's exact row, by id.
+        from tests.chatbot.test_outstanding_lane import _codes_of
+
+        assert _codes_of(session_factory, captured[0][1].get("product_ids")) == [PLACED_CODE], captured
         # HELD (see class docstring): the CURRENT wording, not the plan's target -
         # still a hard requirement that BOTH unplaced tokens are named, verbatim.
         assert f"I could not find {UNPLACED_1} or {UNPLACED_2}." in reply, (

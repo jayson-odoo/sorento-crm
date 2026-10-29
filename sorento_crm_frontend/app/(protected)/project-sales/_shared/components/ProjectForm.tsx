@@ -541,7 +541,7 @@ export function ProjectForm(props: ProjectFormProps) {
           {typeId && (
             <div className="space-y-1.5">
               <Label id="project-template-label" htmlFor="project-template">
-                Template
+                To-do list template
               </Label>
               {!canViewTypes ? (
                 <p id="project-template" aria-labelledby="project-template-label" className="text-sm">
@@ -562,8 +562,8 @@ export function ProjectForm(props: ProjectFormProps) {
                     ? 'Has its own stage flow'
                     : undefined,
                 }))}
-                placeholder="Select a template"
-                emptyMessage="No templates for this type"
+                placeholder="Select a to-do list template"
+                emptyMessage="No to-do list templates for this type"
               />
               )}
             </div>

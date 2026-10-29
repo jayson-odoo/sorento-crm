@@ -1,0 +1,113 @@
+# HA override for BOTH CRM nodes (A = CRM box, B = KVM 8):
+#   docker compose -f docker-compose.yml -f compose.ha.yml up -d
+# Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md sections 2 and 8b.
+#
+# - Patroni replaces the plain `db` service (same service name, so pgbouncer and the deploy
+#   script's DB_SERVICE keep working). Which node leads is Patroni's call, never this file's.
+# - Workers and the scheduler sit behind profile `promoted`; infra/scripts/role-watcher.sh
+#   starts them only while the local Postgres leads and stops them otherwise.
+# - Migrations: SKIP_MIGRATIONS defaults to 0 (today's behaviour on the leader). A node that is
+#   NOT leading must start its backend with SKIP_MIGRATIONS=1, or start.sh runs
+#   `alembic upgrade head` against the read-only replica and the start fails; the release
+#   follow-up (plan section 11) sets it per node from the role endpoint.
+# - autoheal restarts any container whose healthcheck turns unhealthy.
+services:
+  db:
+    image: <REGISTRY>/sorento-patroni-pg17:<PIN>    # built from templates/patroni/Dockerfile
+    env_file: [/etc/sorento-ha/ha-members.env, patroni.env, walg.env]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./patroni.yml:/etc/patroni/patroni.yml:ro
+      # Patroni's client cert ONLY: the peer/server keys would let this container join raft.
+      - /etc/etcd/pki/ca.crt:/etc/etcd/pki/ca.crt:ro
+      - /etc/etcd/pki/patroni.crt:/etc/etcd/pki/patroni.crt:ro
+      - /etc/etcd/pki/patroni.key:/etc/etcd/pki/patroni.key:ro
+    devices:
+      # Host prep first (templates/host/): without softdog loaded this device does not exist
+      # and the container will not start at all.
+      - /dev/watchdog:/dev/watchdog
+    ports:
+      - "127.0.0.1:5432:5432"
+      - "<THIS_WG_IP>:5432:5432"
+      - "127.0.0.1:8008:8008"
+      - "<THIS_WG_IP>:8008:8008"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8008/liveness || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    labels:
+      autoheal: "true"
+    restart: unless-stopped
+
+  backend_blue:
+    environment:
+      SKIP_MIGRATIONS: ${SKIP_MIGRATIONS:-0}
+    labels:
+      autoheal: "true"
+  backend_green:
+    environment:
+      SKIP_MIGRATIONS: ${SKIP_MIGRATIONS:-0}
+    labels:
+      autoheal: "true"
+  frontend:
+    labels:
+      autoheal: "true"
+
+  worker:
+    profiles: ["promoted"]
+    environment:
+      ENABLE_SCHEDULER: "true"
+      # Direct to Postgres, not pgbouncer (sorento_crm_backend/app/scheduler/leader.py).
+      SCHEDULER_LEADER_DATABASE_URL: ${SCHEDULER_LEADER_DATABASE_URL:?set a direct Postgres URL (not pgbouncer)}
+  worker_fast:
+    profiles: ["promoted"]
+
+  etcd:
+    image: <ETCD_IMAGE>:<PIN>
+    env_file: [/etc/sorento-ha/ha-members.env, etcd.env]   # etcd.env from templates/etcd/etcd.env.template
+    network_mode: host                               # binds the tunnel address + 127.0.0.1 only
+    volumes:
+      - etcd_data:/etcd-data
+      # etcd's own files only (ca.crt, peer.*, server.*, healthcheck.*), never in git. The CA's
+      # private key (ca.key) lives on NO box: certs are minted offline and copied in, because
+      # with client-cert auth a cert's CN is its etcd user and ca.key could mint CN=root.
+      - /etc/etcd/pki:/etc/etcd/pki:ro
+    restart: unless-stopped
+
+  # The Docker socket is root on the host (security review S4): autoheal never gets it directly.
+  # A socket proxy allows only container list / inspect / restart; both images pinned by digest.
+  docker_socket_proxy:
+    image: <SOCKET_PROXY_IMAGE>@sha256:<DIGEST>
+    environment:
+      CONTAINERS: "1"
+      # POST stays 0: with POST=1 a caller could create a privileged container (root on the
+      # host). ALLOW_RESTARTS permits restart alone.
+      POST: "0"
+      ALLOW_RESTARTS: "1"
+      IMAGES: "0"
+      NETWORKS: "0"
+      VOLUMES: "0"
+      EXEC: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [autoheal_net]
+    restart: unless-stopped
+
+  autoheal:
+    image: <AUTOHEAL_IMAGE>@sha256:<DIGEST>
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "15"
+      DOCKER_SOCK: tcp://docker_socket_proxy:2375
+    networks: [autoheal_net]
+    depends_on: [docker_socket_proxy]
+    restart: unless-stopped
+
+volumes:
+  etcd_data:
+
+networks:
+  # Internal only: no ports, nothing else attached.
+  autoheal_net:
+    internal: true

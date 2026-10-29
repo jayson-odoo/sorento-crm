@@ -471,9 +471,10 @@ def test_ac_ru_9a_a_contact_with_the_outstanding_reveal_only_is_refused_a_sales_
     assert resp.json().get("code") == "sales_report_not_enabled", resp.text
 
 
-@pytest.mark.parametrize("basis", ["outstanding", "pending_delivery", "unpaid"])
+@pytest.mark.parametrize("basis", ["outstanding", "unpaid"])
 def test_ac_ru_9a_a_contact_with_the_sales_report_reveal_only_is_refused_an_outstanding_kind(client, db, basis):
-    """AC-RU-9a: the refusal has the route's shape (403, a code) and names the Outstanding reveal."""
+    """AC-RU-9a: the refusal has the route's shape (403, a code) and names the Outstanding reveal. Pending delivery is
+    open to office staff without the reveal (owner 29 Oct, REPORT-OUTSTANDING-SUMMARY, as before #1922)."""
     _unpaid_world(db)
     contact = _holder(db, "sales_orders.sales_report")
     resp = _ask(client, contact, basis=basis, period=None)
