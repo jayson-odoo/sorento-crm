@@ -18,8 +18,8 @@ from app.services.chatbot.lanes.business.fetch import ToolNotAllowed  # noqa: F4
 from app.services.llm_provider import ChatResult
 from app.services.user_service import UserPermissionService
 from tests._pg_fixture import blank_session, unique_code
-from tests.agent._seed import seed_agent_contact, seed_contact, seed_user
-from tests.agent._turns import seed_turn
+from tests.chatbot.agent._seed import seed_agent_contact, seed_contact, seed_user
+from tests.chatbot.agent._turns import seed_turn
 
 STOCK = "crm_inventory_stock_balance_list"
 REPORT = "crm_report_ask"
@@ -67,7 +67,7 @@ def held(monkeypatch):
 
 
 def _ctx(grants=(), stock_allowed=True):
-    from app.services.agent.access import AgentContext
+    from app.services.chatbot.agent.access import AgentContext
 
     return AgentContext(
         contact_pk="pk-1", contact_respond_id="ZZT-R-1", space_id="364817", user_id="user-1",
@@ -89,7 +89,7 @@ class Rec:
 
 
 def _dispatch(name, args, rec, ctx=None, catalog=None):
-    from app.services.agent import tools
+    from app.services.chatbot.agent import tools
 
     return tools.dispatch(None, ctx or _ctx(), name, args, call=rec, catalog=catalog or CATALOG, timeout=5.0)
 
@@ -109,7 +109,7 @@ def test_view_render_is_always_sent_and_not_model_controllable(held):
 
 
 def test_view_is_not_in_the_model_facing_schema():
-    from app.services.agent.tools import REGISTRY, tool_schemas
+    from app.services.chatbot.agent.tools import REGISTRY, tool_schemas
 
     params = tool_schemas([REGISTRY[STOCK]], CATALOG)[0]["function"]["parameters"]
     assert "view" not in params["properties"]
@@ -159,7 +159,7 @@ EXPECTED_GRANTS = {
 
 
 def test_registry_carries_the_contact_grants():
-    from app.services.agent.tools import REGISTRY
+    from app.services.chatbot.agent.tools import REGISTRY
 
     assert {n: d.contact_grant for n, d in REGISTRY.items()} == EXPECTED_GRANTS
 
@@ -187,7 +187,7 @@ def db():
 
 
 def test_permitted_tools_needs_the_contact_grant_too(db, held, monkeypatch):
-    from app.services.agent.access import build_context, permitted_tools
+    from app.services.chatbot.agent.access import build_context, permitted_tools
 
     held.update({"scm.purchase_orders.view", "procurement.grn.view"})
     contact = seed_contact(db)
@@ -206,7 +206,7 @@ def test_permitted_tools_needs_the_contact_grant_too(db, held, monkeypatch):
 
 
 def test_a_contact_that_may_not_check_stock_is_not_offered_the_stock_tool(db, held):
-    from app.services.agent.access import build_context, permitted_tools
+    from app.services.chatbot.agent.access import build_context, permitted_tools
 
     held.update({"inventory.stock.view"})
     contact = seed_contact(db)
@@ -267,13 +267,13 @@ def test_a_plain_sales_report_needs_neither(held):
     ],
 )
 def test_figure_check_units_codes_and_dates(reply, sources, expected):
-    from app.services.agent.loop import unsupported_figures
+    from app.services.chatbot.agent.loop import unsupported_figures
 
     assert sorted(unsupported_figures(reply, sources)) == sorted(expected)
 
 
 def test_redaction_uses_the_same_masks():
-    from app.services.agent.loop import _redact
+    from app.services.chatbot.agent.loop import _redact
 
     out = _redact("SRTWT7445 has 99pcs on 2026-10-29", ["12"])
     assert out == "SRTWT7445 has (not verified) on 2026-10-29"
@@ -326,7 +326,7 @@ def contact(db):
 
 
 def run(db, contact, provider, mcp=None, text_="stock?", **kw):
-    from app.services.agent.loop import run_agent_turn
+    from app.services.chatbot.agent.loop import run_agent_turn
 
     return run_agent_turn(
         db, contact_respond_id=contact["respond_id"], text=text_, provider=provider,
@@ -367,7 +367,7 @@ def test_a_repair_call_cannot_outlast_the_turn(db, contact):
 
 def test_a_second_turn_for_the_same_contact_is_busy(db, contact):
     from app.database import engine
-    from app.services.agent.loop import AgentBusy
+    from app.services.chatbot.agent.loop import AgentBusy
 
     holder = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
     try:
@@ -389,7 +389,7 @@ def test_the_lock_is_released_after_a_turn(db, contact):
 
 
 def test_the_catalogue_is_cached_between_turns():
-    from app.services.agent import loop
+    from app.services.chatbot.agent import loop
 
     calls = []
     clock = {"t": 0.0}
@@ -434,7 +434,7 @@ def test_long_arguments_are_clipped_in_digest_and_trace(db, contact):
 
 
 def test_a_change_of_user_or_grants_starts_a_new_conversation(db):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     rid = unique_code("m3")
     a = memory.current_conversation(db, rid, user_id="u1", grants_hash="h1")
@@ -447,7 +447,7 @@ def test_a_change_of_user_or_grants_starts_a_new_conversation(db):
 
 
 def test_grants_hash_is_stable_and_order_free():
-    from app.services.agent.access import grants_hash
+    from app.services.chatbot.agent.access import grants_hash
 
     assert grants_hash(_ctx({"a", "b"})) == grants_hash(_ctx({"b", "a"}))
     assert grants_hash(_ctx({"a"})) != grants_hash(_ctx({"b"}))
@@ -489,7 +489,7 @@ def test_a_provider_failure_reply_is_fixed(db, contact):
 
 
 def test_a_failure_while_building_context_marks_the_row_failed_not_processing(db, contact, monkeypatch):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     def boom(*a, **k):
         raise RuntimeError("history broke")
@@ -523,7 +523,7 @@ GRN = "crm_procurement_grn_summary"
 
 
 def test_only_lookup_and_grn_are_not_render_tools():
-    from app.services.agent.tools import REGISTRY
+    from app.services.chatbot.agent.tools import REGISTRY
 
     assert {n for n, d in REGISTRY.items() if not d.render} == {LOOKUP, GRN}
 
@@ -584,7 +584,7 @@ def test_a_null_gated_argument_is_treated_as_absent(held):
 def test_grants_hash_covers_the_tool_set_and_the_brand_scope():
     import dataclasses
 
-    from app.services.agent.access import grants_hash
+    from app.services.chatbot.agent.access import grants_hash
 
     base = _ctx({"a"})
     assert grants_hash(dataclasses.replace(base, tool_names=("x",))) != grants_hash(base)
@@ -597,7 +597,7 @@ def test_grants_hash_covers_the_tool_set_and_the_brand_scope():
 
 
 def test_build_context_carries_the_permitted_tool_names(db, held):
-    from app.services.agent.access import build_context
+    from app.services.chatbot.agent.access import build_context
 
     held.update({"inventory.stock.view"})
     contact = seed_contact(db)
@@ -620,7 +620,7 @@ def test_losing_a_user_permission_starts_a_new_conversation(db, contact, held):
 def test_grants_hash_covers_the_argument_level_permissions():
     import dataclasses
 
-    from app.services.agent.access import grants_hash
+    from app.services.chatbot.agent.access import grants_hash
 
     base = _ctx({"a"})
     held = dataclasses.replace(base, arg_permissions=("finance.billing_documents.view",))
@@ -628,7 +628,7 @@ def test_grants_hash_covers_the_argument_level_permissions():
 
 
 def test_build_context_carries_the_held_argument_permissions(db, held):
-    from app.services.agent.access import build_context
+    from app.services.chatbot.agent.access import build_context
 
     held.update({"order_management.orders.view", "finance.billing_documents.view"})
     contact = seed_contact(db)

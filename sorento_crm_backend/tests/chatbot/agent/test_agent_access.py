@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from tests._pg_fixture import blank_session, unique_code
-from tests.agent._seed import seed_contact, seed_user
+from tests.chatbot.agent._seed import seed_contact, seed_user
 
 
 @pytest.fixture()
@@ -19,7 +19,7 @@ def db():
 
 
 def _reason(db, respond_id):
-    from app.services.agent.access import AgentRefused, build_context
+    from app.services.chatbot.agent.access import AgentRefused, build_context
 
     with pytest.raises(AgentRefused) as exc:
         build_context(db, respond_id)
@@ -59,7 +59,7 @@ def test_a_user_linked_to_another_contact_does_not_count(db):
 
 
 def test_success_fills_the_context(db):
-    from app.services.agent.access import AgentContext, build_context
+    from app.services.chatbot.agent.access import AgentContext, build_context
 
     contact = seed_contact(db)
     user_id = seed_user(db, contact_pk=contact["pk"])
@@ -75,7 +75,7 @@ def test_success_fills_the_context(db):
 
 
 def test_the_context_is_immutable(db):
-    from app.services.agent.access import build_context
+    from app.services.chatbot.agent.access import build_context
 
     contact = seed_contact(db)
     seed_user(db, contact_pk=contact["pk"])
@@ -85,7 +85,7 @@ def test_the_context_is_immutable(db):
 
 
 def test_permitted_tools_returns_only_tools_whose_slug_the_user_holds(db):
-    from app.services.agent.access import build_context, permitted_tools
+    from app.services.chatbot.agent.access import build_context, permitted_tools
 
     contact = seed_contact(db)
     seed_user(db, contact_pk=contact["pk"], slugs=["inventory.stock.view"])
@@ -97,7 +97,7 @@ def test_permitted_tools_returns_only_tools_whose_slug_the_user_holds(db):
 
 
 def test_a_user_with_no_role_gets_no_tools(db):
-    from app.services.agent.access import build_context, permitted_tools
+    from app.services.chatbot.agent.access import build_context, permitted_tools
 
     contact = seed_contact(db)
     seed_user(db, contact_pk=contact["pk"], slugs=[])
@@ -107,7 +107,7 @@ def test_a_user_with_no_role_gets_no_tools(db):
 
 
 def test_two_slugs_expose_every_tool_behind_them(db):
-    from app.services.agent.access import build_context, permitted_tools
+    from app.services.chatbot.agent.access import build_context, permitted_tools
 
     contact = seed_contact(db)
     seed_user(

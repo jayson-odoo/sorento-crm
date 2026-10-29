@@ -32,7 +32,7 @@ lane's to fix; reported to the owner.
 
 ## Card v3: the agent foundation
 
-One small package, `app/services/agent/`, four modules. It reuses what exists (provider adapters, MCP read seam,
+One small package, `app/services/chatbot/agent/`, four modules. It reuses what exists (provider adapters, MCP read seam,
 prompt registry, turn trace, usage log) and adds only the loop, the tool registry with its permission layer, and
 the entry point. No planner agent, no multi-agent topology, no new workflow platform.
 
@@ -229,7 +229,7 @@ mode + switch, built against mocks first. Reviewer + security reviewer (permissi
 
 ## Build contract (Phase 2; tester and coder both read this)
 
-Backend package `sorento_crm_backend/app/services/agent/`. Names below are the contract; tests import them.
+Backend package `sorento_crm_backend/app/services/chatbot/agent/`. Names below are the contract; tests import them.
 
 ### `agent/tools.py`
 

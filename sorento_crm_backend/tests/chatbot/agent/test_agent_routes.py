@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.agent._turns import seed_turn
+from tests.chatbot.agent._turns import seed_turn
 from tests.chatbot.test_console_turn_endpoint import (  # noqa: F401 - fixtures + helpers
     VIEW,
     _GRANTS,
@@ -22,7 +22,7 @@ NEW = "/api/v1/system/chatbot/agent/conversation/new"
 
 
 def _result(**over):
-    from app.services.agent.loop import AgentTurnResult
+    from app.services.chatbot.agent.loop import AgentTurnResult
 
     fields = dict(
         turn_id="11111111-1111-1111-1111-111111111111",
@@ -42,7 +42,7 @@ def _result(**over):
 def patch_run(monkeypatch):
     """Replace `run_agent_turn` wherever the route may have bound it. Returns the call log."""
     import app.api.v1.system.chatbot as route_mod
-    import app.services.agent.loop as loop_mod
+    import app.services.chatbot.agent.loop as loop_mod
 
     calls: list[dict] = []
     box: dict = {"result": _result(), "exc": None}
@@ -85,7 +85,7 @@ def test_turn_reports_a_limit_hit(client, patch_run):
 
 @pytest.mark.parametrize("reason", ["contact_not_found", "ai_replies_off", "switch_off", "no_linked_user"])
 def test_a_refusal_is_a_409_with_the_reason(client, patch_run, reason):
-    from app.services.agent.access import AgentRefused
+    from app.services.chatbot.agent.access import AgentRefused
 
     patch_run.box["exc"] = AgentRefused(reason)
     resp = client.post(TURN, json={"contact_respond_id": "ZZT-C1", "text": "x"})
@@ -118,9 +118,9 @@ def test_turn_validates_the_body(client, patch_run, body):
 def _agent_contact_with_conversation(session_factory):
     """A switched-on contact with a linked user, and the conversation a turn would have made
     for them (round 3: the conversation routes build the agent context like the turn does)."""
-    from app.services.agent import memory
-    from app.services.agent.access import build_context, grants_hash
-    from tests.agent._seed import seed_agent_contact
+    from app.services.chatbot.agent import memory
+    from app.services.chatbot.agent.access import build_context, grants_hash
+    from tests.chatbot.agent._seed import seed_agent_contact
 
     db = session_factory()
     contact = seed_agent_contact(db)
@@ -151,7 +151,7 @@ def test_get_conversation_lists_the_current_conversations_turns(client, session_
 
 
 def test_get_conversation_for_a_new_contact_is_empty(client, session_factory):
-    from tests.agent._seed import seed_agent_contact
+    from tests.chatbot.agent._seed import seed_agent_contact
 
     db = session_factory()
     contact = seed_agent_contact(db)

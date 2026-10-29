@@ -15,7 +15,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.llm_provider import ChatResult
 from tests._pg_fixture import blank_session
-from tests.agent._seed import seed_agent_contact
+from tests.chatbot.agent._seed import seed_agent_contact
 
 STOCK = "crm_inventory_stock_balance_list"
 
@@ -105,7 +105,7 @@ def _set_budgets(db, **cols):
 
 
 def run(db, contact, provider, mcp=None, text="stock of SRTWT7445?", **kw):
-    from app.services.agent.loop import run_agent_turn
+    from app.services.chatbot.agent.loop import run_agent_turn
 
     return run_agent_turn(
         db,
@@ -284,7 +284,7 @@ def test_more_than_four_calls_in_a_round_run_four_and_deny_the_rest(db, contact)
 
 
 def test_budgets_default_when_no_settings_row(db):
-    from app.services.agent.loop import Budgets, budgets_from_settings
+    from app.services.chatbot.agent.loop import Budgets, budgets_from_settings
 
     assert db.query(SystemSetting).count() == 0
     b = budgets_from_settings(db)
@@ -295,7 +295,7 @@ def test_budgets_default_when_no_settings_row(db):
 
 
 def test_budgets_read_the_four_system_settings_columns(db):
-    from app.services.agent.loop import budgets_from_settings
+    from app.services.chatbot.agent.loop import budgets_from_settings
 
     _set_budgets(
         db,
@@ -309,7 +309,7 @@ def test_budgets_read_the_four_system_settings_columns(db):
 
 
 def test_a_fresh_settings_row_carries_the_documented_defaults(db):
-    from app.services.agent.loop import budgets_from_settings
+    from app.services.chatbot.agent.loop import budgets_from_settings
 
     _set_budgets(db)
     db.refresh(db.query(SystemSetting).first())
@@ -333,7 +333,7 @@ def test_a_provider_error_before_any_tool_result_is_a_failed_turn(db, contact):
 
 
 def test_no_provider_and_no_key_is_a_failed_turn_not_a_crash(db, contact):
-    from app.services.agent.loop import run_agent_turn
+    from app.services.chatbot.agent.loop import run_agent_turn
 
     result = run_agent_turn(
         db, contact_respond_id=contact["respond_id"], text="hi", mcp_call=Mcp(), catalog=CATALOG
@@ -353,8 +353,8 @@ def test_a_provider_error_after_a_tool_result_takes_the_limit_path(db, contact):
 
 
 def test_a_refused_contact_propagates_agent_refused(db):
-    from app.services.agent.access import AgentRefused
-    from app.services.agent.loop import run_agent_turn
+    from app.services.chatbot.agent.access import AgentRefused
+    from app.services.chatbot.agent.loop import run_agent_turn
 
     with pytest.raises(AgentRefused) as exc:
         run_agent_turn(
@@ -416,7 +416,7 @@ def test_a_figure_from_the_users_own_message_is_supported(db, contact):
     ],
 )
 def test_unsupported_figures(reply, sources, expected):
-    from app.services.agent.loop import unsupported_figures
+    from app.services.chatbot.agent.loop import unsupported_figures
 
     assert sorted(unsupported_figures(reply, sources)) == sorted(expected)
 
@@ -441,7 +441,7 @@ def test_history_from_an_earlier_turn_appears_in_the_next_turns_messages(db, con
 
 
 def test_a_new_conversation_hides_earlier_turns_from_the_next_turn(db, contact):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     run(db, contact, ScriptedProvider([answer("Hello there.")]), text="first question")
     memory.new_conversation(db, contact["respond_id"])
@@ -457,7 +457,7 @@ def test_a_new_conversation_hides_earlier_turns_from_the_next_turn(db, contact):
 
 
 def test_the_per_call_timeout_shrinks_with_the_remaining_budget(db, contact):
-    from app.services.agent.loop import run_agent_turn
+    from app.services.chatbot.agent.loop import run_agent_turn
 
     clock = {"t": 0.0}
     seen: list[int] = []

@@ -65,7 +65,7 @@ def _user_holds(monkeypatch):
 
 
 def _ctx(grants=frozenset()):
-    from app.services.agent.access import AgentContext
+    from app.services.chatbot.agent.access import AgentContext
 
     return AgentContext(
         contact_pk="pk-1",
@@ -93,7 +93,7 @@ class Recorder:
 
 
 def _dispatch(name, args, rec, ctx=None):
-    from app.services.agent import tools
+    from app.services.chatbot.agent import tools
 
     return tools.dispatch(None, ctx or _ctx(), name, args, call=rec, catalog=CATALOG, timeout=5.0)
 
@@ -102,14 +102,14 @@ def _dispatch(name, args, rec, ctx=None):
 
 
 def test_registry_holds_exactly_the_ten_tools_with_their_slugs():
-    from app.services.agent.tools import REGISTRY
+    from app.services.chatbot.agent.tools import REGISTRY
 
     assert {name: d.user_permission for name, d in REGISTRY.items()} == EXPECTED
     assert all(d.name == name for name, d in REGISTRY.items())
 
 
 def test_tool_schemas_strip_contact_and_space_from_properties_and_required():
-    from app.services.agent.tools import REGISTRY, tool_schemas
+    from app.services.chatbot.agent.tools import REGISTRY, tool_schemas
 
     schemas = tool_schemas([REGISTRY[STOCK]], CATALOG)
 
@@ -137,7 +137,7 @@ def test_unknown_name_is_denied_and_the_call_never_happens():
 def test_a_name_outside_the_registry_but_in_the_catalogue_is_denied():
     rec = Recorder()
     catalog = dict(CATALOG, crm_other_tool=CATALOG[STOCK])
-    from app.services.agent import tools
+    from app.services.chatbot.agent import tools
 
     out = tools.dispatch(None, _ctx(), "crm_other_tool", {}, call=rec, catalog=catalog, timeout=5.0)
     assert out.status == "denied"
@@ -145,7 +145,7 @@ def test_a_name_outside_the_registry_but_in_the_catalogue_is_denied():
 
 
 def test_a_slug_lost_between_exposure_and_dispatch_is_denied():
-    from app.services.agent.tools import REGISTRY
+    from app.services.chatbot.agent.tools import REGISTRY
 
     rec = Recorder()
     exposed = [REGISTRY[STOCK]]  # the model was shown the tool while the user held the slug

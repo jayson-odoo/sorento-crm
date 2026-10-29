@@ -11,7 +11,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-from app.services.agent.tools import REGISTRY, ToolDef
+from app.services.chatbot.agent.tools import REGISTRY, ToolDef
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         stock_allowed=getattr(contact, "chatbot_stock_allowed", True) is not False,
         brand_scope=None if brand_scope is None else frozenset(str(b) for b in brand_scope),
     )
-    from app.services.agent.tools import ARG_PERMISSIONS, _permitted
+    from app.services.chatbot.agent.tools import ARG_PERMISSIONS, _permitted
 
     held = sorted({slug for slug in ARG_PERMISSIONS.values() if _permitted(db, user_id, slug)})
     return dataclasses.replace(
@@ -116,7 +116,7 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
 
 def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
     """REGISTRY entries whose slug the linked user holds, in registry order."""
-    from app.services.agent.tools import _permitted, contact_allows
+    from app.services.chatbot.agent.tools import _permitted, contact_allows
 
     return [
         t for t in REGISTRY.values()

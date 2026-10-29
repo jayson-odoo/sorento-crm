@@ -19,9 +19,9 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.agent import memory
-from app.services.agent.access import build_context, grants_hash, permitted_tools
-from app.services.agent.tools import GUARD_PARAMS, ToolResult, clip_args, dispatch, tool_schemas
+from app.services.chatbot.agent import memory
+from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
+from app.services.chatbot.agent.tools import GUARD_PARAMS, ToolResult, clip_args, dispatch, tool_schemas
 
 logger = logging.getLogger(__name__)
 

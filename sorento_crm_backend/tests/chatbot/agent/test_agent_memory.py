@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from tests._pg_fixture import blank_session, unique_code
-from tests.agent._turns import at, seed_turn
+from tests.chatbot.agent._turns import at, seed_turn
 
 
 @pytest.fixture()
@@ -34,7 +34,7 @@ def _long(n: int = 400) -> str:
 
 def test_current_conversation_creates_then_reuses(db, rid):
     from app.models.chatbot_agent import AgentConversation
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     first = memory.current_conversation(db, rid)
     again = memory.current_conversation(db, rid)
@@ -48,7 +48,7 @@ def test_current_conversation_creates_then_reuses(db, rid):
 
 def test_new_conversation_becomes_the_current_one_and_nothing_is_deleted(db, rid):
     from app.models.chatbot_agent import AgentConversation
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     old = memory.current_conversation(db, rid)
     fresh = memory.new_conversation(db, rid)
@@ -59,7 +59,7 @@ def test_new_conversation_becomes_the_current_one_and_nothing_is_deleted(db, rid
 
 
 def test_conversations_are_per_contact(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     a = memory.current_conversation(db, rid)
     b = memory.current_conversation(db, unique_code("other"))
@@ -67,7 +67,7 @@ def test_conversations_are_per_contact(db, rid):
 
 
 def test_the_next_turn_after_a_new_conversation_starts_empty(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     old = memory.current_conversation(db, rid)
     seed_turn(db, old, minute=1, text="how much stock", reply="42 units")
@@ -84,7 +84,7 @@ def test_the_next_turn_after_a_new_conversation_starts_empty(db, rid):
 
 
 def test_conversation_turns_are_agent_ingress_of_this_conversation_oldest_first(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     conv = memory.current_conversation(db, rid)
     t2 = seed_turn(db, conv, minute=2, text="second", reply="r2")
@@ -97,7 +97,7 @@ def test_conversation_turns_are_agent_ingress_of_this_conversation_oldest_first(
 
 
 def test_history_has_user_and_assistant_messages_with_a_tools_digest(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     conv = memory.current_conversation(db, rid)
     seed_turn(
@@ -120,7 +120,7 @@ def test_history_has_user_and_assistant_messages_with_a_tools_digest(db, rid):
 
 
 def test_history_includes_the_summary_line_then_only_turns_after_summary_through(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     conv = memory.current_conversation(db, rid)
     seed_turn(db, conv, minute=1, text="folded one", reply="folded reply one")
@@ -153,7 +153,7 @@ def _seed_ten(db, conv, size=400):
 
 
 def test_below_the_threshold_nothing_changes(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     conv = memory.current_conversation(db, rid)
     _seed_ten(db, conv)
@@ -169,7 +169,7 @@ def test_below_the_threshold_nothing_changes(db, rid):
 
 
 def test_above_the_threshold_folds_older_turns_and_keeps_the_last_six(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     conv = memory.current_conversation(db, rid)
     turns = _seed_ten(db, conv)
@@ -195,7 +195,7 @@ def test_above_the_threshold_folds_older_turns_and_keeps_the_last_six(db, rid):
 
 
 def test_a_second_compaction_folds_on_top_of_the_old_summary(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     conv = memory.current_conversation(db, rid)
     turns = _seed_ten(db, conv)
@@ -218,7 +218,7 @@ def test_a_second_compaction_folds_on_top_of_the_old_summary(db, rid):
 
 
 def test_a_summarizer_that_raises_changes_nothing_and_returns_false(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     conv = memory.current_conversation(db, rid)
     _seed_ten(db, conv)
@@ -234,7 +234,7 @@ def test_a_summarizer_that_raises_changes_nothing_and_returns_false(db, rid):
 
 
 def test_too_few_turns_to_fold_is_a_no_op(db, rid):
-    from app.services.agent import memory
+    from app.services.chatbot.agent import memory
 
     conv = memory.current_conversation(db, rid)
     for i in range(1, 5):

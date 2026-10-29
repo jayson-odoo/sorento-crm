@@ -645,7 +645,7 @@ class SystemSetting(Base):
     # Chatbot media settings page applies on the next report. 0 means no limit.
     report_ask_rate_limit = Column(Integer, nullable=False, server_default="10", default=10)
     report_ask_rate_window_minutes = Column(Integer, nullable=False, server_default="10", default=10)
-    # AGENTIC-P1 budgets for one agent turn, read per turn (`app/services/agent/loop.py`).
+    # AGENTIC-P1 budgets for one agent turn, read per turn (`app/services/chatbot/agent/loop.py`).
     chatbot_agent_max_rounds = Column(Integer, nullable=False, server_default="8", default=8)
     chatbot_agent_max_seconds = Column(Integer, nullable=False, server_default="45", default=45)
     chatbot_agent_max_input_tokens = Column(Integer, nullable=False, server_default="150000", default=150000)

@@ -74,9 +74,9 @@ from app.schemas.chatbot_turn import (
     FailedContactListResponse,
     RetryTurnResponse,
 )
-from app.services.agent import memory as agent_memory
-from app.services.agent.access import AgentRefused, build_context, grants_hash
-from app.services.agent.loop import AgentBusy, run_agent_turn
+from app.services.chatbot.agent import memory as agent_memory
+from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
+from app.services.chatbot.agent.loop import AgentBusy, run_agent_turn
 from app.services.chatbot import console_service
 from app.services.chatbot.analytics import topic_audit
 from app.services.chatbot.contracts import TURN_STAGES

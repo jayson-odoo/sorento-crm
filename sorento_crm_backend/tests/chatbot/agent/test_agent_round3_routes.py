@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from tests.agent._seed import seed_agent_contact
-from tests.agent._turns import seed_turn
+from tests.chatbot.agent._seed import seed_agent_contact
+from tests.chatbot.agent._turns import seed_turn
 
 STOCK = "crm_inventory_stock_balance_list"
 
@@ -39,7 +39,7 @@ def test_conversation_routes_refuse_like_the_turn_route(client, method, url):
 
 def test_turn_busy_is_a_409_agent_busy(client, monkeypatch):
     import app.api.v1.system.chatbot as route_mod
-    from app.services.agent.loop import AgentBusy
+    from app.services.chatbot.agent.loop import AgentBusy
 
     def fake(db, **kw):
         raise AgentBusy()
@@ -52,7 +52,7 @@ def test_turn_busy_is_a_409_agent_busy(client, monkeypatch):
 
 def test_turn_passes_the_console_user_as_operator(client, monkeypatch):
     import app.api.v1.system.chatbot as route_mod
-    from app.services.agent.loop import AgentTurnResult
+    from app.services.chatbot.agent.loop import AgentTurnResult
 
     seen = {}
 
@@ -78,8 +78,8 @@ def test_get_conversation_is_read_only_and_null_when_none(client, session_factor
 
 
 def test_get_conversation_returns_rounds_limit_and_tool_chips(client, session_factory):
-    from app.services.agent import memory
-    from app.services.agent.access import build_context, grants_hash
+    from app.services.chatbot.agent import memory
+    from app.services.chatbot.agent.access import build_context, grants_hash
 
     db = session_factory()
     contact = seed_agent_contact(db)
