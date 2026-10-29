@@ -701,7 +701,7 @@ def report_ask(
             # those set the rate is over more sales orders than the ranking it annotates counts.
             _extra = [SalesOrder.company_id.in_(sorted(grants)) if grants else false()]
             if brand_scope:
-                _extra.append(brand_predicate(brand_scope, Product.brand_id, Product.company_id))
+                _extra.append(brand_predicate(brand_scope, Product.brand_id, Product.company_id, Product.item_class_id))
             _fill = srs.sales_agent_fill_rate(
                 db, group="category" if group_norm == "category" else "item",
                 filters=srs._ranking_filters(

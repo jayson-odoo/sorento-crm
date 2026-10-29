@@ -663,17 +663,21 @@ def _embed_text_chunks(chunks: list[str], timeout: float | None = None) -> list[
     )
 
 
+def _embed_for_model(db: Session, chunks: list[str], model_name: str) -> list[list[float]]:
+    """The platform model keeps its existing seam (cassette, timeout); any other model goes through the client."""
+    if model_name == settings.embedding_model_name:
+        return _embed_text_chunks(chunks)
+    from app.services.embedding_settings import embed_for_model
+
+    return embed_for_model(db, chunks, model_name)
+
+
 def _post_embeddings(chunks: list[str], timeout: float | None = None) -> list[list[float]]:
-    headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
-    payload = {"model": settings.embedding_model_name, "input": chunks}
-    with httpx.Client(timeout=timeout or 30) as client:
-        response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-    vectors = [item["embedding"] for item in data.get("data", [])]
-    if len(vectors) != len(chunks):
-        raise ValueError("Embedding provider returned mismatched vector count")
-    return vectors
+    from app.services.embedding_client import embed_texts
+
+    return embed_texts(
+        chunks, "openai", settings.embedding_model_name, api_key=settings.openai_api_key, timeout=timeout or 30
+    )
 
 
 def _chunks_for_source(source_type: str, source: dict[str, Any]) -> list[str]:
@@ -839,6 +843,16 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         if queue_item.status in {"completed", "skipped"}:
             return {"status": queue_item.status, "queue_id": queue_id}
 
+        # LOOKUP-EMBED-CENTRAL: only the keep set is embedded. A row of any other source (queued before
+        # the producers were narrowed) is retired without an embed call; its old chunks are left alone.
+        from app.services.embedding_settings import RECORD_KEEP_SET
+
+        if queue_item.source_type not in RECORD_KEEP_SET:
+            queue_item.status = "skipped"
+            queue_item.processed_at = datetime.utcnow()
+            db.commit()
+            return {"status": "skipped", "queue_id": queue_id}
+
         # Claim under the row lock (EMBED-QUEUE-DEDUPE): a transaction that found this row
         # pending and queued nothing must commit before the source is read below.
         queue_item = _claim(db, queue_id)
@@ -895,16 +909,25 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         )
         queue_item.source_hash = source_hash
 
-        distinct_current = read_svc.current_chunk_hashes_distinct(
-            queue_item.source_type,
-            queue_item.source_id,
-            settings.embedding_model_name,
-            settings.embedding_model_version,
-        )
-        # Skip only when a single current generation exists and it already matches this payload.
-        # If multiple distinct source_hash values are current (duplicate batches), re-embed so
-        # mark_previous_non_current + insert can consolidate.
-        if len(distinct_current) == 1 and source_hash in distinct_current:
+        # LOOKUP-EMBED-CENTRAL: one chunk set per model in `write_models` (the setting's model plus the
+        # records-search model while they differ). A model whose current generation already matches is left.
+        from app.services.embedding_settings import provider_for_model, write_models
+
+        models = write_models(db)
+        stale_models = []
+        for model_name in models:
+            distinct_current = read_svc.current_chunk_hashes_distinct(
+                queue_item.source_type,
+                queue_item.source_id,
+                model_name,
+                settings.embedding_model_version,
+            )
+            # Skip only when a single current generation exists and it already matches this payload.
+            # If multiple distinct source_hash values are current (duplicate batches), re-embed so
+            # mark_previous_non_current + insert can consolidate.
+            if not (len(distinct_current) == 1 and source_hash in distinct_current):
+                stale_models.append(model_name)
+        if not stale_models:
             # R9/AC-E15 (round 2 + round 3, security review): keyed on "the document
             # is inactive and this row is not hidden" - never on anything specific to
             # retirement - because TWO paths reach this branch with a document still
@@ -948,7 +971,10 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
             doc.source_key = source.get("source_key")
             doc.title = source.get("title")
             doc.body_text = source["body_text"]
-            doc.metadata_json = source.get("metadata", {})
+            failures = (doc.metadata_json or {}).get("embed_failures")
+            doc.metadata_json = dict(source.get("metadata", {}) or {})
+            if failures:  # backfill's per-model failure counts survive a re-render
+                doc.metadata_json["embed_failures"] = failures
             doc.visibility_scope = source.get("visibility_scope")
             doc.source_hash = source_hash
             doc.source_updated_at = source.get("source_updated_at")
@@ -972,35 +998,44 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         db.flush()
 
         chunks = _chunks_for_source(queue_item.source_type, source)
-        vectors = _embed_text_chunks(chunks)
-
-        read_svc.mark_previous_non_current(
-            queue_item.source_type,
-            queue_item.source_id,
-            settings.embedding_model_name,
-            settings.embedding_model_version,
-        )
-        db.flush()
-
-        for idx, (chunk_text, vector) in enumerate(zip(chunks, vectors)):
-            db.add(
-                EmbeddingChunk(
-                    document_id=doc.id,
-                    source_type=queue_item.source_type,
-                    source_id=queue_item.source_id,
-                    chunk_index=idx,
-                    chunk_text=chunk_text,
-                    chunk_hash=hashlib.sha256(chunk_text.encode("utf-8")).hexdigest(),
-                    embedding=vector,
-                    model_name=settings.embedding_model_name,
-                    model_version=settings.embedding_model_version,
-                    embedding_provider=settings.embedding_provider,
-                    source_hash=source_hash,
-                    metadata_json=source.get("metadata", {}),
-                    company_id=company_id,
-                    is_current=True,
-                )
+        written = 0
+        last_error: Exception | None = None
+        for model_name in stale_models:
+            try:
+                vectors = _embed_for_model(db, chunks, model_name)
+            except Exception as exc:  # noqa: BLE001 - one model failing must not block the other's chunks
+                logger.warning("Embedding with %s failed for %s:%s: %s", model_name, queue_item.source_type, queue_item.source_id, exc)
+                last_error = exc
+                continue
+            read_svc.mark_previous_non_current(
+                queue_item.source_type,
+                queue_item.source_id,
+                model_name,
+                settings.embedding_model_version,
             )
+            db.flush()
+            for idx, (chunk_text, vector) in enumerate(zip(chunks, vectors)):
+                db.add(
+                    EmbeddingChunk(
+                        document_id=doc.id,
+                        source_type=queue_item.source_type,
+                        source_id=queue_item.source_id,
+                        chunk_index=idx,
+                        chunk_text=chunk_text,
+                        chunk_hash=hashlib.sha256(chunk_text.encode("utf-8")).hexdigest(),
+                        embedding=vector,
+                        model_name=model_name,
+                        model_version=settings.embedding_model_version,
+                        embedding_provider=provider_for_model(model_name),
+                        source_hash=source_hash,
+                        metadata_json=source.get("metadata", {}),
+                        company_id=company_id,
+                        is_current=True,
+                    )
+                )
+            written += 1
+        if not written and last_error is not None:
+            raise last_error
 
         queue_item.status = "completed"
         queue_item.processed_at = datetime.utcnow()

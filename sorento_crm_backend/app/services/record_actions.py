@@ -680,6 +680,12 @@ def _delete_country(db: Session, payload: dict):
     return CountryService(db).delete_country(_entity_id(payload))
 
 
+def _delete_item_class(db: Session, payload: dict):
+    from app.services.item_class_service import ItemClassService
+
+    return ItemClassService(db).delete(_entity_id(payload))
+
+
 def _delete_brand(db: Session, payload: dict):
     from app.services.product_service import BrandService
 
@@ -746,6 +752,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.brands.delete",
         label="Delete brand",
+    )
+)
+
+register(
+    FormAction(
+        key="item_class.delete",
+        entity_types=("item_class",),
+        execute=_delete_item_class,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.item_classes.delete",
+        label="Delete item class",
     )
 )
 

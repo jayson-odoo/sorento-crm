@@ -12,13 +12,10 @@ offered (their exact path runs after the parser).
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import logging
-import os
 import random
 import re
-import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -61,26 +58,6 @@ TOP_K = {
 DEFAULT_ORDER = (
     "category", "spec", "file_type", "brand", "promotion_kind", "salesperson", "location", "sales_channel", "customer",
 )
-
-#: The word lists the v63 prompt carried (category translations, file type words), as row texts:
-#: list -> row label (case aside) -> extra texts matched beside the row's own.
-PROMPT_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
-    "category": {
-        "water tap": ("paip air", "kepala paip", "水龙头"),
-        "water closet": ("tandas", "mangkuk tandas", "马桶"),
-        "kitchen sink": ("sinki dapur", "厨房水槽"),
-    },
-    "file_type": {
-        "photo": ("gambar", "foto", "image", "picture", "imej"),
-        "image": ("imej", "gambar", "foto", "picture"),
-        "video": ("videos",),
-        "drawing": ("lukisan",),
-        "technical drawing": ("lukisan teknikal", "lukisan", "cad", "blueprint"),
-        "3d model": ("model 3d",),
-        "installation guide": ("installation manual",),
-        "certificate": ("sijil", "cert", "ikram"),
-    },
-}
 
 EMBED_MODEL = "text-embedding-3-small"
 #: The prompt-registry key whose production label (provider, model) picks the lookup embedder.
@@ -133,6 +110,9 @@ class LookupRow:
     #: DIMENSION-ANY: a number line offered for a dimension no product holds at that value is kept only beside a
     #: Category row whose products carry the key (these are those rows' keys); None is always kept.
     scope: frozenset[str] | None = None
+    #: LOOKUP-EMBED-CENTRAL: where each text came from, parallel to `texts` (`label`, `code`, `class`, `alias_column`,
+    #: `alias_set`, `description`); None for a row built outside the loaders.
+    homes: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -495,9 +475,14 @@ def render(
     return lines
 
 
-def _with_synonyms(list_name: str, label: str, texts: tuple[str, ...]) -> tuple[str, ...]:
-    extra = {k.casefold(): v for k, v in PROMPT_SYNONYMS.get(list_name, {}).items()}.get(label.casefold(), ())
-    return tuple(dict.fromkeys([*texts, *extra]))
+def _tagged(*parts: tuple[str, Any], fold: bool = True) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(texts, homes) from (home, texts) parts: a text keeps the home it first appears under; empty texts drop."""
+    texts: dict[str, str] = {}
+    for home, items in parts:
+        for t in items:
+            if t and (_fold(str(t)) if fold else str(t).strip()) and str(t) not in texts:
+                texts[str(t)] = home
+    return tuple(texts), tuple(texts.values())
 
 
 def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[LookupRow]:
@@ -512,8 +497,9 @@ def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[Look
         merged_synonyms,
     )
 
-    def texts_of(*parts) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(str(t) for p in parts for t in p if t and _fold(str(t))))
+    def row_of(list_key: str, label: str, own: list, synonym_words: list) -> LookupRow:
+        texts, homes = _tagged(("label", own), ("alias_column", synonym_words))
+        return LookupRow("spec", list_key, label, texts, homes=homes)
 
     out: list[LookupRow] = []
     for row in active_registry(db):
@@ -526,20 +512,14 @@ def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[Look
             for value in merged_allowed_values(row):
                 display = display_spec_value(value, labels)
                 out.append(
-                    LookupRow("spec", f"{key}={value}", f"{row.label} {display} ({key}: {value})",
-                              texts_of([str(value), display], synonyms.get(value) or []))
+                    row_of(f"{key}={value}", f"{row.label} {display} ({key}: {value})",
+                           [str(value), display], synonyms.get(value) or [])
                 )
         elif kind == "boolean":
-            out.append(
-                LookupRow("spec", f"{key}=true", f"{row.label} yes ({key}: true)",
-                          texts_of(synonyms.get("true") or []))
-            )
+            out.append(row_of(f"{key}=true", f"{row.label} yes ({key}: true)", [], synonyms.get("true") or []))
         elif kind == "numeric":
             for value in (v for v in synonyms if v != "_self"):
-                out.append(
-                    LookupRow("spec", f"{key}={value}", f"{row.label} {value} ({key}: {value})",
-                              texts_of(synonyms.get(value) or []))
-                )
+                out.append(row_of(f"{key}={value}", f"{row.label} {value} ({key}: {value})", [], synonyms.get(value) or []))
     return out
 
 
@@ -551,13 +531,15 @@ def _file_type_rows(db: "Session") -> list[LookupRow]:
     out: list[LookupRow] = []
     for row in [*pv._file_type_rows(db), *pv._cert_kind_rows(db)]:
         name = str(row.get("type_name") or pv._item(row))
-        texts = (name, pv._item(row), *pv._type_words(row, aliases))
-        out.append(
-            LookupRow(
-                "file_type", pv._item(row) or name, name,
-                _with_synonyms("file_type", name, tuple(dict.fromkeys(t for t in texts if t and _fold(t)))),
-            )
+        keys = {str(row.get(k) or "").strip().casefold() for k in ("code", "type_name")} - {""}
+        alias_words = {w.casefold() for k in keys for w in aliases.get(k, [])}
+        words = pv._type_words(row, aliases)
+        texts, homes = _tagged(
+            ("label", [name]), ("code", [pv._item(row)]),
+            ("alias_set", [w for w in words if w.casefold() in alias_words]),
+            ("description", words),
         )
+        out.append(LookupRow("file_type", pv._item(row) or name, name, texts, homes=homes))
     return out
 
 
@@ -574,11 +556,8 @@ def _brand_rows(db: "Session", brands: list[dict] | None = None) -> list[LookupR
         if not name or name in seen or not line:
             continue
         seen.add(name)
-        texts = [name, b.get("brand_code"), *(b.get("aliases") or [])]
-        out.append(
-            LookupRow("brand", str(b.get("id") or name), line.removeprefix("Known brands: "),
-                      tuple(dict.fromkeys(str(t) for t in texts if t and _fold(str(t)))))
-        )
+        texts, homes = _tagged(("label", [name]), ("code", [b.get("brand_code")]), ("alias_column", b.get("aliases") or []))
+        out.append(LookupRow("brand", str(b.get("id") or name), line.removeprefix("Known brands: "), texts, homes=homes))
     return out
 
 
@@ -586,7 +565,8 @@ def _promotion_kind_rows(db: "Session") -> list[LookupRow]:
     from app.services.chatbot import turn_runtime
 
     return [
-        LookupRow("promotion_kind", r["type_code"], f"{r['type_code']} ({r['type_name']})", (r["type_name"], r["type_code"]))
+        LookupRow("promotion_kind", r["type_code"], f"{r['type_code']} ({r['type_name']})", (r["type_name"], r["type_code"]),
+                  homes=("label", "code"))
         for r in turn_runtime.promotion_kind_rows(db)
         if r.get("type_code") and r.get("type_name")
     ]
@@ -601,7 +581,8 @@ def _location_rows(db: "Session") -> list[LookupRow]:
         code = str(w.warehouse_code or "").strip()
         name = str(w.warehouse_name or "").strip()
         if code:
-            out.append(LookupRow("location", str(w.id), f"{name} ({code})" if name else code, tuple(t for t in (name, code) if t)))
+            texts, homes = _tagged(("label", [name]), ("code", [code]))
+            out.append(LookupRow("location", str(w.id), f"{name} ({code})" if name else code, texts, homes=homes))
     return out
 
 
@@ -623,9 +604,9 @@ def _salesperson_rows(db: "Session") -> list[LookupRow]:
     for a in query.order_by(SalesAgent.sales_agent).all():
         code = str(a.sales_agent or "").strip()
         aliases = [x.strip() for x in str(a.aliases or "").split(",")]
-        texts = [code, a.person_label, *aliases]
+        texts, homes = _tagged(("label", [code, a.person_label]), ("alias_column", aliases))
         if code:
-            out.append(LookupRow("salesperson", str(a.id), code, tuple(dict.fromkeys(str(t) for t in texts if t and _fold(str(t))))))
+            out.append(LookupRow("salesperson", str(a.id), code, texts, homes=homes))
     return out
 
 
@@ -638,7 +619,7 @@ def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[Looku
     if only_ids is not None:
         query = query.filter(Customer.id.in_(list(only_ids)))
     return [
-        LookupRow("customer", str(cid), name.strip(), (name.strip(),))
+        LookupRow("customer", str(cid), name.strip(), (name.strip(),), homes=("label",))
         for cid, name in query.order_by(Customer.customer_code).all()
         if name and name.strip() and _fold(name)
     ]
@@ -669,19 +650,29 @@ def load_rows(
 
     vocab = ClassVocabulary(db) if group_categories and any(not (c.class_label or "").strip() for c in cats) else None
     for c in cats:
-        texts = tuple(dict.fromkeys(str(t) for t in [c.category_name, c.category_code, c.class_label, *(c.search_synonyms or [])] if t and str(t).strip()))
+        texts, homes = _tagged(
+            ("label", [c.category_name]), ("code", [c.category_code]), ("class", [c.class_label]),
+            ("alias_column", c.search_synonyms or []), fold=False,
+        )
         group = (
             category_class(db, code=c.category_code, name=c.category_name, class_label=c.class_label, vocab=vocab)
             if group_categories else None
         )
-        out.append(LookupRow("category", str(c.id), c.category_name, _with_synonyms("category", c.category_name, texts), group))
+        out.append(LookupRow("category", str(c.id), c.category_name, texts, group, homes=homes))
         seen_labels.add(_fold(c.category_name))
     # Class labels and product types, as the parser's old `Product types:` line named them.
+    # A class-label row's texts are the label plus the search synonyms of the categories of that class.
+    class_words: dict[str, list[str]] = {}
+    for c in cats:
+        for word in c.search_synonyms or []:
+            if word and str(word).strip():
+                class_words.setdefault(_fold(c.class_label or ""), []).append(str(word))
     for name in turn_runtime.product_type_names(db):
         key = _fold(name)
         if key and key not in seen_labels:
             seen_labels.add(key)
-            out.append(LookupRow("category", "type:" + key, name, _with_synonyms("category", name, (name,)), name if group_categories else None))
+            texts, homes = _tagged(("class", [name]), ("alias_column", class_words.get(key, [])), fold=False)
+            out.append(LookupRow("category", "type:" + key, name, texts, name if group_categories else None, homes=homes))
     out.extend(_spec_rows(db, hidden_spec_keys))
     out.extend(_file_type_rows(db))
     out.extend(_brand_rows(db, brands))
@@ -693,10 +684,9 @@ def load_rows(
         out.extend(_customer_rows(db, customer_ids))
     # The channel values are code's; the owner's `sales_channel_alias` set only adds words for them ("retail" = dealer).
     channel_words = pv._alias_words(db, "sales_channel_alias")
-    out.extend(
-        LookupRow("sales_channel", ch, ch, tuple(dict.fromkeys(t for t in (ch, *channel_words.get(ch, ())) if _fold(t))))
-        for ch in SALES_CHANNELS
-    )
+    for ch in SALES_CHANNELS:
+        texts, homes = _tagged(("label", [ch]), ("alias_set", channel_words.get(ch, ())))
+        out.append(LookupRow("sales_channel", ch, ch, texts, homes=homes))
     return out
 
 
@@ -914,7 +904,7 @@ def _key(text: str, model: str = EMBED_MODEL) -> tuple[str, str]:
     return (model, hashlib.sha1(text.encode()).hexdigest())
 
 
-#: Gemini's batchEmbedContents takes at most 100 texts per request.
+#: Gemini's batch endpoint takes at most 100 texts per request.
 GEMINI_EMBED_CHUNK = 100
 #: The vector size the meaning floors were calibrated on (native is 3072; `GeminiProvider.embed` also sizes down).
 GEMINI_EMBED_DIMENSIONS = 1536
@@ -925,72 +915,6 @@ GEMINI_EMBED_DIMENSIONS = 1536
 WARM_RETRY_WAITS = (15, 30, 60)
 _sleep = time.sleep
 _jitter = random.random
-
-
-def _shared_path(model: str) -> str | None:
-    """The shared vector file of `model`, or None when sharing is off (`CHATBOT_LOOKUP_VECTOR_DIR` = off/0/false/no).
-    The directory defaults to the system temp dir, which every worker of a container sees."""
-    base = os.environ.get("CHATBOT_LOOKUP_VECTOR_DIR") or tempfile.gettempdir()
-    if base.strip().lower() in ("off", "0", "false", "no"):
-        return None
-    return os.path.join(base, "lookup-vectors-" + re.sub(r"[^A-Za-z0-9._-]", "_", model) + ".npz")
-
-
-def _lock_shared(path: str) -> int | None:
-    """Take the exclusive lock beside the shared file (blocking); None, with a warning, when it cannot be had."""
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        fd = os.open(path[: -len(".npz")] + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
-    except OSError:
-        logger.warning("lookup shared vectors: no lock file, warming without the shared file", exc_info=True)
-        return None
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-    except OSError:
-        os.close(fd)
-        logger.warning("lookup shared vectors: lock failed, warming without the shared file", exc_info=True)
-        return None
-    return fd
-
-
-def _read_shared(path: str) -> dict[str, Any]:
-    """sha1 -> unit float32 vector from the shared file; empty when it is absent or unusable (warned)."""
-    import numpy as np
-
-    if not os.path.exists(path):
-        return {}
-    try:
-        with np.load(path, allow_pickle=False) as f:
-            keys, vectors = f["keys"], f["vectors"]
-        if vectors.ndim != 2 or vectors.dtype != np.float32 or len(keys) != len(vectors):
-            raise ValueError("unexpected shape")
-        return {str(k): vectors[i] for i, k in enumerate(keys)}
-    except Exception:  # noqa: BLE001 - a bad file is rebuilt by this warm
-        logger.warning("lookup shared vectors: %s unreadable, re-embedding", path, exc_info=True)
-        return {}
-
-
-def _write_shared(path: str, vectors: dict[str, Any]) -> None:
-    """Write the shared file atomically (temp file in the same directory, then rename); never raises."""
-    import numpy as np
-
-    if not vectors:
-        return
-    tmp = None
-    try:
-        fd, tmp = tempfile.mkstemp(prefix=".part-", suffix=".npz", dir=os.path.dirname(path))
-        with os.fdopen(fd, "wb") as out:
-            np.savez(out, keys=np.array(list(vectors)), vectors=np.stack(list(vectors.values())).astype(np.float32))
-        os.replace(tmp, path)
-        tmp = None
-    except Exception:  # noqa: BLE001 - the warm stands without the file
-        logger.warning("lookup shared vectors: could not write %s", path, exc_info=True)
-    finally:
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
 
 
 def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chunk_size: int) -> Embedder:
@@ -1022,41 +946,31 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
             return [_cache[_key(t, model)] for t in texts]
 
     def fill(texts: list[str]) -> int:
-        """The background warm-up: every uncached text in chunks, each chunk under its own timeout, no
-        total deadline; chunks are kept as they complete. A rate-limited chunk is waited out (`WARM_RETRY_WAITS`),
-        then the error is re-raised; a large warm is back-to-back requests and trips the per-minute limit.
-        The workers of a container share their vectors through a per-model file (`_shared_path`) under an
-        exclusive file lock held for the whole warm, so one worker embeds and the rest load. Returns how many
-        texts came from that file."""
-        lock_fd = None
-        path = _shared_path(model)
-        if path is not None:
-            lock_fd = _lock_shared(path)
-        loaded = embedded = 0
-        file_vectors: dict[str, Any] = {}
+        """The background warm-up. The stored vectors (`lookup_word` chunks of this model) are loaded first in one
+        SELECT; only the texts still missing are embedded, in chunks each under its own timeout with no total
+        deadline (chunks are kept as they complete; a rate-limited chunk is waited out, `WARM_RETRY_WAITS`, then the
+        error is re-raised), and written back so the next process loads them. Returns how many vectors came from
+        the store."""
+        from app.services.chatbot.head import lookup_word_store
+
+        loaded = 0
         try:
-            with _store_lock:
-                missing = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
-                if len(_cache) + len(missing) > _CACHE_CAP:  # the cap `embed` keeps, so the store stays bounded
-                    _cache.clear()
-                    _matrices.clear()
-            if lock_fd is not None:
-                file_vectors = _read_shared(path)
-                with _store_lock:
-                    held = next((v for k, v in _cache.items() if k[0] == model), None)
-                    width = next((v.shape[-1] for v in file_vectors.values()), None)
-                    if held is not None and width is not None and held.shape[-1] != width:
-                        logger.warning("lookup shared vectors: file width %d differs from the cache, ignoring it", width)
-                        file_vectors = {}
-                    for t in dict.fromkeys(texts):
-                        sha = _key(t, model)[1]
-                        if _key(t, model) not in _cache and sha in file_vectors:
-                            _cache[_key(t, model)] = file_vectors[sha]
-                            loaded += 1
-            with _store_lock:
-                todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
-            for i in range(0, len(todo), chunk_size):
-                chunk = todo[i : i + chunk_size]
+            from app.database import SessionLocal
+
+            with SessionLocal() as s:
+                loaded = lookup_word_store.load_lookup_vectors(s, model)
+        except Exception:  # noqa: BLE001 - advisory: the warm embeds what it cannot load
+            logger.warning("lookup warm: stored vectors not loaded", exc_info=True)
+        with _store_lock:
+            missing = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
+            if len(_cache) + len(missing) > _CACHE_CAP:  # the cap `embed` keeps, so the store stays bounded
+                _cache.clear()
+                _matrices.clear()
+                missing = list(dict.fromkeys(texts))
+        fresh: list[str] = []
+        try:
+            for i in range(0, len(missing), chunk_size):
+                chunk = missing[i : i + chunk_size]
                 for wait in (*WARM_RETRY_WAITS, None):
                     try:
                         raw = request(chunk)
@@ -1068,17 +982,19 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
                             raise
                         _sleep(wait * (1 + 0.5 * _jitter()))
                 store(chunk, raw)
-                embedded += len(chunk)
+                fresh.extend(chunk)
         finally:
-            if lock_fd is not None:
+            if fresh:
                 try:
+                    from app.database import SessionLocal
+
                     with _store_lock:
-                        asked = {_key(t, model)[1]: _cache[_key(t, model)] for t in texts if _key(t, model) in _cache}
-                    merged = {**file_vectors, **asked}
-                    if embedded or not all(sha in file_vectors for sha in asked):  # else the file already says it
-                        _write_shared(path, merged if len(merged) <= _CACHE_CAP else asked)
-                finally:
-                    os.close(lock_fd)  # closing the descriptor releases the flock
+                        vectors = {t: _cache[_key(t, model)] for t in fresh if _key(t, model) in _cache}
+                    with SessionLocal() as s:
+                        lookup_word_store.write_back(s, model, vectors)
+                        s.commit()
+                except Exception:  # noqa: BLE001 - the vectors stay in this process's cache
+                    logger.warning("lookup warm: vectors not written back", exc_info=True)
         return loaded
 
     def matrix(texts: list[str]):
@@ -1122,41 +1038,22 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
     return embed
 
 
-def provider_embedder(api_key: str) -> Embedder:
-    """OpenAI `text-embedding-3-small` (see `_vector_embedder`)."""
-    from app.services.llm_provider import OpenAIProvider
+def provider_embedder(api_key: str, model: str = EMBED_MODEL) -> Embedder:
+    """OpenAI embeddings on `model` (default `text-embedding-3-small`; see `_vector_embedder`)."""
+    from app.services.embedding_client import embed_texts
 
     def request(chunk: list[str]) -> list[Any]:
-        client = OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
-        return [item.embedding for item in client.embeddings.create(model=EMBED_MODEL, input=chunk).data]
+        return embed_texts(chunk, "openai", model, api_key=api_key, timeout=EMBED_TIMEOUT)
 
-    return _vector_embedder(EMBED_MODEL, request, EMBED_CHUNK)
+    return _vector_embedder(model, request, EMBED_CHUNK)
 
 
 def gemini_embedder(api_key: str, model: str) -> Embedder:
-    """Gemini `batchEmbedContents` on `model` (see `_vector_embedder`), one request per batch of texts."""
-    from app.services.llm_provider import GeminiProvider
+    """Gemini batch embeddings on `model` (see `_vector_embedder`), one request per batch of texts."""
+    from app.services.embedding_client import embed_texts
 
     def request(chunk: list[str]) -> list[Any]:
-        body = GeminiProvider(api_key)._request(
-            "POST",
-            f"models/{model}:batchEmbedContents",
-            json_body={
-                "requests": [
-                    {
-                        "model": f"models/{model}",
-                        "content": {"parts": [{"text": t}]},
-                        "outputDimensionality": GEMINI_EMBED_DIMENSIONS,
-                    }
-                    for t in chunk
-                ]
-            },
-            timeout=EMBED_TIMEOUT,
-        )
-        vectors = [e.get("values") or [] for e in body.get("embeddings") or []]
-        if len(vectors) != len(chunk) or not all(vectors):
-            raise RuntimeError("Gemini batchEmbedContents returned the wrong number of vectors.")
-        return vectors
+        return embed_texts(chunk, "gemini", model, api_key=api_key, timeout=EMBED_TIMEOUT)
 
     return _vector_embedder(model, request, GEMINI_EMBED_CHUNK)
 
@@ -1248,18 +1145,18 @@ def usable_embedder(rows: list[LookupRow], embed: Embedder | None) -> Embedder |
 
 def embedder(db: "Session") -> Embedder | None:
     """`EMBED` as the engine uses it: a set value (a callable or None) wins; the default follows the production
-    label of prompt key `chatbot_lookup_embedder`: provider gemini plus a model -> a Gemini embedder with the AI
-    config's Gemini key; otherwise the OpenAI embedder with its key. No key for the chosen provider -> None
-    (spelling only)."""
+    setting `embedding_provider` / `embedding_model` (else the production label of prompt key `chatbot_lookup_embedder`,
+    else OpenAI small): gemini -> a Gemini embedder with the AI config's Gemini key; otherwise the OpenAI embedder with
+    its key. No key for the chosen provider -> None (spelling only)."""
     if EMBED is not USE_PROVIDER:
         return EMBED
-    from app.services import ai_prompt_registry, llm_provider
+    from app.services import embedding_settings, llm_provider
     from app.services.ai_assistant_service import AIAssistantConfigService
 
     config = AIAssistantConfigService(db).get()
-    provider, model = ai_prompt_registry.agent_model(db, EMBEDDER_PROMPT_KEY)
+    provider, model = embedding_settings.resolve_embedder(db)
     if provider == "gemini" and model:
         key = llm_provider.resolve_api_key(config, "gemini")
         return gemini_embedder(key, model) if key else None
     key = llm_provider.resolve_api_key(config, "openai")
-    return provider_embedder(key) if key else None
+    return provider_embedder(key, model) if key else None
