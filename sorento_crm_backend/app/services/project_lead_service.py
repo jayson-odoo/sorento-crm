@@ -38,9 +38,11 @@ from app.models.projects import (
     LEAD_OUTCOME_OPEN,
     LEAD_OUTCOME_QUALIFIED,
     LEAD_SOURCES,
+    APPROVAL_DRAFT,
     Project,
     ProjectLead,
     ProjectParty,
+    ProjectSalesProfile,
 )
 from app.models.status import Status
 from app.schemas.common import MAX_PAGE_LIMIT
@@ -996,6 +998,8 @@ def qualify_lead(
         details["location"] = lead.location
     if lead.estimated_value is not None and "estimated_sales_value" not in details:
         details["estimated_sales_value"] = lead.estimated_value
+    if lead.customer_id and not details.get("customer_id"):
+        details["customer_id"] = lead.customer_id
 
     project = register_project(
         db,
@@ -1060,6 +1064,39 @@ def _release_lead(
     db.flush()
 
 
+def is_own_lead(lead: ProjectLead, user_id: str) -> bool:
+    """Own = assigned to the user or recorded by them (LEAD-GOVERNS-REGISTER H)."""
+    return bool(user_id) and user_id in (lead.owner_user_id, lead.created_by)
+
+
+def lead_for_registration(
+    db: Session, lead_id: str, *, actor_user_id: str, own_leads_only: bool
+) -> ProjectLead:
+    """The lead a registration names: 404 when missing, and for a submit-only salesperson
+    also when it is not their own (the same answer, so nothing leaks)."""
+    from app.services.uuid_path_param import validate_uuid_path
+
+    validate_uuid_path(lead_id, resource="Lead")
+    lead = db.query(ProjectLead).filter(ProjectLead.id == lead_id).first()
+    if lead is None or (own_leads_only and not is_own_lead(lead, actor_user_id)):
+        raise AppException(status_code=404, message="Lead not found.", code="lead_not_found")
+    return lead
+
+
+def customer_from_lead(lead: ProjectLead, requested: Optional[str]) -> Optional[str]:
+    """The lead governs the project's customer: its own when it has one (a different one
+    asked for is refused), else whatever was asked for."""
+    if not lead.customer_id:
+        return requested
+    if requested and requested != lead.customer_id:
+        raise AppException(
+            status_code=422,
+            message="The project's customer is the lead's customer.",
+            code="project_customer_not_lead_customer",
+        )
+    return lead.customer_id
+
+
 def set_project_lead(
     db: Session,
     project: Project,
@@ -1067,8 +1104,13 @@ def set_project_lead(
     *,
     actor_user_id: str,
     permissions: Set[str],
+    own_leads_only: bool = False,
 ) -> None:
     """Link, swap or unlink the lead a project came from (the project form, #1339).
+
+    ``own_leads_only`` is the submit-only salesperson's registration: the lead must be one
+    of their own (404 otherwise), the project is their draft (not approved yet), and the
+    lead is marked qualified only once the registration is submitted.
 
     Linking marks the lead exactly as Qualify does and needs the same right on the
     lead. Unlike Qualify, a lead another project already carries is refused: picking
@@ -1091,7 +1133,8 @@ def set_project_lead(
         # is not one yet (PROJECT-REG-PORTAL R4).
         from app.services.project_service import assert_project_approved, project_label
 
-        assert_project_approved(project)
+        if not own_leads_only:
+            assert_project_approved(project)
         # Locked, so two saves racing to link the same lead cannot both pass the
         # already-linked check below.
         lead = (
@@ -1104,7 +1147,13 @@ def set_project_lead(
             raise AppException(
                 status_code=404, message="Lead not found.", code="lead_not_found"
             )
-        assert_can_edit_lead(lead, actor_user_id, permissions)
+        if own_leads_only:
+            if not is_own_lead(lead, actor_user_id):
+                raise AppException(
+                    status_code=404, message="Lead not found.", code="lead_not_found"
+                )
+        else:
+            assert_can_edit_lead(lead, actor_user_id, permissions)
         other = (
             db.query(Project)
             .filter(Project.lead_id == lead.id, Project.id != project.id)
@@ -1136,7 +1185,11 @@ def set_project_lead(
             db, previous, actor_user_id=actor_user_id, permissions=permissions
         )
     if lead is not None:
-        _mark_qualified(db, lead)
+        profile = db.get(ProjectSalesProfile, project.id)
+        if not lead.customer_id and getattr(profile, "customer_id", None):
+            lead.customer_id = profile.customer_id
+        if project.approval_state != APPROVAL_DRAFT:
+            _mark_qualified(db, lead)
 
 
 def preview_qualify_clashes(
@@ -1395,6 +1448,12 @@ def _duplicate_hints(
     return hints
 
 
+def reads_own_leads_only(permissions: Optional[Set[str]]) -> bool:
+    from app.services.own_scope import PROJECTS_VIEW, PROJECTS_VIEW_OWN, is_limited
+
+    return is_limited(permissions, PROJECTS_VIEW, PROJECTS_VIEW_OWN)
+
+
 def list_leads(
     db: Session,
     *,
@@ -1414,6 +1473,13 @@ def list_leads(
     dir: str = "desc",
 ) -> Dict[str, Any]:
     q = db.query(ProjectLead).filter(ProjectLead.company_id == company_id)
+    if reads_own_leads_only(permissions):
+        q = q.filter(
+            or_(
+                ProjectLead.owner_user_id == actor_user_id,
+                ProjectLead.created_by == actor_user_id,
+            )
+        )
 
     if query:
         like = f"%{query.strip()}%"

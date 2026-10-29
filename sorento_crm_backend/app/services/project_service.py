@@ -385,6 +385,7 @@ def start_project(
 
 
 MANAGE_PERMISSION = "projects.projects.manage"
+EDIT_PERMISSION = "projects.projects.edit"
 CUSTOMERS_VIEW_PERMISSION = "order_management.customers.view"
 
 TAKEOVER_JOIN = "join"
@@ -1271,6 +1272,16 @@ def update_project(
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
 
+    own_leads_only = "projects.registrations.submit" in permissions and EDIT_PERMISSION not in permissions
+    if payload.get("lead_id") and payload["lead_id"] != project.lead_id:
+        # The lead governs the customer (LEAD-GOVERNS-REGISTER E4).
+        from app.services import project_lead_service as leads
+
+        lead = leads.lead_for_registration(
+            db, payload["lead_id"], actor_user_id=actor_user_id, own_leads_only=own_leads_only
+        )
+        if lead.customer_id:
+            payload = {**payload, "customer_id": leads.customer_from_lead(lead, payload.get("customer_id"))}
     apply_sales_details(db, project, payload)
 
     # Present-and-null is an unlink; absent leaves the link alone (#1339).
@@ -1283,6 +1294,7 @@ def update_project(
             payload["lead_id"],
             actor_user_id=actor_user_id,
             permissions=permissions,
+            own_leads_only=own_leads_only,
         )
     return project
 
