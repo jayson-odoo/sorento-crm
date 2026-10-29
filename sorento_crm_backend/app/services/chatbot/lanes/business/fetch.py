@@ -2992,8 +2992,9 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                     ],
                     "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
                 }
-        offer = _LIST_OFFERS.get(frame.get("basis")) if not frame.get("group_by") else None
+        offer = _LIST_OFFERS.get(frame.get("basis"))
         if offer is not None and offer[0] in text:
+            # A summary that broke down by the user's own axis printed no rank numbers: its one offer is the list.
             # Owner 28 Oct 09:30 (AC-RU-17a): an undelivered-orders total offers the open sales orders behind it; "1"
             # re-runs THIS frame grouped by sales order (`report_ask.settle`, `so_list_outcome`). REPORT-OUTSTANDING-
             # SUMMARY: a pending-delivery summary offers its delivery orders the same way.

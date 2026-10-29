@@ -766,7 +766,7 @@ def sales_figure_decision(
     db: Any, contact_respond_id: Any, space_id: Any, *, order_status: str, granted: bool,
     parse_output: dict[str, Any] | None = None,
 ) -> str:
-    """`granted`, `salesperson_book` or `not_granted` for a sales figure ask. The ONE rule
+    """`granted`, `salesperson_book`, `pending_delivery_open` or `not_granted` for a sales figure ask. The ONE rule
     (`contact_asker.may_ask_sales_ranking`) applies only to a verdict that runs on the report-ask
     tool (`sales_ranking`, the parser's `top_selling` label included); every other sales figure ask
     (sales report, the sales analysis tool) needs the grant, as before. The contact is the one the
@@ -776,6 +776,7 @@ def sales_figure_decision(
     if order_status == "top_selling" and isinstance(parse_output, dict):
         # REPORT-SMART-L R1: a top_selling verdict that skipped `by_capability` is the sales ranking it becomes.
         parse_output, order_status = report_ask.from_top_selling(parse_output), report_ask.ASK_NAME
+    routed = parse_output if isinstance(parse_output, dict) else {}
     if order_status in report_ask.SALES_STATUSES:
         # Owner 28 Oct 08:40: a sales total passes like a ranking, but only when the verdict WILL run on the report ask
         # (`by_capability` reroutes it); the Yearly comparison and the other sales analysis files do not.
@@ -790,6 +791,17 @@ def sales_figure_decision(
         db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
     )
     decision = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=False)[0]
+    if (
+        decision == "not_granted"
+        and (
+            (routed.get("capability_from") == "outstanding" and routed.get("basis") in (None, "pending_delivery"))
+            or report_ask.list_pick_kind(routed) == "pending_delivery"
+        )
+        and contact_asker.pending_delivery_open(db, str(resolved) if resolved else None)
+    ):
+        # Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY, as before #1922): pending delivery needs no reveal for office staff or
+        # a linked contact; an ask naming no kind is that kind for them (`report_ask.outstanding_kinds`).
+        return "pending_delivery_open"
     return decision
 
 
@@ -1915,7 +1927,7 @@ def run_fetch(
             if sales_need and need not in granted
             else "granted" if need in granted else "not_granted"
         )
-        if decision == "salesperson_book":
+        if decision in ("salesperson_book", "pending_delivery_open"):
             if trace is not None:
                 trace.add("domain_grant", {"domain": domain, "decision": decision, "needs": need})
         elif need not in granted:
@@ -2212,9 +2224,15 @@ def run_fetch(
         # their own book) is never offered the list of agents to pick from.
         _attrs = (ctx.get("access") or {}).get("attributes") if isinstance(ctx.get("access"), dict) else None
         _agent_filter = report_ask.grant_key(parse_output) in set(_attrs) if isinstance(_attrs, (list, tuple, set, frozenset)) else False
+        _kinds = report_ask.ASKED_KINDS
+        if parse_output.get("capability_from") == "outstanding" and report_ask.OUTSTANDING_GRANT not in set(_attrs or ()):
+            # Owner 29 Oct: only the kinds this contact may see are offered; one is run with no question (#b6e9).
+            _kinds = report_ask.outstanding_kinds(revealed=False, decision=sales_figure_decision(
+                db, contact_id, space_id, order_status=order_status_raw, granted=False, parse_output=parse_output,
+            ))
         settled, line = report_ask.settle(
             db, parse_output, entities, dealer=bool(customer_scope.get("enforced")), agent_filter=_agent_filter,
-            companies=sales_company_ask._companies(db, contact_id, space_id),
+            companies=sales_company_ask._companies(db, contact_id, space_id), kinds=_kinds,
         )
         if trace is not None:
             trace.add(

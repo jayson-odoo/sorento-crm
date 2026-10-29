@@ -174,7 +174,7 @@ def test_b6e9_a_do_only_contact_gets_the_delivery_order_summary_with_no_question
 def test_a_do_only_contact_naming_undelivered_orders_is_refused_that_kind(do_only, do_only_world) -> None:
     text, calls = do_only.say(
         _status("outstanding", _e(PRODUCT, "product"), basis="outstanding", state_changes=list(KEEP), **NO_DATES),
-        "Srt5733 undelivered sales orders",
+        "Srt5733 undelivered",
     )
     assert calls == [], calls
     assert "Outstanding is not enabled for your account." in text, text

@@ -6381,7 +6381,7 @@ def _run_stages_body(  # noqa: PLR0915
                 order_status=jsc.js_string(parsed_output.get("order_status") or "").strip(),
                 parse_output=parsed_output,
             )
-            sales_report_grant_refused = _decision != "salesperson_book"
+            sales_report_grant_refused = _decision not in ("salesperson_book", "pending_delivery_open")
             if not sales_report_grant_refused:
                 turn_trace.add(
                     "domain_grant",

@@ -222,7 +222,11 @@ BASES = ("invoiced", "delivered", "ordered", "outstanding", "pending_delivery", 
 #: Never defaulted: an outstanding ask whose parse names none is asked `KIND_QUESTION`. They take no period
 #: (absent = every date).
 OUTSTANDING_KINDS = ("outstanding", "pending_delivery", "unpaid")
-KIND_QUESTION = "Undelivered orders, pending delivery or unpaid invoices?"
+KIND_QUESTION = "Undelivered orders or pending delivery?"
+#: Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY): "outstanding" means undelivered orders or pending delivery, never unpaid
+#: invoices (only when the user names them). The kind question offers only the kinds the contact may see; a contact
+#: that may see one (pending delivery without the Outstanding reveal, as before #1922) gets it with no question.
+ASKED_KINDS = ("outstanding", "pending_delivery")
 #: The parser's outstanding document statuses that already name their kind: a sales order backlog, a delivery
 #: order backlog. `outstanding_both` and the bare `outstanding` name none.
 STATUS_KIND = {"so_outstanding": "outstanding", "do_outstanding": "pending_delivery"}
@@ -246,6 +250,23 @@ def metric_from(parse_output: dict[str, Any]) -> str | None:
 
 
 OUTSTANDING_GRANT = "sales_orders.outstanding"
+
+
+def list_pick_kind(parse_output: dict[str, Any]) -> str | None:
+    """The outstanding kind a "Reply 1 for the ... list" pick re-runs (`LIST_PICKS`), off the pick itself: the pick's
+    verdict names no basis, so the reveal it is read under comes from here."""
+    detail = parse_output.get("ranking_detail") if isinstance(parse_output, dict) else None
+    group = detail.get("group_by") if isinstance(detail, dict) else None
+    return next((kind for kind, pick in LIST_PICKS.items() if pick == group), None)
+
+
+def outstanding_kinds(*, revealed: bool, decision: str) -> tuple[str, ...]:
+    """The outstanding kinds a contact may see (owner 29 Oct, as before #1922): both with the Outstanding reveal or as a
+    salesperson on its own book (Q6); pending delivery alone when `sales_figure_decision` opened it without the reveal
+    (`pending_delivery_open`: office staff or a linked contact); none otherwise."""
+    if revealed or decision == "salesperson_book":
+        return ASKED_KINDS
+    return ("pending_delivery",) if decision == "pending_delivery_open" else ()
 SALES_REPORT_GRANT = "sales_orders.sales_report"
 
 
@@ -256,7 +277,7 @@ def grant_key(parse_output: dict[str, Any]) -> str:
         return SALES_REPORT_GRANT
     if parse_output.get("order_status") != ASK_NAME:
         return SALES_REPORT_GRANT
-    if parse_output.get("basis") in OUTSTANDING_KINDS or (
+    if parse_output.get("basis") in OUTSTANDING_KINDS or list_pick_kind(parse_output) or (
         parse_output.get("capability_from") == "outstanding" and not parse_output.get("basis")
     ):
         return OUTSTANDING_GRANT
@@ -288,7 +309,7 @@ def _resolve_basis(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
     """An answering turn's basis: the PARSER's own reading of the reply (`reply_basis`); the kind question
     (an outstanding ask) takes one of the three kinds only."""
     basis = extras.get("reply_basis")
-    allowed = OUTSTANDING_KINDS if extras.get("kind_ask") else BASES
+    allowed = ASKED_KINDS if extras.get("kind_ask") else BASES
     return rf.Resolved("ok", value=basis, label=basis) if basis in allowed else rf.Resolved("unknown")
 
 
@@ -311,7 +332,7 @@ TOP_N = rf.FieldSpec(name="top_n", noun="number", question=TOP_N_QUESTION, resol
 METRIC = rf.FieldSpec(name="metric", noun="measure", question=ranking_ask.METRIC_LINE, question_fn=_metric_question, resolve=_resolve_metric, allow_all=False)
 #: The kind question's options (the outstanding kinds, in the question's order) and the basis question's, as the
 #: pick the parser is shown (`FieldSpec.offered`).
-KIND_OPTIONS = (("outstanding", "Undelivered orders"), ("pending_delivery", "Pending delivery"), ("unpaid", "Unpaid invoices"))
+KIND_OPTIONS = (("outstanding", "Undelivered orders"), ("pending_delivery", "Pending delivery"))
 BASIS_OPTIONS = (("invoiced", "Invoiced"), ("delivered", "Delivered"), ("ordered", "Ordered"), ("outstanding", "Outstanding"))
 
 
@@ -1474,11 +1495,17 @@ def so_list_outcome(db: Any, frame: dict[str, Any], pick: str = SO_LIST) -> rf.O
 
 def settle(
     db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True,
-    companies: Any = (),
+    companies: Any = (), kinds: tuple[str, ...] = ASKED_KINDS,
 ) -> tuple[rf.Outcome | None, str | None]:
     """`_settle`, with the company question asked as the one line `sales_company_ask` asks on the Yearly path (one
     question, one wording); the slot keeps its options, and the parser's declared pick of one of them is the only answer
-    (`required_fields.picked_option`: the company and sales agent fields are `parser_only`)."""
+    (`required_fields.picked_option`: the company and sales agent fields are `parser_only`). `kinds`: the outstanding
+    kinds the contact may see (`outstanding_kinds`); with one, an outstanding ask naming none is that kind, unasked."""
+    if (
+        len(kinds) == 1 and parse_output.get("capability_from") == "outstanding"
+        and parse_output.get("basis") not in OUTSTANDING_KINDS
+    ):
+        parse_output = {**parse_output, "basis": kinds[0]}
     outcome, line = _settle(db, parse_output, entities, dealer=dealer, agent_filter=agent_filter, companies=companies)
     if outcome is not None and outcome.slot and outcome.slot.get("asking") == "company" and outcome.reply:
         outcome.reply = _company_question(_dict(outcome.slot.get("extras")))
@@ -1516,7 +1543,6 @@ def _settle(
         isinstance(ranking_detail, dict)
         and ranking_detail.get("group_by") in LIST_PICKS.values()
         and LIST_PICKS.get(shown_frame.get("basis")) == ranking_detail.get("group_by")
-        and not shown_frame.get("group_by")
     ):
         return so_list_outcome(db, shown_frame, ranking_detail["group_by"]), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME and slot.get("asking") == "scope":
