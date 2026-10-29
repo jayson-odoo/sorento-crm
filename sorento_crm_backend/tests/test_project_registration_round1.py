@@ -99,7 +99,7 @@ def embed_calls(monkeypatch):
     real = REAL_SEMANTIC
     calls: list = []
 
-    def fake(chunks, model=None, timeout=30):
+    def fake(chunks, model=None, timeout=30, **kw):
         calls.append({"chunks": list(chunks), "timeout": timeout})
         return [[0.0, 0.0, 0.0] for _ in chunks]
 
@@ -156,7 +156,7 @@ def test_b3_a_failing_embed_keeps_the_detail_readable_and_is_not_retried(world, 
     real = REAL_SEMANTIC
     attempts: list = []
 
-    def boom(chunks, model=None, timeout=30):
+    def boom(chunks, model=None, timeout=30, **kw):
         attempts.append(len(chunks))
         raise RuntimeError("provider down")
 

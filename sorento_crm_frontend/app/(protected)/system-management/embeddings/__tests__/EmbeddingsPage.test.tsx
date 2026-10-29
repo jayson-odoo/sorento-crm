@@ -109,7 +109,8 @@ describe('lookup words', () => {
 
   it('groups each row\'s words by home', () => {
     renderPage();
-    const row = screen.getByText('Water Closet', { selector: '*' }).closest('tr, [role="row"], [data-row]') as HTMLElement;
+    // the label is real text in the Row cell and also a label chip: both sit in the one row
+    const row = screen.getAllByText('Water Closet')[0].closest('tr, [role="row"], [data-row]') as HTMLElement;
     expect(row).not.toBeNull();
     const scope = within(row);
     expect(scope.getByText(/^label$/i)).toBeInTheDocument();
