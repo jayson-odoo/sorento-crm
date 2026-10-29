@@ -89,6 +89,22 @@ Supersedes P4-24 and P4-25 for the salesperson's form and view. Parity table: #1
 - PAR-7 Every lookup the portal form calls answers the same on `/api/v1/my-requests` as on the portal, and refuses
   staff (`.view` holders), no session and no linked contact like the other my-requests routes.
 
+## Salesperson projects (owner rulings a54382059 and a54716498, 29 Oct)
+
+This lane's `pp4_0001` grants Salesperson `projects.registrations.submit`, which makes them "submit-only" under
+PROJECT-REGISTER-V2 (no `projects.projects.edit`). Keep today's behaviour on approved projects:
+
+- PRJ-1 #1957's J3b narrows a submit-only user only while the project is an unapproved registration (draft, pending,
+  resubmitted, rejected: own draft or rejected editable, pending or resubmitted not). On a staff project
+  (`approval_state` null) or an approved one, the general rule decides (owner, approved collaborator, manager):
+  detail `can_edit`, PUT, the gear with Edit project, and the edit form's Save changes (not Save draft / Submit).
+- PRJ-2 Unchanged: J3c (no Lead field for a submit-only user, on any project); owner reassignment needs
+  `projects.projects.manage`; a stranger is refused.
+- PRJ-3 Unchanged (a54716498): `POST /projects/{id}/status` stays `projects.projects.edit` only, no button is hidden,
+  no grant is added here; the owner grants salespeople stage moves through roles. Until then a salesperson's stage
+  move (and with it the Sponsorship / Sample Request stage-action seed) is refused, as on main today. Delete and
+  stakeholder writes likewise keep their own permissions.
+
 ## Proof
 
 - API-level pytest per form driving flows 1-4 of the card (red first), asserting records, never sending.
