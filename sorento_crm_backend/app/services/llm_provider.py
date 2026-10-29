@@ -808,7 +808,8 @@ ANTHROPIC_EFFORT_BUDGETS: dict[str, int] = {"low": 1024, "medium": 4096, "high":
 ANTHROPIC_EFFORTS = frozenset({"none", "minimal", *ANTHROPIC_EFFORT_BUDGETS})
 # The SDK refuses, before sending, a non-streaming call whose `max_tokens` could run past ten
 # minutes (21,333 tokens) when the caller sets no timeout, so the thinking room stops there.
-# Opus 4.0 / 4.1 carry their own 8,192 cap in the SDK and refuse `medium` and up the same way.
+# Opus 4.0 / 4.1 carry their own 8,192 cap in the SDK and refuse any effort whose max_tokens passes it
+# (`high` and up at a 2048 answer budget) the same way.
 ANTHROPIC_NONSTREAMING_MAX_TOKENS = 21_333
 
 
