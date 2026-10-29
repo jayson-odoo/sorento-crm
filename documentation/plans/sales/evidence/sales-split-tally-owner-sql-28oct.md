@@ -331,6 +331,10 @@ ROLLBACK;
 
 ### R9 apply (HELD: the owner runs it only after reading the dry run)
 
+Incident 29 Oct: this block was once run on prod with `<OTHER n>` unfilled, which sets the five
+left-out agents to `project`. Check and correction: section R11 below. The guard now refuses an
+unfilled run.
+
 Writes, for every agent the dry run marks `change` and that has at most one dated row: one dated
 row `{proposed} from start to open` (the existing single row is updated in place, else one is
 inserted), and the `sales_agents.demand_class` mirror. Agents marked `CHECK BY HAND` are skipped.
@@ -339,6 +343,17 @@ the same with `--apply` (the SO classes follow the agent classes; plan 2.9 Q8).
 
 ```sql
 BEGIN;
+-- Guard (added 29 Oct after the apply was run once with the placeholders unfilled): stops here,
+-- writing nothing, unless every <OTHER n> is filled with the code of an existing agent.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM (VALUES ('<OTHER 1>'), ('<OTHER 2>'), ('<OTHER 3>'), ('<OTHER 4>'), ('<OTHER 5>')) v(code)
+    WHERE v.code LIKE '<%'
+       OR NOT EXISTS (SELECT 1 FROM public.sales_agents a WHERE upper(btrim(a.sales_agent)) = v.code))
+  THEN RAISE EXCEPTION 'R9 apply: fill every <OTHER n> with an existing agent code first; nothing written';
+  END IF;
+END $$;
 WITH other_codes(code) AS (VALUES ('<OTHER 1>'), ('<OTHER 2>'), ('<OTHER 3>'), ('<OTHER 4>'), ('<OTHER 5>')),
 jan_agents AS (
   SELECT DISTINCT d.sales_agent_id AS id
@@ -522,3 +537,103 @@ and 3b): reason 3 holds 5,760 documents, 14,871,452.95. Of the 24 traced: 10 mat
 -2,063.26, Project team 5 docs -92,874.38); 13 sit on `retail` SOs of two agents AutoCount leaves
 out (-34,077.02: reason 6 or 7, DATA, fixed by R9 apply + re-derive); 1 sits on a `project` SO of a
 Dealer-list agent (-159.00: reason 4, 5 or 7; R10 says which).
+
+# Incident, 29 Oct: R9 apply run on prod with `<OTHER n>` unfilled
+
+With no `<OTHER n>` filled, no agent matches `other_codes`, so the apply gives every agent with a
+January 2026 SRT document (and at most one class row) ONE row `{class} from start to open` and the
+same `sales_agents.demand_class`: an area-suffixed code `retail`, every other code `project`. The
+five left-out agents become `project` instead of `other`. Every other agent gets exactly the class
+the dry run proposed (its per-class sums matched AutoCount: retail 27 agents 6,513,047.67). It
+writes no sales order; only an SO ingested afterwards reads the new class.
+`tests/test_sales_split_tally_owner_sql.py` rehearses the incident, this check and this
+correction.
+
+## R11. Did it land? (READ ONLY)
+
+`<OTHER n>` = the five left-out codes, `<PROJECT 1>` = the agent Q10 moves to project, `<NONE 1>` =
+the agent Q4 leaves blank. Landed = D1 shows the five with ONE row `project start..open` and mirror
+`project`, created or updated at the same second (D2). D3 shows a transaction still open (not
+committed): ROLLBACK it in that client. D4: SOs stamped since, for the five.
+
+```sql
+BEGIN READ ONLY;
+-- D1. The decisive check. Before the apply (owner's 3a / R5, 28 Oct 08:35 MYT): two of the five had NO
+-- agent_classes row, the other three and <PROJECT 1> were 'retail'. The unfilled apply gives all six
+-- ONE row 'project' from start to open, and mirror 'project'.
+SELECT a.sales_agent, a.demand_class AS mirror_now,
+       count(ac.id) AS class_rows,
+       string_agg(ac.demand_class || ' ' || coalesce(ac.from_month::text, 'start') || '..'
+                  || coalesce(ac.to_month::text, 'open')
+                  || ' created ' || ac.created_at::text || ' updated ' || ac.updated_at::text, '; ') AS rows_now
+FROM public.sales_agents a
+LEFT JOIN sales.agent_classes ac ON ac.sales_agent_id = a.id
+WHERE upper(btrim(a.sales_agent)) IN ('<OTHER 1>', '<OTHER 2>', '<OTHER 3>', '<OTHER 4>', '<OTHER 5>', '<PROJECT 1>', '<NONE 1>')
+GROUP BY a.id, a.sales_agent, a.demand_class ORDER BY 1;
+-- D2. Every class row created or updated after the owner's 3a run (28 Oct 08:35 MYT = 00:35 UTC;
+-- if the server clock is MYT, read 08:35). The apply's footprint: same second, from start to open.
+SELECT a.sales_agent, ac.demand_class, ac.from_month, ac.to_month, ac.created_at, ac.updated_at, a.demand_class AS mirror
+FROM sales.agent_classes ac JOIN public.sales_agents a ON a.id = ac.sales_agent_id
+WHERE ac.created_at >= TIMESTAMP '2026-10-28 00:30' OR ac.updated_at >= TIMESTAMP '2026-10-28 00:30'
+ORDER BY greatest(ac.created_at, ac.updated_at), 1;
+-- D3. Is the owner's client still holding the transaction open (uncommitted)? A row here with
+-- state 'idle in transaction' that started at the apply time = NOT committed yet: in that client,
+-- run ROLLBACK (or disconnect WITHOUT committing).
+SELECT pid, usename, application_name, client_addr, state, xact_start, now() - xact_start AS open_for,
+       left(query, 120) AS last_statement
+FROM pg_stat_activity
+WHERE state LIKE 'idle in transaction%' ORDER BY xact_start;
+-- D4. Sales orders stamped since then for the five 'other' agents (the SO ingest reads the agent's
+-- class on the SO date, so a landed apply stamps their NEW SOs 'project').
+SELECT a.sales_agent, so.demand_class, count(*) AS sos, min(so.created_at) AS first, max(so.created_at) AS last
+FROM public.sales_orders so JOIN public.sales_agents a ON a.id = so.sales_agent_id
+WHERE upper(btrim(a.sales_agent)) IN ('<OTHER 1>', '<OTHER 2>', '<OTHER 3>', '<OTHER 4>', '<OTHER 5>')
+  AND so.created_at >= TIMESTAMP '2026-10-28 00:30'
+GROUP BY 1, 2 ORDER BY 1, 2;
+ROLLBACK;
+```
+
+## R11 correction (HELD for the owner; only if R11 shows the apply landed)
+
+Moves the five to `other` from start to open, row and mirror, which is the class rulings Q7 / Q10
+give them; the rest of what the apply wrote is the approved target and stays. Its guard writes
+nothing unless all five codes name an agent. After COMMIT: R11 D1 again, then
+`python -m scripts.sales_order_class_rederive --company SRT` (dry run; it also re-derives any SO
+D4 listed), then `--apply` once the owner has read it.
+
+```sql
+BEGIN;
+-- C0. Guard: the five codes must each name exactly one agent, or nothing is written.
+DO $$
+DECLARE n int;
+BEGIN
+  SELECT count(*) INTO n FROM public.sales_agents
+  WHERE upper(btrim(sales_agent)) IN ('<OTHER 1>', '<OTHER 2>', '<OTHER 3>', '<OTHER 4>', '<OTHER 5>');
+  IF n <> 5 THEN RAISE EXCEPTION 'expected 5 agents, found %; nothing written', n; END IF;
+END $$;
+-- C1. The five left-out agents: their ONE class row (the one the apply wrote or overwrote) to
+-- 'other' from start to open, the class Q10 / Q7 rules for them. An agent with more than one row
+-- is left alone (fix it by hand on the Sales Agents screen).
+UPDATE sales.agent_classes ac
+SET demand_class = 'other', from_month = NULL, to_month = NULL, updated_at = now()
+FROM public.sales_agents a
+WHERE a.id = ac.sales_agent_id
+  AND upper(btrim(a.sales_agent)) IN ('<OTHER 1>', '<OTHER 2>', '<OTHER 3>', '<OTHER 4>', '<OTHER 5>')
+  AND (SELECT count(*) FROM sales.agent_classes x WHERE x.sales_agent_id = a.id) = 1;
+-- C2. The same five with no row at all (apply did not land for them): one open 'other' row.
+INSERT INTO sales.agent_classes (id, sales_agent_id, demand_class, from_month, to_month)
+SELECT gen_random_uuid(), a.id, 'other', NULL, NULL FROM public.sales_agents a
+WHERE upper(btrim(a.sales_agent)) IN ('<OTHER 1>', '<OTHER 2>', '<OTHER 3>', '<OTHER 4>', '<OTHER 5>')
+  AND NOT EXISTS (SELECT 1 FROM sales.agent_classes x WHERE x.sales_agent_id = a.id);
+-- C3. The mirror the Sales Agents grid and the weekly upload read.
+UPDATE public.sales_agents SET demand_class = 'other'
+WHERE upper(btrim(sales_agent)) IN ('<OTHER 1>', '<OTHER 2>', '<OTHER 3>', '<OTHER 4>', '<OTHER 5>');
+-- C4. Check BEFORE COMMIT: five rows, each 'other', class_rows 1, mirror 'other'.
+SELECT a.sales_agent, a.demand_class AS mirror, count(ac.id) AS class_rows,
+       string_agg(ac.demand_class || ' ' || coalesce(ac.from_month::text, 'start') || '..'
+                  || coalesce(ac.to_month::text, 'open'), '; ') AS rows_now
+FROM public.sales_agents a LEFT JOIN sales.agent_classes ac ON ac.sales_agent_id = a.id
+WHERE upper(btrim(a.sales_agent)) IN ('<OTHER 1>', '<OTHER 2>', '<OTHER 3>', '<OTHER 4>', '<OTHER 5>')
+GROUP BY a.id, a.sales_agent, a.demand_class ORDER BY 1;
+-- Then type COMMIT; (or ROLLBACK; if C4 is not five 'other' rows).
+```

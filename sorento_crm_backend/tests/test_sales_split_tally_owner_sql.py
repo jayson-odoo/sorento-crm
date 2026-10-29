@@ -41,18 +41,24 @@ def _blocks(heading: str) -> list[str]:
 
 def _statements(block: str, fills: dict[str, str]) -> list[str]:
     """The block's statements, placeholders filled, without the transaction lines (the test's
-    own transaction is the one rolled back). Split on `;` outside quotes and comments."""
+    own transaction is the one rolled back). Split on `;` outside quotes, `$$` bodies and
+    comments."""
     for placeholder, value in fills.items():
         block = block.replace(placeholder, value)
-    out, current, quoted, i = [], [], False, 0
+    out, current, quoted, dollar, i = [], [], False, False, 0
     while i < len(block):
         ch = block[i]
-        if not quoted and block.startswith("--", i):
+        if not quoted and block.startswith("$$", i):
+            dollar = not dollar
+            current.append("$$")
+            i += 2
+            continue
+        if not quoted and not dollar and block.startswith("--", i):
             i = block.find("\n", i) if "\n" in block[i:] else len(block)
             continue
-        if ch == "'":
+        if ch == "'" and not dollar:
             quoted = not quoted
-        if ch == ";" and not quoted:
+        if ch == ";" and not quoted and not dollar:
             out.append("".join(current).strip())
             current = []
         else:
@@ -153,3 +159,86 @@ def test_r9_apply_writes_one_open_row_and_the_mirror_then_the_dry_run_reads_no_c
         assert rows[who.sales_agent] == (cls, "no change")
         assert db.execute(text("SELECT demand_class FROM sales_agents WHERE id = :i"), {"i": who.id}).scalar() == cls
     assert db.query(BillingDocument).filter(BillingDocument.company_id == DEFAULT_COMPANY_ID).count() == 7
+
+
+# ------------------------------------------------- incident 29 Oct: R9 apply run unfilled
+
+
+@pytest.fixture
+def five_left_out(db):
+    """Five left-out agents (two with no class row, three `retail` with one row, as prod had
+    them), one more agent the lists put on `project`, each with a January document."""
+    from app.models.sales import SalesAgentClass
+
+    agents = []
+    for n in range(5):
+        row = agent(db, unique_code("AG"), demand_class=None if n < 2 else "retail")
+        if n >= 2:
+            db.add(SalesAgentClass(sales_agent_id=row.id, demand_class="retail"))
+        agents.append(row)
+    to_project = agent(db, unique_code("AG"), demand_class="retail")
+    db.add(SalesAgentClass(sales_agent_id=to_project.id, demand_class="retail"))
+    db.flush()
+    for row in agents + [to_project]:
+        doc(db, "invoice", "10.00", JAN15, agent_row=row)
+    fills = {f"<OTHER {n + 1}>": row.sales_agent.upper() for n, row in enumerate(agents)}
+    fills.update({"<PROJECT 1>": to_project.sales_agent.upper(), "<NONE 1>": "ZZT-NONE"})
+    return fills, agents, to_project
+
+
+def _classes(db, rows):
+    """Each agent's mirror and class rows, straight from the tables."""
+    return {
+        row.sales_agent: (
+            db.execute(text("SELECT demand_class FROM sales_agents WHERE id = :i"), {"i": row.id}).scalar(),
+            [tuple(x) for x in db.execute(text(
+                "SELECT demand_class, from_month, to_month FROM sales.agent_classes "
+                "WHERE sales_agent_id = :i"), {"i": row.id})],
+        )
+        for row in rows
+    }
+
+
+def test_incident_the_apply_with_unfilled_placeholders_is_refused_and_writes_nothing(db, five_left_out):
+    _fills, agents, to_project = five_left_out
+    before = _classes(db, agents + [to_project])
+    (apply_block,) = _blocks("R9 apply")
+    guard, *_rest = _statements(apply_block, {})
+    savepoint = db.begin_nested()
+    with pytest.raises(Exception, match="fill every <OTHER n>"):
+        db.execute(text(guard))
+    savepoint.rollback()
+    assert _classes(db, agents + [to_project]) == before
+
+
+def test_incident_r11_sees_the_unfilled_apply_and_the_correction_moves_the_five_to_other(db, five_left_out):
+    fills, agents, to_project = five_left_out
+    # The incident: the apply as it stood before the guard, placeholders unfilled.
+    _guard, *unfilled_apply = _statements(_blocks("R9 apply")[0], {})
+    for statement in unfilled_apply:
+        db.execute(text(statement))
+
+    d1, *_rest = _statements(_blocks("R11.")[0], fills)
+    landed = {r.sales_agent: (r.mirror_now, r.class_rows, r.rows_now.split(" created")[0])
+              for r in db.execute(text(d1))}
+    for row in agents + [to_project]:
+        assert landed[row.sales_agent] == ("project", 1, "project start..open")
+
+    for statement in _statements(_blocks("R11 correction")[0], fills)[:-1]:
+        db.execute(text(statement))
+    after = _classes(db, agents + [to_project])
+    for row in agents:
+        assert after[row.sales_agent] == ("other", [("other", None, None)])
+    assert after[to_project.sales_agent] == ("project", [("project", None, None)])
+
+
+def test_incident_the_correction_writes_nothing_unless_all_five_codes_name_an_agent(db, five_left_out):
+    fills, agents, _to_project = five_left_out
+    fills["<OTHER 5>"] = "ZZT-NO-SUCH-AGENT"
+    before = _classes(db, agents)
+    guard = _statements(_blocks("R11 correction")[0], fills)[0]
+    savepoint = db.begin_nested()
+    with pytest.raises(Exception, match="expected 5 agents, found 4"):
+        db.execute(text(guard))
+    savepoint.rollback()
+    assert _classes(db, agents) == before
