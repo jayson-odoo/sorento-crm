@@ -6,6 +6,7 @@ checks the same again at call time.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -34,6 +35,11 @@ class AgentContext:
     grants: frozenset[str]
     #: `respond_contacts.chatbot_stock_allowed`: may this contact check stock (today's bot gate).
     stock_allowed: bool = True
+    #: Names of the tools this user and contact may use, and the contact's brand scope
+    #: (None = unscoped): both go into `grants_hash`, so a lost permission or a narrower scope
+    #: starts a new conversation.
+    tool_names: tuple[str, ...] = ()
+    brand_scope: frozenset[str] | None = None
 
 
 def build_context(db, contact_respond_id: str) -> AgentContext:
@@ -88,7 +94,7 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         brand_scope = frozenset({NO_BRAND_ID})
     set_brand_scope(db, brand_scope)
 
-    return AgentContext(
+    ctx = AgentContext(
         contact_pk=pk,
         contact_respond_id=str(contact.respond_io_id),
         space_id=space_id,
@@ -96,7 +102,9 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         user_name=user_name,
         grants=grants,
         stock_allowed=getattr(contact, "chatbot_stock_allowed", True) is not False,
+        brand_scope=None if brand_scope is None else frozenset(str(b) for b in brand_scope),
     )
+    return dataclasses.replace(ctx, tool_names=tuple(t.name for t in permitted_tools(db, ctx)))
 
 
 def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
@@ -110,5 +118,8 @@ def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
 
 
 def grants_hash(ctx: AgentContext) -> str:
-    """Stable digest of the contact's reveal grants; a change starts a new conversation."""
-    return hashlib.sha256("\n".join(sorted(ctx.grants)).encode()).hexdigest()
+    """Stable digest of the contact's grants, the tools open to the user and the brand scope;
+    a change in any of them starts a new conversation."""
+    scope = "none" if ctx.brand_scope is None else ",".join(sorted(ctx.brand_scope))
+    parts = [",".join(sorted(ctx.grants)), ",".join(sorted(ctx.tool_names)), scope]
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()

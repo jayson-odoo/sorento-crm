@@ -711,6 +711,15 @@ def agent_turn(
     """One turn of the agent for a contact whose Agent switch is on and which has a linked
     active user. A refusal is a 409 carrying the reason; a second turn for the same contact
     while one runs is a 409 agent_busy."""
+    from app.services import rate_limit
+
+    # Each turn can spend a dozen model calls: limited per operator (fail-open without Redis).
+    if not rate_limit.hit("agent_turn", str(user["id"]), limit=30, window_seconds=600).allowed:
+        raise AppException(
+            status_code=429,
+            message="Too many agent messages, wait a few minutes.",
+            code="agent_turn_rate_limited",
+        )
     try:
         result = run_agent_turn(
             db,

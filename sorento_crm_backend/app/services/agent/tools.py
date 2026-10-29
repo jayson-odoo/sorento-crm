@@ -31,10 +31,22 @@ class ToolDef:
     #: (`turn/policy_rows.py`, `answer.DOMAIN_GRANT_REQUIRED`, `turn/sub_asks.GRANT`); None
     #: where today's bot requires none.
     contact_grant: str | None = None
+    #: True for a presenter tool (`sorento_crm_mcp.presenters.PRESENTER_TOOLS`): it is called
+    #: with `view=render`, its answer is a render envelope carrying `restricted_fields`, and
+    #: anything else is refused. The two non-presenter tools answer the route's raw JSON.
+    #: Both were checked in the MCP catalogue: neither declares `restricted_fields`, so there
+    #: is no field-level drop to lose by skipping the render view for them.
+    render: bool = True
 
 
 def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
-    return {name: ToolDef(name, slug, grant) for name, slug, grant in rows}
+    return {
+        name: ToolDef(name, slug, grant, render=name not in NON_RENDER_TOOLS)
+        for name, slug, grant in rows
+    }
+
+
+NON_RENDER_TOOLS = frozenset({"crm_lookup_resolve", "crm_procurement_grn_summary"})
 
 
 # crm_report_ask: the sales / outstanding reveal is decided by the route itself from the
@@ -119,6 +131,16 @@ def contact_allows(ctx: Any, tool: ToolDef) -> bool:
 def _arg_value(args: dict, key: str) -> str:
     value = args.get(key)
     return value.strip().lower() if isinstance(value, str) else ""
+
+
+def _gated_keys() -> set[str]:
+    return {k for k, _ in ARG_PERMISSIONS} | {k for k, _ in ARG_CONTACT_GRANTS}
+
+
+def _plain_string(value: Any) -> bool:
+    """A gated argument must be one plain string: a list, a number or a JSON-looking string
+    could carry the gated value past the comparison."""
+    return isinstance(value, str) and not value.strip().startswith(("[", "{"))
 
 
 def clip_args(args: Any, limit: int = 500) -> Any:
@@ -220,6 +242,10 @@ def dispatch(
         return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
 
     if name == "crm_report_ask":
+        args = {k: v for k, v in args.items() if not (k in _gated_keys() and v is None)}
+        for key in _gated_keys():
+            if key in args and not _plain_string(args[key]):
+                return ToolResult("invalid", message=f"{key} must be a single plain value.")
         for (key, value), slug in ARG_PERMISSIONS.items():
             if _arg_value(args, key) == value and not _permitted(db, ctx.user_id, slug):
                 return ToolResult("denied", message=f"{key}={value} is outside this user's access.")
@@ -234,7 +260,8 @@ def dispatch(
     if ctx.space_id is not None:
         clean["space_id"] = ctx.space_id
     # Only the render view carries `restricted_fields`, which the field drop below relies on.
-    clean[VIEW_PARAM] = "render"
+    if tool.render:
+        clean[VIEW_PARAM] = "render"
 
     try:
         raw = call(name, clean)
@@ -249,12 +276,13 @@ def dispatch(
         return ToolResult("error", message=FIXED_ERROR)
 
     data = _as_data(raw)
-    # Fail closed: a result that is not a render envelope has not been through the presenter,
-    # so nothing in it can be trusted to be field-scoped.
-    if not (isinstance(data, dict) and any(k in data for k in ENVELOPE_KEYS)):
-        logger.warning("agent: %s returned a non-envelope result", name)
-        return ToolResult("error", message=FIXED_NOT_ENVELOPE)
-    axis = clean.get("group_by")
-    drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
+    if tool.render:
+        # Fail closed: a presenter tool's result that is not a render envelope has not been
+        # through the presenter, so nothing in it can be trusted to be field-scoped.
+        if not (isinstance(data, dict) and any(k in data for k in ENVELOPE_KEYS)):
+            logger.warning("agent: %s returned a non-envelope result", name)
+            return ToolResult("error", message=FIXED_NOT_ENVELOPE)
+        axis = clean.get("group_by")
+        drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
     data, more = cap_result(data)
     return ToolResult("ok", data=data, more=more)

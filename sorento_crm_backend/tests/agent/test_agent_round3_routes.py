@@ -104,3 +104,23 @@ def test_new_conversation_with_a_valid_contact_works(client, session_factory):
     resp = client.post(NEW, json={"contact_respond_id": contact["respond_id"]})
     assert resp.status_code == 200, resp.text
     assert resp.json()["conversation_id"]
+
+
+def test_turns_are_rate_limited_per_operator(client, monkeypatch):
+    import app.api.v1.system.chatbot as route_mod
+    from app.services import rate_limit
+
+    seen = {}
+
+    def fake_hit(bucket, ident, *, limit, window_seconds):
+        seen.update(bucket=bucket, ident=ident, limit=limit, window=window_seconds)
+        return rate_limit.RateResult(allowed=False, retry_after_seconds=120)
+
+    monkeypatch.setattr(rate_limit, "hit", fake_hit)
+    ran = []
+    monkeypatch.setattr(route_mod, "run_agent_turn", lambda db, **kw: ran.append(kw))
+    resp = client.post(TURN, json={"contact_respond_id": "ZZT-C1", "text": "x"})
+    assert resp.status_code == 429
+    assert "too many" in resp.text.lower()
+    assert seen["ident"] == _ACTOR["id"] and seen["limit"] == 30 and seen["window"] == 600
+    assert ran == []

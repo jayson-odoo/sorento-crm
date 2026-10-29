@@ -494,8 +494,8 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 args = call.get("arguments")
                 started = clock()
                 if idx >= budgets.calls_per_round:
-                    # The provider protocol wants an answer per call; the digest and trace
-                    # carry one note for all of them.
+                    # A Gemini continuation must be replayed with a reply for every call it
+                    # contains, so each extra call gets one; the digest and trace carry one note.
                     skipped += 1
                     out = ToolResult("denied", message="Too many calls this round; ask again next round.")
                     messages.append(

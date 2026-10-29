@@ -513,3 +513,105 @@ def test_the_operator_is_recorded_on_the_turn(db, contact):
     result = run(db, contact, Prov([answer("hi")]), operator_user_id="op-1")
     assert _row(db, result).envelope["operator_user_id"] == "op-1"
     assert _row(db, result).response["rounds"] == 1
+
+
+# ------------------------------------------------------------------ round 4: N1 render flag
+
+
+LOOKUP = "crm_lookup_resolve"
+GRN = "crm_procurement_grn_summary"
+
+
+def test_only_lookup_and_grn_are_not_render_tools():
+    from app.services.agent.tools import REGISTRY
+
+    assert {n for n, d in REGISTRY.items() if not d.render} == {LOOKUP, GRN}
+
+
+def test_lookup_resolve_real_raw_shape_is_ok_and_gets_no_view(held):
+    held.update({"master_data.products.view"})
+    raw = {"value": "SRT", "label": "Sorento", "matched_keyword": None, "match_type": "exact_value", "score": 1.0}
+    rec = Rec(result=raw)
+    out = _dispatch(LOOKUP, {"query": "sorento"}, rec)
+    assert out.status == "ok"
+    assert out.data == raw
+    assert "view" not in rec.calls[0][1]
+    assert rec.calls[0][1]["contact_id"] == "ZZT-R-1"
+
+
+def test_lookup_resolve_ignores_a_model_supplied_view(held):
+    held.update({"master_data.products.view"})
+    rec = Rec(result={"value": "a", "label": "b", "matched_keyword": None, "match_type": "normalized", "score": 0.5})
+    _dispatch(LOOKUP, {"query": "x", "view": "render"}, rec)
+    assert "view" not in rec.calls[0][1]
+
+
+def test_grn_summary_real_raw_shape_is_ok(held):
+    held.update({"procurement.grn.view"})
+    raw = {"data": [{"product_id": "p1", "product_code": "SRTWT7445", "received_qty": 3}], "empty": False}
+    out = _dispatch(GRN, {"query": "x"}, Rec(result=raw), ctx=_ctx({"purchase_orders.placed"}))
+    assert out.status == "ok"
+    assert out.data["data"][0]["received_qty"] == 3
+
+
+# ------------------------------------------------------------------ round 4: N2 argument shapes
+
+
+BAD_SHAPES = [["unpaid"], '["unpaid"]', ["invoiced", "unpaid"], {"v": "unpaid"}, '{"v": "unpaid"}', 5, True]
+
+
+@pytest.mark.parametrize("bad", BAD_SHAPES)
+@pytest.mark.parametrize("key", ["basis", "dataset"])
+def test_a_gated_argument_that_is_not_a_plain_string_is_invalid(held, key, bad):
+    held.update({"order_management.orders.view"})
+    rec = Rec()
+    out = _dispatch(REPORT, {key: bad}, rec, ctx=_ctx())
+    assert out.status == "invalid"
+    assert rec.calls == []
+
+
+def test_a_null_gated_argument_is_treated_as_absent(held):
+    held.update({"order_management.orders.view"})
+    rec = Rec()
+    out = _dispatch(REPORT, {"basis": None, "dataset": None}, rec)
+    assert out.status == "ok"
+    assert "basis" not in rec.calls[0][1] and "dataset" not in rec.calls[0][1]
+
+
+# ------------------------------------------------------------------ round 4: M3 residual
+
+
+def test_grants_hash_covers_the_tool_set_and_the_brand_scope():
+    import dataclasses
+
+    from app.services.agent.access import grants_hash
+
+    base = _ctx({"a"})
+    assert grants_hash(dataclasses.replace(base, tool_names=("x",))) != grants_hash(base)
+    assert grants_hash(dataclasses.replace(base, brand_scope=frozenset({"b1"}))) != grants_hash(base)
+    assert grants_hash(dataclasses.replace(base, brand_scope=frozenset({"b1"}))) != grants_hash(
+        dataclasses.replace(base, brand_scope=frozenset({"b1", "b2"}))
+    )
+    same = dataclasses.replace(base, tool_names=("x", "y"))
+    assert grants_hash(same) == grants_hash(dataclasses.replace(base, tool_names=("x", "y")))
+
+
+def test_build_context_carries_the_permitted_tool_names(db, held):
+    from app.services.agent.access import build_context
+
+    held.update({"inventory.stock.view"})
+    contact = seed_contact(db)
+    seed_user(db, contact_pk=contact["pk"])
+    ctx = build_context(db, contact["respond_id"])
+    assert ctx.tool_names == (STOCK,)
+
+
+def test_losing_a_user_permission_starts_a_new_conversation(db, contact, held):
+    held.update({"inventory.stock.view"})
+    run(db, contact, Prov([answer("Hello there.")]), text_="first question")
+    held.clear()
+    held.update({"order_management.orders.view"})
+    second = Prov([answer("Fresh.")])
+    run(db, contact, second, text_="second question")
+    contents = [m["content"] for m in second.seen[0]["messages"] if isinstance(m.get("content"), str)]
+    assert "first question" not in contents
