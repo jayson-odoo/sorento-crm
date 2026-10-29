@@ -3510,6 +3510,58 @@ def _not_applied(body: dict) -> list[dict]:
 
 
 _ASK_SO_LIST_OFFER = "Reply 1 for the sales order list."
+_ASK_DO_LIST_OFFER = "Reply 1 for the delivery order list."
+#: The engine's name for a row with no value (`reports.engine.BLANK_VALUE`): a location with no code.
+_ASK_BLANK = "(blank)"
+#: The summary's second group, by the route's `second`: its heading and the row key its trailer's noun is read by.
+_ASK_SUMMARY_SECOND = {"customer": ("*_By customer_*", "customer_name"), "product": ("*_By product_*", "product_code")}
+
+
+def _ask_summary(basis: Any, summary: dict) -> list[str]:
+    """REPORT-OUTSTANDING-SUMMARY: the pre-#1922 outstanding summary's lines (`_outstanding_so_block` /
+    `_outstanding_do_block`, same words and the same `name: total (O/S: outstanding)` groups), from the report ask's
+    `summary`, then the list offer. Undelivered orders: the total is the ordered quantity of the open lines and
+    Transferred to DO is ordered minus outstanding. Pending delivery: every DO in it is undelivered as a whole, so its
+    DO qty is the outstanding quantity and Delivered is 0, as the old block printed it."""
+    so = basis == "outstanding"
+    if not summary.get("documents"):
+        return ["No open sales order." if so else "No outstanding delivery order."]
+    qty = summary.get("qty") or 0
+    outstanding = f"Outstanding: {_ask_pcs(qty)}, {_ask_rm(summary.get('amount'))}"
+    days = _outstanding_date_range(summary.get("date_first"), summary.get("date_last"))
+    total_key = "ordered_qty" if so else "qty"
+    if so:
+        ordered = summary.get("ordered_qty") or 0
+        lines = [
+            f"Sales orders: {_outstanding_fmt_int(summary.get('documents'))}",
+            f"Ordered: {_outstanding_fmt_int(ordered)}",
+            f"Transferred to DO: {_outstanding_fmt_int(ordered - qty)}",
+            outstanding,
+            f"Order date range: {days}",
+        ]
+    else:
+        lines = [
+            f"Delivery orders: {_outstanding_fmt_int(summary.get('documents'))}",
+            f"DO qty: {_outstanding_fmt_int(qty)}",
+            "Delivered: 0",
+            outstanding,
+            f"DO date range: {days}",
+        ]
+    lines.append("*_By location_*")
+    lines.extend(_outstanding_group(
+        [{**r, "name": None if r.get("name") == _ASK_BLANK else r.get("name")} for r in summary.get("by_location") or []],
+        name_key="name", total_key=total_key, outstanding_key="qty",
+    ))
+    second = _ASK_SUMMARY_SECOND.get(str(summary.get("second")))
+    if second is not None:
+        heading, key = second
+        lines.append(heading)
+        lines.extend(_outstanding_capped_group(
+            [{**r, key: r.get("name")} for r in summary.get("by_second") or []],
+            name_key=key, total_key=total_key, outstanding_key="qty",
+        ))
+    lines.extend(["", _ASK_SO_LIST_OFFER if so else _ASK_DO_LIST_OFFER])
+    return lines
 
 
 def _report_ask(body: dict) -> str:
@@ -3552,6 +3604,8 @@ def _report_ask(body: dict) -> str:
             else basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid")
             else f"Sales by {basis}"
         )
+        if isinstance(body.get("summary"), dict):
+            return "\n".join([head, *facts, *_ask_summary(body["basis"], body["summary"])])
         text = "\n".join([head, *facts, f"Total {figures}"])
         if body.get("basis") == "outstanding" and not body.get("compare_to"):
             # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure; pending delivery and unpaid get none.
