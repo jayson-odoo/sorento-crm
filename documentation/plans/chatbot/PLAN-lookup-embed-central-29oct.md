@@ -183,8 +183,9 @@ whether the span pass would offer it. No 2-D plot (Q4).
 - One additive alembic migration: `lookup_vectors` + unique index. No data migration; no change to lookup_sets /
   lookup_bindings schema.
 - Data moves (owner-visible, done on the screen or by a one-off script the owner runs): each PROMPT_SYNONYMS word
-  not already on a row of its class / type goes to that row's alias home (list shown to the owner first; on dev only
-  mangkuk tandas, sinki dapur, 厨房水槽 may be missing, UNVERIFIED per word); sales_channel_alias set created with
+  not already on a row of its class / type goes to that row's alias home (list shown to the owner first; on dev 3 of the 8 category
+  words are missing from every category: mangkuk tandas, paip air, sinki dapur; 马桶 / tandas sit on 5, 水龙头 /
+  kepala paip / 厨房水槽 on 4, query 29 Oct); sales_channel_alias set created with
   dealer / project options.
 - Rollback: revert the PR (cache code returns to the shared file); the table is left unused, drop later.
 - Prod steps for the owner: (1) run the read-only SQL below to confirm the dict's category words are on prod's
