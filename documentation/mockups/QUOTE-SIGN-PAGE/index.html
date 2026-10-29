@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Quotation sign page and PDF (mockup v1)</title>
+<title>Quotation sign page and PDF (mockup v2)</title>
 <style>
 /* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/set-quote-line */
 :root{--background:#fff;--foreground:#09090b;--card:#fff;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-fg:#fff;--primary-soft:#eff6ff;--success:#15803d;--success-soft:#f0fdf4;--radius:8px;--page:#f7f7f8}
@@ -98,18 +98,33 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .map{font-size:12.5px;border:1px solid var(--border);background:#fff;border-radius:8px}
 .map td{padding:6px 10px;vertical-align:top}
 .map td:first-child{white-space:nowrap}
+.chk.alert{border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;padding:8px;box-shadow:0 0 0 3px rgba(245,158,11,.18)}
+.box.on{background:var(--primary);border-color:var(--primary);color:#fff;font-size:11px;line-height:14px;text-align:center}
+.inp.filled{color:var(--foreground)}
+.hint{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted-fg)}
+.hint.warn{color:#b45309;font-weight:500}
+.hint i{font-style:normal;display:inline-flex;width:16px;height:16px;border-radius:8px;border:1.5px solid currentColor;font-size:10px;font-weight:700;align-items:center;justify-content:center;flex:none}
+.pad.ready{background:#fff;border-style:solid;border-color:#cbd5e1;color:var(--muted-fg)}
+.acts .right{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.states{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.states .lab{font-size:12px;font-weight:600;margin:0 0 6px}
+.states .card .pad{height:70px}
+.tapcue{display:inline-block;font-size:11px;color:#b45309;border:1px dashed #f59e0b;border-radius:6px;padding:1px 6px;margin-left:6px}
 .map code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 </style>
 </head>
 <body>
 <div class="doc">
-<h1>Quotation sign page and PDF, mockup v1</h1>
+<h1>Quotation sign page and PDF, mockup v2</h1>
 <p class="intro">Lane QUOTE-SIGN-PAGE, owner team meeting 29 Oct 15:40. Shows the AFTER state with crew's recommendations from the
 behaviour card (<code>documentation/plans/project-sales/CARD-quote-sign-page-29oct.md</code>) applied. Data: real shape of
 quotation PRJQ-2026-0003 on the dev copy (one section "Townhouse", 2 lines, RM 800.00); recipient, contact and salesperson
 names are masked. Blue numbered dots = the five meeting items. Cover letter and terms show as grey lines because the dev
 quotation has none written.</p>
-<div class="nav"><a href="#desk">Sign page 1280</a><a href="#phone">Sign page 375</a><a href="#pdf">PDF (A4)</a><a href="#map">What each part reuses</a></div>
+<p class="intro"><b>v2 (owner answers 29 Oct ~22:45):</b> "Quotation No. PRJQ-2026-0003-R1" AND the Revision row stays;
+the accept form always says why "Sign and accept" is not ready yet (hint next to the button, names the next missing step),
+and tapping the disabled button or pad highlights and jumps to the missing step (see <a href="#states">Accept form, step by step</a>).</p>
+<div class="nav"><a href="#desk">Sign page 1280</a><a href="#states">Accept form, step by step</a><a href="#phone">Sign page 375</a><a href="#pdf">PDF (A4)</a><a href="#map">What each part reuses</a></div>
 
 <section id="desk">
 <h2>Sign page, desktop 1280px (customer opens the link)</h2>
@@ -125,6 +140,7 @@ quotation has none written.</p>
       </div>
       <div class="refs">
         <div><span><span class="nb">2</span>Quotation No.</span><span>PRJQ-2026-0003-R1</span></div>
+        <div><span>Revision</span><span>R1</span></div>
         <div><span>Your Ref</span><span>-</span></div>
         <div><span>Date</span><span>14 Oct 2026</span></div>
         <div><span><span class="nb">5</span>Sales contact</span><span>SALES REP A, +60100000001</span></div>
@@ -157,17 +173,52 @@ quotation has none written.</p>
       <div style="margin-top:8px;font-size:13px"><b>SALES REP A</b><br><span class="small">+60100000001</span></div>
     </div></div>
     <div class="card"><div class="hd">Accept this quotation</div><div class="bd">
-      <div class="lbl">Your name</div><div class="inp">Type your full name</div>
-      <div class="chk"><span class="box"></span><span><span class="nb">4</span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+      <div class="lbl">Your name</div><div class="inp filled">CONTACT B</div>
+      <div class="chk alert"><span class="box"></span><span><span class="nb">4</span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
       <div class="tabs"><span class="on">Draw</span><span>Type</span><span>Initials</span></div>
-      <div class="pad">Type your name and tick the box to sign</div>
-      <div class="acts"><span class="btn">Request changes</span><span class="btn pri off">Sign and accept</span></div>
+      <div class="pad">Tick the terms box above to sign</div>
+      <div class="acts"><span class="btn">Request changes</span><span class="right"><span class="btn pri off">Sign and accept</span><span class="hint warn"><i>!</i>Tick to agree to the terms before you accept.</span></span></div>
     </div></div>
   </div>
 
-</div><div class="cap">Customer view, before signing. "Sign and accept" stays disabled until a name is typed AND the box is ticked.</div></div>
+</div><div class="cap">Customer typed a name, did not tick, and tapped "Sign and accept": the tick row lights up amber and gets focus, the hint turns amber.</div></div>
 <p class="note">One section, so it opens expanded (card Q3 rec a). A quotation with several sections shows one closed row per
 section ("Townhouse . 2 items . RM 800.00"), as in the phone view below; tapping a row opens its line table.</p>
+</section>
+
+<section id="states">
+<h2><span class="nb">4</span>Accept form, step by step</h2>
+<p class="why">"Sign and accept" is never silently grey: one hint line beside it names the next missing step (name, then
+tick, then signature). Tapping the grey button, or the locked signature pad, highlights that step, scrolls it into view
+and puts the cursor on it.</p>
+<div class="states">
+  <div><p class="lab">A. Page opened</p><div class="card"><div class="bd">
+    <div class="lbl">Your name</div><div class="inp">Type your full name</div>
+    <div class="chk"><span class="box"></span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+    <div class="pad">Type your name and tick the box to sign</div>
+    <div class="acts" style="justify-content:flex-end"><span class="right"><span class="btn pri off">Sign and accept</span><span class="hint"><i>i</i>Type your name and tick the terms box to accept.</span></span></div>
+  </div></div></div>
+  <div><p class="lab">B. Name typed, not ticked, tapped the button <span class="tapcue">tap</span></p><div class="card"><div class="bd">
+    <div class="lbl">Your name</div><div class="inp filled">CONTACT B</div>
+    <div class="chk alert"><span class="box"></span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+    <div class="pad">Tick the terms box above to sign</div>
+    <div class="acts" style="justify-content:flex-end"><span class="right"><span class="btn pri off">Sign and accept</span><span class="hint warn"><i>!</i>Tick to agree to the terms before you accept.</span></span></div>
+  </div></div></div>
+  <div><p class="lab">C. Ticked, pad unlocked</p><div class="card"><div class="bd">
+    <div class="lbl">Your name</div><div class="inp filled">CONTACT B</div>
+    <div class="chk"><span class="box on">&#10003;</span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+    <div class="pad ready">Draw your signature here</div>
+    <div class="acts" style="justify-content:flex-end"><span class="right"><span class="btn pri off">Sign and accept</span><span class="hint"><i>i</i>Draw your signature to accept.</span></span></div>
+  </div></div></div>
+  <div><p class="lab">D. Signed, ready</p><div class="card"><div class="bd">
+    <div class="lbl">Your name</div><div class="inp filled">CONTACT B</div>
+    <div class="chk"><span class="box on">&#10003;</span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+    <div class="pad signed">Contact B</div>
+    <div class="acts" style="justify-content:flex-end"><span class="right"><span class="btn pri">Sign and accept</span></span></div>
+  </div></div></div>
+</div>
+<p class="note">Unticking after signing takes the form back to B (button grey, hint back). A quotation issued with no terms
+shows no tick box and the hint skips that step. The server also refuses an accept without the tick.</p>
 </section>
 
 <section id="phone">
@@ -179,6 +230,7 @@ section ("Townhouse . 2 items . RM 800.00"), as in the phone view below; tapping
     <div class="from"><div class="logo"><span>Logo</span></div><div><div class="small">Quotation from</div><div style="font-weight:600">Sorento</div></div></div>
     <div class="refs" style="margin-top:12px;min-width:0">
       <div><span>Quotation No.</span><span>PRJQ-2026-0003-R1</span></div>
+      <div><span>Revision</span><span>R1</span></div>
       <div><span>Date</span><span>14 Oct 2026</span></div>
       <div><span>Sales contact</span><span>SALES REP A, +60100000001</span></div>
     </div>
@@ -195,8 +247,9 @@ section ("Townhouse . 2 items . RM 800.00"), as in the phone view below; tapping
     <div class="card"><div class="hd">Accept this quotation</div><div class="bd">
       <div class="lbl">Your name</div><div class="inp">Type your full name</div>
       <div class="chk"><span class="box"></span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
-      <div class="pad" style="height:90px">Sign here</div>
+      <div class="pad" style="height:90px">Type your name and tick the box to sign</div>
       <div class="acts"><span class="btn">Request changes</span><span class="btn pri off">Sign and accept</span></div>
+      <div class="hint" style="margin-top:8px"><i>i</i>Type your name and tick the terms box to accept.</div>
     </div></div>
   </div>
 </div></div><div class="cap">375px</div></div>
@@ -237,9 +290,9 @@ Shown as accepted (both signatures). Before acceptance the right column prints b
 <h2>What each part reuses (no new components)</h2>
 <table class="map">
 <tr><td><span class="nb">1</span>Logo</td><td>Letterhead in <code>sorento_crm_frontend/app/(auth)/quotation-sign/[token]/components/QuotationSignClient.tsx:33-92</code> gets an <code>&lt;img&gt;</code>; source <code>companies.logo_url</code> (<code>sorento_crm_backend/app/models/company.py:38</code>, set on System &gt; Companies). PDF inlines it like product photos (<code>app/services/product_image_service.py</code> <code>data_uri</code>, used at <code>project_quotation_pdf_service.py:186-207</code>).</td></tr>
-<tr><td><span class="nb">2</span>Quotation No.</td><td>Same refs rows (<code>QuotationSignClient.tsx:68-81</code>) and PDF refs table (<code>project_quotation_pdf_service.py:304-349</code>); Revision row removed.</td></tr>
+<tr><td><span class="nb">2</span>Quotation No.</td><td>Same refs rows (<code>QuotationSignClient.tsx:68-81</code>) and PDF refs table (<code>project_quotation_pdf_service.py:304-349</code>); the sign page keeps its Revision row (owner 29 Oct); the PDF has no Revision row today and gets none.</td></tr>
 <tr><td><span class="nb">3</span>One card</td><td><code>components/ui/card.tsx</code> (Card) holding <code>components/ui/accordion.tsx</code> (Accordion, AccordionItem, AccordionTrigger, AccordionContent); the line table inside is today's table from <code>QuotationSignScopes.tsx:50-114</code>, unchanged; amounts via <code>formatMyrExact</code> (<code>app/(protected)/project-sales/_shared/lib/money.ts</code>).</td></tr>
-<tr><td><span class="nb">4</span>Terms tick</td><td><code>components/ui/checkbox.tsx</code> + <code>components/ui/label.tsx</code>; gates the existing <code>components/common/SignaturePad.tsx</code> through its <code>disabled</code> prop (<code>QuotationSignClient.tsx:252</code>). Terms panel = existing ProsePanel (<code>QuotationSignClient.tsx:100-118</code>).</td></tr>
+<tr><td><span class="nb">4</span>Terms tick</td><td><code>components/ui/checkbox.tsx</code> + <code>components/ui/label.tsx</code>; gates the existing <code>components/common/SignaturePad.tsx</code> through its <code>disabled</code> prop (<code>QuotationSignClient.tsx:252</code>); hint line = text with the lucide <code>Info</code> / <code>AlertCircle</code> icon from <code>lucide-react</code> (the page already imports its icons from there, <code>QuotationSignClient.tsx:4</code>); tap on the grey button or pad focuses the first missing step (name <code>Input</code> or the checkbox). Terms panel = existing ProsePanel (<code>QuotationSignClient.tsx:100-118</code>).</td></tr>
 <tr><td><span class="nb">5</span>Side by side</td><td>The two existing cards ("Signed for Sorento" <code>QuotationSignClient.tsx:439-451</code>, CustomerSignature <code>:133-339</code>) in a two-column grid that stacks below 768px; PDF sign-off (<code>project_quotation_pdf_service.py:505-542</code>) as a two-column block. Sales contact = quotation signatory name + phone.</td></tr>
 </table>
 </section>

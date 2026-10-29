@@ -1,8 +1,8 @@
 # UAC: QUOTE-SIGN-PAGE (quotation sign page + issued PDF)
 
-Status: DRAFT, written on crew's recommendations in the behaviour card (`CARD-quote-sign-page-29oct.md`, ask
-a73603971) and mock v1 (`documentation/mockups/QUOTE-SIGN-PAGE/index.html`). Rewritten where the owner answers
-differently; build starts only after the answers and the mock approval.
+Status: owner answered the card 29 Oct ~22:45 (ask a73603971): Q1 a but KEEP the Revision row, Q2 a, Q3 a, Q4 yes
+plus a visible reason when Sign and accept is not ready, Q5 a. Mock v2 (`documentation/mockups/QUOTE-SIGN-PAGE/index.html`)
+waits on approval; build starts after it.
 
 Terms: "sign page" = `/quotation-sign/{token}`; "PDF" = the issued quotation PDF
 (`project_quotation_pdf_service.build_issue_html`); "issue" = one `quotation_issues` row (one revision).
@@ -20,7 +20,8 @@ Terms: "sign page" = `/quotation-sign/{token}`; "PDF" = the issued quotation PDF
 ## AC2 Quotation number
 
 1. Sign page and PDF show ONE row "Quotation No." with value `<document_no>-R<issue_no>`, e.g. `PRJQ-2026-0003-R1`.
-2. The sign page has no separate "Revision" row; the PDF has no "Our Ref" row.
+2. The sign page KEEPS its "Revision R<n>" row, under Quotation No. (owner 29 Oct ~22:45). The PDF has no "Our Ref"
+   row and, as today, no Revision row.
 3. The value is built from `document_no` + `issue_no` when shown, so an issue stored with the old text
    (`PRJQ-2026-0003 (R1)`) also shows `PRJQ-2026-0003-R1`.
 4. A new issue stores `our_ref_text = "<document_no>-R<issue_no>"`; the draft view (`document_service.py:700-703`) uses
@@ -43,6 +44,12 @@ Terms: "sign page" = `/quotation-sign/{token}`; "PDF" = the issued quotation PDF
    agree to the Terms and conditions." above the signature pad.
 2. The signature pad and "Sign and accept" stay disabled until a name is typed AND the box is ticked; unticking
    disables them again.
+2a. While "Sign and accept" is not ready, a hint line beside it names the next missing step (owner: "the user know why
+   they cannot accept"): no name and no tick = "Type your name and tick the terms box to accept."; name, no tick =
+   "Tick to agree to the terms before you accept."; name + tick, nothing drawn = "Draw your signature to accept.";
+   ready = no hint. With no terms on the issue the tick step is skipped in every message.
+2b. Tapping the not-ready "Sign and accept", or the locked signature pad, highlights the first missing step (name
+   field or tick row), scrolls it into view and focuses it; the hint turns to the warning colour. Nothing is sent.
 3. `POST /api/v1/public/quotation-sign/{token}/accept` with `terms_accepted` missing or false, on an issue with terms,
    returns 422 and records no signature; with `terms_accepted: true` it accepts as today.
 4. When the issue has no terms: no checkbox, and accept does not require `terms_accepted`.

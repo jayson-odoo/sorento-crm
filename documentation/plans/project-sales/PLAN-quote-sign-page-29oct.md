@@ -1,9 +1,10 @@
 # PLAN: quotation sign page + PDF: logo, quotation number, one card of sections, terms checkbox, side-by-side signatures (QUOTE-SIGN-PAGE)
 
-Status: Plan. Behaviour card (ask a73603971) + mock v1 (7111e5416b) filed, waiting on the owner; UAC drafted on the recommendations; no code until the owner answers and approves the mock.
+Status: Plan. Owner answered card a73603971 (29 Oct ~22:45: Q1 a + keep Revision row, Q2 a, Q3 a, Q4 yes + visible
+reason when not ready, Q5 a); mock v2 filed, waiting on its approval; UAC updated; no code until the mock is approved.
 Track: M (feature track: changed wording and layout on an existing screen + PDF, a new required consent on the
-public accept endpoint; no migration planned, no auth/RBAC change). UAC: `quote-sign-page-29oct-acceptance-criteria.md`
-(written after the owner answers the card).
+public accept endpoint; no migration planned, no auth/RBAC change). UAC: `quote-sign-page-29oct-acceptance-criteria.md`.
+security-reviewer joins (server fetch of the admin-entered logo URL; public accept endpoint gains a required field).
 
 Owner team meeting 29 Oct 15:40 (Project Sales module) decided the five items below for the customer quotation sign
 page (`/quotation-sign/{token}`) and the issued quotation PDF.
