@@ -803,31 +803,39 @@ def _convert_messages_to_anthropic(messages: list[dict]) -> list[dict]:
 
 
 # A caller's `reasoning_effort` on Claude, as the tokens its thinking may add to `max_tokens` (the
-# caller's number is its answer budget, the same rule as Gemini). `high` stays under the SDK's
-# non-streaming ceiling (21,333 tokens without a caller timeout) at the loops' 2048 answer budget.
+# caller's number is its answer budget, the same rule as Gemini).
 ANTHROPIC_EFFORT_BUDGETS: dict[str, int] = {"low": 1024, "medium": 4096, "high": 16384, "xhigh": 16384, "max": 16384}
 ANTHROPIC_EFFORTS = frozenset({"none", "minimal", *ANTHROPIC_EFFORT_BUDGETS})
+# The SDK refuses, before sending, a non-streaming call whose `max_tokens` could run past ten
+# minutes (21,333 tokens) when the caller sets no timeout, so the thinking room stops there.
+# Opus 4.0 / 4.1 carry their own 8,192 cap in the SDK and refuse `medium` and up the same way.
+ANTHROPIC_NONSTREAMING_MAX_TOKENS = 21_333
 
 
-def _anthropic_thinking(model: str, effort: str) -> tuple[dict[str, Any], int]:
-    """`(request fields, tokens to add to max_tokens)` for an effort on this Claude model.
+def _anthropic_thinking(model: str, effort: str, answer_tokens: int) -> dict[str, Any]:
+    """The request fields (`max_tokens` included) for an effort on this Claude model.
 
     Claude 4.6 and later think adaptively, steered by `output_config.effort`; older models
     (Haiku 4.5, Sonnet 4.5, ...) take only a fixed `budget_tokens`. `none` / `minimal` asks
     for the least: effort `low` without thinking from 4.6, nothing at all before it.
-    An unknown value raises rather than being dropped, so a label typo shows at once.
+    An unknown value, or an older model left no room to think, raises rather than being
+    dropped, so a label typo shows at once.
     """
     key = (effort or "").strip().lower()
     if key not in ANTHROPIC_EFFORTS:
         raise ValueError(f"Anthropic takes no reasoning effort {effort!r}; use one of {sorted(ANTHROPIC_EFFORTS)}.")
     version = re.search(r"claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2})(?!\d))?", (model or "").lower())
     adaptive = version is not None and (int(version.group(1)), int(version.group(2) or 0)) >= (4, 6)
-    budget = ANTHROPIC_EFFORT_BUDGETS.get(key)
-    if budget is None:
-        return ({"output_config": {"effort": "low"}} if adaptive else {}), 0
+    if key not in ANTHROPIC_EFFORT_BUDGETS:
+        return {"output_config": {"effort": "low"}} if adaptive else {}
+    room = max(0, min(ANTHROPIC_EFFORT_BUDGETS[key], ANTHROPIC_NONSTREAMING_MAX_TOKENS - answer_tokens))
     if adaptive:
-        return {"thinking": {"type": "adaptive"}, "output_config": {"effort": key}}, budget
-    return {"thinking": {"type": "enabled", "budget_tokens": budget}}, budget
+        return {"thinking": {"type": "adaptive"}, "output_config": {"effort": key}, "max_tokens": answer_tokens + room}
+    if room < 1024:  # the smallest budget Anthropic takes
+        raise ValueError(
+            f"No room to think under the {ANTHROPIC_NONSTREAMING_MAX_TOKENS}-token ceiling at max_tokens={answer_tokens}."
+        )
+    return {"thinking": {"type": "enabled", "budget_tokens": room}, "max_tokens": answer_tokens + room}
 
 
 class AnthropicProvider:
@@ -946,9 +954,8 @@ class AnthropicProvider:
         if tools:
             kwargs["tools"] = _convert_tools_to_anthropic(tools)
         if reasoning_effort:
-            thinking_fields, thinking_room = _anthropic_thinking(kwargs["model"], reasoning_effort)
+            thinking_fields = _anthropic_thinking(kwargs["model"], reasoning_effort, kwargs["max_tokens"])
             kwargs.update(thinking_fields)
-            kwargs["max_tokens"] += thinking_room
             if "thinking" in thinking_fields:
                 # Anthropic refuses a set temperature alongside thinking.
                 kwargs.pop("temperature")
