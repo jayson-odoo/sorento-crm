@@ -52,9 +52,6 @@ vi.mock('@/components/common/container', () => ({ Container: ({ children }: { ch
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn(), info: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/components/common/deferredToast', () => ({ deferredToast: vi.fn(() => 't'), dismissDeferredToast: vi.fn() }));
 vi.mock('@/services/pendingActionService', () => pending);
-vi.mock('@/hooks/useDeferredAction', () => ({
-  useDeferredAction: () => ({ pending: null, isPending: false, isBlocked: false, start: vi.fn(), cancel: vi.fn(), countdown: null }),
-}));
 vi.mock('@/components/common/DetailActionsMenu', () => ({
   DetailActionsMenu: ({ children, ariaLabel }: { children: React.ReactNode; ariaLabel?: string }) => (
     <div data-testid="gear-menu" aria-label={ariaLabel}>{children}</div>
