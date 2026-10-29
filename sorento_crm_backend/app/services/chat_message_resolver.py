@@ -6,9 +6,10 @@ rows an outgoing `sent_at` can precede the incoming it answers). This service fi
 `respond_ts` from Respond itself, so both ends of the SLA share one clock.
 
 Targeted lookup rather than polling: `GET /v2/contact/{id}/message/{messageId}` for rows
-that carry a `message_id`. A 404 is meaningful in its own right - a message we believed
-we sent does not exist on Respond's side - but only after enough attempts that a
-transient failure has been ruled out. A 500 must never be read as "never sent".
+that carry a `message_id`, on a backoff schedule from the send. Respond 404s a message
+until it dispatches it, so a 404 only becomes `not_sent` an hour after the send, and
+even then a later 200 upgrades it. A 500 must never be read as "never sent".
+Respond's own status timeline and the reason for a failure are stored on the row.
 
 Runs from the `chat_message_resolver` scheduled task, so its throughput and failures show
 up in the run-log UI alongside every other background job.
@@ -19,17 +20,29 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.models.chat_history import ChatHistory
 
 logger = logging.getLogger(__name__)
 
-# After this many misses a message is concluded never to have been sent.
-MAX_RESOLVE_ATTEMPTS = 5
+# Minutes after the send at which each attempt is due. Respond answers 404 for a
+# message it has accepted but not yet dispatched - on 29 Oct 2026 its outbound queue
+# held four bot replies for ~25 min - so a 404 inside the first hour means "not
+# visible yet", never "not sent".
+RESOLVE_SCHEDULE_MINUTES = [1, 2, 5, 15, 30, 60, 240, 720, 1440]
+MAX_RESOLVE_ATTEMPTS = len(RESOLVE_SCHEDULE_MINUTES)
+# A 404 this long after the send writes `not_sent`, still upgradable by a later 200
+# until the schedule runs out.
+NOT_SENT_AFTER_MINUTES = 60
+# Rows older than this are never picked up: past the schedule, and keeps a deploy of
+# this code from silently backfilling every historic NULL row.
+RESOLVE_LOOKBACK = timedelta(hours=48)
 
-# Respond's delivery lifecycle. Anything else is stored verbatim for triage.
-_KNOWN_STATUSES = ("sent", "delivered", "read", "failed")
+# Respond's delivery lifecycle, furthest step wins. `failed` outranks all of them.
+_STATUS_RANK = {"pending": 0, "sent": 1, "delivered": 2, "read": 3}
+_TERMINAL_STATUSES = ("read", "failed")
 
 
 # How far a derived `respond_ts` may sit from the ingest-supplied `sent_at` before
@@ -105,24 +118,47 @@ def _epoch_to_naive_utc(value: Any) -> Optional[datetime]:
         return None
 
 
-def _pending_rows(db: Session, limit: int) -> list[ChatHistory]:
-    """Rows still missing something Respond owns.
+def _anchor():
+    """The send time a row's backoff is measured from: Respond's clock when held."""
+    return func.coalesce(ChatHistory.respond_ts, ChatHistory.sent_at)
 
-    `respond_ts` now normally arrives at ingest (derived from the message id), so the
-    common reason to call Respond is a missing `delivery_status` - which only Respond
-    can supply. Rows whose id wasn't a usable timestamp still come through the
-    `respond_ts IS NULL` arm.
+
+def _pending_rows(db: Session, limit: int, now: datetime) -> list[ChatHistory]:
+    """Rows Respond still owes us something for AND whose next attempt is due.
+
+    Outgoing rows are polled until a terminal status (`read` / `failed`) or until the
+    schedule runs out - `not_sent` is NOT terminal, because Respond 404s a message until
+    it dispatches it. Incoming rows carry `status: []`, so they only ever need the clock.
+    The due check is in SQL so rows still backing off cannot fill the batch.
     """
+    anchor = _anchor()
+    attempts = func.coalesce(ChatHistory.resolve_attempts, 0)
+    due = case(
+        *[
+            (attempts == i, anchor <= now - timedelta(minutes=minutes))
+            for i, minutes in enumerate(RESOLVE_SCHEDULE_MINUTES)
+        ],
+        else_=False,
+    )
     return (
         db.query(ChatHistory)
         .filter(
             ChatHistory.message_id.isnot(None),
-            (ChatHistory.respond_ts.is_(None))
-            | (ChatHistory.delivery_status.is_(None)),
-            # sqlite/Postgres both need the NULL arm spelled out: a row that has never
-            # been attempted has NULL, not 0, unless the server_default applied.
-            (ChatHistory.resolve_attempts.is_(None))
-            | (ChatHistory.resolve_attempts < MAX_RESOLVE_ATTEMPTS),
+            (
+                (ChatHistory.type == "outgoing")
+                & (
+                    ChatHistory.delivery_status.is_(None)
+                    | ChatHistory.delivery_status.notin_(_TERMINAL_STATUSES)
+                )
+            )
+            | ChatHistory.respond_ts.is_(None),
+            attempts < MAX_RESOLVE_ATTEMPTS,
+            # Bounds the scan and keeps this from quietly backfilling history.
+            anchor >= now - RESOLVE_LOOKBACK,
+            # Same bound on the bare column so the (type, sent_at) indexes can serve it;
+            # widened by the tolerance respond_ts may sit from sent_at.
+            ChatHistory.sent_at >= now - RESOLVE_LOOKBACK - _MESSAGE_ID_CLOCK_TOLERANCE,
+            due,
         )
         .order_by(ChatHistory.id.asc())
         .limit(limit)
@@ -130,28 +166,76 @@ def _pending_rows(db: Session, limit: int) -> list[ChatHistory]:
     )
 
 
+def _status_entries(payload: dict) -> list[dict]:
+    statuses = payload.get("status")
+    if not isinstance(statuses, list):
+        return []
+    return [s for s in statuses if isinstance(s, dict)]
+
+
 def _apply_payload(row: ChatHistory, payload: dict) -> bool:
-    """Write what Respond told us. Returns True if a timestamp was resolved."""
-    ts = _epoch_to_naive_utc(payload.get("timestamp"))
-    if ts is None:
-        # No clock in the response - leave unresolved rather than substituting now(),
-        # which would fabricate a latency figure.
+    """Write what Respond told us. Returns True if anything was resolved.
+
+    Respond v2 answers `status: [{value, timestamp(ms), message?}, ...]`, one entry per
+    lifecycle step (pending -> sent -> delivered -> read, or failed). The furthest step
+    wins; `failed` wins outright.
+    """
+    entries = _status_entries(payload)
+    values = [e.get("value") for e in entries if isinstance(e.get("value"), str)]
+
+    clock_was_missing = row.respond_ts is None
+    if clock_was_missing:
+        stamps = [_epoch_to_naive_utc(e.get("timestamp")) for e in entries]
+        stamps = [s for s in stamps if s is not None]
+        # Earliest entry = creation; an incoming message has no entries, only its id.
+        row.respond_ts = min(stamps) if stamps else respond_ts_from_message_id(
+            row.message_id, sent_at=row.sent_at
+        )
+
+    if row.type != "outgoing" or not values:
+        # Nothing about delivery here; resolved only if this call supplied the clock.
+        return clock_was_missing and row.respond_ts is not None
+
+    row.delivery_trace = entries
+    if "failed" in values:
+        failure = next(e for e in reversed(entries) if e.get("value") == "failed")
+        row.delivery_status = "failed"
+        row.delivery_error = str(failure.get("message") or "respond.io status failed")[:512]
+        return True
+
+    known = [v for v in values if v in _STATUS_RANK]
+    if not known:
         return False
-
-    row.respond_ts = ts
-
-    status = payload.get("status")
-    if isinstance(status, str) and status:
-        row.delivery_status = status if status in _KNOWN_STATUSES else status[:32]
-    elif row.delivery_status is None:
-        row.delivery_status = "sent"
-
-    stamps = payload.get("statusTimestamps")
-    if isinstance(stamps, dict):
-        row.delivered_ts = _epoch_to_naive_utc(stamps.get("delivered")) or row.delivered_ts
-        row.read_ts = _epoch_to_naive_utc(stamps.get("read")) or row.read_ts
-
+    row.delivery_status = max(known, key=_STATUS_RANK.__getitem__)
+    row.delivery_error = None
+    for entry in entries:
+        ts = _epoch_to_naive_utc(entry.get("timestamp"))
+        if entry.get("value") == "delivered" and ts is not None:
+            row.delivered_ts = ts
+        elif entry.get("value") == "read" and ts is not None:
+            row.read_ts = ts
     return True
+
+
+def _not_found_reason(exc: BaseException) -> str:
+    """`HTTP 404: <Respond's error text>`, from the JSON `message` when there is one."""
+    resp = getattr(exc, "response", None)
+    text = ""
+    if resp is not None:
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                text = str(body.get("message") or body.get("error") or "")
+        except Exception:  # noqa: BLE001 - a non-JSON body is still a reason
+            pass
+        text = text or (getattr(resp, "text", "") or "")
+    return f"HTTP 404: {text.strip() or 'not found'}"[:512]
+
+
+def _next_attempts(attempts: int, age: timedelta) -> int:
+    """Skip to the next slot still ahead, so a late tick does not fire every minute."""
+    passed = sum(1 for m in RESOLVE_SCHEDULE_MINUTES if age >= timedelta(minutes=m))
+    return min(MAX_RESOLVE_ATTEMPTS, max(attempts + 1, passed))
 
 
 def resolve_pending(
@@ -160,30 +244,33 @@ def resolve_pending(
     limit: int = 200,
     now: Optional[datetime] = None,
 ) -> dict:
-    """Resolve a batch of unresolved rows. Never raises on a single bad row."""
+    """Resolve a batch of due rows. Never raises on a single bad row."""
     if client is None:
         from app.services.integration_service import RespondClient
 
         client = RespondClient()
+    if now is None:
+        now = datetime.utcnow()
 
-    rows = _pending_rows(db, limit)
+    rows = _pending_rows(db, limit, now)
     resolved = failed = not_sent = 0
 
     for row in rows:
         attempts = int(row.resolve_attempts or 0)
+        age = now - (row.respond_ts or row.sent_at)
+        row.resolve_attempts = _next_attempts(attempts, age)
         try:
             try:
                 payload = client.get_message(row.contact_id, row.message_id) or {}
             except Exception as exc:  # noqa: BLE001
                 # RespondClient surfaces HTTP errors via raise_for_status. A 404 is the
-                # "no such message" signal; every other status is transient and must not
-                # be allowed to conclude that a message was never sent.
+                # "not dispatched (yet)" signal; every other status is transient and must
+                # not be allowed to conclude that a message was never sent.
                 resp = getattr(exc, "response", None)
                 if resp is not None and getattr(resp, "status_code", None) == 404:
-                    raise MessageNotFound(str(exc)) from exc
+                    raise MessageNotFound(_not_found_reason(exc)) from exc
                 raise
-        except MessageNotFound:
-            row.resolve_attempts = attempts + 1
+        except MessageNotFound as exc:
             # Logged, not silent: an unlogged 404 loop is indistinguishable from a
             # resolver that never ran, which is how a wrong workspace key hides.
             logger.warning(
@@ -192,13 +279,16 @@ def resolve_pending(
                 row.id, row.message_id, row.contact_id,
                 row.resolve_attempts, MAX_RESOLVE_ATTEMPTS,
             )
-            if row.resolve_attempts >= MAX_RESOLVE_ATTEMPTS:
-                # Exhausted: Respond consistently has no record of it.
-                row.delivery_status = "not_sent"
-                not_sent += 1
+            # Only a row Respond has never shown us: a 404 after a confirmed sent /
+            # delivered (a rotated workspace key, say) must not erase that receipt.
+            if row.type == "outgoing" and row.delivery_status in (None, "pending", "not_sent"):
+                row.delivery_error = str(exc)
+                if age >= timedelta(minutes=NOT_SENT_AFTER_MINUTES):
+                    # Provisional until the schedule ends: a later 200 upgrades it.
+                    row.delivery_status = "not_sent"
+                    not_sent += 1
             continue
         except Exception as exc:  # noqa: BLE001 - one bad row must not kill the batch
-            row.resolve_attempts = attempts + 1
             failed += 1
             logger.warning(
                 "chat_message_resolver: %s for chat_histories.id=%s message_id=%s",
@@ -208,8 +298,6 @@ def resolve_pending(
 
         if _apply_payload(row, payload):
             resolved += 1
-        else:
-            row.resolve_attempts = attempts + 1
 
     db.commit()
     return {

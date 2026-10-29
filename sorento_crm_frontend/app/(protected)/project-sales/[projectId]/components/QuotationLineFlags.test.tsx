@@ -3,6 +3,9 @@
  * with neither a product nor a set reads "Non-standard" (tooltip "Not a catalogue product"); a
  * linked product or set outside the series reads "Non-standard" with the series tooltip; the word
  * "custom" appears nowhere, and a line never shows two Non-standard pills.
+ *
+ * Owner meeting 29 Oct: the below-floor flag leaves the product cell. It sits under the price in
+ * the Rate cell (`MinimumPriceFlag`) and reads "Minimum price RM x", never "Below floor".
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
@@ -16,7 +19,7 @@ vi.mock('./QuotationsPanel', () => ({
   formatMyr: (value: string) => `RM ${value}`,
 }));
 
-import { LineFlags } from './QuotationLineFlags';
+import { LineFlags, MinimumPriceFlag } from './QuotationLineFlags';
 import { emptyDraft } from './quotationLineDraft';
 
 function line(overrides: Partial<QuotationLine> = {}): QuotationLine {
@@ -101,21 +104,70 @@ describe('LineFlags', () => {
     );
   });
 
-  it('shows a set line below its floor as below floor and not as non-standard', () => {
+  it('keeps the minimum price out of the product cell, and shows no non-standard pill there', () => {
+    const below = line({
+      product_set_id: 'set-1',
+      is_below_floor: true,
+      floor_value_applied: '900.00',
+      floor_level_applied: 'series',
+    });
     render(
-      <LineFlags
-        quotationId="q1"
-        line={line({
-          product_set_id: 'set-1',
-          is_below_floor: true,
-          floor_value_applied: '900.00',
-          floor_level_applied: 'series',
-        })}
-        draft={draftOf({ product_set_id: 'set-1' })}
-      />,
+      <LineFlags quotationId="q1" line={below} draft={draftOf({ product_set_id: 'set-1' })} />,
     );
-    expect(screen.getByText('Below floor')).toBeInTheDocument();
+    expect(screen.queryByText(/Minimum price/)).toBeNull();
+    expect(screen.queryByText(/below floor/i)).toBeNull();
     expect(screen.queryByText('Non-standard')).not.toBeInTheDocument();
     expect(screen.queryByText(/custom/i)).toBeNull();
+  });
+});
+
+describe('MinimumPriceFlag', () => {
+  const draftOf = (extra: Record<string, string> = {}) => ({
+    ...emptyDraft(),
+    unit_price: '400.00',
+    ...extra,
+  });
+
+  it('reads Minimum price RM x for a line priced below its floor, with where it was set', () => {
+    render(
+      <MinimumPriceFlag
+        quotationId="q1"
+        line={line({
+          product_id: 'p1',
+          unit_price: '400.00',
+          is_below_floor: true,
+          floor_value_applied: '700.00',
+          floor_level_applied: 'category_ancestor',
+        })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(screen.getByText('Minimum price RM 700.00')).toBeInTheDocument();
+    expect(screen.getByText('Set on a parent category.')).toBeInTheDocument();
+    expect(screen.queryByText(/below floor/i)).toBeNull();
+    expect(screen.queryByText(/\bfloor\b/i)).toBeNull();
+  });
+
+  it('says the line is below the minimum price when no floor value came back', () => {
+    render(
+      <MinimumPriceFlag
+        quotationId="q1"
+        line={line({ product_id: 'p1', unit_price: '400.00', is_below_floor: true })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(screen.getByText('Minimum price')).toBeInTheDocument();
+    expect(screen.getByText('Below the minimum price for this item.')).toBeInTheDocument();
+  });
+
+  it('renders nothing for a line at or above its floor', () => {
+    const { container } = render(
+      <MinimumPriceFlag
+        quotationId="q1"
+        line={line({ product_id: 'p1', unit_price: '400.00' })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
   });
 });

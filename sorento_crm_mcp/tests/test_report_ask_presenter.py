@@ -206,8 +206,9 @@ def test_one_printed_row_reads_singular():
 @pytest.mark.parametrize(
     "basis, label, head",
     [
-        ("outstanding", "outstanding orders", "Undelivered orders"),
-        ("pending_delivery", "pending delivery", "Pending delivery"),
+        # REPORT-OUTSTANDING-SUMMARY item 5 (owner 29 Oct): SO / DO totals open with the pre-#1922 header instead.
+        ("outstanding", "outstanding orders", "Product: all"),
+        ("pending_delivery", "pending delivery", "Product: all"),
         ("unpaid", "unpaid invoices", "Unpaid invoices"),
         ("delivered", "delivered sales", "Sales by delivered sales"),
     ],
