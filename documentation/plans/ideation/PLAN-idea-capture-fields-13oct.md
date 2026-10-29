@@ -1,6 +1,6 @@
 # PLAN: idea capture collects the canny-style fields (IDEA-CAPTURE, 13 Oct)
 
-Status: Hand test (track: standard lane). Owner approved the behaviour card 13 Oct; built red-first, reviewer READY, crew live check READY on a6ddd54e (fix round 4). Unfrozen 16 Oct: origin/main merged and the migration re-parented onto cfs_0001_spec_registry_seed; awaiting final reviewer verdict, crew live run on parser prompt v94 and the owner hand test. Out of scope: G1 (re-offer the similar list, undecided, follow-up lane) and G2 (with the owner).
+Status: Hand test (track: standard lane). Owner approved the behaviour card 13 Oct; built red-first, reviewer READY, crew live check READY on a6ddd54e (fix round 4). Unfrozen 16 Oct: origin/main merged and the migration re-parented onto cfs_0001_spec_registry_seed. 29 Oct: origin/main merged again (197 commits) and the migration re-parented onto pmt_0001_parser_max_tokens (PR gate was red on two heads); lane tests 299 passed on the merged head. Awaiting final reviewer verdict, crew live run on parser prompt v94 and the owner hand test. Out of scope: G1 (re-offer the similar list, undecided, follow-up lane) and G2 (with the owner).
 
 Decisions (13 Oct): Q1 (owner) a solution-only message gets the underlying need as Business
 problem and the user's own words as Desired outcome. Q3 (owner) field names stay English in
