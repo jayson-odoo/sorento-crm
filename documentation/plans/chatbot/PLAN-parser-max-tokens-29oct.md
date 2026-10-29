@@ -1,6 +1,6 @@
 # PLAN: parser max output tokens (PARSER-MAX-TOKENS, 29 Oct 2026)
 
-Status: in progress, small fix track (S); one additive migration (owner addition, lane stays S).
+Status: in review (PR #1970), small fix track (S); one additive migration + Settings > Chatbot field (owner additions, lane stays S).
 
 ## Problem
 
@@ -37,8 +37,9 @@ Measured on origin/main 6011ba76ff:
   so the engine writes a `was_answered = false` row. Message text unchanged (existing tests
   match on it).
 - Not changed: the customer-facing reply wording (owner decision; see report).
-- UI: the sibling setting has no UI or API field; crew asked (a) DB-only vs (b) a System
-  Settings field. Built as (a) unless crew answers (b).
+- UI (owner ruling 29 Oct, option b): a "Parser max output tokens" number field in the Switches
+  card of Settings > Chatbot (shared `NumberInput`, `numberFieldError` on save with the API's
+  bounds), through the settings API (schema + GET dict + null-reset defaults dict).
 
 ## Tests (red first)
 
