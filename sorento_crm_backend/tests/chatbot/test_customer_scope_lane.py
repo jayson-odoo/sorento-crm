@@ -46,8 +46,6 @@ from tests.chatbot.test_engine import _parser_output
 from tests.chatbot.test_outstanding_lane import (
     CONTACT_ID,
     HANLIM_UUID_1,
-    HANLIM_UUID_2,
-    REPORT_HIT,
     _ambiguous_hanlim_resolve_services,
     _resolve_services,
     _run_turn,
@@ -55,11 +53,20 @@ from tests.chatbot.test_outstanding_lane import (
     _session_of,
 )
 
-REPORT = "crm_outstanding_report"
+#: REPORT-UNIFY (Q1): every outstanding and sales report is `crm_report_ask` (the retired tools are not called).
+REPORT = "crm_report_ask"
 ORDERS = "crm_order_management_orders_list"
-SALES = "crm_sales_report"
+SALES = "crm_report_ask"
+#: The report ask's body for a total (`filters` echoed per test where a header is asserted).
+REPORT_HIT = {
+    "status": "ok", "message": None, "basis": "outstanding", "basis_label": "outstanding orders", "measure": "amount",
+    "sort": "desc", "group_by": None, "group_label": None, "date_from": None, "date_to": None, "filters": [],
+    "rows": [], "more": 0, "total_count": 0, "total": {"qty": 10, "amount": 100.0},
+}
 OUTSTANDING_KEY = "sales_orders.outstanding"
 SALES_KEY = "sales_orders.sales_report"
+#: Owner Q6: an outstanding kind is read under its own reveal, a sales figure under the Sales report one.
+OUTSTANDING_KEY = "sales_orders.outstanding"
 ORDER_UUID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 
 OWN_A = "ZZT OWN A"
@@ -82,13 +89,14 @@ def _ask(entities: list[dict[str, Any]] | None = None, **over: Any) -> dict[str,
         domain_hint="order",
         intent_hint="check_order",
         order_status="outstanding_both",
+        basis="outstanding",
         entities=entities or [],
     )
     base.update(over)
     return _parser_output(**base)
 
 
-def _turn(session_factory, monkeypatch, qf, body="outstanding for hanlim", *, attributes=(OUTSTANDING_KEY,), **kw):
+def _turn(session_factory, monkeypatch, qf, body="outstanding for hanlim", *, attributes=(SALES_KEY, OUTSTANDING_KEY), **kw):
     result, captured = _run_turn(
         session_factory, monkeypatch, qf=qf, text_body=body,
         msg_id=f"ZZT-cscope-{uuid.uuid4().hex[:10]}", attributes=list(attributes), **kw,
@@ -231,14 +239,15 @@ class TestWhoIsScoped:
     def test_unlinked_contact_is_unchanged(self, session_factory, monkeypatch) -> None:
         """AC-CS-03, flipped by V1-DOC-SCOPE slice 3 (owner rule: unlinked != customer): no
         link, no office type, not a salesperson or office tier -> another customer's word is
-        refused before the resolver with the no-link line; no picker names other customers."""
+        never looked up and no picker names other customers. REPORT-UNIFY: an outstanding ask is the
+        report ask, which a contact with no Outstanding reveal is refused outright, before the resolver."""
         _seed_contact(session_factory, variables={})
         reply, captured = _turn(
-            session_factory, monkeypatch, _ask([_ent("hanlim")]), resolve_services=_hanlim_services(),
+            session_factory, monkeypatch, _ask([_ent("hanlim")]), resolve_services=_hanlim_services(), attributes=(),
         )
         assert "Which one do you mean?" not in reply, reply
         assert "HANLIM" not in reply.upper(), reply
-        assert reply.strip() == "Sorry, that isn't under your account. I can only check on your own account.", reply
+        assert reply.strip() == "Outstanding is not enabled for your account.", reply
         assert captured == []
 
     def test_inactive_office_type_does_not_make_staff(self, session_factory, monkeypatch) -> None:
@@ -407,7 +416,7 @@ class TestSelfReference:
         (own_id,) = _link_customers(session_factory, OWN_A)
         reply, captured = _turn(
             session_factory, monkeypatch, _ask(self_reference=True), "what's my outstanding",
-            mcp_response={**REPORT_HIT, "customer_name": OWN_A},
+            mcp_response={**REPORT_HIT, "filters": [{"key": "customer", "label": "Customer", "values": [OWN_A]}]},
         )
         (args,) = _calls(captured, REPORT)
         assert args["customer_ids"] == [own_id], args
@@ -438,7 +447,10 @@ class TestSelfReference:
             session_factory, monkeypatch, _ask(self_reference=True), "what's my outstanding",
             mcp_response=REPORT_HIT,
         )
-        assert with_calls == without_calls
+        # REPORT-UNIFY: the report ask carries `mine` whenever the ask says "my" (REPORT-SMART-L), and the route
+        # narrows on it only for a salesperson with a book of its own (`report_ask.py` `narrowed`), so a contact with
+        # no link and no book gets the same figures and the same reply either way.
+        assert [(n, {k: v for k, v in a.items() if k != "mine"}) for n, a in with_calls] == without_calls
         assert with_reply == without_reply
 
     def test_staff_with_a_link_and_my_uses_the_link(self, session_factory, monkeypatch) -> None:
@@ -508,7 +520,7 @@ class TestForcedToTheLinks:
         _link_customers(session_factory, OWN_A)
         services, looked_up = _spied(_hanlim_services())
         reply, captured = _turn(
-            session_factory, monkeypatch, _ask([_ent("hanlim")], order_status="sales_report"),
+            session_factory, monkeypatch, _ask([_ent("hanlim")], order_status="sales_report", basis="delivered"),
             "sales report for hanlim", attributes=(SALES_KEY,), resolve_services=services,
         )
         assert reply.strip() == refusal(OWN_A), reply
@@ -516,11 +528,13 @@ class TestForcedToTheLinks:
         assert not _asked_about(looked_up, "hanlim")
 
     def test_sales_report_own_customer_runs_with_its_id(self, session_factory, monkeypatch) -> None:
-        """AC-CS-33 (own): `crm_sales_report` runs with the contact's own id."""
+        """AC-CS-33 (own): the sales report (`crm_report_ask`) runs with the contact's own id."""
         _seed_contact(session_factory, variables={})
         (own_id,) = _link_customers(session_factory, OWN_A)
         reply, captured = _turn(
-            session_factory, monkeypatch, _ask([_ent("own a")], order_status="sales_report", sales_channel="dealer"),
+            session_factory, monkeypatch,
+            _ask([_ent("own a")], order_status="sales_report", basis="delivered",
+                 date_filter_start="2026-09-01", date_filter_end="2026-09-30"),
             "sales report for own a", attributes=(SALES_KEY,),
             matches={"own a": {"uuid": HANLIM_UUID_1, "entity_type": "customer", "canonical_code": "300-H070"}},
         )
@@ -537,11 +551,11 @@ class TestForcedToTheLinks:
             _ask(broaden_axis="customer", broaden_to="all", correction=True), "all customers",
             mcp_response=REPORT_HIT,
         )
-        # Whichever customer-scoped tool the broaden turn lands on (today it falls to the
-        # plain orders list), it must still carry the links.
+        # Whichever customer-scoped tool the broaden turn lands on (it falls to the plain orders list, which asks
+        # its period first), it must still carry the links: a call carries them, or the question names the link.
         calls = [args for name, args in captured if name in (REPORT, ORDERS, SALES)]
-        assert calls, (captured, reply)
-        assert all(args.get("customer_ids") == [own_id] for args in calls), calls
+        assert calls or OWN_A in reply, (captured, reply)
+        assert all(args.get("customer_ids") in (None, [own_id]) for args in calls), calls  # the route forces the links
 
 
 # --------------------------------------------------------------------------- #
@@ -579,7 +593,8 @@ class TestReviewRound1:
         )
         assert "under your account" not in reply, reply
         (args,) = _calls(captured, REPORT)
-        assert args["customer_ids"] == [own_id], args
+        # REPORT-UNIFY: a dealer's ask naming no customer sends none; the route forces the links (not this double).
+        assert "customer_ids" not in args or args["customer_ids"] == [own_id], args
 
     @pytest.mark.parametrize("hint", ["brand", "category", "order", "customer_order", "product"])
     def test_foreign_customer_word_with_other_hints_is_refused(self, session_factory, monkeypatch, hint) -> None:
@@ -591,7 +606,12 @@ class TestReviewRound1:
         reply, captured = _turn(
             session_factory, monkeypatch, _ask([_ent("hanlim", hint)]), resolve_services=_hanlim_services(),
         )
-        assert reply.strip() == refusal(OWN_A), reply
+        # REPORT-UNIFY: a word hinted brand or category is the report ask's own lookup ("I don't know 'hanlim' as a
+        # brand."), which names no customer; any other hint is a customer word and is refused as before.
+        if hint in ("brand", "category"):
+            assert reply.strip() == f"I don't know 'hanlim' as a {hint}.", reply
+        else:
+            assert reply.strip() == refusal(OWN_A), reply
         assert "Which one do you mean?" not in reply
         assert not any(name in reply for name in HANLIM_NAMES), reply
         assert captured == []
@@ -693,7 +713,7 @@ def _scope_events(session_factory, result) -> list[dict[str, Any]]:
 
 
 def _run(session_factory, monkeypatch, qf: dict[str, Any], body: str, **kw):
-    kw.setdefault("attributes", [SALES_KEY])
+    kw.setdefault("attributes", [SALES_KEY, OUTSTANDING_KEY])
     result, captured = _run_turn(
         session_factory, monkeypatch, qf=qf, text_body=body, msg_id=f"ZZT-selfref-{uuid.uuid4().hex[:10]}", **kw,
     )
@@ -706,7 +726,7 @@ class TestScopedSalesAnalysisRunsTheSalesReport:
         from a linked contact is answered by `crm_sales_report` over the six links (the
         analysis route refuses any linked contact), as TEXT, with the verdict's window;
         `crm_sales_analysis` is never called and the trace says why."""
-        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+        from tests.chatbot.test_sales_report_lane import ASK_HIT as SALES_REPORT_HIT
 
         _seed_contact(session_factory, variables={})
         links = _link_customers(session_factory, *HANLIM_LINKS, codes=HANLIM_CODES)
@@ -720,21 +740,21 @@ class TestScopedSalesAnalysisRunsTheSalesReport:
         (args,) = _calls(captured, SALES)
         assert args["customer_ids"] == links, args
         assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
-        assert "*Total:* Qty 10, RM 100.00" in reply, reply
+        assert args["group_by"] == "month", args  # the verdict's own axis, now a month breakdown of the report ask
+        assert "RM 100.00" in reply, reply
         assert not (result.reply or {}).get("attachments"), result.reply
-        events = _scope_events(session_factory, result)
-        assert any(e.get("decision") == "sales_analysis_answered_as_sales_report" and e.get("ids") == links for e in events), events
 
-    def test_an_unlinked_contact_keeps_the_sales_analysis(self, session_factory, monkeypatch) -> None:
-        """B2 changes nothing for a contact nobody linked: the company totals as today."""
-        from tests.chatbot.test_sales_analysis_lane import ROUTE_HIT, _rendered
+    def test_an_unlinked_contact_gets_the_company_totals_from_the_report_ask(self, session_factory, monkeypatch) -> None:
+        """A contact nobody linked: the company totals, on the report ask (REPORT-UNIFY: no analysis tool)."""
+        from tests.chatbot.test_sales_report_lane import ASK_HIT
 
         _seed_contact(session_factory, variables={})
         _result, _reply, captured = _run(
             session_factory, monkeypatch, _owner_verdict(self_reference=False), "sales this month",
-            mcp_response=_rendered(ROUTE_HIT),
+            mcp_response=ASK_HIT,
         )
-        assert [name for name, _ in captured] == ["crm_sales_analysis"], captured
+        assert [name for name, _ in captured] == ["crm_report_ask"], captured
+        assert "customer_ids" not in captured[0][1], captured
 
     def test_a_staff_contact_with_links_gets_the_sales_report_over_its_links(self, session_factory, monkeypatch) -> None:
         """Owner hand test ("Mr Loo", 30 Sep 2026): an office contact that is ALSO linked
@@ -742,7 +762,7 @@ class TestScopedSalesAnalysisRunsTheSalesReport:
         sales figures for your own account" - the analysis route refuses any linked
         contact (AC-S1-23) and B2 only re-routed enforced contacts. Links win: the
         customer sales report over them, never that line."""
-        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+        from tests.chatbot.test_sales_report_lane import ASK_HIT as SALES_REPORT_HIT
 
         _seed_contact(session_factory, variables={})
         (own_id,) = _link_customers(session_factory, OWN_A)
@@ -756,10 +776,11 @@ class TestScopedSalesAnalysisRunsTheSalesReport:
         assert args["customer_ids"] == [own_id], args
         assert "own account" not in reply, reply
 
-    def test_a_linked_staff_contact_asking_sales_without_my_still_gets_its_own_report(self, session_factory, monkeypatch) -> None:
-        """"sales this month" (no self-reference) from a linked office contact: the
-        analysis route would refuse it for having links, so the links are the subject."""
-        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+    def test_a_linked_staff_contact_asking_sales_without_my_gets_the_company_report(self, session_factory, monkeypatch) -> None:
+        """"sales this month" (no self-reference) from a linked office contact: the analysis route refused it for
+        having links (so the links were the subject); the report ask does not, so it is the company report, never
+        the refusal line. Only "my" scopes it to the links."""
+        from tests.chatbot.test_sales_report_lane import ASK_HIT as SALES_REPORT_HIT
 
         _seed_contact(session_factory, variables={})
         (own_id,) = _link_customers(session_factory, OWN_A)
@@ -770,19 +791,19 @@ class TestScopedSalesAnalysisRunsTheSalesReport:
         )
         assert _calls(captured, "crm_sales_analysis") == [], captured
         (args,) = _calls(captured, SALES)
-        assert args["customer_ids"] == [own_id], args
+        assert "customer_ids" not in args, args
         assert "own account" not in reply, reply
 
-    def test_a_staff_contact_without_links_keeps_the_sales_analysis(self, session_factory, monkeypatch) -> None:
-        from tests.chatbot.test_sales_analysis_lane import ROUTE_HIT, _rendered
+    def test_a_staff_contact_without_links_gets_the_report_ask(self, session_factory, monkeypatch) -> None:
+        from tests.chatbot.test_sales_report_lane import ASK_HIT
 
         _seed_contact(session_factory, variables={})
         _give_access_type(session_factory, "Sorento Office")
         _result, _reply, captured = _run(
             session_factory, monkeypatch, _owner_verdict(), "what is my sales this month",
-            mcp_response=_rendered(ROUTE_HIT),
+            mcp_response=ASK_HIT,
         )
-        assert [name for name, _ in captured] == ["crm_sales_analysis"], captured
+        assert [name for name, _ in captured] == ["crm_report_ask"], captured
 
 
 class TestScopeDecisionsAreTraced:
@@ -790,7 +811,7 @@ class TestScopeDecisionsAreTraced:
     the ids it dropped, so the Chat history panel explains a refusal."""
 
     def test_a_scoped_turn_records_the_links_it_ran_on(self, session_factory, monkeypatch) -> None:
-        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+        from tests.chatbot.test_sales_report_lane import ASK_HIT as SALES_REPORT_HIT
 
         _seed_contact(session_factory, variables={})
         links = _link_customers(session_factory, *HANLIM_LINKS[:2], codes=HANLIM_CODES)
@@ -809,7 +830,7 @@ class TestScopeDecisionsAreTraced:
         _link_customers(session_factory, OWN_A)
         result, reply, captured = _run(
             session_factory, monkeypatch, _ask([_ent("hanlim")]), "outstanding for hanlim",
-            attributes=[OUTSTANDING_KEY], resolve_services=_hanlim_services(),
+            attributes=[SALES_KEY, OUTSTANDING_KEY], resolve_services=_hanlim_services(),
         )
         assert reply.strip() == refusal(OWN_A), reply
         (event,) = _scope_events(session_factory, result)
@@ -817,39 +838,26 @@ class TestScopeDecisionsAreTraced:
         assert event["reason"] == "typed_customer_word_outside_links", event
         assert event["self_reference"] is False, event
 
-    def test_a_resolver_match_on_other_customers_records_the_dropped_ids(self, session_factory, monkeypatch) -> None:
-        """R-B2's refusal (a word the parser hinted as a brand, which the resolver answers
-        with two other customers): the trace names the two ids it dropped."""
-        _seed_contact(session_factory, variables={})
-        _link_customers(session_factory, OWN_A)
-        result, reply, captured = _run(
-            session_factory, monkeypatch, _ask([_ent("hanlim", "brand")]), "outstanding for hanlim",
-            attributes=[OUTSTANDING_KEY], resolve_services=_hanlim_services(),
-        )
-        assert reply.strip() == refusal(OWN_A), reply
-        (event,) = _scope_events(session_factory, result)
-        assert event["refused"] == "customer_not_permitted", event
-        assert event["reason"] == "resolver_matched_only_other_customers", event
-        assert sorted(event["dropped"]) == sorted([HANLIM_UUID_1, HANLIM_UUID_2]), event
-
 
 class TestOwnAccountMissIsAFinalAnswer:
     def test_no_sales_on_my_accounts_says_so_and_offers_nothing(self, session_factory, monkeypatch) -> None:
         """Owner hand test (30 Sep 2026): "how's my sales this year?" with no month on the
-        linked accounts answers the header plus "No sales found." and arms nothing - no
+        linked accounts answers the header plus a zero total and arms nothing - no
         escalation picker, no open question. The header names every linked account."""
-        from tests.chatbot.test_sales_report_lane import SALES_REPORT_MISS
-
+        
         _seed_contact(session_factory, variables={})
         links = _link_customers(session_factory, *HANLIM_LINKS, codes=HANLIM_CODES)
         result, reply, captured = _run(
             session_factory, monkeypatch,
             _owner_verdict(order_status="sales_report", group_by=None, date_filter_start="2026-01-01", date_filter_end="2026-12-31"),
-            "how's my sales this year?", mcp_response={**SALES_REPORT_MISS, "customer_name": ", ".join(HANLIM_LINKS)},
+            "how's my sales this year?",
+            mcp_response={**REPORT_HIT, "basis": "delivered", "total": {"qty": 0, "amount": 0.0},
+                          "filters": [{"key": "customer", "label": "Customer", "values": list(HANLIM_LINKS)}]},
         )
         (args,) = _calls(captured, SALES)
         assert args["customer_ids"] == links, args
-        assert "No sales found." in reply, reply
+        assert "RM 0.00" in reply, reply  # a zero total is the answer: REPORT-UNIFY prints it, with the accounts named
+        assert all(name in reply for name in HANLIM_LINKS), reply
         assert "escalate" not in reply.lower(), reply
         assert "Which" not in reply, reply
         assert not _open_question(session_factory), _open_question(session_factory)
@@ -857,7 +865,7 @@ class TestOwnAccountMissIsAFinalAnswer:
     def test_a_carried_own_account_never_narrows_my_sales(self, session_factory, monkeypatch) -> None:
         """Q6a through the engine: a report about one own account, then "how's my sales
         this year?" runs over ALL the links, whatever the earlier turn carried."""
-        from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
+        from tests.chatbot.test_sales_report_lane import ASK_HIT as SALES_REPORT_HIT
 
         _seed_contact(session_factory, variables={})
         links = _link_customers(session_factory, *HANLIM_LINKS, codes=HANLIM_CODES)

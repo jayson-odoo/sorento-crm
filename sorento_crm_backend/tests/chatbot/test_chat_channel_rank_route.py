@@ -15,7 +15,8 @@ from tests.chatbot.test_report_channel_filter import OTHER_CODE, _agent_ranking,
 
 #: Today's answer to that parse (a sales analysis naming one product is that product's sales report,
 #: `business.__init__` "sales_analysis_answered_as_sales_report"): the total prod v63 replied "No sales found" with.
-TODAY = "crm_sales_report"
+TODAY = "crm_sales_report"  # retired (REPORT-UNIFY): a fresh sales ask is the report ask, whose missing period / basis is asked
+FRESH = "Which period?"  # the line a fresh ask that owes its period opens with; nothing ran
 
 
 @pytest.fixture(autouse=True)
@@ -78,20 +79,20 @@ def test_cr1b_straight_after_the_ranking_too(console, monkeypatch, other_product
 
 def test_cr2_guard_nothing_held_stays_today_s_sales_report(console, monkeypatch, other_product) -> None:
     text, log = _say_all(console, monkeypatch, _project_top_10(), f"Project sales top 10 {OTHER_CODE.lower()}")
-    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
-    assert _today(log)[0].get("channel") == "project", log
+    assert _ran(log) == [] and FRESH in text, (text, log)
 
 
 def test_cr3_guard_no_count_stays_today_s_sales_report(console, monkeypatch, other_product) -> None:
     _agent_ranking(console, monkeypatch)
     text, log = _say_all(console, monkeypatch, _project_top_10(top_n=None), f"Project sales {OTHER_CODE.lower()}")
-    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+    assert _ran(log) == [] and FRESH in text, (text, log)
 
 
 def test_cr4_guard_a_count_with_an_axis_stays_today_s_sales_report(console, monkeypatch, other_product) -> None:
     _agent_ranking(console, monkeypatch)
     text, log = _say_all(console, monkeypatch, _project_top_10(group_by="month"), "Project sales by month top 10")
-    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == "month", (text, log)  # its own axis, not the held agents ranking
 
 
 def test_cr5_guard_a_plain_refine_of_the_ranking_is_unchanged(console, monkeypatch) -> None:
@@ -106,7 +107,7 @@ def test_cr6_guard_a_count_with_no_channel_is_not_this_rule(console, monkeypatch
     """Out of this lane's scope (no channel named): the reply stays today's."""
     _agent_ranking(console, monkeypatch)
     text, log = _say_all(console, monkeypatch, _project_top_10(sales_channel=None), f"sales top 10 {OTHER_CODE.lower()}")
-    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+    assert _ran(log) == [] and FRESH in text, (text, log)
 
 
 def test_cr7_guard_a_stale_frame_stays_today_s_sales_report(console, monkeypatch, other_product) -> None:
@@ -117,7 +118,7 @@ def test_cr7_guard_a_stale_frame_stays_today_s_sales_report(console, monkeypatch
     text, log = _say_all(console, monkeypatch, failed, "top 5 by weather")
     assert _ran(log) == [], ("setup: the failing ask ran", text, log)
     text, log = _say_all(console, monkeypatch, _project_top_10(), f"Project sales top 10 {OTHER_CODE.lower()}")
-    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+    assert _ran(log) == [] and FRESH in text, (text, log)
 
 
 def test_cr8_guard_a_held_total_has_no_ranking_to_rerun(console, monkeypatch, other_product) -> None:
@@ -127,7 +128,7 @@ def test_cr8_guard_a_held_total_has_no_ranking_to_rerun(console, monkeypatch, ot
     text, log = _say_all(console, monkeypatch, total, f"total qty of {PRODUCT_CODE} in 2026 delivered")
     assert len(_ran(log)) == 1 and not _ran(log)[0].get("group_by"), ("setup", text, log)
     text, log = _say_all(console, monkeypatch, _project_top_10(), f"Project sales top 10 {OTHER_CODE.lower()}")
-    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+    assert _ran(log) == [] and FRESH in text, (text, log)
 
 
 def test_cr9_guard_a_held_month_list_is_not_a_population_to_rank(console, monkeypatch, other_product) -> None:
@@ -138,7 +139,7 @@ def test_cr9_guard_a_held_month_list_is_not_a_population_to_rank(console, monkey
     text, log = _say_all(console, monkeypatch, months, f"{PRODUCT_CODE} sales by month 2026 delivered qty")
     assert len(_ran(log)) == 1 and _ran(log)[0]["group_by"] == "month", ("setup", text, log)
     text, log = _say_all(console, monkeypatch, _project_top_10(), f"Project sales top 10 {OTHER_CODE.lower()}")
-    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+    assert _ran(log) == [] and FRESH in text, (text, log)
 
 
 def test_cr10_guard_a_non_report_status_is_not_this_rule(console, monkeypatch, other_product) -> None:

@@ -2,7 +2,7 @@
 
 `GET /api/v1/connector/manifest`, signed like any call (`sub` may be empty), returns
 `{version, tools: [{name, title, description, input_schema, annotations, http: {method, path_template,
-query_params, path_params}}]}`: 34 reused read tools + 5 chat tools.
+query_params, path_params}}]}`: 33 reused read tools + 5 chat tools.
 
 Resolutions pinned here:
 * `path_template` is the backend's REAL route path (trailing slash included where the route has one,
@@ -45,7 +45,7 @@ REUSED_TOOLS = frozenset({
     "crm_inventory_stock_balance_list", "crm_inventory_warehouses_list",
     "crm_incoming_stock_by_product", "crm_incoming_stock_shipments", "crm_incoming_stock_list",
     "crm_order_management_orders_list", "crm_order_management_orders_by_product_list",
-    "crm_outstanding_report", "crm_sales_report", "crm_top_selling_report",
+    "crm_outstanding_report", "crm_sales_report",
     "crm_procurement_po_placed_list", "crm_procurement_spo_allocations_last_receipt_list",
     "crm_procurement_po_last_cost_list",
     "crm_marketing_promotions_list", "crm_marketing_promotion_products_list",
@@ -92,10 +92,11 @@ def _tools(manifest) -> dict:
     return {t["name"]: t for t in manifest["tools"]}
 
 
-def test_manifest_lists_exactly_the_34_reused_and_5_chat_tools(manifest):
-    assert len(REUSED_TOOLS) == 34 and len(CHAT_TOOLS) == 5
+def test_manifest_lists_exactly_the_33_reused_and_5_chat_tools(manifest):
+    # REPORT-UNIFY: crm_top_selling_report left REUSED_TOOLS (owner Q1), so 33 + 5 = 38.
+    assert len(REUSED_TOOLS) == 33 and len(CHAT_TOOLS) == 5
     names = [t["name"] for t in manifest["tools"]]
-    assert len(names) == len(set(names)) == 39
+    assert len(names) == len(set(names)) == 38
     assert set(names) == REUSED_TOOLS | CHAT_TOOLS
 
 

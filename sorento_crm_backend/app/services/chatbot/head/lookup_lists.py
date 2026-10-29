@@ -434,9 +434,45 @@ def _grouped_category_lines(hits: list[Hit]) -> list[str]:
     return [f"- {head}: {', '.join(items)}" if items else f"- {head}" for head, items, _m in groups.values()]
 
 
-def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False) -> list[str]:
+#: REPORT-UNIFY slice 3: the lists whose rows the report ask binds by id; their lines carry it when `row_ids`.
+ID_LISTS = frozenset({"brand", "salesperson", "category"})
+
+
+def cap_hits(name: str, hits: list[Hit]) -> list[Hit]:
+    """`TOP_K` for the list. The salesperson list is the one place an exact match is never cut (REPORT-UNIFY slice 3,
+    AC-RU-22): every PERSON the message names exactly (spelling 1.0: a span, an alias, a code) stays, however many
+    there are, and only the looser rows fill what is left of the cap. The accounts of one person (a code stem, "WT I"
+    to "WT III") count as one person, so a long ledger list still stops at the cap."""
+    cap = TOP_K.get(name, 10)
+    if name != "salesperson":
+        return hits[:cap]
+    from app.services.chatbot.lanes.business.services import _code_stem
+
+    people: set[str] = set()
+    exempt: list[Hit] = []
+    for h in hits:
+        stem = _code_stem(h.row.label)
+        if h.spelling >= 1.0 and stem not in people:
+            people.add(stem)
+            exempt.append(h)
+    room = max(0, cap - len(exempt))
+    kept: list[Hit] = []
+    for h in hits:
+        if any(h is e for e in exempt):
+            kept.append(h)
+        elif room > 0:
+            kept.append(h)
+            room -= 1
+    return kept
+
+
+def render(
+    hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False,
+    row_ids: bool = False,
+) -> list[str]:
     """One block per list with hits: the header, then `- <label>` once per label (a category block one line per
-    class when `group_categories`)."""
+    class when `group_categories`). `row_ids` (a prompt that asks for it) ends the line of a brand, salesperson or
+    category row with `[id: <row id>]`, so the parser can answer with the id."""
     lines: list[str] = []
     for name in order:
         if group_categories and name == "category":
@@ -446,13 +482,16 @@ def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *
                 lines.extend(grouped)
             continue
         labels: list[str] = []
+        printed: list[str] = []
         for h in hits.get(name) or []:
             label = _one_line(h.row.label)
             if label and label not in labels:
                 labels.append(label)
+                with_id = row_ids and name in ID_LISTS and h.row.key and not str(h.row.key).startswith("type:")
+                printed.append(f"{label} [id: {h.row.key}]" if with_id else label)
         if labels:
             lines.append(header(name))
-            lines.extend(f"- {label}" for label in labels)
+            lines.extend(f"- {text}" for text in printed)
     return lines
 
 

@@ -404,3 +404,15 @@ def test_ac_cp_10_turn_a_parsed_null_keeps_the_saved_language_over_the_conversat
     assert c.state["reply_language"] == "zh"
     c.say("SRTWC286-SH 2", stock(product("SRTWC286-SH", 2), message_language=None))
     assert c.state["reply_language"] == "ms"
+
+
+def test_s7_a_template_without_the_row_id_sentence_renders_no_row_ids(session_factory, monkeypatch):
+    config = _config_for(session_factory, monkeypatch, "Rules {{current_date}}.\n" + GATE)
+    assert config.row_ids is False
+    assert parser_mod.ParserConfig(system_prompt="x", prompt_version=1, provider="openai", model="m", api_key="k").row_ids is False
+
+
+def test_s7_a_template_with_the_row_id_sentence_turns_row_ids_on(session_factory, monkeypatch):
+    config = _config_for(session_factory, monkeypatch,
+                         "Rules {{current_date}}.\n" + GATE + parser_mod.ROW_ID_ASK + "\n")
+    assert config.row_ids is True

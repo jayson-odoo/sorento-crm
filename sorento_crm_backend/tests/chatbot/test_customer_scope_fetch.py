@@ -149,7 +149,11 @@ class TestRunFetchAnswersAScopeViolationWithTheRefusal:
                         "domain_hint": "order",
                         "intent_hint": "check_order",
                         "message_type": "business_query",
-                        "order_status": "outstanding_both",
+                        # REPORT-UNIFY: an outstanding ask is the report ask, whose customers the route forces; the
+                        # orders list is the customer-scoped read this seam still guards.
+                        "order_status": None,
+                        "date_filter_start": "2026-09-01",
+                        "date_filter_end": "2026-09-30",
                         "entities": [],
                     }
                 },
@@ -203,7 +207,7 @@ class TestRefusalsAreTraced:
         trace = TurnTrace()
         payload = _scoped_payload(
             scope=[a], entities=[{"uuid": z, "entity_type": "customer", "code": "ZZT-Z"}],
-            parse={"order_status": "outstanding_both"},
+            parse={"order_status": None, "date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"},
         )
         db = session_factory()
         try:
@@ -215,7 +219,7 @@ class TestRefusalsAreTraced:
         assert event["refused"] == "customer_not_permitted"
         assert event["dropped"] == [z]
         assert event["reason"] == "fetch_customer_ids_outside_links"
-        assert event["tool"] == "crm_outstanding_report"
+        assert event["tool"] == "crm_order_management_orders_list"
 
     def test_the_tier_probe_refusal_writes_the_trace_event_it_omitted(self, session_factory, monkeypatch) -> None:
         """The probe tool takes no customer ids, so the violation is raised by a stubbed
@@ -260,12 +264,6 @@ class TestMyMeansAllLinkedAccounts:
             _trigger(tool, [a, b], [], self_reference=True, outstanding_carried_customer_ids=[a])
         )
         assert out["customer_ids"] == [a, b], out
-
-    @pytest.mark.parametrize("tool", ["crm_sales_report", "crm_outstanding_report"])
-    def test_without_self_reference_the_carry_still_narrows(self, tool, ids) -> None:
-        a, b, _z = ids
-        out = fetch.entity_ids_transformer(_trigger(tool, [a, b], [], outstanding_carried_customer_ids=[a]))
-        assert out["customer_ids"] == [a], out
 
     def test_the_account_the_message_itself_named_stands(self, ids) -> None:
         """"my sales for a/c ii": the engine hands the named link as the entity; the

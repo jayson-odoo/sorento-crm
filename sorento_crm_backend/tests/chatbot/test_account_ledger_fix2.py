@@ -214,7 +214,7 @@ def test_s3_an_unrelated_turn_drops_the_account_so_the_next_is_not_narrowed(sess
 def _events(session_factory, monkeypatch, qf, body, **kw):
     result, _captured = _run_turn(
         session_factory, monkeypatch, qf=qf, text_body=body, msg_id=f"ZZT-fix2-{uuid.uuid4().hex[:10]}",
-        attributes=["sales_orders.outstanding"], mcp_response=REPORT_HIT, **kw,
+        attributes=["sales_orders.outstanding", "sales_orders.sales_report"], mcp_response=REPORT_HIT, **kw,
     )
     return _scope_events(session_factory, result)
 

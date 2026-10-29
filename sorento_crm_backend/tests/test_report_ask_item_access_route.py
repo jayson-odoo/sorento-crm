@@ -1,9 +1,7 @@
-"""RED tests - REPORT-SMART-L R1 security: item and category rankings on the report-ask route.
-
-Top selling refuses a granted contact that is neither staff nor linked to a customer (403
-`customer_not_permitted`). The report ask must refuse a granted live salesperson the same way when
-they do not ask for their own book (`mine` None / False), for `group_by` product and category,
-whether their agent link has customers or an empty book. With `mine` true they get their book only;
+"""REPORT-SMART-L R1 on the report-ask route, retired by owner 28 Oct 10:15 ("see everything for those people with no
+linked customer, simple as that"): a contact with no linked customer that may ask at all (a reveal, or a live
+salesperson) gets item and category rankings over ALL, whether or not it is staff. A linked contact stays on its
+customers. With `mine` true a salesperson gets their book only;
 staff with the switch see every customer; an ungranted salesperson with `mine` true gets their book
 (ruling 2). Postgres only; every row seeded here (generic names). Beside
 `tests/test_report_ask_my_sales_route.py`, whose world and helpers are reused.
@@ -40,27 +38,22 @@ def _empty_book_salesperson(db):
     return contact
 
 
-def _refused_not_permitted(resp) -> None:
-    assert resp.status_code == 403, resp.text
-    body = resp.json()
-    assert body.get("code") == "customer_not_permitted", body
-    assert not body.get("rows"), body
-
-
 @pytest.mark.parametrize("mine", [None, False])
 @pytest.mark.parametrize("group_by", ITEM_AXES)
-def test_r1_sec_a_granted_salesperson_with_a_book_is_refused_items_without_my(client, db, group_by, mine) -> None:
+def test_r1_sec_a_granted_salesperson_with_a_book_sees_all_items_without_my(client, db, group_by, mine) -> None:
+    """Owner 28 Oct 10:15: R1 retires for a contact with no linked customer."""
     w = _world(db)
     contact = _salesperson(db, w, granted=True)
-    _refused_not_permitted(_ask(client, contact, group_by=group_by, top_n=10, mine=mine))
+    assert _total(_ok(client, contact, group_by=group_by, top_n=10, mine=mine)) == ALL_TOTAL
 
 
 @pytest.mark.parametrize("mine", [None, False])
 @pytest.mark.parametrize("group_by", ITEM_AXES)
-def test_r1_sec_a_granted_salesperson_with_an_empty_book_is_refused_items_without_my(client, db, group_by, mine) -> None:
+def test_r1_sec_a_granted_salesperson_with_an_empty_book_sees_all_items_without_my(client, db, group_by, mine) -> None:
+    """Owner 28 Oct 10:15."""
     _world(db)
     contact = _empty_book_salesperson(db)
-    _refused_not_permitted(_ask(client, contact, group_by=group_by, top_n=10, mine=mine))
+    assert _total(_ok(client, contact, group_by=group_by, top_n=10, mine=mine)) == ALL_TOTAL
 
 
 @pytest.mark.parametrize("group_by", ITEM_AXES)

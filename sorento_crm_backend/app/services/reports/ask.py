@@ -17,14 +17,22 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.reports.datasets import billing_document_lines, chat_asks, chat_report_ask, sales_order_lines_ask
+from app.services.reports import spec_set
+from app.services.reports.datasets import (
+    billing_document_lines,
+    chat_asks,
+    chat_report_ask,
+    delivery_order_lines,
+    sales_order_lines_ask,
+    unpaid_documents,
+)
 from app.services.sales_report_delivered import _CHANNEL_CLASS, resolve_locations
 from app.services.sales_report_service import _money_edge, _qty
 
 #: The words a caller may group by and filter by. Every word is named the same as the column or
 #: param key behind it, so one list each serves every basis (a word that differs from its key
 #: earns a mapping then).
-DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month")
+DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month", "year")
 FILTERS = ("customer", "product", "brand", "category", "sales_agent", "customer_agent", "location", "channel")
 
 #: The datasets a caller may ask over; the first is the default (a call naming none is sales).
@@ -54,7 +62,7 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
             basis: {
                 "definition": sales_order_lines_ask.DEFINITIONS[basis],
                 "label": label,
-                "dimensions": DIMENSIONS,
+                "dimensions": (*DIMENSIONS, "sales_order") if basis == "outstanding" else DIMENSIONS,
                 "filters": FILTERS,
             }
             for basis, label in (
@@ -62,6 +70,19 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
                 ("ordered", "ordered sales"),
                 ("outstanding", "outstanding orders"),
             )
+        },
+        # REPORT-UNIFY: delivery order lines of DOs not yet delivered, and unpaid invoices (per document).
+        "pending_delivery": {
+            "definition": delivery_order_lines.PENDING_DEFINITION,
+            "label": "pending delivery",
+            "dimensions": DIMENSIONS,
+            "filters": FILTERS,
+        },
+        "unpaid": {
+            "definition": unpaid_documents.DEFINITION,
+            "label": "unpaid invoices",
+            "dimensions": ("customer", "sales_agent", "month", "year"),
+            "filters": ("customer", "sales_agent", "customer_agent"),
         },
     },
     "chat": {
@@ -75,8 +96,15 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
+#: The bases a caller may leave the period off (REPORT-UNIFY: absent = every date); both dates or neither.
+OPEN_BASES = frozenset({"outstanding", "pending_delivery", "unpaid"})
+#: The filter words a document-level basis (`unpaid`) cannot apply: a document has no product, place or channel.
+PER_DOCUMENT_FILTERS = ("product", "brand", "category", "spec", "location", "channel")
+#: `group_by=spec:<key>`: the prefix of a ranking by a product spec's value.
+SPEC_GROUP = "spec:"
+
 #: What a customer-scoped contact (a dealer) may group or filter by (PLAN section 0, Q1/Q2).
-DEALER_KEYS = frozenset({"product", "brand", "category", "month"})
+DEALER_KEYS = frozenset({"product", "brand", "category", "month", "year", "sales_order"})
 CHAT_DEALER_KEYS = frozenset({"topic", "subject", "product", "month"})
 
 GROUP_LABELS = {
@@ -88,6 +116,8 @@ GROUP_LABELS = {
     "location": "Location",
     "channel": "Channel",
     "month": "Month",
+    "year": "Year",
+    "sales_order": "Sales order",
 }
 
 CHAT_GROUP_LABELS = {
@@ -117,7 +147,7 @@ CHAT_ITEM_AXES = frozenset({"product", "category", "brand"})
 
 #: The filter words' labels, as the route echoes them: the dimensions' own, plus the customer
 #: card link a drill down uses (REPORT-DRILLDOWN, owner 8 Oct 2026), named so the reply says it.
-FILTER_LABELS = {**GROUP_LABELS, "customer_agent": "Customers assigned to"}
+FILTER_LABELS = {**GROUP_LABELS, "customer_agent": "Customers assigned to", "spec": "Specification", "company": "Company"}
 
 NO_AGENT_KEY = sales_order_lines_ask.NO_AGENT_KEY
 
@@ -279,17 +309,19 @@ def run_ask(
             values = [_CHANNEL_CLASS[v] for v in values]
         params[word] = list(values)
 
-    location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
-    if refusal is not None:
-        return _empty("refused", refusal)
-    if nothing:
-        return _empty()
-    if location_ids is not None:
-        params["location"] = location_ids
+    if "location" in entry["filters"]:  # a document-level basis has no location to cap
+        location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
+        if refusal is not None:
+            return _empty("refused", refusal)
+        if nothing:
+            return _empty()
+        if location_ids is not None:
+            params["location"] = location_ids
 
     # The engine refuses rows == cols, so the one-total shape groups by month and reads the
     # grand total only.
-    rows_key = group_by or "month"
+    by_spec = bool(group_by) and group_by.startswith(SPEC_GROUP)
+    rows_key = "product" if by_spec else (group_by or "month")
     counted = measure in COUNT_MEASURES
     view = ReportViewConfig.model_validate(
         {
@@ -318,6 +350,11 @@ def run_ask(
             continue
         name = _CHANNEL_NAMES.get(value, value) if group_by == "channel" else value
         ranked.append((name, qty, amount, Decimal(totals.get(measure) or 0) if counted else Decimal(0)))
+
+    if by_spec:
+        # A product ranking folded to the value each product holds (a count measure is refused by the route).
+        ids = _row_keys(db, "product", [r[0] for r in ranked], company_grants)
+        ranked = spec_set.fold_by_key(db, group_by[len(SPEC_GROUP):], ranked, ids)
 
     sign = -1 if sort == "desc" else 1
     order = {"amount": (2, 1), "qty": (1, 2)}.get(measure, (3, 2))

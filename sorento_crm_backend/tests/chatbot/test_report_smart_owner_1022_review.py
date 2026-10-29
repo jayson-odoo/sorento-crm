@@ -130,7 +130,8 @@ def _sales_report_turn(session_factory, monkeypatch, token: str, matches: list[t
         token=token, matches=[{"entity_type": "product", "canonical_code": c, "uuid": u} for c, u in matches])
     return _run_turn(
         session_factory, monkeypatch,
-        qf=_parser_output(domain_hint="order", intent_hint="check_order", order_status="sales_report", entities=[
+        qf=_parser_output(domain_hint="order", intent_hint="check_order", order_status="sales_report", basis="delivered", date_filter_start="2026-09-01",
+        date_filter_end="2026-09-30", entities=[
             {"raw": token, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}]),
         text_body=body, msg_id=msg_id, attributes=["sales_orders.sales_report"], resolve_services=services,
         mcp_response=SALES_REPORT_HIT,
@@ -141,7 +142,7 @@ def _sales_report_turn(session_factory, monkeypatch, token: str, matches: list[t
 def test_4_a_mixed_code_set_on_the_sales_report_path_asks_which_product(session_factory, monkeypatch, body) -> None:
     result, captured = _sales_report_turn(session_factory, monkeypatch, "ZQ6635", MIXED, body, f"zzt-rev4-{abs(hash(body))}")
     reply = (result.reply or {}).get("text") or ""
-    sent = [a for name, a in captured if name == "crm_sales_report"]
+    sent = [a for name, a in captured if name == "crm_report_ask"]  # the sales report is the report ask now
     assert not sent, ("ran on one unrelated code", [a.get("product_code") for a in sent])
     assert "?" in reply or "1." in reply, reply
     assert sum(code in reply for code, _u in MIXED) != 1, reply
@@ -150,7 +151,7 @@ def test_4_a_mixed_code_set_on_the_sales_report_path_asks_which_product(session_
 def test_4_near_miss_a_shared_prefix_family_still_sends_the_prefix(session_factory, monkeypatch) -> None:
     family = [("ZYQ7001-A", "44444444-4444-4444-8444-444444444441"), ("ZYQ7001-B", "44444444-4444-4444-8444-444444444442")]
     _result, captured = _sales_report_turn(session_factory, monkeypatch, "ZYQ7001", family, "sales report for ZYQ7001", "zzt-rev4-fam")
-    sent = [a for name, a in captured if name == "crm_sales_report"]
+    sent = [a for name, a in captured if name == "crm_report_ask"]
     assert sent and str(sent[0].get("product_code") or "").startswith("ZYQ7001"), captured
 
 

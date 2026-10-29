@@ -12,7 +12,8 @@ from tests.chatbot.test_engine import _parser_output, stub_access  # noqa: F401
 from tests.chatbot.test_one_ranking_r5_axis_refine import YEAR_2026, _ran
 from tests.chatbot.test_report_ask_lane import PRODUCT_CODE, SEP, TOOL, _e, _names, _say_all, console  # noqa: F401
 
-SALES_REPORT_TOOL = "crm_sales_report"
+#: REPORT-UNIFY (Q1): the total is the report ask too (no axis); its basis is typed in the message, never defaulted.
+SALES_REPORT_TOOL = TOOL
 HOW_MANY = "How many? For example top 5."
 PERIOD_Q = "Which period?"
 BASIS_Q = "Invoiced, delivered, ordered or outstanding?"
@@ -35,7 +36,7 @@ def _row1(**over: Any) -> dict[str, Any]:
     """'Top sales for <product> in 2026': v63 reads the sales report total (`crm_sales_report`)."""
     base: dict[str, Any] = dict(
         order_status="sales_report", entities=[_e(PRODUCT_CODE, "product")], entity_op="replace_combine",
-        domain_in_message=True, **YEAR_2026,
+        domain_in_message=True, basis="delivered", **YEAR_2026,
     )
     base.update(over)
     return _v63(**base)
@@ -52,8 +53,9 @@ def _row2(**over: Any) -> dict[str, Any]:
 
 
 def _row3(**over: Any) -> dict[str, Any]:
-    """'by salesppl': a sales agent ranking flagged fresh, nothing else read, reuse."""
-    base: dict[str, Any] = dict(group_by="sales_agent", ranking_refine=False)
+    """'by salesppl': a sales agent ranking flagged fresh, nothing else read, reuse. `rank_direction` is the parser's
+    ranking mark: a group_by with none of rank_direction / top_n / rank_by is a breakdown, never asked "How many?"."""
+    base: dict[str, Any] = dict(group_by="sales_agent", ranking_refine=False, rank_direction="top")
     base.update(over)
     return _v63(**base)
 
@@ -66,7 +68,7 @@ def _top5(**over: Any) -> dict[str, Any]:
 
 def _total(console, monkeypatch, **over: Any) -> None:
     text, log = _say_all(console, monkeypatch, _row1(**over), f"Top sales for {PRODUCT_CODE} in 2026")
-    assert SALES_REPORT_TOOL in _names(log) and TOOL not in _names(log), ("setup", text, log)
+    assert _names(log) == [TOOL] and not log[0][1].get("group_by"), ("setup", text, log)
 
 
 def _runs_with_all_four(log, group_by: str) -> dict[str, Any]:
@@ -79,7 +81,7 @@ def _runs_with_all_four(log, group_by: str) -> dict[str, Any]:
     return args
 
 
-def test_r8_0_the_total_is_still_the_sales_report_tool(console, monkeypatch) -> None:
+def test_r8_0_the_total_is_the_report_ask_without_an_axis(console, monkeypatch) -> None:
     _total(console, monkeypatch)
 
 
@@ -114,10 +116,12 @@ def test_r8_3_a_ranking_right_after_the_total_never_asks_the_period(console, mon
 # ------------------------------------------------ guards: the carry is off for a genuinely new ask
 
 
-def test_r8_guard_a_reply_naming_its_own_value_asks_the_period_as_today(console, monkeypatch) -> None:
+def test_r8_a_refine_flagged_reply_keeps_the_held_total_whatever_its_entity_op(console, monkeypatch) -> None:
+    """REPORT-UNIFY: the total is a held report-ask frame, so the parser's refine flag keeps it (only a `new_subject` op
+    restarts: the next test); a total that ran on the retired sales report tool asked the period again."""
     _total(console, monkeypatch)
     text, log = _say_all(console, monkeypatch, _row2(entity_op="replace_combine"), "qty, delivered")
-    assert _ran(log) == [] and PERIOD_Q in text, (text, log)
+    assert _ran(log) == [] and text == HOW_MANY, (text, log)
 
 
 def test_r8_guard_a_new_subject_op_asks_the_period_as_today(console, monkeypatch) -> None:
@@ -164,16 +168,6 @@ def test_r8_guard_an_order_list_window_is_never_lent_to_a_ranking(console, monke
     )
     assert TOOL not in _names(log) and SALES_REPORT_TOOL not in _names(log), ("setup", text, log)
     text, log = _say_all(console, monkeypatch, _row2(), "qty, delivered")
-    assert _ran(log) == [] and PERIOD_Q in text, (text, log)
-
-
-def test_r8_guard_a_held_ranking_frame_keeps_today_s_rules(console, monkeypatch) -> None:
-    """A total that ran on the report engine is a held frame: its own rules decide, as today."""
-    total = _v63(order_status="sales_ranking", ranking_refine=False, entities=[_e(PRODUCT_CODE, "product")],
-                 entity_op="replace_combine", measure="qty", basis="delivered", domain_in_message=True, **YEAR_2026)
-    text, log = _say_all(console, monkeypatch, total, f"total qty of {PRODUCT_CODE} in 2026 delivered")
-    assert len(_ran(log)) == 1, ("setup", text, log)
-    text, log = _say_all(console, monkeypatch, _row3(group_by="customer"), "by customer")
     assert _ran(log) == [] and PERIOD_Q in text, (text, log)
 
 

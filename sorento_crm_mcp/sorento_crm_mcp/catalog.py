@@ -670,7 +670,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         # DO-ASK-SIMPLIFY rule 2 (owner, 2 Oct 2026): the DO list's logistics fields are
         # per-contact reveals, gated by `output_structurer` off `_orders_list`'s restrict.
         restricted_fields=(
-            ("sales_orders.outstanding", "Sales order outstanding"),
+            ("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)"),
             ("delivery_orders.status", "DO status"),
             ("delivery_orders.pickup_time", "DO pickup time"),
             ("delivery_orders.transporter", "DO transporter"),
@@ -728,7 +728,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         # `crm_order_management_orders_list` above - see its own comment. DO-ASK-SIMPLIFY
         # (owner hand test 3 Oct 2026): the DO fields this list prints are reveals too.
         restricted_fields=(
-            ("sales_orders.outstanding", "Sales order outstanding"),
+            ("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)"),
             ("delivery_orders.order_number", "DO order number"),
             ("delivery_orders.customer", "DO customer"),
             ("delivery_orders.order_date", "DO order date"),
@@ -800,14 +800,14 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"),
         escalation_team="sales",
-        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
+        restricted_fields=(("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)"),),
     ),
     ToolSpec(
         "crm_sales_report",
         (
             "DELIVERED SALES REPORT: delivered sales (delivery orders, by DO date) for a customer, "
             "a product, or both. Delivered, not invoiced: invoiced sales (the CRM's sales figure) are "
-            "crm_sales_analysis, crm_report_ask basis invoiced and crm_top_selling_report. "
+            "crm_sales_analysis and crm_report_ask basis invoiced. "
             "Returns `total` {qty, amount}, `periods[]` latest first (`grain` day when the window "
             "is at most 7 days, week Monday to Sunday when at most 31, else month; only periods "
             "with a delivery), and `options[]`, the drill-downs the reply offers. A legacy DO "
@@ -928,16 +928,17 @@ CATALOG: tuple[ToolSpec, ...] = (
             "printed), `total_count` (every ranked row) and `total` {qty, amount} over the WHOLE "
             "set, the resolved period, `basis` and the applied `filters` by name "
             "(`view=render` prints it).\n\n"
-            "REQUIRED: `date_from` and `date_to` (ISO dates; 422 `period_required` otherwise - "
-            "ask the person which period, never guess one) and `contact_id` + `space_id`. "
+            "REQUIRED: `contact_id` + `space_id`; and for the sales bases `date_from` and `date_to` (ISO dates; 422 `period_required` otherwise - "
+            "ask the person which period, never guess one). Outstanding, pending_delivery and unpaid may leave both off = every date. "
             "`group_by` = customer | product | brand | category | sales_agent | location | "
-            "channel | month; absent = ONE total. With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
+            "channel | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only); absent = ONE total. With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
             "(422 `top_n_required`): the number the person named, or ask. `sort` desc (top, "
             "default) | asc (bottom). `measure` amount (RM) | qty | customers | orders | "
             "products (what the ranking sorts by), the last three COUNT distinct customers, orders "
             "or products with a sale ('how many dealers sell product Y'); ask the person which measure when they did not say, as for top_n. `basis` "
-            "invoiced | delivered | ordered | outstanding; ask the person which basis when they did not say "
-            "(the bot asks 'Invoiced, delivered, ordered or outstanding?'). "
+            "invoiced | delivered | ordered | outstanding | pending_delivery (delivery order lines not yet delivered) | unpaid "
+            "(RM still owed on posted invoices; group by customer, sales_agent or month only; product, brand, category, spec, location and channel come back under `not_applied`); ask the person which basis when they did not say "
+            "(the bot asks 'Invoiced, delivered, ordered or outstanding?', and for an outstanding ask 'Undelivered orders, pending delivery or unpaid invoices?'). "
             "`compare_to` previous_period (the same number of days just before) | last_year (the "
             "same dates a year earlier), only when the person asks to compare, never with group_by month: every row and the "
             "total then carry `prev` and `change_pct` on the sort measure. "
@@ -956,11 +957,17 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`category_ids`, `sales_agent_ids`, `customer_ids` (repeated or csv UUIDs), "
             "`customer_agent_ids` (customers whose assigned agent on the customer card is one "
             "of these; `none` in either agent list = no agent), "
+            "`spec` (repeatable `key:value`, e.g. `trap_type:p_trap`; the same key = any of, different keys = all of; "
+            "a spec that cannot narrow comes back under `not_applied`, no match is `status: no_products`), "
             "`warehouse_codes` (exact codes; a location outside the contact's visibility "
             "answers `status: refused`), `channel` dealer | project. OMIT a filter you do not "
             "use: an empty value is 422 `empty_filter` (it never reads as 'no filter'), and an "
             "id naming nothing is 404.\n\n"
-            "ACCESS: the contact needs the Sales report reveal (403 `sales_report_not_enabled`). "
+            "`company` (a company name, code or id) narrows a contact in several companies to that one (403 "
+            "`COMPANY_FORBIDDEN` if it is not theirs); ask 'Sorento or Mocha?' when they named none and no product or "
+            "customer.\n\n"
+            "ACCESS: the contact needs the Sales report reveal (403 `sales_report_not_enabled`); the outstanding, "
+            "pending_delivery and unpaid bases need the Outstanding reveal instead (403 `outstanding_not_enabled`). "
             "A customer-linked dealer sees only its own customers' sales and may group or "
             "filter by product, brand, category and month ONLY; anything else is 403 "
             "`report_dimension_not_allowed` - say 'That breakdown is not available for your "
@@ -989,71 +996,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort",
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
-            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine",
-        ),
-        domain="orders",
-        related_tools=("crm_sales_report", "crm_top_selling_report"),
-        escalation_team="sales",
-        restricted_fields=(
-            ("sales_orders.sales_report", "Sales report"),
-            ("chatbot.analytics", "Chat analytics"),
-        ),
-    ),
-    ToolSpec(
-        "crm_top_selling_report",
-        (
-            "Top selling ITEMS (or CATEGORIES) over a date window, ranked by quantity or by "
-            "amount. Basis invoiced (the default) is SALES: billing document lines, invoices + cash "
-            "sales + debit notes - credit notes (credit notes negative), excluding tax, by document "
-            "date, the Top selling items report's own figures. Delivered and ordered read "
-            "sales_order_lines with the same exclusions and bucket date as crm_sales_report. "
-            "Returns `rows[]` (rank, code, quantity, amount - code alone, "
-            "no name, owner ruling 26 Sep), "
-            "`total_count` (every ranked row, always the full count), `totals` over the whole "
-            "set, the resolved `date_from`/`date_to`, `basis`, the applied `filters`, and "
-            "`sales_agent_fill_rate` when a sales agent filter was used.\n\n"
-            "`rank_by` - quantity | amount, REQUIRED (422 `rank_by_required`): never guess, ask "
-            "the customer which one. `basis` - invoiced (default: sales as above) | delivered "
-            "(transferred to DO, capped at ordered) | ordered. On invoiced, `group=category` (422 "
-            "`group_needs_order_basis`), `customer_query` (422 `customer_query_needs_order_basis`) "
-            "and `detail_code` (422 `detail_code_needs_order_basis`) are refused: use "
-            "`customer_ids`, or basis delivered / ordered. `group` - item (default) | category (rank categories). `n` - how "
-            "many rows, 1 to 1000 (a safety ceiling, not a product limit: 200 is fine), exactly "
-            "the number the customer named (no paging, no 'more'). "
-            "When the customer named no number, send `count_only=true`: it returns the full "
-            "`total_count` and NO rows (a single ranked row is still returned), so you can say "
-            "the count and ask how many; never omit `n` to pull every row.\n\n"
-            "FILTERS (all optional, ANDed): `customer_ids` (csv/JSON/repeated UUIDs), "
-            "`customer_query` (partial customer NAME, min 3 chars), `category_ids`, "
-            "`sales_agent_ids` (delivered/ordered: sales_orders.sales_agent_id; invoiced: the document's "
-            "agent, or the customer's where the company says so), `brand_ids` (products.brand_id), "
-            "`channel` dealer | project (invoiced also: other, set_apart, mixed, type_not_set, "
-            "no_sales_order), "
-            "`date_from`/`date_to` on the document date (invoiced) or the bucket date "
-            "(required_date, else order_date); both omitted = the current calendar year.\n\n"
-            "DIRECTION: `direction` top (default, most sold first) | bottom (least sold first, "
-            "for 'cold selling', 'least sold'). Only items with a sale in the window are ranked "
-            "either way.\n\n"
-            "DETAIL: `detail_code` = one row's code (a product code, or a category code under "
-            "group=category) answers the detail offer: `rows`/`totals` narrow to that code and "
-            "`detail` carries its `by_customer` and `by_month`, same filters and basis.\n\n"
-            "ACCESS: pass `contact_id` + `space_id` (both or neither). The contact needs the "
-            "Sales report reveal (403 `sales_report_not_enabled`). A contact holding any active "
-            "office access type is staff and sees every customer, whatever else it holds. "
-            "Otherwise a contact linked to customers is forced to them and naming another is "
-            "403 `customer_not_permitted`, the same 403 any other contact gets."
-        ),
-        "/api/v1/order-management/top-selling",
-        (),
-        (
-            "rank_by", "basis", "group", "n", "customer_ids", "customer_query",
-            "category_ids", "sales_agent_ids", "brand_ids", "channel", "date_from", "date_to",
-            "contact_id", "space_id", "detail_code", "count_only", "direction",
+            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec", "company",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),
         escalation_team="sales",
-        restricted_fields=(("sales_orders.sales_report", "Sales report"),),
+        restricted_fields=(
+            ("sales_orders.sales_report", "Sales report"),
+            ("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)"),
+            ("chatbot.analytics", "Chat analytics"),
+        ),
     ),
     ToolSpec(
         "crm_sales_analysis",

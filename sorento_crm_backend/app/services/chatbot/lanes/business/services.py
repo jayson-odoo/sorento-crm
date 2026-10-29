@@ -719,11 +719,16 @@ def resolve_sales_agent_token(db: Session, token: str) -> list[tuple[str, str]]:
     word = _norm(token)
     if not word:
         return []
-    rows = (
-        db.query(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label, SalesAgent.aliases)
-        .order_by(SalesAgent.sales_agent)
-        .all()
-    )
+    from app.models.base import get_company_scope
+    from app.services.scm.sales_agent_service import scope_filter
+
+    query = db.query(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label, SalesAgent.aliases)
+    # Only the contact's own companies' agents and the shared ones (`company_id IS NULL`): an agent of another company
+    # is never a match, so never a pick line (security review S3).
+    predicate = scope_filter(get_company_scope(db))
+    if predicate is not None:
+        query = query.filter(predicate)
+    rows = query.order_by(SalesAgent.sales_agent).all()
     exact = [(str(r[0]), r[1]) for r in rows if word in (_norm(r[1]), _norm(r[2]))]
     if exact:
         return exact

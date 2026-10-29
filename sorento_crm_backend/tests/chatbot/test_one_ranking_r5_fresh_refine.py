@@ -42,7 +42,7 @@ def test_r7_b_guard_a_refine_naming_no_axis_with_nothing_held_still_asks(console
     assert [a for n, a in log if n == TOOL] == [] and "Which period?" in text, (text, log)
 
 
-def test_r13_c_guard_an_ungranted_salesperson_is_refused_items_first(console_no_grant, monkeypatch) -> None:
+def test_r13_c_an_ungranted_salesperson_is_asked_what_is_missing_for_items_not_refused(console_no_grant, monkeypatch) -> None:
     _make_salesperson(console_no_grant)
     for self_reference in (None, False):
         qf = _parser_output(
@@ -50,5 +50,6 @@ def test_r13_c_guard_an_ungranted_salesperson_is_refused_items_first(console_no_
             rank_group="item", rank_direction="top", top_n=10, measure=None, basis=None, rank_by=None,
             self_reference=self_reference, entities=[], domain_in_message=True, state_changes=list(KEEP), **YEAR_2026)
         text, log = _say_all(console_no_grant, monkeypatch, qf, "top 10 selling items this year")
-        assert text.strip() == NOT_ENABLED and "?" not in text, (self_reference, text)
+        # Owner 28 Oct 10:15: no linked customer sees everything, so it is asked like staff, never refused first.
+        assert text.strip() != NOT_ENABLED and "?" in text, (self_reference, text)
         assert [n for n, _a in log if n == TOOL] == [], log
