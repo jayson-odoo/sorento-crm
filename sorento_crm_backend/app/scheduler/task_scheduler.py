@@ -185,7 +185,7 @@ def _handler_notification_delivery_processor(db, task):
 def _handler_lookup_words_sync(db, task):
     """Hand the lookup-word sync to the worker (it can embed thousands of texts; the scheduler must not)."""
     from app.services.queue_service import enqueue_job
-    from app.tasks.embedding_backfill import embed_missing_lookup_words
+    from app.tasks.chat_turns import embed_missing_lookup_words
 
     job = enqueue_job(embed_missing_lookup_words, queue_name="imports")
     return {"queued": True, "job_id": getattr(job, "id", None)}

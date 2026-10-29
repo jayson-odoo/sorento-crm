@@ -940,7 +940,7 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
         deadline (chunks are kept as they complete; a rate-limited chunk is waited out, `WARM_RETRY_WAITS`, then the
         error is re-raised), and written back so the next process loads them. Returns how many vectors came from
         the store."""
-        from app.services import lookup_word_store
+        from app.services.chatbot.head import lookup_word_store
 
         loaded = 0
         try:
