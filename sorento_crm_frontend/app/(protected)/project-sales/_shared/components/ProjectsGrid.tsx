@@ -98,11 +98,10 @@ export function ProjectsGrid({
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         size: 120,
         meta: { headerTitle: 'Code' },
+        // No underline here or on Project (owner, 29 Oct): the whole row is the link, as on the
+        // Orders list.
         cell: ({ row }) => (
-          <Link
-            href={`/project-sales/${row.original.id}`}
-            className="hover:underline"
-          >
+          <Link href={`/project-sales/${row.original.id}`}>
             {row.original.approval_state === 'draft' && !row.original.project_code ? (
               <ApprovalStatePill state="draft" />
             ) : (
@@ -119,7 +118,7 @@ export function ProjectsGrid({
         cell: ({ row }) => (
           <Link
             href={`/project-sales/${row.original.id}`}
-            className="block truncate hover:underline"
+            className="block truncate"
             title={row.original.title}
           >
             {row.original.title}
