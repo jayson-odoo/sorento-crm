@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../types/project.types';
 
@@ -73,6 +73,7 @@ type Call = { url: string; method: string; body: unknown; form: FormData | null 
 const calls: Call[] = [];
 let clashAnswer: (body: { developer_party_id?: string | null }) => unknown;
 let aiAnswer: unknown;
+let denyTypeConfig = false;
 
 const PARTIES = [
   { id: 'd1', party_type: 'developer', name: 'SP Setia CONTOH', is_active: true },
@@ -137,8 +138,11 @@ vi.mock('@/lib/api', async (importOriginal) => {
         const b = call.body as { name: string; party_type: string };
         return json({ id: `new-${b.party_type}`, name: b.name, party_type: b.party_type, is_active: true });
       }
-      if (path.endsWith('/config/types')) return json({ data: [TYPE] });
-      if (path.endsWith('/config/templates')) return json({ data: [] });
+      if (path.endsWith('/config/types') || path.endsWith('/config/templates')) {
+        // The server answers 403 to a user without projects.types.view.
+        if (denyTypeConfig) return json({ detail: 'Forbidden' }, 403);
+        return path.endsWith('/config/types') ? json({ data: [TYPE] }) : json({ data: [] });
+      }
       if (path.endsWith('/project-sales/leads')) {
         return json({ data: [LEAD], pagination: { total: 1, page: 1, limit: 20 } });
       }
@@ -298,6 +302,7 @@ beforeEach(() => {
   granted = new Set(['projects.projects.edit', 'projects.projects.manage']);
   clashAnswer = () => ({ candidates: [], would_block: false });
   aiAnswer = {};
+  denyTypeConfig = false;
 });
 
 
@@ -380,10 +385,32 @@ describe('submit-only owner without projects.types.view (owner ruling a54716498:
 
   it('raises no error toast', async () => {
     granted = new Set(SUBMIT_ONLY);
+    denyTypeConfig = true;
     renderForm({ mode: 'edit', project: own() });
     await screen.findByRole('button', { name: 'Save changes' });
     await new Promise((r) => setTimeout(r, 50));
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('an AI extract fill does not change the type or template; the PUT keeps the project own ids', async () => {
+    granted = new Set(SUBMIT_ONLY);
+    denyTypeConfig = true;
+    aiAnswer = { project_type: { status: 'match', id: 'ty-other', name: 'Condo CONTOH' } };
+    renderForm({ mode: 'edit', project: own() });
+    fireEvent.click(await screen.findByRole('button', { name: 'AI extract' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'AI Extract' }));
+    await screen.findByTestId('ai-extract-review');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and prefill' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(callsTo('PUT', '/project-sales/projects/p1')).toHaveLength(1));
+    const body = callsTo('PUT', '/project-sales/projects/p1')[0].body as {
+      type_id?: string | null;
+      template_id?: string | null;
+    };
+    expect(body.type_id).toBe('ty2');
+    expect(body.template_id).toBe('tpl-1');
   });
 
   it('pin: with projects.types.view the type select renders as today (green)', async () => {
