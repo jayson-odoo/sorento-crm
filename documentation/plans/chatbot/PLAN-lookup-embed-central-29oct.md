@@ -469,3 +469,27 @@ plus `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_li
   posts to an embeddings endpoint.
 - System settings API GET returns the 4 fields; PUT accepts provider, model, backfill rpm; it never changes
   `embedding_records_search_model` (only the guard does).
+
+### Slice 2 contract (keep set, product_spec, readers, indexes)
+
+- `app/services/embedding_settings.py`: `RECORD_KEEP_SET = frozenset({"attachment", "promotion", "certificate", "form",
+  "product_spec", "project"})`, `HOT_FILTERED_SOURCES = ("attachment", "product_spec")`.
+- Producers: the change listeners (`embedding_change_listener.py:378-401`) and every explicit enqueue site queue only
+  keep-set sources (order / spo / picking / customer / transporter / promotion_product / *_attachment links /
+  order_status / schema_doc / mcp_tool / conversation_frame stop); the worker marks a queue item of any other source
+  `skipped` without an embed call. Existing rows are never deleted.
+- `product_spec` is enqueued when a `product_specifications` row is inserted or its `rendered_text` changes to a
+  non-empty value (wire `enqueue_spec_embedding`, `product_spec_change_listener.py:103-131`).
+- Readers: `entity_resolver` source maps use `product_spec` where they used `product` and map the hit's `source_id`
+  (the product id) back to the product; no reader asks for a source outside `RECORD_KEEP_SET`; every reader filters
+  `model_name = records_search_model(db)` and embeds the question with that model through `embed_texts`.
+- `EmbeddingReadService.search_current` orders by `embedding <=> :q` (not by similarity DESC) and keeps every filter.
+- `app/services/embedding_indexes.py`: `index_names(model) -> dict` and `index_ddl(model) -> list[str]` giving, per
+  model, `CREATE INDEX CONCURRENTLY IF NOT EXISTS` for one keep-set partial HNSW index (`vector_cosine_ops`, `WHERE
+  model_name = '<m>' AND is_current AND source_type IN (<keep set>)`) and one per hot source (`... AND source_type =
+  '<s>'`). Reader SQL repeats the literal predicate so the planner matches the index. Migration
+  `lec_0002_embedding_indexes` (down_revision `lec_0001_embedding_setting`) runs `index_ddl('text-embedding-3-small')`
+  in an autocommit block.
+- Filtered reads to a source not in `HOT_FILTERED_SOURCES` run `SET LOCAL hnsw.iterative_scan = relaxed_order`.
+- `fuzzy_resolver`: a vector hit is added only at similarity >= `VECTOR_FLOOR_BY_MODEL[model]`
+  (`{"text-embedding-3-small": 0.55, "gemini-embedding-001": 0.70}`, the lookup floors of the same models).
