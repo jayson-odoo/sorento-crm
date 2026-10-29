@@ -80,9 +80,12 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
   // A refused row's links are gone; there is nothing to mark as anything.
   if (state === 'rejected') return null;
   if (state === 'acknowledged') {
-    const who = row.acknowledged_by_name ?? 'Purchasing';
     const when = row.acknowledged_at ? ` ${formatDateInMalaysia(row.acknowledged_at)}` : '';
-    const label = `Confirmed by ${who}${when}`;
+    // A row the system marked done has nobody's name on it.
+    const label =
+      row.acknowledged_by_name || row.ack_override
+        ? `Confirmed by ${row.acknowledged_by_name ?? 'Purchasing'}${when}`
+        : `Done${when}`;
     return (
       <span data-testid="link-confirmed-mark" title={label} aria-label={label}>
         <CircleCheck className="size-3.5 shrink-0 text-emerald-600" aria-hidden />
@@ -236,13 +239,16 @@ export function documentChipsOf(
   return [...chips.filter((chip) => !chip.deadReason), ...chips.filter((chip) => chip.deadReason)];
 }
 
-/** OI-AUTO-CONFIRM (AC-AC-10b): a reserve link is not a document; the PO cell prints it as
- * plain text, "Reserved @ BRW 3". */
-export function reserveTextOf(links: { kind?: string; document?: string | null; qty?: string | null }[] | null | undefined): string | null {
-  const texts = (links ?? [])
-    .filter((link) => link.kind === 'reserve')
-    .map((link) => [link.document, link.qty].filter(Boolean).join(' '));
-  return texts.length > 0 ? texts.join(', ') : null;
+/** OI-AUTO-CONFIRM (AC-AC-10b): a CS reserve is not a document link; the PO cell prints it as
+ * plain text, "Reserved @ BRW 3" (the row's `reserve_label` and `reserved_qty`). */
+export function reserveTextOfRows(
+  rows: { reserve_label?: string | null; reserved_qty?: string | null }[],
+): string | null {
+  const labelled = rows.filter((row) => row.reserve_label && Number(row.reserved_qty ?? 0) > 0);
+  if (labelled.length === 0) return null;
+  const total = labelled.reduce((sum, row) => sum + Number(row.reserved_qty ?? 0), 0);
+  const labels = [...new Set(labelled.map((row) => row.reserve_label as string))];
+  return `${labels.join(', ')} ${total}`;
 }
 
 export function ReserveText({ text }: { text: string }) {
@@ -387,7 +393,7 @@ function LinkSuggestionDialog({
  */
 /** The PO cell: the row's purchase documents and, beside them, a reserve ("Reserved @ BRW 3"). */
 function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
-  const reserve = kind === 'po' ? reserveTextOf(row.links) : null;
+  const reserve = kind === 'po' ? reserveTextOfRows([row]) : null;
   if (!reserve) return <PurchaseDocumentsCell row={row} kind={kind} />;
   if (documentsOf(row, kind).length === 0) return <ReserveText text={reserve} />;
   return (
@@ -1272,6 +1278,8 @@ export function useOrderInquiryWorklistColumns({
             }
           }
           if ((row.original.links ?? []).length === 0) {
+            const reserveOnly = reserveTextOfRows([row.original]);
+            if (reserveOnly) return <ReserveText text={reserveOnly} />;
             // Nothing in either book can cover this row (S5, AC-D4): a plain dash, the
             // same "no explanation in the UI" rule every other blank cell here follows -
             // "Not found (new order)" read as a caption nobody asked for. Nothing is

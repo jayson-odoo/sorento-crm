@@ -50,7 +50,6 @@ export const ACK_ANY = 'all';
 export const ACK_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: 'to_confirm', label: ACK_LABELS.awaiting },
   { value: 'acknowledged', label: ACK_LABELS.acknowledged },
-  { value: 'changed', label: 'Changed' },
   { value: 'rejected', label: ACK_LABELS.rejected },
   { value: ACK_ANY, label: 'All' },
 ];
@@ -69,14 +68,15 @@ const trimQty = (value: number): string =>
  * Confirm / Unconfirm decided it.
  */
 export function ackStatusText(
-  row: OrderInquiryAckFields & { qty?: string | number | null; links?: { qty?: string | number | null }[] | null },
+  row: OrderInquiryAckFields & { qty?: string | number | null; open_qty?: string | number | null },
 ): string {
   const state = ackStateOf(row);
   let text: string = ACK_LABELS[state];
   if (state === 'awaiting' || state === 'changed') {
+    // `open_qty` is the backend's own figure (qty less live cover less bundled).
     const need = Number(row.qty ?? 0);
-    const covered = (row.links ?? []).reduce((sum, link) => sum + Number(link.qty ?? 0), 0);
-    if (covered > 0 && need > covered) text += ` \u00b7 ${trimQty(need - covered)} left`;
+    const open = row.open_qty === null || row.open_qty === undefined ? null : Number(row.open_qty);
+    if (open !== null && open > 0 && open < need) text += ` \u00b7 ${trimQty(open)} left`;
   }
   if (row.ack_override) text += ' \u00b7 manual';
   return text;

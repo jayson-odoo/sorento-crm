@@ -307,6 +307,8 @@ export interface OrderInquiryAckFields {
   ack_override?: 'confirmed' | 'unconfirmed' | string | null;
   ack_override_at?: string | null;
   ack_override_by_name?: string | null;
+  /** What is still to order: qty less live cover less bundled, never below zero. */
+  open_qty?: string | number | null;
 }
 
 export interface OrderInquiryRow extends OrderInquiryAckFields {
@@ -595,6 +597,8 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   /** 3.4 (AC-RS-12): the sum of the row's reserve links - already included in
    * `taken_from_po`/`remaining_open`, both of which sum every link with no target filter. */
   reserved_qty?: string;
+  /** "Reserved @ <warehouse code>" when CS reserved stock for the row (not a document link). */
+  reserve_label?: string | null;
   /** Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): the OPEN reserve request row's
    * own `qty_requested` for this row - "0" when `reserve_state` is not `requested`.
    * The Lines grid's `Request to reserve N` pill and the tick's default stage both
