@@ -544,3 +544,36 @@ plus `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_li
   word not already on a row of its class / type is listed; `--apply` adds a category word to the `search_synonyms` of
   every active category of that class, a file type word as a keyword of that type's `attachment_type_alias` option
   (creating the option if missing). The 11 entries are a constant inside the script.
+
+### Slice 5 contract (API + screens)
+
+API, added to the existing router `app/api/v1/system/embeddings.py` (prefix `/api/v1/system/embeddings`; the existing
+`/metrics`, `/dead-letters`, `/rebuild`, `/backfill` stay). View = `master_data.lookup_sets.view`, edit =
+`master_data.lookup_sets.edit`:
+- `GET /overview` (view) -> `{setting: {provider, model, backfill_rpm}, records_search_model, lookup: {texts_total,
+  texts_with_vector}, records: [{source_type, documents, chunks_by_model: {<model>: n}}], guard: {target_model,
+  ready, remaining, failed}}` (records = the keep set only; guard numbers from `embedding_backfill_service`).
+- `GET /lookup-words?list=<name>` (view) -> `{list, rows: [{key, label, source, group, words: [{text, home,
+  has_vector}]}]}`, rows from `load_rows` under the request's company scope, `home` one of `label`, `code`, `class`,
+  `alias_column`, `alias_set`, `description`; `has_vector` for the setting's model. Lists: category, spec, file_type,
+  brand, promotion_kind, location, salesperson, customer, sales_channel. Unknown list -> 422.
+- `POST /try` (view) `{phrase}` -> `{verdict: resolved|ambiguous|unresolved, candidates: [{list, key, label, spelling:
+  {score, text, home}, vector: {score, text, home} | null, partial, floors: {spell, partial, meaning}, passed,
+  signal}]}`: the live span resolver (`list_resolver.resolve`, `_score_list`, `_meaning_scores`) over the same rows,
+  phrase embedded once with the setting's model; top 8 candidates.
+- `POST /embed-missing` (edit) -> 202 `{job_id}` enqueues `embed_missing_lookup_words`; `POST /records-backfill` (edit)
+  `{action: start|stop}` -> 202: start enqueues `run_records_backfill`, stop sets the stop flag the job's
+  `should_stop` reads (Redis key `lec:records_backfill:stop`).
+- Word provenance: `LookupRow` gains `homes: tuple[str, ...] | None` parallel to `texts`, filled by every loader.
+- Alias targets (AC-LEC-24): `app/services/lookup_alias_targets.py` `ALIAS_SET_TARGETS` maps `attachment_type_alias`
+  -> attachment types (value = type name), `brand_alias` -> brands (brand_code), `sales_channel_alias` -> the
+  `SALES_CHANNELS` values; `GET /api/v1/master-data/lookup-sets/{set_id}/alias-targets` -> `[{value, label}]` (404 for a
+  set that is not an alias set); options of an alias set carry `orphaned: bool` (value not among the targets).
+
+FE (vitest on touched components; layering UI -> hooks -> `services/embeddingsService.ts` -> api-client):
+- Page `app/(protected)/system-management/embeddings/page.tsx`, menu entry beside Lookup Sets (`config/menu.config.tsx`
+  ~:1131, permission `master_data.lookup_sets.view`), layout per mock v3 sections 1-6.
+- System Settings tab `app/(protected)/user-management/settings/embeddings/page.tsx` + tab entry in
+  `settings/layout.tsx` (~:306-361): provider / model SearchableSelect, backfill rpm, read-only coverage rows (mock §7).
+- Lookup set option dialog: for an alias set the value is a SearchableSelect over `alias-targets`; orphaned options
+  show a Badge.
