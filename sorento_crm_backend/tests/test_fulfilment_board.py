@@ -8222,3 +8222,40 @@ def test_a_board_group_offer_covers_a_line_the_group_can_actually_meet():
         assert fact.group_net == Decimal("0")
         assert fact.group_offer == Decimal("9")
         assert str(own.warehouse_code).endswith(fact.group_code or "")
+
+
+def test_a_contribution_names_its_fulfilment_location_name_for_the_tooltip():
+    """PLAN-SO-LOCATION Q2: the List view's Location column prints the code and gives the
+    warehouse NAME in its tooltip, so the payload carries the name beside the code - through
+    `response_model` too, which drops any field it does not declare."""
+    from app.schemas.project_board import BoardContribution
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        warehouse.warehouse_name = "Brickfields Warehouse"
+        db.flush()
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        assert contribution["fulfilment_location"] == warehouse.warehouse_code
+        assert contribution["fulfilment_location_name"] == "Brickfields Warehouse"
+        assert (
+            BoardContribution.model_validate(contribution).fulfilment_location_name
+            == "Brickfields Warehouse"
+        )
+
+
+def test_an_unplannable_line_has_no_fulfilment_location_name():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=None)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        assert contribution["fulfilment_location_name"] is None
