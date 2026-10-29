@@ -435,19 +435,22 @@ class TestNits:
         assert seen["actor"] == ("scheduler", "email_outbox_drainer")
 
     def test_n5_the_bulk_embedding_enqueue_carries_the_actor(self, db):
+        """The embedding job carries its audit actor (review N5). Changed seam (LOOKUP-EMBED-CENTRAL):
+        the product bulk publisher queues a `product` source, which left the keep set and now queues nothing,
+        so the same point is made through the event service with a keep-set source (`promotion`)."""
         from unittest.mock import MagicMock, patch
 
         from app.audit_context import AuditActor, actor_scope
         from app.services import queue_service
-        from app.services.product_service import ProductService
+        from app.services.embedding_service import EmbeddingEventService
 
         user_id = str(uuid.uuid4())
         fake_queue = MagicMock()
         with actor_scope(AuditActor(actor_type="user", user_id=user_id, real_user_id=user_id)), \
                 patch.object(queue_service, "get_queue", return_value=fake_queue), \
-                patch.object(db, "bulk_insert_mappings"), patch.object(db, "commit"):
-            ProductService(db)._bulk_publish_product_embedding_events(
-                [(str(uuid.uuid4()), "P-1", None, None)], user_id
+                patch.object(db, "commit"), patch.object(db, "refresh"):
+            EmbeddingEventService(db).queue_event(
+                source_type="promotion", source_id=str(uuid.uuid4()), event_type="promotion.updated"
             )
         (call,) = fake_queue.enqueue.call_args_list
         assert call.kwargs["meta"]["actor"]["user_id"] == user_id
