@@ -1,8 +1,9 @@
 # PLAN: LEAD-GOVERNS-REGISTER (29 Oct 2026)
 
-Status: Build - card answered 29 Oct (Q1 a, Q2 a, Q3 a, Q4 b, Q5 a); slice 1 (BE + RBAC) red tests in progress;
-screens wait for the mock v2 (owner notes: no debtor code; Firm question filed). Track: M + RBAC (Q4 b adds own-lead
-access for the submit-only salesperson, so security-reviewer runs). No migration. Branch `crew/lead-governs-register`.
+Status: Review - slices 1 (BE + RBAC) and 2 (screens) built and green (PR #1966, red/kill proofs posted); main merged
+25cafb9b0d; fix round in progress for the security review (own = owner only, own-only duplicate hints, E7-E9) and the
+reviewer (draft-path lead customer fill, Edit customer wipe, leadMissing guard, wizard assignee). Browser Part A PASS at
+1280/375 on d0c20bb090; C/D blocked on copy data. Track: M + RBAC. No migration.
 
 ## Owner ask (29 Oct ~09:3x, verbatim)
 
