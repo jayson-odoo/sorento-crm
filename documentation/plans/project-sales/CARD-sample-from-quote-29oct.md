@@ -1,6 +1,6 @@
 # CARD SAMPLE-FROM-QUOTE: a sample request starts from the project's quotation
 
-Status: card filed, waiting on owner answers and on #1953 (PORTAL-P4-REQUESTS) merging. Track: M lane
+Status: superseded by `PLAN-sample-from-quote-29oct.md` once the owner answered (30 Oct). Track: M lane
 (not small-fix: a new read endpoint on the portal surface, possibly a migration, see Q5).
 
 Source: owner team meeting 29 Oct 15:40 (Project Sales). A sample request pulls ALL items of the
