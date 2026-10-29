@@ -1,6 +1,6 @@
 # PLAN: STOCKDEBT-PERF - make the Stock Debt board fast without changing a number
 
-Status: Build. PR1 #1901 reviewer READY (waits ci); PR2 #1902 reviewer READY (stacked on #1901); PR3 (ids as text) in build on crew/stockdebt-perf-c. Owner approved A -> B -> C on 27 Oct; statement_timeout dropped.
+Status: Build. PR1 #1901 merged (7f8011bd35), PR2 #1902 merged (c55eb336d0), PR4 #1914 merged (944937efab, fix forward for #1897: PO-received read as one statement without parallel workers); PR3 #1906 (ids as text) in CI. Follow-up after release: transferred allocations read once per request; re-measure once the dev copy has main's schema. Owner approved A -> B -> C on 27 Oct; statement_timeout dropped.
 under ~300 lines, no migration, no auth change); lane is LEAD pattern (tester + coder + reviewer
 subagents). Page for the owner: `stockdebt-perf-27oct.html` beside this file.
 
