@@ -598,6 +598,8 @@ export function QuotationFormClient({
                       notes: body.notes,
                     })
                   }
+                  // A new scope this form already defaulted: an empty series was cleared on purpose.
+                  preselectSoleSeries={!seriesDefaulted.current.has(scope.key)}
                   onDone={() => setEditingScopeKey(null)}
                 />
               );

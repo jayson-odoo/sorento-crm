@@ -41,10 +41,16 @@ export function QuotationDialog({
   quotation,
   onDone,
   onSubmit,
+  preselectSoleSeries = true,
 }: {
   project: Project;
   quotation: ProjectQuotation | null;
   onDone: () => void;
+  /**
+   * False when the caller already gave this scope the sole series itself (the quotation form's
+   * new scopes): an empty series there was cleared on purpose and must not come back.
+   */
+  preselectSoleSeries?: boolean;
   /**
    * The quotation form page (#1341): the scope's name, series and notes are staged and saved
    * with the form, so the dialog hands them over instead of writing.
@@ -60,7 +66,7 @@ export function QuotationDialog({
 
   // Preselected once, when the list arrives, and only on a scope with none: clearing it sticks.
   const soleSeriesId = soleActiveSeriesId(series.data);
-  const seriesDefaulted = React.useRef(Boolean(quotation?.series_id));
+  const seriesDefaulted = React.useRef(Boolean(quotation?.series_id) || !preselectSoleSeries);
   React.useEffect(() => {
     if (seriesDefaulted.current || !series.data) return;
     seriesDefaulted.current = true;
