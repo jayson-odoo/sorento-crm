@@ -304,3 +304,54 @@ def test_a_dealer_keeps_the_location_refusal_on_the_sales_bases(client, db):
     db.commit()
     resp = _ask(client, contact, basis="ordered", warehouse_codes=[w.w1.warehouse_code])
     assert resp.status_code == 403, resp.text
+
+
+# ================================================================ item 7 (owner 29 Oct): the document lists as before #1922
+
+
+def test_the_delivery_order_list_is_one_row_per_do_latest_first_every_field(client, db):
+    """pC: DO1 (C1, 10 Sep, W2 2) and DO4 (C1, 15 Aug, W2 1). Latest first (R23), Delivered 0 by construction."""
+    w = _pending_world(db)
+    body = _ok(client, _staff(db), basis="pending_delivery", product_ids=[w.pc.id], group_by="delivery_order",
+               top_n=50, period=None)
+    docs = body["documents"]
+    assert [(d["customer_name"], d["product_code"], d["location"], d["do_qty"], d["delivered_qty"], d["pending_qty"],
+             d["do_date"]) for d in docs] == [
+        (w.c1.customer_name, w.pc.product_code, w.w2.warehouse_code, 2, 0, 2, "2026-09-10"),
+        (w.c1.customer_name, w.pc.product_code, w.w2.warehouse_code, 1, 0, 1, "2026-08-15"),
+    ], docs
+    assert all(d["do_number"] for d in docs), docs
+
+
+def test_a_do_with_two_lines_is_one_row_with_its_products_and_locations_joined(client, db):
+    """DO1 carries pA at W1 (3) and pC at W2 (2): one row, both codes, both locations, 5 outstanding."""
+    w = _pending_world(db)
+    body = _ok(client, _staff(db), basis="pending_delivery", customer_ids=[w.c1.id], group_by="delivery_order",
+               top_n=50, period=None)
+    sep = [d for d in body["documents"] if d["do_date"] == "2026-09-10"]
+    assert len(sep) == 1, body["documents"]
+    assert sep[0]["product_code"] == ", ".join(sorted([w.pa.product_code, w.pc.product_code])), sep
+    assert sep[0]["location"] == ", ".join(sorted([w.w1.warehouse_code, w.w2.warehouse_code])), sep
+    assert sep[0]["pending_qty"] == 5, sep
+
+
+def test_the_sales_order_list_is_one_row_per_so_with_ordered_transferred_and_outstanding(client, db):
+    cust = seed_customer(db, name=unique_code("CustL"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WL"))
+    p1 = make_product(db, unique_code("L1"))
+    seed_so_line(db, cust=cust, prod=p1, qty=10, delivered=4, total="1000.00", wh=wh, order_date=date(2026, 8, 5))
+    seed_so_line(db, cust=cust, prod=p1, qty=5, delivered=0, total="500.00", wh=wh, order_date=date(2026, 9, 20))
+    seed_so_line(db, cust=cust, prod=p1, qty=8, delivered=8, total="800.00", wh=wh, order_date=date(2026, 9, 25))
+    db.commit()
+    body = _ok(client, _staff(db), basis="outstanding", customer_ids=[cust.id], group_by="sales_order", top_n=50,
+               period=None)
+    docs = body["documents"]
+    assert [(d["ordered_qty"], d["transferred_qty"], d["outstanding_qty"], d["order_date"], d["location"]) for d in docs] == [
+        (5, 0, 5, "2026-09-20", wh.warehouse_code), (10, 4, 6, "2026-08-05", wh.warehouse_code),
+    ], docs  # the fully delivered SO is not outstanding
+
+
+def test_a_ranking_by_another_axis_carries_no_documents(client, db):
+    w = _pending_world(db)
+    body = _ok(client, _staff(db), basis="pending_delivery", group_by="customer", top_n=10, period=None)
+    assert body.get("documents") is None, body

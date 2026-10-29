@@ -193,3 +193,32 @@ def test_an_outstanding_total_with_no_subject_also_carries_the_header():
         "Product: all", "Customer: all", "Location: all", "Order date: all", "", "*Delivery order outstanding*",
         "Total 40 pcs, RM 1,234.00",
     ])
+
+
+def test_the_delivery_order_list_prints_the_pre_1922_rows():
+    """Item 7 (owner 29 Oct): the header, then one numbered block per DO with every field (`_outstanding_detail`)."""
+    body = _body("pending_delivery", "pending delivery", PRODUCT, None)
+    body.update(group_by="delivery_order", group_label="Delivery order", rows=[{"rank": 1, "name": "DO-1", "qty": 2, "amount": 1.0}],
+                documents=[{"do_number": "DO-1", "customer_name": "Customer A", "product_code": "SRT5733-WH",
+                            "location": "WH-A", "do_qty": 2, "delivered_qty": 0, "pending_qty": 2, "do_date": "2026-09-10"},
+                           {"do_number": "DO-0", "customer_name": None, "product_code": "SRT5733-WH",
+                            "location": None, "do_qty": 1, "delivered_qty": 0, "pending_qty": 1, "do_date": "2026-08-15"}])
+    assert _report_ask(body) == "\n".join([
+        "Product: SRT5733-WH", "Customer: all", "Location: all", "Order date: all", "",
+        "1. *DO Number:* DO-1", "*Customer:* Customer A", "*Product:* SRT5733-WH", "*Location:* WH-A",
+        "*DO Qty:* 2", "*Delivered:* 0", "*Outstanding:* 2", "*DO Date:* 10/09/2026", "",
+        "2. *DO Number:* DO-0", "*Customer:* Unassigned", "*Product:* SRT5733-WH", "*Location:* Unassigned",
+        "*DO Qty:* 1", "*Delivered:* 0", "*Outstanding:* 1", "*DO Date:* 15/08/2026",
+    ])
+
+
+def test_the_sales_order_list_prints_the_pre_1922_rows():
+    body = _body("outstanding", "outstanding orders", CUSTOMER, None)
+    body.update(group_by="sales_order", group_label="Sales order", rows=[{"rank": 1, "name": "SO-1", "qty": 6, "amount": 1.0}],
+                documents=[{"so_number": "SO-1", "customer_name": "Customer A", "product_code": "P-1", "location": "WH-A",
+                            "ordered_qty": 10, "transferred_qty": 4, "outstanding_qty": 6, "order_date": "2026-08-05"}])
+    assert _report_ask(body) == "\n".join([
+        "Product: all", "Customer: Customer A", "Location: all", "Order date: all", "",
+        "1. *SO Number:* SO-1", "*Customer:* Customer A", "*Product:* P-1", "*Location:* WH-A", "*Ordered:* 10",
+        "*Transferred to DO:* 4", "*Outstanding:* 6", "*Order Date:* 05/08/2026",
+    ])
