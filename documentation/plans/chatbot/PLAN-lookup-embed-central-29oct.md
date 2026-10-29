@@ -451,3 +451,21 @@ plus `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_li
 6. **Floors re-check** (AC-LEC-25): copy `scratchpad/tune/tune_floors.py` into `sorento_crm_backend/scripts/eval/`,
    add 30+ masked meaning-only phrases per main list (category, file type, brand, sales channel) as a fixture, embed
    only the new phrases (ledger line first, ~USD 0.0001), re-run, table in the PR body.
+
+### Slice 1 contract (names the tests and the code share)
+
+- Migration `sorento_crm_backend/alembic/versions/lec_0001_embedding_setting.py`, revision `lec_0001_embedding_setting`,
+  down_revision = main's head at build time (`unpaid_0001_chatbot_ar_role` on 98773e5aa9; re-parent before PR). Adds
+  nullable `system_settings.embedding_provider` varchar(32), `embedding_model` varchar(128),
+  `embedding_records_search_model` varchar(128) and `embedding_backfill_rpm` int default 20. Upgrade copies the
+  production label of prompt key `chatbot_lookup_embedder` (provider, model) into provider / model when such a label
+  exists, sets `embedding_records_search_model = 'text-embedding-3-small'`; idempotent; downgrade drops the 4 columns.
+- `app/services/embedding_settings.py`: `resolve_embedder(db) -> tuple[str, str]` (setting, else the label via
+  `ai_prompt_registry.agent_model(db, "chatbot_lookup_embedder")`, else `("openai", "text-embedding-3-small")`);
+  `records_search_model(db) -> str`.
+- `app/services/embedding_client.py`: `embed_texts(texts, provider, model, *, api_key=None) -> list[list[float]]`,
+  unit-normalised, 1536 dims (Gemini `outputDimensionality` 1536, `batchEmbedContents`, <= 100 texts per request;
+  OpenAI embeddings endpoint); raises `EmbeddingDimensionError` when a vector is not 1536 long. The only module that
+  posts to an embeddings endpoint.
+- System settings API GET returns the 4 fields; PUT accepts provider, model, backfill rpm; it never changes
+  `embedding_records_search_model` (only the guard does).
