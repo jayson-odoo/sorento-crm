@@ -264,7 +264,7 @@ def report_ask(
     ),
     mine: bool = Query(False, description="A salesperson's own customers only."),
     group_offset: Optional[int] = Query(
-        None, ge=0, description="An outstanding summary's page start: the first row of its long breakdown to show (a 'more')."
+        None, ge=0, description="An outstanding summary's or document list's page start: the first row to show (a 'more')."
     ),
     company: Optional[str] = Query(
         None, description="A company name, code or id; narrows the contact's own companies to that one (403 if not theirs)."
@@ -666,11 +666,17 @@ def report_ask(
         if group_offset is not None:
             data["summary"]["group_offset"] = group_offset  # item 6: the page a "more" asked for (the presenter cuts it)
     if basis_norm in ask.DOCUMENT_LISTS and group_norm == ask.DOCUMENT_LISTS[basis_norm]["column"] and data.get("status") == "ok":
-        # REPORT-OUTSTANDING-SUMMARY item 7 (owner 29 Oct): the document list as before #1922, every row.
-        data = {**data, "documents": ask.document_rows(
+        # REPORT-OUTSTANDING-SUMMARY item 7 (owner 29 Oct): the document list as before #1922, one 20-row page at a time
+        # (eval hard guard: no reply carries an unpaged list); `group_offset` is the page a "more" asked for.
+        docs = ask.document_rows(
             db, basis=basis_norm, filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
             date_from=date_from, date_to=date_to,
-        )}
+        )
+        start = group_offset or 0
+        data = {
+            **data, "documents": docs[start : start + ask.DOCUMENT_PAGE], "documents_total": len(docs),
+            "group_offset": start,
+        }
     if compare_norm is not None and data.get("status") == "ok":
         # REPORT-SMART-1021: the earlier window, every row (matched by name), one call.
         earlier_from, earlier_to = ask.compare_window(compare_norm, date_from, date_to)

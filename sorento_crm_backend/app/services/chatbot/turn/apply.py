@@ -1387,7 +1387,10 @@ def _answer_top_selling_pick(
         # its next page; the held ask re-runs at that offset and the list offer stays open.
         from app.services.chatbot.lanes.business.report_ask import MORE_PAGE
 
-        verdict["ranking_detail"] = {"group_by": MORE_PAGE, "offset": more}
+        key = focus.set_page.get("set_key") if isinstance(focus.set_page, dict) else None
+        listed = key.get("list") if isinstance(key, dict) else None
+        # A "more" under a document list pages that list, not the summary held behind it.
+        verdict["ranking_detail"] = {"group_by": MORE_PAGE, "offset": more, **({"list": listed} if listed else {})}
         focus.status = "sales_ranking"
         focus.domains = [contracts.SALES_DOMAIN]
         focus.set_page = None

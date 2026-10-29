@@ -2702,7 +2702,7 @@ def _low_stock_envelope(payload: dict) -> dict:
 _OUTSTANDING_BOTH_HEADINGS = {"so": "*Sales order list*", "do": "*Delivery order list*"}
 
 
-def _outstanding_detail(report: dict, scope: str) -> str:
+def _outstanding_detail(report: dict, scope: str, *, start: int = 1) -> str:
     """Numbered SO (``scope="so"``) or DO (``scope="do"``) list (AC-1106), served
     from the SAME report the presenter already rendered - no second fetch, no
     re-parse (D10). Every row renders, in whatever order `so_rows` / `do_rows`
@@ -2725,7 +2725,7 @@ def _outstanding_detail(report: dict, scope: str) -> str:
         field_defs = _OUTSTANDING_DO_FIELDS
 
     items: list[str] = []
-    for i, row in enumerate(rows, start=1):
+    for i, row in enumerate(rows, start=start):
         field_lines = []
         for label, key, kind in field_defs:
             value = row.get(key)
@@ -3595,6 +3595,15 @@ def _ask_summary(basis: Any, summary: dict) -> list[str]:
     return lines
 
 
+def _ask_documents_window(body: dict) -> tuple[int, int]:
+    """A document list's page start and the whole list's count (the route's `group_offset`, `documents_total`)."""
+    offset = body.get("group_offset")
+    offset = offset if isinstance(offset, int) and not isinstance(offset, bool) and offset > 0 else 0
+    total = body.get("documents_total")
+    total = total if isinstance(total, int) and not isinstance(total, bool) else offset + len(body.get("documents") or [])
+    return offset, total
+
+
 def _ask_summary_window(summary: dict) -> tuple[int, int]:
     """The page start a "more" asked for (0 on the first page) and the longest paged group's row count."""
     offset = summary.get("group_offset")
@@ -3644,9 +3653,17 @@ def _report_ask(body: dict) -> str:
     if outstanding_kind and isinstance(body.get("documents"), list):
         # Item 7 (owner 29 Oct): the SO / DO list as before #1922: the header, then one numbered block per document with
         # every field (`_outstanding_detail`, the old list's own renderer).
+        # Eval hard guard: the route sends one 20-row page (`group_offset`, `documents_total`); "more" asks the next.
         scope = "so" if body["basis"] == "outstanding" else "do"
-        listed = _outstanding_detail({f"{scope}_rows": body["documents"]}, scope)
-        return "\n".join(facts) + "\n\n" + (listed or _ASK_OUTSTANDING_EMPTY[body["basis"]])
+        offset, total = _ask_documents_window(body)
+        if offset and offset >= total:
+            return "\n".join(facts) + f"\n\nThat is all {total:,}."
+        listed = _outstanding_detail({f"{scope}_rows": body["documents"]}, scope, start=offset + 1)
+        text = "\n".join(facts) + "\n\n" + (listed or _ASK_OUTSTANDING_EMPTY[body["basis"]])
+        left = total - offset - len(body["documents"])
+        if left > 0:
+            text += f'\n\nReply "more" to see the next {min(OUTSTANDING_GROUP_CAP, left):,}.'
+        return text
     if isinstance(body.get("summary"), dict):
         # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or customer prints the summary in the pre-#1922
         # frame (header, a blank line, the block), its breakdowns the route's (the defaults, or the axis the user named).
@@ -3831,7 +3848,12 @@ def _report_ask_envelope(body: dict) -> dict:
         "not_applied": _not_applied(body),
     }
     summary = body.get("summary")
-    if body.get("status") == "ok" and isinstance(summary, dict):
+    if body.get("status") == "ok" and isinstance(body.get("documents"), list):
+        offset, total = _ask_documents_window(body)
+        if total > OUTSTANDING_GROUP_CAP or offset:
+            # Eval hard guard: a long document list arms "more" like a long summary breakdown.
+            envelope["group_window"] = {"offset": offset, "shown": len(body["documents"]), "total": total}
+    elif body.get("status") == "ok" and isinstance(summary, dict):
         offset, longest = _ask_summary_window(summary)
         if longest > OUTSTANDING_GROUP_CAP or offset:
             # Item 6: the lane arms "more" off this, as it does the pre-#1922 report's (`_outstanding_envelope`).

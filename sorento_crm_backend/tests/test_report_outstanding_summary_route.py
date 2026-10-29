@@ -447,6 +447,12 @@ def test_a_2000_row_document_list_returns_one_page_of_20_and_the_total(client, d
         seed_do(db, customer_id=cust.id, order_date=start + timedelta(days=i), source_book="db1",
                 lines=[line(p.id, wh.id, 1, total="10.00")])
     db.commit()
+    # A fresh test schema has no planner statistics: unanalyzed, the line query re-scans its per-DO totals for every
+    # line (quadratic, minutes at 2,000). Production tables are analyzed.
+    from sqlalchemy import text
+
+    db.execute(text("ANALYZE orders"))
+    db.execute(text("ANALYZE order_lines"))
     ask = dict(basis="pending_delivery", product_ids=[p.id], group_by="delivery_order", top_n=50, period=None)
     first = _ok(client, _staff(db), **ask)
     assert first["documents_total"] == 2000 and len(first["documents"]) == 20, (first.get("documents_total"),)

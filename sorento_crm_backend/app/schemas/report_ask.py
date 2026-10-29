@@ -115,6 +115,9 @@ class ReportAskResponse(BaseModel):
     # REPORT-OUTSTANDING-SUMMARY item 7: an SO / DO list's documents, as the pre-#1922 `so_rows` / `do_rows` (one row per
     # document: number, customer_name, product_code, location, the quantities and the date); absent otherwise.
     documents: Optional[List[Dict[str, Any]]] = None
+    # Eval hard guard: `documents` is one page; the whole list's count and the page's first row.
+    documents_total: Optional[int] = None
+    group_offset: Optional[int] = None
 
 
 class ReportAskChatRow(BaseModel):

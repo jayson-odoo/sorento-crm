@@ -3007,10 +3007,24 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                 "last_result_set": [{"idx": 1, "label": offer[1], "code": code, "entity_type": offer[2], "keys": []}],
                 "filters": {"tool": "crm_report_ask", "ranking": {"group_by": code}},
             }
+    if frame is not None and pick is None and frame.get("group_by") in ("sales_order", "delivery_order"):
+        # Eval hard guard: item 3's document list (no subject) is the frame on screen; its "more" is answered under an
+        # open pick (`turn/apply._answer_top_selling_pick`), so it arms its kind's list pick ("1" re-lists page one).
+        from app.services.chatbot.lanes.business.report_ask import LIST_PICKS
+
+        code, offer = LIST_PICKS.get(frame.get("basis")), _LIST_OFFERS.get(frame.get("basis"))
+        if code is not None and offer is not None:
+            pick = {
+                "kind": "top_selling_pick",
+                "last_result_set": [{"idx": 1, "label": offer[1], "code": code, "entity_type": offer[2], "keys": []}],
+                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": code}},
+            }
     question = _sole_subject_question(envelope, args)
     if question:
         text, frame, pick = question, None, None
-    window = envelope.get("group_window") if frame is not None else None
+    # A detail list ("1" under a summary) pages too: the summary stays the frame, the carry names the list.
+    listed = detail and isinstance(args, dict) and args.get("group_by") in ("sales_order", "delivery_order")
+    window = envelope.get("group_window") if frame is not None or listed else None
     set_window = None
     if isinstance(window, dict):
         from app.services.chatbot import composers
@@ -3019,9 +3033,14 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
             # Item 6 (owner 29 Oct, as before #1922): a cut summary arms "more", as the old report's output did.
             o, k, t = window.get("offset"), window.get("shown"), window.get("total")
             if all(isinstance(v, int) and not isinstance(v, bool) for v in (o, k, t)):
+                from app.services.chatbot.lanes.business.report_ask import LIST_PICKS
+
                 set_window = {
                     "first": o + 1, "last": o + k, "total": t, "next": max(0, min(OUTSTANDING_GROUP_PAGE, t - o - k)),
-                    "carry": {"report_groups": True, "total": t, "shown": o + k if k else o},
+                    "carry": {
+                        "report_groups": True, "total": t, "shown": o + k if k else o,
+                        **({"list": LIST_PICKS[args["basis"]]} if listed and args.get("basis") in LIST_PICKS else {}),
+                    },
                 }
     if pick is None:
         text = _without_row_offers(text)  # an offer for a list this reply never armed would hand the next number to an older list

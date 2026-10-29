@@ -398,6 +398,8 @@ def run_ask(
 
 # ----------------------------------------------------------------------- summary (REPORT-OUTSTANDING-SUMMARY)
 
+#: Eval hard guard (REPORT-OUTSTANDING-SUMMARY): a document list is returned one page of this many at a time.
+DOCUMENT_PAGE = 20
 #: REPORT-OUTSTANDING-SUMMARY item 7: each document list's line columns and its row's keys, as the pre-#1922
 #: outstanding report's `so_rows` / `do_rows` named them.
 DOCUMENT_LISTS: dict[str, dict[str, Any]] = {

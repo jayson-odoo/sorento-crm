@@ -1522,12 +1522,14 @@ LIST_PICKS = {"outstanding": SO_LIST, "pending_delivery": DO_LIST}
 _LIST_GROUP = {SO_LIST: "sales_order", DO_LIST: "delivery_order"}
 
 
-def so_list_outcome(db: Any, frame: dict[str, Any], pick: str = SO_LIST) -> rf.Outcome:
+def so_list_outcome(db: Any, frame: dict[str, Any], pick: str = SO_LIST, *, offset: Any = None) -> rf.Outcome:
     """The documents behind an outstanding total: the SAME held ask (basis, filters, company, period) grouped by the
     definition's document dimension (`sales_order` for undelivered orders, `delivery_order` for pending delivery), so
     the list is the figure's own population."""
     args = {k: v for k, v in frame.items() if k not in _FRAME_ONLY}
     args["group_by"] = _LIST_GROUP[pick]
+    if isinstance(offset, int) and not isinstance(offset, bool) and offset > 0:
+        args["group_offset"] = offset  # a "more" under the list: its next page
     args.setdefault("measure", "amount")  # the list prints both figures; the order is by RM
     given = {**_given_choices(args), **_given_top_n(args, BREAKDOWN_TOP_N)}
     period = period_from(frame.get("date_from"), frame.get("date_to"))
@@ -1599,6 +1601,9 @@ def _settle(
         and ranking_detail.get("group_by") == MORE_PAGE
         and shown_frame.get("basis") in OUTSTANDING_KINDS
     ):
+        if LIST_PICKS.get(shown_frame.get("basis")) == ranking_detail.get("list"):
+            # Eval hard guard: the next page of the document list "1" printed under this summary.
+            return so_list_outcome(db, shown_frame, ranking_detail["list"], offset=ranking_detail.get("offset")), None
         return more_outcome(db, shown_frame, ranking_detail.get("offset")), None
     if (
         isinstance(ranking_detail, dict)
