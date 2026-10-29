@@ -648,15 +648,13 @@ def report_ask(
         # REPORT-OUTSTANDING-SUMMARY (owner 29 Oct): an outstanding kind naming a product or a customer gets the
         # pre-#1922 summary. Default breakdowns: by location (unless a location was named), then by customer for a
         # product, by product for a customer, neither when both were named (R13). An axis the user named replaces the
-        # defaults. A dealer keeps to its own keys.
+        # defaults. A dealer's named axis was already held to its own keys, and a dealer always has a customer subject.
         if group_norm is not None:
             axes = [group_norm]
         else:
             axes = [] if codes else ["location"]
             if product_subject != customer_subject:
                 axes.append("customer" if product_subject else "product")
-        if scoped is not None:
-            axes = [a for a in axes if a in dealer_keys]
         data = {
             **data,
             "summary": ask.outstanding_summary(

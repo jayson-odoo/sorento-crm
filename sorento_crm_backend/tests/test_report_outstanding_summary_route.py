@@ -366,3 +366,64 @@ def test_the_route_echoes_the_group_offset_on_a_summary(client, db):
     assert body["summary"]["group_offset"] == 20, body["summary"]
     first = _ok(client, _staff(db), basis="pending_delivery", product_ids=[w.pc.id], period=None)
     assert first["summary"].get("group_offset") in (None, 0), first["summary"]
+
+
+# ================================================================ review round 2 (B1, S1, S2)
+
+
+def test_an_undated_sales_order_neither_breaks_the_date_range_nor_lists_first(client, db):
+    """Review B1: an open SO with no order date, dated for the figure by its line's required date. The range reads the
+    real dates only (never the engine's blank label), and the SO list puts the undated SO last."""
+    cust = seed_customer(db, name=unique_code("CustU"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WU"))
+    p1 = make_product(db, unique_code("U1"))
+    seed_so_line(db, cust=cust, prod=p1, qty=4, delivered=0, total="400.00", wh=wh, order_date=None,
+                 required_date=date(2026, 9, 1))
+    seed_so_line(db, cust=cust, prod=p1, qty=5, delivered=0, total="500.00", wh=wh, order_date=date(2026, 8, 5))
+    db.commit()
+    s = _ok(client, _staff(db), basis="outstanding", customer_ids=[cust.id], period=None)["summary"]
+    assert s["qty"] == 9, s
+    assert (s["date_first"], s["date_last"]) == ("2026-08-05", "2026-08-05"), s
+    docs = _ok(client, _staff(db), basis="outstanding", customer_ids=[cust.id], group_by="sales_order", top_n=50,
+               period=None)["documents"]
+    assert [(d["outstanding_qty"], d["order_date"]) for d in docs] == [(5, "2026-08-05"), (4, None)], docs
+
+
+def test_the_document_list_reads_every_granted_company_like_the_figure(db):
+    """Review S1: from a session scoped to Sorento, a contact granted Sorento and Mocha gets Mocha's SO in the list as it
+    does in the summary's count (the dataset owns its company arm, as `engine.run_summary` runs it)."""
+    from app.models.base import company_scope
+    from app.services.reports import ask
+    from app.services.stock_visibility import Policy
+    from tests._mc_lookup_seed import MOCHA_ID, product, seed_mocha
+
+    seed_mocha(db)
+    sp, mp = product(db, company_id=DEFAULT_COMPANY_ID), product(db, company_id=MOCHA_ID)
+    sorento, mocha = seed_customer(db, name=unique_code("CS")), seed_customer(db, name=unique_code("CM"), company_id=MOCHA_ID)
+    ws, wm = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WS")), warehouse(db, company_id=MOCHA_ID, code=unique_code("WM"))
+    seed_so_line(db, cust=sorento, prod=sp, qty=3, delivered=0, total="300.00", wh=ws)
+    seed_so_line(db, cust=mocha, prod=mp, qty=2, delivered=0, total="200.00", wh=wm, company_id=MOCHA_ID)
+    db.commit()
+    run = dict(basis="outstanding", filters={"customer": [sorento.id, mocha.id]}, warehouse_codes=[],
+               policy=Policy(mode="detailed", warehouse_ids=None, source="default", source_label=None,
+                             hide_zero_locations=False, excluded_warehouse_ids=None),
+               company_grants=[DEFAULT_COMPANY_ID, MOCHA_ID], date_from=date(1900, 1, 1), date_to=date(2200, 12, 31))
+    with company_scope(db, frozenset({DEFAULT_COMPANY_ID})):
+        docs = ask.document_rows(db, **run)
+        summary = ask.outstanding_summary(db, axes=[], **{k: v for k, v in run.items() if k != "basis"},
+                                          basis="outstanding")
+    assert summary["documents"] == 2, summary
+    assert sorted(d["outstanding_qty"] for d in docs) == [2, 3], docs
+
+
+def test_a_by_channel_breakdown_of_undelivered_orders_keeps_the_ordered_quantity(client, db):
+    """Review S2: "Dealer: 0 (O/S: 6)" was the ordered measure looked up under the display name."""
+    cust = seed_customer(db, name=unique_code("CustC"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WC"))
+    p1 = make_product(db, unique_code("C1"))
+    seed_so_line(db, cust=cust, prod=p1, qty=10, delivered=4, total="1000.00", wh=wh, order_date=date(2026, 8, 5),
+                 demand_class="retail")
+    db.commit()
+    s = _ok(client, _staff(db), basis="outstanding", product_ids=[p1.id], group_by="channel", top_n=10,
+            period=None)["summary"]
+    assert [(r["name"], r["ordered_qty"], r["qty"]) for r in _group(s, "channel")] == [("Dealer", 10, 6)], s

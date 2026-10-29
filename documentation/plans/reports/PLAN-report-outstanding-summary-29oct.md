@@ -1,7 +1,7 @@
 # PLAN: REPORT-OUTSTANDING-SUMMARY (29 Oct 2026)
 
-Status: Build done, in review. Track: small fix track (no migration), but the diff loosens one #1922 access gate
-(pending delivery without the reveal), so security-reviewer runs.
+Status: Build done, review round 2 fixes in. Track: full lane (about 2,000 changed lines and one #1922 access gate
+loosened, pending delivery without the reveal), so security-reviewer runs.
 
 Restore the outstanding SUMMARY shape (totals, by location, by customer or product, list offer) inside the unified
 report engine (`crm_report_ask`), after #1922 REPORT-UNIFY reduced an outstanding answer to a single total. The old

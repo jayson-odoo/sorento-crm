@@ -422,8 +422,10 @@ def document_rows(
     ctx = engine.resolve(db, entry["definition"], params, company_grants=frozenset(str(c) for c in company_grants or ()))
     keys = [shape["column"], "customer", "product", "location", shape["day"], "qty", *SUMMARY_BASES[basis]["also"]]
     columns = [ctx.dataset.column(k) for k in keys]
+    with engine._unscoped(ctx):  # the dataset owns its company arm, as `engine.run_summary` runs it (review S1)
+        lines = db.execute(engine._detail_statement(ctx, columns)).mappings().all()
     docs: dict[str, dict[str, Any]] = {}
-    for row in db.execute(engine._detail_statement(ctx, columns)).mappings():
+    for row in lines:
         open_qty = Decimal(row["qty"] or 0)
         if open_qty <= 0:
             continue  # nothing still owed on this line (pre-#1922: ordered minus delivered above 0)
@@ -478,6 +480,8 @@ def outstanding_summary(
     one was named, owner 29 Oct; that axis keeps the ask's own `sort` and `top_n`, and a month or year axis reads oldest
     first). Every figure is `run_ask` over the SAME definition and filters as the total, so the
     summary cannot disagree with it. `run` is the total's own `run_ask` keywords, less the grouping."""
+    from app.services.reports import engine
+
     shape = SUMMARY_BASES[basis]
     also = shape["also"]
     named_measure = run.pop("measure", None)
@@ -490,7 +494,8 @@ def outstanding_summary(
         )
 
     total = grouped(None)
-    days = sorted(r["name"] for r in grouped(shape["day"])["rows"])
+    # An SO with no date of its own is counted (its line's required date places it) but has no day to range over.
+    days = sorted(r["name"] for r in grouped(shape["day"])["rows"] if r["name"] != engine.BLANK_VALUE)
     groups = []
     for axis in axes:
         if top_n is not None and axis not in TIME_AXES:

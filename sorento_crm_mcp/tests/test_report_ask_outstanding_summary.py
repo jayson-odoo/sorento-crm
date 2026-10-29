@@ -257,3 +257,11 @@ def test_the_second_page_shows_the_next_twenty_and_the_last_page_the_rest():
 def test_past_the_end_says_that_is_all():
     text = _report_ask(_long(60))
     assert "That is all 45." in text and "C44:" not in text, text
+
+
+def test_a_page_that_ends_exactly_on_the_last_row_offers_no_more():
+    """Review N2: 40 rows, page 2 shows rows 21 to 40 and nothing is left, so no `Reply "more"` line."""
+    body = _long(20)
+    body["summary"]["groups"][1]["rows"] = body["summary"]["groups"][1]["rows"][:40]
+    text = _report_ask(body)
+    assert "C39:" in text and 'Reply "more"' not in text, text
