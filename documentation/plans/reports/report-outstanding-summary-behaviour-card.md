@@ -1,6 +1,6 @@
 # Behaviour card: REPORT-OUTSTANDING-SUMMARY (29 Oct 2026)
 
-Status: Asked (crew-ask on the lane PR). Build proceeds on the recommendations; a different answer is a small change.
+Status: Answered (owner 29 Oct). Q1 (a) with access-aware kinds and unpaid never offered; Q2 default group-bys, the user's own axes and filters win; Q3 ok; access (a) the pre-#1922 split. See the plan.
 
 ## The regression
 
