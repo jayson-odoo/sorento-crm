@@ -38,10 +38,26 @@ A turn goes to the agent when ALL of these hold:
      `head/parser.py:497-516`) and at least one of them is one the runner answers with "not available yet":
      `measure == "other"`, or `sold_by` with a `group_by` outside the runner's axes. That is the runner's own
      NOT_AVAILABLE arm (`turn/sub_asks.py:709-715`), computed with the same predicate, so the agent takes exactly
-     the turns today's path already admits it cannot answer.
+     the turns today's path already admits it cannot answer. The predicate reads the verdict only; it does not
+     depend on the runner having placed a product.
+   - **H3, a multi-ask with no product for the runner to anchor on.** The parser named two or more asks and the
+     verdict carries no product entity. Today the runner returns None for exactly this case
+     (`_scoped_products` empty, `turn/sub_asks.py:291-293`) and the turn drops to the one-domain path, so
+     only part of it is answered. This is where chained asks live ("top 3 customers for brand X last month and
+     their outstanding DO": the subject is customers and a brand, not a product).
    - **H2, a follow-up of an agent answer.** The previous turn was answered by the agent and this turn's
      decision (`turn/decide.py:41-44`, on `plan.trace.decision`) is REFINE, ANSWER or CARRY (it keeps the standing
      subject), with no `topic_reset`.
+
+**Chained asks, plainly.** No parser field says that one ask depends on another's result. A `sub_asks` item is
+`{measure, group_by, date_from, date_to, basis, label}` (`head/parser.py:497-516`), and entities belong to the
+turn, not to an ask. So P1 does not detect a chain as such. A chain reaches the agent only through H3 (no
+product subject) or H1 (a part the measure list does not cover: "outstanding DO" is not a measure, so the
+addendum tells the parser to label it `other`, `chatbot_parser_prompt.py:884-895`; the eval measures how
+reliably it does). A chain whose parts are all runner measures over one product ("stock of X and who bought most
+of it") is answered part by part by today's runner, and that is out of P1. The smallest honest signal for those
+chains is one per-ask field (`uses_result_of: <index> | null`) on the agent-only parser label of Q1 (b); it is
+not proposed for P1.
 
 Seam: one new `if` right BEFORE the multi-ask runner block (`engine.py:7287`). Every other turn falls through to
 today's code with zero changes.
@@ -118,15 +134,43 @@ Scope, both sides (R3):
 ### 7. Complex turns today's path answers badly
 
 The sandbox has no access to the dev DB (crew contract), so the 3 to 5 real turns are pulled by crew with the
-query in the crew-ask. The shapes they target, each tied to the code arm that fails today:
+query below (read-only; crew masks names, phones and prices before posting back). The verdict is the
+`understood` stage's `raw.derived` (`engine.py:5468`); `contact_respond_id` is the Respond id.
+
+```sql
+WITH v AS (
+  SELECT t.id, t.created_at, t.branch_kind, t.envelope, t.response,
+         jsonb_path_query_first(t.trace, '$[*] ? (@.stage == "understood").raw.derived') AS verdict
+  FROM chatbot.turns t
+  JOIN respond_contacts c ON c.respond_io_id = t.contact_respond_id
+  WHERE c.chatbot_profile->>'tier' = 'office'
+    AND t.is_test = false
+    AND t.created_at > now() - interval '45 days'
+)
+SELECT id, created_at, branch_kind,
+       envelope AS envelope_with_text,
+       verdict->'sub_asks' AS sub_asks,
+       verdict->'entities' AS entities,
+       left(response::text, 800) AS reply
+FROM v
+WHERE jsonb_typeof(verdict->'sub_asks') = 'array'
+  AND jsonb_array_length(verdict->'sub_asks') >= 2
+  AND (jsonb_path_exists(verdict, '$.sub_asks[*] ? (@.measure == "other")')         -- H1
+       OR NOT jsonb_path_exists(verdict, '$.entities[*] ? (@.hint == "product")'))  -- H3
+ORDER BY created_at DESC
+LIMIT 30;
+```
+
+If the join returns nothing, join on `c.id` instead. The shapes they target, each tied to the code arm that fails today:
 
 1. Several asks where one is outside the runner's measures, for example "stock, incoming, and which customers
    bought the most of it this quarter and whether they still owe us": the last part becomes
    "not available yet" (`turn/sub_asks.py:709`).
 2. A sold breakdown by an axis the runner does not have: same arm (`turn/sub_asks.py:714`).
 3. A chained ask (the answer to one part feeds the next, for example "top 3 customers for brand X last month and
-   their outstanding DO"): the runner runs each ask independently and cannot feed one result into another.
-4. A follow-up on (3) ("and the month before?").
+   their outstanding DO"): no product subject, so the runner returns None (`turn/sub_asks.py:291-293`) and
+   only one domain is answered. Reaches the agent through H3.
+4. A follow-up on (3) ("and the month before?"): through H2, because (3) was answered by the agent.
 
 ## Delivery after owner answers
 
