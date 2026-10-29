@@ -72,7 +72,7 @@ def accept_quotation(
             user_agent=request.headers.get("user-agent"),
             gps_lat=payload.gps_lat,
             gps_lng=payload.gps_lng,
-            terms_accepted=getattr(payload, "terms_accepted", False),
+            terms_accepted=payload.terms_accepted,
         )
         db.commit()
         return svc.serialize_sign_page(db, record)

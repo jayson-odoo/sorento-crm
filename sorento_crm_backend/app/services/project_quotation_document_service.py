@@ -1045,7 +1045,7 @@ def accept_issue(
     user_agent: Optional[str] = None,
     gps_lat: Optional[str] = None,
     gps_lng: Optional[str] = None,
-    terms_accepted: bool = True,
+    terms_accepted: bool = False,
 ) -> ProjectQuotationIssue:
     """The customer counter-signs, and that WINS the quotation.
 
