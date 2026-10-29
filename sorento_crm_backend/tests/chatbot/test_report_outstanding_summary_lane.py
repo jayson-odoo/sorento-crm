@@ -379,15 +379,15 @@ def test_rpt038_a_dealer_naming_its_customer_and_outstanding_sales_order_gets_pe
 
 
 def test_rpt030_shape_a_dealer_naming_its_customer_and_a_brand_gets_pending_delivery(dealer_no_reveal) -> None:
-    from tests.test_report_unify_outstanding_bases import _brand  # noqa: F401  (brand row helper)
-    from tests._pg_fixture import unique_code  # noqa: F401
-
     dealer_no_reveal.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
     text, calls = dealer_no_reveal.say(
         _so_document_ask(_e("ZZT OWN DEALER SDN BHD", "customer"), _e("mocha", "brand")),
         "ZZT OWN DEALER SDN BHD\nany outstanding mocha item in sales order",
     )
     assert "Outstanding is not enabled" not in text, (calls, text)
+    reports = [a for n, a in calls if n == "crm_report_ask"]
+    assert reports and reports[0]["basis"] == "pending_delivery", (calls, text)
+    assert text.startswith("Sales order figures are not enabled for your account."), text
 
 
 def test_the_so_line_rides_a_question_asked_before_the_redirected_answer(do_only, do_only_world) -> None:
@@ -398,3 +398,15 @@ def test_the_so_line_rides_a_question_asked_before_the_redirected_answer(do_only
     )
     assert calls == [] and "I don't know 'ZZTNOBRAND' as a brand." in text, (calls, text)
     assert text.startswith("Sales order figures are not enabled for your account."), text
+
+
+def test_b6e9_v70_under_an_open_kind_question_is_still_the_outstanding_ask(bot, world) -> None:
+    """Review (eval round 2): only the question that offers Outstanding as a SALES basis reads "outstanding" as its
+    answer. Under the kind question (or any other open slot) the v70 shape is a fresh outstanding ask, never the
+    sales "Which period?"."""
+    text, _calls = bot.say(
+        _status("outstanding", _e(PRODUCT, "product"), basis=None, state_changes=list(KEEP), **NO_DATES), "outstanding",
+    )
+    assert text.strip().endswith(KIND_QUESTION), text
+    text, calls = bot.say(_v70_b6e9(asks=None), "SRT5733 stock and outstanding")
+    assert "Which period" not in text and text.rstrip().endswith(KIND_QUESTION), (calls, text)

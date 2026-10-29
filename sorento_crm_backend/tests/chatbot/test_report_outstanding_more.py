@@ -139,3 +139,10 @@ def test_settle_pages_a_list_frame():
     outcome, _line = report_ask.settle(None, parse, [])
     args = report_ask.route_args(outcome)
     assert args["group_by"] == "delivery_order" and args["group_offset"] == 40, args
+
+
+def test_a_short_no_subject_list_arms_no_pick(monkeypatch):
+    """Review nit: with no page to continue, the list arms nothing (a "1" there is not a hidden re-list)."""
+    _set_gate(monkeypatch, True)
+    out = fetch._report_ask_output(_envelope(None), {"semantic_input": {"report_ask_args": dict(LIST_ARGS)}})
+    assert out["outstanding_ask"] is None and "set_window" not in out, out
