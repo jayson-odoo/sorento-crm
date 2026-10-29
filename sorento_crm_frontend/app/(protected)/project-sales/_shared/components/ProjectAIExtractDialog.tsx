@@ -21,7 +21,6 @@ export type ProjectExtractFill = {
   project_type?: { id: string; name: string };
   state?: string;
   mukim?: string;
-  customer?: { id: string; name: string };
 };
 
 const FIELD_DEFS: { name: ProjectExtractFieldKey; label: string }[] = [
@@ -31,7 +30,6 @@ const FIELD_DEFS: { name: ProjectExtractFieldKey; label: string }[] = [
   { name: 'project_type', label: 'Project type' },
   { name: 'state', label: 'State' },
   { name: 'mukim', label: 'Mukim' },
-  { name: 'customer', label: 'Customer' },
   { name: 'title', label: 'Project title' },
 ];
 
@@ -54,9 +52,6 @@ function toExtractResult(result: ProjectExtractResult): AIExtractResult {
   const values: Record<string, unknown> = {};
   for (const { name } of FIELD_DEFS) {
     const text = proposalText(result[name]);
-    // A customer is only ever matched, never created (C8).
-    const customer = result.customer;
-    if (name === 'customer' && (typeof customer === 'string' || customer?.status !== 'match')) continue;
     if (text) values[name] = text;
   }
   return {
@@ -119,10 +114,6 @@ export function ProjectAIExtractDialog({
     const type = objectProposal(proposals.project_type);
     if (listed('project_type') && type?.status === 'match' && type.id) {
       fill.project_type = { id: type.id, name: type.name ?? '' };
-    }
-    const customer = objectProposal(proposals.customer);
-    if (listed('customer') && customer?.status === 'match' && customer.id) {
-      fill.customer = { id: customer.id, name: customer.name ?? '' };
     }
     if (listed('state')) fill.state = proposalText(proposals.state);
     if (listed('mukim')) fill.mukim = proposalText(proposals.mukim);
