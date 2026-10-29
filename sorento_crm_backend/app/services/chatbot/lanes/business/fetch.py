@@ -2976,6 +2976,7 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     pick = None
     if frame is not None:
         frame.pop("shown", None)
+        frame.pop("group_offset", None)  # item 6: a page is never held; "more" carries its own offset
         if isinstance(drill, dict) and drill.get("group_by") == frame.get("group_by") and drill.get("rows"):
             frame["shown"] = drill
             if frame.get("group_by") in ("product", "category", "sales_agent", "customer") and not frame.get("compare_to"):
@@ -3009,6 +3010,19 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     question = _sole_subject_question(envelope, args)
     if question:
         text, frame, pick = question, None, None
+    window = envelope.get("group_window") if frame is not None else None
+    set_window = None
+    if isinstance(window, dict):
+        from app.services.chatbot import composers
+
+        if composers.enabled():
+            # Item 6 (owner 29 Oct, as before #1922): a cut summary arms "more", as the old report's output did.
+            o, k, t = window.get("offset"), window.get("shown"), window.get("total")
+            if all(isinstance(v, int) and not isinstance(v, bool) for v in (o, k, t)):
+                set_window = {
+                    "first": o + 1, "last": o + k, "total": t, "next": max(0, min(OUTSTANDING_GROUP_PAGE, t - o - k)),
+                    "carry": {"report_groups": True, "total": t, "shown": o + k if k else o},
+                }
     if pick is None:
         text = _without_row_offers(text)  # an offer for a list this reply never armed would hand the next number to an older list
     return {
@@ -3029,6 +3043,7 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
         "requested_attributes": [],
         "keys_served": False,
         "outstanding_report": True,
+        **({"set_window": set_window} if set_window else {}),
     }
 
 

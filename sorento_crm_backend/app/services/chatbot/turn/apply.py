@@ -1380,9 +1380,21 @@ def _answer_top_selling_pick(
 
     None when nothing on the list was picked: the generic rules settle it (an aside keeps
     the list open, a number past the end re-prints it, a new ask closes it)."""
+    ranking = (pending.payload.get("filters") or {}).get("ranking")
+    more = _report_more(verdict, focus)
+    if more is not None and isinstance(verdict, dict) and isinstance(ranking, dict):
+        # REPORT-OUTSTANDING-SUMMARY item 6 (owner 29 Oct, as before #1922): "more" under a cut outstanding summary is
+        # its next page; the held ask re-runs at that offset and the list offer stays open.
+        from app.services.chatbot.lanes.business.report_ask import MORE_PAGE
+
+        verdict["ranking_detail"] = {"group_by": MORE_PAGE, "offset": more}
+        focus.status = "sales_ranking"
+        focus.domains = [contracts.SALES_DOMAIN]
+        focus.set_page = None
+        trace.rules_fired.append("report_summary_more")
+        return focus, pending, None, True
     positions = list(decision.positions) if decision.answers else []
     matched = [o for o in pending.options if o.get("position") in positions]
-    ranking = (pending.payload.get("filters") or {}).get("ranking")
     if not matched or not isinstance(ranking, dict) or not isinstance(verdict, dict):
         return None
     option = matched[-1]

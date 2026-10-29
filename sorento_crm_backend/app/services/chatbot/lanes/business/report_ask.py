@@ -259,6 +259,10 @@ def list_pick_kind(parse_output: dict[str, Any]) -> str | None:
     verdict names no basis, so the reveal it is read under comes from here."""
     detail = parse_output.get("ranking_detail") if isinstance(parse_output, dict) else None
     group = detail.get("group_by") if isinstance(detail, dict) else None
+    if group == MORE_PAGE:
+        # A page of the held summary is read under the held frame's own kind.
+        kind = _dict(parse_output.get("sales_ranking_frame")).get("basis")
+        return kind if kind in OUTSTANDING_KINDS else None
     return next((kind for kind, pick in LIST_PICKS.items() if pick == group), None)
 
 
@@ -1483,6 +1487,9 @@ def _detail_outcome(db: Any, frame: dict[str, Any], detail: dict[str, Any]) -> r
 SO_LIST = "sales_order_list"
 #: REPORT-OUTSTANDING-SUMMARY: the pick a pending-delivery summary arms ("Reply 1 for the delivery order list.").
 DO_LIST = "delivery_order_list"
+#: Item 6 (owner 29 Oct): a "more" under a cut outstanding summary (`turn/apply._answer_top_selling_pick`): the held
+#: summary's next page, `ranking_detail = {"group_by": MORE_PAGE, "offset": n}`.
+MORE_PAGE = "summary_more"
 #: Outstanding kind -> the pick its list offer arms, and the pick -> the document grouping it runs.
 LIST_PICKS = {"outstanding": SO_LIST, "pending_delivery": DO_LIST}
 _LIST_GROUP = {SO_LIST: "sales_order", DO_LIST: "delivery_order"}
@@ -1501,6 +1508,17 @@ def so_list_outcome(db: Any, frame: dict[str, Any], pick: str = SO_LIST) -> rf.O
     outcome = rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": BREAKDOWN_TOP_N})
     outcome.extras["detail"] = True  # a list on screen never replaces the held total
     return outcome
+
+
+def more_outcome(db: Any, frame: dict[str, Any], offset: Any) -> rf.Outcome:
+    """Item 6: the held outstanding ask again, unchanged but for the page of its long breakdown (`group_offset`)."""
+    args = {k: v for k, v in frame.items() if k not in _FRAME_ONLY}
+    args["group_offset"] = offset if isinstance(offset, int) and not isinstance(offset, bool) and offset > 0 else 0
+    given = {**_given_choices(args), **_given_top_n(args, args.get("top_n"))}
+    period = period_from(frame.get("date_from"), frame.get("date_to"))
+    given["period"] = period if period is not None else rf.Resolved("ok", value={"from": None, "to": None}, label="all dates")
+    given.setdefault("metric", rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or ""))
+    return rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": args.get("top_n")})
 
 
 def settle(
@@ -1549,6 +1567,12 @@ def _settle(
         and ranking_detail.get("group_by") == shown_frame.get("group_by")  # the pick is of the list on screen
     ):
         return _detail_outcome(db, shown_frame, ranking_detail), None
+    if (
+        isinstance(ranking_detail, dict)
+        and ranking_detail.get("group_by") == MORE_PAGE
+        and shown_frame.get("basis") in OUTSTANDING_KINDS
+    ):
+        return more_outcome(db, shown_frame, ranking_detail.get("offset")), None
     if (
         isinstance(ranking_detail, dict)
         and ranking_detail.get("group_by") in LIST_PICKS.values()
