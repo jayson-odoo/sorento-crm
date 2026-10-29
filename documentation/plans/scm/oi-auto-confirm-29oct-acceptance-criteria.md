@@ -7,7 +7,9 @@ overrides, documents list drops its Lines column. Override behaviour: crew-note 
 
 Terms: a row is DONE (stored as `ack_state = acknowledged`, shown "Done") when purchasing has
 nothing left to do on it. A live row is any row not cancelled. A LIVE link is one whose PO line is
-not cancelled and whose SPO allocation is not retired.
+not cancelled and whose SPO allocation is not retired, and whose PO line / SPO allocation is for the
+row's CURRENT item (review round 1: an item swap leaves the old item's link in place but it no
+longer covers the row). Reserve links have no product check.
 
 ## Row done (written by the system unless a person overrides, see Manual override)
 
@@ -28,10 +30,16 @@ not cancelled and whose SPO allocation is not retired.
 - AC-AC-10 A done row CS amends to a qty above its links is not done (keeps `changed`, shows the
   qty left) until the extra is covered; an amendment that leaves it covered keeps it done.
 - AC-AC-10a A companion ("supplied with") row is done only when its own live links plus its bundled
-  qty cover its qty AND its host row is done. When the host becomes done or not done, its
+  qty cover its qty AND its host row is done (a manually confirmed host counts as done; a rejected
+  host is no host). When the host becomes done or not done, its
   companions follow in the same write.
-- AC-AC-10b A reserve-only row shows its reserve ("Reserved @ <location> <qty>") in the PO column
-  instead of "-".
+- AC-AC-10b A reserved row shows its reserve ("Reserved @ <location> <qty>") in the PO column, beside
+  any PO chips. The reserve is NOT a document link (`links_for_rows` keeps leaving reserve links out,
+  as on main, so no quantity is counted twice); rows carry `reserve_label` + `reserved_qty` instead.
+- AC-AC-10d Rows carry `open_qty` = qty minus live cover minus bundled qty; "N left" reads it.
+- AC-AC-10e A live row on a CANCELLED SO line with no live link is done (nothing to order); with a live
+  link it is not done until a manual Confirm, and no later automatic write flips it to done
+  (lead ruling (c), ask open with the owner, 30 Oct).
 - AC-AC-10c A row the system marks done carries `acknowledged_at` = the moment it became done and
   `acknowledged_by` = NULL (no person pressed anything).
 
@@ -56,7 +64,8 @@ not cancelled and whose SPO allocation is not retired.
   automatic rule decides again.
 - AC-AC-17a Rejecting a row clears its override; a rejected row cannot be confirmed (today's guard).
 - AC-AC-17b A manual decision is stored with kind (confirmed / unconfirmed), by and at, and the row
-  status reads "Done · manual" / "To order · manual" with who and when on hover.
+  status reads "Done · manual" / "To order · manual" with who and when on hover. Confirm writes one
+  audit entry per press, like Unconfirm. A row the system marked done never reads "Confirmed by".
 - AC-AC-17c Rows confirmed by a press before this ships are NOT manual: the backfill re-derives them.
 - AC-AC-18 Row labels: "To confirm" reads "To order", "Confirmed" reads "Done" (owner may still pick
   "Confirmed"); the Lines list quick chip and Status filter use the new words.

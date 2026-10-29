@@ -1,6 +1,6 @@
 # PLAN: OI rows auto-confirm, OI auto-complete, no manual Confirm (OI-AUTO-CONFIRM)
 
-Status: Build - card answered 29 Oct ~22:45, Q4 = b ~23:20, mock v1 notes in (overrides kept); mock v2 next; slice 1 BE in progress (draft PR #1986). Track: full (size L:
+Status: Review fix round 1 - reviewer NOT READY at e3bdf82240 (legacy fails, reserve double count, item swap), security CLEAN; tests then fixes in progress. Track: full (L). Draft PR #1986.
 changes reorder-plan demand, retires a purchasing press, possible migration/backfill).
 
 ## Owner ruling (29 Oct 2026, ~21:55)
@@ -74,11 +74,12 @@ already turns that chain into links (`order_inquiry_links.claim_id`), so the rul
 
 ## Slices
 
-1. BE auto-confirm writer + hooks + link-now widening + reserve entry in the links reader (tests first).
+1. BE auto-confirm writer + hooks + link-now widening (tests first). (Reserve entry in the links reader
+   was reverted in review round 1: rows carry `reserve_label` instead.)
 2. Manual override columns + press semantics, reorder plan To order states (Q4 b), backfill data
    migration (tests first, dev-copy check).
 3. FE after mock approval (vitest first).
-4. Review + security review (RBAC: two routes under the acknowledge grant are removed) + browser pass.
+4. Review + security review (ingest hooks, company scoping, override audit) + browser pass + hand test.
 
 ## Rule (as built)
 
