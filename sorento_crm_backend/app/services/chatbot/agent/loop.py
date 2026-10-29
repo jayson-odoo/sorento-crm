@@ -2,8 +2,9 @@
 
 Context = system prompt + conversation memory + the user's message. Each round the model
 either asks for tools (dispatched through the permission layer) or answers. A budget limit
-ends tool use with one last call that has no tools. Every number in the final reply must come
-from a tool result of this turn or the user's own message.
+ends tool use with one last call that offers only the `answer` tool. The `answer` tool ends every
+turn, and a verifier (code, not a model) checks its figures and its not-found claims against this
+turn's tool results.
 """
 from __future__ import annotations
 
@@ -21,7 +22,18 @@ from typing import Any, Callable
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot.agent import memory
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
-from app.services.chatbot.agent.tools import GUARD_PARAMS, ToolResult, clip_args, dispatch, tool_schemas
+from app.services.chatbot.agent.tools import (
+    ANSWER,
+    ANSWER_SCHEMA,
+    GUARD_PARAMS,
+    RESOLVE,
+    TOOL_LABELS,
+    ToolResult,
+    _id_args,
+    clip_args,
+    dispatch,
+    tool_schemas,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +158,152 @@ def _redact(reply: str, sources: list[str]) -> str:
     return "".join(out)
 
 
+# ------------------------------------------------------------------ the answer verifier
+
+_PLAIN_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+LIMIT_WORDS = {"rounds": "rounds", "seconds": "time", "input_tokens": "token"}
+
+
+def _value_forms(value: Any) -> set[str]:
+    text = str(value if value is not None else "").strip()
+    forms = set()
+    for m in _NUMBER.finditer(text):
+        forms.add(_normal(m.group("int") + (m.group("dec") or "")))
+    return forms
+
+
+def _number_leaves(data: Any) -> set[str]:
+    """Normal forms of every numeric VALUE in `data`: JSON numbers and numeric strings. Keys,
+    UUIDs and dates are never numbers here."""
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+        elif isinstance(node, bool) or node is None:
+            return
+        elif isinstance(node, (int, float)):
+            found.add(_normal(str(node)))
+        elif isinstance(node, str):
+            plain = node.strip().replace(",", "")
+            if _PLAIN_NUMBER.fullmatch(plain):
+                found.add(_normal(plain))
+
+    walk(data)
+    return found
+
+
+def _answer_parts(args: Any) -> tuple[str, list[dict], list[dict], list[str]]:
+    args = args if isinstance(args, dict) else {}
+    text = args.get("text")
+    figures = [f for f in (args.get("figures") or []) if isinstance(f, dict)] if isinstance(args.get("figures"), list) else []
+    not_found = [n for n in (args.get("not_found") or []) if isinstance(n, dict)] if isinstance(args.get("not_found"), list) else []
+    checked = args.get("not_checked")
+    not_checked = [str(x).strip() for x in checked if str(x).strip()] if isinstance(checked, list) else []
+    return (text.strip() if isinstance(text, str) else ""), figures, not_found, not_checked
+
+
+def _found_ids(ledger: dict[str, dict]) -> set[str]:
+    ids: set[str] = set()
+    for entry in ledger.values():
+        if entry["name"] == RESOLVE and entry["status"] == "ok" and isinstance(entry["data"], dict):
+            for r in entry["data"].get("results") or []:
+                if r.get("status") == "found":
+                    ids.update(str(m.get("id")).lower() for m in r.get("matches") or [])
+    return ids
+
+
+def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: set[str]) -> bool:
+    entry = ledger.get(str(call_id))
+    if not entry:
+        return False
+    low = what.lower()
+    if entry["name"] == RESOLVE and entry["status"] == "ok" and isinstance(entry["data"], dict):
+        for r in entry["data"].get("results") or []:
+            term = str(r.get("term") or "").lower()
+            if r.get("status") == "not_found" and term and (term in low or low in term):
+                return True
+        return False
+    if entry["status"] == "empty":
+        ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
+        return bool(ids) and all(i in found for i in ids)
+    return False
+
+
+def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[list[str], list[str]]:
+    """(numbers in the text no tool result backs, not-found claims no tool call backs)."""
+    text, figures, not_found, _ = _answer_parts(args)
+    backed: set[str] = set()
+    for fig in figures:
+        entry = ledger.get(str(fig.get("call_id")))
+        if entry and entry["status"] == "ok":
+            leaves = _number_leaves(entry["data"])
+            forms = _value_forms(fig.get("value"))
+            if forms & leaves:
+                backed |= forms
+    user_forms = _supported_forms([user_text])
+    bad_numbers: list[str] = []
+    for _, _, written, forms in _figures(text):
+        if not forms & (backed | user_forms) and written not in bad_numbers:
+            bad_numbers.append(written)
+    found = _found_ids(ledger)
+    bad_not_found = [
+        str(n.get("what") or "").strip()
+        for n in not_found
+        if not _not_found_backed(str(n.get("what") or ""), n.get("call_id"), ledger, found)
+    ]
+    return bad_numbers, [w for w in bad_not_found if w]
+
+
+def _redact_written(text: str, bad: set[str]) -> str:
+    out, last = [], 0
+    for start, end, written, _ in _figures(text):
+        if written in bad:
+            out.append(text[last:start])
+            out.append(NOT_VERIFIED)
+            last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
+def final_reply(args: Any, bad_numbers: list[str], bad_not_found: list[str]) -> tuple[str, bool]:
+    """The user-facing text of an accepted answer, and whether the model named what it did not check."""
+    text, _, _, not_checked = _answer_parts(args)
+    if bad_numbers:
+        text = _redact_written(text, set(bad_numbers))
+    if bad_not_found:
+        text = f"I could not confirm that nothing exists for: {'; '.join(bad_not_found)}. {text}".strip()
+    if not_checked:
+        text = f"{text}\n\nNot checked: {'; '.join(not_checked)}.".strip()
+    return text, bool(not_checked)
+
+
+def violation_message(bad_numbers: list[str], bad_not_found: list[str], empty_text: bool) -> str:
+    parts = []
+    if empty_text:
+        parts.append("text is required")
+    if bad_numbers:
+        parts.append(
+            "these numbers in text are not backed by a figure whose call_id result holds that value: "
+            + ", ".join(bad_numbers)
+        )
+    if bad_not_found:
+        parts.append(
+            "these not_found items are not backed by a crm_resolve not_found term or by an empty "
+            "result whose ids came from crm_resolve: " + "; ".join(bad_not_found)
+        )
+    return "Fix and call answer again. " + "; ".join(parts) + "."
+
+
+def limit_sentence(word: str, labels: list[str]) -> str:
+    what = ", ".join(dict.fromkeys(labels)) if labels else "the rest of your question"
+    return f"I stopped at the {word} limit before finishing, so I did not check: {what}."
+
+
 # ------------------------------------------------------------------ result
 
 
@@ -172,8 +330,9 @@ class _Run:
     rounds: int = 0
     tool_calls: list[dict] = field(default_factory=list)
     digest: list[dict] = field(default_factory=list)
-    sources: list[str] = field(default_factory=list)
     any_tool_result: bool = False
+    #: Labels of tools that were refused, failed, timed out or never ran: what a limit left unchecked.
+    unchecked: list[str] = field(default_factory=list)
 
     def usage(self) -> dict:
         return {
@@ -449,20 +608,41 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         messages: list[dict] = [{"role": "system", "content": _system_prompt(db, ctx.user_name)}]
         messages.extend(memory.history_messages(db, conv))
         messages.append({"role": "user", "content": text})
-        schemas = tool_schemas(permitted_tools(db, ctx), catalog) or None
-        run.sources.append(text)
+        schemas = tool_schemas(permitted_tools(db, ctx), catalog) + [ANSWER_SCHEMA]
+        ledger: dict[str, dict] = {}
+        seen_ids: set[str] = set()
+        repaired = False
+        final_args: dict | None = None
+        nudge = (
+            "Finish by calling the answer tool now: put your reply in text, list every number in "
+            "figures with the call_id that shows it, and anything you could not find in not_found."
+        )
 
-        def forced_final(why: str) -> str:
+        def answer_of(result_obj: Any) -> dict:
+            for c in result_obj.tool_calls or []:
+                if c.get("name") == ANSWER:
+                    return c.get("arguments") if isinstance(c.get("arguments"), dict) else {}
+            return {"text": (result_obj.content or "").strip()}
+
+        def forced_final(why: str) -> tuple[str, bool]:
             messages.append(
                 {
                     "role": "user",
                     "content": (
-                        f"Tool use has ended for this turn ({why}). Answer now with what you have, "
-                        "and say plainly what you could not check."
+                        f"Tool use has ended for this turn ({why}). Call the answer tool now with what you "
+                        "have, and name in not_checked what you could not check."
                     ),
                 }
             )
-            return (chat(messages, None, kind="final", grace=FINAL_GRACE).content or "").strip()
+            res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
+            args = answer_of(res)
+            bad_numbers, bad_nf = verify_answer(args, ledger, text)
+            return final_reply(args, bad_numbers, bad_nf)
+
+        def add_limit_sentence(reply_text: str, named: bool, word: str) -> str:
+            if named:
+                return reply_text
+            return f"{reply_text}\n\n{limit_sentence(word, run.unchecked)}".strip()
 
         while True:
             try:
@@ -471,12 +651,21 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 if not run.any_tool_result:
                     raise
                 status, limit_hit = "limited", "error"
-                reply = forced_final("the model call failed")
+                reply, named = forced_final("the model call failed")
+                if not named:
+                    labels = ", ".join(dict.fromkeys(run.unchecked)) or "the rest of your question"
+                    reply = f"{reply}\n\nI stopped because of an error before finishing, so I did not check: {labels}.".strip()
                 break
             run.rounds += 1
             calls = list(result.tool_calls or [])
             if not calls:
-                reply = (result.content or "").strip()
+                content = (result.content or "").strip()
+                if not repaired and remaining() >= SIDE_CALL_MIN:
+                    repaired = True
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": nudge})
+                    continue
+                final_args = {"text": content}
                 break
 
             assistant_calls = [
@@ -499,32 +688,44 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 entry["continuation"] = result.continuation
             messages.append(entry)
 
+            replies: dict[int, str] = {}
+            answer_idx: int | None = None
             skipped = 0
+            tool_index = 0
             for idx, call in enumerate(calls):
                 name = str(call.get("name") or "")
                 args = call.get("arguments")
+                call_id = assistant_calls[idx]["id"]
+                if name == ANSWER:
+                    answer_idx = idx
+                    continue
                 started = clock()
-                if idx >= budgets.calls_per_round:
+                if tool_index >= budgets.calls_per_round:
                     # A Gemini continuation must be replayed with a reply for every call it
                     # contains, so each extra call gets one; the digest and trace carry one note.
                     skipped += 1
-                    out = ToolResult("denied", message="Too many calls this round; ask again next round.")
-                    messages.append(
-                        {"role": "tool", "tool_call_id": assistant_calls[idx]["id"], "content": out.to_json()}
-                    )
+                    run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
+                    replies[idx] = ToolResult(
+                        "denied", message="Too many calls this round; ask again next round."
+                    ).to_json(call_id)
                     continue
+                tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
                 seconds = max(1, int(min(remaining(), MCP_CALL_TIMEOUT)))
                 out = dispatch(
                     db, ctx, name, args,
                     call=mcp_call if mcp_call is not None else mcp_builder(seconds),
-                    catalog=catalog, timeout=float(seconds),
+                    catalog=catalog, timeout=float(seconds), seen_ids=seen_ids,
                 )
                 ms = int((clock() - started) * 1000)
-                payload = out.to_json()
-                if out.status == "ok":
-                    run.sources.append(payload)
+                payload = out.to_json(call_id)
                 run.any_tool_result = True
+                ledger[call_id] = {
+                    "name": name, "status": out.status,
+                    "args": args if isinstance(args, dict) else {}, "data": out.data,
+                }
+                if out.status in ("denied", "invalid", "error", "timeout"):
+                    run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
                 run.tool_calls.append({"name": name, "status": out.status, "ms": ms})
                 run.digest.append({"name": name, "args": _args_for_digest(args), "status": out.status})
                 trace.add(
@@ -538,12 +739,40 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                         "more": out.more,
                     },
                 )
-                messages.append({"role": "tool", "tool_call_id": assistant_calls[idx]["id"], "content": payload})
+                replies[idx] = payload
             if skipped:
                 note = {"name": "(extra calls)", "args": {"skipped": skipped}, "status": "denied"}
                 run.tool_calls.append({"name": note["name"], "status": "denied", "ms": 0})
                 run.digest.append(note)
                 trace.add("agent_tool", {**note, "ms": 0, "result_chars": 0, "more": 0})
+
+            accepted = False
+            if answer_idx is not None:
+                args = calls[answer_idx].get("arguments")
+                args = args if isinstance(args, dict) else {}
+                bad_numbers, bad_nf = verify_answer(args, ledger, text)
+                empty_text = not _answer_parts(args)[0]
+                trace.add(
+                    "agent_answer",
+                    {"unbacked_numbers": bad_numbers, "unbacked_not_found": bad_nf, "repaired": repaired},
+                )
+                if not (bad_numbers or bad_nf or empty_text):
+                    replies[answer_idx] = ToolResult("ok", message="Answer accepted.").to_json(assistant_calls[answer_idx]["id"])
+                    final_args, accepted = args, True
+                elif not repaired and remaining() >= SIDE_CALL_MIN:
+                    # One repair round, and only with time to spare; otherwise redact below.
+                    repaired = True
+                    replies[answer_idx] = ToolResult(
+                        "invalid", message=violation_message(bad_numbers, bad_nf, empty_text)
+                    ).to_json(assistant_calls[answer_idx]["id"])
+                else:
+                    final_args, accepted = args, True
+            for idx in range(len(calls)):
+                messages.append(
+                    {"role": "tool", "tool_call_id": assistant_calls[idx]["id"], "content": replies.get(idx, "{}")}
+                )
+            if accepted:
+                break
 
             if run.rounds >= budgets.max_rounds:
                 limit_hit = "rounds"
@@ -553,31 +782,13 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 limit_hit = "input_tokens"
             if limit_hit:
                 status = "limited"
-                reply = forced_final(f"limit reached: {limit_hit}")
+                reply, named = forced_final(f"limit reached: {limit_hit}")
+                reply = add_limit_sentence(reply, named, LIMIT_WORDS[limit_hit])
                 break
 
-        # -- figure check (one repair round with time to spare, then redaction)
-        missing = unsupported_figures(reply, run.sources)
-        if missing:
-            trace.add("agent_figure_check", {"unsupported": missing})
-            if remaining() >= SIDE_CALL_MIN:
-                try:
-                    messages.append({"role": "assistant", "content": reply})
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "These figures in your answer do not appear in any tool result of this turn: "
-                                + ", ".join(missing)
-                                + ". Answer again using only figures from the tool results or from my message, "
-                                "and say which figures you could not verify."
-                            ),
-                        }
-                    )
-                    reply = (chat(messages, None, kind="repair", cap=SIDE_CALL_CAP).content or "").strip()
-                except (_ProviderFailed, TimeoutError):
-                    logger.warning("agent: repair round failed")
-            reply = _redact(reply, run.sources)
+        if final_args is not None:
+            bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
+            reply, _ = final_reply(final_args, bad_numbers, bad_nf)
     except _AgentUnavailable as exc:
         status, error, limit_hit = "failed", str(exc), None
     except _ProviderFailed:

@@ -50,11 +50,28 @@ def call(name=STOCK, args=None, cid="call-1"):
     return {"id": cid, "name": name, "arguments": {"query": "SRTWT7445"} if args is None else args}
 
 
-def answer(text, *, prompt=100, completion=10, cached=0):
+def answer(text, *, prompt=100, completion=10, cached=0, figures=(), cid="ans-1"):
+    """Round 5: a turn ends with the `answer` tool, not with plain text."""
     return ChatResult(
-        content=text, prompt_tokens=prompt, completion_tokens=completion,
+        content="", prompt_tokens=prompt, completion_tokens=completion,
         total_tokens=prompt + completion, cached_tokens=cached,
+        tool_calls=[
+            {
+                "id": cid,
+                "name": "answer",
+                "arguments": {"text": text, "figures": [dict(f) for f in figures], "not_found": [], "not_checked": []},
+            }
+        ],
     )
+
+
+def plain(text, *, prompt=100, completion=10):
+    return ChatResult(
+        content=text, prompt_tokens=prompt, completion_tokens=completion, total_tokens=prompt + completion
+    )
+
+
+TWELVE = [{"value": "12", "call_id": "call-1"}]
 
 
 def asks(*calls, prompt=100, completion=10, continuation=None, cached=0):
@@ -126,7 +143,7 @@ def _turn_row(db, result):
 
 
 def test_a_two_round_turn_calls_the_tool_then_answers(db, contact):
-    provider = ScriptedProvider([asks(call()), answer("There are 12 units.")])
+    provider = ScriptedProvider([asks(call()), answer("There are 12 units.", figures=TWELVE)])
     mcp = Mcp()
 
     result = run(db, contact, provider, mcp)
@@ -159,7 +176,7 @@ def test_the_first_call_sees_a_system_prompt_the_user_text_and_only_permitted_to
 
 
 def test_the_turn_writes_one_agent_row(db, contact):
-    provider = ScriptedProvider([asks(call()), answer("There are 12 units.")])
+    provider = ScriptedProvider([asks(call()), answer("There are 12 units.", figures=TWELVE)])
     result = run(db, contact, provider)
 
     rows = db.query(ChatbotTurn).filter(ChatbotTurn.contact_respond_id == contact["respond_id"]).all()
@@ -184,7 +201,7 @@ def test_usage_is_summed_over_the_turns_model_calls_and_logged(db, contact):
     from app.models.ai_assistant import AIAssistantUsageLog
 
     provider = ScriptedProvider(
-        [asks(call(), prompt=100, completion=10, cached=40), answer("There are 12 units.", prompt=150, completion=20, cached=60)]
+        [asks(call(), prompt=100, completion=10, cached=40), answer("There are 12 units.", prompt=150, completion=20, cached=60, figures=TWELVE)]
     )
     result = run(db, contact, provider)
 
@@ -199,7 +216,7 @@ def test_usage_is_summed_over_the_turns_model_calls_and_logged(db, contact):
 
 def test_round_two_replays_the_round_one_continuation_unchanged(db, contact):
     signature = {"provider": "gemini", "parts": [{"thoughtSignature": "SIG-ABC", "functionCall": {"name": STOCK}}]}
-    provider = ScriptedProvider([asks(call(), continuation=signature), answer("There are 12 units.")])
+    provider = ScriptedProvider([asks(call(), continuation=signature), answer("There are 12 units.", figures=TWELVE)])
 
     run(db, contact, provider)
 
@@ -215,7 +232,7 @@ def test_round_two_replays_the_round_one_continuation_unchanged(db, contact):
 
 
 def test_an_assistant_message_without_a_continuation_has_no_such_key(db, contact):
-    provider = ScriptedProvider([asks(call()), answer("There are 12 units.")])
+    provider = ScriptedProvider([asks(call()), answer("There are 12 units.", figures=TWELVE)])
     run(db, contact, provider)
     assistants = [m for m in provider.seen[1]["messages"] if m["role"] == "assistant"]
     assert "continuation" not in assistants[0]
@@ -235,10 +252,11 @@ def test_max_rounds_forces_a_final_call_with_no_tools(db, contact):
     assert result.status == "limited"
     assert result.limit_hit == "rounds"
     assert result.rounds == 2
-    assert result.reply_text == "I could only check part of it."
+    assert result.reply_text.startswith("I could only check part of it.")
     assert len(provider.seen) == 3
     assert provider.seen[0]["tools"] and provider.seen[1]["tools"]
-    assert provider.seen[2]["tools"] is None
+    # Round 5: the final call offers only the answer tool.
+    assert [t["function"]["name"] for t in provider.seen[2]["tools"]] == ["answer"]
     row = _turn_row(db, result)
     assert row.response["limit_hit"] == "rounds" and row.response["status"] == "limited"
 
@@ -254,7 +272,7 @@ def test_max_seconds_uses_the_injected_clock(db, contact):
 
     assert result.status == "limited"
     assert result.limit_hit == "seconds"
-    assert provider.seen[-1]["tools"] is None
+    assert [t["function"]["name"] for t in provider.seen[-1]["tools"]] == ["answer"]
 
 
 def test_max_input_tokens_sums_prompt_tokens_across_calls(db, contact):
@@ -265,12 +283,14 @@ def test_max_input_tokens_sums_prompt_tokens_across_calls(db, contact):
 
     assert result.status == "limited"
     assert result.limit_hit == "input_tokens"
-    assert provider.seen[-1]["tools"] is None
+    assert [t["function"]["name"] for t in provider.seen[-1]["tools"]] == ["answer"]
 
 
 def test_more_than_four_calls_in_a_round_run_four_and_deny_the_rest(db, contact):
     six = [call(cid=f"c{i}", args={"query": f"q{i}"}) for i in range(6)]
-    provider = ScriptedProvider([asks(*six), answer("There are 12 units.")])
+    provider = ScriptedProvider(
+        [asks(*six), answer("There are 12 units.", figures=[{"value": "12", "call_id": "c0"}])]
+    )
     mcp = Mcp()
 
     result = run(db, contact, provider, mcp)
@@ -348,8 +368,8 @@ def test_a_provider_error_after_a_tool_result_takes_the_limit_path(db, contact):
     result = run(db, contact, provider)
 
     assert result.status == "limited"
-    assert result.reply_text == "Partial answer."
-    assert provider.seen[-1]["tools"] is None
+    assert result.reply_text.startswith("Partial answer.")
+    assert [t["function"]["name"] for t in provider.seen[-1]["tools"]] == ["answer"]
 
 
 def test_a_refused_contact_propagates_agent_refused(db):
@@ -368,8 +388,13 @@ def test_a_refused_contact_propagates_agent_refused(db):
 
 
 def test_an_unsupported_figure_triggers_one_repair_round(db, contact):
+    # Round 5: a figure counts when the answer tool cites a call whose result holds it.
     provider = ScriptedProvider(
-        [asks(call()), answer("There are 99 units."), answer("There are 12 units.")]
+        [
+            asks(call()),
+            answer("There are 99 units.", figures=[{"value": "99", "call_id": "call-1"}]),
+            answer("There are 12 units.", figures=TWELVE, cid="ans-2"),
+        ]
     )
 
     result = run(db, contact, provider)
@@ -399,7 +424,7 @@ def test_a_figure_from_the_users_own_message_is_supported(db, contact):
     result = run(db, contact, provider, text="show me 50 rows")
 
     assert result.reply_text == "Here are 50 rows."
-    assert len(provider.seen) == 1
+    assert len(provider.seen) == 1  # no figures declared: the user's own number is exempt
 
 
 @pytest.mark.parametrize(
@@ -467,7 +492,7 @@ def test_the_per_call_timeout_shrinks_with_the_remaining_budget(db, contact):
         return Mcp()
 
     provider = ScriptedProvider(
-        [asks(call(cid="c1")), asks(call(cid="c2")), answer("There are 12 units.")],
+        [asks(call(cid="c1")), asks(call(cid="c2")), answer("There are 12 units.", figures=TWELVE)],
         on_call=lambda n: clock.__setitem__("t", clock["t"] + 20.0) if n <= 2 else None,
     )
     run_agent_turn(

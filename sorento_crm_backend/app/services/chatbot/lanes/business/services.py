@@ -594,6 +594,59 @@ def customer_names_reader(db: Session) -> Callable[[list[str]], dict[str, str]]:
     return read
 
 
+def readable_customers(db: Any, rows: Any, contact_respond_id: Any, has_company_scope: bool) -> list[Any]:
+    """CHAT-STATE S7: the carried customer rows this contact can still read, at turn start.
+    One read through the contact's scope-stamped session (company scope applies), narrowed to
+    the current customer links for an enforced contact. A row whose keys are all unreadable is
+    dropped; a row with no code and no key is dropped; token-only rows travel to the resolver."""
+    keys_of = lambda r: [  # noqa: E731
+        str(k) for k in ([r.get("uuid")] if r.get("uuid") else []) + list(r.get("uuids") or []) if k
+    ]
+    from app.services.identifier_resolver import is_uuid
+
+    every_key = {k for r in rows or [] if isinstance(r, dict) for k in keys_of(r)}
+    wanted = {k for k in every_key if is_uuid(k)}
+    # A key that is not a UUID can name nothing readable.
+    unreadable: set[str] = every_key - wanted
+    if wanted:
+        try:
+            from app.models.base import company_scope
+            from app.models.order import Customer
+
+            # A key nothing holds names no data and is left to the resolver; a key a customer
+            # holds but this contact's scope cannot read is dropped.
+            with company_scope(db, None):
+                existing = {str(i) for (i,) in db.query(Customer.id).filter(Customer.id.in_(wanted)).all()}
+            readable = (
+                {str(i) for (i,) in db.query(Customer.id).filter(Customer.id.in_(wanted)).all()}
+                if has_company_scope
+                else set()
+            )
+            scope = customer_scope(db, contact_respond_id, fetch_space_id(db))
+            if scope and scope.get("enforced"):
+                readable &= {str(i) for i in scope["ids"]}
+            # With no company scope at all nothing is readable, whether or not the key exists.
+            unreadable |= (existing - readable) if has_company_scope else set(wanted)
+        except Exception:  # noqa: BLE001 - fail closed: no keyed row is trusted when the read fails
+            logger.warning("chatbot: the carried-customer read failed; keyed customer rows dropped", exc_info=False)
+            unreadable = set(every_key)
+    kept: list[Any] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        keys = keys_of(row)
+        if keys:
+            live = [k for k in keys if k not in unreadable]
+            if not live:
+                continue
+            if len(live) != len(keys):
+                row = {**row, "uuid": live[0], **({"uuids": live} if row.get("uuids") else {})}
+        elif not (row.get("canonical_code") or row.get("raw") or row.get("name")):
+            continue
+        kept.append(row)
+    return kept
+
+
 def customer_scope(db: Session, contact_respond_id: Any, space_id: str | None) -> dict[str, Any] | None:
     """The asking contact's customer scope, read ONCE per turn
     (PLAN-chatbot-customer-scope-29sep.md D1/D3): None when nobody linked the contact to a

@@ -25,7 +25,8 @@ EXPECTED = {
     "crm_procurement_po_placed_list": "scm.purchase_orders.view",
     "crm_procurement_spo_allocations_last_receipt_list": "procurement.spo_allocations.view",
     "crm_order_management_orders_by_product_list": "order_management.orders.view",
-    "crm_lookup_resolve": "master_data.products.view",
+    # Round 5: the local resolver; each kind it searches has its own slug (tools.KIND_SLUGS).
+    "crm_resolve": "",
 }
 
 STOCK = "crm_inventory_stock_balance_list"
@@ -81,7 +82,8 @@ class Recorder:
     """A fake `call(name, args)` that records every invocation."""
 
     def __init__(self, result=None, exc=None):
-        self.result = {"items": []} if result is None else result
+        # Round 5: an envelope with no rows is the typed `empty`, so the default carries a row.
+        self.result = {"items": [{"qty": 1}]} if result is None else result
         self.exc = exc
         self.calls: list[tuple[str, dict]] = []
 

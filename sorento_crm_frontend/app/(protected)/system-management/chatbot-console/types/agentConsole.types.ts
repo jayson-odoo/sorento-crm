@@ -73,7 +73,7 @@ export const AGENT_TOOL_LABELS: Record<string, string> = {
   crm_procurement_po_placed_list: 'Purchase orders placed',
   crm_procurement_spo_allocations_last_receipt_list: 'Last receipt',
   crm_order_management_orders_by_product_list: 'Orders by product',
-  crm_lookup_resolve: 'Lookup',
+  crm_resolve: 'Find names and codes',
 };
 
 export const AGENT_LIMIT_LABELS: Record<string, string> = {
@@ -82,6 +82,9 @@ export const AGENT_LIMIT_LABELS: Record<string, string> = {
   input_tokens: 'token limit',
   error: 'an error',
 };
+
+/** The tool that ends every turn: not a lookup, so it gets no chip. */
+export const AGENT_HIDDEN_TOOLS = new Set(['answer']);
 
 export function agentToolLabel(name: string): string {
   return AGENT_TOOL_LABELS[name] ?? name.replace(/^crm_/, '').replace(/_/g, ' ');

@@ -191,4 +191,31 @@ describe('AgentConsole', () => {
     );
     expect(screen.queryByTestId('agent-console-empty')).not.toBeInTheDocument();
   });
+
+  it('shows the resolver as "Find names and codes" and hides the answer call', async () => {
+    getAgentConversation.mockResolvedValue({
+      conversation_id: 'cv1',
+      turns: [
+        {
+          turn_id: 't0',
+          text: 'q',
+          reply_text: 'a',
+          status: 'done',
+          created_at: '2026-10-29T09:00:00Z',
+          rounds: 2,
+          limit_hit: null,
+          tool_calls: [
+            { name: 'crm_resolve', status: 'ok' },
+            { name: 'crm_inventory_stock_balance_list', status: 'empty' },
+            { name: 'answer', status: 'ok' },
+          ],
+        },
+      ],
+    });
+    renderConsole();
+    const meta = await screen.findByTestId('agent-reply-meta');
+    expect(meta).toHaveTextContent('Find names and codes: ok');
+    expect(meta).toHaveTextContent('Stock balance: empty');
+    expect(meta).not.toHaveTextContent(/answer/i);
+  });
 });

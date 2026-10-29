@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -46,7 +47,10 @@ def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
     }
 
 
-NON_RENDER_TOOLS = frozenset({"crm_lookup_resolve", "crm_procurement_grn_summary"})
+#: `crm_resolve` is local (the bot's resolver, in process); the GRN summary is a plain route.
+NON_RENDER_TOOLS = frozenset({"crm_resolve", "crm_procurement_grn_summary"})
+RESOLVE = "crm_resolve"
+ANSWER = "answer"
 
 
 # crm_report_ask: the sales / outstanding reveal is decided by the route itself from the
@@ -62,7 +66,8 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_procurement_po_placed_list", "scm.purchase_orders.view", "purchase_orders.placed"),
     ("crm_procurement_spo_allocations_last_receipt_list", "procurement.spo_allocations.view", "purchase_orders.placed"),
     ("crm_order_management_orders_by_product_list", "order_management.orders.view", None),
-    ("crm_lookup_resolve", "master_data.products.view", None),
+    # No single slug: each kind it searches has its own (KIND_SLUGS), checked per call.
+    ("crm_resolve", "", None),
 )
 
 #: Tools that read stock: today's bot refuses them for a contact with `chatbot_stock_allowed` off.
@@ -84,8 +89,41 @@ SELLABLE_PARAM = "include_sellable"
 SELLABLE_GRANT = "inventory.sellable"
 #: Keys the presenter envelope always carries one of; a raw route payload carries none.
 ENVELOPE_KEYS = ("has_result", "result_type", "items", "answers", "response")
+#: Keys whose content makes an envelope non-empty.
+ROW_KEYS = ("items", "answers", "response", "groups", "summary_items", "drill_rows", "attachments", "action_links")
 FIXED_ERROR = "The tool failed."
 FIXED_TIMEOUT = "The tool did not answer in time."
+#: What `crm_resolve` may search, the slug the user needs for each kind, and the contact reveal
+#: a kind also needs.
+KIND_SLUGS: dict[str, str] = {
+    "product": "master_data.products.view",
+    "supplier": "procurement.suppliers.view",
+    "brand": "master_data.brands.view",
+    "customer": "order_management.customers.view",
+    "category": "master_data.product_categories.view",
+    "sales_agent": "master_data.sales_agents.view",
+}
+KIND_CONTACT_GRANTS: dict[str, str] = {"supplier": "purchase_orders.supplier"}
+#: Resolver entity types that stand for one of our kinds.
+_KIND_OF_ENTITY: dict[str, str] = {**{k: k for k in KIND_SLUGS}, "product_set": "product"}
+MAX_TERMS = 10
+MAX_MATCHES = 5
+MAX_DETAIL_CHARS = 200
+NO_ROWS_MESSAGE = "No rows matched these filters."
+
+#: Plain labels for a tool, for sentences the user reads.
+TOOL_LABELS: dict[str, str] = {
+    "crm_report_ask": "sales and outstanding figures",
+    "crm_inventory_stock_balance_list": "stock on hand",
+    "crm_incoming_stock_by_product": "incoming stock",
+    "crm_incoming_stock_shipments": "incoming shipments",
+    "crm_procurement_grn_summary": "goods received",
+    "crm_procurement_po_last_cost_list": "last purchase cost",
+    "crm_procurement_po_placed_list": "purchase orders placed",
+    "crm_procurement_spo_allocations_last_receipt_list": "last receipt",
+    "crm_order_management_orders_by_product_list": "orders by product",
+    "crm_resolve": "finding names and codes",
+}
 FIXED_NOT_ENVELOPE = "The tool returned an unexpected shape, so its data was not used."
 
 
@@ -96,17 +134,20 @@ class ToolResult:
     more: int = 0
     message: str = ""
 
-    def to_json(self) -> str:
-        return json.dumps(
-            {"status": self.status, "data": self.data, "more": self.more, "message": self.message},
-            default=str,
-        )
+    def to_json(self, call_id: str | None = None) -> str:
+        body: dict[str, Any] = {"status": self.status, "data": self.data, "more": self.more, "message": self.message}
+        if call_id:
+            body["call_id"] = call_id  # the model cites this in the answer tool
+        return json.dumps(body, default=str)
 
 
 def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
     """OpenAI-style function tools for `tools`, from the MCP catalogue, guards stripped."""
     out: list[dict] = []
     for tool in tools:
+        if tool.name == RESOLVE:
+            out.append(copy.deepcopy(RESOLVE_SCHEMA))
+            continue
         meta = catalog.get(tool.name)
         if not isinstance(meta, dict):
             continue
@@ -117,6 +158,83 @@ def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
         params["required"] = [r for r in params.get("required") or [] if r != VIEW_PARAM]
         out.append(schema)
     return out
+
+
+RESOLVE_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": RESOLVE,
+        "description": (
+            "Turn names and codes (product codes, suppliers, brands, customers, categories, sales "
+            "agents) into ids. Call this before any tool that takes an id, and pass only the ids it "
+            "returns. A term comes back found, ambiguous (ask which one) or not_found."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "terms": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": MAX_TERMS},
+                "kinds": {"type": "array", "items": {"type": "string", "enum": list(KIND_SLUGS)}},
+            },
+            "required": ["terms"],
+        },
+    },
+}
+
+ANSWER_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": ANSWER,
+        "description": (
+            "Finish the turn with the reply for the user. Every number in text must be listed in "
+            "figures with the call_id of the tool call whose result holds it. Anything you could not "
+            "find goes in not_found with the call_id that showed it, and anything you did not check "
+            "goes in not_checked."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "figures": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}, "call_id": {"type": "string"}},
+                        "required": ["value", "call_id"],
+                    },
+                },
+                "not_found": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"what": {"type": "string"}, "call_id": {"type": "string"}},
+                        "required": ["what", "call_id"],
+                    },
+                },
+                "not_checked": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["text"],
+        },
+    },
+}
+
+
+def user_may_use(db: Any, ctx: Any, tool: ToolDef) -> bool:
+    """Does the linked user hold what the tool needs (for `crm_resolve`: any searchable kind)."""
+    if tool.name == RESOLVE:
+        return bool(searchable_kinds(db, ctx, list(KIND_SLUGS))[0])
+    return _permitted(db, ctx.user_id, tool.user_permission)
+
+
+def searchable_kinds(db: Any, ctx: Any, requested: list[str]) -> tuple[list[str], list[str]]:
+    """(kinds that may be searched, kinds left out): the user's slug now, and the contact's reveal."""
+    allowed, skipped = [], []
+    for kind in requested:
+        grant = KIND_CONTACT_GRANTS.get(kind)
+        if _permitted(db, ctx.user_id, KIND_SLUGS[kind]) and (grant is None or grant in ctx.grants):
+            allowed.append(kind)
+        else:
+            skipped.append(kind)
+    return allowed, skipped
 
 
 def contact_allows(ctx: Any, tool: ToolDef) -> bool:
@@ -209,6 +327,161 @@ def cap_result(data: Any, limit: int = RESULT_CHAR_CAP) -> tuple[Any, int]:
     return data, more
 
 
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+_URL = re.compile(r"\bhttps?://\S+", re.I)
+_IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b")
+_HOST = re.compile(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+){2,}\b", re.I)
+_PATH = re.compile(r"\S*/api/v\d\S*")
+_HTTP_ERR = re.compile(r"returned HTTP (\d{3})\s*:?\s*(.*)", re.S)
+
+
+def _id_args(args: dict) -> dict[str, list[Any]]:
+    """The arguments that carry ids (`*_id` / `*_ids`, not the injected guards), as lists of values."""
+    out: dict[str, list[Any]] = {}
+    for key, value in args.items():
+        if key in GUARD_PARAMS or not (key.endswith("_id") or key.endswith("_ids")):
+            continue
+        if isinstance(value, str) and value.strip().startswith("["):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                pass
+        if isinstance(value, str):
+            value = [v.strip() for v in value.split(",")]
+        elif not isinstance(value, list):
+            value = [value]
+        out[key] = [v for v in value if v not in (None, "")]
+    return out
+
+
+def _check_ids(args: dict, seen: set[str]) -> ToolResult | None:
+    for key, values in _id_args(args).items():
+        for value in values:
+            if not (isinstance(value, str) and _UUID.match(value.strip())):
+                return ToolResult(
+                    "invalid", message=f"`{key}` takes ids from crm_resolve, not codes or names (`{value}`)."
+                )
+            if value.strip().lower() not in seen:
+                return ToolResult("invalid", message=f"Unknown id in `{key}`; get ids from crm_resolve first.")
+    return None
+
+
+def clean_detail(text: Any) -> str:
+    """A route's own detail text with URLs, hosts and paths removed, at most 200 characters."""
+    out = str(text or "")
+    for pattern in (_URL, _PATH, _IPV4, _HOST):
+        out = pattern.sub("", out)
+    return re.sub(r"\s+", " ", out).strip()[:MAX_DETAIL_CHARS]
+
+
+def _http_failure(status: int, detail: Any) -> ToolResult:
+    if 400 <= status < 500:
+        return ToolResult("invalid", message=clean_detail(detail) or "The request was rejected.")
+    return ToolResult("error", message=FIXED_ERROR)
+
+
+def _body_failure(data: Any) -> ToolResult | None:
+    """A route's non-2xx answer carried back as data (`status_code` on the body)."""
+    if not (isinstance(data, dict) and isinstance(data.get("status_code"), int) and data["status_code"] >= 400):
+        return None
+    detail = data.get("detail")
+    if isinstance(detail, dict):
+        detail = detail.get("detail") or detail.get("message")
+    if not isinstance(detail, str) or not detail.strip():
+        match = _HTTP_ERR.search(str(data.get("http_error") or data.get("error") or ""))
+        detail = match.group(2) if match else ""
+    return _http_failure(int(data["status_code"]), detail)
+
+
+def _has_rows(data: dict) -> bool:
+    return any(bool(data.get(k)) for k in ROW_KEYS)
+
+
+def _is_empty(data: Any, render: bool) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if render:
+        return data.get("has_result") is False or not _has_rows(data)
+    return data.get("empty") is True or (isinstance(data.get("data"), list) and not data["data"])
+
+
+def _resolve(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
+    """`crm_resolve`: the bot's own resolver, in process, under the contact's scope."""
+    from app.models.base import get_company_scope
+    from app.services.chatbot.lanes.business import services as business_services
+
+    unknown = sorted(k for k in args if k not in ("terms", "kinds") and k not in GUARD_PARAMS and k != VIEW_PARAM)
+    if unknown:
+        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
+    terms = args.get("terms")
+    if not (isinstance(terms, list) and 1 <= len(terms) <= MAX_TERMS and all(isinstance(t, str) and t.strip() for t in terms)):
+        return ToolResult("invalid", message=f"terms must be 1 to {MAX_TERMS} non-empty strings.")
+    kinds = args.get("kinds")
+    if kinds is None:
+        requested = list(KIND_SLUGS)
+    elif isinstance(kinds, list) and kinds and all(isinstance(k, str) and k in KIND_SLUGS for k in kinds):
+        requested = list(dict.fromkeys(kinds))
+    else:
+        return ToolResult("invalid", message=f"kinds must be some of: {', '.join(KIND_SLUGS)}.")
+    terms = [t.strip() for t in terms]
+
+    allowed, skipped = searchable_kinds(db, ctx, requested)
+    if not allowed:
+        return ToolResult(
+            "denied",
+            data={"skipped_kinds": skipped},
+            message=f"None of the requested kinds may be searched: {', '.join(skipped)}.",
+        )
+    body = {"tokens": terms, "raw_tokens": terms, "allowed_entity_types": allowed, "dry_run": True}
+    try:
+        raw = business_services._resolve_entity(db)(body)
+    except Exception:  # noqa: BLE001
+        logger.warning("agent: crm_resolve failed", exc_info=True)
+        return ToolResult("error", message=FIXED_ERROR)
+
+    by_token: dict[str, dict] = {}
+    resolutions = [r for r in (raw or {}).get("resolutions") or [] if isinstance(r, dict)]
+    for index, term in enumerate(terms):
+        match = next((r for r in resolutions if r.get("token") == term), None)
+        by_token[term] = match if match is not None else (resolutions[index] if index < len(resolutions) else {})
+
+    scope = get_company_scope(db) if db is not None else None
+    has_company_scope = isinstance(scope, (set, frozenset)) and bool(scope)
+    results = []
+    for term in terms:
+        res = by_token[term]
+        matches = []
+        for m in res.get("matches") or []:
+            kind = _KIND_OF_ENTITY.get(str(m.get("entity_type") or ""))
+            ident = m.get("uuid")
+            if kind not in allowed or not ident:
+                continue
+            display = m.get("display") if isinstance(m.get("display"), dict) else {}
+            matches.append(
+                {"id": str(ident), "kind": kind, "code": m.get("canonical_code"), "name": display.get("name")}
+            )
+        before = len(matches)
+        customers = [m for m in matches if m["kind"] == "customer"]
+        if customers:
+            kept = business_services.readable_customers(
+                db, [{"uuid": m["id"], "canonical_code": m["code"], "name": m["name"]} for m in customers],
+                ctx.contact_respond_id, has_company_scope,
+            )
+            readable = {str(r.get("uuid")) for r in kept if isinstance(r, dict)}
+            matches = [m for m in matches if m["kind"] != "customer" or m["id"] in readable]
+        trusted = res.get("resolved") is True and res.get("ambiguous") is False and len(matches) == before
+        if not matches:
+            status = "not_found"
+        elif len(matches) == 1 or trusted:
+            status, matches = "found", matches[:1] if trusted else matches
+        else:
+            status = "ambiguous"
+        matches = matches[:MAX_MATCHES]
+        seen.update(m["id"].lower() for m in matches)
+        results.append({"term": term, "status": status, "matches": matches})
+    return ToolResult("ok", data={"results": results, "skipped_kinds": skipped})
+
+
 def dispatch(
     db: Any,
     ctx: Any,
@@ -218,23 +491,30 @@ def dispatch(
     call: Callable[[str, dict], Any],
     catalog: dict[str, dict],
     timeout: float,
+    seen_ids: set[str] | None = None,
 ) -> ToolResult:
-    """One tool call, checked in the order the contract names. Never raises."""
+    """One tool call, checked in the order the contract names. Never raises.
+
+    `seen_ids` is the set of ids this turn's `crm_resolve` results produced (lower case); the
+    caller keeps it for the whole turn. Left out, no id is known and every id argument is refused."""
     from app.services.chatbot.lanes.business.fetch import ToolNotAllowed, drop_restricted_fields
     from app.services.llm_provider import is_timeout
 
+    seen = seen_ids if seen_ids is not None else set()
     tool = REGISTRY.get(name) if isinstance(name, str) else None
     if tool is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
-    if not _permitted(db, ctx.user_id, tool.user_permission):
+    if tool.name != RESOLVE and not _permitted(db, ctx.user_id, tool.user_permission):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not contact_allows(ctx, tool):
         return ToolResult("denied", message=f"{name} is outside this contact's access.")
+    if not isinstance(args, dict):
+        return ToolResult("invalid", message="Arguments must be an object of named values.")
+    if tool.name == RESOLVE:
+        return _resolve(db, ctx, args, seen)
     meta = catalog.get(name)
     if not isinstance(meta, dict):
         return ToolResult("error", message=f"{name} is not available right now.")
-    if not isinstance(args, dict):
-        return ToolResult("invalid", message="Arguments must be an object of named values.")
     schema = meta.get("inputSchema") if isinstance(meta.get("inputSchema"), dict) else {}
     allowed = set((schema.get("properties") or {}).keys()) | set(GUARD_PARAMS) | {VIEW_PARAM}
     unknown = sorted(k for k in args if k not in allowed)
@@ -253,9 +533,14 @@ def dispatch(
             if _arg_value(args, key) == value and grant not in ctx.grants:
                 return ToolResult("denied", message=f"{key}={value} is outside this contact's access.")
 
+    bad_id = _check_ids(args, seen)
+    if bad_id is not None:
+        return bad_id
+
     clean = {k: v for k, v in args.items() if k not in GUARD_PARAMS and k != VIEW_PARAM}
     if SELLABLE_GRANT not in ctx.grants:
         clean.pop(SELLABLE_PARAM, None)
+    filters = dict(clean)
     clean["contact_id"] = ctx.contact_respond_id
     if ctx.space_id is not None:
         clean["space_id"] = ctx.space_id
@@ -273,9 +558,15 @@ def dispatch(
         if is_timeout(exc):
             return ToolResult("timeout", message=FIXED_TIMEOUT)
         logger.warning("agent: tool %s failed", name, exc_info=True)
+        match = _HTTP_ERR.search(str(exc))
+        if match and match.group(1).startswith("4"):
+            return _http_failure(int(match.group(1)), match.group(2))
         return ToolResult("error", message=FIXED_ERROR)
 
     data = _as_data(raw)
+    failure = _body_failure(data)
+    if failure is not None:
+        return failure
     if tool.render:
         # Fail closed: a presenter tool's result that is not a render envelope has not been
         # through the presenter, so nothing in it can be trusted to be field-scoped.
@@ -284,5 +575,7 @@ def dispatch(
             return ToolResult("error", message=FIXED_NOT_ENVELOPE)
         axis = clean.get("group_by")
         drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
+    if _is_empty(data, tool.render):
+        return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
     data, more = cap_result(data)
     return ToolResult("ok", data=data, more=more)

@@ -49,7 +49,7 @@ ALL_TOOLS = (
     "crm_report_ask", "crm_inventory_stock_balance_list", "crm_incoming_stock_by_product",
     "crm_incoming_stock_shipments", "crm_procurement_grn_summary", "crm_procurement_po_last_cost_list",
     "crm_procurement_po_placed_list", "crm_procurement_spo_allocations_last_receipt_list",
-    "crm_order_management_orders_by_product_list", "crm_lookup_resolve",
+    "crm_order_management_orders_by_product_list", "crm_resolve",
 )
 CATALOG = _catalog(*ALL_TOOLS)
 
@@ -77,7 +77,7 @@ def _ctx(grants=(), stock_allowed=True):
 
 class Rec:
     def __init__(self, result=None, exc=None):
-        self.result = {"items": [], "has_result": True} if result is None else result
+        self.result = {"items": [{"qty": 1}], "has_result": True} if result is None else result
         self.exc = exc
         self.calls: list[tuple[str, dict]] = []
 
@@ -154,7 +154,7 @@ EXPECTED_GRANTS = {
     "crm_procurement_po_placed_list": "purchase_orders.placed",
     "crm_procurement_spo_allocations_last_receipt_list": "purchase_orders.placed",
     "crm_order_management_orders_by_product_list": None,
-    "crm_lookup_resolve": None,
+    "crm_resolve": None,
 }
 
 
@@ -518,32 +518,24 @@ def test_the_operator_is_recorded_on_the_turn(db, contact):
 # ------------------------------------------------------------------ round 4: N1 render flag
 
 
-LOOKUP = "crm_lookup_resolve"
 GRN = "crm_procurement_grn_summary"
 
 
-def test_only_lookup_and_grn_are_not_render_tools():
+def test_only_the_resolver_and_grn_are_not_render_tools():
     from app.services.chatbot.agent.tools import REGISTRY
 
-    assert {n for n, d in REGISTRY.items() if not d.render} == {LOOKUP, GRN}
+    assert {n for n, d in REGISTRY.items() if not d.render} == {"crm_resolve", GRN}
 
 
-def test_lookup_resolve_real_raw_shape_is_ok_and_gets_no_view(held):
-    held.update({"master_data.products.view"})
-    raw = {"value": "SRT", "label": "Sorento", "matched_keyword": None, "match_type": "exact_value", "score": 1.0}
+def test_a_non_render_tool_gets_no_view_and_a_model_supplied_view_is_dropped(held):
+    held.update({"procurement.grn.view"})
+    raw = {"data": [{"product_id": "p1", "received_qty": 3}], "empty": False}
     rec = Rec(result=raw)
-    out = _dispatch(LOOKUP, {"query": "sorento"}, rec)
+    out = _dispatch(GRN, {"query": "x", "view": "render"}, rec, ctx=_ctx({"purchase_orders.placed"}))
     assert out.status == "ok"
     assert out.data == raw
     assert "view" not in rec.calls[0][1]
     assert rec.calls[0][1]["contact_id"] == "ZZT-R-1"
-
-
-def test_lookup_resolve_ignores_a_model_supplied_view(held):
-    held.update({"master_data.products.view"})
-    rec = Rec(result={"value": "a", "label": "b", "matched_keyword": None, "match_type": "normalized", "score": 0.5})
-    _dispatch(LOOKUP, {"query": "x", "view": "render"}, rec)
-    assert "view" not in rec.calls[0][1]
 
 
 def test_grn_summary_real_raw_shape_is_ok(held):

@@ -49,7 +49,7 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
     # what the routes allow for the contact id. Company scope of the linked user is not applied
     # here, because the routes scope by contact id and the call itself runs as the integration.
     from app.models.access import RespondContact
-    from app.models.base import company_scope, set_brand_scope
+    from app.models.base import company_scope, set_brand_scope, set_company_scope
     from app.models.user import User, UserStatus
     from app.services.chatbot.head.access import default_space_id
     from app.services.contact_brand_scope import NO_BRAND_ID, contact_brand_scope
@@ -95,6 +95,16 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         logger.warning("agent: brand scope lookup failed for %s", contact_respond_id, exc_info=True)
         brand_scope = frozenset({NO_BRAND_ID})
     set_brand_scope(db, brand_scope)
+    # The company scope too (engine.py `_contact_company_scope`): the resolver and the routes
+    # called in process read the session, and an unstamped one reads nothing.
+    try:
+        from app.services import company_scope_resolver
+
+        company = company_scope_resolver.resolve_contact_company_scope(db, contact_respond_id, space_id)
+    except Exception:  # noqa: BLE001 - fail closed: an empty set owns no rows
+        logger.warning("agent: company scope lookup failed for %s", contact_respond_id, exc_info=True)
+        company = frozenset()
+    set_company_scope(db, company)
 
     ctx = AgentContext(
         contact_pk=pk,
@@ -115,13 +125,10 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
 
 
 def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
-    """REGISTRY entries whose slug the linked user holds, in registry order."""
-    from app.services.chatbot.agent.tools import _permitted, contact_allows
+    """REGISTRY entries the linked user and the contact may use, in registry order."""
+    from app.services.chatbot.agent.tools import contact_allows, user_may_use
 
-    return [
-        t for t in REGISTRY.values()
-        if _permitted(db, ctx.user_id, t.user_permission) and contact_allows(ctx, t)
-    ]
+    return [t for t in REGISTRY.values() if user_may_use(db, ctx, t) and contact_allows(ctx, t)]
 
 
 def grants_hash(ctx: AgentContext) -> str:

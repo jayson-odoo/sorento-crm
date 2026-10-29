@@ -134,7 +134,7 @@ class Resolver:
 
         def call(body):
             self.bodies.append(copy.deepcopy(body))
-            self.scopes.append(get_company_scope(db))
+            self.scopes.append(get_company_scope(db) if db is not None else None)
             out = []
             for term in body["tokens"]:
                 entry = self.table.get(term, [])
