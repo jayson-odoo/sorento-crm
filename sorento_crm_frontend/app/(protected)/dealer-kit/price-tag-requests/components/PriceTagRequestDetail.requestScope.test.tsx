@@ -145,6 +145,21 @@ describe('Price Tag Request page, limited user, view', () => {
 
 });
 
+describe('Price Tag Request page, page Back (owner hand test 2 point 4)', () => {
+  it('a limited user sees no page-level Back link', async () => {
+    await mountDetail(LIMITED);
+    await screen.findByText('Submit');
+    expect(screen.queryByText(/^Back to /)).toBeNull();
+    expect(screen.queryByRole('link', { name: /^Back to / })).toBeNull();
+  });
+
+  it('staff keep the page Back link (pin)', async () => {
+    await mountDetail(STAFF, { portal_draft_at: null, status: 'new' });
+    await screen.findByText('Claim');
+    expect(screen.getByText('Back to price tag requests')).toBeTruthy();
+  });
+});
+
 describe('Price Tag Request page, limited user, edit and create', () => {
   it('Submit in edit mode ends in POST .../submit through my-requests', async () => {
     await mountDetail(LIMITED, {}, 'edit=1');

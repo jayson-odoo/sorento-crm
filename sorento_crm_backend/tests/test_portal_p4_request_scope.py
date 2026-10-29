@@ -174,12 +174,14 @@ def test_p4_5_no_linked_contact_sees_nothing(scene, kind):
 # ------------------------------------------------------------------ P4-3: every other route is refused
 
 # The routes a limited user may reach on each router: list, detail, revisions. Anything else
-# on these routers answers 403. A route added later is refused by default, so it must be
+# on these routers answers 403. Complaint also allows GET /{complaint_id}/fulfilment-orders
+# (crew a88990530: a salesperson reads the fulfilment DOs of their own complaint).
+# A route added later is refused by default, so it must be
 # classified here before it can be reached.
 ALLOWED = {
     "stock_inquiry": {("GET", ""), ("GET", "/{inquiry_id}"), ("GET", "/{inquiry_id}/revisions")},
     "purchase_request": {("GET", ""), ("GET", "/{request_id}"), ("GET", "/{request_id}/revisions")},
-    "complaint": {("GET", ""), ("GET", "/{complaint_id}")},
+    "complaint": {("GET", ""), ("GET", "/{complaint_id}"), ("GET", "/{complaint_id}/fulfilment-orders")},
 }
 ROUTERS = {"stock_inquiry": SI, "purchase_request": PR_URL, "complaint": CMP}
 

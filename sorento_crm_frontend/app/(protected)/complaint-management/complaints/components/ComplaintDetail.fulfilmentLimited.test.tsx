@@ -19,6 +19,7 @@ vi.mock('@/components/common/MyRequestPortalForm', () => ({
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(''),
+  usePathname: () => '/complaint-management/complaints/cmp-1',
 }));
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: any) => (
