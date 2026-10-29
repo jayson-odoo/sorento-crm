@@ -83,7 +83,7 @@ router = APIRouter()
 # an earlier "documented under shipping_orders too, since that is the family
 # it names" note here was wrong and has been removed.
 FIELDS_ADDED: dict[str, list[str]] = {
-    "products": ["is_discontinued", "remark", "brand_code", "item_type_code"],
+    "products": ["is_discontinued", "remark", "brand_code", "item_type_code", "item_class_code"],
     "customers": ["market_segment_code", "region", "sales_agent_code"],
     "sales_orders": [
         "customer_segment",
@@ -348,6 +348,7 @@ WARNINGS: list[str] = sorted(
         "uom_created",
         "brand_created",
         "item_type_created",
+        "item_class_created",
         "segment_unknown",
         "lines.dropped",
         "lines.superseded",

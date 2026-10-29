@@ -4,10 +4,10 @@ import logging
 import re
 import uuid
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, func, select
 from typing import Any, Optional, List, Callable, Tuple, Iterable
 from decimal import Decimal
-from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+from app.models.product import Product, ProductCategory, Brand, ItemClass, UnitOfMeasure, ProductAttachment
 from app.models.product_set import ProductSet, ProductSetMember
 from app.services.sla_service import MALAYSIA_TZ
 
@@ -241,6 +241,30 @@ class ProductService:
     # to an empty result without hitting the DB.
     _EMPTY_RESULT = object()
 
+    def _resolve_category_filter(self, category_id: Optional[str]) -> Optional[list[str]]:
+        """Category ids for ``category_id``, one value or several comma-joined (OR-ed).
+
+        Each value resolves on its own (id, code or name) and the results are unioned, the
+        categories themselves with no subtree expansion. ``None`` is "no filter", ``[]`` is
+        "definitively no rows", as :func:`resolve_identifier` answers.
+        """
+        tokens = [t.strip() for t in (category_id or "").split(",") if t.strip()]
+        if len(tokens) <= 1:
+            return resolve_identifier(
+                self.db, category_id, ProductCategory, code_fields=("category_code", "category_name")
+            )
+        resolved: list[str] = []
+        picked = False
+        for token in tokens:
+            ids = resolve_identifier(
+                self.db, token, ProductCategory, code_fields=("category_code", "category_name")
+            )
+            if ids is None:  # "all"
+                continue
+            picked = True
+            resolved.extend(i for i in ids if i not in resolved)
+        return resolved if picked else None
+
     def _resolve_brand_filter(self, brand_id: Optional[str]) -> Optional[list[str]]:
         """Brand ids for the ``brand_id`` filter, which accepts a comma-separated list.
 
@@ -310,6 +334,7 @@ class ProductService:
         price_min: Optional[float] = None,
         price_max: Optional[float] = None,
         item_type: Optional[str] = None,
+        item_class_ids: Optional[list[str]] = None,
         length_min: Optional[float] = None,
         length_max: Optional[float] = None,
         width_min: Optional[float] = None,
@@ -351,12 +376,7 @@ class ProductService:
             lowered = [c.lower() for c in entity_buckets.product_codes]
             filters.append(_func.lower(Product.product_code).in_(lowered))
 
-        category_ids = resolve_identifier(
-            self.db,
-            category_id,
-            ProductCategory,
-            code_fields=("category_code", "category_name"),
-        )
+        category_ids = self._resolve_category_filter(category_id)
         if category_ids is not None:
             if not category_ids:
                 return self._EMPTY_RESULT
@@ -379,6 +399,10 @@ class ProductService:
 
         if item_type:
             filters.append(Product.item_type == item_type)
+
+        # ITEM-CLASS: multi-select filter over AutoCount Item Class ids.
+        if item_class_ids:
+            filters.append(Product.item_class_id.in_(item_class_ids))
 
         # Deep link from a "products discontinued" notification: show exactly the
         # products reported in that batch (see product_discontinued_notify_service).
@@ -489,6 +513,11 @@ class ProductService:
             "largest_dimension": largest_dim,
             "smallest_dimension": smallest_dim,
             "discontinued_at": Product.discontinued_notified_at,
+            # ITEM-CLASS: by class name, products with no class last (nulls_last below).
+            "item_class": select(ItemClass.item_class_name)
+            .where(ItemClass.id == Product.item_class_id)
+            .correlate(Product)
+            .scalar_subquery(),
         }
         sort_column = sort_map.get(sort_field, Product.created_at)
         if sort_dir == "desc":
@@ -508,6 +537,7 @@ class ProductService:
         price_min: Optional[float] = None,
         price_max: Optional[float] = None,
         item_type: Optional[str] = None,
+        item_class_ids: Optional[list[str]] = None,
         length_min: Optional[float] = None,
         length_max: Optional[float] = None,
         width_min: Optional[float] = None,
@@ -566,6 +596,7 @@ class ProductService:
             price_min=price_min,
             price_max=price_max,
             item_type=item_type,
+            item_class_ids=item_class_ids,
             length_min=length_min,
             length_max=length_max,
             width_min=width_min,
@@ -607,6 +638,7 @@ class ProductService:
             q.options(
                 joinedload(Product.category),
                 joinedload(Product.brand),
+                joinedload(Product.item_class),
                 joinedload(Product.base_uom),
             )
             .offset(offset)
@@ -1106,6 +1138,19 @@ class ProductService:
         )
         self.db.flush()
 
+    def _assert_item_class(self, item_class_id: Optional[str], company_id: Optional[str]) -> None:
+        """422 for an item class id the caller cannot see, or one of another company than the
+        product's (classes are per company; ITEM-CLASS review S3)."""
+        if not item_class_id:
+            return
+        try:
+            uuid.UUID(str(item_class_id))
+        except ValueError:
+            raise AppException(422, "Unknown item class", code="UNKNOWN_ITEM_CLASS") from None
+        row = self.db.query(ItemClass.company_id).filter(ItemClass.id == str(item_class_id)).first()
+        if row is None or (company_id and str(row[0]) != str(company_id)):
+            raise AppException(422, "Unknown item class", code="UNKNOWN_ITEM_CLASS")
+
     def create_product(self, product_data: ProductCreate, created_by: str):
         """Create a new product."""
         # Trim product_code defensively (schema validator also does this; belt-and-suspenders)
@@ -1117,6 +1162,14 @@ class ProductService:
         
         data = product_data.model_dump()
         data["product_code"] = product_code
+        if data.get("item_class_id"):
+            from app.models.base import get_company_scope
+            from app.services.company_scope import resolve_write_company_id
+
+            self._assert_item_class(
+                data["item_class_id"],
+                resolve_write_company_id(get_company_scope(self.db), ambiguous=None),
+            )
         # Live finding, 2026-09-06: derive from product_rules.derivation_text
         # (description if non-blank else name), not the raw description column
         # directly - the ESB maps AutoCount's Description onto name and sends
@@ -1160,6 +1213,8 @@ class ProductService:
         product = self.get_product(product_id)
         
         update_data = product_data.model_dump(exclude_unset=True)
+        if update_data.get("item_class_id"):
+            self._assert_item_class(update_data["item_class_id"], product.company_id)
         if update_data:
             update_data["updated_by"] = updated_by
             update_data["updated_at"] = datetime.utcnow()

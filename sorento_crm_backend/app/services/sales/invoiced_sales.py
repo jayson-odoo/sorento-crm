@@ -347,6 +347,24 @@ def require_invoiced_access(db: Any, current_user: dict) -> None:
         )
 
 
+#: Unpaid invoices are receivables: finance data, read under the billing documents' own slug everywhere else
+#: (`api/v1/finance/billing_documents`, `OUTSTANDING_VIEW_SLUG`).
+UNPAID_SLUG = "finance.billing_documents.view"
+
+
+def require_unpaid_access(db: Any, current_user: dict) -> None:
+    """The chatbot route's unpaid gate on the act-as user (superadmin and admin pass). The contact's Outstanding reveal
+    is checked separately, next to the other outstanding kinds."""
+    from app.services.user_service import UserPermissionService
+
+    if not UserPermissionService(db).check_user_has_permission(str(current_user["id"]), UNPAID_SLUG):
+        raise AppException(
+            status_code=403,
+            message="Unpaid invoices need the finance billing documents permission",
+            code="unpaid_needs_finance_view",
+        )
+
+
 # ------------------------------------------------------------------------ entry points
 
 

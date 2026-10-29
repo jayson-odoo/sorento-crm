@@ -25,6 +25,7 @@ from app.schemas.new_product_application import (
 from app.services import new_product_application_service as svc
 from app.services import npa_xlsx
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_uuids, multi_values
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
 
@@ -99,10 +100,10 @@ def search_products(
 
 @router.get("")
 def list_applications(
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     q: Optional[str] = Query(None),
     stock_inquiry_id: Optional[str] = Query(None),
-    applicant_id: Optional[str] = Query(None),
+    applicant_id: Optional[list[str]] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=200),
     sort: Optional[str] = Query(None),
@@ -110,14 +111,15 @@ def list_applications(
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    statuses = [s.strip() for s in status_filter.split(",") if s.strip()] if status_filter else None
+    statuses = multi_values(status_filter)
+    applicant_ids = multi_uuids(applicant_id, "Applicant")
     return svc.list_for(
         db,
         actor=_any_actor(db, user),
         statuses=statuses,
         q=q,
         stock_inquiry_id=stock_inquiry_id,
-        applicant_id=applicant_id or None,
+        applicant_id=applicant_ids,
         page=page,
         limit=limit,
         sort=sort,

@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -75,7 +76,7 @@ const TABS = [
   { id: 'overview', label: 'Overview', icon: Info },
   { id: 'informant', label: 'Who told us', icon: UserRound },
   { id: 'handover', label: 'Assignment', icon: ArrowRightLeft },
-  { id: 'buyer', label: 'Buyer', icon: Building2 },
+  { id: 'buyer', label: 'Customer', icon: Building2 },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'activity', label: 'Activity', icon: History },
 ] as const;
@@ -243,7 +244,9 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
             <LeadStatusPill statusKey={lead.status_key} label={lead.status_label} />
             {!lead.can_edit && <Badge variant="secondary">Read only</Badge>}
           </div>
-          <h2 className="mt-1 text-xl font-semibold">{lead.title}</h2>
+          <h2 className="mt-1 text-xl font-semibold">
+            <TruncatedTextCell text={lead.title} lines={2} dialogTitle="Lead title" />
+          </h2>
           <p className="text-sm text-muted-foreground">
             {[lead.developer_name, lead.location].filter(Boolean).join(' · ') || '-'}
           </p>
@@ -306,7 +309,7 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
       </header>
 
       {/* Above the strip, not inside a tab: it is true of the whole record, and somebody
-          reading the buyer tab still needs to know two people recorded this development. */}
+          reading the customer tab still needs to know two people recorded this development. */}
       {lead.possible_duplicates.length > 0 && (
         <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-sm">
           <Users className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -364,7 +367,7 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           <AccountPanel
             lead={view}
             canEdit={lead.can_edit}
-            onSetBuyer={() => setEditingWho(true)}
+            onSetCustomer={() => setEditingWho(true)}
           />
         </TabsContent>
 
@@ -483,7 +486,7 @@ function HeardCard({ lead }: { lead: LeadWithAcceptance }) {
 }
 
 /**
- * Who told us. Its own tab, apart from the buyer, so the two are never read as one thing:
+ * Who told us. Its own tab, apart from the customer, so the two are never read as one thing:
  * an informant is a data source and never issues a purchase order.
  */
 function InformantCard({
@@ -512,7 +515,7 @@ function InformantCard({
           <Fact label="Their reference" value={lead.informant_ref} />
           <Fact label="Firm" value={lead.informant_party_label} />
           <Fact label="Contact name" value={lead.informant_contact_name} />
-          <Fact label="Buyer" value={lead.customer_name} />
+          <Fact label="Customer" value={lead.customer_name} />
         </dl>
       </CardContent>
     </Card>
@@ -654,17 +657,17 @@ function QualifiedProjects({ lead }: { lead: LeadWithAcceptance }) {
  * The account view (AC-O9), from the lead's side.
  *
  * Two system lists, not two bulleted `ul`s with a sentence under each. The card subtitle
- * ("Everything this buyer has been part of, and what it turned into") and both empty
+ * ("Everything this customer has been part of, and what it turned into") and both empty
  * sentences are gone: the list headings already say what each list is.
  */
 function AccountPanel({
   lead,
   canEdit,
-  onSetBuyer,
+  onSetCustomer,
 }: {
   lead: LeadWithAcceptance;
   canEdit: boolean;
-  onSetBuyer: () => void;
+  onSetCustomer: () => void;
 }) {
   const router = useRouter();
   const portfolio = useCustomerPortfolio(lead.customer_id ?? undefined);
@@ -755,12 +758,12 @@ function AccountPanel({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">No buyer yet</CardTitle>
+          <CardTitle className="text-sm">No customer yet</CardTitle>
         </CardHeader>
         <CardContent>
           {canEdit ? (
-            <Button type="button" variant="outline" size="sm" onClick={onSetBuyer}>
-              Set the buyer
+            <Button type="button" variant="outline" size="sm" onClick={onSetCustomer}>
+              Set the customer
             </Button>
           ) : (
             <p className="text-sm text-muted-foreground">-</p>
@@ -773,25 +776,25 @@ function AccountPanel({
   return (
     <div className="space-y-4">
       <PanelDataGrid
-        title={`${lead.customer_name ?? 'This buyer'} - other leads`}
+        title={`${lead.customer_name ?? 'This customer'} - other leads`}
         columns={leadColumns}
         rows={otherLeads}
         getRowId={(row) => row.id}
         listingKey="projects.leads.view::buyer-other-leads"
         isLoading={portfolio.isLoading}
         error={portfolio.isError ? portfolio.error : undefined}
-        emptyTitle="No other leads on this buyer"
+        emptyTitle="No other leads on this customer"
         onRowClick={(row) => router.push(`/project-sales/leads/${row.id}`)}
       />
       <PanelDataGrid
-        title={`${lead.customer_name ?? 'This buyer'} - projects`}
+        title={`${lead.customer_name ?? 'This customer'} - projects`}
         columns={projectColumns}
         rows={projects}
         getRowId={(row) => row.id}
         listingKey="projects.leads.view::buyer-projects"
         isLoading={portfolio.isLoading}
         error={portfolio.isError ? portfolio.error : undefined}
-        emptyTitle="No projects on this buyer"
+        emptyTitle="No projects on this customer"
         onRowClick={(row) => router.push(`/project-sales/${row.id}`)}
       />
     </div>

@@ -29,12 +29,30 @@ from app.schemas.contact_customer import (
 )
 from app.services import contact_customer_service
 from app.services.company_scope_resolver import company_name_map, grants_scope, widen_if_requested
-from app.services.error_handler import handle_internal_error, handle_not_found
-from app.utils.multi_value import multi_uuids
+from app.services.error_handler import handle_internal_error, handle_not_found, handle_unprocessable
+from app.utils.multi_value import multi_uuids, multi_values
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_TIERS = ("dealer", "office", "end_user", "none")
+
+
+def _tiers(raw: Optional[list[str]]) -> Optional[list[str]]:
+    """The Tier filter's values; an unknown one is a 422, as the old Literal param was."""
+    values = multi_values(raw)
+    if values and any(v not in _TIERS for v in values):
+        raise handle_unprocessable(f"Tier: expected one of {', '.join(_TIERS)}")
+    return values
+
+
+def _regions(raw: Optional[list[str]]) -> Optional[list[str]]:
+    """The Region filter's values; an unknown one is a 422, as the old Literal param was."""
+    values = multi_values(raw)
+    if values and any(v not in ("west", "east") for v in values):
+        raise handle_unprocessable("Region: expected one of west, east")
+    return values
 
 
 class ContactCompaniesUpdateRequest(BaseModel):
@@ -89,7 +107,7 @@ def _effective_base_url(request: Request, payload_base_url: Optional[str]) -> Op
 
 
 @router.get("/", response_model=ListResponse[RespondContactResponse])
-async def get_contacts(
+def get_contacts(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -101,15 +119,16 @@ async def get_contacts(
     # `none` lists the contacts with no linked customer (bulk Link customers worklist).
     customers: Optional[Literal["none"]] = Query(None),
     # CONTACT-BULK-ACCESS (UAC A2.3): access filters, each optional.
-    access_type: Optional[str] = Query(None),
-    tier: Optional[Literal["dealer", "office", "end_user", "none"]] = Query(None),
+    # FILTER-MULTISELECT: access_type, tier and customer_id take several values (repeat or comma-join).
+    access_type: Optional[list[str]] = Query(None),
+    tier: Optional[list[str]] = Query(None),
     cost: Optional[Literal["yes", "no"]] = Query(None),
     ai: Optional[Literal["yes", "no"]] = Query(None),
     escalation: Optional[Literal["yes", "no"]] = Query(None),
     packing_list: Optional[Literal["yes", "no"]] = Query(None),
     stock: Optional[Literal["yes", "no"]] = Query(None),
-    region: Optional[Literal["west", "east"]] = Query(None),
-    customer_id: Optional[uuid.UUID] = Query(None),
+    region: Optional[list[str]] = Query(None),
+    customer_id: Optional[list[str]] = Query(None),
     # FILTER-MULTISELECT: the companies of the contact's linked customers, any-of; the ids
     # repeat or comma-join (app/utils/multi_value.py).
     company: Optional[list[str]] = Query(None),
@@ -144,15 +163,15 @@ async def get_contacts(
             no_customers_only=customers == "none",
             viewer_id=current_user["id"],
             access_filters={
-                "access_type": access_type,
-                "tier": tier,
+                "access_type": multi_values(access_type),
+                "tier": _tiers(tier),
                 "cost": cost,
                 "ai": ai,
                 "escalation": escalation,
                 "packing_list": packing_list,
                 "stock": stock,
-                "region": region,
-                "customer_id": str(customer_id) if customer_id else None,
+                "region": _regions(region),
+                "customer_ids": multi_uuids(customer_id, "Customer"),
                 "company_ids": multi_uuids(company, "Company"),
                 "tag_ids": [str(t) for t in tag] if tag else None,
                 "no_tags": tags == "none",
@@ -298,7 +317,7 @@ def import_contact_access_sheet(
 
 
 @router.post("/bulk-sync", status_code=status.HTTP_200_OK)
-async def bulk_sync_contacts(
+def bulk_sync_contacts(
     body: BulkSyncContactsRequest = Body(...),
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
@@ -316,7 +335,7 @@ async def bulk_sync_contacts(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_contacts(
+def bulk_delete_contacts(
     body: BulkDeleteContactsRequest = Body(...),
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
@@ -334,7 +353,7 @@ async def bulk_delete_contacts(
 
 
 @router.get("/{contact_id}", response_model=RespondContactResponse)
-async def get_contact(
+def get_contact(
     contact_id: str,
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db)
@@ -361,7 +380,7 @@ async def get_contact(
 
 
 @router.post("/", response_model=RespondContactResponse, status_code=status.HTTP_201_CREATED)
-async def create_contact(
+def create_contact(
     contact_data: RespondContactCreate,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
@@ -378,7 +397,7 @@ async def create_contact(
 
 
 @router.put("/{contact_id}", response_model=RespondContactResponse)
-async def update_contact(
+def update_contact(
     contact_id: str,
     contact_data: RespondContactUpdate,
     # Reviewer pass at d89110c0 (S8): the same edit slug every other write on the
@@ -459,7 +478,7 @@ class ContactChatbotUpdate(BaseModel):
 
 
 @router.put("/{contact_id}/chatbot", response_model=RespondContactResponse)
-async def update_contact_chatbot(
+def update_contact_chatbot(
     contact_id: str,
     body: ContactChatbotUpdate,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
@@ -539,7 +558,7 @@ _CHATBOT_EPISODES_VIEW = "system.chat_history.view"
 
 
 @router.get("/{contact_id}/chatbot/memory")
-async def get_contact_chatbot_memory(
+def get_contact_chatbot_memory(
     contact_id: str,
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
@@ -570,7 +589,7 @@ class ContactFactUpdate(BaseModel):
 
 
 @router.put("/{contact_id}/chatbot/facts/{key}")
-async def put_contact_chatbot_fact(
+def put_contact_chatbot_fact(
     contact_id: str,
     key: str,
     body: ContactFactUpdate,
@@ -601,7 +620,7 @@ async def put_contact_chatbot_fact(
 
 
 @router.delete("/{contact_id}/chatbot/facts/{key}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_contact_chatbot_fact(
+def delete_contact_chatbot_fact(
     contact_id: str,
     key: str,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
@@ -626,7 +645,7 @@ async def delete_contact_chatbot_fact(
 # `_require_superadmin(db, current_user)` before reading anything. See
 # `documentation/plans/security/PLAN-user-management-read-gates.md`.
 @router.get("/{contact_id}/companies")
-async def get_contact_companies(
+def get_contact_companies(
     contact_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -643,7 +662,7 @@ async def get_contact_companies(
 
 
 @router.put("/{contact_id}/companies", status_code=status.HTTP_200_OK)
-async def set_contact_companies(
+def set_contact_companies(
     contact_id: str,
     body: ContactCompaniesUpdateRequest = Body(...),
     current_user: dict = Depends(get_current_user),
@@ -661,7 +680,7 @@ async def set_contact_companies(
 
 
 @router.delete("/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_contact(
+def delete_contact(
     contact_id: str,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
@@ -679,7 +698,7 @@ async def delete_contact(
 
 
 @router.post("/{contact_id}/sync", response_model=RespondContactResponse)
-async def sync_contact(
+def sync_contact(
     contact_id: str,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
@@ -787,7 +806,7 @@ class CsRoutingReplaceRequest(BaseModel):
 
 
 @router.get("/cs-routing/candidates")
-async def list_cs_routing_candidates(
+def list_cs_routing_candidates(
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
 ):
@@ -803,7 +822,7 @@ async def list_cs_routing_candidates(
 
 
 @router.get("/{contact_id}/cs-routing")
-async def get_contact_cs_routing(
+def get_contact_cs_routing(
     contact_id: str,
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
@@ -820,7 +839,7 @@ async def get_contact_cs_routing(
 
 
 @router.put("/{contact_id}/cs-routing")
-async def replace_contact_cs_routing(
+def replace_contact_cs_routing(
     contact_id: str,
     payload: CsRoutingReplaceRequest,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
@@ -844,7 +863,7 @@ async def replace_contact_cs_routing(
 
 
 @router.put("/{contact_id}/cs-routing/{use_case}")
-async def upsert_contact_cs_routing(
+def upsert_contact_cs_routing(
     contact_id: str,
     use_case: str,
     payload: CsRoutingPinRequest,
@@ -877,7 +896,7 @@ async def upsert_contact_cs_routing(
 
 
 @router.get("/cs-routing/fields")
-async def list_cs_routing_fields(
+def list_cs_routing_fields(
     use_case: str,
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
@@ -894,7 +913,7 @@ async def list_cs_routing_fields(
 
 
 @router.delete("/{contact_id}/cs-routing/{use_case}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_contact_cs_routing(
+def delete_contact_cs_routing(
     contact_id: str,
     use_case: str,
     row_id: Optional[str] = None,
@@ -914,7 +933,7 @@ async def delete_contact_cs_routing(
 
 
 @router.get("/{contact_id}/market-segments")
-async def get_contact_market_segments(
+def get_contact_market_segments(
     contact_id: str,
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
@@ -931,7 +950,7 @@ async def get_contact_market_segments(
 
 
 @router.put("/{contact_id}/market-segments")
-async def set_contact_market_segments(
+def set_contact_market_segments(
     contact_id: str,
     payload: MarketSegmentCodesUpdate,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
@@ -951,7 +970,7 @@ async def set_contact_market_segments(
 
 
 @router.get("/{contact_id}/brands", response_model=ContactBrandsResponse)
-async def get_contact_brands(
+def get_contact_brands(
     contact_id: str,
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
@@ -968,17 +987,18 @@ async def get_contact_brands(
 
 
 @router.put("/{contact_id}/brands", response_model=ContactBrandsResponse)
-async def set_contact_brands(
+def set_contact_brands(
     contact_id: str,
     payload: ContactBrandsUpdate,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
-    """Replace the contact's accessible brands (empty = clear, every brand)."""
+    """Replace the contact's accessible brands (empty = clear, every brand) and per brand its
+    item classes (none = every class of that brand)."""
     try:
         from app.services.contact_brand_scope import set_contact_brands as write
 
-        return write(db, contact_id, payload.brand_ids)
+        return write(db, contact_id, payload.brand_ids, payload.brand_class_ids)
     except HTTPException:
         raise
     except Exception as e:
@@ -986,7 +1006,7 @@ async def set_contact_brands(
 
 
 @router.get("/{contact_id}/attachment-types")
-async def get_contact_attachment_types(
+def get_contact_attachment_types(
     contact_id: str,
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
@@ -1007,7 +1027,7 @@ async def get_contact_attachment_types(
 
 
 @router.put("/{contact_id}/attachment-types")
-async def set_contact_attachment_types(
+def set_contact_attachment_types(
     contact_id: str,
     payload: ContactAttachmentTypesUpdate,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
@@ -1035,7 +1055,7 @@ def _require_contact(db: Session, contact_id: str) -> None:
 
 
 @router.get("/{contact_id}/customers", response_model=ContactCustomersResponse)
-async def get_contact_customers(
+def get_contact_customers(
     contact_id: str,
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
@@ -1057,7 +1077,7 @@ async def get_contact_customers(
     response_model=ContactCustomerLinksResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def link_contact_customers(
+def link_contact_customers(
     contact_id: str,
     payload: ContactCustomerLinkCreate,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
@@ -1102,7 +1122,7 @@ async def link_contact_customers(
 
 
 @router.get("/{contact_id}/access-agents", response_model=ListResponse[ContactAgentAccessResponse])
-async def get_contact_access_agents(
+def get_contact_access_agents(
     contact_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
@@ -1130,7 +1150,7 @@ async def get_contact_access_agents(
 
 
 @router.post("/{contact_id}/portal-link", response_model=PortalLinkResponse)
-async def get_contact_portal_link(
+def get_contact_portal_link(
     contact_id: str,
     request: Request,
     payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),
@@ -1153,7 +1173,7 @@ async def get_contact_portal_link(
 
 
 @router.post("/{contact_id}/portal-link/send", response_model=PortalLinkSendResponse)
-async def send_contact_portal_link(
+def send_contact_portal_link(
     contact_id: str,
     request: Request,
     payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),

@@ -16,7 +16,8 @@ export type PromotionsListParams = DataGridApiFetchParams & {
   date_from?: string;
   date_to?: string;
   user_type?: string;
-  attachment_state?: 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed';
+  /** One state, or several comma-joined: unlinked | linked_to_trashed | unlinked_or_trashed. */
+  attachment_state?: string;
   /** Deep-link filter: restrict to promos stamped by one expiry-reminder batch. */
   expiry_notify_batch_id?: string;
 };

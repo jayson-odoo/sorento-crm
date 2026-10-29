@@ -412,14 +412,14 @@ def test_b2_new_ask_naming_its_own_entity_still_drops_the_old_subject() -> None:
 
 
 class TestB2EngineT6SendsTheCarriedProductsToIncoming:
-    """Engine level: an outstanding ask over two products arms the scope question,
+    """Engine level: an outstanding ask over two products runs the report ask (REPORT-UNIFY: no scope question),
     then "got eta" calls the incoming tool with BOTH product ids."""
 
     P1 = ("SRTBF11502", "aaaaaaaa-1111-aaaa-1111-aaaaaaaaaaaa")
     P2 = ("SRTBF11503", "aaaaaaaa-2222-aaaa-2222-aaaaaaaaaaaa")
 
     def test_got_eta_calls_incoming_with_both_products(self, session_factory, monkeypatch) -> None:
-        from tests.chatbot.test_outstanding_lane import _qf, _run_turn, _seed_contact, _session_of
+        from tests.chatbot.test_outstanding_lane import _qf, _run_turn, _seed_contact
 
         _seed_contact(session_factory, variables={})
         matches = {
@@ -427,7 +427,7 @@ class TestB2EngineT6SendsTheCarriedProductsToIncoming:
             for code, uid in (self.P1, self.P2)
         }
         qf1 = _qf(
-            order_status="outstanding",
+            order_status="outstanding", basis="outstanding",
             entities=[
                 {"raw": code, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}
                 for code, _ in (self.P1, self.P2)
@@ -436,10 +436,9 @@ class TestB2EngineT6SendsTheCarriedProductsToIncoming:
         _result, captured1 = _run_turn(
             session_factory, monkeypatch,
             qf=qf1, text_body="outstanding SRTBF11502 SRTBF11503", msg_id="ZZT-b2-t6-1",
-            attributes=["sales_orders.outstanding"], matches=matches,
+            attributes=["sales_orders.outstanding", "sales_orders.sales_report"], matches=matches,
         )
-        assert captured1 == [], f"the bare outstanding ask arms the scope question first: {captured1}"
-        assert (_session_of(session_factory).get("open_question") or {}).get("kind") == "outstanding_scope"
+        assert [n for n, _a in captured1] == ["crm_report_ask"], captured1
 
         qf2 = _qf(
             domain_hint="incoming", intent_hint="check_incoming", entities=[], domain_in_message=True,

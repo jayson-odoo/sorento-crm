@@ -66,7 +66,8 @@ const ORDER = [
   'Customer name',
   'Type of building',
   'State',
-  'Mukim',
+  // QUOTE-UI-POLISH: Mukim is labelled Area (owner, 29 Oct).
+  'Area',
   'Your ref',
   'Developer',
   'Main contractor',

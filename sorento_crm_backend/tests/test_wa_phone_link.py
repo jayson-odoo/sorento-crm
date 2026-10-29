@@ -576,6 +576,54 @@ def test_wu12_survivor_is_read_from_the_merge_response_row_exists(result, after,
         assert lookups == (2 if result == "none" else 1)
 
 
+def test_wu12_card_sender_surviving_the_merge_gets_the_phone_written():
+    """Prod 28 Oct: Respond.io keeps the OLDER contact, so the card sender can survive the merge;
+    the survivor must still end up holding the verified phone."""
+    m = _mod()
+    with blank_session() as db:
+        ws = _workspace(db)
+        _row(db, f"+{E164}", respond_io_id=str(PHONE_ID), workspace_id=str(ws.id))
+        client = FakeClient(merge_result="turn")
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged" and out.survivor_respond_id == str(TURN_ID)
+        put = ("put", str(TURN_ID), {"phone": f"+{E164}"})
+        assert put in client.calls
+        assert client.calls.index(put) > client.kinds().index("merge")
+        assert [r.respond_io_id for r in _rows(db)] == [str(TURN_ID)]
+
+
+def test_wu12_phone_contact_surviving_the_merge_gets_no_phone_write():
+    m = _mod()
+    with blank_session() as db:
+        _workspace(db)
+        client = FakeClient(merge_result="phone")
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged" and out.survivor_respond_id == str(PHONE_ID)
+        assert "put" not in client.kinds()
+
+
+def test_wu12_survivor_found_by_the_phone_lookup_gets_no_phone_write():
+    m = _mod()
+    with blank_session() as db:
+        _workspace(db)
+        client = FakeClient(merge_result="none", after_merge_id=TURN_ID)
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged" and out.survivor_respond_id == str(TURN_ID)
+        assert "put" not in client.kinds()
+
+
+def test_wu16_phone_write_failing_after_the_merge_is_a_failure_naming_the_survivor():
+    m = _mod()
+    with blank_session() as db:
+        ws = _workspace(db)
+        _row(db, f"+{E164}", respond_io_id=str(PHONE_ID), workspace_id=str(ws.id))
+        client = FakeClient(merge_result="turn", put_error=_http_error(500))
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "failed"
+        assert out.survivor_respond_id == str(TURN_ID)
+        assert [r.respond_io_id for r in _rows(db)] == [str(PHONE_ID)]
+
+
 def test_wu12_turn_survivor_creates_the_row_on_the_turn_id():
     m = _mod()
     with blank_session() as db:

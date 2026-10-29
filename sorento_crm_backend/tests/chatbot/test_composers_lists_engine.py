@@ -16,7 +16,6 @@ from typing import Any
 from sqlalchemy import text as sa_text
 
 from app.main import app  # noqa: F401  (first app import resolves the guards cycle)
-from tests.chatbot._turn_helpers import make_office_access_type
 from tests.chatbot.test_composers_stock_xd import _set_gate
 from tests.chatbot.test_engine import CONTACT_ID, _parser_output, stub_access, stub_parser  # noqa: F401
 from tests.chatbot.test_set_stock_render import world  # noqa: F401 - fixture used by name
@@ -136,90 +135,9 @@ def test_engine_gate_off_leaves_no_code_list_carry(session_factory, monkeypatch,
 
 
 # --------------------------------------------------------------------------- #
-# L2: the outstanding report's groups
+# L2: the outstanding report's groups: retired by REPORT-UNIFY (Q1) with the outstanding report tool in the chatbot
+# (the report ask lists rows with its own `and N more` line); the MCP tool and its group window stay for other callers.
 # --------------------------------------------------------------------------- #
-
-
-def _l2_envelope(offset: int) -> str:
-    text = (
-        "Product: SRTWT7445\nCustomer: all\nLocation: all\nOrder date: all\n\n"
-        "*Sales order outstanding*\nSales orders: 45\n\nReply 1 for the sales order list."
-    )
-    shown = 20 if offset < 40 else 5
-    return json.dumps(
-        {
-            "result_type": "outstanding_report",
-            "response": text,
-            "has_result": True,
-            "group_window": {"offset": offset, "shown": shown, "total": 45},
-        }
-    )
-
-
-def _l2_turn(session_factory, monkeypatch, *, qf, text, msg_id, offset=0):
-    from tests.chatbot.test_outstanding_lane import PRODUCT_CODE, PRODUCT_UUID, _run_turn
-
-    return _run_turn(
-        session_factory,
-        monkeypatch,
-        qf=qf,
-        text_body=text,
-        msg_id=msg_id,
-        attributes=["sales_orders.outstanding"],
-        matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-        mcp_response=_l2_envelope(offset),
-    )
-
-
-def test_engine_more_reruns_with_offset(session_factory, monkeypatch):
-    from tests.chatbot.test_outstanding_lane import PRODUCT_CODE, _qf, _seed_contact
-
-    _set_gate(monkeypatch, True)
-    _seed_contact(session_factory, variables={})
-    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
-    make_office_access_type(session_factory, CONTACT_ID)
-    tag = uuid.uuid4().hex[:8]
-    _result, first = _l2_turn(
-        session_factory, monkeypatch, qf=_qf(order_status="so_outstanding"),
-        text="SRTWT7445 sales order outstanding", msg_id=f"ZZT-l2-1-{tag}",
-    )
-    assert first and first[0][0] == "crm_outstanding_report"
-    assert first[0][1].get("group_offset") == 0, first[0][1]
-    carry = _stored_set_page(session_factory, CONTACT_ID)
-    assert carry["set_key"]["report_groups"] is True and carry["set_key"]["shown"] == 20
-
-    _result, second = _l2_turn(
-        session_factory, monkeypatch, qf=_more_verdict("order", "check_order"), text="more",
-        msg_id=f"ZZT-l2-2-{tag}", offset=20,
-    )
-    assert second and second[0][0] == "crm_outstanding_report", second
-    args = second[0][1]
-    assert args.get("group_offset") == 20, args
-    assert args.get("product_code") == PRODUCT_CODE, args
-    assert "detail" not in args or args["detail"] is None
-
-    _result, third = _l2_turn(
-        session_factory, monkeypatch,
-        qf=_parser_output(message_type="casual", intent_hint=None, domain_hint=None, entities=[], reference_positions=[1]),
-        text="1", msg_id=f"ZZT-l2-3-{tag}", offset=20,
-    )
-    assert third and third[0][1].get("detail") == "so", third
-    assert "group_offset" not in third[0][1], third[0][1]
-
-
-def test_engine_gate_off_sends_no_group_offset(session_factory, monkeypatch):
-    from tests.chatbot.test_outstanding_lane import _qf, _seed_contact
-
-    _set_gate(monkeypatch, False)
-    _seed_contact(session_factory, variables={})
-    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
-    make_office_access_type(session_factory, CONTACT_ID)
-    _result, first = _l2_turn(
-        session_factory, monkeypatch, qf=_qf(order_status="so_outstanding"),
-        text="SRTWT7445 sales order outstanding", msg_id=f"ZZT-l2-off-{uuid.uuid4().hex[:8]}",
-    )
-    assert first and "group_offset" not in first[0][1]
-    assert _stored_set_page(session_factory, CONTACT_ID) is None
 
 
 # --------------------------------------------------------------------------- #

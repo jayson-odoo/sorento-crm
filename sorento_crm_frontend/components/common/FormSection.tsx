@@ -77,7 +77,7 @@ export function FormSection({
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none">
-          <div className="space-y-4 border-t px-4 py-4">{children}</div>
+          <div className="min-w-0 space-y-4 border-t px-4 py-4">{children}</div>
         </CollapsibleContent>
       </Collapsible>
     </Card>

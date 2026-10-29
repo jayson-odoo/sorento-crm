@@ -10,6 +10,8 @@ stock wiring through a real turn is `test_low_stock_filter_ask.py`.
 """
 from __future__ import annotations
 
+import pytest
+
 from app.services.chatbot import required_fields as rf
 
 CATEGORIES = {"water tap": ["SRT-FT", "CB-FT"], "water closet": ["SRT-WC"], "srt-ft": ["SRT-FT"]}
@@ -429,3 +431,22 @@ class TestReplyVerdictByShape:
             assert question.of_required_ask(_start(BY_SHAPE).slot) is None
         finally:
             rf.ASKS.pop("test_shape", None)
+
+
+class TestOfRequiredAskNamesTheOptionalPick:
+    """A pick on an OPTIONAL field of an `ask_all` ask (the report ask's company and sales agent) is owed: the parser is
+    shown the question with the field in `owed` and its options, so it can declare the pick."""
+
+    @staticmethod
+    def _slot(asking: str, options: list[list[str]]) -> dict:
+        return {"ask": "sales_ranking", "values": {}, "asking": asking, "options": options, "misses": 0, "extras": {}}
+
+    @pytest.mark.parametrize("asking, question", [("company", "Which company?"), ("sales_agent", "Which sales agent?")])
+    def test_the_optional_field_asked_is_owed_with_its_options(self, asking, question) -> None:
+        import app.services.chatbot.lanes.business.report_ask  # noqa: F401  (registers the ask)
+        from app.services.chatbot.turn import question as question_mod
+
+        obj = question_mod.of_required_ask(self._slot(asking, [["id-1", "One"], ["id-2", "Two"]]))
+        assert obj["owed"] == [asking], obj
+        assert obj["kind"] == "pick_one" and [o["position"] for o in obj["options"]] == [1, 2], obj
+        assert question in obj["question"], obj

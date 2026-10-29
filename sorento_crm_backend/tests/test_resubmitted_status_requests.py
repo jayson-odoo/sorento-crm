@@ -139,8 +139,8 @@ def test_resubmit_notifies_the_team_as_resubmitted(db, monkeypatch):
 @pytest.mark.parametrize(
     "request_type,expected_title",
     [
-        ("purchase_request", "Purchase request resubmitted"),
-        ("sponsorship_form", "Sponsorship form resubmitted"),
+        ("purchase_request", "Purchase request appealed"),
+        ("sponsorship_form", "Sponsorship form appealed"),
     ],
 )
 def test_resubmitted_notification_wording(db, monkeypatch, request_type, expected_title):
@@ -181,16 +181,18 @@ def test_resubmitted_notification_wording(db, monkeypatch, request_type, expecte
     )
 
     assert seen["heading"] == expected_title
-    assert "resubmitted" in seen["intro"]
+    # Owner, 28 Oct: every form calls a send-back after a rejection an appeal.
+    assert "appealed" in seen["intro"]
+    assert "resubmit" not in (seen["heading"] + seen["intro"]).lower()
 
 
 # ---- reading it ---------------------------------------------------------------
 
 
-def test_display_status_reads_resubmitted():
+def test_display_status_reads_appealed():
     header = SimpleNamespace(status="resubmitted", approval_status=None)
-    assert _pr_display_status(header) == "Resubmitted"
-    assert _bubble_display_status("resubmitted", None) == "Resubmitted"
+    assert _pr_display_status(header) == "Appealed"
+    assert _bubble_display_status("resubmitted", None) == "Appealed"
 
 
 def test_approval_decision_still_wins_over_resubmitted():

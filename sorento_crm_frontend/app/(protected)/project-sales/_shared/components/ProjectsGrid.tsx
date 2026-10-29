@@ -17,7 +17,6 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { OutcomePill } from './OutcomePill';
-import { PillOverflow, PillOverflowList } from '@/components/common/PillOverflow';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import {
   DataGridListToolbar,
@@ -99,12 +98,15 @@ export function ProjectsGrid({
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         size: 120,
         meta: { headerTitle: 'Code' },
+        // No underline here or on Project (owner, 29 Oct): the whole row is the link, as on the
+        // Orders list.
         cell: ({ row }) => (
-          <Link
-            href={`/project-sales/${row.original.id}`}
-            className="hover:underline"
-          >
-            {projectCodeLabel(row.original)}
+          <Link href={`/project-sales/${row.original.id}`}>
+            {row.original.approval_state === 'draft' && !row.original.project_code ? (
+              <ApprovalStatePill state="draft" />
+            ) : (
+              projectCodeLabel(row.original)
+            )}
           </Link>
         ),
       },
@@ -116,7 +118,7 @@ export function ProjectsGrid({
         cell: ({ row }) => (
           <Link
             href={`/project-sales/${row.original.id}`}
-            className="block truncate hover:underline"
+            className="block truncate"
             title={row.original.title}
           >
             {row.original.title}
@@ -186,27 +188,6 @@ export function ProjectsGrid({
             </span>
           ) : (
             <Muted>-</Muted>
-          ),
-      },
-      {
-        id: 'brands',
-        accessorFn: (row) => row.brands.join(', '),
-        header: ({ column }) => <DataGridColumnHeader title="Brands" column={column} />,
-        size: 180,
-        enableSorting: false,
-        meta: { headerTitle: 'Brands' },
-        // One line of pills, folding what does not fit into "+N" (owner, 13 Oct), the same
-        // shared row the sales-team Agents column uses.
-        cell: ({ row }) =>
-          row.original.brands.length ? (
-            <PillOverflow
-              ariaLabel={`Brands on ${projectCodeLabel(row.original)}`}
-              items={row.original.brands.map((brand) => ({ key: brand, label: brand }))}
-              renderPopover={(items) => <PillOverflowList items={items} />}
-              testId={`project-brands-${row.original.id}`}
-            />
-          ) : (
-            <Muted>None</Muted>
           ),
       },
       {

@@ -1,0 +1,16 @@
+# Witness: etcd only (third voter, no Postgres, no app). Plan section 2.
+# Today on the shared-service box (owner, 27 Oct), later a small Hetzner EU VPS: the same file,
+# moved per documentation/runbooks/ha-failover.md "Move the witness".
+#   docker compose -f compose.witness.yml up -d      (in its own directory, e.g. /opt/sorento-witness)
+# On the shared-service box it runs beside that box's own stack and must not join its networks.
+services:
+  etcd:
+    image: <ETCD_IMAGE>@sha256:<DIGEST>
+    env_file: [/etc/sorento-ha/ha-members.env, etcd.env]
+    network_mode: host            # binds <WITNESS_WG_IP> + 127.0.0.1 only (etcd.env URLs)
+    volumes:
+      - etcd_data:/etcd-data
+      - /etc/etcd/pki:/etc/etcd/pki:ro
+    restart: unless-stopped
+volumes:
+  etcd_data:

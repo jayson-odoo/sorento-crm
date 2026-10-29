@@ -22,7 +22,6 @@ import json
 import uuid
 from typing import Any
 
-import pytest
 from sqlalchemy import text
 
 from app.models.base import set_company_scope
@@ -248,7 +247,7 @@ class TestT2BrandTokenNotResolvedAsCustomerInOrderDomain:
                 "allowed": True,
                 "decision": "allow",
                 "agent_name": "General",
-                "attributes": ["sales_orders.outstanding"],
+                "attributes": ["sales_orders.outstanding", "sales_orders.sales_report"],
                 "all_attributes_allowed": None,
             },
         )
@@ -263,6 +262,7 @@ class TestT2BrandTokenNotResolvedAsCustomerInOrderDomain:
             domain_hint="order",
             intent_hint="check_order",
             order_status="outstanding",
+            basis="outstanding",
             entities=[
                 {"raw": "Sorento", "hint": "brand", "canonical_code": None, "current_message": True, "confident": True},
                 {
@@ -315,45 +315,13 @@ class TestT2BrandTokenNotResolvedAsCustomerInOrderDomain:
         assert "transporter" not in reply_text.lower(), reply_text
         assert "which customer" not in reply_text.lower(), reply_text
 
-        # Contract 38 / AC-1130: a customer-only (now customer+brand) subject on the
-        # BARE "outstanding" word arms the scope question rather than calling the
-        # report this turn - `TestCustomerOnlyOutstandingAskReachesTheReport::
-        # test_bare_outstanding_customer_only_arms_the_scope_question` pins the
-        # identical shape for a customer alone.
-        assert captured == [], (
-            f"no report/order tool may be called while the scope question is open: {captured}"
-        )
-        assert "Outstanding for which document?" in reply_text, reply_text
-        open_question = _open_question_of(session_factory)
-        assert open_question.get("kind") == "outstanding_scope", (
-            f"a customer+brand outstanding ask must arm the scope question exactly "
-            f"like a product/customer ask does: {open_question!r}"
-        )
-
-        # -- turn 2: "3" (Both) answers the scope question ----------------------- #
-        qf_turn2 = _parser_output(
-            message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-            reference_positions=[3],
-        )
-        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: qf_turn2)
-        envelope2 = _envelope()
-        envelope2.message["message"]["messageId"] = "ZZT-s9-brand-scope-answer-1"
-        envelope2.message["message"]["message"]["text"] = "3"
-        engine_mod.run_turn(envelope2, session_factory=session_factory)
-
-        assert captured, (
-            "the scope answer must run crm_outstanding_report on the carried "
-            "customer AND brand - it never called any tool at all"
-        )
-        name, args = captured[-1]
-        assert name == "crm_outstanding_report", (name, args)
-        assert args.get("customer_ids") == [self.CHENG_HUAT_UUID], (
-            f"the carried customer must survive the scope answer: {args}"
-        )
-        assert args.get("brand_ids") == [brand_id], (
-            f"the carried BRAND must survive the scope answer too - the scope-ask's "
-            f"own stored filters do not carry `outstanding_brand_ids` yet: {args}"
-        )
+        # REPORT-UNIFY (Q1): the outstanding ask names its kind, so it is the report ask at once (no scope question,
+        # no second turn): the brand and the customer both ride on the one call.
+        assert [n for n, _a in captured] == ["crm_report_ask"], (captured, reply_text)
+        args = captured[0][1]
+        assert args.get("basis") == "outstanding", args
+        assert args.get("customer_ids") == [self.CHENG_HUAT_UUID], args
+        assert args.get("brand_ids") == [brand_id], args
 
 
 # --------------------------------------------------------------------------- #
@@ -679,7 +647,7 @@ class TestUnlistedBrandNeverSelectsASubjectlessReport:
         result, _captured = _run_turn(
             session_factory, monkeypatch,
             qf=qf, text_body="outstanding brand XYZ", msg_id="ZZT-s9-unlisted-brand-silent-1",
-            attributes=["sales_orders.outstanding"], matches={},  # XYZ never resolves to anything
+            attributes=["sales_orders.outstanding", "sales_orders.sales_report"], matches={},  # XYZ never resolves to anything
         )
         reply = (result.reply or {}).get("text") or ""
         assert "XYZ" in reply, (

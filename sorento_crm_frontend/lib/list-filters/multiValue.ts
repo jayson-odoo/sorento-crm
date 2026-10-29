@@ -32,3 +32,29 @@ export function multiValueSummary(labels: readonly string[], shown = 2): string 
 export function multiChipLabel(title: string, labels: readonly string[], shown = 2): string {
   return `${title}: ${multiValueSummary(labels, shown)}`;
 }
+
+/**
+ * The labels of a multi-select's chosen options for a trigger whose values are ids. The
+ * component renders a value it holds no option for as a bare chip whose label IS the value, so
+ * an id would show; this names it with a neutral word instead (the way the chips already do).
+ * Only for filters whose values are ids: where a value is its own label, do not use it.
+ */
+export function idFilterLabels(
+  chosen: readonly { value: string; label: string }[],
+  unknown = 'Selected',
+): string[] {
+  return chosen.map((o) => (o.label === o.value ? unknown : o.label));
+}
+
+/**
+ * The values of a FREE-TEXT filter read from a link: one repeated param per value, each read whole
+ * (a value can contain a comma). Stripped and deduped, never split.
+ */
+export function splitText(raws: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const raw of raws) {
+    const value = raw.trim();
+    if (value && !out.includes(value)) out.push(value);
+  }
+  return out;
+}

@@ -778,6 +778,7 @@ def seed_chatbot_policy() -> None:
     ca3_domain = _load("_ca3_0002_chat_analytics_domain", "ca3_0002_chat_analytics_domain.py")
     measure_words = _load("_maskp_0002_measure_words", "maskp_0002_measure_words.py")
     or_r4b = _load("_or_r4b_top_selling_off", "or_r4b_top_selling_off.py")
+    report_unify = _load("_report_unify_0001_retire", "report_unify_0001_retire.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
@@ -811,6 +812,9 @@ def seed_chatbot_policy() -> None:
     # R4b, after the sales row exists (pdyn1 inserts it with the old tool): the tool leaves every row.
     with engine.begin() as conn:
         or_r4b.apply_tools(conn)
+    # REPORT-UNIFY: the three retired sales and outstanding tools leave the order and sales rows.
+    with engine.begin() as conn:
+        report_unify.apply_tools(conn)
     # The owner's prompt-list tags and his curated domain words (answers 2 and 4).
     with engine.begin() as conn:
         pdyn4.apply(conn)

@@ -11,6 +11,7 @@ import secrets
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, inspect, func
+from app.utils.multi_value import multi_values
 from typing import List, Optional, Iterable
 from app.config import settings
 from app.models.complaints import Complaint
@@ -418,8 +419,8 @@ class ComplaintService:
     def _build_list_query(
         self,
         query: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-        status: Optional[str] = None,
+        assigned_to: Optional[list[str] | str] = None,
+        status: Optional[list[str] | str] = None,
         sort_field: str = "complaint_date",
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
@@ -464,15 +465,19 @@ class ComplaintService:
                     Complaint.assigned_to.ilike(like),
                 )
             )
-        if assigned_to is not None and str(assigned_to).strip():
-            if str(assigned_to).strip().lower() == "__unassigned__":
-                q = q.filter(
-                    (Complaint.assigned_to.is_(None)) | (Complaint.assigned_to == "")
-                )
-            else:
-                q = q.filter(Complaint.assigned_to == assigned_to.strip())
-        if status and str(status).strip():
-            q = q.filter(Complaint.status == status.strip())
+        assignees = multi_values(assigned_to)
+        if assignees:
+            # `__unassigned__` is a pseudo-value that ORs with real assignees.
+            clauses = []
+            if any(a.lower() == "__unassigned__" for a in assignees):
+                clauses.append((Complaint.assigned_to.is_(None)) | (Complaint.assigned_to == ""))
+            real = [a for a in assignees if a.lower() != "__unassigned__"]
+            if real:
+                clauses.append(Complaint.assigned_to.in_(real))
+            q = q.filter(or_(*clauses))
+        statuses = multi_values(status)
+        if statuses:
+            q = q.filter(Complaint.status.in_(statuses))
         contact_filter = (contact_id or "").strip()
         if contact_filter:
             q = q.filter(Complaint.contact_id == contact_filter)
@@ -712,8 +717,8 @@ class ComplaintService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-        status: Optional[str] = None,
+        assigned_to: Optional[list[str] | str] = None,
+        status: Optional[list[str] | str] = None,
         sort_field: str = "complaint_date",
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
@@ -1203,8 +1208,9 @@ class ComplaintService:
             rejected_at = getattr(row, "rejected_at", None)
             cycle_key = rejected_at.isoformat() if rejected_at else "resubmit"
             event_type = f"external_resubmitted:{cycle_key}"
-            title = "Complaint resubmitted"
-            sentence = "A previously rejected complaint has been resubmitted and requires your review."
+            # A send-back after a rejection is an appeal (owner, 28 Oct 2026).
+            title = "Complaint appealed"
+            sentence = "A previously rejected complaint has been appealed and requires your review."
         else:
             event_type = "external_created"
             title = "New Complaint created"

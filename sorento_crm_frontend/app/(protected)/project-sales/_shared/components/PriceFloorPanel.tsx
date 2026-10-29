@@ -51,7 +51,7 @@ export function PriceFloorPanel({
   return (
     <section className="space-y-3 rounded-lg border border-border p-4">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <h3 className="min-w-0 break-words text-sm font-medium">Price floor</h3>
+        <h3 className="min-w-0 break-words text-sm font-medium">Minimum price</h3>
         {own && !own.is_active && <Badge variant="secondary">Switched off</Badge>}
       </div>
 

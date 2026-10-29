@@ -61,7 +61,7 @@ SALES_COMPANY_ASK = rf.register(rf.AskType(
 
 def _offered(slot: dict[str, Any]) -> list[dict[str, Any]]:
     """The slot's options as picker options: the company's name is the label, its code an alias."""
-    codes = list(jsc.get(slot.get("extras"), "codes") or [])
+    codes = list(jsc.get(slot.get("extras"), "codes") or jsc.get(slot.get("extras"), "company_codes") or [])
     return [
         {
             "position": i,
@@ -79,11 +79,21 @@ def as_answer(verdict: dict[str, Any], slot: dict[str, Any] | None) -> dict[str,
     from app.services.chatbot.turn import pending as turn_pending
     from app.services.chatbot.turn.decide import domain_in_message, picked_positions
 
-    if not isinstance(slot, dict) or slot.get("ask") != ASK_NAME:
-        return verdict
+    if not isinstance(slot, dict) or not (
+        slot.get("ask") == ASK_NAME or (slot.get("ask") == "sales_ranking" and slot.get("asking") == "company")
+    ):
+        return verdict  # this question, or the report ask's own company question (same options, same rule)
     answer = verdict.get("open_question_answer")
     if (isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES) or domain_in_message(verdict) is True:
         return verdict
+    offered_count = len(_offered(slot))
+    positions = {
+        p for p in jsc.array(verdict.get("reference_positions"))
+        if isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= offered_count
+    }
+    if len(positions) == 1:
+        # The parser's own position reading of the reply ("1" for the first company).
+        return {**verdict, "open_question_answer": {"mode": "pick", "picked": sorted(positions), "items": [], "qty_for_all": None}}
     escalation = verdict.get("escalation") if isinstance(verdict.get("escalation"), dict) else {}
     words = [w for w in (verdict.get("sales_company"), escalation.get("company_pick")) if isinstance(w, str) and w.strip()]
     named = {

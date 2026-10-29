@@ -26,6 +26,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildGroupHeader } from './groupHeader';
 import { getChatMessages } from './services/chatHistoryService';
@@ -56,7 +58,6 @@ const GROUP_BY_OPTIONS = [
 ];
 
 const DIRECTION_OPTIONS = [
-  { value: '', label: 'All directions' },
   { value: 'incoming', label: 'Incoming' },
   { value: 'outgoing', label: 'Outgoing' },
 ];
@@ -80,6 +81,7 @@ export default function ChatHistoryPage() {
   // AC-255. Narrows the LIST to contacts whose chatbot turns failed in this range.
   const [failedTurnsOnly, setFailedTurnsOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [inputValue, setInputValue] = useState('');
   const [groupBy, setGroupBy] = useState<ChatHistoryGroupBy>('none');
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -101,7 +103,7 @@ export default function ChatHistoryPage() {
     () => ({
       date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
       date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
-      direction: (direction || undefined) as ChatHistoryFilters['direction'],
+      direction: direction || undefined,
       breached_only: breachedOnly || undefined,
     }),
     [dateFrom, dateTo, direction, breachedOnly],
@@ -268,8 +270,9 @@ export default function ChatHistoryPage() {
 
   const filtersActive = (direction ? 1 : 0) + (breachedOnly ? 1 : 0) + (failedTurnsOnly ? 1 : 0);
 
-  const GridToolbar = () => {
-    const [inputValue, setInputValue] = useState(searchQuery);
+  // Called as a function, not mounted as a component: a component declared here would remount on
+  // every render and close the open Filters menu each time a filter changed.
+  const renderGridToolbar = () => {
     const applySearch = () => {
       setSearchQuery(inputValue);
       resetPage();
@@ -339,14 +342,15 @@ export default function ChatHistoryPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Direction</Label>
-                  <SearchableSelect
+                  <SearchableMultiSelect
                     options={DIRECTION_OPTIONS}
-                    value={direction}
+                    value={splitMulti(direction)}
                     onChange={(v) => {
-                      setDirection(v);
+                      setDirection(joinMulti(v));
                       resetPage();
                     }}
                     placeholder="All directions"
+                    clearable
                   />
                 </div>
                 <div className="space-y-1" data-testid="chat-history-group-by">
@@ -440,7 +444,7 @@ export default function ChatHistoryPage() {
           }
         >
           <Card>
-            <GridToolbar />
+            {renderGridToolbar()}
             <CardTable>
               <DataGridTable />
             </CardTable>

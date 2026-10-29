@@ -165,8 +165,8 @@ class CertificateQueryService:
         certificate_ids: Optional[Sequence[str]] = None,
         certificate_number: Optional[str] = None,
         product_ids: Optional[Sequence[str]] = None,
-        scheme: Optional[str] = None,
-        status: Optional[str] = None,
+        scheme: Optional[Sequence[str] | str] = None,
+        status: Optional[Sequence[str] | str] = None,
         validity_state: Optional[str] = None,
         expiring_within_days: Optional[int] = None,
         valid_on: Optional[date] = None,
@@ -210,16 +210,18 @@ class CertificateQueryService:
             # still decides which companies' rows can come back.
             q = q.filter(Certificate.id.in_(self.db.query(covered.c.certificate_id)))
 
-        if scheme:
-            q = q.filter(func.upper(Certificate.scheme) == str(scheme).strip().upper())
+        schemes = [scheme] if isinstance(scheme, str) else list(scheme or [])
+        if schemes:
+            q = q.filter(func.upper(Certificate.scheme).in_([str(s).strip().upper() for s in schemes]))
 
-        if status:
-            value = str(status).strip()
-            if value not in CERTIFICATE_STATUSES:
+        statuses = [status] if isinstance(status, str) else list(status or [])
+        if statuses:
+            values = [str(s).strip() for s in statuses]
+            if any(v not in CERTIFICATE_STATUSES for v in values):
                 raise handle_validation_error(
                     f"status must be one of {', '.join(CERTIFICATE_STATUSES)}."
                 )
-            q = q.filter(Certificate.status == value)
+            q = q.filter(Certificate.status.in_(values))
 
         if expiry_notify_batch_id:
             q = q.filter(

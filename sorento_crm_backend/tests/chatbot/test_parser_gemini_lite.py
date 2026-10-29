@@ -195,7 +195,7 @@ def test_a_capped_effort_still_reaches_gemini(monkeypatch):
 
 
 def test_anthropic_reports_no_effort_sent():
-    """AnthropicProvider ignores an effort, so the trace must not say one was sent."""
+    """AnthropicProvider refuses an effort on a structured-output call, so the parser sends none and the trace says so."""
     assert parser_mod.sent_reasoning_effort(_config(provider="anthropic", label_reasoning_effort="low")) == "off"
 
 
@@ -219,6 +219,7 @@ def test_resolve_config_reads_the_labels_reasoning_effort(monkeypatch):
     monkeypatch.setattr(parser_mod, "get_prompt", lambda *_a, **_k: types.SimpleNamespace(text="prompt"))
     monkeypatch.setattr(parser_mod, "render_resolved", lambda *_a, **_k: ("prompt", 7))
     monkeypatch.setattr(parser_mod, "reasoning_effort_setting", lambda *_a, **_k: "off")
+    monkeypatch.setattr(parser_mod, "max_output_tokens_setting", lambda *_a, **_k: parser_mod.PARSER_MAX_TOKENS)
     monkeypatch.setattr(parser_mod, "agent_model", lambda *_a, **_k: ("gemini", "gemini-3.5-flash-lite"))
     monkeypatch.setattr(parser_mod, "agent_reasoning_effort", lambda *_a, **_k: "minimal")
     monkeypatch.setattr(assistant_service, "AIAssistantConfigService", _Service)

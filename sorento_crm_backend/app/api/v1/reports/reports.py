@@ -211,6 +211,7 @@ def get_report_meta(
                 unavailable_for=lacking[c.key],
             )
             for c in definition.catalog()
+            if not c.hidden
         ],
         default_view=default_view,
         can_publish=_holds(db, current_user, PUBLISH_PERMISSION),

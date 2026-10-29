@@ -2099,7 +2099,9 @@ def lane_parse_output(
     if focus is not None and not document:
         document = list(focus.document)
     status = delivery_status(out) or (focus.status if focus is not None else None)
-    if status:
+    if jsc.js_string(out.get("order_status") or "").strip() == "sales_ranking":
+        pass  # a seam already chose the report ask: the document/status projection must not replace it
+    elif status:
         key = (",".join(sorted(document)), status)
         out["order_status"] = _DOCUMENT_STATUS_TO_ORDER_STATUS.get(key, status)
     else:

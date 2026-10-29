@@ -40,7 +40,7 @@ DELETE = "sla_management.message_snippets.delete"
 
 
 @router.get("/", response_model=ListResponse[MessageSnippetResponse])
-async def list_message_snippets(
+def list_message_snippets(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -67,7 +67,7 @@ async def list_message_snippets(
 
 
 @router.get("/select", response_model=List[MessageSnippetOption])
-async def list_message_snippets_for_composer(
+def list_message_snippets_for_composer(
     query: Optional[str] = Query(None),
     tracking_id: Optional[str] = Query(
         None,
@@ -109,7 +109,7 @@ async def list_message_snippets_for_composer(
 
 
 @router.get("/{snippet_id}", response_model=MessageSnippetResponse)
-async def get_message_snippet(
+def get_message_snippet(
     snippet_id: str,
     current_user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -124,7 +124,7 @@ async def get_message_snippet(
 
 
 @router.post("/", response_model=MessageSnippetResponse, status_code=status.HTTP_201_CREATED)
-async def create_message_snippet(
+def create_message_snippet(
     payload: MessageSnippetCreate,
     current_user: dict = Depends(require_permission(ADD)),
     db: Session = Depends(get_db),
@@ -140,7 +140,7 @@ async def create_message_snippet(
 
 
 @router.put("/{snippet_id}", response_model=MessageSnippetResponse)
-async def update_message_snippet(
+def update_message_snippet(
     snippet_id: str,
     payload: MessageSnippetUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -156,7 +156,7 @@ async def update_message_snippet(
 
 
 @router.delete("/{snippet_id}", status_code=status.HTTP_200_OK)
-async def delete_message_snippet(
+def delete_message_snippet(
     snippet_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),

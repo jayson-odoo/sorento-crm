@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[StorageZoneResponse])
-async def get_storage_zones(
+def get_storage_zones(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     warehouse_id: Optional[str] = Query(None),
@@ -31,7 +31,7 @@ async def get_storage_zones(
 
 
 @router.get("/tree", response_model=list[StorageZoneTreeItem])
-async def get_storage_zones_tree(
+def get_storage_zones_tree(
     warehouse_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -46,7 +46,7 @@ async def get_storage_zones_tree(
 
 
 @router.get("/{zone_id}", response_model=StorageZoneResponse)
-async def get_storage_zone(
+def get_storage_zone(
     zone_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -64,7 +64,7 @@ async def get_storage_zone(
 
 
 @router.post("/", response_model=StorageZoneResponse, status_code=status.HTTP_201_CREATED)
-async def create_storage_zone(
+def create_storage_zone(
     zone_data: StorageZoneCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -81,7 +81,7 @@ async def create_storage_zone(
 
 
 @router.put("/{zone_id}", response_model=StorageZoneResponse)
-async def update_storage_zone(
+def update_storage_zone(
     zone_id: str,
     zone_data: StorageZoneUpdate,
     current_user: dict = Depends(get_current_user),
@@ -100,7 +100,7 @@ async def update_storage_zone(
 
 
 @router.delete("/{zone_id}", status_code=status.HTTP_200_OK)
-async def delete_storage_zone(
+def delete_storage_zone(
     zone_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

@@ -52,7 +52,7 @@ class RetainedUpload:
     content_type: Optional[str]
 
 
-async def read_upload_retained(file: UploadFile) -> RetainedUpload:
+def read_upload_retained(file: UploadFile) -> RetainedUpload:
     """The uploaded bytes for a QUEUED import: what to parse, and what to keep.
 
     Same extension guard and same macro strip as `read_upload` - the difference is only that
@@ -81,7 +81,7 @@ async def read_upload_retained(file: UploadFile) -> RetainedUpload:
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="The uploaded file exceeds the 25 MB limit.",
         )
-    source_bytes = await file.read()
+    source_bytes = file.file.read()
     if not source_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -102,7 +102,7 @@ async def read_upload_retained(file: UploadFile) -> RetainedUpload:
     return RetainedUpload(data, cleaned_name, source_bytes, source_name, file.content_type)
 
 
-async def read_upload(file: UploadFile) -> bytes:
+def read_upload(file: UploadFile) -> bytes:
     """Just the bytes to parse, for a read that keeps nothing (preview, Test).
 
     The same guards as `read_upload_retained` because it IS that function - the extension
@@ -110,4 +110,4 @@ async def read_upload(file: UploadFile) -> bytes:
     preview path accepted a zero-byte upload and handed it to a reader, which reported "this
     file could not be read" where the apply path says "the uploaded file is empty".
     """
-    return (await read_upload_retained(file)).data
+    return read_upload_retained(file).data

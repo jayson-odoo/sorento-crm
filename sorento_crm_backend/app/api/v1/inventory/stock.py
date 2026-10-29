@@ -50,6 +50,7 @@ def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
             out.append(piece)
     return out or None
 
+from app.utils.multi_value import multi_values
 from app.database import get_db
 from app.dependencies import (
     get_current_user,
@@ -266,7 +267,7 @@ def get_stock_balance(
     ),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
-    status: Optional[str] = Query(None, description="Filter by status: critical, low, normal, overstock"),
+    status: Optional[list[str]] = Query(None, description="Filter by status: critical, low, normal, overstock (several = any of them)"),
     exclude_zero_system_adjustment: bool = Query(
         False,
         description=(
@@ -376,7 +377,7 @@ def get_stock_balance(
             product_ids=parsed_product_ids,
             quantity_operator=quantity_operator,
             quantity_value=quantity_value,
-            status=status,
+            status=multi_values(status),
             entities=_normalize_entities(entities),
             exclude_zero_system_adjustment=exclude_zero_system_adjustment,
             contact_id=contact_id,
@@ -439,6 +440,8 @@ def get_stock_alerts(
 @router.get("/balance/export")
 def export_stock_balance(
     warehouse_id: Optional[str] = Query(None),
+    warehouse_ids: Optional[list[str]] = Query(None, description="Canonical warehouse UUIDs (repeated / csv / JSON array)."),
+    status: Optional[list[str]] = Query(None, description="critical, low, normal, overstock; several = any of them."),
     product_id: Optional[str] = Query(
         None,
         description="Single product UUID or product_code (kept for direct callers).",
@@ -468,10 +471,13 @@ def export_stock_balance(
         quantity_operator,
         quantity_value,
     )
+    parsed_export_warehouse_ids = parse_uuid_list(warehouse_ids, param_name="warehouse_ids")
     try:
         service = StockService(db)
         stock_items = service.get_all_stock_for_export(
             warehouse_id=warehouse_id,
+            warehouse_ids=parsed_export_warehouse_ids,
+            status=multi_values(status),
             product_id=product_id,
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             quantity_operator=quantity_operator,
@@ -491,7 +497,7 @@ def export_stock_balance(
 
 
 @router.delete("/bulk")
-async def bulk_delete_stock(
+def bulk_delete_stock(
     body: BulkDeleteStockRequest = Body(...),
     current_user: dict = Depends(require_permission("inventory.stock.delete")),
     db: Session = Depends(get_db)
@@ -536,7 +542,7 @@ def get_stock_ledger_by_stock(
     status_code=status.HTTP_202_ACCEPTED,
     responses={200: {"description": "Validation only (validate_only=true)", "model": ValidateImportResponse}},
 )
-async def bulk_import_stock(
+def bulk_import_stock(
     import_data: BulkImportStockRequest,
     current_user: dict = Depends(require_permission("inventory.stock.import")),
     db: Session = Depends(get_db)

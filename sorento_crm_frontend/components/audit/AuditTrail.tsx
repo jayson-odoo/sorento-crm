@@ -4,13 +4,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditLogs } from '@/hooks/useAuditLogs';
 import { actorDisplay } from '@/lib/audit-actor';
+import { appealWording } from '@/lib/submission-status';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   auditFieldChanges,
   auditFieldLabel,
   formatAuditValue,
-  isAuditResubmit,
+  auditTrailHeadings,
+  resubmittedSummary,
   type AuditFieldChange,
+  type AuditTrailHeading,
 } from '@/lib/audit-fields';
 import type { AuditLogEntry } from '@/types/audit.types';
 
@@ -33,19 +36,34 @@ type ChangeLine = { text: string } | { label: string; before: string; after: str
  * What one audit row changed, one line per field. An empty list means the row changed
  * nothing a reader can see (only bookkeeping fields), and the row is not shown.
  * `childName` is set for a child row (a product line on its complaint's trail).
+ * `own` is set for the record's own row: its status lines say appealed, not resubmitted
+ * (owner, 28 Oct 2026, every form).
  */
-function collectChangeLines(entry: AuditLogEntry, childName: string | null): ChangeLine[] {
+function collectChangeLines(
+  entry: AuditLogEntry,
+  childName: string | null,
+  heading: AuditTrailHeading | undefined,
+  own: boolean,
+): ChangeLine[] {
   if (entry.action === 'INSERT') return [{ text: childName ? `${childName} added` : 'Record created' }];
   if (entry.action === 'DELETE') return [{ text: childName ? `${childName} removed` : 'Record deleted' }];
   const summary = entry.description?.trim() || '';
-  if (entry.action !== 'UPDATE') return [{ text: summary || entry.action }];
+  // Only a status move is reworded: an undo row's summary quotes the reason as typed.
+  const statusMove = /^(status|approval_status|order_status)(:|\s+changed to)\s/i.test(summary);
+  if (entry.action !== 'UPDATE') {
+    return [{ text: (own && statusMove ? appealWording(summary) : summary) || entry.action }];
+  }
   const prefix = childName ? `${childName}: ` : '';
-  const lines: ChangeLine[] = summary ? [{ text: `${prefix}${summary}` }] : [];
+  // A past resubmit's "rejected → submitted" reads as what it is called today.
+  const resubmit = heading === 'Appealed' ? resubmittedSummary(summary) : summary;
+  const shown = own && statusMove ? appealWording(resubmit) : resubmit;
+  const lines: ChangeLine[] = summary ? [{ text: `${prefix}${shown}` }] : [];
   for (const change of auditFieldChanges(entry.old_values, entry.new_values)) {
     if (summary && summaryCovers(change, entry, summary)) continue;
+    const statusLine = own && STATUS_SUMMARY_KEYS.includes(change.key);
     lines.push(
       change.kind === 'line'
-        ? { text: `${prefix}${change.text}` }
+        ? { text: `${prefix}${statusLine ? appealWording(change.text) : change.text}` }
         : { label: `${prefix}${change.label}`, before: change.before, after: change.after },
     );
   }
@@ -77,11 +95,16 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
     );
   }
 
-  const rows = (data?.data ?? [])
+  const entries = data?.data ?? [];
+  const isChild = (entry: AuditLogEntry) =>
+    entry.entity_type !== entityType || entry.entity_id !== entityId;
+  // Rejected / Appealed come from the record's own history, never a child row's status.
+  const headings = auditTrailHeadings(entries.filter((entry) => !isChild(entry)));
+  const rows = entries
     .map((entry) => {
-      const isChild = entry.entity_type !== entityType || entry.entity_id !== entityId;
-      const childName = isChild ? entry.entity_label || auditFieldLabel(entry.entity_type) : null;
-      return { entry, lines: collectChangeLines(entry, childName) };
+      const childName = isChild(entry) ? entry.entity_label || auditFieldLabel(entry.entity_type) : null;
+      const heading = headings.get(entry.id);
+      return { entry, heading, lines: collectChangeLines(entry, childName, heading, !childName) };
     })
     .filter((row) => row.lines.length > 0);
   const empty = data?.empty ?? true;
@@ -98,7 +121,7 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
           <p className="text-sm text-muted-foreground">No field changes to show.</p>
         ) : (
           <ul className="space-y-4">
-            {rows.map(({ entry, lines }) => (
+            {rows.map(({ entry, heading, lines }) => (
               <li
                 key={entry.id}
                 data-audit-entry="1"
@@ -106,7 +129,7 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
               >
                 <div className="flex flex-wrap items-baseline gap-2 text-sm">
                   <span data-testid="audit-action" className="font-medium capitalize">
-                    {isAuditResubmit(entry) ? 'Resubmitted' : entry.action.toLowerCase()}
+                    {heading ?? entry.action.toLowerCase()}
                   </span>
                   <span className="text-muted-foreground">
                     {formatDateTimeInMalaysia(entry.changed_at)}

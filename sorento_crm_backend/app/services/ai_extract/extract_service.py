@@ -48,9 +48,9 @@ from app.services.llm_provider import (
     ChatResult,
     ImagePart,
     LLMProvider,
-    default_model_for,
     get_provider,
     resolve_api_key,
+    resolve_model,
 )
 from app.services.lookup_resolver import LookupResolverService
 
@@ -189,6 +189,9 @@ class AIExtractService:
 
     def __init__(self, db: Session):
         self.db = db
+        # The form being extracted, so `_resolve_provider` can read that form's own
+        # prompt label without changing its call shape (tests stub it argument-free).
+        self._form_key: str | None = None
 
     # ----- Public API -------------------------------------------------------
 
@@ -335,6 +338,7 @@ class AIExtractService:
                 code="ai_extract_no_content",
             )
 
+        self._form_key = form_key
         provider, provider_name, model_name = self._resolve_provider()
         messages = self._build_messages(
             form_key,
@@ -397,9 +401,11 @@ class AIExtractService:
 
     # ----- Provider ---------------------------------------------------------
 
-    def _resolve_provider(self) -> tuple[LLMProvider, str, str]:
-        """Resolve the active provider from ``AIAssistantConfig`` (same source
-        as the chat assistant).
+    def _resolve_provider(self, form_key: str | None = None) -> tuple[LLMProvider, str, str]:
+        """Resolve the provider: the form's own extract prompt label first
+        (``ai_prompt_labels.provider`` / ``.model`` for ``extract_prompt_key``,
+        read through ``agent_model``), else ``AIAssistantConfig`` (same source as
+        the chat assistant), which is what an install without such a label gets.
 
         The key comes from the shared ``resolve_api_key``, which reads the
         provider-specific column first and only hands over the generic
@@ -409,14 +415,19 @@ class AIExtractService:
         environment key to the wrong vendor.
         """
         from app.models.ai_assistant import AIAssistantConfig
+        from app.services.ai_prompt_registry import agent_model
 
         cfg = (
             self.db.query(AIAssistantConfig)
             .order_by(AIAssistantConfig.created_at.asc())
             .first()
         )
-        provider_name = (cfg.provider if cfg else "openai") or "openai"
-        model_name = (cfg.model if cfg else "") or ""
+        key = form_key or self._form_key
+        label_provider, label_model = (
+            agent_model(self.db, extract_prompt_key(key)) if key else (None, None)
+        )
+        provider_name = label_provider or (cfg.provider if cfg else "openai") or "openai"
+        model_name = resolve_model(cfg, provider_name, label_model)
         api_key = resolve_api_key(cfg, provider_name)
         if not api_key:
             raise AppException(
@@ -427,8 +438,6 @@ class AIExtractService:
                 ),
                 code="ai_extract_no_api_key",
             )
-        if not model_name:
-            model_name = default_model_for(provider_name)
         try:
             provider = get_provider(provider_name, api_key, model=model_name)
         except ValueError as exc:

@@ -42,12 +42,12 @@ router = APIRouter()
 
 @router.get("/tickets")
 def list_tickets(
-    status: Optional[str] = Query(None),
+    status: Optional[list[str]] = Query(None),
     assigned_to: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
-    priority: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    source_channel: Optional[str] = Query(
+    priority: Optional[list[str]] = Query(None),
+    category: Optional[list[str]] = Query(None),
+    source_channel: Optional[list[str]] = Query(
         None,
         description="Filter by source channel: manual | ai_assistant | whatsapp_respond",
     ),
@@ -81,11 +81,11 @@ def list_tickets(
 
 @router.get("/tickets/kanban", response_model=TicketKanbanResponse)
 def kanban(
-    status: Optional[str] = Query(None),
+    status: Optional[list[str]] = Query(None),
     assigned_to: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
-    priority: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
+    priority: Optional[list[str]] = Query(None),
+    category: Optional[list[str]] = Query(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(
         require_permission_with_api_key("tickets.tickets.view")

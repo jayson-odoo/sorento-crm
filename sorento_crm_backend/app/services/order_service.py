@@ -27,6 +27,7 @@ from app.services.import_log_service import ImportLogService
 from app.services.contact_brand_scope import product_in_scope_clauses
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
+from app.utils.multi_value import multi_values
 from app.services.company_scope import (
     DEFAULT_COMPANY_ID,
     build_company_predicate,
@@ -261,7 +262,7 @@ def scope_product_filter(db: Session, value):
     scope = get_brand_scope(db)
     if not scope:
         return value
-    stmt = select(Product.id).where(brand_predicate(scope, Product.brand_id, Product.company_id))
+    stmt = select(Product.id).where(brand_predicate(scope, Product.brand_id, Product.company_id, Product.item_class_id))
     if has_product_filter(value):
         stmt = stmt.where(Product.id.in_(value))
     return stmt
@@ -827,6 +828,20 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
         logger.warning("stamp_order_summary skipped: %s", exc)
 
 
+
+def resolve_order_status_ids(db, order_status_id):
+    """Order status ids for the `order_status_id` filter: one value or several (comma-joined or a
+    list), each an id or a status code/name, OR-ed. `None` is "no filter", `[]` is "matches no
+    status". Shared by the delivery-orders list and its export so they cannot disagree."""
+    status_ids = None
+    for value in multi_values(order_status_id) or []:
+        resolved = resolve_identifier(
+            db, value, OrderStatus, code_fields=("status_code", "status_name")
+        )
+        if resolved is not None:
+            status_ids = [*(status_ids or []), *resolved]
+    return status_ids
+
 class OrderService:
     """Service for order operations."""
     
@@ -842,7 +857,7 @@ class OrderService:
         product_query: Optional[str] = None,
         transporter_query: Optional[str] = None,
         customer_id: Optional[str] = None,
-        order_status_id: Optional[str] = None,
+        order_status_id: Optional[list[str] | str] = None,
         order_status: Optional[str] = None,
         has_order_lines: Optional[str] = None,
         has_actual_delivery_date: Optional[str] = None,
@@ -981,12 +996,8 @@ class OrderService:
             filters.append(Order.customer_id.in_(customer_ids))
             _customer_scoped = True
 
-        status_ids = resolve_identifier(
-            self.db,
-            order_status_id,
-            OrderStatus,
-            code_fields=("status_code", "status_name"),
-        )
+        # Several statuses are OR-ed; each may be an id or a code/name (FILTER-MULTISELECT).
+        status_ids = resolve_order_status_ids(self.db, order_status_id)
         if status_ids is not None:
             if not status_ids:
                 if ids_only:
@@ -3598,7 +3609,8 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
-        customer_group_id: Optional[str] = None,
+        customer_group_id: Optional[list[str] | str] = None,
+        status: Optional[str] = None,
     ):
         """Build the filtered + sorted customers query shared by ``list_customers``
         and ``neighbours`` so the two can never drift.
@@ -3612,8 +3624,15 @@ class CustomerService:
         if sales_agent_id is not None:
             q = q.filter(Customer.sales_agent_id == sales_agent_id)
 
-        if customer_group_id is not None:
-            q = q.filter(Customer.customer_group_id == customer_group_id)
+        if customer_group_id:
+            groups = [customer_group_id] if isinstance(customer_group_id, str) else customer_group_id
+            q = q.filter(Customer.customer_group_id.in_(groups))
+
+        # `active` / `inactive`; anything else (or nothing) is every customer.
+        if status == "active":
+            q = q.filter(Customer.is_active.is_(True))
+        elif status == "inactive":
+            q = q.filter(Customer.is_active.is_(False))
 
         if query:
             q = q.filter(
@@ -3638,7 +3657,8 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
-        customer_group_id: Optional[str] = None,
+        customer_group_id: Optional[list[str] | str] = None,
+        status: Optional[str] = None,
     ):
         """List customers with pagination, search, and sorting.
 
@@ -3650,6 +3670,7 @@ class CustomerService:
             sort_dir=sort_dir,
             sales_agent_id=sales_agent_id,
             customer_group_id=customer_group_id,
+            status=status,
         )
 
         total = q.count()
@@ -3835,9 +3856,11 @@ class OrderStatusService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_order_statuses(self, page: int = 1, limit: int = 50):
-        """List order statuses."""
+    def list_order_statuses(self, page: int = 1, limit: int = 50, is_final_status: Optional[bool] = None):
+        """List order statuses; `is_final_status` narrows the whole table (total and paging)."""
         q = self.db.query(OrderStatus).order_by(OrderStatus.sequence)
+        if is_final_status is not None:
+            q = q.filter(OrderStatus.is_final_status.is_(is_final_status))
         
         total = q.count()
         offset = (page - 1) * limit

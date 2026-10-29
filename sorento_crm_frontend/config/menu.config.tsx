@@ -149,6 +149,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         moduleKey: 'sales',
       },
       {
+        title: 'Sales & outstanding',
+        path: '/sales/sales-and-outstanding',
+        // Invoiced needs the reports slug, unpaid the finance one, the other four the orders slug: any opens the screen.
+        permissionsAny: ['sales.reports.view', 'order_management.orders.view', 'finance.billing_documents.view'],
+        moduleKey: 'sales',
+      },
+      {
         title: 'Set-apart customers',
         path: '/sales/set-apart-customers',
         permission: 'sales.reports.view',
@@ -487,6 +494,12 @@ export const MENU_SIDEBAR: MenuConfig = [
         permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
       },
       {
+        title: 'Stock position',
+        path: '/inventory-management/stock-position',
+        // Same gate as Stock status (`app/api/v1/inventory/stock_position.py` reuses its slugs).
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
+      },
+      {
         title: 'Stock Batches',
         path: '/inventory-management/stock-batches',
         permission: 'inventory.stock_batches.view',
@@ -562,6 +575,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Brands',
             path: '/master-data-management/brands',
             permission: 'master_data.brands.view',
+          },
+          {
+            title: 'Item Classes',
+            path: '/master-data-management/item-classes',
+            permission: 'master_data.item_classes.view',
           },
           {
             title: 'Units of Measure',
@@ -1914,6 +1932,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       permission: 'master_data.brands.view',
     },
     {
+      title: 'Item Classes',
+      path: '/master-data-management/item-classes',
+      permission: 'master_data.item_classes.view',
+    },
+    {
       title: 'Units of Measure',
       path: '/master-data-management/units-of-measure',
       permission: 'master_data.units_of_measure.view',
@@ -2029,6 +2052,12 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/inventory-management/stock-status',
         // The API's own gate (`app/api/v1/inventory/stock_status.py`): the panel shows SO
         // customers and PO suppliers, which `inventory.stock.view` alone never granted.
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
+      },
+      {
+        title: 'Stock position',
+        path: '/inventory-management/stock-position',
+        // Same gate as Stock status (`app/api/v1/inventory/stock_position.py` reuses its slugs).
         permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
       },
       {

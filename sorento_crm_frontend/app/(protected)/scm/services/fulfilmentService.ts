@@ -418,8 +418,9 @@ export interface LoadingPlanListParams {
   pageSize: number;
   sorting: { id: string; desc: boolean }[];
   searchQuery: string;
-  /** `active` = planning + sent, the default chip. */
-  status: LoadingPlanStatus | 'active' | '';
+  /** One status, or several comma-joined (OR-ed); `active` = planning + sent is a pseudo-value that
+   *  combines with real ones, and empty reads as the active group. */
+  status: string;
 }
 
 export async function getLoadingPlanList(

@@ -5,10 +5,10 @@ import { getOrderStatuses, getOrderStatus, createOrderStatus, updateOrderStatus,
 import type { OrderStatusFormData } from '../types/orderStatus.types';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
-export function useOrderStatuses(params: DataGridApiFetchParams) {
+export function useOrderStatuses(params: DataGridApiFetchParams & { is_final_status?: boolean }) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: ['order-statuses', params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
+    queryKey: ['order-statuses', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.is_final_status],
     queryFn: () => getOrderStatuses(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

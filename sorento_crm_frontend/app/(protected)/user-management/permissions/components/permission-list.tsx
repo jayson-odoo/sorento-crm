@@ -42,7 +42,8 @@ import {
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserPermission, UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
@@ -104,9 +105,7 @@ const PermissionList = () => {
       limit: String(pageSize),
       ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
       ...(searchQuery ? { query: searchQuery } : {}),
-      ...(selectedRole && selectedRole !== 'all'
-        ? { roleId: selectedRole }
-        : {}),
+      ...(selectedRole ? { roleId: selectedRole } : {}),
     });
 
     const response = await apiFetch(
@@ -149,8 +148,13 @@ const PermissionList = () => {
   });
 
   // Handle row selection
-  const handleRoleSelection = (roleId: string) => {
-    setSelectedRole(roleId);
+  const roleIds = splitMulti(selectedRole);
+  const roleOptions: { value: string; label: string }[] = (roleList ?? []).map((role: UserRole) => ({
+    value: role.id,
+    label: role.name,
+  }));
+  const handleRoleSelection = (ids: string[]) => {
+    setSelectedRole(joinMulti(ids) || null);
     setPagination({ ...pagination, pageIndex: 0 }); // Reset to first page when filtering
   };
 
@@ -367,32 +371,49 @@ const PermissionList = () => {
               }
               filters={{
                 kind: 'custom',
-                active: Boolean(selectedRole && selectedRole !== 'all'),
-                activeCount: selectedRole && selectedRole !== 'all' ? 1 : 0,
+                active: roleIds.length > 0,
+                activeCount: roleIds.length > 0 ? 1 : 0,
+                activeSummary: roleIds.length
+                  ? [
+                      {
+                        label: multiChipLabel(
+                          'Role',
+                          roleIds.map(
+                            (id) => roleOptions.find((o) => o.value === id)?.label ?? 'Selected',
+                          ),
+                        ),
+                        onClear: () => handleRoleSelection([]),
+                      },
+                    ]
+                  : undefined,
                 content: (
                   <div className="space-y-2">
                     <Label>Role</Label>
-                    <SearchableSelect
+                    <SearchableMultiSelect
                       onChange={handleRoleSelection}
-                      value={selectedRole || 'all'}
+                      value={roleIds}
                       placeholder="Filter by role"
                       triggerClassName="w-full"
                       loadError={roleListError}
                       onRetry={() => void refetchRoleList()}
-                      options={[
-                        { value: 'all', label: 'All roles' },
-                        ...(roleList ?? []).map((role: UserRole) => ({
-                          value: role.id,
-                          label: role.name,
-                        })),
-                      ]}
+                      options={roleOptions}
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">
+                            {multiChipLabel('Role', chosen.map((o) => o.label))}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Role: any</span>
+                        )
+                      }
+                      clearable
                     />
-                    {selectedRole && selectedRole !== 'all' && (
+                    {roleIds.length > 0 && (
                       <div className="flex justify-end">
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleRoleSelection('all')}
+                          onClick={() => handleRoleSelection([])}
                         >
                           Clear filter
                         </Button>

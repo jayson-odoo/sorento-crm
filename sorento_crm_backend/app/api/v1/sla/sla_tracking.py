@@ -38,6 +38,7 @@ from app.schemas.sla import (
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.ticket_comment import TicketCommentCreate, TicketCommentResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.utils.multi_value import multi_uuids, multi_values
 from app.services.error_handler import (
     AppException,
     handle_internal_error,
@@ -424,7 +425,7 @@ def build_conversation_sla_tracking_response(
 
 
 @router.get("/dashboard")
-async def get_sla_tracking_dashboard(
+def get_sla_tracking_dashboard(
     current_user: dict = Depends(require_permission_with_api_key("sla_management.conversation_sla_tracking.view")),
     db: Session = Depends(get_db)
 ):
@@ -448,7 +449,7 @@ async def get_sla_tracking_dashboard(
 
 
 @router.get("/my-pending")
-async def get_my_pending_sla_tracking(
+def get_my_pending_sla_tracking(
     limit: int = Query(1000, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -473,7 +474,7 @@ async def get_my_pending_sla_tracking(
 
 
 @router.get("/{tracking_id}/takeover-state")
-async def get_takeover_state(
+def get_takeover_state(
     tracking_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -490,9 +491,9 @@ async def get_takeover_state(
 
 
 @router.get("/team-pending")
-async def get_team_pending_sla_tracking(
-    assignee: Optional[str] = Query(None),
-    team: Optional[str] = Query(None),
+def get_team_pending_sla_tracking(
+    assignee: Optional[list[str]] = Query(None),
+    team: Optional[list[str]] = Query(None),
     query: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -502,12 +503,14 @@ async def get_team_pending_sla_tracking(
     """Unresolved SLA tasks of teammates in the current user's visible teams
     (peers + recursive child/grandchild teams), excluding the user's own.
     ``query`` free-text search over entity number / contact name / assignee / team."""
+    assignee_ids = multi_uuids(assignee, "Assignee")
+    team_ids = multi_uuids(team, "Team")
     try:
         service = ConversationSLATrackingService(db)
         result = service.list_team_pending(
             current_user["id"],
-            assignee=assignee,
-            team=team,
+            assignee=assignee_ids,
+            team=team_ids,
             page=page,
             limit=limit,
             query=query,
@@ -528,7 +531,7 @@ async def get_team_pending_sla_tracking(
 
 
 @router.get("/visible-users")
-async def get_visible_users(
+def get_visible_users(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -547,7 +550,7 @@ class _TakeoverRequest(BaseModel):
 
 
 @router.post("/{tracking_id}/takeover")
-async def takeover_sla_tracking(
+def takeover_sla_tracking(
     tracking_id: str,
     payload: _TakeoverRequest,
     response: Response,
@@ -575,7 +578,7 @@ async def takeover_sla_tracking(
 
 
 @router.post("/takeover-requests/{request_id}/cancel")
-async def cancel_takeover_request(
+def cancel_takeover_request(
     request_id: str,
     current_user: dict = Depends(get_current_user),
     _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.takeover")),
@@ -593,7 +596,7 @@ async def cancel_takeover_request(
 
 
 @router.post("/takeover-requests/{request_id}/reject")
-async def reject_takeover_request(
+def reject_takeover_request(
     request_id: str,
     current_user: dict = Depends(get_current_user),
     _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.takeover")),
@@ -615,7 +618,7 @@ class _ReassignRequest(BaseModel):
 
 
 @router.post("/{tracking_id}/reassign")
-async def reassign_sla_tracking(
+def reassign_sla_tracking(
     tracking_id: str,
     payload: _ReassignRequest,
     current_user: dict = Depends(get_current_user),
@@ -765,7 +768,7 @@ def _assert_extend_assignee(tracking, current_user: dict) -> None:
 
 
 @router.post("/{tracking_id}/extend/preview")
-async def preview_extend_sla_tracking(
+def preview_extend_sla_tracking(
     tracking_id: UUID,
     payload: _ExtendPreviewRequest,
     current_user: dict = Depends(get_current_user),
@@ -817,7 +820,7 @@ async def preview_extend_sla_tracking(
 
 
 @router.post("/{tracking_id}/extend", response_model=ConversationSLATrackingResponse)
-async def extend_sla_tracking(
+def extend_sla_tracking(
     tracking_id: UUID,
     payload: _ExtendRequest,
     current_user: dict = Depends(get_current_user),
@@ -851,7 +854,7 @@ async def extend_sla_tracking(
 
 
 @router.get("/", response_model=ListResponse[ConversationSLATrackingResponse])
-async def get_sla_tracking(
+def get_sla_tracking(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     policy_id: Optional[str] = Query(None),
@@ -862,7 +865,7 @@ async def get_sla_tracking(
     ),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
-    assigned_to: Optional[str] = Query(None),
+    assigned_to: Optional[list[str]] = Query(None),
     contact: Optional[str] = Query(
         None,
         description=(
@@ -895,7 +898,7 @@ async def get_sla_tracking(
             tracking_ids=parse_uuid_list(tracking_ids, param_name="tracking_ids"),
             sort_field=sort or "created_at",
             sort_dir=dir or "desc",
-            assigned_to=assigned_to,
+            assigned_to=multi_values(assigned_to),
             scope="form" if scope == "form" else "conversation",
             contact=contact,
             is_resolved=is_resolved,
@@ -912,7 +915,7 @@ async def get_sla_tracking(
 
 
 @router.post("/", response_model=ConversationSLATrackingResponse, status_code=status.HTTP_201_CREATED)
-async def create_sla_tracking(
+def create_sla_tracking(
     tracking_data: ConversationSLATrackingCreate,
     request: Request,
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -973,7 +976,7 @@ async def create_sla_tracking(
 
 
 @router.get("/integration/due-escalations", status_code=status.HTTP_200_OK)
-async def list_due_escalations_integration(
+def list_due_escalations_integration(
     # LIST-API-PERMS: the router's module guard only proved a session or key existed, so any
     # signed-in account could read every breaching conversation with its phone number. The
     # n8n runner's role holds this slug (Admin-equivalent, migration 297).
@@ -1008,7 +1011,7 @@ async def list_due_escalations_integration(
 
 
 @router.post("/integration/escalate", status_code=status.HTTP_200_OK)
-async def escalate_sla_tracking_integration(
+def escalate_sla_tracking_integration(
     body: ConversationSLAEscalateRequest,
     request: Request,
     db: Session = Depends(get_db),
@@ -1285,7 +1288,7 @@ async def escalate_sla_tracking_integration(
 # shadow the n8n integration endpoint. Keep all static "/integration/*" routes above
 # this parametric one.
 @router.post("/{tracking_id}/escalate")
-async def escalate_conversation_sla_tracking(
+def escalate_conversation_sla_tracking(
     tracking_id: str,
     payload: _ConversationEscalateRequest,
     current_user: dict = Depends(get_current_user),
@@ -1388,7 +1391,7 @@ async def escalate_conversation_sla_tracking(
 
 
 @router.post("/{tracking_id}/resolve", response_model=ConversationSLATrackingResponse)
-async def resolve_sla_tracking(
+def resolve_sla_tracking(
     tracking_id: UUID,
     current_user: dict = Depends(get_current_user),
     _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.resolve")),
@@ -1564,7 +1567,7 @@ async def send_intervention_ticket_message(
 
 
 @router.post("/integration", status_code=status.HTTP_200_OK)
-async def create_sla_tracking_integration(
+def create_sla_tracking_integration(
     tracking_data: ConversationSLATrackingCreate,
     request: Request,
     db: Session = Depends(get_db)
@@ -1647,7 +1650,7 @@ async def create_sla_tracking_integration(
 
 
 @router.put("/{tracking_id}", response_model=ConversationSLATrackingResponse)
-async def update_sla_tracking(
+def update_sla_tracking(
     tracking_id: UUID,
     tracking_data: ConversationSLATrackingUpdate,
     request: Request,
@@ -1794,7 +1797,7 @@ async def update_sla_tracking(
 
 
 @router.post("/{tracking_id}/sync-assignee")
-async def sync_assignee_from_respond(
+def sync_assignee_from_respond(
     tracking_id: UUID,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -1829,7 +1832,7 @@ async def sync_assignee_from_respond(
 
 
 @router.post("/{tracking_id}/test-overrides", status_code=status.HTTP_200_OK)
-async def post_sla_tracking_test_overrides(
+def post_sla_tracking_test_overrides(
     tracking_id: UUID,
     body: ConversationSLATestOverrideRequest,
     _current_user: dict = Depends(
@@ -1851,7 +1854,7 @@ async def post_sla_tracking_test_overrides(
 
 
 @router.delete("/{tracking_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_sla_tracking(
+def delete_sla_tracking(
     tracking_id: UUID,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -1917,7 +1920,7 @@ def _calculate_duration_hours(start_at, end_at) -> Decimal:
 
 @router.post("/integration/{tracking_id}", status_code=status.HTTP_200_OK)
 @router.put("/integration/{tracking_id}", status_code=status.HTTP_200_OK)
-async def update_sla_tracking_status_integration(
+def update_sla_tracking_status_integration(
     tracking_id: UUID,
     update_data: ConversationSLATrackingStatusUpdate,
     request: Request,
@@ -2096,7 +2099,7 @@ async def update_sla_tracking_status_integration(
 
 
 @router.post("/event-logs", response_model=ConversationSLAEventLogResponse, status_code=status.HTTP_201_CREATED)
-async def create_event_log(
+def create_event_log(
     event_data: ConversationSLAEventLogCreate,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -2131,7 +2134,7 @@ async def create_event_log(
 
 
 @router.delete("/event-logs/{log_id}", status_code=status.HTTP_200_OK)
-async def delete_event_log(
+def delete_event_log(
     log_id: UUID,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -2157,7 +2160,7 @@ async def delete_event_log(
 
 
 @router.get("/by-source", response_model=list[ConversationSLATrackingResponse])
-async def list_trackers_by_source(
+def list_trackers_by_source(
     source_entity_type: str = Query(..., description="stock_inquiry | purchase_request | sponsorship_form | complaint | ticket"),
     source_entity_id: str = Query(..., description="Form row id"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -2187,15 +2190,15 @@ async def list_trackers_by_source(
 
 
 @router.get("/event-logs", response_model=ListResponse[ConversationSLAEventLogResponse])
-async def get_event_logs(
+def get_event_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("event_at"),
     dir: Optional[str] = Query("desc"),
     tracking_id: Optional[str] = Query(None),
-    event_type: Optional[str] = Query(None),
-    assigned_to: Optional[str] = Query(None),
-    assigned_to_id: Optional[str] = Query(None, description="Filter by user id (assigned_to_id)"),
+    event_type: Optional[list[str]] = Query(None),
+    assigned_to: Optional[list[str]] = Query(None),
+    assigned_to_id: Optional[list[str]] = Query(None, description="Filter by user id (assigned_to_id)"),
     date_from: Optional[str] = Query(None, description="Filter event_at >= date (ISO date or datetime)"),
     date_to: Optional[str] = Query(None, description="Filter event_at <= date (ISO date or datetime, end of day)"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -2203,6 +2206,7 @@ async def get_event_logs(
 ):
     """Get SLA event logs with pagination and filtering."""
     _require_event_log_reader(db, current_user, _tracking_or_404(db, tracking_id) if tracking_id else None)
+    assignee_ids = multi_uuids(assigned_to_id, "Assignee")
     try:
         service = ConversationSLATrackingService(db)
         result = service.list_event_logs(
@@ -2211,9 +2215,9 @@ async def get_event_logs(
             sort_field=sort,
             sort_dir=dir,
             tracking_id=tracking_id,
-            event_type=event_type,
-            assigned_to=assigned_to,
-            assigned_to_id=assigned_to_id,
+            event_type=multi_values(event_type),
+            assigned_to=multi_values(assigned_to),
+            assigned_to_id=assignee_ids,
             date_from=date_from,
             date_to=date_to,
         )
@@ -2401,7 +2405,7 @@ async def search_sla_tracking_conversation(
 
 
 @router.post("/{tracking_id}/conversation/reply")
-async def post_sla_tracking_conversation_reply(
+def post_sla_tracking_conversation_reply(
     tracking_id: UUID,
     body: SlaTrackingConversationReplyBody,
     request: Request,
@@ -2428,7 +2432,7 @@ async def post_sla_tracking_conversation_reply(
 
 
 @router.get("/{tracking_id}/comments", response_model=list[TicketCommentResponse])
-async def list_ticket_comments(
+def list_ticket_comments(
     tracking_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -2450,7 +2454,7 @@ async def list_ticket_comments(
     response_model=TicketCommentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_ticket_comment(
+def create_ticket_comment(
     tracking_id: str,
     payload: TicketCommentCreate,
     current_user: dict = Depends(get_current_user),
@@ -2472,7 +2476,7 @@ async def create_ticket_comment(
 
 
 @router.get("/{tracking_id}", response_model=ConversationSLATrackingResponse)
-async def get_sla_tracking_record(
+def get_sla_tracking_record(
     tracking_id: UUID,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)

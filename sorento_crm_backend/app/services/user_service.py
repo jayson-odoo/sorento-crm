@@ -284,8 +284,8 @@ class UserService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
-        status: Optional[str] = None,
-        role_id: Optional[str] = None,
+        status: Optional[list[str]] = None,
+        role_id: Optional[list[str]] = None,
         respond_synced: Optional[str] = None,
         trashed: Optional[str] = None,
         tier: Optional[str] = None,
@@ -299,11 +299,12 @@ class UserService:
         elif trashed != "all":
             q = q.filter(User.is_trashed == False)
         filters = []
-        if status and status != "all":
-            filters.append(User.status == status)
-        if role_id and role_id != "all":
+        # FILTER-MULTISELECT: ``status`` and ``role_id`` are lists, any-of; "all" is no filter.
+        if status and "all" not in status:
+            filters.append(User.status.in_(status))
+        if role_id and "all" not in role_id:
             q = q.join(UserRoleAssignment, UserRoleAssignment.user_id == User.id)
-            q = q.filter(UserRoleAssignment.role_id == role_id)
+            q = q.filter(UserRoleAssignment.role_id.in_(role_id))
             q = q.distinct()
 
         if respond_synced:
@@ -1415,9 +1416,13 @@ class UserPermissionService:
             )
         return q.order_by(UserPermission.name).all()
 
-    def list_permissions(self, page: int = 1, limit: int = 50):
-        """List user permissions."""
+    def list_permissions(self, page: int = 1, limit: int = 50, role_ids: Optional[list[str]] = None):
+        """List user permissions; role_ids keeps those granted to any of the roles."""
         q = self.db.query(UserPermission)
+        if role_ids:
+            q = q.filter(UserPermission.id.in_(
+                self.db.query(UserRolePermission.permission_id).filter(UserRolePermission.role_id.in_(role_ids))
+            ))
         
         total = q.count()
         offset = (page - 1) * limit

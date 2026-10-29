@@ -389,6 +389,8 @@ def test_ac_b8_client_facing_endpoint_ignores_a_posted_company_id(db):
     a = seed.attachment(db, company_id=SORENTO, type_id=t.id)
     actor = seed.user(db)
     seed.grant(db, user_id=actor.id, company_id=SORENTO)  # NOT granted Mocha
+    # Linking needs the edit slug (PRODUCT-ATTACH-AUDIT); this test is about the company.
+    seed.grant_permission(db, user_id=actor.id, slug="master_data.product_attachments.edit")
     db.commit()
 
     c = _scope_client(db, actor_id=actor.id, scope=frozenset({SORENTO}))

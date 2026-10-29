@@ -122,7 +122,8 @@ def test_a_hidden_dim_width_is_never_shown_to_the_parser(session_factory, seeded
 
     lines = _candidate_lines(block)
     assert not any("dim_width" in ln for ln in lines), lines
-    assert not any(ln.startswith('- "600mm"') and "size 600" in ln for ln in lines), lines
+    # DIMENSION-ANY (owner, 28 Oct 2026): a bare length is offered as a size whatever visible key
+    # holds it; the size's OR is built from the VISIBLE dimensions only (test_closed_lists_bare_size).
 
 
 def test_a_hidden_dim_width_is_never_shown_to_the_parser_under_code_lookup(
@@ -137,7 +138,8 @@ def test_a_hidden_dim_width_is_never_shown_to_the_parser_under_code_lookup(
 
     lines = _candidate_lines(block)
     assert not any("dim_width" in ln for ln in lines), lines
-    assert not any(ln.startswith('- "600mm"') and "size 600" in ln for ln in lines), lines
+    # DIMENSION-ANY (owner, 28 Oct 2026): a bare length is offered as a size whatever visible key
+    # holds it; the size's OR is built from the VISIBLE dimensions only (test_closed_lists_bare_size).
 
 
 def test_a_hidden_boolean_key_gets_no_candidate_line(session_factory, seeded, stub_access, monkeypatch):

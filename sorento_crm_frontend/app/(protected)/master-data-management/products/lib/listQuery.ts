@@ -21,6 +21,8 @@ export type ProductsListParams = DataGridApiFetchParams & {
   category_id?: string;
   /** One brand id, or the comma-separated list a discontinued deep link carries. */
   brand_id?: string;
+  /** One item class id, or a comma-separated list. */
+  item_class_id?: string;
   status?: string;
   variant_filter?: 'base' | 'variant' | 'all';
   discontinued_batch_id?: string;
@@ -41,6 +43,7 @@ export function productsListQueryKey(params: ProductsListParams): QueryKey {
     params.searchQuery,
     params.category_id,
     params.brand_id,
+    params.item_class_id,
     params.status,
     params.variant_filter,
     params.advancedFilter,
@@ -82,6 +85,7 @@ export function fetchProductsPage(
     searchQuery: params.searchQuery,
     ...(params.category_id ? { category_id: params.category_id } : {}),
     ...(params.brand_id ? { brand_id: params.brand_id } : {}),
+    ...(params.item_class_id ? { item_class_id: params.item_class_id } : {}),
     status: (params.status as 'active' | 'inactive' | 'all') ?? 'all',
     ...(params.variant_filter && params.variant_filter !== 'all'
       ? { variant_filter: params.variant_filter }
@@ -112,6 +116,7 @@ export function productsListParamsFromUrl(
     searchQuery: params.searchQuery,
     category_id: f.category_id,
     brand_id: f.brand_id,
+    item_class_id: f.item_class_id,
     status: f.status ?? 'all',
     variant_filter:
       variant === 'base' || variant === 'variant' ? variant : 'all',

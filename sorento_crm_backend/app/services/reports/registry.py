@@ -68,6 +68,12 @@ def current_year_period() -> Dict[str, Any]:
     return {"kind": "year", "year": today_malaysia().year}
 
 
+def all_dates_period() -> Dict[str, Any]:
+    """Every date (1900 to 2200, the report-ask route's own bounds): the default period of an open basis, which the
+    chatbot also answers over all dates when no period is named."""
+    return {"kind": "custom", "from": "1900-01-01", "to": "2200-12-31"}
+
+
 _MONTH_NAMES = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 #: A month-of-year axis's fixed values ("01", "JAN") .. ("12", "DEC"). The kernel reads a
 #: column carrying exactly these as months of the year (the VARIANCE window, G5 (a)).
@@ -112,6 +118,8 @@ class Column:
     #: How this dimension's blank bucket READS ("(no agent)"): it stays the blank bucket (last
     #: in every order, one row), only its label changes (SALES-UNIFIED).
     blank_label: Optional[str] = None
+    #: Resolvable by key (the engine and the report ask read it) but not offered in the screen's Columns menu.
+    hidden: bool = False
 
     def __post_init__(self) -> None:
         if self.agg not in AGGS:

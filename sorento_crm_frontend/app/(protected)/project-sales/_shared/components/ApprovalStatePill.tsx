@@ -1,12 +1,13 @@
 'use client';
 
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { isAwaitingReview } from '@/lib/submission-status';
+import { APPEALED_LABEL, isAwaitingReview } from '@/lib/submission-status';
 import type { ProjectApprovalState } from '../types/project.types';
 
 const LABEL: Partial<Record<ProjectApprovalState, string>> = {
+  draft: 'Draft',
   pending: 'Awaiting approval',
-  resubmitted: 'Resubmitted',
+  resubmitted: APPEALED_LABEL,
   rejected: 'Rejected',
 };
 

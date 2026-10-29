@@ -25,7 +25,7 @@ MAX_LIMIT = 200
 
 
 @router.get("/select")
-async def get_customers_select(
+def get_customers_select(
     query: Optional[str] = Query(None),
     limit: Optional[int] = Query(None, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
@@ -134,7 +134,7 @@ def _customers_select(
 
 
 @router.get("/sales-agents-select")
-async def get_customer_sales_agents_select(
+def get_customer_sales_agents_select(
     query: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission("order_management.customers.view")),
     db: Session = Depends(get_db),

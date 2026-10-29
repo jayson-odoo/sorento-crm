@@ -118,6 +118,7 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 from app.services.scm import ladder_steps, priority, spo_supply
 from app.services.scm.history_sources import SPO_HISTORY_SOURCE
 from app.services.scm.supply_origin import buy_origin_by_product
@@ -11509,7 +11510,7 @@ class ProjectSupplyService:
         self,
         *,
         query: Optional[str] = None,
-        state: Optional[str] = None,
+        state: Optional[str | Sequence[str]] = None,
         agent_code: Optional[str] = None,
         sort: Optional[str] = None,
         dir: str = "desc",
@@ -11549,7 +11550,7 @@ class ProjectSupplyService:
             .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .outerjoin(User, User.id == SOSupplyDecision.confirmed_by)
-            .filter(SOSupplyDecision.state == (state or DECISION_ACTIVE))
+            .filter(SOSupplyDecision.state.in_(multi_values(state) or [DECISION_ACTIVE]))
         )
         if agent_code:
             base = base.filter(SalesAgent.sales_agent.ilike(agent_code.strip()))

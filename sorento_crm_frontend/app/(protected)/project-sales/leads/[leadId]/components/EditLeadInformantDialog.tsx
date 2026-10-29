@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useCustomerSelectQuery } from '@/app/(protected)/order-management/shared/hooks/use-customer-select-query';
+import { useFetchCustomerOptions } from '../../../_shared/hooks/useProjects';
 import {
   InformantFieldset,
   informantBody,
@@ -28,8 +28,7 @@ import type { ProjectLeadBody } from '../../../_shared/types/project.types';
 /**
  * The two "who" questions on a lead, in one place and never in the same box.
  *
- * The informant told us about the job. The buyer will issue the purchase order, and is
- * usually unknown for weeks after the lead is worth recording.
+ * The informant told us about the job. The customer will issue the purchase order.
  *
  * There is deliberately NO owner field here. `PUT /leads/{id}` still accepts
  * `owner_user_id` (phase-1 behaviour), and editing it would move a lead to a new person
@@ -45,13 +44,14 @@ export function EditLeadInformantDialog({
   lead: LeadWithAcceptance;
   submitting?: boolean;
   onDone: () => void;
-  onConfirm: (body: Partial<ProjectLeadBody> & LeadInformantBody) => Promise<void>;
+  onConfirm: (
+    body: Partial<ProjectLeadBody> & LeadInformantBody,
+  ) => Promise<void>;
 }) {
-  const customers = useCustomerSelectQuery();
+  const fetchCustomers = useFetchCustomerOptions();
   const [informant, setInformant] = React.useState<InformantDraft>({
     informant_source: lead.informant_source ?? '',
     informant_ref: lead.informant_ref ?? '',
-    informant_party_id: lead.informant_party_id ?? '',
     informant_contact_name: lead.informant_contact_name ?? '',
   });
   const [customerId, setCustomerId] = React.useState(lead.customer_id ?? '');
@@ -62,7 +62,7 @@ export function EditLeadInformantDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Who told us, and who buys</DialogTitle>
+          <DialogTitle>Who told us, and the customer</DialogTitle>
           <DialogDescription>{lead.title}</DialogDescription>
         </DialogHeader>
 
@@ -89,19 +89,20 @@ export function EditLeadInformantDialog({
             />
 
             <div className="space-y-1.5">
-              <Label htmlFor="edit-lead-buyer">Buyer</Label>
+              <Label htmlFor="edit-lead-customer">Customer</Label>
               <SearchableSelect
-                id="edit-lead-buyer"
+                id="edit-lead-customer"
                 value={customerId}
                 onChange={setCustomerId}
-                clearable
-                options={(customers.data ?? []).map((row) => ({
-                  value: row.id,
-                  label: row.customer_name,
-                  description: row.customer_code ?? undefined,
-                }))}
-                placeholder="Not known yet"
-                emptyMessage="No match"
+                clearable={!lead.customer_id}
+                fetchOptions={fetchCustomers}
+                selectedOption={
+                  lead.customer_id && lead.customer_name
+                    ? { value: lead.customer_id, label: lead.customer_name }
+                    : undefined
+                }
+                placeholder="Search customers"
+                emptyMessage="No customers found"
               />
             </div>
           </DialogBody>

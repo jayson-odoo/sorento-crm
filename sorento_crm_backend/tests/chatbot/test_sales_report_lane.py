@@ -1,5 +1,13 @@
 """Phase 2 RED tests - S4 lane wiring for the sales report.
 
+REPORT-UNIFY (owner ruling Q1, 27 Oct 2026): `crm_sales_report` is retired from the chatbot, so this file now
+pins the same lane behaviours through `crm_report_ask` (tool pick, the grant gate, the channel, the param mapping,
+typed-code-wins, the wrong-domain-hint correction). Retired with the tool, not moved: the `sales_report_detail`
+and `outstanding_detail` offers and their refinements and pick continuation (a total has no drill offer now), the
+"no sales found" escalate miss (a zero total is an answer), the report's own header test (the ask's presenter owns
+it), the stored-channel carry through those offers, and the product-only current-year default (the period is asked,
+never defaulted: AC-RU-16).
+
 `documentation/plans/chatbot/PLAN-chatbot-sales-report.md` "S4 wiring" (10 numbered
 points) + "Tester's list"; `chatbot-sales-report-acceptance-criteria.md` AC-1641
 (backend half) and AC-1650 to AC-1660. Written BEFORE any of the wiring exists - S1
@@ -80,7 +88,6 @@ from tests.chatbot.test_outstanding_lane import (
     PRODUCT_CODE,
     PRODUCT_UUID,
     REPORT_HIT,
-    _all_pick_parser_output,
     _ambiguous_hanlim_resolve_services,
     _capturing_mcp,
     _qf,
@@ -120,6 +127,15 @@ SALES_REPORT_HIT: dict[str, Any] = {
         {"key": "delivery_order", "label": "Delivery orders"},
     ],
 }
+
+#: REPORT-UNIFY (Q1): every sales total is `crm_report_ask`; its own body (`ReportAskResponse`) for a total.
+ASK_HIT: dict[str, Any] = {
+    "status": "ok", "message": None, "basis": "delivered", "basis_label": "delivered sales", "measure": "amount",
+    "sort": "desc", "group_by": None, "group_label": None, "date_from": "2026-01-01", "date_to": "2026-12-31",
+    "filters": [], "rows": [], "more": 0, "total_count": 0, "total": {"qty": 10, "amount": 100.0},
+}
+#: What a report ask needs named beside its filters: the basis and the period (never defaulted).
+ASKED = {"basis": "delivered", "date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31"}
 
 #: The same body for several accounts: By customer joins the options.
 SALES_REPORT_HIT_MULTI: dict[str, Any] = {
@@ -162,16 +178,19 @@ class TestToolPickSalesVsOutstanding:
             "gate": {"compatible_entities": entities},
             "tier_gate": None,
             "ctx": {
-                "parse": {"output": _qf(order_status=order_status, entities=[])},
+                # The parse names what the gate resolved: the report ask reads its filters off the parse.
+                "parse": {"output": _qf(order_status=order_status, entities=[
+                    {"raw": e["canonical_code"], "hint": e["entity_type"], "canonical_code": None,
+                     "current_message": True, "confident": True} for e in entities], **ASKED)},
                 "contact": {"id": 900000008},
                 "access": {"attributes": attributes},
             },
         }
 
-    def test_sales_report_with_resolved_customer_picks_sales_report_tool(self, session_factory) -> None:
+    def test_sales_report_with_resolved_customer_picks_the_report_ask(self, session_factory) -> None:
         from app.services.chatbot.lanes.business import run_fetch
 
-        call, captured = _capturing_mcp(SALES_REPORT_HIT)
+        call, captured = _capturing_mcp(ASK_HIT)
         payload = self._payload(
             order_status="sales_report",
             entities=[{"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}],
@@ -179,16 +198,17 @@ class TestToolPickSalesVsOutstanding:
         )
         run_fetch(payload, services=FetchServices(mcp_call=call))
         assert captured, "no MCP tool was ever called"
-        name, _args = captured[0]
-        assert name == "crm_sales_report", (
+        name, args = captured[0]
+        assert name == "crm_report_ask", (
             f"domain=order + a resolved customer + order_status=sales_report must pick "
-            f"crm_sales_report, not {name!r} (S4 wiring point 3)"
+            f"crm_report_ask, not {name!r} (REPORT-UNIFY Q1)"
         )
+        assert args["customer_ids"] == [CUSTOMER_UUID], args
 
-    def test_sales_report_with_resolved_product_picks_sales_report_tool(self, session_factory) -> None:
+    def test_sales_report_with_resolved_product_picks_the_report_ask(self, session_factory) -> None:
         from app.services.chatbot.lanes.business import run_fetch
 
-        call, captured = _capturing_mcp(SALES_REPORT_HIT)
+        call, captured = _capturing_mcp(ASK_HIT)
         payload = self._payload(
             order_status="sales_report",
             entities=[{"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}],
@@ -196,23 +216,22 @@ class TestToolPickSalesVsOutstanding:
         )
         run_fetch(payload, services=FetchServices(mcp_call=call))
         assert captured, "no MCP tool was ever called"
-        name, _args = captured[0]
-        assert name == "crm_sales_report", name
+        name, args = captured[0]
+        assert name == "crm_report_ask", name
+        assert args["product_code"] == PRODUCT_CODE, args
 
     @pytest.mark.parametrize(
         "order_status",
         ["outstanding", "so_outstanding", "do_outstanding", "outstanding_both"],
     )
-    def test_every_outstanding_status_still_picks_the_outstanding_report(
+    def test_every_outstanding_status_is_now_the_report_ask(
         self, session_factory, order_status: str
     ) -> None:
-        """Pin: none of the four existing outstanding asks may be redirected to the
-        new tool. Expected GREEN today (this is the outstanding lane's own, already
-        shipped, S4 point 2 override) - a red here would mean the new branch was
-        written too broadly."""
+        """REPORT-UNIFY (Q1): every outstanding ask that holds a filter is `crm_report_ask`; its kind is the parser's
+        `basis` (a document status may name it: `so_outstanding`, `do_outstanding`), never defaulted."""
         from app.services.chatbot.lanes.business import run_fetch
 
-        call, captured = _capturing_mcp(REPORT_HIT)
+        call, captured = _capturing_mcp(ASK_HIT)
         payload = self._payload(
             order_status=order_status,
             entities=[{"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}],
@@ -220,10 +239,12 @@ class TestToolPickSalesVsOutstanding:
         )
         # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
         payload["ctx"]["parse"]["output"]["doc_staff"] = True
+        payload["ctx"]["parse"]["output"]["basis"] = "outstanding"
+        payload["ctx"]["access"]["attributes"].append("sales_orders.sales_report")
         run_fetch(payload, services=FetchServices(mcp_call=call))
         assert captured, (order_status, "no MCP tool was ever called")
-        name, _args = captured[0]
-        assert name == "crm_outstanding_report", (order_status, name)
+        name, args = captured[0]
+        assert name == "crm_report_ask" and args["basis"] == "outstanding", (order_status, name, args)
 
 
 class TestDateParamsTable:
@@ -244,7 +265,7 @@ class TestNoKeyDeniesBeforeFetch:
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="sales_report"),
+            qf=_qf(order_status="sales_report", **ASKED),
             text_body="sales report for SRTWT7445",
             msg_id="ZZT-sales-report-no-key-1",
             attributes=[],
@@ -269,15 +290,15 @@ class TestNoKeyDeniesBeforeFetch:
         _result, captured = _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="sales_report"),
+            qf=_qf(order_status="sales_report", **ASKED),
             text_body="sales report for SRTWT7445",
             msg_id="ZZT-sales-report-with-key-1",
             attributes=["sales_orders.sales_report"],
             matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=SALES_REPORT_HIT,
+            mcp_response=ASK_HIT,
         )
         assert len(captured) == 1, captured
-        assert captured[0][0] == "crm_sales_report", captured
+        assert captured[0][0] == "crm_report_ask", captured
 
 
 # --------------------------------------------------------------------------- #
@@ -296,7 +317,9 @@ class TestChannelFromParserOnly:
             "tier_gate": None,
             "ctx": {
                 "parse": {
-                    "output": _qf(order_status="sales_report", entities=[], sales_channel=sales_channel)
+                    "output": _qf(order_status="sales_report", sales_channel=sales_channel, **ASKED, entities=[
+                        {"raw": PRODUCT_CODE, "hint": "product", "canonical_code": None,
+                         "current_message": True, "confident": True}])
                 },
                 "contact": {"id": 900000008},
                 "access": {"attributes": list(attributes)},
@@ -307,7 +330,7 @@ class TestChannelFromParserOnly:
     def test_channel_maps_to_the_tool_param(self, session_factory, sales_channel, expected) -> None:
         from app.services.chatbot.lanes.business import run_fetch
 
-        call, captured = _capturing_mcp(SALES_REPORT_HIT)
+        call, captured = _capturing_mcp(ASK_HIT)
         run_fetch(self._payload(sales_channel=sales_channel), services=FetchServices(mcp_call=call))
         assert captured, "no MCP tool was ever called"
         _name, args = captured[0]
@@ -316,7 +339,7 @@ class TestChannelFromParserOnly:
     def test_absent_channel_sends_no_param_at_all(self, session_factory) -> None:
         from app.services.chatbot.lanes.business import run_fetch
 
-        call, captured = _capturing_mcp(SALES_REPORT_HIT)
+        call, captured = _capturing_mcp(ASK_HIT)
         run_fetch(self._payload(sales_channel=None), services=FetchServices(mcp_call=call))
         assert captured, "no MCP tool was ever called"
         _name, args = captured[0]
@@ -331,12 +354,12 @@ class TestChannelFromParserOnly:
         _result, captured = _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="sales_report", sales_channel=None),
+            qf=_qf(order_status="sales_report", sales_channel=None, **ASKED),
             text_body="dealer sales report for SRTWT7445",
             msg_id="ZZT-sales-report-channel-text-trap-1",
             attributes=["sales_orders.sales_report"],
             matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=SALES_REPORT_HIT,
+            mcp_response=ASK_HIT,
         )
         assert captured, "the report must still run"
         _name, args = captured[0]
@@ -368,6 +391,7 @@ class TestParamMapping:
             monkeypatch,
             qf=_qf(
                 order_status="sales_report",
+                basis="delivered",
                 date_filter_start="2026-01-01",
                 date_filter_end="2026-01-31",
                 entities=[
@@ -383,11 +407,11 @@ class TestParamMapping:
                 PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE},
                 CUSTOMER_NAME: {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME},
             },
-            mcp_response=SALES_REPORT_HIT,
+            mcp_response=ASK_HIT,
         )
         assert captured, "the report must run"
         name, args = captured[0]
-        assert name == "crm_sales_report", name
+        assert name == "crm_report_ask", name
         assert args.get("date_from") == "2026-01-01", args
         assert args.get("date_to") == "2026-01-31", args
         assert args.get("customer_ids") == [CUSTOMER_UUID], args
@@ -400,48 +424,6 @@ class TestParamMapping:
 # --------------------------------------------------------------------------- #
 # AC-1654 - a hit arms the sales_report_detail offer
 # --------------------------------------------------------------------------- #
-
-
-class TestHitArmsSalesReportDetail:
-    def test_hit_arms_sales_report_detail(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="sales_report"),
-            text_body="sales report for SRTWT7445",
-            msg_id="ZZT-sales-report-hit-arm-1",
-            attributes=["sales_orders.sales_report"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "the sales report must be fetched"
-        reply = (result.reply or {}).get("text") or ""
-        assert reply.strip(), "a hit must produce a non-empty reply"
-        assert "would you like me to escalate" not in reply.lower(), (
-            f"a hit must never also offer to escalate: {reply!r}"
-        )
-        # Session-shape port (AC-1592, see test_outstanding_lane.py's module
-        # docstring): `pending`/`selection_context`/`last_result_set`/
-        # `outstanding_filters` are this file's OLD names for what `open_question` now
-        # carries whole - `.kind` is both the old `selection_context` and
-        # `pending.kind`, `.options` is `last_result_set` (one option per row, its
-        # `payload.value` the old row's bare `value`), and `.payload.filters` is
-        # `outstanding_filters` (measured directly, not guessed).
-        stored = _session_of(session_factory)
-        open_question = stored.get("open_question") or {}
-        assert open_question.get("kind") == "sales_report_detail", open_question
-        # AC-SR-28: the offer is the envelope's own `options` (one account, so no By
-        # customer), never a regex over the reply text.
-        options = open_question.get("options") or []
-        assert [o.get("label") for o in options] == ["By product", "Delivery orders"], options
-        assert [o.get("payload", {}).get("value") for o in options] == ["product", "delivery_order"], options
-        filters_out = open_question.get("payload", {}).get("filters") or {}
-        assert filters_out.get("tool") == "crm_sales_report", (
-            f"tester's own naming choice (module docstring): the stored filter set "
-            f"must carry which tool the offer belongs to: {filters_out}"
-        )
-        assert filters_out.get("product_code") == PRODUCT_CODE, filters_out
 
 
 # --------------------------------------------------------------------------- #
@@ -521,55 +503,6 @@ def _seed_open_detail(
 
 
 class TestDetailOfferLifecycle:
-    @pytest.mark.parametrize("kind", KINDS)
-    def test_a_pick_reruns_the_kinds_own_tool_with_its_pick_argument(
-        self, session_factory, monkeypatch, kind: str
-    ) -> None:
-        _seed_open_detail(session_factory, kind)
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1",
-            msg_id=f"ZZT-{kind}-pick-1",
-            attributes=_KIND_ATTRS[kind],
-            matches=_PRODUCT_MATCH,
-            mcp_response=_KIND_MOCK_HIT[kind],
-        )
-        assert captured, (kind, "the detail pick must re-run the tool")
-        name, args = captured[0]
-        assert name == _KIND_TOOL[kind], (kind, name)
-        arg, value = _KIND_PICK_ARG[kind]
-        assert args.get(arg) == value, (kind, args)
-        if kind == "sales_report_detail":
-            assert "detail" not in args, ("`detail=so` is retired", args)
-
-    @pytest.mark.parametrize("kind", KINDS)
-    def test_offer_survives_a_pick(self, session_factory, monkeypatch, kind: str) -> None:
-        _seed_open_detail(session_factory, kind)
-        _r1, captured1 = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1", msg_id=f"ZZT-{kind}-sticky-1",
-            attributes=_KIND_ATTRS[kind], matches=_PRODUCT_MATCH,
-            mcp_response=_KIND_MOCK_HIT[kind],
-        )
-        assert captured1 and captured1[0][1].get(_KIND_PICK_ARG[kind][0]) == _KIND_PICK_ARG[kind][1], (
-            kind, captured1,
-        )
-        # Session-shape port: `pending`/`variables` -> `open_question` (see
-        # test_outstanding_lane.py's module docstring).
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == kind, (
-            kind, "the offer must still be open after one pick", open_question,
-        )
-
     @pytest.mark.parametrize("kind", KINDS)
     def test_offer_survives_a_casual_turn(self, session_factory, monkeypatch, kind: str) -> None:
         """KEPT RED, confirmed a real still-open defect, not ported around (20 Sep
@@ -704,105 +637,6 @@ class TestDetailOfferLifecycle:
 
 class TestRefinementAndNewAsk:
     @pytest.mark.parametrize("kind", KINDS)
-    def test_a_date_only_turn_reruns_with_no_detail_and_rearms_the_offer(
-        self, session_factory, monkeypatch, kind: str
-    ) -> None:
-        _seed_open_detail(session_factory, kind)
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], entity_op="reuse", broaden_axis="date",
-                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
-                user_goal="trying to see this month only",
-            ),
-            text_body="i want to see this month only",
-            msg_id=f"ZZT-{kind}-date-refine-1",
-            attributes=_KIND_ATTRS[kind],
-            mcp_response=_KIND_MOCK_HIT[kind],
-        )
-        assert captured, (kind, "a date-only refinement must re-run the report")
-        name, args = captured[0]
-        assert name == _KIND_TOOL[kind], (kind, name)
-        assert "detail" not in args, (kind, args)
-        assert "group_by" not in args, (kind, "a date-only refinement re-runs the default report", args)
-        stored = _session_of(session_factory)
-        assert (stored.get("open_question") or {}).get("kind") == kind, (kind, stored.get("open_question"))
-
-    @pytest.mark.parametrize("kind", KINDS)
-    def test_a_location_word_reruns_with_no_detail(
-        self, session_factory, monkeypatch, kind: str
-    ) -> None:
-        from app.models.inventory import Warehouse
-
-        db = session_factory()
-        db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW", warehouse_name="BRW", is_active=True))
-        db.commit()
-        _seed_open_detail(session_factory, kind)
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="business_query", intent_hint=None, domain_hint=None,
-                entity_op="replace_combine",
-                entities=[
-                    {"raw": "BRW", "hint": "warehouse", "canonical_code": None, "current_message": True, "confident": True},
-                ],
-                reference_positions=[],
-            ),
-            text_body="only BRW",
-            msg_id=f"ZZT-{kind}-location-refine-1",
-            attributes=_KIND_ATTRS[kind],
-            mcp_response=_KIND_MOCK_HIT[kind],
-        )
-        assert captured, (kind, "a location-word refinement must re-run the report")
-        name, args = captured[0]
-        assert name == _KIND_TOOL[kind], (kind, name)
-        assert "detail" not in args, (kind, args)
-
-    @pytest.mark.parametrize("kind", KINDS)
-    def test_a_product_named_on_a_customer_report_is_a_refinement(
-        self, session_factory, monkeypatch, kind: str
-    ) -> None:
-        """Measured while writing this test (not assumed): this sub-case is RED for
-        BOTH kinds today, `outstanding_detail` included - it is not a pre-existing
-        pin. `_apply_outstanding_pending` freezes a refinement's own entities as
-        `outstanding_refinement_entities` and keeps them OFF `o["entities"]" (R17),
-        but `run_fetch`'s product-code resolution only ever reads `parse_output.
-        get("entities")` for a typed product code - `outstanding_refinement_entities`
-        is read ONLY for a `hint == "warehouse"` entity (see the loop right after "D5/
-        AC-1105: one location word per turn" in `lanes/business/__init__.py::
-        run_fetch`). So a location word survives a refinement and a PRODUCT named on
-        a customer-subject report does not - it resolves nothing and the report reruns
-        with the stored customer alone. This is a shared gap in the R15 mechanism
-        itself, not something this lane introduces; fixing it (reading a product hint
-        out of `outstanding_refinement_entities` too) benefits both kinds at once."""
-        _seed_open_detail(session_factory, kind, subject="customer")
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="business_query", intent_hint=None, domain_hint=None,
-                entity_op="replace_combine",
-                entities=[
-                    {"raw": PRODUCT_CODE, "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
-                ],
-                reference_positions=[],
-            ),
-            text_body=f"only {PRODUCT_CODE}",
-            msg_id=f"ZZT-{kind}-product-refine-1",
-            attributes=_KIND_ATTRS[kind],
-            matches=_PRODUCT_MATCH,
-            mcp_response=_KIND_MOCK_HIT[kind],
-        )
-        assert captured, (kind, "a product on a customer report is a refinement, not a drop")
-        name, args = captured[0]
-        assert name == _KIND_TOOL[kind], (kind, name)
-        assert args.get("customer_ids") == [CUSTOMER_UUID], (kind, args)
-        assert args.get("product_code") == PRODUCT_CODE, (kind, args)
-        assert "detail" not in args, (kind, args)
-        stored = _session_of(session_factory)
-        assert (stored.get("open_question") or {}).get("kind") == kind, (kind, stored.get("open_question"))
-
-    @pytest.mark.parametrize("kind", KINDS)
     def test_a_business_query_with_a_domain_hint_is_a_new_ask_and_drops_the_offer(
         self, session_factory, monkeypatch, kind: str
     ) -> None:
@@ -929,175 +763,14 @@ class TestPickerNoDoHintAndPickContinues:
             f"a sales_report ask's picker must not probe for a delivery order at all: {probe_calls}"
         )
 
-    def test_pick_one_continues_the_sales_report_with_the_original_filters(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Re-armed with a REAL turn 1 (20 Sep 2026), not `_seed_open_sales_report_
-        customer_pick`'s hand-written `variables` dict - see the class module's own
-        history for that reasoning. `tool`/`customer_ids` FIXED (coder 30:
-        `answer_bridge._offer_answer` stamps `payload["status"]` from the asking
-        turn's own `order_status`, and `turn/apply.py::_answer_pending` carries it back
-        onto `focus.status`), GREEN on those two axes.
-
-        DEFECT ADJUDICATION (tester 34, 20 Sep 2026, coder 30's own report): the
-        `date_from`/`date_to`/`channel` assertions below were themselves wrong, not a
-        code gap. MEASURED verbatim: `lanes/business/fetch.py:672-689`'s own S18 comment
-        ("a PRODUCT-ONLY ask ... with no date window defaults to the CURRENT CALENDAR
-        YEAR ... a customer ask, or a customer+product ask, with no date stays all
-        dates (S4, unchanged)") and its own code guard
-        (`jsc.truthy(out.get("product_code")) and not jsc.truthy(out.get("customer_ids"))`)
-        - this scenario is a CUSTOMER-only ask (no product_code), so the current-year
-        default explicitly does NOT apply; production correctly leaves `date_from`/
-        `date_to` unset. `channel` has no default mechanism anywhere in the codebase
-        (`semantic_input.sales_channel` or `.outstanding_carried_channel`, both absent
-        here, are the only two readers, `fetch.py:661-665`) - no access-type-to-channel
-        mapping exists for `crm_sales_report`. Re-pinned to what production actually,
-        correctly does."""
-        _seed_contact(session_factory, variables={})
-        _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                domain_hint="order", intent_hint="check_order", order_status="sales_report",
-                entities=[
-                    {"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
-                ],
-            ),
-            text_body="sales report for hanlim",
-            msg_id="ZZT-sales-report-pick-arm-1",
-            attributes=["sales_orders.sales_report"],
-            resolve_services=_ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False}),
-        )
-        assert (_session_of(session_factory).get("open_question") or {}).get("kind") == (
-            "customer_pick"
-        ), "setup: the customer picker must be armed before the pick answer"
-
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1], reference_target="dym", entity_op="reuse",
-                order_status=None,
-            ),
-            text_body="1", msg_id="ZZT-sales-report-pick-1",
-            attributes=["sales_orders.sales_report"],
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, (
-            "the pick must directly re-run the sales report - there is no scope "
-            "question to arm first (S4 wiring point 6)"
-        )
-        name, args = captured[0]
-        assert name == "crm_sales_report", (name, args)
-        assert args.get("customer_ids") == [HANLIM_UUID_1], args
-        assert not args.get("date_from") and not args.get("date_to"), (
-            "S18 (fetch.py:672-689): a customer-only ask with no date stays ALL DATES - "
-            f"a current-year default only applies to a product-only ask: {args!r}"
-        )
-        assert not args.get("channel"), (
-            f"no channel-default mechanism exists for this ask's inputs: {args!r}"
-        )
-
-    def test_pick_all_continues_the_sales_report_for_every_family(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Re-armed with a REAL turn 1, same reasoning as
-        `test_pick_one_continues_the_sales_report_with_the_original_filters` above - see
-        its docstring, including the `date_from`/`date_to`/`channel` re-pin to S18's own
-        documented "customer ask stays all dates" rule."""
-        _seed_contact(session_factory, variables={})
-        _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                domain_hint="order", intent_hint="check_order", order_status="sales_report",
-                entities=[
-                    {"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
-                ],
-            ),
-            text_body="sales report for hanlim",
-            msg_id="ZZT-sales-report-pick-all-arm-1",
-            attributes=["sales_orders.sales_report"],
-            resolve_services=_ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False}),
-        )
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_all_pick_parser_output(),
-            text_body="all", msg_id="ZZT-sales-report-pick-all-1",
-            attributes=["sales_orders.sales_report"],
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "the pick-all must directly re-run the sales report"
-        name, args = captured[0]
-        assert name == "crm_sales_report", (name, args)
-        assert args.get("customer_ids") == [HANLIM_UUID_1, HANLIM_UUID_2], args
-        assert not args.get("date_from") and not args.get("date_to"), (
-            "S18 (fetch.py:672-689): a customer-only ask with no date stays ALL DATES - "
-            f"a current-year default only applies to a product-only ask: {args!r}"
-        )
-        assert not args.get("channel"), (
-            f"no channel-default mechanism exists for this ask's inputs: {args!r}"
-        )
-
-
 # --------------------------------------------------------------------------- #
 # AC-1658 - a miss takes the presenter's own not-found path
 # --------------------------------------------------------------------------- #
 
 
-class TestMissTakesNotFoundPath:
-    def test_miss_takes_the_not_found_path(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(
-                order_status="sales_report",
-                entities=[
-                    {"raw": "SRTWT9999", "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
-                ],
-            ),
-            text_body="sales report for SRTWT9999",
-            msg_id="ZZT-sales-report-miss-1",
-            attributes=["sales_orders.sales_report"],
-            matches={"SRTWT9999": {"uuid": "ffffffff-0000-0000-0000-000000000000", "entity_type": "product", "canonical_code": "SRTWT9999"}},
-            mcp_response=SALES_REPORT_MISS,
-        )
-        assert captured, "the report must still be fetched"
-        reply = (result.reply or {}).get("text") or ""
-        assert "escalate" in reply.lower(), (
-            f"a total miss must reach the existing escalate offer: {reply!r}"
-        )
-        stored = _session_of(session_factory)
-        assert (stored.get("open_question") or {}).get("kind") != "sales_report_detail", (
-            f"a miss offers no detail list: {stored.get('pending')!r}"
-        )
-
-
 # --------------------------------------------------------------------------- #
 # AC-1659 - the generic search-scope header is skipped for crm_sales_report
 # --------------------------------------------------------------------------- #
-
-
-class TestHeaderSkipped:
-    def test_generic_search_scope_header_is_skipped(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        result, _captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(order_status="sales_report"),
-            text_body="sales report for SRTWT7445",
-            msg_id="ZZT-sales-report-header-skip-1",
-            attributes=["sales_orders.sales_report"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=SALES_REPORT_HIT,
-        )
-        reply = (result.reply or {}).get("text") or ""
-        assert reply.startswith("*Customer:*"), (
-            f"the report's own header must be the first thing in the reply: {reply!r}"
-        )
-        assert "Dates: all dates" not in reply, (
-            f"the generic search-scope header must not print above the report: {reply!r}"
-        )
-        assert "Customer: all customers" not in reply, (
-            f"the generic header's own wording must not print above the report's: {reply!r}"
-        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1337,80 +1010,6 @@ class TestParserPromptAndContractsTeachSalesReport:
 # --------------------------------------------------------------------------- #
 
 
-class TestChannelSurvivesPickAndRefinement:
-    def test_a_pick_carries_the_stored_channel(self, session_factory, monkeypatch) -> None:
-        _seed_open_detail(session_factory, "sales_report_detail", channel="project")
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[1],
-            ),
-            text_body="1", msg_id="ZZT-sales-report-channel-pick-1",
-            attributes=["sales_orders.sales_report"], matches=_PRODUCT_MATCH,
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "the pick must re-run the report"
-        name, args = captured[0]
-        assert name == "crm_sales_report", (name, args)
-        assert args.get("channel") == "project", (
-            "the stored channel must survive a pick of the detail offer", args,
-        )
-        assert args.get("group_by") == "product", args
-        assert "detail" not in args, args
-
-    def test_a_dates_only_refinement_carries_the_stored_channel(self, session_factory, monkeypatch) -> None:
-        _seed_open_detail(session_factory, "sales_report_detail", channel="project")
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], entity_op="reuse", broaden_axis="date",
-                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
-                user_goal="trying to see this month only",
-            ),
-            text_body="i want to see this month only",
-            msg_id="ZZT-sales-report-channel-date-refine-1",
-            attributes=["sales_orders.sales_report"],
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "a date-only refinement must re-run the report"
-        name, args = captured[0]
-        assert name == "crm_sales_report", (name, args)
-        assert args.get("channel") == "project", (
-            "the stored channel must survive a dates-only refinement", args,
-        )
-        assert "detail" not in args, args
-
-    def test_a_refinement_turns_own_channel_overlays_the_stored_one(self, session_factory, monkeypatch) -> None:
-        """The turn's OWN `sales_channel` already wins today - `fetch.py` reads it
-        directly and nothing currently clears it - so this sub-case is reported
-        green-by-design; it is written because the captain's list asked for it as
-        the third leg of the SAME finding, not because it is expected red."""
-        _seed_open_detail(session_factory, "sales_report_detail", channel="project")
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], entity_op="reuse", broaden_axis="date",
-                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
-                sales_channel="dealer",
-                user_goal="trying to switch to dealer this month",
-            ),
-            text_body="dealer only, this month",
-            msg_id="ZZT-sales-report-channel-overlay-1",
-            attributes=["sales_orders.sales_report"],
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "a refinement naming its own channel must still re-run the report"
-        name, args = captured[0]
-        assert name == "crm_sales_report", (name, args)
-        assert args.get("channel") == "dealer", (
-            "the turn's OWN sales_channel must overlay the stored one, not be "
-            f"overridden by it: {args}"
-        )
-
-
 # --------------------------------------------------------------------------- #
 # R-S4 (reviewer finding, Phase 3 fix round): `_resolve_report_product_and_
 # location`'s LAST fallback (`lanes/business/__init__.py`, right after the
@@ -1423,46 +1022,6 @@ class TestChannelSurvivesPickAndRefinement:
 # outstanding override's own product too), so parametrized like the sibling
 # `test_a_product_named_on_a_customer_report_is_a_refinement` this mirrors.
 # --------------------------------------------------------------------------- #
-
-
-@pytest.mark.parametrize("kind", KINDS)
-def test_an_unresolvable_product_word_in_a_refinement_is_ignored(
-    session_factory, monkeypatch, kind: str
-) -> None:
-    """KEPT RED, measured 20 Sep 2026 for BOTH kinds equally (so not a sales-report-
-    only artifact, and not a seeding gap - `_seed_open_detail`'s own `scope` fix
-    already lands the sibling refinement tests green for outstanding_detail): the
-    resolver's own diagnostics correctly flag "cheaper" as `missing_or_bad_uuid`
-    (`skipped`), but the fetch args still carry `product_code: "cheaper"` verbatim -
-    the raw unresolved token reaches the tool call instead of being dropped. A real,
-    still-open defect in the shared refinement product_code derivation, not a fixture
-    bug; flagged for a coder pass."""
-    _seed_open_detail(session_factory, kind, subject="customer")
-    _result, captured = _run_turn(
-        session_factory, monkeypatch,
-        qf=_parser_output(
-            message_type="business_query", intent_hint=None, domain_hint=None,
-            entity_op="replace_combine",
-            entities=[
-                {"raw": "cheaper", "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
-            ],
-            reference_positions=[],
-        ),
-        text_body="something cheaper",
-        msg_id=f"ZZT-{kind}-unresolvable-product-refine-1",
-        attributes=_KIND_ATTRS[kind],
-        matches={},  # "cheaper" resolves to nothing
-        mcp_response=_KIND_MOCK_HIT[kind],
-    )
-    assert captured, (kind, "a refinement the resolver cannot match must still re-run with the stored subject")
-    name, args = captured[0]
-    assert name == _KIND_TOOL[kind], (kind, name)
-    assert args.get("customer_ids") == [CUSTOMER_UUID], (
-        kind, "the stored customer subject must survive an unresolvable refinement", args,
-    )
-    assert not args.get("product_code"), (
-        kind, "an unresolved product word must never be sent verbatim as product_code", args,
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1525,125 +1084,6 @@ def _current_myt_year() -> int:
     return (datetime.now(timezone.utc) + timedelta(hours=8)).year
 
 
-class TestProductOnlyDefaultsToCurrentYear:
-    def test_product_only_ask_defaults_to_the_current_year(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        year = _current_myt_year()
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(order_status="sales_report"),
-            text_body="sales report for SRTWT7445",
-            msg_id="ZZT-sales-report-s18-year-default-1",
-            attributes=["sales_orders.sales_report"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "the report must run"
-        name, args = captured[0]
-        assert name == "crm_sales_report", name
-        assert args.get("date_from") == f"{year}-01-01", args
-        assert args.get("date_to") == f"{year}-12-31", args
-
-        stored = _session_of(session_factory)
-        open_question = stored.get("open_question") or {}
-        filters_out = open_question.get("payload", {}).get("filters") or {}
-        assert filters_out.get("date_filter_start") == f"{year}-01-01", (
-            "the stored filter set must carry the same default window, so a later "
-            f"'1' lists that window only: {filters_out}"
-        )
-        assert filters_out.get("date_filter_end") == f"{year}-12-31", filters_out
-
-    def test_customer_ask_without_dates_stays_all_dates(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(
-                order_status="sales_report",
-                entities=[
-                    {"raw": CUSTOMER_NAME, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
-                ],
-            ),
-            text_body="sales report for hanlim",
-            msg_id="ZZT-sales-report-s18-customer-all-dates-1",
-            attributes=["sales_orders.sales_report"],
-            matches={CUSTOMER_NAME: {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}},
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "the report must run"
-        name, args = captured[0]
-        assert name == "crm_sales_report", name
-        assert "date_from" not in args, args
-        assert "date_to" not in args, args
-
-    def test_customer_and_product_without_dates_stays_all_dates(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(
-                order_status="sales_report",
-                entities=[
-                    {"raw": PRODUCT_CODE, "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
-                    {"raw": CUSTOMER_NAME, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
-                ],
-            ),
-            text_body="sales report for hanlim SRTWT7445",
-            msg_id="ZZT-sales-report-s18-both-all-dates-1",
-            attributes=["sales_orders.sales_report"],
-            matches={
-                PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE},
-                CUSTOMER_NAME: {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME},
-            },
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "the report must run"
-        name, args = captured[0]
-        assert name == "crm_sales_report", name
-        assert "date_from" not in args, args
-        assert "date_to" not in args, args
-
-    def test_product_only_all_dates_in_words_is_honoured(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(order_status="sales_report", broaden_axis="date"),
-            text_body="sales report for SRTWT7445, all dates",
-            msg_id="ZZT-sales-report-s18-all-dates-in-words-1",
-            attributes=["sales_orders.sales_report"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "the report must run"
-        name, args = captured[0]
-        assert name == "crm_sales_report", name
-        assert "date_from" not in args, (
-            "broaden_axis == 'date' must turn the current-year default off", args,
-        )
-        assert "date_to" not in args, args
-
-    def test_product_only_with_its_own_window_is_untouched(self, session_factory, monkeypatch) -> None:
-        """Pin, green-by-design: an EXPLICIT window already flows through the
-        generic `DATE_PARAMS` mechanism today (`fetch.py`) - unaffected by S18's
-        new default, which only ever fires when the turn supplies no dates."""
-        _seed_contact(session_factory, variables={})
-        _result, captured = _run_turn(
-            session_factory, monkeypatch,
-            qf=_qf(
-                order_status="sales_report",
-                date_filter_start="2026-06-01", date_filter_end="2026-06-30",
-            ),
-            text_body="sales report for SRTWT7445 in june 2026",
-            msg_id="ZZT-sales-report-s18-own-window-1",
-            attributes=["sales_orders.sales_report"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=SALES_REPORT_HIT,
-        )
-        assert captured, "the report must run"
-        name, args = captured[0]
-        assert name == "crm_sales_report", name
-        assert args.get("date_from") == "2026-06-01", args
-        assert args.get("date_to") == "2026-06-30", args
-
-
 # --------------------------------------------------------------------------- #
 # S19 item 3 (captain brief, 19 Sep 2026): the typed-code-wins rule sends the
 # raw STEM to `crm_sales_report`, which the ROUTE then prefix-matches - never
@@ -1695,7 +1135,7 @@ class TestTypedStemWinsOverFamilySibling:
         _result, captured = _run_turn(
             session_factory, monkeypatch,
             qf=_parser_output(
-                domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                domain_hint="order", intent_hint="check_order", order_status="sales_report", **ASKED,
                 entities=[
                     {
                         "raw": "SRT5674", "hint": "product", "canonical_code": None,
@@ -1707,11 +1147,11 @@ class TestTypedStemWinsOverFamilySibling:
             msg_id="ZZT-sales-report-s19-stem-1",
             attributes=["sales_orders.sales_report"],
             resolve_services=resolve_services,
-            mcp_response=SALES_REPORT_HIT,
+            mcp_response=ASK_HIT,
         )
         assert captured, "the report must run"
         name, args = captured[0]
-        assert name == "crm_sales_report", name
+        assert name == "crm_report_ask", name
         assert args.get("product_code") == "SRT5674", (
             "typed-code-wins (AC-1119) must send the RAW TYPED STEM, never a "
             f"family sibling the OR-mode probe also matched: {args}"
@@ -1753,7 +1193,7 @@ class TestTypedStemWinsOverFamilySibling:
         result, captured = _run_turn(
             session_factory, monkeypatch,
             qf=_parser_output(
-                domain_hint="order", intent_hint="check_order", order_status="sales_report",
+                domain_hint="order", intent_hint="check_order", order_status="sales_report", **ASKED,
                 entities=[
                     {
                         "raw": "SRT567", "hint": "product", "canonical_code": None,
@@ -1765,7 +1205,7 @@ class TestTypedStemWinsOverFamilySibling:
             msg_id="ZZT-sales-report-s19-stem-2",
             attributes=["sales_orders.sales_report"],
             resolve_services=resolve_services,
-            mcp_response=SALES_REPORT_HIT,
+            mcp_response=ASK_HIT,
         )
         assert result.status == "done", result.error
         assert len(captured) == 1, (
@@ -1773,7 +1213,7 @@ class TestTypedStemWinsOverFamilySibling:
             f"fetch, never a roster (owner ruling 21 Sep 2026, list_all): {captured!r}"
         )
         name, args = captured[0]
-        assert name == "crm_sales_report", name
+        assert name == "crm_report_ask", name
         assert args.get("product_code") == "SRT567", (
             "typed-code-wins (AC-1119) must send the RAW TYPED STEM here too, the "
             f"SAME rule the sibling test above pins for an exact-match stem: {args!r}"
@@ -1838,8 +1278,8 @@ class TestReportAskNeverAnsweredByTheDeliveryOrderMissProbe:
     @pytest.mark.parametrize(
         "order_status,attributes,tool",
         [
-            ("sales_report", ["sales_orders.sales_report"], "crm_sales_report"),
-            ("so_outstanding", ["sales_orders.outstanding"], "crm_outstanding_report"),
+            ("sales_report", ["sales_orders.sales_report"], "crm_report_ask"),
+            ("so_outstanding", ["sales_orders.outstanding"], "crm_report_ask"),
         ],
     )
     def test_a_customer_hinted_token_that_resolves_as_a_product_still_runs_the_report(
@@ -1852,7 +1292,7 @@ class TestReportAskNeverAnsweredByTheDeliveryOrderMissProbe:
             session_factory, monkeypatch,
             qf=_parser_output(
                 message_type="business_query", domain_hint="order", intent_hint="check_order",
-                order_status=order_status, sales_channel="dealer",
+                order_status=order_status, sales_channel="dealer", basis="delivered" if order_status == "sales_report" else "outstanding",
                 date_filter_start="2026-08-01", date_filter_end="2026-08-31",
                 entities=[
                     {
@@ -1865,7 +1305,7 @@ class TestReportAskNeverAnsweredByTheDeliveryOrderMissProbe:
             msg_id=f"ZZT-report-hint-mismatch-{order_status}-1",
             attributes=attributes,
             resolve_services=_customer_hinted_product_fallback_resolve_services(),
-            mcp_response=SALES_REPORT_HIT,
+            mcp_response=ASK_HIT,
         )
         reply = (_result.reply or {}).get("text") or ""
         assert captured, (
@@ -1874,7 +1314,7 @@ class TestReportAskNeverAnsweredByTheDeliveryOrderMissProbe:
         )
         name, args = captured[0]
         assert name == tool, (name, args)
-        if tool == "crm_sales_report":
+        if order_status == "sales_report":
             assert args.get("product_code") == "SRT5674-N", (
                 "typed-code-wins must send the raw stem the customer typed, folded "
                 f"through the resolved match: {args}"
@@ -1907,8 +1347,8 @@ class TestReportOrderStatusAlwaysReachesTheReportDespiteAWrongDomainHint:
     @pytest.mark.parametrize(
         "order_status,attributes,tool,mock_hit",
         [
-            ("sales_report", ["sales_orders.sales_report"], "crm_sales_report", SALES_REPORT_HIT),
-            ("so_outstanding", ["sales_orders.outstanding"], "crm_outstanding_report", REPORT_HIT),
+            ("sales_report", ["sales_orders.sales_report"], "crm_report_ask", ASK_HIT),
+            ("so_outstanding", ["sales_orders.outstanding"], "crm_report_ask", ASK_HIT),
         ],
     )
     def test_a_master_products_domain_hint_still_reaches_the_report(
@@ -1922,7 +1362,8 @@ class TestReportOrderStatusAlwaysReachesTheReportDespiteAWrongDomainHint:
             qf=_parser_output(
                 message_type="business_query", domain_hint="master_products",
                 intent_hint="check_product", order_status=order_status,
-                requested_attributes=["quantity"],
+                requested_attributes=["quantity"], basis="delivered",
+                date_filter_start="2026-08-01", date_filter_end="2026-08-31",
                 entities=[
                     {
                         "raw": PRODUCT_CODE, "hint": "product", "canonical_code": None,

@@ -303,7 +303,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[OrderResponse])
-async def get_orders(
+def get_orders(
     request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
@@ -367,7 +367,7 @@ async def get_orders(
         ),
     ),
     customer_id: Optional[str] = Query(None),
-    order_status_id: Optional[str] = Query(None),
+    order_status_id: Optional[list[str]] = Query(None),
     order_status: Optional[str] = Query(
         None,
         description=(
@@ -680,7 +680,7 @@ async def get_orders(
 
 
 @router.get("/debtors")
-async def list_distinct_debtors(
+def list_distinct_debtors(
     request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -784,7 +784,7 @@ async def list_distinct_debtors(
 
 
 @router.get("/by-product", response_model=ListResponse[OrderSimpleRef])
-async def get_orders_by_product(
+def get_orders_by_product(
     request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
@@ -1015,7 +1015,7 @@ async def get_orders_by_product(
 
 
 @router.get("/analytics")
-async def get_order_analytics(
+def get_order_analytics(
     metric: str = Query(
         ...,
         description=(
@@ -1107,7 +1107,7 @@ async def get_order_analytics(
 
 
 @router.get("/{order_id}/fulfilled-complaints")
-async def get_order_fulfilled_complaints(
+def get_order_fulfilled_complaints(
     order_id: str,
     current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
     db: Session = Depends(get_db),
@@ -1127,7 +1127,7 @@ async def get_order_fulfilled_complaints(
 
 
 @router.get("/{order_id}", response_model=OrderResponse)
-async def get_order(
+def get_order(
     order_id: str,
     current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
     db: Session = Depends(get_db)
@@ -1174,7 +1174,7 @@ def get_order_related(
 
 
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
-async def create_order(
+def create_order(
     order_data: OrderCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1191,7 +1191,7 @@ async def create_order(
 
 
 @router.put("/{order_id}", response_model=OrderResponse)
-async def update_order(
+def update_order(
     order_id: str,
     order_data: OrderUpdate,
     current_user: dict = Depends(require_permission("order_management.orders.view")),
@@ -1213,7 +1213,7 @@ class OrderCancelRequest(BaseModel):
 
 
 @router.post("/{order_id}/cancel", response_model=OrderResponse)
-async def cancel_order(
+def cancel_order(
     order_id: str,
     body: OrderCancelRequest = Body(default_factory=OrderCancelRequest),
     current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
@@ -1242,7 +1242,7 @@ async def cancel_order(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_orders(
+def bulk_delete_orders(
     body: BulkDeleteOrdersRequest = Body(...),
     current_user: dict = Depends(require_permission("order_management.orders.delete")),
     db: Session = Depends(get_db)
@@ -1258,7 +1258,7 @@ async def bulk_delete_orders(
 
 
 @router.delete("/{order_id}", status_code=status.HTTP_200_OK)
-async def delete_order(
+def delete_order(
     order_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1275,7 +1275,7 @@ async def delete_order(
 
 
 @router.post("/{order_id}/lines", response_model=OrderLineResponse, status_code=status.HTTP_201_CREATED)
-async def create_order_line(
+def create_order_line(
     order_id: str,
     data: OrderLineCreate,
     current_user: dict = Depends(require_permission("order_management.orders.view")),
@@ -1293,7 +1293,7 @@ async def create_order_line(
 
 
 @router.put("/{order_id}/lines/{line_id}", response_model=OrderLineResponse)
-async def update_order_line(
+def update_order_line(
     order_id: str,
     line_id: str,
     data: OrderLineUpdate,
@@ -1312,7 +1312,7 @@ async def update_order_line(
 
 
 @router.delete("/{order_id}/lines/{line_id}", status_code=status.HTTP_200_OK)
-async def delete_order_line(
+def delete_order_line(
     order_id: str,
     line_id: str,
     current_user: dict = Depends(get_current_user),
@@ -1329,7 +1329,7 @@ async def delete_order_line(
 
 
 @router.delete("/{order_id}/lines/bulk-delete", status_code=status.HTTP_200_OK)
-async def bulk_delete_order_lines(
+def bulk_delete_order_lines(
     order_id: str,
     body: BulkDeleteOrderLinesRequest = Body(...),
     current_user: dict = Depends(get_current_user),
@@ -1346,7 +1346,7 @@ async def bulk_delete_order_lines(
 
 
 @router.post("/{order_id}/archive", status_code=status.HTTP_200_OK)
-async def archive_order(
+def archive_order(
     order_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1363,7 +1363,7 @@ async def archive_order(
 
 
 @router.put("/{order_id}/restore", status_code=status.HTTP_200_OK)
-async def restore_order(
+def restore_order(
     order_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1380,7 +1380,7 @@ async def restore_order(
 
 
 @router.post("/bulk-import", response_model=BulkImportResponse, status_code=status.HTTP_200_OK)
-async def bulk_import_orders(
+def bulk_import_orders(
     import_data: BulkImportRequest,
     current_user: dict = Depends(require_permission("order_management.orders.import")),
     db: Session = Depends(get_db)
@@ -1400,7 +1400,7 @@ async def bulk_import_orders(
 
 
 @router.post("/import-tracking", status_code=status.HTTP_202_ACCEPTED)
-async def import_order_tracking(
+def import_order_tracking(
     file: UploadFile = File(...),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(get_current_user),
@@ -1413,7 +1413,7 @@ async def import_order_tracking(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid file type. Please upload an Excel file (.xlsx, .xls, or .xlsm)."
             )
-        file_data = await file.read()
+        file_data = file.file.read()
         # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
         source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
         from app.services.excel_macro_stripper import maybe_strip
@@ -1471,7 +1471,7 @@ async def import_order_tracking(
 
 
 @router.post("/import-order-lines", status_code=status.HTTP_202_ACCEPTED)
-async def import_delivery_order_detail(
+def import_delivery_order_detail(
     file: UploadFile = File(...),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("order_management.orders.import")),
@@ -1484,7 +1484,7 @@ async def import_delivery_order_detail(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid file type. Please upload an Excel file (.xlsx, .xls, or .xlsm)."
             )
-        file_data = await file.read()
+        file_data = file.file.read()
         # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
         source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
         from app.services.excel_macro_stripper import (
@@ -1575,7 +1575,7 @@ outstanding_report_router = APIRouter()
 
 
 @outstanding_report_router.get("/outstanding-report", response_model=OutstandingReportResponse)
-async def get_outstanding_report(
+def get_outstanding_report(
     product_code: Optional[str] = Query(
         None,
         description=(
@@ -1819,7 +1819,7 @@ sales_report_router = APIRouter()
 
 
 @sales_report_router.get("/sales-report", response_model=SalesReportResponse)
-async def get_sales_report(
+def get_sales_report(
     product_code: Optional[str] = Query(
         None,
         description=(
@@ -2112,7 +2112,7 @@ def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str
 
 
 @sales_report_router.get("/top-selling", response_model=TopSellingResponse)
-async def get_top_selling(
+def get_top_selling(
     rank_by: Optional[str] = Query(
         None,
         description=(

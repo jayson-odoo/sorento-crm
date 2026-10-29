@@ -27,7 +27,7 @@ DELETE = "sla_management.sla_policies.delete"
 
 
 @router.get("/", response_model=ListResponse[SLAPolicyResponse])
-async def get_sla_policies(
+def get_sla_policies(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -54,7 +54,7 @@ async def get_sla_policies(
 
 
 @router.get("/{policy_id}", response_model=SLAPolicyResponse)
-async def get_sla_policy(
+def get_sla_policy(
     policy_id: str,
     current_user: dict = Depends(require_permission_with_api_key("sla_management.sla_policies.view")),
     db: Session = Depends(get_db)
@@ -72,7 +72,7 @@ async def get_sla_policy(
 
 
 @router.post("/", response_model=SLAPolicyResponse, status_code=status.HTTP_201_CREATED)
-async def create_sla_policy(
+def create_sla_policy(
     policy_data: SLAPolicyCreate,
     current_user: dict = Depends(require_permission_with_api_key(ADD)),
     db: Session = Depends(get_db)
@@ -89,7 +89,7 @@ async def create_sla_policy(
 
 
 @router.put("/{policy_id}", response_model=SLAPolicyResponse)
-async def update_sla_policy(
+def update_sla_policy(
     policy_id: str,
     policy_data: SLAPolicyUpdate,
     current_user: dict = Depends(require_permission_with_api_key(EDIT)),
@@ -108,7 +108,7 @@ async def update_sla_policy(
 
 
 @router.delete("/{policy_id}", status_code=status.HTTP_200_OK)
-async def delete_sla_policy(
+def delete_sla_policy(
     policy_id: str,
     current_user: dict = Depends(require_permission_with_api_key(DELETE)),
     db: Session = Depends(get_db)
@@ -125,7 +125,7 @@ async def delete_sla_policy(
 
 
 @router.get("/{policy_id}/tiers", response_model=list[SLAPolicyTierResponse])
-async def get_sla_policy_tiers(
+def get_sla_policy_tiers(
     policy_id: str,
     current_user: dict = Depends(require_permission_with_api_key("sla_management.sla_policies.view")),
     db: Session = Depends(get_db)
@@ -141,7 +141,7 @@ async def get_sla_policy_tiers(
 
 
 @router.post("/{policy_id}/tiers", response_model=SLAPolicyTierResponse, status_code=status.HTTP_201_CREATED)
-async def create_sla_policy_tier(
+def create_sla_policy_tier(
     policy_id: str,
     tier_data: SLAPolicyTierCreate,
     current_user: dict = Depends(require_permission_with_api_key(EDIT)),
@@ -162,7 +162,7 @@ async def create_sla_policy_tier(
 
 
 @router.put("/{policy_id}/tiers/{tier_id}", response_model=SLAPolicyTierResponse)
-async def update_sla_policy_tier(
+def update_sla_policy_tier(
     policy_id: str,
     tier_id: str,
     tier_data: SLAPolicyTierUpdate,
@@ -182,7 +182,7 @@ async def update_sla_policy_tier(
 
 
 @router.delete("/{policy_id}/tiers/{tier_id}", status_code=status.HTTP_200_OK)
-async def delete_sla_policy_tier(
+def delete_sla_policy_tier(
     policy_id: str,
     tier_id: str,
     current_user: dict = Depends(require_permission_with_api_key(EDIT)),

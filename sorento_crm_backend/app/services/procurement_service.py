@@ -18,6 +18,7 @@ from sqlalchemy import inspect
 from decimal import Decimal, InvalidOperation
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime, timedelta, timezone
+from app.utils.multi_value import multi_values
 from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
     PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine,
@@ -869,7 +870,7 @@ class InboundShipmentService:
         shipment_status: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc",
-        region: Optional[str] = None,
+        region: Optional[list[str] | str] = None,
     ):
         """Build the filtered + sorted inbound-shipment query shared by
         ``list_shipments`` and ``neighbours`` so the two can never drift.
@@ -897,9 +898,10 @@ class InboundShipmentService:
                 return q.filter(InboundShipment.id.is_(None)), True
             filters.append(shipment_supplier_predicate(supplier_ids))
 
-        region_norm = (region or "").strip().lower()
-        if region_norm:
-            filters.append(InboundShipment.regions.contains([region_norm]))
+        # Several regions: a shipment serving ANY of them.
+        regions_norm = [r.lower() for r in (multi_values(region) or [])]
+        if regions_norm:
+            filters.append(or_(*[InboundShipment.regions.contains([r]) for r in regions_norm]))
 
         status_norm = (shipment_status or "").strip().lower()
         if status_norm and status_norm != "all":
@@ -968,7 +970,7 @@ class InboundShipmentService:
         shipment_status: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc",
-        region: Optional[str] = None,
+        region: Optional[list[str] | str] = None,
     ):
         """List inbound shipments."""
         q, empty = self._build_list_query(
@@ -2559,8 +2561,8 @@ class SPOAllocationService:
         page: int = 1,
         limit: int = 50,
         state: str = "outstanding",
-        product_id: Optional[str] = None,
-        warehouse_id: Optional[str] = None,
+        product_id: Optional[list[str] | str] = None,
+        warehouse_id: Optional[list[str] | str] = None,
         overdue_only: bool = False,
         query: Optional[str] = None,
         sort_field: str = "spo_number",
@@ -2655,9 +2657,13 @@ class SPOAllocationService:
             MatchLine = aliased(SPOAllocation)
             match_conditions = [MatchLine.spo_number == SPOAllocation.spo_number]
             if product_id:
-                match_conditions.append(MatchLine.product_id == product_id)
+                match_conditions.append(
+                    MatchLine.product_id.in_([product_id] if isinstance(product_id, str) else product_id)
+                )
             if warehouse_id:
-                match_conditions.append(MatchLine.warehouse_id == warehouse_id)
+                match_conditions.append(
+                    MatchLine.warehouse_id.in_([warehouse_id] if isinstance(warehouse_id, str) else warehouse_id)
+                )
             if query and query.strip():
                 q_str = query.strip()
                 matching_product_ids = select(Product.id).where(
@@ -3844,8 +3850,8 @@ class PickingHeaderService:
         self,
         query: Optional[str] = None,
         product_query: Optional[str] = None,
-        picking_status: Optional[str] = None,
-        inspection_status: Optional[str] = None,
+        picking_status: Optional[list[str] | str] = None,
+        inspection_status: Optional[list[str] | str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc",
     ):
@@ -3865,11 +3871,13 @@ class PickingHeaderService:
 
         filters = []
 
-        if picking_status and picking_status != "all":
-            filters.append(PickingHeader.picking_status == picking_status)
+        picking_statuses = [v for v in (multi_values(picking_status) or []) if v != "all"]
+        if picking_statuses:
+            filters.append(PickingHeader.picking_status.in_(picking_statuses))
 
-        if inspection_status and inspection_status != "all":
-            filters.append(PickingHeader.inspection_status == inspection_status)
+        inspection_statuses = [v for v in (multi_values(inspection_status) or []) if v != "all"]
+        if inspection_statuses:
+            filters.append(PickingHeader.inspection_status.in_(inspection_statuses))
 
         if query:
             like = f"%{query}%"
@@ -3951,8 +3959,8 @@ class PickingHeaderService:
         limit: int = 50,
         query: Optional[str] = None,
         product_query: Optional[str] = None,
-        picking_status: Optional[str] = None,
-        inspection_status: Optional[str] = None,
+        picking_status: Optional[list[str] | str] = None,
+        inspection_status: Optional[list[str] | str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc"
     ):
@@ -6266,7 +6274,7 @@ class StockInquiryService:
                 if existing.status != "rejected":
                     raise handle_validation_error(
                         f"Inquiry number {lookup!r} already exists with status {existing.status!r}. "
-                        "Use inquiry_number only to resubmit a rejected inquiry."
+                        "Use inquiry_number only to appeal a rejected inquiry."
                     )
                 # For update, enforce completion against merged existing+incoming values
                 # BEFORE asking for explicit confirmation.
@@ -8356,7 +8364,7 @@ class PurchaseRequestService:
                     raise handle_validation_error(
                         f"Request number {lookup!r} already exists with approval_status "
                         f"{getattr(existing, 'approval_status', None)!r}. "
-                        "Use request_number only to resubmit a rejected request."
+                        "Use request_number only to appeal a rejected request."
                     )
                 self._require_complete_external_request_submission(payload, existing=existing)
                 if getattr(payload, "user_confirmed", None) is not True:
@@ -8799,9 +8807,9 @@ class PurchaseRequestService:
                 "purchase_request": "purchase request",
                 "sponsorship_form": "sponsorship form",
             }.get(rt, "request")
-            title = f"{noun[0].upper()}{noun[1:]} resubmitted"
+            title = f"{noun[0].upper()}{noun[1:]} appealed"
             kind_sentence = (
-                f"A previously rejected {noun} has been resubmitted and requires your review."
+                f"A previously rejected {noun} has been appealed and requires your review."
             )
         base_url = (base_url_override or "").strip().rstrip("/")
         if not base_url:
@@ -9109,13 +9117,13 @@ class PurchaseRequestService:
     def _build_request_list_query(
         self,
         query: Optional[str] = None,
-        request_type: Optional[str] = None,
-        approval_status: Optional[str] = None,
+        request_type: Optional[list[str] | str] = None,
+        approval_status: Optional[list[str] | str] = None,
         sort_field: str = "request_date",
         sort_dir: str = "desc",
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
-        assigned_to: Optional[str] = None,
+        assigned_to: Optional[list[str] | str] = None,
     ):
         """Build the filtered + sorted PR/SF query shared by ``list_requests`` and
         ``neighbours`` so the two can never drift.
@@ -9128,9 +9136,11 @@ class PurchaseRequestService:
         q = self.db.query(PurchaseRequestHeader)
         if contact_id is not None:
             q = q.filter(PurchaseRequestHeader.contact_id == str(contact_id).strip())
-        if assigned_to is not None and str(assigned_to).strip():
+        assignees = multi_values(assigned_to)
+        if assignees:
             # Filter by the latest unresolved form-SLA assignee (project-sales
-            # before approval, customer-service after) - mirrors complaint.
+            # before approval, customer-service after) - mirrors complaint. Several are OR-ed,
+            # and `__unassigned__` is a pseudo-value that ORs with real assignees.
             from app.models.sla import ConversationSLATracking
             from app.services.sla_scope import open_tracker_scope
 
@@ -9140,18 +9150,21 @@ class PurchaseRequestService:
                 ),
                 *open_tracker_scope(),
             )
-            val = str(assigned_to).strip()
-            if val.lower() == "__unassigned__":
-                assigned_subq = base.filter(
-                    ConversationSLATracking.assigned_to_id.isnot(None)
-                )
-                q = q.filter(~PurchaseRequestHeader.id.in_(assigned_subq))
-            else:
-                q = q.filter(
-                    PurchaseRequestHeader.id.in_(
-                        base.filter(ConversationSLATracking.assigned_to_id == val)
+            clauses = []
+            if any(a.lower() == "__unassigned__" for a in assignees):
+                clauses.append(
+                    ~PurchaseRequestHeader.id.in_(
+                        base.filter(ConversationSLATracking.assigned_to_id.isnot(None))
                     )
                 )
+            real = [a for a in assignees if a.lower() != "__unassigned__"]
+            if real:
+                clauses.append(
+                    PurchaseRequestHeader.id.in_(
+                        base.filter(ConversationSLATracking.assigned_to_id.in_(real))
+                    )
+                )
+            q = q.filter(or_(*clauses))
         if space_id is not None:
             q = q.filter(PurchaseRequestHeader.space_id == str(space_id).strip())
         if query:
@@ -9181,29 +9194,36 @@ class PurchaseRequestService:
                     PurchaseRequestHeader.id.in_(line_subq),
                 )
             )
-        if request_type and request_type.strip() in ("purchase_request", "sponsorship_form"):
-            q = q.filter(PurchaseRequestHeader.request_type == request_type.strip())
-        if approval_status and approval_status.strip():
-            status_val = approval_status.strip().lower()
+        types = [t for t in (multi_values(request_type) or []) if t in ("purchase_request", "sponsorship_form")]
+        if types:
+            q = q.filter(PurchaseRequestHeader.request_type.in_(types))
+        status_vals = [v.lower() for v in (multi_values(approval_status) or [])]
+        status_clauses = []
+        for status_val in status_vals:
             if status_val == "draft":
-                q = q.filter(
+                status_clauses.append(
                     or_(
                         PurchaseRequestHeader.approval_status.is_(None),
                         PurchaseRequestHeader.approval_status == "",
                     )
                 )
             elif status_val in ("pending", "approved", "rejected"):
-                q = q.filter(PurchaseRequestHeader.approval_status == status_val)
+                status_clauses.append(PurchaseRequestHeader.approval_status == status_val)
             elif status_val == "resubmitted":
                 # A lifecycle status, not an approval one: what the list pill reads
                 # while no approval decision has been recorded since the resubmit.
-                q = q.filter(
-                    PurchaseRequestHeader.status == "resubmitted",
-                    or_(
-                        PurchaseRequestHeader.approval_status.is_(None),
-                        PurchaseRequestHeader.approval_status == "",
-                    ),
+                status_clauses.append(
+                    and_(
+                        PurchaseRequestHeader.status == "resubmitted",
+                        or_(
+                            PurchaseRequestHeader.approval_status.is_(None),
+                            PurchaseRequestHeader.approval_status == "",
+                        ),
+                    )
                 )
+        if status_clauses:
+            # Several statuses are OR-ed (an unknown one adds nothing, as before).
+            q = q.filter(or_(*status_clauses))
 
         sort_map = {
             "submitted_at": PurchaseRequestHeader.submitted_at,
@@ -9224,13 +9244,13 @@ class PurchaseRequestService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
-        request_type: Optional[str] = None,
-        approval_status: Optional[str] = None,
+        request_type: Optional[list[str] | str] = None,
+        approval_status: Optional[list[str] | str] = None,
         sort_field: str = "request_date",
         sort_dir: str = "desc",
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
-        assigned_to: Optional[str] = None,
+        assigned_to: Optional[list[str] | str] = None,
     ):
         """List purchase requests / sponsorship forms with pagination."""
         q = self._build_request_list_query(
@@ -10284,9 +10304,13 @@ class PurchaseRequestService:
         approval_comments: Optional[str] = None,
     ):
         """Consume token and update purchase request with approval/rejection. Returns updated header."""
+        # Row lock until this decision commits: a second submission of the same link waits
+        # here, then reads the used_at the first one wrote (API-NONBLOCKING security S1).
         approval_token = (
             self.db.query(ApprovalToken)
             .filter(ApprovalToken.token == token_value)
+            .with_for_update()
+            .populate_existing()  # re-read under the lock even if this session loaded it already
             .first()
         )
         if not approval_token:

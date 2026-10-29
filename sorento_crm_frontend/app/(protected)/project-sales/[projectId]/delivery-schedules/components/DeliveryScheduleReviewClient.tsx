@@ -747,7 +747,9 @@ function MetaLine({
       : null;
   return (
     <>
-      {projectLabel}
+      <span className="inline-block max-w-full truncate align-bottom" title={projectLabel}>
+        {projectLabel}
+      </span>
       {` · Dated ${version.schedule_date ? formatDateInMalaysia(version.schedule_date) : '-'}`}
       {checkedAgainst && (
         <>

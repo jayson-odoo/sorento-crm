@@ -301,7 +301,10 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // AC-BILLING (#1770): `finance/billing-documents` is a new DataGrid list segment with its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 162.
     // NEW-PRODUCT-APP: `procurement-management/new-product-applications` is a new DataGrid list segment with its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 163.
     // SALES-UNIFIED (#1916): `sales/set-apart-customers` is a new DataGrid list segment with its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 164.
-    expect(requiredSegmentNames.length).toBe(164);
+    // STOCK-POSITION-REPORT (#1913): `inventory-management/stock-position` is a new DataGrid list segment, found by the walk; its `loading.tsx` (ListPageSkeleton) came in RELEASE5-FIX. Total: 165.
+    // ITEM-CLASS (PLAN-item-class-29oct.md): `master-data-management/item-classes` is a new
+    // DataGrid list segment with its own `loading.tsx`, found by the walk. Total: 166.
+    expect(requiredSegmentNames.length).toBe(166);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

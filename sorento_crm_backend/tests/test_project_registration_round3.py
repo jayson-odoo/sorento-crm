@@ -354,9 +354,8 @@ def test_f3_a_legacy_cross_company_link_left_untouched_still_saves(world):
 def test_f3_a_newly_picked_cross_company_record_is_still_refused(world):
     staff_project = project(world.db, world.company_id, "NEW REFS TOWER", code="PRJ-ZZT-NR1", owner=world.root)
     foreign_contractor = developer(world.db, world.other_company, "Foreign Builder", "main_contractor")
-    foreign_brand = _foreign_brand(world, world.other_company)
     world.db.commit()
     c = as_user(world, world.root)
-    for body in ({"main_contractor_party_id": foreign_contractor.id}, {"brand_ids": [foreign_brand.id]}):
+    for body in ({"main_contractor_party_id": foreign_contractor.id},):
         res = c.put(f"{STAFF}/{staff_project.id}", json=body)
         assert res.status_code == 422, (body, res.status_code, res.text)

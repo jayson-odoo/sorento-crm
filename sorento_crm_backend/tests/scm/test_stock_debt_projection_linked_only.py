@@ -2,7 +2,8 @@
 
 In the project projection, pool supply (BRW and every other pool) counts for a project
 ONLY when it is linked to that project line: the S/O ref on the PO/SPO line, an OI
-placement, or a confirmed planning decision. Incoming or landed alike: a linked SPO that
+placement (a confirmed planning decision no longer counts: STOCKDEBT-NO-PLAN-REACH, owner
+28 Oct 2026, a decided line reads as undecided). Incoming or landed alike: a linked SPO that
 lands becomes an on-hand hold and keeps covering, as Covered by does today. Unlinked pool
 on hand and unlinked incoming POs/SPOs never count. The projection agrees with Covered by
 line for line.
@@ -151,11 +152,13 @@ def test_a_pool_spo_naming_a_project_line_by_s_o_ref_agrees_with_covered_by(scm_
             assert (line["assigned_qty"], line["short_qty"]) == (0, 500), book
 
 
-def test_a_confirmed_decision_on_pool_stock_counts(scm_app):
-    """A confirmed planning decision holding 100 of BRW's on hand for the BB line counts;
-    BRW's other 233 do not."""
+def test_a_confirmed_decision_on_pool_stock_does_not_count(scm_app):
+    """STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026, superseding rule D's "or a confirmed
+    planning decision"): a confirmed planning decision naming 100 of BRW's on hand for the
+    BB line gives it no reach. The projection reads exactly as with no decision."""
     app, db = _client(scm_app)
     seed = _spo_333(db, linked=False, received=True)
+    undecided = {book: _projected(app, seed, book) for book in BOOKS}
     from app.models.inventory import Warehouse
     from app.models.order import SalesOrderLine
 
@@ -169,7 +172,8 @@ def test_a_confirmed_decision_on_pool_stock_counts(scm_app):
     _order, project_line = _project_line_for(db, line)
     _confirmed_hold(db, project_line, pool, 100)
     for book in BOOKS:
-        assert _projected(app, seed, book) == [0.0, 0.0, -400.0, 0.0], book
+        assert _projected(app, seed, book) == undecided[book], book
+        assert undecided[book] == [0.0, 0.0, -500.0, 0.0], book
 
 
 def test_the_projection_agrees_with_covered_by_line_for_line(scm_app):

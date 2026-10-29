@@ -210,7 +210,7 @@ def clear_brochure_image(db: Session, product_id: str) -> None:
 def list_brochure_images(
     db: Session,
     *,
-    promotion_id: Optional[str] = None,
+    promotion_id: Optional[list[str] | str] = None,
     product_ids: Optional[Sequence[str]] = None,
     only_unset: bool = True,
     query: Optional[str] = None,
@@ -236,7 +236,7 @@ def list_brochure_images(
     if promotion_id:
         promoted = (
             db.query(PromotionProduct.product_id)
-            .filter(PromotionProduct.promotion_id == promotion_id)
+            .filter(PromotionProduct.promotion_id.in_([promotion_id] if isinstance(promotion_id, str) else promotion_id))
             # scalar_subquery, not subquery: the latter is coerced with a warning
             # and the coercion is the kind of thing that changes between
             # SQLAlchemy releases.

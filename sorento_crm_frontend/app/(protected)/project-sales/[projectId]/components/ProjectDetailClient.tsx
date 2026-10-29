@@ -44,6 +44,7 @@ import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import DetailActions from '@/components/common/DetailActions';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
 import type { Project, ProjectPossibleDuplicate } from '../../_shared/types/project.types';
 import {
@@ -112,6 +113,13 @@ type TabId = (typeof TABS)[number]['id'];
 /** The three tabs Orders replaced; their old links (and bookmarks) open Orders. */
 const LEGACY_ORDER_TABS = ['pos', 'schedules', 'sales-orders'];
 
+// Rung key -> the form its forward stage action opens.
+const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
+  specified: (id) => `/project-sales/${id}/quotation-documents/new`,
+  sample_submission: (id) => `/project-sales/sample-requests/new?project_id=${id}`,
+  sponsorship_form: (id) => `/procurement-management/sponsorship-forms/new?project_id=${id}`,
+};
+
 export function resolveProjectTab(requested: string | null): TabId {
   if (requested && LEGACY_ORDER_TABS.includes(requested)) return 'orders';
   return requested && TABS.some((tab) => tab.id === requested)
@@ -135,6 +143,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const isManager = useHasPermission('projects.projects.manage');
   // PROJECT-REG-PORTAL R7: a pending portal registration is approved or rejected here.
   const mayApprove = useHasPermission('projects.registrations.approve');
+  // A salesperson with the submit slug but no edit rights (J3): their own draft shows its
+  // fields with Edit and Submit for approval, and nothing else.
+  const canEditProjects = useHasPermission('projects.projects.edit');
+  const canSubmitRegistration = useHasPermission('projects.registrations.submit');
+  const submitOnly = !canEditProjects && canSubmitRegistration;
   const [rejecting, setRejecting] = React.useState(false);
   // The approved project an exact-duplicate refusal names, linked under the header.
   const [existingProject, setExistingProject] = React.useState<ProjectPossibleDuplicate | null>(
@@ -193,14 +206,20 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   // The gear's items, each with its own rule; the gear itself shows only when one applies,
   // so an approver deciding a registration (Edit in the header, no Reassign, no Delete,
   // no stage moves) never opens an empty menu.
+  const isDraft = project.approval_state === 'draft';
+  // J3b: a submit-only user edits only their own draft or rejected registration.
+  const submitOnlyEdit =
+    submitOnly && (isDraft || project.approval_state === 'rejected');
   const showEditItem = !canDecide;
   const showDeleteItem = isProjectApproved(project) || isManager;
   const hasGearItems =
-    showEditItem || isManager || secondaryMoves.length > 0 || showDeleteItem;
+    !submitOnly &&
+    (showEditItem || isManager || secondaryMoves.length > 0 || showDeleteItem);
 
   /**
    * Spec In is where quoting starts, so making it opens the new quotation page (owner,
-   * 13 Oct). Only after the move lands: a refused move leaves the person where they were.
+   * 13 Oct); Sample Submission and Sponsorship open their forms the same way (owner,
+   * 28 Oct). Only after the move lands: a refused move leaves the person where they were.
    * Matched on the rung's KEY, which an admin relabel cannot break.
    */
   function moveTo(toStatusId: string) {
@@ -210,9 +229,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       {
         onSuccess: () => {
           // Forward only: Quoted -> Spec In ("Re-specify") is a correction, not a new quote.
-          if (target?.toKey === 'specified' && target.isForward) {
-            router.push(`/project-sales/${project!.id}/quotation-documents/new`);
-          }
+          const formRoute =
+            target?.isForward && Object.hasOwn(STAGE_FORM_ROUTE, target.toKey)
+              ? STAGE_FORM_ROUTE[target.toKey]
+              : undefined;
+          if (formRoute) router.push(formRoute(project!.id));
         },
       },
     );
@@ -268,7 +289,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             )}
             {!project.can_edit && <Badge variant="outline">Read only</Badge>}
           </div>
-          <h2 className="mt-1 text-xl font-semibold">{project.title}</h2>
+          <h2 className="mt-1 text-xl font-semibold">
+            <TruncatedTextCell text={project.title} lines={2} dialogTitle="Project title" />
+          </h2>
         </div>
 
         {/* Pager, gear, primary (D6). One primary action, and everything else behind
@@ -297,6 +320,15 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                   Edit
                 </Button>
               </>
+            )}
+            {submitOnlyEdit && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push(`/project-sales/${project.id}/edit`)}
+              >
+                Edit
+              </Button>
             )}
             {project.can_edit && hasGearItems && (
               <DetailActionsMenu ariaLabel="Project actions">
@@ -347,6 +379,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           primary={
             canDecide ? (
               <ApproveButton projectId={project.id} onRefused={setExistingProject} />
+            ) : submitOnly && isDraft ? (
+              // The submit itself lives in the form, where the required fields are checked.
+              <Button type="button" onClick={() => router.push(`/project-sales/${project.id}/edit`)}>
+                Submit for approval
+              </Button>
             ) : (
               <ProjectStatusAction
                 moves={moves}
@@ -362,14 +399,20 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       {project.registration && <RegistrationFacts project={project} />}
 
       {existingProject && (
-        <p className="text-sm text-destructive" role="alert">
-          Already registered as{' '}
-          <Link
-            href={`/project-sales/${existingProject.project_id}`}
-            className="font-medium underline"
-          >
-            {projectCodeLabel(existingProject)} {existingProject.title}
-          </Link>
+        <p className="flex min-w-0 items-baseline gap-1 text-sm text-destructive" role="alert">
+          <span className="shrink-0">Already registered as</span>{' '}
+          <TruncatedTextCell
+            text={`${projectCodeLabel(existingProject)} ${existingProject.title}`}
+            dialogTitle="Project title"
+            renderLabel={(label) => (
+              <Link
+                href={`/project-sales/${existingProject.project_id}`}
+                className="block font-medium underline"
+              >
+                {label}
+              </Link>
+            )}
+          />
         </p>
       )}
 
@@ -399,9 +442,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           `role="tabpanel"`. Routing is unchanged - `value` still comes from the
           URL and `onValueChange` still writes it back, so each section keeps
           its own link and only the open one mounts. */}
-      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as TabId)}>
+      <Tabs value={isDraft ? 'overview' : activeTab} onValueChange={(value) => selectTab(value as TabId)}>
         <TabsList aria-label="Project sections">
-          {TABS.map((tab) => (
+          {TABS.filter((tab) => !isDraft || tab.id === 'overview').map((tab) => (
             <TabsTrigger key={tab.id} value={tab.id}>
               <tab.icon />
               <span>{tab.label}</span>
@@ -419,9 +462,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               <Fact label="Location" value={project.location} />
               <Fact label="Address" value={project.address} />
               <Fact label="State" value={project.state} />
-              <Fact label="Mukim" value={project.mukim} />
+              <Fact label="Area" value={project.mukim} />
               <Fact label="Project type" value={project.type_name} />
-              <Fact label="Template" value={project.template_name} />
+              <Fact label="To-do list template" value={project.template_name} />
               <Fact label="Reference" value={project.admin_ref} />
             </Section>
 
@@ -454,10 +497,6 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     : null
                 }
               />
-              <Fact
-                label="Brands"
-                value={project.brands.length ? project.brands.join(', ') : null}
-              />
             </Section>
 
             <Section title="Consultants">
@@ -467,11 +506,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
 
             <SourceCard project={project} />
 
-            <ProjectAccessPanel project={project} />
+            {!isDraft && <ProjectAccessPanel project={project} />}
           </div>
-          <div className="mt-4">
-            <CriticalPanel project={project} />
-          </div>
+          {!isDraft && (
+            <div className="mt-4">
+              <CriticalPanel project={project} />
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="stakeholders">
@@ -553,20 +594,25 @@ function RegistrationFacts({ project }: { project: Project }) {
         <Fact label="Your ref" value={info.your_ref} />
       </dl>
       {duplicates.length > 0 && (
-        <p className="text-sm">
-          <span className="text-muted-foreground">Possible duplicate: </span>
-          {duplicates.map((duplicate, index) => (
-            <React.Fragment key={duplicate.project_id}>
-              {index > 0 && ', '}
-              <Link
-                href={`/project-sales/${duplicate.project_id}`}
-                className="text-primary hover:underline"
-              >
-                {projectCodeLabel(duplicate)} {duplicate.title}
-              </Link>
-            </React.Fragment>
+        <div className="flex min-w-0 flex-col gap-1 text-sm sm:flex-row sm:items-baseline">
+          <span className="shrink-0 text-muted-foreground">Possible duplicate: </span>
+          {duplicates.map((duplicate) => (
+            <div key={duplicate.project_id} className="min-w-0">
+              <TruncatedTextCell
+                text={`${projectCodeLabel(duplicate)} ${duplicate.title}`}
+                dialogTitle="Project title"
+                renderLabel={(label) => (
+                  <Link
+                    href={`/project-sales/${duplicate.project_id}`}
+                    className="block text-primary hover:underline"
+                  >
+                    {label}
+                  </Link>
+                )}
+              />
+            </div>
           ))}
-        </p>
+        </div>
       )}
       {project.approval_state === 'rejected' && project.reject_reason && (
         <div className="text-sm">

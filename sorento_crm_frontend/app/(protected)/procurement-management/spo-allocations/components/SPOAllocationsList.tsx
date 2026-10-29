@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -43,8 +43,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useSPODocuments } from '../hooks/useSPODocuments';
 import { importSPOAllocations, validateSPOAllocations } from '../services/spoAllocationService';
 import { SPOImportDialog } from './SPOImportDialog';
-import { ProductCombobox } from './ProductCombobox';
-import { WarehouseCombobox } from './WarehouseCombobox';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { SEARCH_DEBOUNCE_MS } from '@/hooks/useDebouncedSearch';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
+import { codeWithName } from '@/lib/product-display';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
 import type { Warehouse } from '@/app/(protected)/inventory-management/warehouses/types/warehouse.types';
@@ -213,6 +215,51 @@ export default function SPOAllocationsList() {
       cancelled = true;
     };
   }, [productSearch]);
+
+  // Every product seen so far, so a pick keeps its name once the search moves on.
+  const [seenProducts, setSeenProducts] = useState<
+    Record<string, { value: string; label: string; searchText: string }>
+  >({});
+  useEffect(() => {
+    if (!products.length) return;
+    setSeenProducts((prev) => {
+      const next = { ...prev };
+      for (const p of products) {
+        next[p.id] = {
+          value: p.id,
+          label: codeWithName(p.product_code, p.product_name),
+          searchText: `${p.product_code} ${p.product_name ?? ''}`,
+        };
+      }
+      return next;
+    });
+  }, [products]);
+  const productOptions = Object.values({
+    ...Object.fromEntries(
+      splitMulti(productFilter).flatMap((id) => (seenProducts[id] ? [[id, seenProducts[id]]] : [])),
+    ),
+    ...Object.fromEntries(
+      products.map((p) => [
+        p.id,
+        {
+          value: p.id,
+          label: codeWithName(p.product_code, p.product_name),
+          searchText: `${p.product_code} ${p.product_name ?? ''}`,
+        },
+      ]),
+    ),
+  });
+  const productSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (productSearchTimer.current) clearTimeout(productSearchTimer.current);
+    },
+    [],
+  );
+  const searchProducts = (query: string) => {
+    if (productSearchTimer.current) clearTimeout(productSearchTimer.current);
+    productSearchTimer.current = setTimeout(() => setProductSearch(query), SEARCH_DEBOUNCE_MS);
+  };
 
   // Warehouses fully enumerated once - a small table, unlike the product catalogue.
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -501,25 +548,50 @@ export default function SPOAllocationsList() {
                     <Label htmlFor="spo-doc-product" className="mb-1 block">
                       Product
                     </Label>
-                    <ProductCombobox
-                      value={productFilter}
-                      onChange={setProductFilter}
-                      products={products}
+                    <SearchableMultiSelect
+                      id="spo-doc-product"
+                      value={splitMulti(productFilter)}
+                      onChange={(v) => setProductFilter(joinMulti(v))}
+                      options={productOptions}
                       placeholder="Any product"
-                      onSearch={setProductSearch}
+                      emptyMessage="No product found."
+                      onSearchChange={searchProducts}
                       clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">{multiChipLabel('Product', idFilterLabels(chosen))}</span>
+                        ) : (
+                          <span className="text-muted-foreground">Product: any</span>
+                        )
+                      }
                     />
                   </div>
                   <div>
                     <Label htmlFor="spo-doc-warehouse" className="mb-1 block">
                       Warehouse
                     </Label>
-                    <WarehouseCombobox
-                      value={warehouseFilter}
-                      onChange={setWarehouseFilter}
-                      warehouses={warehouses}
+                    <SearchableMultiSelect
+                      id="spo-doc-warehouse"
+                      value={splitMulti(warehouseFilter)}
+                      onChange={(v) => setWarehouseFilter(joinMulti(v))}
+                      options={warehouses.map((w) => ({
+                        value: w.id,
+                        // A name that merely repeats the code says nothing twice.
+                        label:
+                          w.warehouse_name && w.warehouse_name !== w.warehouse_code
+                            ? `${w.warehouse_code} - ${w.warehouse_name}`
+                            : w.warehouse_code,
+                        searchText: `${w.warehouse_code} ${w.warehouse_name ?? ''}`,
+                      }))}
                       placeholder="Any warehouse"
                       clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">{multiChipLabel('Warehouse', idFilterLabels(chosen))}</span>
+                        ) : (
+                          <span className="text-muted-foreground">Warehouse: any</span>
+                        )
+                      }
                     />
                   </div>
                   {filtersActive > 0 ? (

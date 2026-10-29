@@ -13,10 +13,10 @@ month, less what the lines due in it went short of on their own dates.
 
 **One read per input, never one per product.** The page is the whole flagged catalogue
 (1,000-2,000 products on the live book), so every fact is fetched for the WHOLE set in one
-query and then split by product in Python: on hand, open demand, SPO, PO, the decisions that
-pin stock and the links that pin a document. A per-product query here is what would turn a
-screen into a minute. The trigger for a persisted debt table is stated in plan 3.6 and it is
-this cost - measured, not guessed.
+query and then split by product in Python: on hand, open demand, SPO, PO, the board decisions
+(read on the board's path only, STOCKDEBT-NO-PLAN-REACH) and the links that pin a document.
+A per-product query here is what would turn a screen into a minute. The trigger for a
+persisted debt table is stated in plan 3.6 and it is this cost - measured, not guessed.
 
 **No debt table** (plan 3.6). Debt is computed from the book, and the parts of it that are
 decisions (ORDER_BACK rows, placement links, confirmed allocations) are already persisted by
@@ -33,10 +33,9 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import and_, func, or_, select, union
+from sqlalchemy import String, and_, cast, func, or_, select, union
 from sqlalchemy.orm import Session
 
-from app.models.base import get_company_scope
 from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import (
@@ -56,7 +55,7 @@ from app.models.project_so import (
     SOLineAllocation,
 )
 from app.models.sales_agent import SalesAgent
-from app.services.company_scope import build_company_predicate
+from app.services.scm import last_po_supplier as last_po_rule
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     ProjectSupplyService,
@@ -326,6 +325,11 @@ def _source_order(label: str) -> tuple:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _text(column, name):
+    # The driver builds a uuid.UUID per uuid cell; as text it is the str the code reads.
+    return cast(column, String).label(name)
 
 
 class StockDebtService:
@@ -1210,7 +1214,8 @@ class StockDebtService:
         PO line is dated on its Delivery date (`expected_date`, else `issue + lead`), and a
         PO line whose S/O names a sales order is pinned to that order's lines before the
         walk (`_book_so_holds`). `list()`/`cell()` pass it; `assignments_for` (the board
-        and the ladder) never does.
+        and the ladder) never does. Under `view` no board decision reaches the walk either
+        (STOCKDEBT-NO-PLAN-REACH, `_holds(routes=False)`).
         """
         self._event_cache: Dict[str, List[SupplyEvent]] = {}
         self._lead_cache: Dict[str, int] = {}
@@ -1278,6 +1283,8 @@ class StockDebtService:
             span=set(warehouse_ids),
             supply_rows=supply_rows,
             lendable_lines=lendable_lines,
+            # STOCKDEBT-NO-PLAN-REACH: on the page a board plan gives no reach.
+            routes=not view,
         )
 
         settings = self.supply._fulfilment_settings()
@@ -1387,8 +1394,9 @@ class StockDebtService:
 
         # #1362 round 5 (owner ruling, 29 Sep 2026): goods that LANDED for a line stay with
         # that line, so they bind before anybody queues, exactly as a confirmed decision
-        # does. After the decision and placement holds, so nothing is pinned twice - off
-        # what those holds really cover (STOCK-DEBT-STALE-PIN), not what they state.
+        # does. After the decision (board path only) and placement holds, so nothing is
+        # pinned twice - off what those holds really cover (STOCK-DEBT-STALE-PIN), not
+        # what they state.
         holds = holds + self._landed_holds(
             supply_rows, demand_rows, holds, lendable_lines=lendable_lines,
             held=held_by_line(holds),
@@ -1471,8 +1479,8 @@ class StockDebtService:
 
         rows = (
             self.db.query(
-                Stock.product_id,
-                Stock.warehouse_id,
+                _text(Stock.product_id, "product_id"),
+                _text(Stock.warehouse_id, "warehouse_id"),
                 func.sum(
                     func.coalesce(Stock.quantity_on_hand, 0)
                     - func.coalesce(Stock.quantity_reserved, 0)
@@ -1600,11 +1608,11 @@ class StockDebtService:
             )
         rows = (
             self.db.query(
-                SalesOrderLine.id,
-                SalesOrderLine.product_id,
-                SalesOrderLine.warehouse_id,
+                _text(SalesOrderLine.id, "id"),
+                _text(SalesOrderLine.product_id, "product_id"),
+                _text(SalesOrderLine.warehouse_id, "warehouse_id"),
                 SalesOrderLine.required_date,
-                SalesOrderLine.sales_order_id,
+                _text(SalesOrderLine.sales_order_id, "sales_order_id"),
                 # R29: the CORE line's own `line_no` (AutoCount's `Seq`) - Supply's own
                 # "Assigned to" entries name this, never the PROJECT mirror's `line_no`
                 # selected below (a different number, the ladder's own).
@@ -1682,6 +1690,7 @@ class StockDebtService:
         span: Optional[Set[str]] = None,
         supply_rows: Optional[Dict[str, List[SupplyEvent]]] = None,
         lendable_lines: Optional[Set[str]] = None,
+        routes: bool = True,
     ) -> List[Hold]:
         """What is already promised: confirmed allocations and placement links (R21).
 
@@ -1779,6 +1788,12 @@ class StockDebtService:
         own read to nothing), so without the mark here the feature lent nothing on the real
         book. A decision allocation (`so_line_allocations`) is never lendable: a Borrow
         and a Reserve are both routes, neither is goods that landed for the line. `None` marks nothing.
+
+        `routes=False` (STOCKDEBT-NO-PLAN-REACH, owner 28 Oct 2026, the VIEW's own reading):
+        no decision row is read at all, so a decided line walks exactly as the same line
+        undecided: "even if plan says reserve from BRW, it doesn't care, and how it draws is
+        the same as other lines that don't have a decision". The board and the ladder keep
+        the routes (`assignments_for`), their planning is unchanged.
         """
         if not line_keys:
             return []
@@ -1787,17 +1802,21 @@ class StockDebtService:
 
         # BOARD-NO-HOLD + BORROW-NO-HOLD: ONE read of the live decision allocations. A
         # decision is a plan, not a hold, whatever its source: every row is a ROUTE the
-        # walk takes (the line may draw the bin at its own date, `Hold.route`).
-        route_rows = (
+        # walk takes (the line may draw the bin at its own date, `Hold.route`). None in the
+        # view (STOCKDEBT-NO-PLAN-REACH, see the docstring).
+        route_rows = [] if not routes else (
             self.supply._decision_allocation_query(
                 [str(pid) for pid in product_ids],
                 exclude_line_ids=None,
                 entities=(
-                    ProjectSalesOrderLine.core_sales_order_line_id,
-                    SOLineAllocation.warehouse_id,
+                    _text(
+                        ProjectSalesOrderLine.core_sales_order_line_id,
+                        "core_sales_order_line_id",
+                    ),
+                    _text(SOLineAllocation.warehouse_id, "warehouse_id"),
                     held_qty_expr(),
                     Warehouse.warehouse_code,
-                    _hold_product,
+                    _text(_hold_product, "product_id"),
                 ),
             )
             .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
@@ -1813,20 +1832,24 @@ class StockDebtService:
         )
         links = (
             self.db.query(
-                OrderInquiryLink.id.label("link_id"),
-                ProjectSalesOrderLine.core_sales_order_line_id,
-                OrderInquiryLink.spo_allocation_id,
+                _text(OrderInquiryLink.id, "link_id"),
+                _text(
+                    ProjectSalesOrderLine.core_sales_order_line_id,
+                    "core_sales_order_line_id",
+                ),
+                _text(OrderInquiryLink.spo_allocation_id, "spo_allocation_id"),
                 # The product a `received` hop's bin is looked up under (`found_empty`):
                 # an SPO link's own, or for a PO link the PO line's, which is the product
                 # of every allocation the line was transferred onto (OI-SPO-EXACT).
-                func.coalesce(SPOAllocation.product_id, PurchaseOrderLine.product_id).label(
-                    "product_id"
+                _text(
+                    func.coalesce(SPOAllocation.product_id, PurchaseOrderLine.product_id),
+                    "product_id",
                 ),
                 # R29 addendum: the order inquiry this placement came through - a
                 # placement is part of an OI ROW's quantity on one document line, and
                 # `_holds` already joins that row to get here.
                 OrderInquiry.inquiry_no,
-                OrderInquiry.id.label("order_inquiry_id"),
+                _text(OrderInquiry.id, "order_inquiry_id"),
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
             .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
@@ -2238,7 +2261,8 @@ class StockDebtService:
 
         - `project`: the project lines' own month figure off the page's walk - the project
           bins' spare less their lines' shortfalls. A pool reaches a project line only
-          through a link (a placement, the S/O ref, a decision), which the walk has already
+          through a link (a placement, the S/O ref; a board decision gives none,
+          STOCKDEBT-NO-PLAN-REACH), which the walk has already
           pinned at any date, so this is what the drill's Covered by leaves owed. A pool
           bin's own events and lines are left out: unlinked pool stock never counts.
         - `reserve_supply`: a project reserve's stock by month, less what any line took of
@@ -2723,15 +2747,12 @@ class StockDebtService:
         the LAST supplier (AC-4/AC-5): the supplier on the product's newest purchase-order
         LINE, falling back to the manually-flagged primary product supplier, else neither.
 
-        The window (newest `PurchaseOrder.issue_date`, `PurchaseOrderLine.created_at`
-        breaking a tie, then po_number, then line id, so an exact tie never falls to the
-        query plan) is `po_last_cost_service.last_cost_rows`'s pick key, reused
-        rather than re-derived (bar the tie: that one breaks it on line id ASCENDING) - the
-        same "which PO line answers for this product" question,
-        one PARTITION BY `product_id` instead of `(product_id, warehouse_id)` because the
-        board asks per PRODUCT, not per bin. Cancelled POs are skipped (A1); a cancelled
-        LINE is not, because A1 names only the PO's own status - an SPO's supplier is never
-        consulted here at all (A1: "we should look at PO, not SPO").
+        The newest PO line is `scm/last_po_supplier.py`'s (newest `PurchaseOrder.issue_date`,
+        then the line's `created_at`, `po_number` and line id, so an exact tie never falls to
+        the query plan), the one rule the low stock report and the stock position report read
+        too. Cancelled POs and POs with no supplier are skipped (A1); a cancelled LINE is not,
+        because A1 names only the PO's own status - an SPO's supplier is never consulted here
+        at all (A1: "we should look at PO, not SPO").
         """
         out: Dict[str, Dict[str, Optional[str]]] = {
             str(pid): {"id": None, "name": None} for pid in product_ids
@@ -2739,48 +2760,13 @@ class StockDebtService:
         if not product_ids:
             return out
 
-        rn = (
-            func.row_number()
-            .over(
-                partition_by=PurchaseOrderLine.product_id,
-                order_by=(
-                    PurchaseOrder.issue_date.desc().nulls_last(),
-                    PurchaseOrderLine.created_at.desc(),
-                    PurchaseOrder.po_number.desc(),
-                    PurchaseOrderLine.id.desc(),
-                ),
-            )
-            .label("rn")
+        # The newest PO line's supplier is the ONE shared rule (`scm/last_po_supplier.py`, owner
+        # ruling 27 Oct, STOCK-POSITION-REPORT Q4), the low stock report's and the stock position
+        # report's too. Its ordering is this function's own (#1901); it also skips a PO with no
+        # supplier, so the next-newest PO names the supplier rather than none.
+        po_supplier: Dict[str, Optional[str]] = last_po_rule.last_po_supplier_ids(
+            self.db, [str(pid) for pid in product_ids]
         )
-        numbered = (
-            self.db.query(
-                PurchaseOrderLine.product_id,
-                PurchaseOrder.supplier_id,
-                rn,
-            )
-            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .filter(
-                PurchaseOrderLine.product_id.in_(product_ids),
-                PurchaseOrder.status != "cancelled",
-                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
-                PurchaseOrderLine.removed_unreferenced.is_(False),
-            )
-        )
-        # COMPANY SCOPE, EXPLICITLY, on BOTH tables named in this branch (belt-and-braces,
-        # matching `spo_last_receipt_service`'s own windowed branch): `.subquery()` loses
-        # the `with_loader_criteria` the session's `do_orm_execute` listener injects, and
-        # the outer query below names only `Supplier`.
-        for model in (PurchaseOrderLine, PurchaseOrder):
-            predicate = build_company_predicate(model, get_company_scope(self.db))
-            if predicate is not None:
-                numbered = numbered.filter(predicate)
-        numbered = numbered.subquery()
-        po_supplier: Dict[str, Optional[str]] = {
-            str(pid): (str(sid) if sid else None)
-            for pid, sid in self.db.query(numbered.c.product_id, numbered.c.supplier_id)
-            .filter(numbered.c.rn == 1)
-            .all()
-        }
 
         primary_rows = (
             self.db.query(ProductSupplier.product_id, ProductSupplier.supplier_id)
@@ -2807,9 +2793,8 @@ class StockDebtService:
             }
 
         for pid in out:
-            # The newest PO line's own answer wins WHENEVER one exists - even a PO line
-            # with no supplier stated - and only a product with NO live PO at all falls
-            # back to the primary flag (A1's "falling back to").
+            # The newest PO line's supplier wins whenever one exists; a product with no live PO
+            # naming a supplier falls back to the primary flag (A1's "falling back to").
             supplier_id = po_supplier[pid] if pid in po_supplier else primary_supplier.get(pid)
             out[pid] = {
                 "id": supplier_id,

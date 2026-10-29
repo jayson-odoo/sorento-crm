@@ -111,9 +111,16 @@ describe('the composed suggestion on the board', () => {
 
   it('S7: a product swap is ONE row - the old product named, the new one sourced', () => {
     const dialog = openDialog('pcr-s7');
-    expect(within(dialog).getByTestId('board-change-product-pcr-s7').textContent).toBe(
-      'Product changed, was B2155-NL-BLUE',
-    );
+    // PRODUCT-CHANGE-TALLY (owner, 28 Oct): the swap is the FIRST row of the yellow Was/Now
+    // table, Was the old product and Now the new one, never a loose sentence under it.
+    const table = within(dialog).getByTestId('board-change-pcr-s7');
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows[0]).toHaveAttribute('data-testid', 'change-row-product');
+    expect(within(table).getByTestId('change-was-product')).toHaveTextContent('B2155-NL-BLUE');
+    expect(within(table).getByTestId('change-now-product')).toHaveTextContent('B2155-NL-WHITE');
+    expect(within(dialog).queryByTestId('board-change-product-pcr-s7')).toBeNull();
+    expect(within(dialog).queryByText(/Product changed, was/)).toBeNull();
+    expect(within(dialog).queryByText(/without changing its quantity/)).toBeNull();
     expect(
       within(dialog)
         .getAllByTestId('board-change-suggestion-line')
@@ -500,10 +507,15 @@ describe('AC-D5: the lightbox behind one icon lists every pending change for the
       }),
     ]);
 
-    // Read off the OLDER change, which is not the one the suggestion comes from.
-    expect(
-      within(dialog).getByTestId('board-change-product-pcr-group-first'),
-    ).toHaveTextContent('Product changed, was B2155-NL-WHITE');
+    // Read off the OLDER change, which is not the one the suggestion comes from: its
+    // product swap is its own table's Product row (PRODUCT-CHANGE-TALLY).
+    const firstTable = within(dialog).getByTestId('board-change-pcr-group-first');
+    expect(within(firstTable).getByTestId('change-was-product')).toHaveTextContent(
+      'B2155-NL-WHITE',
+    );
+    expect(within(firstTable).getByTestId('change-now-product')).toHaveTextContent(
+      'B2155-NL-BLUE',
+    );
     expect(
       within(dialog).getByTestId('board-change-moved-pcr-group-first'),
     ).toHaveTextContent('10 moved BRW -> BRW-IB, line reduced');
@@ -515,12 +527,12 @@ describe('AC-D5: the lightbox behind one icon lists every pending change for the
     ).toHaveTextContent('Late by 4 days');
     // And they sit under THAT change's own block, not loose at the end of the body.
     const firstBlock = within(dialog).getByTestId('board-change-block-pcr-group-first');
-    expect(
-      within(firstBlock).getByTestId('board-change-product-pcr-group-first'),
-    ).toBeInTheDocument();
+    expect(within(firstBlock).getByTestId('board-change-pcr-group-first')).toBeInTheDocument();
     // The newer change said none of those things, so it prints none of them.
     expect(
-      within(dialog).queryByTestId('board-change-product-pcr-group-second'),
+      within(within(dialog).getByTestId('board-change-pcr-group-second')).queryByTestId(
+        'change-row-product',
+      ),
     ).not.toBeInTheDocument();
     expect(
       within(dialog).queryByTestId('board-change-late-pcr-group-second'),

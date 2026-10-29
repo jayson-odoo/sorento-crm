@@ -13,22 +13,23 @@ from app.database import get_db
 from app.api.v1.audit.audit_logs import require_audit_admin
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.activity_service import get_activity_feed
+from app.utils.multi_value import multi_uuids, multi_values
 
 router = APIRouter()
 
 
 @router.get("/activity")
-async def get_activity(
+def get_activity(
     entity_type: Optional[list[str]] = Query(
         None,
         description="Repeatable or CSV FE entity type(s): complaint, order, user, "
         "supplier, promotion, form, ticket, stock_inquiry, purchase_request, product, "
         "customer",
     ),
-    action: Optional[str] = Query(
+    action: Optional[list[str]] = Query(
         None, description="created | updated | deleted"
     ),
-    user_id: Optional[str] = Query(None, description="Actor filter (users.id)"),
+    user_id: Optional[list[str]] = Query(None, description="Actor filter (users.id)"),
     date_from: Optional[str] = Query(None, description="yyyy-MM-dd inclusive (changed_at)"),
     date_to: Optional[str] = Query(None, description="yyyy-MM-dd inclusive (changed_at)"),
     q: Optional[str] = Query(None, description="Free text over entity_id + description"),
@@ -52,8 +53,8 @@ async def get_activity(
     return get_activity_feed(
         db,
         entity_types=entity_types,
-        action=action,
-        user_id=user_id,
+        action=multi_values(action),
+        user_id=multi_uuids(user_id, "User"),
         date_from=date_from,
         date_to=date_to,
         q=q,

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Optional, List
+from app.utils.multi_value import multi_values
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.product_service import ProductService
@@ -124,8 +125,8 @@ def get_products(
             "separated string, or JSON array. Non-UUID input → HTTP 400."
         ),
     ),
-    category_id: Optional[str] = Query(None),
-    brand_id: Optional[str] = Query(None),
+    category_id: Optional[list[str]] = Query(None),
+    brand_id: Optional[list[str]] = Query(None),
     status: Optional[str] = Query(None),
     discontinued_batch_id: Optional[str] = Query(
         None,
@@ -142,6 +143,9 @@ def get_products(
     price_min: Optional[float] = Query(None),
     price_max: Optional[float] = Query(None),
     item_type: Optional[str] = Query(None),
+    item_class_id: Optional[list[str]] = Query(
+        None, description="Filter by AutoCount Item Class UUIDs (repeated / csv / JSON array)."
+    ),
     length_min: Optional[float] = Query(None, description="Minimum dimensions_length in mm."),
     length_max: Optional[float] = Query(None, description="Maximum dimensions_length in mm."),
     width_min: Optional[float] = Query(None, description="Minimum dimensions_width in mm."),
@@ -205,8 +209,8 @@ def get_products(
             query=query,
             entities=_normalize_entities(entities),
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
-            category_id=category_id,
-            brand_id=brand_id,
+            category_id=",".join(multi_values(category_id) or []) or None,
+            brand_id=",".join(multi_values(brand_id) or []) or None,
             status=status,
             discontinued_batch_id=discontinued_batch_id,
             discontinued_from=discontinued_from,
@@ -214,6 +218,7 @@ def get_products(
             price_min=price_min,
             price_max=price_max,
             item_type=item_type,
+            item_class_ids=parse_uuid_list(item_class_id, param_name="item_class_id"),
             length_min=length_min,
             length_max=length_max,
             width_min=width_min,
@@ -299,7 +304,7 @@ def get_product_purchase_history(
 
 
 @router.post("/", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
-async def create_product(
+def create_product(
     product_data: ProductCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -338,7 +343,7 @@ def bulk_update_products(
 
 
 @router.put("/{product_id}", response_model=ProductResponse)
-async def update_product(
+def update_product(
     product_id: str,
     product_data: ProductUpdate,
     current_user: dict = Depends(get_current_user),
@@ -364,7 +369,7 @@ async def update_product(
     status_code=status.HTTP_202_ACCEPTED,
     responses={200: {"description": "Validation only (validate_only=true)", "model": ValidateImportResponse}},
 )
-async def bulk_import_products(
+def bulk_import_products(
     import_data: BulkImportProductsRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -420,7 +425,7 @@ async def bulk_import_products(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_products(
+def bulk_delete_products(
     body: BulkDeleteProductsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -437,7 +442,7 @@ async def bulk_delete_products(
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_200_OK)
-async def delete_product(
+def delete_product(
     product_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -458,7 +463,7 @@ class _VariantParentBody(BaseModel):
 
 
 @router.put("/{product_id}/variant-parent", response_model=ProductResponse)
-async def set_variant_parent(
+def set_variant_parent(
     product_id: str,
     body: _VariantParentBody,
     current_user: dict = Depends(get_current_user),
@@ -480,7 +485,7 @@ async def set_variant_parent(
 
 
 @router.delete("/{product_id}/variant-parent", response_model=ProductResponse)
-async def unlink_variant(
+def unlink_variant(
     product_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -500,7 +505,7 @@ async def unlink_variant(
 
 
 @router.post("/{product_id}/variant-reset", response_model=ProductResponse)
-async def reset_variant_auto(
+def reset_variant_auto(
     product_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -524,7 +529,7 @@ class _FamilyCodeBody(BaseModel):
 
 
 @router.put("/{product_id}/family-code", response_model=ProductResponse)
-async def set_family_code(
+def set_family_code(
     product_id: str,
     body: _FamilyCodeBody,
     current_user: dict = Depends(require_permission("master_data.products.edit")),
@@ -540,7 +545,7 @@ async def set_family_code(
 
 
 @router.post("/{product_id}/family-code-reset", response_model=ProductResponse)
-async def reset_family_code(
+def reset_family_code(
     product_id: str,
     current_user: dict = Depends(require_permission("master_data.products.edit")),
     db: Session = Depends(get_db),
@@ -559,7 +564,7 @@ class _FieldLinksBody(BaseModel):
 
 
 @router.get("/{product_id}/attachments/{attachment_id}/field-links", status_code=status.HTTP_200_OK)
-async def get_product_attachment_field_links(
+def get_product_attachment_field_links(
     product_id: str,
     attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -586,7 +591,7 @@ async def get_product_attachment_field_links(
 
 
 @router.post("/{product_id}/attachments/{attachment_id}/field-links", status_code=status.HTTP_200_OK)
-async def set_product_attachment_field_links(
+def set_product_attachment_field_links(
     product_id: str,
     attachment_id: str,
     body: _FieldLinksBody = Body(...),

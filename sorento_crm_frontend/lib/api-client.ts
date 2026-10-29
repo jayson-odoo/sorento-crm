@@ -215,7 +215,9 @@ export function isRefused(error: unknown): boolean {
  */
 export function buildDataGridParams(
   params: DataGridParamsInput,
-  extra?: Record<string, string | number | boolean | undefined | null>
+  // A list value is sent as a REPEATED param (`a=1&a=2`): the way free-text values travel, since
+  // they can contain commas.
+  extra?: Record<string, string | number | boolean | string[] | undefined | null>
 ): URLSearchParams {
   const { pageIndex, pageSize, sorting, searchQuery } = params;
   const sortField = sorting?.[0]?.id || '';
@@ -228,7 +230,9 @@ export function buildDataGridParams(
   });
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
-      if (v !== undefined && v !== null && v !== '') {
+      if (Array.isArray(v)) {
+        for (const item of v) sp.append(k, item);
+      } else if (v !== undefined && v !== null && v !== '') {
         sp.set(k, String(v));
       }
     }

@@ -30,7 +30,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[PromotionTypeResponse])
-async def get_promotion_types(
+def get_promotion_types(
     current_user: dict = Depends(require_session_or_api_key_permission("marketing.promotion_types.view")),
     db: Session = Depends(get_db),
 ):
@@ -49,7 +49,7 @@ async def get_promotion_types(
 
 
 @router.get("/{type_id}", response_model=PromotionTypeResponse)
-async def get_promotion_type(
+def get_promotion_type(
     type_id: str,
     current_user: dict = Depends(require_session_or_api_key_permission("marketing.promotion_types.view")),
     db: Session = Depends(get_db),
@@ -64,7 +64,7 @@ async def get_promotion_type(
 
 
 @router.post("/", response_model=PromotionTypeResponse, status_code=status.HTTP_201_CREATED)
-async def create_promotion_type(
+def create_promotion_type(
     type_data: PromotionTypeCreate,
     current_user: dict = Depends(require_permission("marketing.promotion_types.add")),
     db: Session = Depends(get_db),
@@ -78,7 +78,7 @@ async def create_promotion_type(
 
 
 @router.put("/{type_id}", response_model=PromotionTypeResponse)
-async def update_promotion_type(
+def update_promotion_type(
     type_id: str,
     type_data: PromotionTypeUpdate,
     current_user: dict = Depends(require_permission("marketing.promotion_types.edit")),
@@ -94,7 +94,7 @@ async def update_promotion_type(
 
 
 @router.delete("/{type_id}", status_code=status.HTTP_200_OK)
-async def delete_promotion_type(
+def delete_promotion_type(
     type_id: str,
     current_user: dict = Depends(require_permission("marketing.promotion_types.delete")),
     db: Session = Depends(get_db),

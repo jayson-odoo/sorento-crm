@@ -194,6 +194,7 @@ export function DeliveryScheduleUploadDialog({
                   onChange={setPickedProjectId}
                   clearable
                   fetchOptions={listEditableProjectOptions}
+                  truncateTriggerLabel
                   placeholder="Search a project"
                   emptyMessage="No projects match"
                 />
