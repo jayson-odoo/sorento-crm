@@ -1413,6 +1413,20 @@ def test_fetch_logo_non_image_content_type_is_none(monkeypatch):
     assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
 
 
+def _big_png() -> bytes:
+    """A REAL PNG over the 1 MB cap (random pixels do not compress), so only the byte cap can
+    refuse it: Pillow would happily decode it."""
+    import os
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.frombytes("RGB", (800, 800), os.urandom(800 * 800 * 3)).save(buffer, format="PNG")
+    data = buffer.getvalue()
+    assert len(data) > 1_048_576
+    return data
+
+
 def test_fetch_logo_over_one_megabyte_is_none_by_header_or_by_streamed_body(monkeypatch):
     from app.services import project_quotation_pdf_service as qpdf
 
@@ -1420,12 +1434,12 @@ def test_fetch_logo_over_one_megabyte_is_none_by_header_or_by_streamed_body(monk
         monkeypatch,
         qpdf,
         lambda r: _png_response(
-            content=b"x", headers={"content-length": str(1_048_576 + 1)}
+            content=_big_png(), headers={"content-length": str(1_048_576 + 1)}
         ),
     )
     assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
 
-    _Spy(monkeypatch, qpdf, lambda r: _png_response(content=b"x" * (1_048_576 + 1)))
+    _Spy(monkeypatch, qpdf, lambda r: _png_response(content=_big_png()))
     assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
 
 
@@ -1475,12 +1489,13 @@ def test_fetch_logo_streamed_body_over_the_cap_with_no_content_length_is_none(mo
 
     from app.services import project_quotation_pdf_service as qpdf
 
-    chunk = b"x" * 65536
+    big = _big_png()
+    pieces = [big[i : i + 65536] for i in range(0, len(big), 65536)]
     seen = {}
 
     def handler(request):
         response = httpx.Response(
-            200, headers={"content-type": "image/png"}, content=iter([chunk] * 17)
+            200, headers={"content-type": "image/png"}, content=iter(pieces)
         )
         seen["declared"] = response.headers.get("content-length")
         return response
