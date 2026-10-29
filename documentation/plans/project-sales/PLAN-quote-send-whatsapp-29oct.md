@@ -1,6 +1,6 @@
 # PLAN: Send a quotation through the salesperson's own WhatsApp (QUOTE-SEND-WHATSAPP)
 
-**Status:** Plan. Size M (card + mock before code), lead pattern (tester -> coder -> reviewer). No migration, no
+**Status:** Build pending mock v2 approval (card answered 30 Oct 00:30, Lavish notes 00:31). Size M (card + mock before code), lead pattern (tester -> coder -> reviewer). No migration, no
 auth/RBAC change, no new external ingest. Behaviour card: `CARD-quote-send-whatsapp-29oct.md` (Waiting:owner).
 
 **Source:** owner team meeting 29 Oct 15:40 (Project Sales module); owner answers 29 Oct 22:45: Q4 a wa.me link from
@@ -32,24 +32,67 @@ and the text already filled in. The salesperson presses Send in WhatsApp themsel
 - Project activity feed: `record_project_event` (`app/services/project_activity_service.py:107`); the Unattended
   clock only moves for `MEANINGFUL_TEMPLATES` (:38-45).
 
-## Architecture (filled in after the card is answered)
+## Architecture
 
-- Layer: FE only for the send (a link, no server send). One pure helper builds the number + message + URL; one dialog
-  renders it; the action set and the issue button both open that dialog. Logging (if approved) = one small BE route
-  writing one `record_project_event` row.
-- Shared mechanism reused: `waMeUrl` moves from the portal into a shared lib (or is imported), the sign-link mutation,
-  `Dialog`/`Button`/`Input` from `components/ui`.
+Layer: FE does the send (a link; no server send). BE gains one small write route for the activity line. No schema.
+Shared mechanisms reused: the sign-link mutation, `waMeUrl`, `record_project_event`, `components/ui` Dialog / Button /
+Input / Textarea / DropdownMenu, `useCopyToClipboard`. Classes of input fixed: every recipient-field shape seen in the
+data (MY landline local/intl, foreign intl, slash lists, empty) plus MY mobiles local/intl, by rule, not by example.
 
-## Slices (after approval)
+FE (paths under `sorento_crm_frontend/`):
+1. `lib/wa-me.ts`: `waMeUrl(phone, text)` moved out of `app/(auth)/portal/lib/portal-paths.ts:108-111` unchanged
+   (empty digits give `https://wa.me/?text=...`); its two portal importers and its test cases move with it.
+2. `app/(protected)/project-sales/_shared/lib/quotationWhatsApp.ts`, pure:
+   - `toWaDigits(raw)`: one number to wa.me digits: drop everything but digits, a leading `00` is dropped, a single
+     leading `0` becomes `60` (MY local). Used for a typed "To".
+   - `pickMobile(field)`: split the recipient field on newline, `/`, `,`, `;`, `&`, " or "; return the first part
+     that is a MY mobile (`toWaDigits` matches `^601\d{8,9}$`) or a non-MY international number (written with `+`
+     or `00`, digits not starting `60`); else `''`. Landlines and bare foreign-looking digits without `+`/`00` give `''`.
+   - `quotationNumberLabel(document, issue)`: `issue.our_ref_text ?? `${document.document_no} (R${issue.issue_no})``
+     (switches to QUOTE-SIGN-PAGE's label at rebase if it has merged).
+   - `whatsAppMessage({ attn, numberLabel, subject, link, signatory })`: UAC AC-D1/AC-D2 exactly (blank = missing).
+3. Service `logQuotationWhatsAppOpened(projectId, documentId, issueId)` in `_shared/services/quotationDocumentService.ts`
+   + mutation `whatsAppOpened` in `_shared/hooks/useQuotationDocuments.ts` with NO error toast (AC-F3).
+4. `[documentId]/components/QuotationWhatsAppDialog.tsx`: open while it holds an issue. On open: mints via `signLink`,
+   link = `window.location.origin + path`; "To" prefilled `pickMobile(recipient_phone_snapshot)`; Textarea prefilled
+   `whatsAppMessage(..., signatory: signatory_name)` once the link arrives. "Open WhatsApp" = an anchor
+   (`target=_blank rel=noopener noreferrer`) to `waMeUrl(toWaDigits(to), message)`, inert until the link is ready;
+   its click fires `whatsAppOpened` and forgets it. "Copy link", "Close".
+5. `quotation-documents/actions.tsx`: action `quotation_document.whatsapp` "Send via WhatsApp" right after
+   `quotation_document.sign_link`, inside `canEdit`, disabled until issued with the copy action's hint; run resolves
+   the latest issue (`issueToExport`) and opens the dialog. The action set also returns `openWhatsApp(issue)`.
+6. `[documentId]/components/QuotationDocumentClient.tsx:406-417`: the Send to Customer button becomes a DropdownMenu
+   trigger with items Email (`mutations.issue.mutate(documentId)`, as today) and WhatsApp (same call, `onSuccess`
+   -> `openWhatsApp(issue)`).
 
-1. Pure helper `buildQuotationWhatsApp(...)` (number normalising + message + URL) - vitest red first.
-2. `QuotationWhatsAppDialog` + action item + post-issue prompt - vitest red first.
-3. (If Q3 = log) BE route + `record_project_event` - pytest red first.
+BE (`sorento_crm_backend/`):
+7. `POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/whatsapp-opened` beside the
+   sign-link route (`app/api/v1/projects/quotation_documents.py:610`), same guards (`require_permission(EDIT)`,
+   `_editable_project`, `get_document_or_404`, `_issue_or_404`). Service `record_whatsapp_opened` in
+   `project_quotation_document_service.py` calls `record_project_event(template="quotation_whatsapp_opened",
+   payload={document_id, issue_id, issue_no, our_ref}, actor_id, body_text="Quotation <ref> link opened in WhatsApp by
+   <user name>")`; the template is NOT added to `MEANINGFUL_TEMPLATES`. `ProjectActivityPanel.tsx:42` renders
+   body_text for it as is.
 
-## Test list (draft, finalised in the UAC)
+## Slices
 
-- URL digits: MY local `01x` -> `601x`; `+60 1x` kept; several lines -> first mobile; landline only -> no number;
-  empty -> no number; foreign `+65` kept.
-- Text is URL-encoded (spaces, newlines, `&`, `#`), link included verbatim, number label right.
-- Action disabled before issue with the same hint as the copy action; hidden without edit permission.
-- Post-issue: the prompt opens after "Send to Customer R<n>" succeeds, not after a failure.
+1. Tester: red vitest + pytest for everything below, committed alone (`test(red):`).
+2. Coder: 1-7 until green; kill test after.
+3. Reviewer + browser pass 1280/375 on the crew test copy (fake numbers only; check the wa.me href, never WhatsApp).
+
+## Test list
+
+- `toWaDigits`: `012-345 6789` -> `60123456789`; `+60 12-345 6789` -> `60123456789`; `0065 9123 4567` ->
+  `6591234567`; `+65 9123 4567` -> `6591234567`.
+- `pickMobile`: the above; `03-1234 5678` -> ``; `+603-1234 5678` -> ``; `03-1234 5678\n012-345 6789` -> mobile;
+  `012-345 6789 / 013-987 6543` -> first; `91-22-12345678/9/0/4` -> ``; `''`, null, spaces -> ``.
+- `whatsAppMessage`: full text byte-exact; no attn -> "Hi,"; no subject -> no " for"; no signatory -> ends "Thank you,".
+- `waMeUrl`: spaces, newlines, `&`, `#`, `+` encoded; empty digits -> `https://wa.me/?text=`.
+- Dialog: mints on open; title "Send R2 via WhatsApp"; To + message prefilled; href exact; edited message and typed
+  `012...` change the href; buttons inert while minting and after a mint failure (with a message); click logs once;
+  a failed log shows no toast.
+- Actions: item right after "Copy counter-sign link"; disabled + hint before issue; absent without edit.
+- Client: Send to Customer opens Email / WhatsApp; Email issues and opens nothing; WhatsApp issues then opens the
+  dialog for the returned revision; failed issue opens nothing; closing the menu issues nothing.
+- BE: route writes one `activity_events` row (template, body_text with ref + user); project last-activity clock
+  unchanged; non-editor refused; another document's issue 404; malformed ids answered not crashed.

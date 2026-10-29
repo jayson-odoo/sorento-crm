@@ -1,6 +1,8 @@
 # UAC: Send a quotation through the salesperson's own WhatsApp (QUOTE-SEND-WHATSAPP)
 
-**Status:** DRAFT on the card's recommendations; final once the owner answers card Q1-Q5 and approves mock v1.
+**Status:** FINAL pending mock v2 approval. Owner answers 30 Oct ~00:30: Q1 (a), Q2 (b) sign-off = the quotation's
+signatory, Q3 (a), Q4 (a), Q5 (a); Lavish notes on mock v1 (00:31): Send to Customer offers Email or WhatsApp (section
+E, replaces Q5 (a)'s auto-open), and the message is editable (AC-B5).
 Plan: `PLAN-quote-send-whatsapp-29oct.md`. Card: `CARD-quote-send-whatsapp-29oct.md`. Mock:
 `documentation/mockups/quote-send-whatsapp/index.html`.
 
@@ -17,13 +19,16 @@ Plan: `PLAN-quote-send-whatsapp-29oct.md`. Card: `CARD-quote-send-whatsapp-29oct
 - **AC-B1** Title "Send R<n> via WhatsApp", where n is the latest revision number.
 - **AC-B2** On open, the counter-sign link for that revision is minted or reused (the existing sign-link call); the
   link in the message is `<this screen's origin>/quotation-sign/<token>`.
-- **AC-B3** While the link is being fetched, "Open WhatsApp" and "Copy link" are disabled; if it fails, the prompt
-  says so and both stay disabled.
+- **AC-B3** While the link is being fetched, "Open WhatsApp" and "Copy link" are disabled and the message box is
+  not yet filled; if it fails, the prompt says so and both stay disabled.
 - **AC-B4** "To" is prefilled per section C and can be edited; an edited number is used for this send only and is not
   saved to the quotation.
-- **AC-B5** The message box shows exactly the text WhatsApp will open with (section D).
-- **AC-B6** "Open WhatsApp" is a link to `https://wa.me/<digits>?text=<url-encoded message>` opening in a new tab;
-  with an empty "To" it is `https://wa.me/?text=<url-encoded message>`.
+- **AC-B5** The message is an editable text box, prefilled once with the template (section D). Whatever it holds
+  when "Open WhatsApp" is pressed is the text WhatsApp opens with. Edits are for this send only: not saved, and
+  reopening the prompt starts from the template again.
+- **AC-B6** "Open WhatsApp" is a link to `https://wa.me/<digits>?text=<url-encoded message box text>` opening in a
+  new tab; with an empty "To" it is `https://wa.me/?text=<url-encoded message box text>`. A typed "To" goes through
+  the same cleanup as section C (a typed `012...` becomes `6012...`).
 - **AC-B7** "Copy link" copies the counter-sign link (same behaviour as the gear's copy action).
 - **AC-B8** Usable at 375 px and 1280 px: nothing clipped, buttons reachable without horizontal scroll.
 
@@ -38,7 +43,7 @@ Plan: `PLAN-quote-send-whatsapp-29oct.md`. Card: `CARD-quote-send-whatsapp-29oct
 - **AC-C4** A MY landline (`03-...`, `+603...`, `04-...`, etc.), a field with no mobile, or an empty field leaves "To"
   empty.
 
-## D. The message (EN, Q1 (a), Q2 (a) pending owner)
+## D. The message (EN, Q1 (a), Q2 (b))
 
 - **AC-D1** Text:
   ```
@@ -49,19 +54,23 @@ Plan: `PLAN-quote-send-whatsapp-29oct.md`. Card: `CARD-quote-send-whatsapp-29oct
   <link>
 
   Thank you,
-  <name of the user pressing the button>
+  <quotation signatory name>
   ```
-- **AC-D2** No Attn -> first line "Hi,". No subject -> " for <subject>" is left out.
+- **AC-D2** No Attn -> first line "Hi,". No subject -> " for <subject>" is left out. No signatory name on the
+  quotation -> the message ends at "Thank you," (never another person's name).
 - **AC-D3** Number label: today's printed `our_ref_text` (e.g. "PRJQ-2026-0003 (R1)") until QUOTE-SIGN-PAGE merges,
   then its label "PRJQ-2026-0003-R1".
 
-## E. After "Send to Customer R<n>" (Q5 (a) pending owner)
+## E. "Send to Customer R<n>" offers Email or WhatsApp (owner note 30 Oct 00:31)
 
-- **AC-E1** When "Send to Customer R<n>" succeeds, the prompt opens on its own for revision n.
-- **AC-E2** When it fails, no prompt opens.
-- **AC-E3** Close dismisses it; nothing else changes.
+- **AC-E1** Pressing "Send to Customer R<n>" no longer sends at once: it opens a menu with two items, "Email" and
+  "WhatsApp". Closing the menu (Escape, click outside) sends nothing.
+- **AC-E2** "Email" sends revision n exactly as the button does today (same call, same toast); nothing else opens.
+- **AC-E3** "WhatsApp" sends revision n the same way, and when that succeeds the WhatsApp prompt opens for revision n.
+- **AC-E4** When the send fails, the error toast shows as today and no prompt opens.
+- **AC-E5** The gear item "Send via WhatsApp" (section A) stays.
 
-## F. Log (Q4 (a) pending owner)
+## F. Log (Q4 (a))
 
 - **AC-F1** Pressing "Open WhatsApp" writes one project activity line "Quotation <number label> link opened in
   WhatsApp by <user>".
