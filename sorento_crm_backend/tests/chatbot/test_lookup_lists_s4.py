@@ -215,6 +215,7 @@ def test_a_warm_up_longer_than_the_turn_budget_still_completes_and_turns_never_w
     patch_openai_embeddings(monkeypatch, client.embeddings.create)
     rows = [ll.LookupRow("customer", f"c{i}", f"Zzcust {i}", (f"zzcust {i}",)) for i in range(300)]
     embed = ll.provider_embedder("sk-test")
+    ll._import_sdk()  # the cold SDK import runs on the caller (#1902); it is not the warm-up being timed
 
     t0 = time.monotonic()
     ll.warm(rows, embed)

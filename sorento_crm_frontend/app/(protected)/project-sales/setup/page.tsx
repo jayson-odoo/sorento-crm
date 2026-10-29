@@ -6,7 +6,7 @@ import { ProjectSetupClient } from './components/ProjectSetupClient';
 export const metadata: Metadata = {
   title: 'Project Setup',
   description:
-    'Project types, their templates, the stakeholder roles each template offers, and the checklist a new project starts with.',
+    'Project types, their to-do list templates, the stakeholder roles each one offers, and the checklist a new project starts with.',
 };
 
 export default function ProjectSetupPage() {

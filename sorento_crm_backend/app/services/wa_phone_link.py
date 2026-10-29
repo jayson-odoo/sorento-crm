@@ -294,6 +294,12 @@ def link_phone(db: Session, client: Any, *, contact_respond_id: str, phone: str)
             if survivor is None:
                 again = parse_respond_contact_payload(client.get_contact_by_phone(f"+{num}"))
                 survivor = again.get("respond_io_id")
+            elif survivor != phone_contact_id:
+                # The card sender survived (it was older), and the phone left with the merged-away
+                # contact: the survivor must hold the verified phone. A survivor found by the phone
+                # lookup already does.
+                merged_phone_contact = survivor
+                client.update_contact(survivor, {"phone": f"+{num}"})
             if survivor is None:
                 return _failed("the merge did not name a surviving contact", merged_phone_contact, phone=shown)
             status = "merged"
@@ -303,8 +309,8 @@ def link_phone(db: Session, client: Any, *, contact_respond_id: str, phone: str)
             client.update_contact(str(contact_respond_id), {"phone": f"+{num}"})
             status, survivor = "phone_set", str(contact_respond_id)
     except Exception as e:  # noqa: BLE001 - any Respond.io failure is a hand-off, never a half-link
-        # Best effort: after a merge Respond.io may have kept the older turn contact instead, so the
-        # staff comment goes to the phone contact and may not land.
+        # Best effort: after a merge the staff comment goes to the survivor when known, otherwise the
+        # phone contact (Respond.io may have kept the older turn contact), and may not land.
         return _failed(f"Respond.io step failed ({_err(e)})", merged_phone_contact, phone=shown)
     merged_survivor = survivor if status == "merged" else None
 

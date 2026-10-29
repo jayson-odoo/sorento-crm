@@ -459,8 +459,8 @@ function StakeholderFormDialog({
                 {roles.length === 0 ? (
                   <p className="rounded-md border border-dashed border-border px-2.5 py-2 text-xs text-muted-foreground">
                     {project.template_id
-                      ? 'This template offers no roles yet.'
-                      : 'Set a project type and template on this project to choose from its roles.'}
+                      ? 'This to-do list template offers no roles yet.'
+                      : 'Set a project type and to-do list template on this project to choose from its roles.'}
                   </p>
                 ) : (
                   <SearchableSelect

@@ -2524,6 +2524,8 @@ class AIAssistantChatService:
         max_iters = max(1, int(getattr(settings, "ai_assistant_agent_max_iterations", 6)))
         tool_call_budget = max(1, int(getattr(settings, "ai_assistant_tool_call_limit", 3)))
         tool_calls_made = 0
+        # The agent_system label's effort, sent only when it sets one (an unset label sends what it always did).
+        effort = ai_prompt_registry.agent_reasoning_effort(self.db, "agent_system")
 
         # M2.5 role split (opt-in): run an explicit planner node up front and
         # compress raw tool JSON before feeding it back to the executor. Each is
@@ -2560,6 +2562,7 @@ class AIAssistantChatService:
                     temperature=float(config.temperature or 0),
                     model=config.model,
                     max_tokens=2048,
+                    **({"reasoning_effort": effort} if effort else {}),
                 )
             except Exception as exc:
                 logger.exception("AI assistant agent chat completion failed iteration=%s", iteration)
@@ -2628,6 +2631,9 @@ class AIAssistantChatService:
                 "content": result.content or "",
                 "tool_calls": assistant_tool_calls,
             }
+            if result.continuation:
+                # The provider's own turn (thought signatures, thinking blocks); it replays this, not a rebuild.
+                assistant_entry["continuation"] = result.continuation
             messages.append(assistant_entry)
 
             for call_idx, call in enumerate(requested_tool_calls):
@@ -2957,6 +2963,7 @@ class AIAssistantChatService:
             logger.warning("record-answer could not list MCP tools; fact-only mode")
 
         rr_started = time.perf_counter()
+        effort = ai_prompt_registry.agent_reasoning_effort(self.db, "agent_system")
         try:
             result: ChatResult = provider.chat(
                 messages,
@@ -2964,6 +2971,7 @@ class AIAssistantChatService:
                 temperature=0.0,
                 model=config.model,
                 max_tokens=2048,
+                **({"reasoning_effort": effort} if effort else {}),
             )
         except Exception as exc:
             logger.exception("record-answer initial provider call failed")
@@ -3017,6 +3025,7 @@ class AIAssistantChatService:
                     "role": "assistant",
                     "content": result.content or "",
                     "tool_calls": assistant_tool_calls,
+                    **({"continuation": result.continuation} if result.continuation else {}),
                 }
             )
             for call_idx, call in enumerate(requested_tool_calls[:1]):
@@ -3072,7 +3081,11 @@ class AIAssistantChatService:
             rr_final_started = time.perf_counter()
             try:
                 final = provider.chat(
-                    messages, temperature=0.0, model=config.model, max_tokens=2048
+                    messages,
+                    temperature=0.0,
+                    model=config.model,
+                    max_tokens=2048,
+                    **({"reasoning_effort": effort} if effort else {}),
                 )
                 token_usage["prompt_tokens"] += int(final.prompt_tokens or 0)
                 token_usage["completion_tokens"] += int(final.completion_tokens or 0)

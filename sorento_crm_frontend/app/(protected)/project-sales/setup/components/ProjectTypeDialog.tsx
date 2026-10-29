@@ -45,8 +45,8 @@ export function ProjectTypeDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? `Edit ${type?.name}` : 'Add a project type'}</DialogTitle>
           <DialogDescription>
-            The kind of job. It decides which templates a project can use, and whether
-            the delivery window is inferred from the launch date.
+            The kind of job. It decides which to-do list templates a project can use, and
+            whether the delivery window is inferred from the launch date.
           </DialogDescription>
         </DialogHeader>
 
