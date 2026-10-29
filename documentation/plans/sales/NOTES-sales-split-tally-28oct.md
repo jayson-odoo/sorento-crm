@@ -1,7 +1,7 @@
 # NOTES: Sales split tally (Dealer / Project team / Set apart vs AutoCount)
 
-Status: Plan; rule ruled (owner 28 Oct ~09:30: the SO's order type decides), waiting on the owner's
-R1 to R10 results for the trace repair. crew-lane: SALES-SPLIT-TALLY.
+Status: Plan; rule ruled (owner 28 Oct ~09:30: the SO's order type decides). Root cause measured:
+the DO feed gap (2b). Waiting on R11 (incident check), R12, R13 and the owner's call on the DO feed. crew-lane: SALES-SPLIT-TALLY.
 Track: small fix (expected diff well under 300 lines, no migration, no RBAC change). Follows
 `PLAN-sales-unified-27oct.md` (#1916, live in prod 745be3f35b). Read-only owner SQL:
 `evidence/sales-split-tally-owner-sql-28oct.md`. No agent code or per-agent figure is committed
@@ -40,6 +40,29 @@ Which of the three it is (the push leaves `from_doc_*` empty; the push sends the
 they name are not in `orders`; the DOs are there but not linked to an SO) is what owner SQL
 R1 to R4 decide. Under the rule proposed below the answer no longer moves a sales figure; it
 still matters for the Related tabs (DOC-RELATIONS) and is fixed as its own step.
+
+### 2b. Measured on prod (owner, round 2)
+
+- **The ingest-time link never fires.** 0 of 17,392 January invoice lines carry `from_line_ref`, and
+  no invoice line in any month July 2025 to February 2026 has a `sales_order_line_id`. The push sends
+  `from_doc_type = 'DO'` and the DO number (`from_doc_no`) on 17,392 of 17,541 lines, never the DO
+  line ref the hop needs (`billing_document_ingest_service.py:550-604`).
+- **The read-time path has no DO to follow.** SRT holds 0 AutoCount DOs (`doc_key` set) dated
+  October 2025 to February 2026. The 11 to 24 DOs a month it does hold are CRM-made (no `doc_key`,
+  no lines), so the 11 January DOs an invoice names reach no SO. The DO book `db1` holds 132,730
+  older rows. R12 dates when DOs stopped arriving.
+- So the trace code is right and has nothing to follow: **the DO feed has a gap.** Fix: the DO
+  push (or the DO pull's `backfill`) for July 2025 onwards. Once the DOs land, their lines name
+  their SO (`FromDocNo`) and the invoices trace with no CRM code change. A second, independent
+  fix on the shared service would send `from_line_ref` on invoice lines.
+- **No genuine cross-type selling on SOs** (R8, SOs Nov 2025 to Jan 2026): every SO with a STATED
+  order type is a Project-list agent stating `project`. The agents whose SOs sit in two classes
+  have 0 stated types: stale stamps that the re-derive fixes.
+- **Class lists confirmed to the cent** (R9 dry run): retail 27 agents 6,513,047.67 = AutoCount
+  Dealer; project 21 agents 8,229,111.30 = Project team 6,084,471.57 + the five left-out agents
+  2,144,639.73 (unfilled in that run); no agent 120.32.
+- **R10**: 5,760 documents untraced (reason 3); the 14 traced gaps are all reason 6 (SO class
+  stale, DATA), none GENUINE.
 
 ## 3. How AutoCount builds the blocks
 

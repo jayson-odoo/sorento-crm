@@ -637,3 +637,64 @@ WHERE upper(btrim(a.sales_agent)) IN ('<OTHER 1>', '<OTHER 2>', '<OTHER 3>', '<O
 GROUP BY a.id, a.sales_agent, a.demand_class ORDER BY 1;
 -- Then type COMMIT; (or ROLLBACK; if C4 is not five 'other' rows).
 ```
+
+# Round 3 results (owner, 28/29 Oct) and the next queries
+
+Read from the owner's round-2 output: no January invoice line carries `from_line_ref` (0 of
+17,392 DO lines), and no invoice line in any month July 2025 to February 2026 has a
+`sales_order_line_id`. So the ingest-time link (`billing_document_ingest_service.py:550-604`) never
+fires. The read-time path needs the DO in `orders`, but SRT holds 0 AutoCount DOs (`doc_key` set)
+dated October 2025 to February 2026 and only 11 to 24 CRM-made DOs a month (no lines). The DO book
+`db1` holds 132,730 older rows. R12 dates the gap; R13 checks the set-apart debtors.
+
+## R12. When did AutoCount DOs stop arriving?
+
+Purpose: per month of DO date, the AutoCount DOs in SRT (rows, with lines, lines naming an SO, lines
+linked to an SO line) and when they were written; then the DO pushes the audit log saw in the last
+120 days. Expected: rows stop at some month (the feed gap); the audit shows no recent integration
+writes on `orders`, or a backfill only.
+
+```sql
+BEGIN READ ONLY;
+SELECT date_trunc('month', o.order_date)::date AS do_month,
+       count(*) AS dos,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM order_lines ol WHERE ol.order_id = o.id)) AS with_lines,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM order_lines ol WHERE ol.order_id = o.id
+                                      AND ol.from_doc_no IS NOT NULL)) AS naming_an_so,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM order_lines ol WHERE ol.order_id = o.id
+                                      AND ol.sales_order_line_id IS NOT NULL)) AS linked_to_so_line,
+       min(o.created_at)::date AS first_written, max(o.created_at)::date AS last_written,
+       min(o.order_number) AS min_no, max(o.order_number) AS max_no
+FROM orders o JOIN companies c ON c.id = o.company_id AND c.code = 'SRT'
+WHERE o.doc_key IS NOT NULL AND o.order_date >= '2024-07-01'
+GROUP BY 1 ORDER BY 1;
+SELECT max(o.order_date) AS latest_do_date, max(o.created_at) AS latest_written, max(o.updated_at) AS latest_updated,
+       count(*) FILTER (WHERE o.order_date IS NULL) AS no_date
+FROM orders o JOIN companies c ON c.id = o.company_id AND c.code = 'SRT' WHERE o.doc_key IS NOT NULL;
+SELECT changed_at::date AS day, action, actor_type, count(*) AS rows
+FROM audit_logs
+WHERE entity_type = 'orders' AND changed_at >= now() - interval '120 days'
+  AND (integration_id IS NOT NULL OR actor_type = 'integration')
+GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2 LIMIT 60;
+ROLLBACK;
+```
+
+## R13. The set-apart debtors' January sales
+
+Purpose: AutoCount's SET APART block is 122,232.99. Sum the four debtor codes crew holds, per
+agent, so the set-apart rows can be entered with confidence (and to confirm they are sold by
+left-out agents only, which is what the per-agent tally says). Expected: total 122,232.99.
+
+```sql
+BEGIN READ ONLY;
+SELECT upper(btrim(d.debtor_code)) AS debtor, coalesce(a.sales_agent, '(no agent)') AS agent, count(*) AS docs,
+       sum(CASE WHEN d.document_type = 'credit_note' THEN -d.local_net_total ELSE d.local_net_total END) AS rm
+FROM finance.billing_documents d
+JOIN companies c ON c.id = d.company_id AND c.code = 'SRT'
+LEFT JOIN sales_agents a ON a.id = d.sales_agent_id
+WHERE d.status = 'posted' AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
+  AND d.doc_date >= '2026-01-01' AND d.doc_date < '2026-02-01'
+  AND upper(btrim(d.debtor_code)) IN ('<DEBTOR 1>', '<DEBTOR 2>', '<DEBTOR 3>', '<DEBTOR 4>')
+GROUP BY ROLLUP (1, 2) ORDER BY 1 NULLS LAST, 2 NULLS LAST;
+ROLLBACK;
+```
