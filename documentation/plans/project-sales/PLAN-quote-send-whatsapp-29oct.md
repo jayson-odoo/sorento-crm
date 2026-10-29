@@ -82,10 +82,10 @@ BE (`sorento_crm_backend/`):
 
 ## Test list
 
-- `toWaDigits`: `012-345 6789` -> `60123456789`; `+60 12-345 6789` -> `60123456789`; `0065 9123 4567` ->
-  `6591234567`; `+65 9123 4567` -> `6591234567`.
-- `pickMobile`: the above; `03-1234 5678` -> ``; `+603-1234 5678` -> ``; `03-1234 5678\n012-345 6789` -> mobile;
-  `012-345 6789 / 013-987 6543` -> first; `91-22-12345678/9/0/4` -> ``; `''`, null, spaces -> ``.
+- `toWaDigits`: `012-000 0001` -> `60120000001`; `+60 12-000 0001` -> `60120000001`; `0065 0000 0001` ->
+  `6500000001`; `+65 0000 0001` -> `6500000001`.
+- `pickMobile`: the above; `03-0000 0001` -> ``; `+603-0000 0001` -> ``; `03-0000 0001\n012-000 0001` -> mobile;
+  `012-000 0001 / 013-000 0002` -> first; `91-00-00000001/2/3/4` -> ``; `''`, null, spaces -> ``.
 - `whatsAppMessage`: full text byte-exact; no attn -> "Hi,"; no subject -> no " for"; no signatory -> ends "Thank you,".
 - `waMeUrl`: spaces, newlines, `&`, `#`, `+` encoded; empty digits -> `https://wa.me/?text=`.
 - Dialog: mints on open; title "Send R2 via WhatsApp"; To + message prefilled; href exact; edited message and typed
