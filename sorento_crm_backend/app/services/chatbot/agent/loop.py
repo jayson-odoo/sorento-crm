@@ -584,6 +584,18 @@ def _system_prompt(db, user_name: str) -> str:
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
 
+def _unique_call_id(raw: Any, used: set[str]) -> str:
+    """A call id no earlier call of this turn has. Gemini names a call `gemini_<index>_<tool>`, so the
+    same tool in two rounds repeats the id; the ledger, the citations and the tool replies all key on it."""
+    base = str(raw) if raw else f"call_{uuid.uuid4().hex[:8]}"
+    out, n = base, 1
+    while out in used:
+        n += 1
+        out = f"{base}~{n}"
+    used.add(out)
+    return out
+
+
 def _args_for_digest(args: Any) -> Any:
     if not isinstance(args, dict):
         return {}
@@ -758,6 +770,8 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             return args
         ledger: dict[str, dict] = {}
         seen_ids: set[str] = set()
+        denied_domains: set[str] = set()
+        used_call_ids: set[str] = set()
         repaired = False
         final_args: dict | None = None
         nudge = (
@@ -817,7 +831,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
 
             assistant_calls = [
                 {
-                    "id": c.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                    "id": _unique_call_id(c.get("id"), used_call_ids),
                     "type": "function",
                     "function": {
                         "name": c.get("name") or "",
@@ -871,7 +885,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 out = dispatch(
                     db, ctx, name, args,
                     call=mcp_call if mcp_call is not None else mcp_builder(seconds),
-                    catalog=catalog, timeout=float(seconds), seen_ids=seen_ids,
+                    catalog=catalog, timeout=float(seconds), seen_ids=seen_ids, denied_domains=denied_domains,
                 )
                 ms = int((clock() - started) * 1000)
                 payload = out.to_json(call_id)

@@ -454,3 +454,8 @@ Round 6 (crew re-run 20/30):
 3. The local `plan` tool (`{parts}`; a later call replaces it; no chip, no digest). `answer` gains `answered`. A planned part neither answered nor named in `not_checked` is appended as "I did not get to: ..."; on a limit every part not answered is listed whatever `not_checked` says. Without a plan the limit sentence is unchanged.
 4. A `crm_resolve` term with exactly one match whose code equals it (case and punctuation folded) is `found`, with the other matches under `variants`; no exact match stays `ambiguous`.
 5. The contact's own Respond id and internal id are replaced by "(id)" in the reply, and their echoes (guard keys and strings) are removed from tool results before the model sees them.
+
+Round 7:
+1. Root cause of the true figures flagged in S1: call ids were not unique across rounds. Gemini names a call `gemini_<index>_<tool>`, so a second `crm_report_ask` in a later round reused the first one's id and overwrote its ledger entry, and the delivered report the figures came from was no longer there to check. Ids are now made unique per turn (`~2`, `~3` suffix). The real presenter output, the cap and the echo strip were checked and were not the cause.
+2. A `crm_report_ask` on a sales basis without an explicit `basis` is invalid (the owner's rule: never default the basis); outstanding kinds and the chat dataset are not sales.
+3. A denial (permission, contact grant, or a route 403) closes its data domain for the rest of the turn (sales, outstanding, chat); the denied message ends "Do not get this information another way."

@@ -70,7 +70,7 @@ def test_a_report_total_with_a_written_period_is_untouched(db, contact):
     text = "Total sales 1 Jan to 30 Oct 2026 were RM2,000,000.00."
     provider = Provider(
         [
-            asks(call(REPORT, {"query": "x"}, "c1")),
+            asks(call(REPORT, {"query": "x", "basis": "invoiced"}, "c1")),
             answer_call(text, figures=[{"value": "2,000,000.00", "call_id": "c1"}]),
         ]
     )

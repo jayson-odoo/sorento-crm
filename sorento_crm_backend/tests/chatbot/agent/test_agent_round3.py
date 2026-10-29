@@ -566,9 +566,10 @@ def test_a_gated_argument_that_is_not_a_plain_string_is_invalid(held, key, bad):
 def test_a_null_gated_argument_is_treated_as_absent(held):
     held.update({"order_management.orders.view"})
     rec = Rec()
-    out = _dispatch(REPORT, {"basis": None, "dataset": None}, rec)
+    # Round 7: a sales ask needs an explicit basis, so only the null dataset is dropped here.
+    out = _dispatch(REPORT, {"basis": "invoiced", "dataset": None}, rec)
     assert out.status == "ok"
-    assert "basis" not in rec.calls[0][1] and "dataset" not in rec.calls[0][1]
+    assert rec.calls[0][1]["basis"] == "invoiced" and "dataset" not in rec.calls[0][1]
 
 
 # ------------------------------------------------------------------ round 4: M3 residual

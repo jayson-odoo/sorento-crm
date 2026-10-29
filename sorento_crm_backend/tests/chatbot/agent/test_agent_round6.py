@@ -126,7 +126,7 @@ def test_exact_code_then_prefix_then_the_rest(db, world):
 
 
 def _run_figures(db, contact, text, result, *, figures=(), user_text="how is it?"):
-    provider = Provider([asks(call(REPORT, {"query": "x"}, "c1")), answer6(text, figures=figures)])
+    provider = Provider([asks(call(REPORT, {"query": "x", "basis": "invoiced"}, "c1")), answer6(text, figures=figures)])
     out = run(db, contact, provider, Mcp(result), text=user_text)
     return out, provider
 

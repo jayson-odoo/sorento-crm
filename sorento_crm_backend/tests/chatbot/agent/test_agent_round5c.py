@@ -30,6 +30,8 @@ _PROPS = {
     "query": {"type": "string"},
     "view": {"type": "string"},
     "warehouse_ids": {"type": "array", "items": {"type": "string"}},
+    "basis": {"type": "string"},
+    "dataset": {"type": "string"},
 }
 CATALOG = {
     n: {"description": n, "inputSchema": {"type": "object", "properties": dict(_PROPS), "required": ["contact_id"]}}
@@ -102,7 +104,7 @@ def test_a_figure_inside_the_report_text_is_backed(db, contact):
     }
     provider = Provider(
         [
-            asks(call(REPORT, {"query": "x"}, "c1")),
+            asks(call(REPORT, {"query": "x", "basis": "invoiced"}, "c1")),
             answer_call("Total sales were RM 2,000,000.00.", figures=[{"value": "2,000,000.00", "call_id": "c1"}]),
         ]
     )

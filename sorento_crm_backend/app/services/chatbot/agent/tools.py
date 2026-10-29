@@ -438,6 +438,9 @@ def clean_detail(text: Any) -> str:
 
 
 def _http_failure(status: int, detail: Any) -> ToolResult:
+    if status == 403:
+        # The route refused this contact or user: a denial, not a bad request.
+        return ToolResult("denied", message=clean_detail(detail) or "The route refused this request.")
     if 400 <= status < 500:
         return ToolResult("invalid", message=clean_detail(detail) or "The request was rejected.")
     return ToolResult("error", message=FIXED_ERROR)
@@ -742,7 +745,58 @@ def _find_products(db: Any, args: dict, seen: set[str]) -> ToolResult:
     return ToolResult("ok", data={"products": products, "more": total - len(products)}, more=total - len(products))
 
 
+DENIED_TAIL = "Do not get this information another way."
+SALES_BASIS_MESSAGE = (
+    "Say which sales basis: ask the user (invoiced is the usual one) or call once per basis "
+    "(invoiced, delivered, ordered) and label each."
+)
+#: Bases that are not sales figures: they need no sales basis, and are their own data domain.
+OUTSTANDING_BASES = frozenset({"outstanding", "pending_delivery", "unpaid"})
+
+
+def data_domain(name: Any, args: Any) -> str | None:
+    """The data domain a call reads, for "refused stays refused": the sales figures (the report on a
+    sales basis, and the orders-by-product totals), receivables / outstanding, and the chat analytics."""
+    if name == "crm_report_ask" and isinstance(args, dict):
+        if _arg_value(args, "dataset") == "chat":
+            return "chat"
+        if _arg_value(args, "basis") in OUTSTANDING_BASES:
+            return "outstanding"
+        return "sales"
+    if name == "crm_order_management_orders_by_product_list":
+        return "sales"
+    return None
+
+
 def dispatch(
+    db: Any,
+    ctx: Any,
+    name: str,
+    args: Any,
+    *,
+    call: Callable[[str, dict], Any],
+    catalog: dict[str, dict],
+    timeout: float,
+    seen_ids: set[str] | None = None,
+    denied_domains: set[str] | None = None,
+) -> ToolResult:
+    """`_dispatch_inner`, plus the turn's memory of what was refused: once a data domain is denied,
+    a later call to the same domain is denied too, and a denial tells the model not to go around it.
+    `denied_domains` is kept by the caller for the whole turn."""
+    domains = denied_domains if denied_domains is not None else set()
+    domain = data_domain(name, args)
+    if domain is not None and domain in domains:
+        return ToolResult("denied", message=f"This data was refused earlier in this turn. {DENIED_TAIL}")
+    out = _dispatch_inner(db, ctx, name, args, call=call, catalog=catalog, timeout=timeout, seen_ids=seen_ids)
+    if out.status == "denied":
+        if domain is not None:
+            domains.add(domain)
+        if DENIED_TAIL not in out.message:
+            out.message = f"{out.message.rstrip()} {DENIED_TAIL}".strip()
+    return out
+
+
+def _dispatch_inner(
     db: Any,
     ctx: Any,
     name: str,
@@ -794,6 +848,10 @@ def dispatch(
         for (key, value), grant in ARG_CONTACT_GRANTS.items():
             if _arg_value(args, key) == value and grant not in ctx.grants:
                 return ToolResult("denied", message=f"{key}={value} is outside this contact's access.")
+
+    if name == "crm_report_ask" and _arg_value(args, "dataset") != "chat" and not _arg_value(args, "basis"):
+        # Owner rule: the sales basis is never defaulted (an outstanding kind is a basis of its own).
+        return ToolResult("invalid", message=SALES_BASIS_MESSAGE)
 
     bad_id = _check_ids(args, seen)
     if bad_id is not None:
