@@ -39,7 +39,7 @@ const ROOT = path.resolve(__dirname, '../..');
 const SCAN_DIRS = ['app', 'components', 'hooks', 'services'];
 
 /** Trigger 1: an inline `queryKey` naming page, size, sort, filter or search state. */
-const LIST_KEY_LITERAL_RE = /page|pageIndex|pageSize|sorting|\blimit\b|columnFilters|sortBy|sortField/;
+const LIST_KEY_LITERAL_RE = /page|pageIndex|pageSize|sorting|limit|columnFilters|sortBy|sortField/;
 
 /**
  * Trigger 2: a `queryKey` built by a named list-key builder. Covers

@@ -244,6 +244,9 @@ def test_p4_pt_foreign_row_answers_what_the_portal_answers(world):
         "changes": ("POST", f"{SUB}/{foreign_sub}/request-changes", {"note": "ZZT x"}),
         "comments": ("GET", f"{SUB}/{foreign_sub}/review-comments", None),
         "collect": ("POST", f"{SUB}/{foreign_sub}/collect", None),
+        "design": ("GET", f"{SUB}/{foreign_sub}/design", None),
+        "download": ("GET", f"{SUB}/{foreign_sub}/download", None),
+        "export": ("POST", f"{SUB}/{foreign_sub}/export", None),
     }
     for name, (method, path, body) in calls.items():
         kw = {"json": body} if body is not None else {}

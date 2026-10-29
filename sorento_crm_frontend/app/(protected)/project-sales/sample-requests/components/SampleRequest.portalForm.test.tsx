@@ -261,3 +261,38 @@ describe('staff keep today\'s Sample Request screens', () => {
     expect(where((c) => c.url.startsWith(`${MINE}/sr-5`) && c.method === 'GET')).toHaveLength(0);
   });
 });
+
+/** S1: the CRM page header carries the one Back; the embedded portal form shows none of its own and no /portal link. */
+function expectNoOwnBack() {
+  expect(screen.queryByRole('button', { name: /^Back/ })).toBeNull();
+  expect(screen.queryByRole('link', { name: /Back/ })).toBeNull();
+  for (const el of Array.from(document.querySelectorAll('[href]'))) {
+    expect(el.getAttribute('href') ?? '').not.toContain('/portal');
+  }
+}
+/** Item 4: a NEW embedded form opens on its first card, with no empty header row above it. */
+function expectNoEmptyHeaderRow(container: HTMLElement) {
+  const shell = container.firstElementChild as HTMLElement;
+  const first = shell.firstElementChild as HTMLElement;
+  expect(first.childElementCount).toBeGreaterThan(0);
+  expect(first.querySelector('[data-slot="card"]') ?? first.closest('[data-slot="card"]')).not.toBeNull();
+}
+
+describe('limited user, Sample Request shows exactly one Back (the CRM header\'s)', () => {
+  it('new form: no Back of its own, no /portal link, no empty header row', async () => {
+    const { container } = mountForm(LIMITED);
+    await screen.findByRole('button', { name: 'Submit sample request' });
+    expectNoOwnBack();
+    expectNoEmptyHeaderRow(container);
+  });
+  it('edit form: no Back of its own', async () => {
+    mountForm(LIMITED, { requestId: 'sr-5' });
+    await screen.findByRole('button', { name: 'Submit sample request' });
+    expectNoOwnBack();
+  });
+  it('read-only view: no Back of its own', async () => {
+    mountDetail(LIMITED, { status: 'submitted', status_label: 'Submitted' });
+    await screen.findByLabelText('Sample request actions');
+    expectNoOwnBack();
+  });
+});

@@ -294,3 +294,157 @@ def test_attachment_unlink_as_an_impersonating_admin_is_the_salespersons(scene):
     assert _settle(scene.client, scene.sp.headers, "my_request_attachment", link)["last_outcome"]["status"] == "committed"
     assert not _link_exists(scene, kind, sid, link)
     _assert_impersonated_trace(_deletes(scene, link), scene.sp, admin)
+
+
+# ----------------------------------------------------------------------------- unlink: the other two kinds
+
+from types import SimpleNamespace  # noqa: E402
+
+from app.models.user import User  # noqa: E402
+
+NPA_PT_KINDS = ["new_product_application", "price_tag_request"]
+
+
+@pytest.fixture(params=NPA_PT_KINDS)
+def req(request, scene):  # noqa: F811
+    """One salesperson world per kind (NPA and price tag keep their own seeding), as a flat handle."""
+    kind = request.param
+    if kind == "new_product_application":
+        from tests import _portal_p4_npa_support as m
+
+        w = m.World(sc=scene, rep=None, other=None, company_id=s.SORENTO)
+    else:
+        from tests import _portal_p4_pt_support as m
+
+        w = m.World(sc=scene, rep=None, other=None, product=m._ptag_r9_seed.seed_product(scene.db),
+                    company_id=s.SORENTO)
+        scene.db.flush()
+    w.rep = w.person("Rep")
+    w.other = w.person("Other")
+    scene.db.commit()
+    return SimpleNamespace(
+        kind=kind, w=w, rep=w.rep, headers=w.rep.actor.headers,
+        make=lambda api=None: m.create(api or w.rep.me, w)["id"],
+        submit=lambda sid: s.ok(w.rep.me.call("POST", f"/submissions/{kind}/{sid}/submit")),
+    )
+
+
+def _up(req, sid):
+    return s.ok(_upload(req.rep.me, req.kind, sid)).json()["link_id"]
+
+
+def test_attachment_unlink_npa_and_price_tag_own_upload_is_removed_after_the_window(req):
+    sc = req.w.sc
+    sid = req.make()
+    link = _up(req, sid)
+    r = _park(sc.client, req.headers, UNLINK, "my_request_attachment", link)
+    s.not_a_missing_route(r)
+    assert r.status_code == 202, r.text
+    assert r.json()["window_seconds"] == 5
+    assert _link_exists(sc, req.kind, sid, link)
+    _lapse(sc.db, r.json()["id"])
+    assert _settle(sc.client, req.headers, "my_request_attachment", link)["last_outcome"]["status"] == "committed"
+    assert not _link_exists(sc, req.kind, sid, link)
+    _assert_own_trace(_deletes(sc, link), req.rep.actor)
+
+
+def test_attachment_unlink_npa_and_price_tag_staff_upload_is_refused_locked(req):
+    sc = req.w.sc
+    sid = req.make()
+    staff_link = _staff_file(sc, req.kind, sid)
+    r = _park(sc.client, req.headers, UNLINK, "my_request_attachment", staff_link)
+    _known(r)
+    assert r.status_code == 403, r.text
+    assert "STAFF_UPLOAD_LOCKED" in r.text or "added by our team" in r.text
+    assert _link_exists(sc, req.kind, sid, staff_link)
+
+
+def test_attachment_unlink_npa_and_price_tag_cancel_keeps_the_file(req):
+    sc = req.w.sc
+    sid = req.make()
+    link = _up(req, sid)
+    r = _park(sc.client, req.headers, UNLINK, "my_request_attachment", link)
+    assert r.status_code == 202, r.text
+    assert sc.client.post(f"{PENDING}/{r.json()['id']}/cancel", headers=req.headers).status_code == 200
+    assert _link_exists(sc, req.kind, sid, link)
+
+
+def test_attachment_unlink_npa_and_price_tag_foreign_row_refused_as_the_portal_refuses(req):
+    sc = req.w.sc
+    foreign = req.make(req.w.other.portal)
+    link = s.ok(_upload(req.w.other.portal, req.kind, foreign)).json()["link_id"]
+    portal = req.rep.portal.call("DELETE", f"/attachments/{link}")
+    assert portal.status_code >= 400
+    r = _park(sc.client, req.headers, UNLINK, "my_request_attachment", link)
+    _known(r)
+    assert r.status_code == portal.status_code, (r.status_code, r.text, portal.text)
+    assert _link_exists(sc, req.kind, foreign, link)
+
+
+# ----------------------------------------------------------------------------- commit re-checks the gates
+
+
+def _assert_commit_refused(client, headers, entity_type, entity_id):
+    out = _settle(client, headers, entity_type, entity_id)
+    assert out["pending"] is None, out
+    assert out["last_outcome"] is not None, "the lapsed action left no outcome"
+    assert out["last_outcome"]["status"] != "committed", out
+
+
+@pytest.mark.parametrize("kind", s.KINDS)
+def test_my_request_delete_commit_refuses_when_the_draft_was_submitted_inside_the_window(scene, kind):
+    spec, sid = s.SPECS[kind], _draft(scene, kind)
+    r = _park(scene.client, scene.sp.headers, DEL, kind, sid)
+    assert r.status_code == 202, r.text
+    s.ok(scene.me.submit(kind, sid))
+    _lapse(scene.db, r.json()["id"])
+    _assert_commit_refused(scene.client, scene.sp.headers, kind, sid)
+    assert _exists(scene, spec, sid), "a submitted request must survive a delete parked while it was a draft"
+
+
+def test_my_request_delete_price_tag_commit_refuses_when_submitted_inside_the_window(world):
+    w, rep = world, world.rep
+    rid = pt.create(rep.me, w)["id"]
+    r = _park(w.client, rep.actor.headers, DEL, pt.KIND, rid)
+    assert r.status_code == 202, r.text
+    s.ok(rep.me.call("POST", f"{pt.SUB}/{rid}/submit"))
+    _lapse(w.sc.db, r.json()["id"])
+    _assert_commit_refused(w.client, rep.actor.headers, pt.KIND, rid)
+    assert pt.pt_row(w, rid) is not None, "the submitted price tag request must survive"
+
+
+def test_my_request_delete_price_tag_commit_refuses_when_the_user_lost_their_contact_inside_the_window(world):
+    w, rep = world, world.rep
+    rid = pt.create(rep.me, w)["id"]
+    r = _park(w.client, rep.actor.headers, DEL, pt.KIND, rid)
+    assert r.status_code == 202, r.text
+    w.sc.db.query(User).filter(User.id == rep.actor.id).update({"respond_contact_id": None}, synchronize_session=False)
+    w.sc.db.commit()
+    _lapse(w.sc.db, r.json()["id"])
+    _assert_commit_refused(w.client, rep.actor.headers, pt.KIND, rid)
+    assert pt.pt_row(w, rid) is not None
+
+
+def test_attachment_unlink_commit_refuses_when_the_parent_stopped_being_editable_inside_the_window(req):
+    sc = req.w.sc
+    sid = req.make()
+    link = _up(req, sid)
+    r = _park(sc.client, req.headers, UNLINK, "my_request_attachment", link)
+    assert r.status_code == 202, r.text
+    req.submit(sid)
+    _lapse(sc.db, r.json()["id"])
+    _assert_commit_refused(sc.client, req.headers, "my_request_attachment", link)
+    assert _link_exists(sc, req.kind, sid, link), "a file on a submitted request must survive"
+
+
+def test_attachment_unlink_commit_refuses_when_the_user_lost_their_contact_inside_the_window(scene):
+    kind = "stock_inquiry"
+    sid = _att_draft(scene, kind)
+    link = s.ok(_upload(scene.me, kind, sid)).json()["link_id"]
+    r = _park(scene.client, scene.sp.headers, UNLINK, "my_request_attachment", link)
+    assert r.status_code == 202, r.text
+    scene.db.query(User).filter(User.id == scene.sp.id).update({"respond_contact_id": None}, synchronize_session=False)
+    scene.db.commit()
+    _lapse(scene.db, r.json()["id"])
+    _assert_commit_refused(scene.client, scene.sp.headers, "my_request_attachment", link)
+    assert _link_exists(scene, kind, sid, link)

@@ -440,3 +440,31 @@ describe('staff keep marketing\'s Price Tag Request page', () => {
     expect(where((c) => c.url.startsWith('/api/v1/my-requests'))).toHaveLength(0);
   });
 });
+
+/** S1: the CRM page header carries the ONE Back (a link to the list); the embedded portal form adds none, and no /portal href. */
+function expectNoOwnBack() {
+  expect(screen.queryByRole('button', { name: /^Back/ })).toBeNull();
+  const links = screen.queryAllByRole('link', { name: /Back/ });
+  expect(links.length).toBeLessThanOrEqual(1);
+  for (const el of Array.from(document.querySelectorAll('[href]'))) {
+    expect(el.getAttribute('href') ?? '').not.toContain('/portal');
+  }
+}
+
+describe('limited user, Price Tag Request shows exactly one Back (the CRM header\'s)', () => {
+  it('new form: no Back of its own, no /portal link', async () => {
+    mountNew();
+    await screen.findByRole('button', { name: 'Save Draft' });
+    expectNoOwnBack();
+  });
+  it('draft edit: no Back of its own', async () => {
+    mountPage(LIMITED);
+    await screen.findByRole('button', { name: 'Save Draft' });
+    expectNoOwnBack();
+  });
+  it('read-only view: no Back of its own', async () => {
+    mountPage(LIMITED, SUBMITTED);
+    await screen.findByText('Status:');
+    expectNoOwnBack();
+  });
+});

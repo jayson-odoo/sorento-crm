@@ -5,8 +5,7 @@
  * SalesOpportunityModal (Log opportunity, opened from the list) and SalesOpportunityDetail (view + in-place edit +
  * stage moves). Staff keep today's modal and detail.
  *
- * Markers that tell the PORTAL from the CRM: the create dialog body carries the portal card title "Log a sales
- * opportunity"; the detail's gear is the portal's own `DetailActionsMenu` labelled "Actions" (the CRM detail uses
+ * Markers that tell the PORTAL from the CRM: the create dialog body carries the portal's "Customer or prospect" field; the detail's gear is the portal's own `DetailActionsMenu` labelled "Actions" (the CRM detail uses
  * `DetailActions`, mocked here with data-testid="detail-actions").
  *
  * The SearchableSelect is a native <select> here (same stand-in the portal and CRM opportunity tests use).
@@ -179,16 +178,25 @@ describe('limited user, Log opportunity renders the portal create form', () => {
   it('the dialog body is the portal form ("Log a sales opportunity"), searching my-requests only', async () => {
     mountModal(LIMITED);
     const dialog = await screen.findByRole('dialog');
-    expect(await within(dialog).findByText('Log a sales opportunity')).toBeInTheDocument();
+    expect(await within(dialog).findByLabelText('Customer or prospect')).toBeInTheDocument();
     await waitFor(() => expect(where((c) => c.url.startsWith(`${MINE}/customer-options`)).length).toBeGreaterThan(0));
     expect(staffApi()).toHaveLength(0);
     expect(portalCalls()).toHaveLength(0);
   });
 
+  it('the dialog names the action once: the DialogTitle stays, the portal card title is not rendered', async () => {
+    mountModal(LIMITED);
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByLabelText('Customer or prospect');
+    expect(within(dialog).getByRole('heading', { name: 'Log opportunity' })).toBeInTheDocument();
+    expect(within(dialog).queryByText('Log a sales opportunity')).toBeNull();
+    expect(within(dialog).queryByText(/^Log (a sales )?opportunity$/i, { selector: '[data-slot="card-title"]' })).toBeNull();
+  });
+
   it('Save POSTs exactly the portal body to my-requests, then pushes the CRM detail (never /portal)', async () => {
     mountModal(LIMITED);
     const dialog = await screen.findByRole('dialog');
-    await within(dialog).findByText('Log a sales opportunity');
+    await within(dialog).findByLabelText('Customer or prospect');
     const customer = screen.getByLabelText('Customer or prospect');
     await waitFor(() => expect((customer as HTMLSelectElement).options.length).toBeGreaterThan(1));
     fireEvent.change(customer, { target: { value: 'cust-1' } });
@@ -249,8 +257,8 @@ describe('limited user, Sales Opportunity detail renders the portal detail', () 
     for (const link of screen.queryAllByRole('link')) {
       expect(link.getAttribute('href') ?? '').not.toContain('/portal');
     }
-    const back = screen.queryByRole('link', { name: /back/i });
-    if (back) expect(back.getAttribute('href')).toBe('/sales/opportunities');
+    expect(screen.queryByRole('button', { name: /^Back/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Back/ })).toBeNull();
   });
 
   it('a refused PATCH shows the server message in a toast', async () => {

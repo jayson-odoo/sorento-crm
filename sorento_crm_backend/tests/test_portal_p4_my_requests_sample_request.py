@@ -121,6 +121,7 @@ def test_p4_sr_foreign_row_answers_what_the_portal_answers(world):
         "put": ("PUT", f"{SR_PORTAL}/{foreign}", w.sr_body()),
         "submit": ("POST", f"{SR_PORTAL}/{foreign}/submit", None),
         "cancel": ("POST", f"{SR_PORTAL}/{foreign}/cancel", None),
+        "pdf": ("GET", f"{SR_PORTAL}/{foreign}/pdf", None),
     }
     for name, (method, path, body) in calls.items():
         kw = {"json": body} if body is not None else {}
