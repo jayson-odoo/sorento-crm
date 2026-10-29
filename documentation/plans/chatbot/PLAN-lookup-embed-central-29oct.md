@@ -518,7 +518,7 @@ plus `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_li
 
 ### Slice 4 contract (lookup words in the store, PROMPT_SYNONYMS gone)
 
-- `app/services/lookup_word_store.py`: `LOOKUP_SOURCE = "lookup_word"`.
+- `app/services/chatbot/head/lookup_word_store.py` (inside the chatbot boundary): `LOOKUP_SOURCE = "lookup_word"`.
   - `sync_lookup_words(db, *, model=None, embed=True) -> SyncResult(created, updated, retired, embedded)`: rows from
     `lookup_lists.load_rows` with the widest visibility (as the start-up warm, `engine.py:1345-1385`: salespeople,
     customers, spec rows); one `embedding_documents` row per lookup row (`source_type = 'lookup_word'`, `source_id =
@@ -539,7 +539,7 @@ plus `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_li
 - Scheduled task `lookup_words_sync` every 600 s (handler registered next to `embedding_job_processor`,
   `app/scheduler/task_scheduler.py:185,793`), seeded idempotently by migration `lec_0003_lookup_words_sync`
   (down_revision `lec_0002_embedding_indexes`) the way `143_seed_embedding_job_processor_task.py` seeds its row.
-- RQ task `embed_missing_lookup_words()` (`app/tasks/embedding_backfill.py`, queue `imports`) = `sync_lookup_words`.
+- RQ task `embed_missing_lookup_words()` (`app/tasks/chat_turns.py`, the chatbot doorway; queue `imports`) = `sync_lookup_words`.
 - Script `scripts/move_prompt_synonyms.py` (dry run by default, `--apply` to write): every former PROMPT_SYNONYMS
   word not already on a row of its class / type is listed; `--apply` adds a category word to the `search_synonyms` of
   every active category of that class, a file type word as a keyword of that type's `attachment_type_alias` option
@@ -547,21 +547,26 @@ plus `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_li
 
 ### Slice 5 contract (API + screens)
 
-API, added to the existing router `app/api/v1/system/embeddings.py` (prefix `/api/v1/system/embeddings`; the existing
-`/metrics`, `/dead-letters`, `/rebuild`, `/backfill` stay). View = `master_data.lookup_sets.view`, edit =
-`master_data.lookup_sets.edit`:
+API. The chatbot import boundary (`tests/chatbot/test_import_boundary.py`: core never imports `app.services.chatbot`)
+splits it: record endpoints go on the existing core router `app/api/v1/system/embeddings.py` (prefix
+`/api/v1/system/embeddings`; `/metrics`, `/dead-letters`, `/rebuild`, `/backfill` stay): `GET /overview`,
+`POST /records-backfill`. Lookup-word endpoints, which need `lookup_lists` / `list_resolver`, go on the chatbot doorway
+router `app/api/v1/system/chatbot.py` under `/api/v1/system/chatbot/lookup-words` (`GET ""`, `POST /try`,
+`POST /embed-missing`). Overview's lookup numbers are counted from `embedding_chunks` (`source_type = 'lookup_word'`)
+in core SQL. View = `master_data.lookup_sets.view`, edit = `master_data.lookup_sets.edit`:
 - `GET /overview` (view) -> `{setting: {provider, model, backfill_rpm}, records_search_model, lookup: {texts_total,
   texts_with_vector}, records: [{source_type, documents, chunks_by_model: {<model>: n}}], guard: {target_model,
   ready, remaining, failed}}` (records = the keep set only; guard numbers from `embedding_backfill_service`).
-- `GET /lookup-words?list=<name>` (view) -> `{list, rows: [{key, label, source, group, words: [{text, home,
+- `GET /api/v1/system/chatbot/lookup-words?list=<name>` (view) -> `{list, rows: [{key, label, source, group, words: [{text, home,
   has_vector}]}]}`, rows from `load_rows` under the request's company scope, `home` one of `label`, `code`, `class`,
   `alias_column`, `alias_set`, `description`; `has_vector` for the setting's model. Lists: category, spec, file_type,
   brand, promotion_kind, location, salesperson, customer, sales_channel. Unknown list -> 422.
-- `POST /try` (view) `{phrase}` -> `{verdict: resolved|ambiguous|unresolved, candidates: [{list, key, label, spelling:
+- `POST /api/v1/system/chatbot/lookup-words/try` (view) `{phrase}` -> `{verdict: resolved|ambiguous|unresolved, candidates: [{list, key, label, spelling:
   {score, text, home}, vector: {score, text, home} | null, partial, floors: {spell, partial, meaning}, passed,
   signal}]}`: the live span resolver (`list_resolver.resolve`, `_score_list`, `_meaning_scores`) over the same rows,
   phrase embedded once with the setting's model; top 8 candidates.
-- `POST /embed-missing` (edit) -> 202 `{job_id}` enqueues `embed_missing_lookup_words`; `POST /records-backfill` (edit)
+- `POST /api/v1/system/chatbot/lookup-words/embed-missing` (edit) -> 202 `{job_id}` enqueues
+  `app.tasks.chat_turns.embed_missing_lookup_words`; `POST /api/v1/system/embeddings/records-backfill` (edit)
   `{action: start|stop}` -> 202: start enqueues `run_records_backfill`, stop sets the stop flag the job's
   `should_stop` reads (Redis key `lec:records_backfill:stop`).
 - Word provenance: `LookupRow` gains `homes: tuple[str, ...] | None` parallel to `texts`, filled by every loader.
