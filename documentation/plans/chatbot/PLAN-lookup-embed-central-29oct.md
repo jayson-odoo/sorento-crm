@@ -67,36 +67,42 @@ Vectors:
   business records, `document_id` FK NOT NULL, `is_current` / `superseded_at` versioning, `company_id`,
   `Vector(1536)`; fed by `embedding_queue` (`:29-62`). Different lifecycle from lookup words.
 
-Dev sizes (sorento_cagent_stack, read-only, 29 Oct): 114 categories (39 carry search_synonyms), 21 non-certificate
-attachment types (16 with description words), 12 brands, 71 warehouses, 114 sales agents (23 with aliases), 5,864
-customers, 53 spec keys. Category + file type + sales channel alone = 601 texts.
+Dev sizes (sorento_cagent_stack, 15 Oct dev copy, read-only, 29 Oct): 114 categories (39 carry search_synonyms) plus
+11 class labels and 44 `product_type` values as type rows; 22 attachment types, of which the file type loader offers 8
+(the `chatbot_prompt_vars.py:322-331` filter: product-carried or unused) plus 1 certificate kind; 12 brands, 71
+warehouses, 114 sales agents (23 with aliases), 5,864 customers, 53 spec keys. Category + file type + sales channel
+rows = 438 distinct texts.
 
 ## Real examples (dev data, cached gemini-embedding-001 vectors, no API call made)
 
 Vectors: `crew/state/eval/eem/s3/vec_store` (gemini-embedding-001, 1536 dims, written by the EEM S3 gate on the org
-key, 27 Oct); 454 of the 601 category / file type / sales channel texts have one. Rows rebuilt from
-sorento_cagent_stack exactly as the loaders build them. Score = cosine, best text of the row.
+key, 27 Oct); 359 of the 438 category / file type / sales channel texts have one. Rows rebuilt from
+sorento_cagent_stack exactly as the loaders build them (generator: the mock's own script, numbers below are its
+output). Score = cosine of the phrase to the row's nearest text.
 
-| Phrase | Top row (list) | Score | Matched text (its home) | Next row | Score |
+| Phrase | Top row (list) | Score | Nearest text (its home) | Next row | Score |
 |---|---|---|---|---|---|
 | 马桶 | SRT-WC, M-WC, IDC-WC, CB-WC, BRT-WC (category, class Water Closet) | 1.000 | 马桶 (search_synonyms) | - | - |
-| smart toilet | the 5 Water Closet categories | 0.759 | 马桶 (search_synonyms) | - | - |
-| mixer tap | SRT-FT, M-FT, CB-FT, BRT-FT (category, class Tap) | 0.825 | water tap (search_synonyms) | CB-FH via "hose" | ~0.61 |
-| high resolution photo | Product Photos (file type) | 0.711 | photo (attachment_type_alias set) | Combo Image | 0.601 |
-| project | project (sales channel) | 1.000 | project (code constant) | Promotion (file type) | 0.624 |
+| smart toilet | the 5 Water Closet categories | 0.759 | 马桶 (search_synonyms) | SRT-UB (class Urinal) | 0.675 |
+| mixer tap | SRT-FT, M-FT, CB-FT, BRT-FT (category, class Tap) | 0.825 | water tap (search_synonyms) | BRT-SH / CB-SH via "hand shower" | 0.683 |
+| high resolution photo | Product Photos (file type) | 0.708 | Photo (description word) | Combo Image | 0.601 |
+| project | project (sales channel) | 1.000 | project (code constant) | Product Photos via "picture" (alias set); MISC (category) | 0.620; 0.600 |
 | dealer | dealer (sales channel) | 1.000 | dealer (code constant) | DISPLAY (category) | 0.585 |
 | 零售 / retail | no vector cached; the dealer row's only text is "dealer" | - | - | - | - |
 
-Two findings the screen makes visible:
+Findings the screen makes visible:
 - "零售" / "retail" can only reach dealer by meaning today (no alias home for sales channel). With a
-  `sales_channel` alias (dealer <- retail, 零售, kedai runcit) they match by spelling at 1.000, no meaning needed.
-- Gemini's unrelated pairs land at 0.57-0.62 (project -> Promotion 0.624 > file_type floor 0.59; dealer -> DISPLAY
-  0.585 > category floor 0.55): the 3-small floors are too low for gemini. Out of scope here (a separate floor
-  re-score lane), but the screen shows score vs floor per row so it is seen.
-- PROMPT_SYNONYMS' 3 category entries are already data on dev: every Water Closet category carries
-  water closet, wc, toilet, toilet bowl, closet, tandas, 马桶, 坐厕 in search_synonyms; Tap carries
-  paip, kepala paip, water tap, 水龙头. UNVERIFIED on prod (no prod reads in crew lanes; owner-run read-only SQL
-  in "Rollout").
+  `sales_channel_alias` option (dealer <- retail, 零售) they match by spelling at 1.000, no meaning needed.
+- Gemini's unrelated pairs land at 0.59-0.62 (project -> Product Photos 0.620 > file_type floor 0.59; project ->
+  MISC 0.600, dealer -> DISPLAY 0.585 > category floor 0.55): the 3-small floors are low for gemini. Out of scope
+  here (a separate floor re-score lane), but the screen shows score vs floor per row so it is seen.
+- PROMPT_SYNONYMS barely reaches dev rows: entries match a row by exact label (`lookup_lists.py:498-500`). Category
+  keys: "water closet" and "kitchen sink" match class rows; "water tap" matches nothing (the class is "Tap"). File type
+  keys photo / image / video / drawing / technical drawing / 3d model / certificate match no dev type name
+  (types are "Product Photos", "Certification", ...); "installation guide" adds "installation manual", already a
+  description word. The words themselves are mostly data already: every Water Closet category carries water closet,
+  wc, toilet, toilet bowl, closet, tandas, 马桶, 坐厕; Tap carries paip, kepala paip, water tap, 水龙头. UNVERIFIED on
+  prod (no prod reads in crew lanes; owner-run read-only SQL in "Rollout").
 
 ## ARCHITECTURE
 
@@ -149,7 +155,7 @@ re-embeds in the background; until it completes, turns embed their own misses as
 ### Screen (mock: `documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`)
 
 `System > Lookup Words` (`/master-data-management/lookup-words`, beside Lookup Sets, permission
-`master_data.lookup_sets.view`). Header: embedder model + coverage ("454 / 601 texts embedded"), one CTA
+`master_data.lookup_sets.view`). Header: embedder model + coverage ("359 / 438 texts with a vector"), one CTA
 "Embed missing". Line tabs per list. DataGrid per list: row label, source table, words (chips coloured by home:
 name/code, alias column, alias set), vector status. Card "Try a phrase": nearest rows with score, list floor and
 whether the span pass would offer it. No 2-D plot (Q4).
@@ -176,8 +182,10 @@ whether the span pass would offer it. No 2-D plot (Q4).
 
 - One additive alembic migration: `lookup_vectors` + unique index. No data migration; no change to lookup_sets /
   lookup_bindings schema.
-- Data moves (owner-visible, done on the screen or by a one-off script the owner runs): PROMPT_SYNONYMS file type
-  words into attachment_type_alias options; sales channel set created with dealer / project options.
+- Data moves (owner-visible, done on the screen or by a one-off script the owner runs): each PROMPT_SYNONYMS word
+  not already on a row of its class / type goes to that row's alias home (list shown to the owner first; on dev only
+  mangkuk tandas, sinki dapur, 厨房水槽 may be missing, UNVERIFIED per word); sales_channel_alias set created with
+  dealer / project options.
 - Rollback: revert the PR (cache code returns to the shared file); the table is left unused, drop later.
 - Prod steps for the owner: (1) run the read-only SQL below to confirm the dict's category words are on prod's
   categories; (2) deploy; (3) open Lookup Words, press Embed missing (~USD 0.01); (4) try 零售 / retail / 马桶.
