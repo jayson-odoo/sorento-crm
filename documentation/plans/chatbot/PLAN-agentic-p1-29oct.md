@@ -1,9 +1,9 @@
 # PLAN: Agentic phase 1 - the agent foundation (read-only, explicit entry)
 
-Status: Plan. Card v3 (the foundation) posted for owner answers (crew-note on PR #1982); no code until they
-arrive. Hand-off-rule track stopped by the owner (30 Oct). Track: full lane (a migration for the per-contact
-switch, a new entry endpoint, a permission layer). Lane AGENTIC-P1, branch `claude/agentic-crm-chatbot-p1-fhvvb0`,
-base origin/main ec29a81c.
+Status: Build (red-first). Card v3 answered by the owner 30 Oct ~00:59 (Q1 a, Q2 a, Q3 a + budgets as settings,
+Q4 continuous context with compaction, Q5 a). Track: full lane (migration: contact switch, budget settings,
+`chatbot.agent_conversations`; new endpoint; permission layer). Lane AGENTIC-P1, branch
+`claude/agentic-crm-chatbot-p1-fhvvb0`, base origin/main ec29a81c.
 
 Parent: `PLAN-agentic-crm-29oct.md` (components 1, 3, 4, 8). P0 (#1979, c9ff4958c9, on main) keeps Gemini thought
 signatures / Claude thinking across tool rounds (`ChatResult.continuation`, `app/services/llm_provider.py:26-54`)
@@ -75,14 +75,20 @@ catalogue's `inputSchema` with `contact_id`/`space_id` stripped (they are server
 
 P1 set (all already on the chatbot's read-only allow-list, `lanes/business/fetch.py:1475`):
 
-| Tool | Reads |
-| --- | --- |
-| `crm_report_ask` | The one report service: sales / outstanding ranked or totalled by one dimension and period |
-| `crm_inventory_stock_balance_list` | Stock on hand |
-| `crm_incoming_stock_by_product`, `crm_incoming_stock_shipments` | Incoming quantities, ETAs, allocation signal |
-| `crm_procurement_grn_summary`, `crm_procurement_po_last_cost_list`, `crm_procurement_spo_allocations_last_receipt_list`, `crm_procurement_po_placed_list` | Received, last cost / supplier, last receipt, POs placed |
-| `crm_order_management_orders_by_product_list`, `crm_order_management_orders_list` | SO / DO lines and status |
-| `crm_lookup_resolve`, `crm_master_products_list` | Names, codes, brands, categories to ids |
+| Tool | Reads | User permission (screen view slug) |
+| --- | --- | --- |
+| `crm_report_ask` | The one report service: sales / outstanding ranked or totalled by one dimension and period | `order_management.orders.view` (the route's own) |
+| `crm_inventory_stock_balance_list` | Stock on hand | `inventory.stock.view` |
+| `crm_incoming_stock_by_product`, `crm_incoming_stock_shipments` | Incoming quantities, ETAs, allocation signal | `procurement.packing_lists.view` |
+| `crm_procurement_grn_summary` | Received quantities | `procurement.grn.view` |
+| `crm_procurement_po_last_cost_list`, `crm_procurement_po_placed_list` | Last cost / supplier, POs placed | `scm.purchase_orders.view` |
+| `crm_procurement_spo_allocations_last_receipt_list` | Last receipt | `procurement.spo_allocations.view` |
+| `crm_order_management_orders_by_product_list` | SO / DO lines and outstanding by product | `order_management.orders.view` (the route's own) |
+| `crm_lookup_resolve` | Names, codes, brands, categories, customers to ids | `master_data.products.view` |
+
+Most of these routes only require a signed-in caller (for example `inventory/stock.py:239`). So the slug is the
+view permission of the screen showing the same data (`config/menu.config.tsx`; `external/ingest.py:153`
+READ_PERMISSIONS), which is stricter than the route, never wider.
 
 Typed results: every dispatch returns `{status: ok | denied | invalid | error | timeout, data, more}`. `denied`
 and `invalid` go back to the model as facts ("you may not read X"), so it can say so or try another route.
@@ -104,36 +110,52 @@ in it comes from the model.
 - Dispatch re-checks all of it (schema exposure is not a guard), validates arguments against the schema, injects
   the contact's `contact_id`/`space_id`, and calls through `services._mcp_call(db)`
   (`lanes/business/services.py:228`): read-only allow-list, brand-scope guard on the call and on the result.
+- Field-level contact scope: every result passes through `lanes/business/fetch.py::output_structurer`, the one
+  place today's chatbot drops restricted fields (supplier, sellable, ...) unless the contact holds the reveal
+  (`fetch.py:3200-3270`), with the contact's reveal grants as `access.attributes`. The model never sees a field
+  the contact could not see today.
 - The routes then apply today's contact scope from `contact_id` (customer scope, reveal grants, audience, stock
   location policy; `api/v1/order_management/report_ask.py:1-9`). So a read is never wider than the same contact
   gets from today's bot, and never wider than the user's permission slugs.
 - Known limit, stated: the MCP call itself still authenticates as the integration's act-as user. Company scope and
   own-agent rules of the linked user are therefore enforced only as far as the contact scope covers them (Q2).
 
-### 4. Context and memory per conversation
+### 4. Context and memory per conversation (owner Q4: continuous, like Claude Code)
 
-- One conversation = one contact, in the agent world, until "new conversation". Each agent turn is one
-  `chatbot.turns` row (`app/models/chatbot_turn.py`, `ingress = "agent"`), carrying the message, the reply and the
-  trace. No new table.
-- Context per call: system prompt (behaviour, today's date, the user's display name and role, permitted tools) +
-  the last 10 agent exchanges of this conversation read back from those rows (user text, final reply, and a
-  one-line digest of each tool call: name, key arguments, status) + the new message + this turn's tool protocol.
-- Fresh facts every time: history is evidence of what the user wants, never of current stock or orders; the model
-  is told to re-read.
-- Later, not P1: summarising/compacting older exchanges, retrieving exact earlier tool results, durable tasks
-  across turns (needed with writes).
+- The conversation runs continuously until the user clears it ("New conversation"), like Claude Code. There is
+  no fixed window of N exchanges.
+- Storage: each agent turn is one `chatbot.turns` row (`app/models/chatbot_turn.py`; `ingress = "agent"`,
+  `is_test = true` because nothing is sent to WhatsApp). The row carries the user text and
+  `agent_conversation_id` in `envelope`; the final reply and a one-line digest per tool call (name, key
+  arguments, status) in `response`; and the full trace.
+- One small new table, `chatbot.agent_conversations`, is needed for what a turn row cannot hold: `id`,
+  `contact_respond_id`, `created_at`, `summary` (text, null), `summary_through` (the `created_at` of the last turn
+  folded into the summary, null), `summary_tokens`. The contact's current conversation is its newest row.
+  "New conversation" inserts a new row. Nothing is deleted.
+- Rebuilding context for a call: system prompt + `summary` (when set) + every turn of the conversation after
+  `summary_through`, verbatim (user text, reply, tool digests) + the new message + this turn's tool protocol.
+- Compaction: when the verbatim part is estimated (characters / 4) above `chatbot_agent_compact_tokens`
+  (default 40,000), one model call with no tools folds the older turns, keeping the last 6 verbatim, into the
+  running summary (old summary + those turns). The summary keeps corrections, open questions, entities and
+  figures already answered, with the date each was read. `summary_through` then moves forward. A failed
+  compaction leaves the conversation as it was; the turn still runs, on the verbatim history truncated from the
+  oldest turn.
+- Fresh facts every time: history and summary are evidence of what the user wants, never of current stock or
+  orders. The model is told to re-read.
+- Later, not P1: retrieving the exact earlier tool results, durable tasks across turns (needed with writes).
 
-### 5. Budgets
+### 5. Budgets (owner Q3: configurable)
 
-Per turn, constants in `app/config.py` (env-overridable, like `ai_assistant_agent_max_iterations`, `:366`):
+System Settings columns (one migration, edited on the existing Chatbot settings screen, read per turn):
 
-| Budget | P1 default (Q3) |
-| --- | --- |
-| Tool rounds | 8 |
-| Tool calls per round | 4 |
-| Wall clock | 45 s |
-| Input tokens summed over the turn | 150,000 |
-| Per MCP call timeout | min(remaining time, 10 s) |
+| Setting (`system_settings`) | Default | Meaning |
+| --- | --- | --- |
+| `chatbot_agent_max_rounds` | 8 | Tool rounds per turn |
+| `chatbot_agent_max_seconds` | 45 | Wall clock per turn |
+| `chatbot_agent_max_input_tokens` | 150000 | Input tokens summed over the turn's model calls |
+| `chatbot_agent_compact_tokens` | 40000 | Verbatim-history size that triggers compaction |
+
+Fixed in code: 4 tool calls per round; each MCP call's timeout is min(remaining time, 10 s).
 
 On any limit: one final call with no tools, told to answer with what it has and name what it could not check
 (owner Q4 a). The trace records which limit hit.
@@ -192,9 +214,11 @@ Later: WhatsApp entry; writes with one confirmation each, an action ledger and d
 the linked user's own principal; memory compaction; the analytics query builder tool and sandboxed computation;
 any automatic routing from today's bot.
 
-## Delivery after owner answers
+## Delivery
 
-Red first (tester): context refusals; tool list filtered by user slug and contact grant; dispatch refusals
+Red first (tester): budget settings read per turn and editable through the settings PUT; compaction (trigger,
+summary stored, `summary_through` moved, last 6 verbatim, a failed compaction keeps the turn running); "new
+conversation" starts empty; context refusals; tool list filtered by user slug and contact grant; dispatch refusals
 (name outside the registry, a slug or grant lost between exposure and dispatch, invalid arguments, a
 model-supplied contact_id ignored); budget limits and the final no-tool answer; figure check; memory read-back;
 continuation replay (Gemini cassette); endpoint auth and switch rules. Coder makes them green. FE: console Agent
