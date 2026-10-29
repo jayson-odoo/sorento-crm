@@ -7,7 +7,7 @@ provider / model only where they are still NULL, and sets the records-search mod
 four columns.
 
 Revision ID: lec_0001_embedding_setting
-Revises: cdr_0001_chat_delivery_trace
+Revises: item_class_0001
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "lec_0001_embedding_setting"
-down_revision = "cdr_0001_chat_delivery_trace"
+down_revision = "item_class_0001"
 branch_labels = None
 depends_on = None
 
