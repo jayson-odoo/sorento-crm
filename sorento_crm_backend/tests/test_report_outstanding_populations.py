@@ -1,12 +1,7 @@
-"""REPORT-OUTSTANDING-SUMMARY item 10 (owner 29 Oct): the chat outstanding figures count what the pre-#1922 outstanding
-report counted (`outstanding_report_service._fill_so` / `_fill_do`, 98773e5a^).
-
-* Undelivered orders are dated by the SALES ORDER's date, never the line's required date; a line with no date counts
-  when no period is named.
-* Pending delivery counts every undelivered DO that is not deleted: a cancelled-but-not-deleted DO, a REP-numbered DO and
-  a DO with no date count too (the sales bases keep excluding them).
-
-The numbers are the ones put to the owner (PR comment "item 10, WHY the outstanding figures changed").
+"""REPORT-OUTSTANDING-SUMMARY item 10 (owner ruling 29 Oct): pending delivery counts REP-numbered DOs (a delivery still
+owed, as the pre-#1922 outstanding report counted it); cancelled DOs stay out; undated DOs stay out until lane
+DO-IMPORT-DATE fixes them at source; undelivered orders keep the line required date (else the SO date), as the engine
+does. The engine and the screen run one rule set.
 """
 from __future__ import annotations
 
@@ -37,7 +32,8 @@ def _tot(body):
     return body["total"]["qty"], money(body["total"]["amount"])
 
 
-def test_example_1_undelivered_orders_are_dated_by_the_sales_order_date(client, db):
+def test_undelivered_orders_keep_the_line_required_date(client, db):
+    """SO-2 (required 5 Dec) is December's; SO-1 (dated 20 Dec, required 15 Jan) is January's."""
     cust = seed_customer(db, name=unique_code("CustA"))
     p1 = make_product(db, unique_code("P1"))
     seed_so_line(db, cust=cust, prod=p1, qty=10, delivered=4, total="1000.00",
@@ -46,20 +42,10 @@ def test_example_1_undelivered_orders_are_dated_by_the_sales_order_date(client, 
                  order_date=date(2025, 11, 28), required_date=date(2025, 12, 5))
     db.commit()
     body = _ok(client, _staff(db), basis="outstanding", customer_ids=[cust.id], period=DEC_2025)
-    assert _tot(body) == (6, D("600.00")), body["total"]  # SO-1 (dated 20 Dec), never SO-2 (required 5 Dec)
+    assert _tot(body) == (5, D("500.00")), body["total"]
 
 
-def test_an_undated_open_line_counts_over_every_date_but_not_in_a_period(client, db):
-    cust = seed_customer(db, name=unique_code("CustU"))
-    p1 = make_product(db, unique_code("PU"))
-    seed_so_line(db, cust=cust, prod=p1, qty=3, delivered=0, total="300.00", order_date=None, required_date=None)
-    db.commit()
-    staff = _staff(db)
-    assert _tot(_ok(client, staff, basis="outstanding", customer_ids=[cust.id], period=None)) == (3, D("300.00"))
-    assert _tot(_ok(client, staff, basis="outstanding", customer_ids=[cust.id], period=DEC_2025)) == (0, D("0.00"))
-
-
-def test_example_2_pending_delivery_counts_every_undelivered_do_not_deleted(client, db):
+def test_pending_delivery_counts_a_rep_do_but_not_a_cancelled_undated_or_deleted_one(client, db):
     seed_registry(db)
     cust = seed_customer(db, name=unique_code("CustB"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
@@ -67,21 +53,17 @@ def test_example_2_pending_delivery_counts_every_undelivered_do_not_deleted(clie
     kw = dict(customer_id=cust.id, source_book="db1")
     seed_do(db, order_date=date(2026, 10, 2), lines=[line(p2.id, wh.id, 8, total="800.00")], **kw)
     seed_do(db, order_date=date(2026, 10, 3), is_cancelled=True, lines=[line(p2.id, wh.id, 5, total="500.00")], **kw)
-    seed_do(db, order_date=date(2026, 10, 4), number=unique_code("REP"), lines=[line(p2.id, wh.id, 2, total="200.00")], **kw)
+    seed_do(db, order_date=date(2026, 10, 4), number="REP" + unique_code("X"), lines=[line(p2.id, wh.id, 2, total="200.00")], **kw)
     seed_do(db, order_date=None, lines=[line(p2.id, wh.id, 1, total="100.00")], **kw)
     seed_do(db, order_date=date(2026, 10, 5), deleted=True, lines=[line(p2.id, wh.id, 7, total="700.00")], **kw)
     db.commit()
-    staff = _staff(db)
-    body = _ok(client, staff, basis="pending_delivery", product_ids=[p2.id], period=None)
-    assert body["total"]["qty"] == 16, body["total"]  # 8 + 5 + 2 + 1; the deleted DO is out
-    assert body["summary"]["documents"] == 4, body["summary"]
-    oct_only = _ok(client, staff, basis="pending_delivery", product_ids=[p2.id],
-                   period={"date_from": "2026-10-01", "date_to": "2026-10-31"})
-    assert oct_only["total"]["qty"] == 15, oct_only["total"]  # the undated DO has no October
+    body = _ok(client, _staff(db), basis="pending_delivery", product_ids=[p2.id], period=None)
+    assert body["total"]["qty"] == 10, body["total"]  # 8 + the REP 2
+    assert body["summary"]["documents"] == 2, body["summary"]
 
 
 def test_the_delivery_order_sales_dataset_keeps_its_exclusions():
-    """Only the pending variant changes: the DO sales dataset (AC-SR-20) still drops cancelled, undated and REP DOs."""
+    """Only the pending variant counts REP DOs: the DO sales dataset (AC-SR-20) still drops cancelled, undated and REP."""
     from types import SimpleNamespace
 
     from app.services.reports.datasets import delivery_order_lines as dol
