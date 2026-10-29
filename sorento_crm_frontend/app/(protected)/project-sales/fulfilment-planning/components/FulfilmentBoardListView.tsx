@@ -243,6 +243,10 @@ export function FulfilmentBoardListView({
   const [localStatusFilter, setLocalStatusFilter] = React.useState<string[]>([]);
   const statusFilter = status?.value ?? localStatusFilter;
   const setStatusFilter = status?.onChange ?? setLocalStatusFilter;
+  // PLAN-SO-LOCATION: the SO line's own location, several at once. List view only - the grid
+  // already names each cell's locations in its pill strip.
+  const [locationFilter, setLocationFilter] = React.useState<string[]>([]);
+  const locationOptions = React.useMemo(() => locationFilterOptions(contributions), [contributions]);
   const filteredContributions = React.useMemo(
     () =>
       contributions.filter(
@@ -251,9 +255,11 @@ export function FulfilmentBoardListView({
           (!scope ||
             scope.value === 'all' ||
             scope.isSaved(contribution) === (scope.value === 'saved')) &&
-          matchesStatusFilter(contribution, draft[contribution.key] ?? null, statusFilter),
+          matchesStatusFilter(contribution, draft[contribution.key] ?? null, statusFilter) &&
+          (locationFilter.length === 0 ||
+            locationFilter.includes(contribution.fulfilment_location ?? NO_LOCATION)),
       ),
-    [contributions, externalSearch, statusFilter, draft, scope],
+    [contributions, externalSearch, statusFilter, locationFilter, draft, scope],
   );
 
   // Should fix 3 (review round 1, fixed again round 2): AC-10's "the order follows the list's
@@ -659,6 +665,35 @@ export function FulfilmentBoardListView({
         minSize: 110,
         enableSorting: true,
       },
+      // PLAN-SO-LOCATION: the SO line's own warehouse, beside the product it is owed in. The
+      // Suggested text names a location only where a supply part does, so a Buy row said
+      // nowhere where the line was. Same cell as `BoardCellBreakdownDialog`'s Location column.
+      {
+        id: 'fulfilment_location',
+        meta: { headerTitle: 'Location' },
+        accessorFn: (row) => row.fulfilment_location ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        cell: ({ row }) => {
+          const { key, fulfilment_location: code, fulfilment_location_name: name } =
+            row.original;
+          return code ? (
+            <span
+              className="block truncate"
+              title={name ? `${code} · ${name}` : code}
+              data-testid={`board-list-location-${key}`}
+            >
+              {code}
+            </span>
+          ) : (
+            <span className="text-destructive" data-testid={`board-list-location-${key}`}>
+              No location
+            </span>
+          );
+        },
+        size: 100,
+        minSize: 80,
+        enableSorting: true,
+      },
       // S6 (AC-B6-15): the live OI row this line raised, linking straight to it. A line
       // with no live row - nothing raised, or the row it raised has since settled/gone -
       // reads a plain dash, never a guess.
@@ -989,7 +1024,7 @@ export function FulfilmentBoardListView({
       columns={columns}
       rows={filteredContributions}
       getRowId={(row) => row.key}
-      pageResetKey={`${pageResetKey ?? externalSearch ?? ''}|${statusFilter.join(',')}|${scope?.value ?? ''}`}
+      pageResetKey={`${pageResetKey ?? externalSearch ?? ''}|${statusFilter.join(',')}|${locationFilter.join(',')}|${scope?.value ?? ''}`}
       // Rank is a planner's tiebreak, not something to read on every row: hidden until asked.
       initialColumnVisibility={{ rank: false }}
       listingKey="projects.projects.view::project-fulfilment-board-list-v2"
@@ -1039,29 +1074,51 @@ export function FulfilmentBoardListView({
           }
           filters={{
             kind: 'custom',
-            active: statusFilter.length > 0,
-            activeCount: statusFilter.length,
-            activeSummary:
-              statusFilter.length > 0
-                ? {
-                    label: `Status: ${statusFilter
-                      .map(
-                        (value) =>
-                          VERDICT_FILTER_OPTIONS.find((option) => option.value === value)?.label ??
-                          value,
-                      )
-                      .join(', ')}`,
-                    onClear: () => setStatusFilter([]),
-                  }
-                : undefined,
+            active: statusFilter.length > 0 || locationFilter.length > 0,
+            activeCount: statusFilter.length + locationFilter.length,
+            activeSummary: [
+              ...(statusFilter.length > 0
+                ? [
+                    {
+                      label: `Status: ${statusFilter
+                        .map(
+                          (value) =>
+                            VERDICT_FILTER_OPTIONS.find((option) => option.value === value)
+                              ?.label ?? value,
+                        )
+                        .join(', ')}`,
+                      onClear: () => setStatusFilter([]),
+                    },
+                  ]
+                : []),
+              ...(locationFilter.length > 0
+                ? [
+                    {
+                      label: `Location: ${locationFilter
+                        .map((value) => (value === NO_LOCATION ? 'No location' : value))
+                        .join(', ')}`,
+                      onClear: () => setLocationFilter([]),
+                    },
+                  ]
+                : []),
+            ],
             content: (
-              <SearchableMultiSelect
-                value={statusFilter}
-                onChange={setStatusFilter}
-                options={VERDICT_FILTER_OPTIONS}
-                placeholder="Status"
-                size="sm"
-              />
+              <div className="flex flex-col gap-2">
+                <SearchableMultiSelect
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  options={VERDICT_FILTER_OPTIONS}
+                  placeholder="Status"
+                  size="sm"
+                />
+                <SearchableMultiSelect
+                  value={locationFilter}
+                  onChange={setLocationFilter}
+                  options={locationOptions}
+                  placeholder="Location"
+                  size="sm"
+                />
+              </div>
             ),
           }}
           leftActions={
@@ -1143,6 +1200,25 @@ export function FulfilmentBoardListView({
     )}
     </>
   );
+}
+
+/** The Location filter's value for a line AutoCount gave no location. */
+const NO_LOCATION = '__no_location__';
+
+/** One option per location the board's lines name, code order, then No location if any. */
+function locationFilterOptions(
+  contributions: BoardContribution[],
+): { value: string; label: string }[] {
+  const codes = new Set<string>();
+  let missing = false;
+  for (const contribution of contributions) {
+    if (contribution.fulfilment_location) codes.add(contribution.fulfilment_location);
+    else missing = true;
+  }
+  return [
+    ...[...codes].sort().map((code) => ({ value: code, label: code })),
+    ...(missing ? [{ value: NO_LOCATION, label: 'No location' }] : []),
+  ];
 }
 
 /** Whether a Buy actually contributed to this composition (S3, R-Local). */

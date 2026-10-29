@@ -77,6 +77,15 @@ function rowOf(soNumber: string): HTMLElement {
   return screen.getByText(soNumber).closest('tr') as HTMLElement;
 }
 
+/** The filter's own Location trigger, not the column header of the same name. */
+async function locationFilterTrigger(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const trigger = screen.getAllByText('Location').find((el) => !el.closest('th'));
+    if (!trigger) throw new Error('no Location filter yet');
+    return trigger;
+  });
+}
+
 const threeLines = [
   contribution({ key: 'so-1:line-1', so_number: 'SO000001', line_no: 1, fulfilment_location: 'WH3-BB', fulfilment_location_name: null }),
   contribution({ key: 'so-2:line-2', so_number: 'SO000002', line_no: 2 }),
@@ -153,7 +162,7 @@ describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', (
     await screen.findByText('SO000001');
 
     await userEvent.click(screen.getByRole('button', { name: /^Filters/ }));
-    await userEvent.click(await screen.findByText('Location'));
+    await userEvent.click(await locationFilterTrigger());
     await userEvent.click(await screen.findByRole('option', { name: /^BRW-BB/ }));
     await userEvent.click(await screen.findByRole('option', { name: /^DC1-BB/ }));
     await userEvent.keyboard('{Escape}');
@@ -178,7 +187,7 @@ describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', (
     await screen.findByText('SO000004');
 
     await userEvent.click(screen.getByRole('button', { name: /^Filters/ }));
-    await userEvent.click(await screen.findByText('Location'));
+    await userEvent.click(await locationFilterTrigger());
     await userEvent.click(await screen.findByRole('option', { name: /^No location/ }));
     await userEvent.keyboard('{Escape}');
 
