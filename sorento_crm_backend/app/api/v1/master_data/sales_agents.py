@@ -284,11 +284,12 @@ def rederive_preview(
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
     db: Session = Depends(get_db),
 ):
-    """The dry run (Q8, Q10 (a)): every sales order whose stored class differs from the rule,
-    per agent per month, with the RM. Writes nothing."""
+    """The bulk script's dry run (Q8, Q10 (a)): every sales order whose stored class differs from
+    the rule, per agent per month, with the RM; an order the rule gives no class keeps its own,
+    as in the script. Writes nothing."""
     from app.services.sales import agent_class_service
 
-    moves = agent_class_service.rederive(db, apply=False)
+    moves = agent_class_service.rederive(db, apply=False, keep_unset=True)
     return {"data": [
         {"agent": m.agent, "month": m.month, "before": m.before, "after": m.after,
          "orders": m.orders, "amount": str(m.amount)}

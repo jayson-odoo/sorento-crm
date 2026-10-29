@@ -140,6 +140,9 @@ def test_number_hits_read_at_most_three_distinct_lengths(session_factory):
 # ------------------------------------------------------------------ C3
 
 
+from tests.chatbot._embed_http import patch_openai_embeddings
+
+
 def _fake_client(calls: list[list[str]]):
     class _Emb:
         def create(self, *, model, input):
@@ -154,7 +157,7 @@ def test_row_vectors_are_cached_as_float32(monkeypatch):
 
     ll._cache.clear()
     calls: list[list[str]] = []
-    monkeypatch.setattr(llm_provider.OpenAIProvider, "_client", lambda self, **kw: _fake_client(calls))
+    patch_openai_embeddings(monkeypatch, _fake_client(calls).embeddings.create)
     embed = ll.provider_embedder("sk-test")
     embed(["zzrow one", "zzrow two"])
     assert ll._cache, "nothing was cached"
@@ -169,7 +172,7 @@ def test_message_pieces_never_evict_or_replace_the_row_vectors(monkeypatch):
 
     ll._cache.clear()
     calls: list[list[str]] = []
-    monkeypatch.setattr(llm_provider.OpenAIProvider, "_client", lambda self, **kw: _fake_client(calls))
+    patch_openai_embeddings(monkeypatch, _fake_client(calls).embeddings.create)
     monkeypatch.setattr(ll, "_CACHE_CAP", 300)
     rows = [ll.LookupRow("customer", f"c{i}", f"Zzrow {i}", (f"zzrow {i}",)) for i in range(100)]
     embed = ll.provider_embedder("sk-test")

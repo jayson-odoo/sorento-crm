@@ -178,7 +178,11 @@ def test_the_migration_succeeds_when_the_build_times_out(monkeypatch, caplog):
 def test_the_retry_script_builds_it(monkeypatch):
     from scripts import ensure_goods_chain_indexes as retry
 
+    from app.services import embedding_indexes
+
     monkeypatch.setattr(online_index, "GOODS_CHAIN_KEY_INDEXES", ())
+    # Keep the retry off public.embedding_chunks (covered in test_migration_lec_0002_online_build.py).
+    monkeypatch.setattr(embedding_indexes, "MIGRATION_INDEXES", ())
     with _scratch(monkeypatch) as (schema, conn):
         assert retry.run(engine) is True
         assert _index(conn, schema)[1] is True
