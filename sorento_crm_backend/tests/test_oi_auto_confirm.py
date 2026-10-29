@@ -374,15 +374,16 @@ def test_ac_ac_3_a_full_reserve_link_marks_the_row_done(reserve_api):
     _assert_done_by_system(_reload(w.db, row))
 
 
-def test_ac_ac_10b_the_links_reader_returns_a_reserve_link_as_a_reserve_entry(reserve_api):
+def test_ac_ac_10b_the_links_reader_returns_no_entry_for_a_reserve_link(reserve_api):
+    """Review round 1 (lead ruling, blocker 2): a reserve is not a document link. The
+    worklist row names it in `reserve_label` beside `reserved_qty`
+    (tests/test_oi_auto_confirm_review1.py)."""
     w, row, _request_id = _reserve_whole_row(reserve_api, "50")
 
     links = ProjectOrderInquiryService(w.db).links_for_rows([row.id]).get(row.id, [])
 
-    reserves = [entry for entry in links if entry.get("kind") == "reserve"]
-    assert len(reserves) == 1, f"a reserve link is an entry of kind 'reserve': {links}"
-    assert reserves[0]["document"] == f"Reserved @ {w.site.warehouse_code}"
-    assert Decimal(str(reserves[0]["qty"])) == Decimal("50")
+    assert [entry for entry in links if entry.get("kind") == "reserve"] == [], links
+    assert links == [], "a reserve-only row has no document entry"
 
 
 # =============================================================================================
