@@ -1,14 +1,19 @@
 """Editing/saving a complaint's technical response must not regress its status.
 
 Lifecycle: submitted -> responded -> approved|rejected ; approved -> processed_by_cs|closed.
-'Save only' (update_complaint) may move new/submitted/updated -> 'updated', but must
-leave a decided/terminal complaint (approved/rejected/processed_by_cs/closed) untouched.
+'Save only' (update_complaint) never moves the status: an open complaint keeps the state
+it is in (the old auto-flip to 'updated' was removed on purpose, see the NOTE in
+ComplaintService.update_complaint), and a decided/terminal complaint
+(approved/rejected/processed_by_cs/closed) refuses the edit.
 
 Superseded in part by the response gate (UAC-portal-submission-revisions O1): on a
 decided/terminal complaint the response can no longer be edited at all, so
 "the save does not regress the status" became "the save is refused". The status
 is still untouched, which is what this file exists to protect. See
 tests/test_response_status_gate.py for the full gate.
+
+Runs on the blank scratch schema (tests/_pg_fixture.py): every test seeds its own row, so
+the file runs in CI (it used to run on the real database and sat in tests/ci_excluded.txt).
 """
 from __future__ import annotations
 
@@ -16,35 +21,19 @@ import uuid
 from typing import Iterator
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal, engine
 from app.models.complaints import Complaint
 from app.schemas.complaints import ComplaintUpdate
 from app.services.complaints_service import ComplaintService
 from app.services.error_handler import AppException
-
-
-@pytest.fixture(autouse=True)
-def _clean():
-    with engine.connect() as conn:
-        try:
-            conn.execute(text("DELETE FROM complaints WHERE complaint_number LIKE 'CMPSG-%'"))
-            conn.commit()
-        except Exception:
-            conn.rollback()
-    yield
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db() -> Iterator[Session]:
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.rollback()
-        s.close()
 
 
 def _seed(db: Session, status: str) -> Complaint:
@@ -76,10 +65,16 @@ def test_edit_response_refused_on_decided_status(db: Session, terminal: str) -> 
     assert c.technical_team_response is None  # the edit never landed
 
 
-def test_edit_response_moves_submitted_to_updated(db: Session) -> None:
-    c = _seed(db, "submitted")
+@pytest.mark.parametrize("open_status", ["new", "submitted", "resubmitted", "updated"])
+def test_edit_response_keeps_open_status(db: Session, open_status: str) -> None:
+    """A plain save stores the response and leaves the status alone. This replaces
+    test_edit_response_moves_submitted_to_updated, which asserted the auto-flip to
+    'updated' that "fix(complaints): don't auto-flip status to 'updated' on plain save"
+    removed on purpose; only the reply action (update-and-reply) moves to 'responded'."""
+    c = _seed(db, open_status)
     out = _edit_response(db, c.id, "first response draft")
-    assert out.status == "updated"
+    assert out.status == open_status
+    assert out.technical_team_response == "first response draft"
 
 
 def test_edit_response_keeps_responded(db: Session) -> None:

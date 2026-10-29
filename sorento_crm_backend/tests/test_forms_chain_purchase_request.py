@@ -224,7 +224,7 @@ def test_approval_rejected_shows_rejected_and_resubmit_restarts_review(world, ki
     assert "over budget" in _last_text(w)
     assert trackers(w.db, kind, rid, open_only=True) == []
 
-    # comments are mandatory on a rejection, and a decided form cannot be decided again
+    # a decided form cannot be decided again
     assert w.as_user(w.staff).post(f"{PR_BASE}/{rid}/approval-decision",
                                    json={"action": "approved"}).status_code == 409
 
@@ -377,7 +377,8 @@ def test_revert_after_commit_restores_the_form_and_sends_a_correction(world, kin
     assert detail["approval_status"] == "pending"
     assert open_tracker(w.db, kind, rid).id == approval.id  # the approval stage is reopened
     w.db.refresh(processing)
-    assert processing.voided_at is not None or processing.is_resolved is True
+    assert processing.is_resolved is True  # the stage the approval opened is voided
+    assert "voided" in event_types(w.db, processing.id)
     assert "reopened" in event_types(w.db, approval.id)
 
     rows = _sends(w, rid)
