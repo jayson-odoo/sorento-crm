@@ -6,6 +6,7 @@ rolled-back blank-schema connection.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import uuid
 from pathlib import Path
 
@@ -181,6 +182,15 @@ def test_a_label_with_no_attachment_type_is_skipped_and_no_type_is_created(db):
     _call(db)
     assert db.query(AttachmentType).count() == before
     assert db.query(LookupOption).count() == 1  # only photo's
+
+
+def test_a_skipped_file_type_label_is_logged_at_info_and_a_matched_one_is_not(db, caplog):
+    _type(db, "photo", "Product Photos")
+    caplog.set_level(logging.INFO)
+    _call(db)
+    infos = [r.getMessage().lower() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("3d model" in m for m in infos), infos
+    assert not any("photo" in m and "skip" in m for m in infos), infos
 
 
 def test_with_no_types_at_all_no_option_is_created(db):

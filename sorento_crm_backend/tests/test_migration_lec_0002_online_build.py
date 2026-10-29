@@ -227,6 +227,20 @@ def test_the_retry_script_passes_the_embedding_indexes_too(monkeypatch):
     assert len(_ei().MIGRATION_INDEXES) == 3
 
 
+def test_the_retry_script_builds_at_512mb_maintenance_work_mem(monkeypatch):
+    from scripts import ensure_goods_chain_indexes as retry
+
+    seen = {}
+
+    def spy(bind, indexes):
+        seen["mem"] = bind.execute(sa.text("SHOW maintenance_work_mem")).scalar()
+        return True
+
+    monkeypatch.setattr(online_index, "ensure_indexes_online", spy)
+    assert retry.run(engine) is True
+    assert seen["mem"] == "512MB"
+
+
 def test_the_graph_keeps_one_head():
     script = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
     assert len(script.get_heads()) == 1
