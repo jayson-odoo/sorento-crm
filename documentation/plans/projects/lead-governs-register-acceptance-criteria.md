@@ -24,6 +24,10 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
 - **LGR-A6** Rough value and Notes sit in The development step; the typed-value check still stops the walk there.
 - **LGR-A7** Confirm lists Customer first, with the picked name. "Buyer" appears nowhere in the wizard.
 - **LGR-A8** Create lead sends `customer_id` and never `new_customer`.
+- **LGR-A9** Who told us holds Source, Their reference and Contact name only: no Firm picker (owner answer a36797930,
+  29 Oct). Confirm lists no Firm. Create lead never sends `informant_party_id`.
+- **LGR-A10** A submit-only salesperson's wizard has no Assign picker; Confirm shows them as Salesperson, and no assign
+  call is made (the server makes the lead theirs, LGR-H3).
 
 ## B. Lead API
 
@@ -38,6 +42,9 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
 - **LGR-C1** Leads list column, lead page tab and fact, and the lead edit dialog say "Customer", not "Buyer".
 - **LGR-C2** The lead edit dialog's Customer picker uses the same server search as LGR-A3, and is not clearable once
   the lead has a customer.
+- **LGR-C3** The lead edit dialog has no Firm picker, and saving it leaves an old lead's `informant_party_id` as it
+  was. The lead page, Leads list "Told us" column, Awaiting acceptance list and timeline still show an old lead's Firm
+  (read-only). The API keeps accepting `informant_party_id` (no schema change).
 
 ## D. Register a project form
 
