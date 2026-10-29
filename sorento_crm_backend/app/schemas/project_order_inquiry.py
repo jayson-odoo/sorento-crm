@@ -333,6 +333,10 @@ class OrderInquiryRowOut(BaseModel):
     ack_state: str = "awaiting"
     acknowledged_by_name: Optional[str] = None
     acknowledged_at: Optional[datetime] = None
+    #: OI-AUTO-CONFIRM: a person's Confirm / Unconfirm over the automatic rule, with who.
+    ack_override: Optional[str] = None
+    ack_override_at: Optional[datetime] = None
+    ack_override_by_name: Optional[str] = None
     rejected_by_name: Optional[str] = None
     rejected_at: Optional[datetime] = None
     rejected_reason: Optional[str] = None
@@ -568,6 +572,10 @@ class OrderInquiryWorklistRow(BaseModel):
     ack_state: str = "awaiting"
     acknowledged_by_name: Optional[str] = None
     acknowledged_at: Optional[datetime] = None
+    #: OI-AUTO-CONFIRM: a person's Confirm / Unconfirm over the automatic rule, with who.
+    ack_override: Optional[str] = None
+    ack_override_at: Optional[datetime] = None
+    ack_override_by_name: Optional[str] = None
     rejected_by_name: Optional[str] = None
     rejected_at: Optional[datetime] = None
     rejected_reason: Optional[str] = None

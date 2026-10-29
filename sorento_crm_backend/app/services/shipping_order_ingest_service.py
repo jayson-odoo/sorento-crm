@@ -224,6 +224,9 @@ class ShippingOrderIngestService(MasterRefResolver):
         # success" rule as `ref_moves` above, for the same reason.
         self.written_spo_allocation_ids: set[str] = set()
         self._pending_spo_allocation_ids: list[str] = []
+        #: OI-AUTO-CONFIRM: allocations retired or revived by this record; the rows linked to
+        #: them re-read their done-ness once the record is written.
+        self._spo_live_changed: set[str] = set()
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -579,6 +582,7 @@ class ShippingOrderIngestService(MasterRefResolver):
             if row.retired_at is None:
                 row.retired_at = datetime.now(timezone.utc)
                 newly_retired_ids.append(str(row.id))
+                self._spo_live_changed.add(str(row.id))
         self.db.flush()
         if newly_retired_ids and not force_closed and payload.lines:
             # AC-REMOVED-LINES (owner, 26 Oct 2026): a line AutoCount dropped gives back
@@ -590,6 +594,14 @@ class ShippingOrderIngestService(MasterRefResolver):
             ProjectOrderInquiryService(self.db).release_removed_lines(
                 spo_allocation_ids=newly_retired_ids
             )
+        if self._spo_live_changed:
+            from app.services.project_order_inquiry_service import (
+                auto_confirm_rows_on_spo_allocations,
+            )
+
+            self.db.flush()
+            auto_confirm_rows_on_spo_allocations(self.db, list(self._spo_live_changed))
+            self._spo_live_changed = set()
         self._write_order_link_claims(payload)
         self.spo_numbers_touched.add(payload.spo_number)
         # AC-RL-49: THIS record has now fully succeeded (everything above this
@@ -736,6 +748,7 @@ class ShippingOrderIngestService(MasterRefResolver):
                 row.stated_received = frozen
             if row.retired_at is None:
                 row.retired_at = now
+                self._spo_live_changed.add(str(row.id))
         self.db.flush()
         logger.info(
             "ingest.spo_dockey_retired spo_number=%s doc_ref=%s retired=%d",
@@ -1038,6 +1051,8 @@ class ShippingOrderIngestService(MasterRefResolver):
         # D28d: the payload NAMES this row (a by-ref update, an adoption claim,
         # a create), so it is live again whatever it was before - the one and
         # only clearer of the retirement marker.
+        if row.retired_at is not None:
+            self._spo_live_changed.add(str(row.id))
         row.retired_at = None
         if force_closed:
             # `cancelled` (D3/D9): every line closes regardless of what is
@@ -1291,6 +1306,7 @@ class ShippingOrderIngestService(MasterRefResolver):
                     row.receipt_status = RECEIPT_PENDING
                     if row.retired_at is None:
                         row.retired_at = retired_at
+                        self._spo_live_changed.add(str(row.id))
                 action = "closed"
                 if warnings is not None:
                     warnings.append(WARN_SUPERSEDED_CLOSED_ONLY)

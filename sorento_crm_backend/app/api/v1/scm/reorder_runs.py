@@ -620,9 +620,6 @@ def get_candidate_orders(
                      AND (CAST(:to_date AS date) IS NULL OR cr.delivery_date IS NULL
                           OR cr.delivery_date <= CAST(:to_date AS date))
                ) AS rows_in_range,
-               count(*) FILTER (
-                   WHERE NOT (cr.ack_state = ANY(:planned_ack_states))
-               ) AS rows_awaiting,
                -- created_at is stored naive UTC by every writer; a header raised 17 Sep
                -- 23:00 UTC is 18 Sep in Kuala Lumpur (app-wide convention, see
                -- reorder_run_service.py:460, models/project_so.py:881).
@@ -645,7 +642,6 @@ def get_candidate_orders(
     """), {
         "from_date": from_date, "to_date": to_date,
         "raised_from": raised_from, "raised_to": raised_to,
-        "planned_ack_states": list(demand.PLANNED_ACK_STATES),
         **co_params,
     }).mappings().all()
     return [
@@ -655,7 +651,6 @@ def get_candidate_orders(
             "customer_name": r["customer_name"],
             "rows_total": int(r["rows_total"] or 0),
             "rows_in_range": int(r["rows_in_range"] or 0),
-            "rows_awaiting": int(r["rows_awaiting"] or 0),
             "rows_raised_in_window": int(r["rows_raised_in_window"] or 0),
             "first_delivery": r["first_delivery"].isoformat() if r["first_delivery"] else None,
             "last_delivery": r["last_delivery"].isoformat() if r["last_delivery"] else None,

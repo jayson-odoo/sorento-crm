@@ -1078,6 +1078,14 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     acknowledged_at = Column(DateTime(timezone=False), nullable=True)
+    #: OI-AUTO-CONFIRM: a person's Confirm / Unconfirm press, 'confirmed' | 'unconfirmed' |
+    #: NULL. 'confirmed' sticks over the automatic rule; 'unconfirmed' holds until a newer
+    #: link arrives; a CS amendment or a reject clears it.
+    ack_override = Column(String(16), nullable=True)
+    ack_override_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    ack_override_at = Column(DateTime(timezone=False), nullable=True)
     rejected_by = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

@@ -832,6 +832,7 @@ _LOCATION = func.coalesce(OrderInquiryRow.stock_location, Warehouse.warehouse_co
 #: reaches the list.
 _ACK_USER = aliased(User)
 _REJECT_USER = aliased(User)
+_OVERRIDE_USER = aliased(User)
 
 _SORT_EXPRESSIONS = {
     "inquiry_no": OrderInquiry.inquiry_no,
@@ -940,6 +941,9 @@ _COLUMNS = (
     # outer join the location fallback already uses - no second join for this.
     _LINE_CANCELLED.label("line_cancelled"),
     _ACK_USER.name.label("acknowledged_by_name"),
+    OrderInquiryRow.ack_override.label("ack_override"),
+    OrderInquiryRow.ack_override_at.label("ack_override_at"),
+    _OVERRIDE_USER.name.label("ack_override_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
     # PLAN-oi-request-cs-reserve.md 3.4/3.5 (AC-RS-12/AC-RS-20).
     _RESERVED_LINKED_QTY.label("reserved_qty"),
@@ -1419,6 +1423,7 @@ class OrderInquiryWorklistService:
             )
             .outerjoin(User, User.id == _RAISED_BY_ID)
             .outerjoin(_ACK_USER, _ACK_USER.id == OrderInquiryRow.acknowledged_by)
+            .outerjoin(_OVERRIDE_USER, _OVERRIDE_USER.id == OrderInquiryRow.ack_override_by)
             .outerjoin(_REJECT_USER, _REJECT_USER.id == OrderInquiryRow.rejected_by)
             .outerjoin(
                 ProjectSalesOrderLine,
@@ -2638,6 +2643,9 @@ class OrderInquiryWorklistService:
             "ack_state": row.ack_state,
             "acknowledged_by_name": row.acknowledged_by_name,
             "acknowledged_at": row.acknowledged_at,
+            "ack_override": row.ack_override,
+            "ack_override_at": row.ack_override_at,
+            "ack_override_by_name": row.ack_override_by_name,
             "rejected_by_name": row.rejected_by_name,
             "rejected_at": row.rejected_at,
             "rejected_reason": row.rejected_reason,
