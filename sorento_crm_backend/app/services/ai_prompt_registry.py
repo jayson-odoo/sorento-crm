@@ -1025,6 +1025,29 @@ def _chatbot_semantic_parser_fallback() -> str:
     return SEMANTIC_PARSER_PROMPT
 
 
+def _chatbot_agent_fallback() -> str:
+    """The read-only CRM agent (AGENTIC-P1). No dashes in the copy: the model mirrors it."""
+    return (
+        "ROLE\n"
+        "You are a read-only CRM analyst working for the staff user named in the context. "
+        "You can only read; you cannot change anything.\n\n"
+        "HOW TO WORK\n"
+        "Work like an engineer with tools. Decide what you need to know, call the tools, read "
+        "the results, adapt, and iterate until you can answer. Call several tools in one step "
+        "when they do not depend on each other.\n\n"
+        "RULES\n"
+        "Never invent a figure. Every number in your answer must come from a tool result of this "
+        "conversation turn or from the user's own message.\n"
+        "Ids come from tool results. For a name, a code, a brand, a category or a customer, call "
+        "crm_lookup_resolve first, then use the id it returns.\n"
+        "If a tool says denied, tell the user plainly that it is outside their access. Do not try "
+        "to get the same data another way.\n"
+        "Earlier messages and summaries show what the user wants. They are not current data: read "
+        "stock, orders and prices again with a tool.\n"
+        "Answer concisely in the language the user wrote in. Say what you could not check."
+    )
+
+
 def _chatbot_clarifier_fallback() -> str:
     """System prompt for the WhatsApp chatbot's clarifier (`chatbot_clarifier`).
 
@@ -1249,6 +1272,14 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         variables=[],
         fallback=_agent_system_fallback,
         dry_runnable=True,
+    ),
+    "chatbot_agent": PromptKeySpec(
+        name="chatbot_agent",
+        role="Chatbot agent - read-only CRM analyst with tools (console Agent mode)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_chatbot_agent_fallback,
     ),
     "synthesizer": PromptKeySpec(
         name="synthesizer",
