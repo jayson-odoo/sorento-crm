@@ -723,3 +723,7 @@ keys in `embeddingsStubs.ts` (27afd5ad2d), fingerprints added to `.gitleaksignor
   already present (case aside) is skipped, so a rerun adds nothing; append only. Downgrade is a no-op (it cannot tell
   a moved word from one an admin typed). `scripts/move_prompt_synonyms.py` is removed: one copy of the word list. The
   10-minute `lookup_words_sync` task embeds the new words after deploy.
+- R6-3 (reviewer S1 / N1 on round 6, READY): the backend-start retry also sets `maintenance_work_mem = '512MB'` before
+  it builds (a rebuild at the default memory could run past the 180 s budget and repeat on every start), and lec_0004
+  logs at INFO each file type label it skips because no attachment type matches. Red b9e5806e4f, fix 77c96a939d.
+  The UAC's AC-LEC-18 now names the migration instead of the script.
