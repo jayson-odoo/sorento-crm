@@ -889,7 +889,7 @@ def test_t9_candidate_orders_lists_open_project_sos_with_their_row_counts(scm_ap
     a = by_so[so_a["so_number"]]
     assert a["rows_total"] == 2
     assert a["rows_in_range"] == 2
-    assert a["rows_awaiting"] == 1
+    assert "rows_awaiting" not in a, "AC-AC-22: nothing waits on a press any more"
     assert a["first_delivery"] == "2026-09-01"
     assert a["last_delivery"] == "2026-09-10"
 
@@ -897,7 +897,7 @@ def test_t9_candidate_orders_lists_open_project_sos_with_their_row_counts(scm_ap
     b = by_so[so_b["so_number"]]
     assert b["rows_total"] == 1
     assert b["rows_in_range"] == 1
-    assert b["rows_awaiting"] == 0
+    assert "rows_awaiting" not in b
     assert b["first_delivery"] == b["last_delivery"] == "2026-09-20"
 
     assert so_closed["so_number"] not in by_so, "a closed SO (no open rows) must be absent"
@@ -1021,14 +1021,14 @@ def test_rf1_2_3_4_raise_window_counts_rows_raised_in_it_without_moving_anything
     assert a["rows_raised_in_window"] == 1
     assert b["rows_raised_in_window"] == 0
 
-    # AC-RF-4: rows_in_range / rows_awaiting / rows_total read the same with or without
+    # AC-RF-4: rows_in_range / rows_total read the same with or without
     # the raise window.
     assert unwindowed.status_code == 200, unwindowed.text
     by_so_nw = {row["so_number"]: row for row in unwindowed.json()}
     for so_number, row in ((so_a["so_number"], a), (so_b["so_number"], b)):
         baseline = by_so_nw[so_number]
         assert row["rows_in_range"] == baseline["rows_in_range"]
-        assert row["rows_awaiting"] == baseline["rows_awaiting"]
+        assert "rows_awaiting" not in row and "rows_awaiting" not in baseline
         assert row["rows_total"] == baseline["rows_total"]
 
 

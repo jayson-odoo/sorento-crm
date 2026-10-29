@@ -481,13 +481,7 @@ def test_ac_ac_11_13_done_and_partial_is_outstanding_with_one_line_to_order(head
 # =============================================================================================
 
 
-@pytest.mark.parametrize("verb", ["acknowledge", "unacknowledge"])
-def test_ac_ac_17_the_press_routes_are_gone(api, verb):
-    _client, w = api
-    row = _raise_one_row(api, qty="10")["row"]  # a REAL row: a missing row would 404 too
-    with _as_purchasing(w) as buyer:  # holds the acknowledge grant: only a missing route says 404
-        response = buyer.post(f"{BASE}/order-inquiries/{verb}", json={"row_ids": [str(row.id)]})
-    assert response.status_code in (404, 405), response.text
+# AC-AC-15..17 (the presses are manual overrides again): tests/test_oi_auto_confirm_override.py
 
 
 def test_ac_ac_20_link_now_links_an_awaiting_row_and_the_worklist_lists_the_suggestion(api):
