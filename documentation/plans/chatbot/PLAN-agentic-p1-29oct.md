@@ -1,6 +1,6 @@
 # PLAN: Agentic phase 1 - read-only agent branch for complex staff turns
 
-Status: Plan. Behaviour card posted for owner answers (crew-ask on PR #1982); build waits on them. Track: full
+Status: Plan. Behaviour card revised on the crew dev-DB measurement (rule now on `asks` + linked user); posted for owner answers (crew-ask on PR #1982); build waits on them. Track: full
 lane (a migration for the per-contact switch, a new contact-settings field). Lane AGENTIC-P1, branch
 `claude/agentic-crm-chatbot-p1-fhvvb0`, base origin/main ec29a81c.
 
@@ -25,39 +25,42 @@ signatures / Claude thinking across tool rounds and passes reasoning effort.
 Decided from the parser's own verdict fields (semantic, already emitted today). No word lists, no regex on the
 message, no prompt change.
 
+**Measured on the dev DB by crew (29 Oct, read-only):** `chatbot_profile.tier` is null on every contact, so
+`is_staff_profile` (`turn/state.py:259`) is false for all of them; and `sub_asks` is never filled (null on every
+turn since 13 Oct, an empty list on 31). The verdict's older `asks` list (`head/parser.py:472-482`, one
+`{domain, intent}` per domain asked) IS filled: 102 turns with two or more in a month. The rule is therefore
+built on `asks` and the linked user, not on `sub_asks` or the tier. (Side finding for the owner: the multi-ask
+runner, `engine.py:7287-7300`, is gated on both of those, so it cannot fire on this data.)
+
 A turn goes to the agent when ALL of these hold:
 
-1. The contact's agent switch is on (section 3), the contact is staff (`is_staff_profile`,
-   `turn/state.py:259`) and has a linked active user (`users.respond_contact_id`, `app/models/user.py:74`).
+1. The contact's agent switch is on (section 3) and the contact has a linked active user
+   (`users.respond_contact_id`, `app/models/user.py:74`). The linked user is the staff test (Q3).
 2. The turn is one the business lane would answer: `branch_kind == "business_query"`, it completes here, no
-   customer-scope refusal, not a stock-availability-only contact. These are the exact guards the multi-ask runner
-   uses today (`engine.py:7287-7300`), so a refusal, an escalation, a casual or a `not_supported` turn never
-   reaches the agent (R3: the agent cannot reopen a domain the owner turned off).
+   customer-scope refusal, not a stock-availability-only contact (the runner's own guards minus the tier check,
+   `engine.py:7287-7300`). A refusal, an escalation, a casual or a `not_supported` turn never reaches the agent
+   (R3: the agent cannot reopen a domain the owner turned off).
 3. And one of:
-   - **H1, asks no lane can serve.** The parser named two or more asks (`sub_asks`, parser schema
-     `head/parser.py:497-516`) and at least one of them is one the runner answers with "not available yet":
-     `measure == "other"`, or `sold_by` with a `group_by` outside the runner's axes. That is the runner's own
-     NOT_AVAILABLE arm (`turn/sub_asks.py:709-715`), computed with the same predicate, so the agent takes exactly
-     the turns today's path already admits it cannot answer. The predicate reads the verdict only; it does not
-     depend on the runner having placed a product.
-   - **H3, a multi-ask with no product for the runner to anchor on.** The parser named two or more asks and the
-     verdict carries no product entity. Today the runner returns None for exactly this case
-     (`_scoped_products` empty, `turn/sub_asks.py:291-293`) and the turn drops to the one-domain path, so
-     only part of it is answered. This is where chained asks live ("top 3 customers for brand X last month and
-     their outstanding DO": the subject is customers and a brand, not a product).
+   - **H3, several asks with no product subject.** `asks` has two or more domains and the verdict carries no
+     product entity (the subject is a supplier, a brand plus a category, a customer, or the previous reply).
+     Today these drop to a one-domain answer or a not-found line. 11 of the 68 linked-user multi-ask turns
+     in the dev month; three of the five real failures in section 7.
+   - **H1, several asks about a product, beyond the stock + incoming pair.** `asks` has two or more domains, a
+     product entity is present, and the domain set is not just {`inventory`, `incoming`}. That one pair is
+     exempt because crew measured it is the common routine turn and today's path answers it well (Q1). Two of
+     the five real failures in section 7.
    - **H2, a follow-up of an agent answer.** The previous turn was answered by the agent and this turn's
      decision (`turn/decide.py:41-44`, on `plan.trace.decision`) is REFINE, ANSWER or CARRY (it keeps the standing
      subject), with no `topic_reset`.
+   - When a later prompt does fill `sub_asks`, a `measure == "other"` ask (the runner's "not available yet" arm,
+     `turn/sub_asks.py:709-715`) also counts as H1. Not relied on in P1.
 
-**Chained asks, plainly.** No parser field says that one ask depends on another's result. A `sub_asks` item is
-`{measure, group_by, date_from, date_to, basis, label}` (`head/parser.py:497-516`), and entities belong to the
-turn, not to an ask. So P1 does not detect a chain as such. A chain reaches the agent only through H3 (no
-product subject) or H1 (a part the measure list does not cover: "outstanding DO" is not a measure, so the
-addendum tells the parser to label it `other`, `chatbot_parser_prompt.py:884-895`; the eval measures how
-reliably it does). A chain whose parts are all runner measures over one product ("stock of X and who bought most
-of it") is answered part by part by today's runner, and that is out of P1. The smallest honest signal for those
-chains is one per-ask field (`uses_result_of: <index> | null`) on the agent-only parser label of Q1 (b); it is
-not proposed for P1.
+**Chained asks, plainly.** No parser field says that one ask depends on another's result: `asks` items are
+`{domain, intent}`, `sub_asks` items carry no subject, and entities belong to the turn. P1 does not detect a
+chain as such. Chains reach the agent through H3 (no product subject) or H1 (a product plus a domain beyond
+stock/incoming). A chain inside the exempt stock + incoming pair stays on today's path. The smallest honest
+signal for chains is one per-ask field (`uses_result_of: <index> | null`) on an agent-only parser label; not
+proposed for P1.
 
 Seam: one new `if` right BEFORE the multi-ask runner block (`engine.py:7287`). Every other turn falls through to
 today's code with zero changes.
@@ -78,7 +81,7 @@ today's code with zero changes.
   existing partial update `PUT /api/v1/user-management/contacts/{id}/chatbot` (same pattern as
   `chatbot_files_as_links`, `api/v1/user_management/contacts.py:473,530`), one switch in Contact Details >
   Chatbot via `contactChatbotService.ts`.
-- Effective only when the contact is staff AND has a linked active user. The existing AI replies gate
+- Effective only when the contact has a linked active user (the staff test, Q3). The existing AI replies gate
   (`chatbot_allowed`) stays authoritative. Turning it on grants no data access of its own.
 - Agent model: its own prompt label `chatbot-agent` in the prompt registry (provider/model per key
   `ai_prompt_registry.py:1576`, effort `:1601`), seeded to Gemini Flash. Independent of the per-contact parser
@@ -96,8 +99,10 @@ A short explicit table, not the whole catalogue. Every tool is already on the ch
 | `crm_inventory_stock_balance_list` | Stock on hand by product/location |
 | `crm_incoming_stock_by_product` | Incoming quantities and ETAs |
 | `crm_procurement_grn_summary`, `crm_procurement_po_last_cost_list`, `crm_procurement_spo_allocations_last_receipt_list` | Received qty, supplier / last cost, last receipt |
-| order / delivery status list tool of the order domain (exact name pinned in Phase 2 from `default_policy()`) | SO / DO status |
-| product / customer lookup through the existing resolver | Turn a name or code into ids |
+| `crm_procurement_po_placed_list` | POs placed, by supplier / product (supplier field gated on `purchase_orders.supplier`) |
+| `crm_incoming_stock_shipments` | Shipment headers and allocation signal |
+| `crm_order_management_orders_by_product_list` | SO / DO lines and outstanding by product |
+| `crm_master_products_list`, `crm_lookup_resolve` | Turn a name, code, brand or category into ids |
 
 Scope, both sides (R3):
 
@@ -133,48 +138,23 @@ Scope, both sides (R3):
 
 ### 7. Complex turns today's path answers badly
 
-The sandbox has no access to the dev DB (crew contract), so the 3 to 5 real turns are pulled by crew with the
-query below (read-only; crew masks names, phones and prices before posting back). The verdict is the
-`understood` stage's `raw.derived` (`engine.py:5468`); `contact_respond_id` is the Respond id.
+Crew pulled these from the shared dev DB read-only and masked them (29 Oct). The rows themselves are NOT
+committed (public repo); below are paraphrases only. Fixtures and eval cases use seeded fakes.
 
-```sql
-WITH v AS (
-  SELECT t.id, t.created_at, t.branch_kind, t.envelope, t.response,
-         jsonb_path_query_first(t.trace, '$[*] ? (@.stage == "understood").raw.derived') AS verdict
-  FROM chatbot.turns t
-  JOIN respond_contacts c ON c.respond_io_id = t.contact_respond_id
-  WHERE c.chatbot_profile->>'tier' = 'office'
-    AND t.is_test = false
-    AND t.created_at > now() - interval '45 days'
-)
-SELECT id, created_at, branch_kind,
-       envelope AS envelope_with_text,
-       verdict->'sub_asks' AS sub_asks,
-       verdict->'entities' AS entities,
-       left(response::text, 800) AS reply
-FROM v
-WHERE jsonb_typeof(verdict->'sub_asks') = 'array'
-  AND jsonb_array_length(verdict->'sub_asks') >= 2
-  AND (jsonb_path_exists(verdict, '$.sub_asks[*] ? (@.measure == "other")')         -- H1
-       OR NOT jsonb_path_exists(verdict, '$.entities[*] ? (@.hint == "product")'))  -- H3
-ORDER BY created_at DESC
-LIMIT 30;
-```
+| # | Paraphrase | Parser saw | Today's reply | Hand-off | Tools the agent needs |
+| --- | --- | --- | --- | --- | --- |
+| 1 | One product code, six asks in one message: received this year, supplier, purchase price, last receipt date, total sold this year, sold per salesperson this year | 3 domains (incoming, purchase cost, order), product | Tens of thousands of characters of raw lists; four of the six asks unanswered, the other two buried | H1 | GRN summary, last receipt, last cost, report-ask (sold total; group_by sales_agent) |
+| 2 | Total purchased and delivered this year from one supplier, named by a short name | 2 domains (PO, order), the supplier read as a customer, no product | A no-match line, a date-range limit notice and a not-found line; nothing asked was answered | H3 | supplier lookup, PO placed list, delivered report |
+| 3 | A brand plus a product category: stock and ETA | 2 domains (stock, incoming), brand + category, no product | A not-found line for the category, then an escalation offer | H3 | category lookup to products, stock balance, incoming by product |
+| 4 | Reply to the bot's own incoming list: is this pending allocation for a project or a dealer? | 2 domains (incoming, order), no entity | The incoming list repeated plus 20 unrelated delivery orders; the question unanswered | H3 (and H2 once the list itself comes from the agent) | incoming shipments (allocation signal), orders by product; an honest "not allocated to any order yet" when that is the fact |
+| 5 | One product: dealer outstanding and stock | 2 domains (stock, order), product | Stock shows 1 outstanding, the order part reports none outstanding because it read deliveries only | H1 | stock balance, orders by product (SO outstanding) or report-ask basis outstanding by customer |
 
-If the join returns nothing, join on `c.id` instead. The shapes they target, each tied to the code arm that fails today:
-
-1. Several asks where one is outside the runner's measures, for example "stock, incoming, and which customers
-   bought the most of it this quarter and whether they still owe us": the last part becomes
-   "not available yet" (`turn/sub_asks.py:709`).
-2. A sold breakdown by an axis the runner does not have: same arm (`turn/sub_asks.py:714`).
-3. A chained ask (the answer to one part feeds the next, for example "top 3 customers for brand X last month and
-   their outstanding DO"): no product subject, so the runner returns None (`turn/sub_asks.py:291-293`) and
-   only one domain is answered. Reaches the agent through H3.
-4. A follow-up on (3) ("and the month before?"): through H2, because (3) was answered by the agent.
+Note on case 3: the reply ended in an escalation offer, so its `branch_kind` may not be `business_query`; if so,
+guard 2 keeps it on today's path. Phase 2 checks the recorded branch before counting it.
 
 ## Delivery after owner answers
 
-Red-first. Tester writes failing tests first: hand-off predicate (H1/H2 and every exclusion), switch PATCH and
+Red-first. Tester writes failing tests first: hand-off predicate (H1/H2/H3 on `asks`, the stock + incoming exemption, every exclusion), switch PATCH and
 effective rules, dispatcher allow-list / grant / permission refusals, budget caps, fall-through on failure,
 cassette loop tests for Gemini with thought signatures. Coder makes them green. Reviewer + security reviewer
 (the diff touches permission gating). Crew runs the paid eval.
