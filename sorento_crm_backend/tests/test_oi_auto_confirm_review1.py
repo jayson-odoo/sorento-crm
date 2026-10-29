@@ -388,12 +388,10 @@ def test_a_rejected_host_does_not_make_its_companion_done(bundle_world):
     w.svc.derive_bundles(w.inquiry)
     w.db.flush()
     assert _reload(w.db, companion).bundled_with_row_id == host.id
-    w.db.execute(
-        text("UPDATE " + _p() + ".order_inquiry_rows SET ack_state = 'rejected' WHERE id = :i"),
-        {"i": host.id},
-    )
+    w.svc.reject_row(host.id, reason="not buying this", actor_user_id=_new_user(w.db))
     w.db.flush()
     w.db.refresh(host)
+    assert host.ack_state == "rejected"
 
     w.svc.auto_confirm([host.id, companion.id])
     w.db.flush()

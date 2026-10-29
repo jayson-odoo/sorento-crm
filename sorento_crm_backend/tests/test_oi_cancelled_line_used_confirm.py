@@ -916,6 +916,9 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
         row_b = _oi_row(
             db, company_b, inquiry_b.id, mirror_b.id, product_b.product_code, "6",
         )
+        # the real precondition of the flag: both core lines are cancelled before it runs
+        core_line_a.line_status = "cancelled"
+        core_line_b.line_status = "cancelled"
         db.commit()
 
         from app.services.project_order_inquiry_service import (
