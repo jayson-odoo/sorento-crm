@@ -333,7 +333,7 @@ class AgentTurnResult:
     conversation_id: str
     reply_text: str
     status: str            # "answered" | "limited" | "failed"
-    limit_hit: str | None  # "rounds" | "seconds" | "input_tokens" | None
+    limit_hit: str | None  # "rounds" | "seconds" | "input_tokens" | "error" (provider failed after tool results) | None
     rounds: int
     usage: dict            # {"prompt_tokens", "completion_tokens", "cached_tokens", "calls"}
     tool_calls: list[dict] # [{"name", "status", "ms"}]
