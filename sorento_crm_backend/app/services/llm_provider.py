@@ -48,6 +48,16 @@ class ChatResult:
     model: str = ""
 
 
+class ResponseTruncated(RuntimeError):
+    """The model stopped on the output cap. `result` is what the call billed, so a caller can
+    record the spend of an answer it cannot use (PARSER-MAX-TOKENS)."""
+
+    # `result` defaults to None so the exception survives a pickle / copy round trip (args hold the message only).
+    def __init__(self, message: str, result: Optional[ChatResult] = None) -> None:
+        super().__init__(message)
+        self.result = result
+
+
 @dataclass
 class ImagePart:
     """Single image attached to the last user message in a multimodal call.
@@ -1703,32 +1713,6 @@ class GeminiProvider:
                     }
                 )
 
-        finish = candidate.get("finishReason")
-        # A truncated answer is worse than a failed one: half a purchase order
-        # looks like a whole one with lines missing, and nothing downstream can
-        # tell. Same for a candidate cut short by SAFETY or RECITATION - it
-        # carries real text, so only the finish reason says it is incomplete.
-        # `MAX_TOKENS` is named separately because the caller's answer budget is
-        # already topped up with the thinking budget above, so reaching it means
-        # the answer itself ran out of room.
-        if finish == "MAX_TOKENS":
-            # Where the budget went, so the trace says whether thinking or the answer
-            # ran out of room (crew gate, 13 Oct 2026).
-            spent = body.get("usageMetadata") or {}
-            raise RuntimeError(
-                "Gemini stopped early: MAX_TOKENS (response truncated; "
-                f"thinking {int(spent.get('thoughtsTokenCount') or 0)}, "
-                f"answer {int(spent.get('candidatesTokenCount') or 0)} tokens)."
-            )
-        if finish and finish != "STOP":
-            raise RuntimeError(f"Gemini stopped early: {finish}.")
-
-        if not text_chunks and not normalized_calls:
-            raise RuntimeError(
-                "Gemini returned an empty candidate "
-                f"(finishReason={finish or 'unknown'})."
-            )
-
         usage = body.get("usageMetadata") or {}
         prompt_tokens = int(usage.get("promptTokenCount") or 0)
         # Reasoning is reported separately as `thoughtsTokenCount` but is
@@ -1742,8 +1726,7 @@ class GeminiProvider:
         total_tokens = int(
             usage.get("totalTokenCount") or (prompt_tokens + completion_tokens)
         )
-
-        return ChatResult(
+        result = ChatResult(
             content="".join(text_chunks),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -1756,6 +1739,34 @@ class GeminiProvider:
             ),
             model=str(body.get("modelVersion") or ""),
         )
+
+        finish = candidate.get("finishReason")
+        # A truncated answer is worse than a failed one: half a purchase order
+        # looks like a whole one with lines missing, and nothing downstream can
+        # tell. Same for a candidate cut short by SAFETY or RECITATION - it
+        # carries real text, so only the finish reason says it is incomplete.
+        # `MAX_TOKENS` is named separately because the caller's answer budget is
+        # already topped up with the thinking budget above, so reaching it means
+        # the answer itself ran out of room.
+        if finish == "MAX_TOKENS":
+            # Where the budget went, so the trace says whether thinking or the answer
+            # ran out of room (crew gate, 13 Oct 2026).
+            raise ResponseTruncated(
+                "Gemini stopped early: MAX_TOKENS (response truncated; "
+                f"thinking {int(usage.get('thoughtsTokenCount') or 0)}, "
+                f"answer {int(usage.get('candidatesTokenCount') or 0)} tokens).",
+                result,
+            )
+        if finish and finish != "STOP":
+            raise RuntimeError(f"Gemini stopped early: {finish}.")
+
+        if not text_chunks and not normalized_calls:
+            raise RuntimeError(
+                "Gemini returned an empty candidate "
+                f"(finishReason={finish or 'unknown'})."
+            )
+
+        return result
 
     def embed(self, text: str) -> list[float]:
         """Embed via ``embedContent``, sized to the pgvector column.

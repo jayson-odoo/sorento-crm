@@ -210,6 +210,10 @@ class SystemSettingUpdate(BaseModel):
     # CHAT-RELEASE-1021: the stored reply composer switch (default off). Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
     chatbot_composer_enabled: Optional[bool] = None
+    # PARSER-MAX-TOKENS: the parser's answer budget, bounded as `head/parser.PARSER_MAX_TOKENS_RANGE`
+    # (core may not import the chatbot package). Same rule as every block above - it must appear
+    # HERE and in the GET dict, because both are manual.
+    chatbot_parser_max_output_tokens: Optional[int] = Field(None, ge=1024, le=32768)
     # Price tag packages (D2): the product classes a request line is WARNED about
     # when it reaches marketing without its catalogue package. Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
@@ -491,6 +495,7 @@ def get_settings(
                 "chatbot_direct_ingress_contacts": getattr(settings, "chatbot_direct_ingress_contacts", None) if settings else None,
                 "chatbot_closed_lists_mode": getattr(settings, "chatbot_closed_lists_mode", None) or "block" if settings else None,
                 "chatbot_composer_enabled": bool(getattr(settings, "chatbot_composer_enabled", False)) if settings else None,
+                "chatbot_parser_max_output_tokens": getattr(settings, "chatbot_parser_max_output_tokens", None) or 8192 if settings else None,
                 "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
                 # PLAN-oi-request-cs-reserve.md section 6c (F1): BOTH manual builders,
                 # or the setting never reaches the General settings screen at all.
@@ -1054,6 +1059,8 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "chatbot_direct_ingress_mode": "off",
         "chatbot_closed_lists_mode": "block",
         "chatbot_composer_enabled": False,
+        # Repeats SystemSetting.chatbot_parser_max_output_tokens' own default (app/models/user.py).
+        "chatbot_parser_max_output_tokens": 8192,
         # A7 (chatbot-growth-r1): repeats SystemSetting.chatbot_crossdomain_ladder's own
         # default (app/models/user.py).
         "chatbot_crossdomain_ladder": {
