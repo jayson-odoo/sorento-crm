@@ -1,7 +1,8 @@
 # PLAN: PS-REGISTER-CHECK-FIRST (29 Oct 2026)
 
-Status: Planning. Track M (feature track, local lane). Behaviour card + Lavish mock filed for owner approval;
-build waits for owner approval AND #1953 (PORTAL-P4-REQUESTS) merge. Merge origin/main again once #1978
+Status: Waiting on owner (card v1 ask a86444940, mock v1 ask a86445157, both 29 Oct 8c8ebdaaac). Track M (feature
+track, local lane; no schema: Requirements is an `attachment_types` row). Build waits for owner approval AND #1953
+(PORTAL-P4-REQUESTS) merge. Merge origin/main again once #1978
 (PS-WORDING) lands (both edit `ProjectForm.tsx`).
 
 Card: `CARD-ps-register-check-first-29oct.md`. UAC: `ps-register-check-first-acceptance-criteria.md` (written after
