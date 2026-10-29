@@ -1,9 +1,9 @@
 # NOTES: Sales split tally (Dealer / Project team / Set apart vs AutoCount)
 
 Status: Plan; rule ruled (owner 28 Oct ~09:30: the SO's order type decides). Root cause measured:
-the DO feed gap (2b), dated by R12: Sep 2025 to Jul 2026 (2d). R11: the incident apply did not land.
-Owner 29 Oct ~22:45: ask 1 (a), resume the shared-service DO history load Sep 2025 to Jul 2026,
-dry run on a prod copy first (run plan: 2e); ask 2 (a), set apart from Jan 2026 (crew fills R9). crew-lane: SALES-SPLIT-TALLY.
+the DO feed gap (2b), dated by R12 and crew's dry run: 19 Aug 2025 to 19 Aug 2026 (2d, 2e). R11: the incident apply did not land.
+Owner 29 Oct ~22:45: ask 1 (a), the shared-service DO history load for the gap, dry run on a prod copy first
+(run plan and dry-run result: 2e; dry run clean 29 Oct, real run on the copy next); ask 2 (a), set apart from Jan 2026 (crew fills R9). crew-lane: SALES-SPLIT-TALLY.
 Track: small fix (expected diff well under 300 lines, no migration, no RBAC change). Follows
 `PLAN-sales-unified-27oct.md` (#1916, live in prod 745be3f35b). Read-only owner SQL:
 `evidence/sales-split-tally-owner-sql-28oct.md`. No agent code or per-agent figure is committed
@@ -100,10 +100,10 @@ out (`autocount_pull_service.map_delivery_order_rows`), but the apply never read
 
 - AutoCount DOs in SRT: Jul 2024 to Aug 2025 (written 24 Oct by the DO-HISTORY shared-service
   backfill) and Aug 2026 onwards (the live push since 17 Aug 2026). **Missing: Sep 2025 to Jul
-  2026, 11 months**, which holds every January 2026 DO. The history backfill stopped after Aug 2025.
+  2026, 11 months** (by day: 19 Aug 2025 to 19 Aug 2026, crew's dry run, 2e), which holds every January 2026 DO. The history backfill stopped after Aug 2025.
 - Set apart: the HANLIM group is three debtors, 300-H030, 300-H118, 300-H119, January 2026
   122,232.99 = AutoCount SET APART to the cent, one agent.
-- Repair: resume the shared service's DocDate DO backfill for Sep 2025 to Jul 2026 (the DO-HISTORY
+- Repair (superseded in detail by 2e): the shared service's DocDate DO backfill for the gap (the DO-HISTORY
   path, quiet: one IMPORT audit row per batch, no embedding work). Fallback: the CRM DO pull, one
   month at a time (about 4,000 to 6,000 DOs a month, under the 10,000 cap); it writes per-DO
   audit rows and queues embedding work, so it is the slower, noisier path. Check: R14, then R10.
@@ -111,29 +111,36 @@ out (`autocount_pull_service.map_delivery_order_rows`), but the apply never read
 ### 2e. Run plan for the load (owner ask 1 (a)); crew runs it, nothing on prod until the owner approves
 
 The load is the DO-HISTORY job (`documentation/plans/autocount/PLAN-do-history-backfill-13oct.md`
-sections 2 (S3 rules), 4, 5 and 7), resumed for the months it did not reach. The shared service
-is not in this repo: the command and its cursor are the ones crew used for the 24 Oct run.
+sections 2 (S3 rules), 4, 5 and 7). The shared service (SS) is not in this repo. Revised 29 Oct
+after crew's dry run on the prod copy (crew-local record; no figures that name anyone are kept here):
 
-1. **Where:** crew's prod copy `sorento_prod_1028` (prod backup 28 Oct 19:00, the copy R12 and
-   R13 ran on), behind a local CRM backend on `main` (C1 to C3 are live code). The shared service
-   points its CRM URL at that backend, never at prod.
-2. **Before:** R15 on the copy (expected `autocount_dos` 0 in every gap month). On the copy, set
-   Settings > Integrations > AutoCount > "Assume DOs delivered before" = 2026-07-01, the same as
-   the 24 Oct run (plan section 4), so Sep 2025 to Jun 2026 land as assumed delivered and Jul 2026
-   lands as `new` unless adopted with tracking.
-3. **Range:** book db1 (Sorento) only, DocDate 2025-09-01 to 2026-07-31. Day by day, oldest first,
-   at most 1,000 records a call, one call in flight, envelope `"backfill": true` (quiet: one
-   IMPORT audit row per batch). First find out why the 24 Oct run stopped after Aug 2025 (its log
-   or cursor); if a day failed there, that day is the first one to look at in the dry run.
-4. **Dry run:** the same range with `?dry_run=true`. Counts by month: created, adopted, unchanged,
-   failed, retryable. Expected: failed 0; created + adopted = AutoCount's DO count for the month
-   (roughly 4,000 to 6,000); adopted about R15's `crm_made` for the month; unchanged 0 (nothing
-   with a `doc_key` is there yet).
-5. **Real run on the copy** (it is disposable), then on the copy: R15 (gap months filled), R14
-   (January lines reaching an SO: expect close to 17,392 of 17,392), R10, and the owner's query 3
-   for January 2026: the Dealer / Project team / No sales order split before the class fix.
-6. **Owner approves** the numbers, then the same run on prod off-hours MYT, then R15, R14 and
-   clear the "Assume DOs delivered before" date (plan section 7.5).
+- **Why the 24 Oct load stopped:** the SS job's 2-hour time limit, part way through 19 Aug 2025.
+  No day failed. **The real gap is 19 Aug 2025 to 19 Aug 2026** (AutoCount DOs resume 20 Aug 2026).
+- **The stopped load cannot simply be resumed for this:** it only spans to 27 Nov 2025, resuming it
+  is itself a live run, and while it sits stopped the SS starts no new load. So the prod path is:
+  discard the stopped load, then start ONE live load for the full range.
+- **"Assume DOs delivered before":** prod (28 Oct backup) holds 27 Nov 2025. It must read
+  **2026-07-01** for the run and be cleared after it (plan section 7.5), or about 25,600 of the
+  loaded DOs read outstanding.
+
+Steps:
+
+1. **Where:** a prod copy behind a local CRM backend on `main`; the SS points at that backend.
+2. **Before:** R15 on the copy; set "Assume DOs delivered before" = 2026-07-01 on the copy.
+3. **Range and rules:** book db1 (Sorento) only, DocDate **2025-08-19 to 2026-08-19**, oldest
+   first, one call in flight, envelope `"backfill": true` (one IMPORT audit row per batch, no
+   per-DO audit and no search indexing; the SS sends 200 DOs a call).
+4. **Dry run** (`?dry_run=true`), done 29 Oct on the 28 Oct copy: 0 failed, 0 retryable, no HTTP
+   errors, DOs read = AutoCount's count in every month. Created 44,613, adopted 23,430, unchanged
+   200 (the first call overlaps the DOs the 24 Oct load wrote on 19 Aug 2025); lines 161,576 new,
+   64,367 matched. January 2026 invoice lines reaching an SO (R14): 17,236 of 17,392 (today 0).
+5. **Real run on the copy**, then on the copy: R15 (gap months filled), R14, R10, and the owner's
+   query 3 for SRT January 2026 (No sales order should fall from 14,871,452.95 to the share of
+   the 156 lines that still reach no SO).
+6. **Prod, after the owner approves 4 and 5:** discard the stopped load in the SS; set "Assume
+   DOs delivered before" = 2026-07-01; start one live load for 2025-08-19 to 2026-08-19
+   (about 70 to 75 minutes, about 500 audit rows, no emails, no embeddings); then R15 and R14;
+   then clear the date.
 
 ## 3. How AutoCount builds the blocks
 

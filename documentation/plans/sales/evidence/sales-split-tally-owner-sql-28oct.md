@@ -750,12 +750,13 @@ ROLLBACK;
 
 ## R15. The gap months on a database, before and after the load (READ ONLY)
 
-Purpose: per DO month, Sep 2025 to Jul 2026, SRT: AutoCount DOs (`doc_key` set), CRM-made rows
+Purpose: per DO month, Aug 2025 to Aug 2026 (the gap is 19 Aug 2025 to 19 Aug 2026), SRT: AutoCount DOs (`doc_key` set), CRM-made rows
 (no `doc_key`: the Order Tracking rows the load adopts by DocNo, keeping their tracking), how many
 of those carry a delivery date, and how many rows read assumed delivered. Run on the prod copy
 before the dry run, after the copy's real run, and on prod after the prod run.
 
-Expected before: `autocount_dos` 0 in every month. After: `autocount_dos` about AutoCount's own
+Expected before: `autocount_dos` 0 from Sep 2025 to Jul 2026; Aug 2025 and Aug 2026 hold only the
+DOs outside the gap. After: `autocount_dos` about AutoCount's own
 DO count for the month (4,000 to 6,000 for SRT); `crm_made` falls by the dry run's `adopted`
 count; `assumed_delivered` grows for months before Jul 2026 only (the 1 Jul 2026 cutover).
 
@@ -767,7 +768,7 @@ SELECT date_trunc('month', o.order_date)::date AS do_month,
        count(*) FILTER (WHERE o.doc_key IS NULL AND o.actual_delivery_date IS NOT NULL) AS crm_made_with_date,
        count(*) FILTER (WHERE o.tracking_assumed_at IS NOT NULL) AS assumed_delivered
 FROM orders o JOIN companies c ON c.id = o.company_id AND c.code = 'SRT'
-WHERE o.deleted_at IS NULL AND o.order_date >= '2025-09-01' AND o.order_date < '2026-08-01'
+WHERE o.deleted_at IS NULL AND o.order_date >= '2025-08-01' AND o.order_date < '2026-09-01'
 GROUP BY 1 ORDER BY 1;
 ROLLBACK;
 ```
