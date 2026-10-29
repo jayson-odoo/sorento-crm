@@ -1,9 +1,62 @@
 # PLAN: Item Class from AutoCount (ITEM-CLASS)
 
-Status: Plan (behaviour card being written; no code yet). Track: full (migration + RBAC).
+Status: Plan, behaviour card posted as crew-ask on PR #1972; no code until answered. Track: full
+(migration + RBAC/access control change).
 
-Owner ask (29 Oct 2026): sync AutoCount `ItemClass` via the shared service like ItemType (category)
-and ItemBrand (brand); reference-data screen, product list column + filter, product form field;
-contact access by class nested inside brand, applied everywhere brand scoping applies.
+## 1. Journey
 
-Sections below are filled in as the behaviour card lands.
+Owner (29 Oct 2026): AutoCount Stock Item carries an Item Class (e.g. SERENE on three
+SRTWC8066-SH-* items, brand SORENTO). hapi `itembypage` returns it as `ItemClass`, often "".
+Sync it via the shared service like ItemType and ItemBrand; reference-data screen; product list
+column (server sort, multi-select filter) and product form field; contact access by class within
+brand, applied everywhere brand scoping applies.
+
+## 2. Measured facts (main 6011ba76)
+
+| Fact | Where |
+| --- | --- |
+| Precedent: AutoCount ItemType already lands as its own table `item_types` (NOT product category), back-created on ingest | `sorento_crm_backend/app/models/product.py:165-187`; plan `documentation/plans/autocount/PLAN-item-type-crm-3oct.md` |
+| `products.item_type_id` nullable FK SET NULL | `app/models/product.py:255-256` |
+| Brand / category reference tables | `app/models/product.py:33` (`product_categories`), `:99` (`brands`) |
+| Canonical push fields `category_code`, `brand_code`, `item_type_code` | `app/schemas/canonical_masters.py:193-198` |
+| Ingest mapping: `ensure_reference` back-create, warnings `brand_created` / `item_type_created`; absent or blank = untouched | `app/services/master_ingest_service.py:603-618` |
+| Contact brand access stored as `respond_contacts.brand_ids` ARRAY(UUID), NULL/[] = every brand | `app/models/access.py:295` |
+| The ONE scope rule: `brand_predicate(scope, brand_col, company_col)`, per company, NULL brand out inside a restricted company | `app/services/contact_brand_scope.py:68-82` |
+| Python twin for output guards: `_product_out_of_scope` | `app/services/contact_brand_scope.py:97-101` |
+| Session stamp `set_brand_scope` / `get_brand_scope` on `db.info`, applied by `do_orm_execute` on Product | `app/models/base.py:75-91`; `app/services/company_scope.py` |
+| Readers of the scope (17 files, 54 call sites): chatbot engine + business lane, order_service, entity_resolver, sales analysis, report_ask, low_stock_report, forecast, export tasks, API-key scope resolver | `grep -rn "brand_predicate\|get_brand_scope\|set_brand_scope" app` |
+| Contact brands settings card read/write | `contact_brand_scope.py` `get_contact_brands` / `set_contact_brands` |
+| FE reference-data screens to copy | `sorento_crm_frontend/app/(protected)/master-data-management/brands/`, `.../product-categories/` |
+| FE product list brand filter | `.../products/hooks/useProductFilters.ts:13,37`; `.../products/components/ProductsList.tsx` |
+| Shared service mapping ItemBrand/ItemType | UNVERIFIED: `jayson-odoo/foundryx-shared-service` is not attached to this sandbox yet |
+| Does one ItemClass span several brands in real data | UNVERIFIED: needs crew-data-request |
+
+## 3. Proposed design
+
+- **D1 Storage.** New table `item_classes`, a copy of `item_types` (`item_class_code`,
+  `item_class_name`, description, is_active, company scoped, unique `(company_id, code)`).
+  `products.item_class_id` nullable FK SET NULL + index. Not the category table with a kind:
+  ItemType already set the "own table" precedent and categories carry class/brand hints, stock
+  limits and searchability that mean nothing for an item class.
+- **D2 Ingest.** `CanonicalProduct.item_class_code`, the `item_type_code` rule exactly: absent or
+  "" leaves the link untouched; unknown value back-created, warning `item_class_created`.
+- **D3 Shared service.** hapi `ItemClass` -> canonical `item_class_code` next to where
+  `ItemType` -> `item_type_code` is mapped (SS PR).
+- **D4 UI.** Reference Data > Item Classes (list + modal create/edit + detail, copy of Brands);
+  product list column (server sort) + multi-select filter; product form field (View = Edit).
+- **D5 Contact access: class nested under brand.** New column
+  `respond_contacts.brand_class_ids` JSONB `{brand_id: [item_class_id, ...]}`. A brand absent from
+  the map, or mapped to [], means every class of that brand (the brand rule today). A class pick
+  only narrows a brand that is already in `brand_ids` (or every brand when `brand_ids` is NULL).
+  Rule, folded into `brand_predicate` (no parallel function): a product passes when
+  `brand IN scope AND (brand has no class list OR product.item_class_id IN that brand's list)`,
+  per company as today. A product with no class inside a class-restricted brand is OUT (the
+  NULL-brand rule Q1, mirrored). The scope object stamped on the session grows from
+  `frozenset[brand_id]` to a small value carrying both; every caller keeps calling the same
+  functions.
+- **D6 Empty class.** "" in AutoCount = no class on the product = visible to contacts with no
+  class restriction on that brand, hidden from contacts restricted to a class list.
+
+## 4. Open questions (crew-ask)
+
+See PR #1972 card.
