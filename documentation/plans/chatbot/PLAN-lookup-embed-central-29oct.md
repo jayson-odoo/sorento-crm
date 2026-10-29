@@ -138,6 +138,7 @@ Findings the screen makes visible:
   ("description got noise"); T1 (a) keep floors, label 30+ meaning-only phrases in the build; P1 (b) ("anything that
   makes our system faster should be considered"): per-model partial index + per-source partial indexes for attachment
   and product_spec; P2 (a); G1 (a); G2 (a); M1 (a) drop mcp_tool + conversation_frame (owner confirmed 29 Oct).
+- Owner Lavish feedback on mock v3 (29 Oct 13:30): "1. ok" = mock v3 approved; screens built per it.
 - Per-source index cost (scaled from the measured 25,090-row index: 193 MB, 34 s at 512MB): attachment 8,083 rows
   ~62 MB / ~11 s, product_spec 14,678 rows ~113 MB / ~20 s, per model; the keep-set index ~185 MB / ~33 s. Built
   CONCURRENTLY (slower; factor UNVERIFIED). Measured win: attachment-filtered p95 0.8 ms vs 127 ms (iterative scan).
