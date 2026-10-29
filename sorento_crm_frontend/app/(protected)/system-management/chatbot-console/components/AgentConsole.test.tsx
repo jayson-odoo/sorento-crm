@@ -206,6 +206,7 @@ describe('AgentConsole', () => {
           limit_hit: null,
           tool_calls: [
             { name: 'crm_resolve', status: 'ok' },
+            { name: 'crm_products_find', status: 'ok' },
             { name: 'crm_inventory_stock_balance_list', status: 'empty' },
             { name: 'answer', status: 'ok' },
           ],
@@ -215,6 +216,7 @@ describe('AgentConsole', () => {
     renderConsole();
     const meta = await screen.findByTestId('agent-reply-meta');
     expect(meta).toHaveTextContent('Find names and codes: ok');
+    expect(meta).toHaveTextContent('Find products: ok');
     expect(meta).toHaveTextContent('Stock balance: empty');
     expect(meta).not.toHaveTextContent(/answer/i);
   });

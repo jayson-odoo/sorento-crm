@@ -48,8 +48,9 @@ def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
 
 
 #: `crm_resolve` is local (the bot's resolver, in process); the GRN summary is a plain route.
-NON_RENDER_TOOLS = frozenset({"crm_resolve", "crm_procurement_grn_summary"})
+NON_RENDER_TOOLS = frozenset({"crm_resolve", "crm_products_find", "crm_procurement_grn_summary"})
 RESOLVE = "crm_resolve"
+FIND = "crm_products_find"
 ANSWER = "answer"
 
 
@@ -68,6 +69,8 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_order_management_orders_by_product_list", "order_management.orders.view", None),
     # No single slug: each kind it searches has its own (KIND_SLUGS), checked per call.
     ("crm_resolve", "", None),
+    # Local: the product list behind a brand / category, under the contact's scopes.
+    ("crm_products_find", "master_data.products.view", None),
 )
 
 #: Tools that read stock: today's bot refuses them for a contact with `chatbot_stock_allowed` off.
@@ -111,6 +114,7 @@ _KIND_OF_ENTITY: dict[str, str] = {**{k: k for k in KIND_SLUGS}, "product_set": 
 LIST_KINDS: dict[str, str] = {"brand": "brand", "category": "category", "sales_agent": "salesperson"}
 MAX_TERMS = 10
 MAX_MATCHES = 5
+MAX_PRODUCTS = 50
 MAX_DETAIL_CHARS = 200
 NO_ROWS_MESSAGE = "No rows matched these filters."
 
@@ -126,6 +130,7 @@ TOOL_LABELS: dict[str, str] = {
     "crm_procurement_spo_allocations_last_receipt_list": "last receipt",
     "crm_order_management_orders_by_product_list": "orders by product",
     "crm_resolve": "finding names and codes",
+    "crm_products_find": "finding products",
 }
 FIXED_NOT_ENVELOPE = "The tool returned an unexpected shape, so its data was not used."
 
@@ -150,6 +155,9 @@ def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
     for tool in tools:
         if tool.name == RESOLVE:
             out.append(copy.deepcopy(RESOLVE_SCHEMA))
+            continue
+        if tool.name == FIND:
+            out.append(copy.deepcopy(FIND_SCHEMA))
             continue
         meta = catalog.get(tool.name)
         if not isinstance(meta, dict):
@@ -179,6 +187,27 @@ RESOLVE_SCHEMA: dict[str, Any] = {
                 "kinds": {"type": "array", "items": {"type": "string", "enum": list(KIND_SLUGS)}},
             },
             "required": ["terms"],
+        },
+    },
+}
+
+FIND_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": FIND,
+        "description": (
+            "List products of a brand and/or category (and/or whose code or name contains a query). "
+            "brand_ids and category_ids must be ids from crm_resolve. Returns at most 50 products with "
+            "their ids, so you can pass those ids to the stock and incoming tools."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "brand_ids": {"type": "array", "items": {"type": "string"}},
+                "category_ids": {"type": "array", "items": {"type": "string"}},
+                "query": {"type": "string"},
+                "active_only": {"type": "boolean"},
+            },
         },
     },
 }
@@ -446,7 +475,9 @@ def _list_matches(db: Any, ctx: Any, terms: list[str], kinds: list[str]) -> dict
         if r.list_name in names and not str(r.key).startswith("type:")
     ]
     if ctx.brand_scope is not None:
-        rows = [r for r in rows if r.list_name != "brand" or str(r.key) in ctx.brand_scope]
+        # A scope token is a whole brand id or `<brand>/<item class>` for a class-narrowed brand.
+        brands = {str(t).split("/")[0] for t in ctx.brand_scope}
+        rows = [r for r in rows if r.list_name != "brand" or str(r.key) in brands]
     out: dict[str, list[dict]] = {t: [] for t in terms}
     if not rows:
         return out
@@ -555,6 +586,81 @@ def _resolve(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
     return ToolResult("ok", data={"results": results, "skipped_kinds": skipped})
 
 
+def _find_products(db: Any, args: dict, seen: set[str]) -> ToolResult:
+    """`crm_products_find`: products of the given brands / categories (one level of child
+    categories) and/or a code or name query, on the agent session, so company scope and brand scope
+    apply, under the chat visibility rule. At most 50 rows, ordered by code."""
+    from sqlalchemy import or_, select
+
+    from app.models.product import Brand, Product, ProductCategory, chat_searchable_products
+
+    unknown = sorted(
+        k for k in args
+        if k not in ("brand_ids", "category_ids", "query", "active_only") and k not in GUARD_PARAMS and k != VIEW_PARAM
+    )
+    if unknown:
+        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
+    lists: dict[str, list[str]] = {}
+    for key in ("brand_ids", "category_ids"):
+        value = args.get(key)
+        if value is None:
+            value = []
+        if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
+            return ToolResult("invalid", message=f"{key} must be a list of ids from crm_resolve.")
+        lists[key] = [v.strip() for v in value if v.strip()]
+    query = args.get("query")
+    if query is not None and not isinstance(query, str):
+        return ToolResult("invalid", message="query must be text.")
+    query = (query or "").strip()
+    active_only = args.get("active_only", True)
+    if not isinstance(active_only, bool):
+        return ToolResult("invalid", message="active_only must be true or false.")
+    if not (lists["brand_ids"] or lists["category_ids"] or query):
+        return ToolResult("invalid", message="Give at least one of brand_ids, category_ids or query.")
+    bad_id = _check_ids({k: v for k, v in lists.items() if v}, seen)
+    if bad_id is not None:
+        return bad_id
+
+    q = db.query(Product).filter(chat_searchable_products())
+    if active_only:
+        q = q.filter(Product.is_active.is_(True))
+    if lists["brand_ids"]:
+        q = q.filter(Product.brand_id.in_(lists["brand_ids"]))
+    if lists["category_ids"]:
+        cats = ProductCategory.__table__
+        children = select(cats.c.id).where(cats.c.parent_category_id.in_(lists["category_ids"]))
+        q = q.filter(or_(Product.category_id.in_(lists["category_ids"]), Product.category_id.in_(children)))
+    if query:
+        like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        q = q.filter(or_(Product.product_code.ilike(like, escape="\\"), Product.product_name.ilike(like, escape="\\")))
+    total = q.count()
+    rows = q.order_by(Product.product_code).limit(MAX_PRODUCTS).all()
+    if not rows:
+        filters = {k: v for k, v in {**lists, "query": query, "active_only": active_only}.items() if v not in ([], "")}
+        return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
+    brand_names = {
+        str(b.id): b.brand_name
+        for b in db.query(Brand).filter(Brand.id.in_({r.brand_id for r in rows if r.brand_id})).all()
+    }
+    cats = ProductCategory.__table__
+    category_names = {
+        str(i): n
+        for i, n in db.execute(select(cats.c.id, cats.c.category_name).where(cats.c.id.in_({r.category_id for r in rows})))
+    }
+    products = [
+        {
+            "id": str(r.id),
+            "code": r.product_code,
+            "name": r.product_name,
+            "brand": brand_names.get(str(r.brand_id)) if r.brand_id else None,
+            "category": category_names.get(str(r.category_id)),
+        }
+        for r in rows
+    ]
+    seen.update(p["id"].lower() for p in products)
+    return ToolResult("ok", data={"products": products, "more": total - len(products)}, more=total - len(products))
+
+
 def dispatch(
     db: Any,
     ctx: Any,
@@ -585,6 +691,8 @@ def dispatch(
         return ToolResult("invalid", message="Arguments must be an object of named values.")
     if tool.name == RESOLVE:
         return _resolve(db, ctx, args, seen)
+    if tool.name == FIND:
+        return _find_products(db, args, seen)
     meta = catalog.get(name)
     if not isinstance(meta, dict):
         return ToolResult("error", message=f"{name} is not available right now.")

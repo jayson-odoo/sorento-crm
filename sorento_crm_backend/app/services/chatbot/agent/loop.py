@@ -116,7 +116,7 @@ _IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+\b")
 
 
 _MONTH = (
-    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|(?-i:May)|june?|july?|aug(?:ust)?|"
     r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?"
 )
 _YEAR = r"(?:19|20)\d{2}"
@@ -125,7 +125,10 @@ _YEAR = r"(?:19|20)\d{2}"
 _WRITTEN_DATE = re.compile(
     rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH}(?:,?\s+{_YEAR})?(?![A-Za-z0-9])"
     rf"|\b{_MONTH}\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s+{_YEAR})?(?![A-Za-z0-9])"
-    rf"|\b{_MONTH}\s+{_YEAR}\b",
+    rf"|\b{_MONTH}\s+{_YEAR}\b"
+    # A lowercase "may" is a month only with a year after it ("5 may 2026"), never "5 may arrive".
+    rf"|\b\d{{1,2}}(?:st|nd|rd|th)?\s+may\.?,?\s+{_YEAR}\b"
+    rf"|\bmay\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+{_YEAR}\b",
     re.I,
 )
 _NUMERIC_DATE = re.compile(r"(?<![\d.,])\d{1,2}[/.-]\d{1,2}[/.-]\d{4}(?![\d])")

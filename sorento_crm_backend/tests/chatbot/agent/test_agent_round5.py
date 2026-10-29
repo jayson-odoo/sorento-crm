@@ -168,7 +168,7 @@ def test_registry_has_crm_resolve_and_no_longer_crm_lookup_resolve():
 
     assert RESOLVE in REGISTRY
     assert "crm_lookup_resolve" not in REGISTRY
-    assert len(REGISTRY) == 10
+    assert len(REGISTRY) == 11  # round 5e: crm_products_find
 
 
 def test_found_ambiguous_and_not_found_per_term_and_the_body_sent(held, resolver):

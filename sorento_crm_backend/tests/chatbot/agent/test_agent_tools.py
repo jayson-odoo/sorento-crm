@@ -27,6 +27,7 @@ EXPECTED = {
     "crm_order_management_orders_by_product_list": "order_management.orders.view",
     # Round 5: the local resolver; each kind it searches has its own slug (tools.KIND_SLUGS).
     "crm_resolve": "",
+    "crm_products_find": "master_data.products.view",
 }
 
 STOCK = "crm_inventory_stock_balance_list"
@@ -103,7 +104,7 @@ def _dispatch(name, args, rec, ctx=None):
 # ------------------------------------------------------------------ registry
 
 
-def test_registry_holds_exactly_the_ten_tools_with_their_slugs():
+def test_registry_holds_exactly_the_eleven_tools_with_their_slugs():
     from app.services.chatbot.agent.tools import REGISTRY
 
     assert {name: d.user_permission for name, d in REGISTRY.items()} == EXPECTED

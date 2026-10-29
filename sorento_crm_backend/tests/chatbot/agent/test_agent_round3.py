@@ -49,7 +49,7 @@ ALL_TOOLS = (
     "crm_report_ask", "crm_inventory_stock_balance_list", "crm_incoming_stock_by_product",
     "crm_incoming_stock_shipments", "crm_procurement_grn_summary", "crm_procurement_po_last_cost_list",
     "crm_procurement_po_placed_list", "crm_procurement_spo_allocations_last_receipt_list",
-    "crm_order_management_orders_by_product_list", "crm_resolve",
+    "crm_order_management_orders_by_product_list", "crm_resolve", "crm_products_find",
 )
 CATALOG = _catalog(*ALL_TOOLS)
 
@@ -155,6 +155,7 @@ EXPECTED_GRANTS = {
     "crm_procurement_spo_allocations_last_receipt_list": "purchase_orders.placed",
     "crm_order_management_orders_by_product_list": None,
     "crm_resolve": None,
+    "crm_products_find": None,
 }
 
 
@@ -524,7 +525,7 @@ GRN = "crm_procurement_grn_summary"
 def test_only_the_resolver_and_grn_are_not_render_tools():
     from app.services.chatbot.agent.tools import REGISTRY
 
-    assert {n for n, d in REGISTRY.items() if not d.render} == {"crm_resolve", GRN}
+    assert {n for n, d in REGISTRY.items() if not d.render} == {"crm_resolve", "crm_products_find", GRN}
 
 
 def test_a_non_render_tool_gets_no_view_and_a_model_supplied_view_is_dropped(held):

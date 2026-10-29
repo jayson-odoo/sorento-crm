@@ -86,7 +86,8 @@ P1 set (all already on the chatbot's read-only allow-list, `lanes/business/fetch
 | `crm_procurement_po_placed_list` | POs placed | `scm.purchase_orders.view` | `purchase_orders.placed` |
 | `crm_procurement_spo_allocations_last_receipt_list` | Last receipt | `procurement.spo_allocations.view` | `purchase_orders.placed` |
 | `crm_order_management_orders_by_product_list` | SO / DO lines and outstanding by product | `order_management.orders.view` (the route's own) | none (outstanding fields are field-restricted) |
-| `crm_lookup_resolve` | Names, codes, brands, categories, customers to ids | `master_data.products.view` | none |
+| `crm_resolve` (local, round 5) | Names and codes of products, suppliers, brands, categories, customers, sales agents to ids | one slug per kind (`KIND_SLUGS`) | `purchase_orders.supplier` for suppliers |
+| `crm_products_find` (local, round 5e) | The products of a brand and/or category (one level of child categories) and/or a code or name query, at most 50 rows | `master_data.products.view` | none; company and brand scope apply |
 
 Every call carries `view=render` (set by the server, never the model), because only the render view carries `restricted_fields`; a result that is not a render envelope is refused and never reaches the model.
 
@@ -444,3 +445,5 @@ hits were reported honestly only 3 of 6 times. Permission violations: 0 of 26 (k
    with IF NOT EXISTS).
 
 Round 5c notes: the brand-scope filter on closed-list brands in `crm_resolve` is stricter than `set_brand_scope` (only in-scope brand rows are returned, because brand rows themselves are not filtered by the session criterion). Numbers inside formatted strings back figures (a report's text, "51 (O/S: 36)", "RM 12.50"); UUIDs, dates, identifiers with a letter joined by "-" or "/", and keys never do. Every UUID value in an ok result of this turn is a known id for later calls; the reply text never carries a UUID.
+
+Round 5e: `crm_products_find` is the 11th tool. Its brand and category ids must come from `crm_resolve` (the id rule), the rows are read on the agent session under the chat visibility rule, and its product ids join the ids seen this turn so the stock and incoming tools accept them. A lowercase `may` is a month only when a year follows.

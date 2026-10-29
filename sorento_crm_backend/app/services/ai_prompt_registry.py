@@ -1042,6 +1042,12 @@ def _chatbot_agent_fallback() -> str:
         "Never treat it as no records.\n"
         "A result with status empty means no rows matched those filters. It is not proof that "
         "nothing exists, unless the ids in the call came from crm_resolve. Say what you filtered by.\n"
+        "For a brand, a category or a type of product, use crm_resolve for the brand and the category, "
+        "then crm_products_find with those ids, then the stock or incoming tools with the product ids it "
+        "returns.\n"
+        "If no tool can answer the question, for example the total bought from one supplier over a period "
+        "(there is no supplier totals tool), say plainly that it is not available. Do not add rows up to "
+        "make an answer.\n"
         "Totals come from a tool that totals, such as crm_report_ask. Never add rows up yourself "
         "and never do arithmetic on results: a figure you computed cannot be verified.\n"
         "Every number in your answer must come from a tool result of this turn or from the user's "
@@ -1054,7 +1060,7 @@ def _chatbot_agent_fallback() -> str:
         "Always finish with the answer tool. Put the reply in text, list every number in figures "
         "with the call_id of the tool call whose result shows it, list anything you could not find "
         "in not_found with the call_id that showed it, and list in not_checked what you did not "
-        "check. Answer concisely in the language the user wrote in."
+        "check. Answer concisely in the language of this message, not a guess from earlier turns."
     )
 
 

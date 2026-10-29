@@ -74,6 +74,7 @@ export const AGENT_TOOL_LABELS: Record<string, string> = {
   crm_procurement_spo_allocations_last_receipt_list: 'Last receipt',
   crm_order_management_orders_by_product_list: 'Orders by product',
   crm_resolve: 'Find names and codes',
+  crm_products_find: 'Find products',
 };
 
 export const AGENT_LIMIT_LABELS: Record<string, string> = {
