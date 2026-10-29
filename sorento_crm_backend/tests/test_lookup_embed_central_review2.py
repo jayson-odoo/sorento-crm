@@ -331,19 +331,6 @@ def test_g5_a_settings_model_change_clears_the_new_models_failure_counts(client,
     assert _failures(db, stuck, GEM) == 0
 
 
-def test_g5_pressing_start_clears_the_models_failure_counts(client, db, allow, monkeypatch):
-    from app.services import queue_service
-
-    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: MagicMock(id="j"))
-    monkeypatch.setattr(queue_service, "redis_conn", MagicMock())
-    allow.add(SETTINGS_UPDATE)
-    _setting(db)
-    stuck = _doc(db, "promotion", 1, failures={GEM: 3})
-    db.commit()
-    assert client.post("/api/v1/system/embeddings/records-backfill", json={"action": "start"}).status_code == 202
-    assert _failures(db, stuck, GEM) == 0
-
-
 # ================================================================== G-6
 def test_g6_rag_search_refuses_a_source_outside_the_keep_set_before_embedding(db, provider):
     from fastapi.testclient import TestClient

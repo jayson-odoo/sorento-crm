@@ -47,7 +47,10 @@ describe('prefill', () => {
   it('shows the resolved embedder when the setting itself is empty, not an OpenAI default', async () => {
     renderPage();
     expect((await screen.findAllByText(new RegExp(GEM))).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/text-embedding-3-small/)).toBeNull();
+    // scoped to the editable fields: the read-only Record search row may name text-embedding-3-small (H-4)
+    for (const field of screen.getAllByRole('combobox')) {
+      expect(field.textContent ?? '').not.toMatch(/text-embedding-3-small|openai/i);
+    }
   });
 });
 
