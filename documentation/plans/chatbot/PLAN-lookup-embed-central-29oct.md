@@ -637,3 +637,23 @@ Each item: red test first (tester), then fix (coder), kill-proof. R = reviewer, 
   the slice 2 index tests `serial_ddl` (or scratch schema).
 - UAC amendment (R5): AC-LEC-17 "written back" is dropped for the turn path: a turn's misses stay in the in-process
   cache (no DB on the turn path, plan Performance) and the 10-minute sync persists them.
+
+## Review fix round 2 (reviewer NOT READY on one regression + security lows, 29 Oct)
+
+- G-1 (R2-1, regression of F-2): the AI assistant's tool pick ranks by word overlap against each tool's capability text
+  (`build_capability_documents`: intent, aliases, typical user questions, description), keeping the portal pin and
+  intent nudges, no vectors (owner M1 (a) "keyword ranking"). "stock for SRT-123" and "how many units of SRT-123 do we
+  have" pick `crm_inventory_stock_balance_list`.
+- G-2 (R2-2): alias-set orphan status is computed from ALL brand codes (unscoped); only the picker list is scoped.
+- G-3 (S-low 1): `resolve_embedder` applies the model-name pattern to the label fallback too (invalid -> default),
+  and the migration copies a label model only when it matches.
+- G-4 (S-low 2): brand picker targets come from the ORM query (standard company filter), not a hand-written scope.
+- G-5 (S-low 3 + R2 nit): Gemini 400 API_KEY_INVALID / FAILED_PRECONDITION and 404 stop the run uncounted; a per-document
+  4xx on a batch is retried one document at a time before any count; `embed_failures[model]` is cleared when the
+  setting's model changes and when Start is pressed.
+- G-6 (nits): `/external/rag/search` refuses a source outside the keep set before embedding; the guard RESETs
+  `maintenance_work_mem` in a finally; the backfill running flag is one shared key constant, owned by a job token
+  (a job clears only its own flag) with a short TTL refreshed per batch; `/lookup-words` checks its permission once;
+  the Settings tab prefills only from known values and sends provider / model only when the user changed them; the
+  LookupWordsGrid Row label is plain text; entity_resolver's search seam and project_registration pass their session to
+  `embed_search_texts`.
