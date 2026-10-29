@@ -1062,6 +1062,8 @@ def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:
     the lane refuses the ask off the word alone."""
     if jsc.js_string(parse_output.get("order_status") or "").strip() != ASK_NAME or parse_output.get("required_ask"):
         return parse_output
+    if parse_output.get("capability_from") == "outstanding":
+        return parse_output  # item 1 (owner 29 Oct, as before #1922): a dealer's outstanding ask takes a location
     moved = [
         " ".join(jsc.js_string(e.get("raw") or e.get("canonical_code") or "").split())
         for e in _current_entities(parse_output, "warehouse")
@@ -1133,18 +1135,21 @@ def _dealer_outside(parse_output: dict[str, Any], group_by: str | None) -> bool:
     dimension, or a sales agent, location or channel filter. Read off the words alone,
     BEFORE any is resolved, so the unknown-word line can never probe agent or location
     names for a dealer (the route refuses the same asks, `report_dimension_not_allowed`)."""
-    from app.services.reports.ask import DEALER_KEYS
+    from app.services.reports.ask import DEALER_KEYS, DEALER_OUTSTANDING_KEYS
 
+    # Item 1 (owner 29 Oct, as before #1922): an outstanding ask also takes a location, over the dealer's own lines.
+    located = parse_output.get("capability_from") == "outstanding"
+    keys = DEALER_KEYS | DEALER_OUTSTANDING_KEYS if located else DEALER_KEYS
     words = _dict(parse_output.get("report_ask_words"))
     named = any(
         " ".join(jsc.js_string(w).split())
-        for hint in ("sales_agent", "warehouse")
+        for hint in ("sales_agent",) + (() if located else ("warehouse",))
         for w in jsc.array(words.get(hint))
     )
     return (
-        (group_by is not None and group_by not in DEALER_KEYS)
+        (group_by is not None and group_by not in keys)
         or named
-        or bool(_current_entities(parse_output, "warehouse"))
+        or (not located and bool(_current_entities(parse_output, "warehouse")))
         or parse_output.get("sales_channel") in ("dealer", "project")
     )
 

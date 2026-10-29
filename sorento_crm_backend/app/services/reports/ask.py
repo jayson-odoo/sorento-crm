@@ -106,6 +106,8 @@ SPEC_GROUP = "spec:"
 
 #: What a customer-scoped contact (a dealer) may group or filter by (PLAN section 0, Q1/Q2).
 DEALER_KEYS = frozenset({"product", "brand", "category", "month", "year", "sales_order", "delivery_order"})
+#: REPORT-OUTSTANDING-SUMMARY item 1: what a dealer may also name or group by on undelivered orders and pending delivery.
+DEALER_OUTSTANDING_KEYS = frozenset({"location"})
 CHAT_DEALER_KEYS = frozenset({"topic", "subject", "product", "month"})
 
 GROUP_LABELS = {

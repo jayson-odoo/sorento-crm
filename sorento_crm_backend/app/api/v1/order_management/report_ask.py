@@ -494,11 +494,14 @@ def report_ask(
         customer_query=None,
     )
     if scoped is not None:
+        # Item 1 (owner 29 Oct, as before #1922): on undelivered orders and pending delivery a dealer may also name and
+        # break down by location, over its own customers' lines.
+        dealer_keys = ask.DEALER_KEYS | (ask.DEALER_OUTSTANDING_KEYS if basis_norm in ask.SUMMARY_BASES else frozenset())
         outside = (
-            (group_norm is not None and group_norm not in ask.DEALER_KEYS)
+            (group_norm is not None and group_norm not in dealer_keys)
             or bool(agents)
             or bool(card_agents)
-            or bool(codes)
+            or (bool(codes) and "location" not in dealer_keys)
             or channel_norm is not None
         )
         if outside:
@@ -649,7 +652,7 @@ def report_ask(
             if product_subject != customer_subject:
                 axes.append("customer" if product_subject else "product")
         if scoped is not None:
-            axes = [a for a in axes if a in ask.DEALER_KEYS]
+            axes = [a for a in axes if a in dealer_keys]
         data = {
             **data,
             "summary": ask.outstanding_summary(
