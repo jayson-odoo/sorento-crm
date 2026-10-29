@@ -582,3 +582,18 @@ FE (vitest on touched components; layering UI -> hooks -> `services/embeddingsSe
   `settings/layout.tsx` (~:306-361): provider / model SearchableSelect, backfill rpm, read-only coverage rows (mock §7).
 - Lookup set option dialog: for an alias set the value is a SearchableSelect over `alias-targets`; orphaned options
   show a Badge.
+
+### Slice 5 FE contract (route-local, like `master-data-management/lookup-sets/`)
+
+- `app/(protected)/system-management/embeddings/`: `page.tsx`; `services/embeddingsService.ts` (`getOverview`,
+  `getLookupWords(list)`, `tryPhrase(phrase)`, `embedMissing()`, `recordsBackfill(action)`, all through
+  `lib/api-client` + `extractApiError`); `hooks/useEmbeddings.ts` (`useEmbeddingsOverview`, `useLookupWords`,
+  `useTryPhrase`, `useEmbedMissing`, `useRecordsBackfill`: invalidate + toast); `components/EmbeddingsHeader.tsx`
+  (PageHeader, strip, ONE CTA), `components/LookupWordsGrid.tsx` (DataGrid fixed layout, resizable, words grouped by
+  home with a vector dot), `components/TryPhraseCard.tsx` (verdict + per row spelling / vector / partial / floors /
+  pass), `components/RecordsGrid.tsx`; tests in `__tests__/`.
+- `app/(protected)/user-management/settings/embeddings/page.tsx` + its tab in `settings/layout.tsx` (provider and model
+  SearchableSelect, backfill rpm, read-only coverage rows from `getOverview`).
+- `master-data-management/lookup-sets`: `services/lookupSetService.ts` `getAliasTargets(setId)`, the option dialog
+  uses SearchableSelect over it for an alias set; an orphaned option shows a Badge.
+- No UUIDs in the UI, no explanation text, usable at 375 and 1280 (browser pass on the crew test copy).
