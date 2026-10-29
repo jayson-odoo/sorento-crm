@@ -225,6 +225,27 @@ describe('PurchaseOrdersPanel', () => {
     expect(await screen.findByText('Record a purchase order')).toBeInTheDocument();
   });
 
+  it('searches from inside the shared toolbar, so the header stays one row', async () => {
+    listPurchaseOrders.mockResolvedValue([
+      po(),
+      po({ id: 'po2', po_number: 'PO-7777', issuing_party_name: 'Other Builder' }),
+    ]);
+    const { container } = renderPos();
+    expect(await screen.findByText('PO-7777')).toBeInTheDocument();
+
+    const box = screen.getByRole('searchbox', { name: 'Search POs' });
+    const toolbar = container.querySelector('[data-slot="data-grid-list-toolbar"]') as HTMLElement;
+    expect(toolbar.contains(box)).toBe(true);
+    expect(screen.getAllByRole('searchbox')).toHaveLength(1);
+
+    fireEvent.change(box, { target: { value: '7777' } });
+    expect(await screen.findByText('PO-7777')).toBeInTheDocument();
+    expect(screen.queryByText('PO-9001')).toBeNull();
+
+    fireEvent.change(box, { target: { value: 'nothing like this' } });
+    expect(await screen.findByText('Nothing matches that search')).toBeInTheDocument();
+  });
+
   it('separates the two mismatch kinds instead of one generic warning', async () => {
     listPurchaseOrders.mockResolvedValue([
       po({ model_mismatch_count: 2, price_mismatch_count: 1 }),

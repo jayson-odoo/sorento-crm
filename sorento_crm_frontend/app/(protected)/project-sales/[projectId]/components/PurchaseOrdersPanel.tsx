@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -100,7 +101,21 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
   const schedules = useDeliverySchedules(project.id);
   const salesOrders = useProjectSalesOrders(project.id, { page: 1, limit: 1000 });
 
-  const rows = React.useMemo(() => purchaseOrders.data ?? [], [purchaseOrders.data]);
+  const [search, setSearch] = React.useState('');
+  // Client-side on purpose, as on the Quotations tab: a project's POs are all in memory and
+  // unpaged. The box lives in the shared list toolbar so the card header stays one row.
+  const rows = React.useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const all = purchaseOrders.data ?? [];
+    if (!needle) return all;
+    return all.filter((row) =>
+      [row.po_number, row.issuing_party_name, row.scope_label, row.po_source]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [purchaseOrders.data, search]);
   const schedulesByPo = React.useMemo(() => {
     const out = new Map<string, DeliverySchedule[]>();
     for (const schedule of schedules.data ?? []) {
@@ -426,6 +441,17 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
             table={table}
             exportConfig={false}
             alignActionsEnd
+            searchSlot={
+              <ListSearchInput
+                type="search"
+                inputClassName="[&::-webkit-search-cancel-button]:appearance-none"
+                value={search}
+                onChange={setSearch}
+                placeholder="Search POs"
+                aria-label="Search POs"
+                className="w-full sm:w-64"
+              />
+            }
             secondaryActionsAsMenu
             secondaryActions={
               canWorkOnProject(project)
@@ -455,13 +481,12 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         listingKey="projects.projects.view::project-purchase-orders"
         isLoading={purchaseOrders.isLoading}
         error={purchaseOrders.isError ? purchaseOrders.error : undefined}
-        emptyTitle="No PO received yet"
-        searchPlaceholder="Search POs"
-        searchOf={(row) =>
-          [row.po_number, row.issuing_party_name, row.scope_label, row.po_source]
-            .filter(Boolean)
-            .join(' ')
+        emptyTitle={
+          search.trim() && (purchaseOrders.data ?? []).length > 0
+            ? 'Nothing matches that search'
+            : 'No PO received yet'
         }
+        pageResetKey={search}
         // The row is the way in, and it goes to the PO's own page. The documents, the
         // readiness step and ninety lines do not belong under a list.
         onRowClick={openPo}
