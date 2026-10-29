@@ -61,3 +61,35 @@ def test_a_dealers_location_word_is_still_refused_on_a_sales_ask() -> None:
         "entities": [_warehouse_entity()], "basis": "delivered", "group_by": None,
     }, seam=False)
     assert report_ask._dealer_outside(report_ask.dealer_location_words(parse), None)
+
+
+# ---------------------------------------------------------------- item 8: the shared resolver's products, exactly
+
+
+import uuid as _uuid  # noqa: E402
+
+
+def _row(code: str) -> dict[str, Any]:
+    return {"entity_type": "product", "uuid": str(_uuid.uuid4()), "code": code, "canonical_code": code}
+
+
+def _product_parse(*codes: str) -> dict[str, Any]:
+    entities = [{"raw": c, "hint": "product", "canonical_code": c, "current_message": True, "confident": True} for c in codes]
+    return _outstanding(entities=entities)
+
+
+def test_an_outstanding_ask_sends_the_resolvers_rows_never_a_code_prefix() -> None:
+    """Item 8 (owner 29 Oct): the products the shared resolver matched, by id, as the pre-#1922 report took its exact
+    codes; never the shared prefix the route would widen to every sibling (SRT5733 -> SRT5733-A, -B, ...)."""
+    rows = [_row("SRT5733-WH")]
+    outcome, line = report_ask.settle(None, _product_parse("SRT5733-WH"), rows, companies=COMPANIES[:1])
+    assert line is None and outcome is not None and outcome.done, (line, outcome and outcome.reply)
+    args = report_ask.route_args(outcome)
+    assert args.get("product_ids") == [rows[0]["uuid"]] and "product_code" not in args, args
+
+
+def test_an_outstanding_ask_over_unrelated_codes_runs_them_all_with_no_question() -> None:
+    rows = [_row("SRT5733-WH"), _row("CBN-200")]
+    outcome, line = report_ask.settle(None, _product_parse("SRT5733-WH", "CBN-200"), rows, companies=COMPANIES[:1])
+    assert line is None and outcome is not None and outcome.done, (line, outcome and outcome.reply)
+    assert sorted(report_ask.route_args(outcome)["product_ids"]) == sorted(r["uuid"] for r in rows)
