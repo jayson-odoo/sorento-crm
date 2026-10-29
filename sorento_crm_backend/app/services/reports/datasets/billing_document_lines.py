@@ -15,6 +15,8 @@ the line's document. A line whose item code is not a CRM product still counts, u
 """
 from __future__ import annotations
 
+import dataclasses
+
 from typing import Any, List, Optional
 
 import sqlalchemy as sa
@@ -24,6 +26,7 @@ from app.models.finance import BillingDocument, BillingDocumentLine
 from app.models.order import Customer
 from app.models.product import Brand, Product, ProductCategory
 from app.services.error_handler import AppException
+from app.services.reports import ask_params as ap
 from app.services.reports import registry as reg
 from app.services.reports.datasets.sales_order_lines import MONTH_OF_YEAR
 from app.services.reports.engine import month_label
@@ -178,6 +181,17 @@ COLUMNS = (
     ),
 )
 
+#: The invoiced ask's own copy of the catalog for the "Sales & outstanding" screen: the report ask's keys replace the
+#: Top selling items report's twins (quantity, RM and documents are the same figures as qty, amount and orders), and an
+#: invoice line has no location. They stay resolvable, only out of the Columns menu; the other report is unchanged.
+_ASK_HIDDEN = frozenset({"quantity", "sales_value", "documents", "location"})
+ASK_COLUMNS = tuple(
+    dataclasses.replace(c, hidden=True) if c.key in _ASK_HIDDEN
+    else dataclasses.replace(c, label="Month of the year") if c.key == "month_of_year"
+    else c
+    for c in COLUMNS
+)
+
 DATASET = reg.Dataset(
     key="billing_document_lines",
     scope="company",
@@ -194,16 +208,16 @@ def _no_options(db: Any) -> List[Any]:
     return []
 
 
-#: The report ask's invoiced basis (contract section 7). Registered nowhere, like the order
-#: bases' ask definitions: `ask.run_ask` runs it directly.
+#: The report ask's invoiced basis (contract section 7): `ask.run_ask` runs it, and the "Sales & outstanding" screen
+#: registers it (`definitions/sales_and_outstanding`), so the screen and the bot read one definition.
 ASK_DEFINITION = reg.ReportDefinition(
     key="sales_invoiced_ask",
     title="Invoiced sales",
-    permission="order_management.orders.view",
+    permission="sales.reports.view",
     dataset=reg.Dataset(
         key="sales_invoiced_ask",
         scope="company",
-        columns=COLUMNS,
+        columns=ASK_COLUMNS,
         date_bases=DATASET.date_bases,
         base=_base,
         company_column=BillingDocument.company_id,
@@ -212,26 +226,28 @@ ASK_DEFINITION = reg.ReportDefinition(
     params=(
         reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
         reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
-        reg.SelectParam("customer", "Customer", True, (), _no_options, customer_condition),
-        reg.SelectParam("product", "Product", True, (), _no_options, product_condition),
-        reg.SelectParam("brand", "Brand", True, (), _no_options, brand_condition),
-        reg.SelectParam("category", "Category", True, (), _no_options, category_condition),
-        reg.SelectParam("sales_agent", "Sales agent", True, (), _no_options, agent_condition),
-        reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition),
-        reg.SelectParam("location", "Location", True, (), _no_options, location_condition),
-        reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition),
+        reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
+        reg.SelectParam("product", "Product", True, (), _no_options, product_condition, hidden=True),
+        reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
+        reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),
+        reg.SelectParam("sales_agent", "Sales agent", True, (), ap.agent_options, agent_condition),
+        reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition, hidden=True),
+        reg.SelectParam("location", "Location", True, (), _no_options, location_condition, hidden=True),
+        reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition, hidden=True),
+        reg.SelectParam("spec", "Specification", True, (), ap.spec_options, ap.spec_condition),
     ),
     detail=reg.DetailLayout(
         title="Billing document lines",
         order_by=lambda c: [BillingDocument.doc_date.desc(), BillingDocument.doc_no.asc(), BillingDocumentLine.id.asc()],
+        cap="truncate",
     ),
     pivot=reg.PivotLayout(title="Invoiced sales"),
     default_view={
         "params": {"date_basis": "order_date"},
-        "detail": {"columns": [], "order": []},
+        "detail": {"columns": list(ap.DETAIL_COLUMNS), "order": list(ap.DETAIL_COLUMNS)},
         "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]},
     },
     workbook=reg.WorkbookSpec(company_name=""),
-    module_key="order_management",
+    module_key="sales",
 )
 reg.validate(ASK_DEFINITION)

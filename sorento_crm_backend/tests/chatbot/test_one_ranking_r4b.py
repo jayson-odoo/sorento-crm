@@ -87,23 +87,18 @@ def test_bootstrap_replays_the_r4b_applier(monkeypatch) -> None:
     assert "crm_report_ask" in rows["sales"], rows["sales"]
 
 
-# ---- guards that stay green: the route, MCP tool and analytics connector keep the tool ----
+# ---- REPORT-UNIFY (Q1): the route stays; the MCP tool, its domain row and the analytics connector entry are gone ----
 
 
-def test_mcp_catalog_still_registers_the_tool() -> None:
+def test_mcp_catalog_no_longer_registers_the_tool() -> None:
     from sorento_crm_mcp import catalog
 
-    names = {s["name"] if isinstance(s, dict) else getattr(s, "name", None) for s in catalog.TOOL_SPECS} \
-        if hasattr(catalog, "TOOL_SPECS") else set()
-    if not names:
-        assert OLD_TOOL in Path(catalog.__file__).read_text()
-    else:
-        assert OLD_TOOL in names
+    assert OLD_TOOL not in {spec.name for spec in catalog.CATALOG}
 
 
-def test_mcp_tool_domains_still_maps_the_tool() -> None:
-    assert OLD_TOOL in (BACKEND / "app" / "services" / "mcp_tool_domains.py").read_text()
+def test_mcp_tool_domains_no_longer_maps_the_tool() -> None:
+    assert OLD_TOOL not in (BACKEND / "app" / "services" / "mcp_tool_domains.py").read_text()
 
 
-def test_analytics_connector_still_names_the_tool() -> None:
-    assert OLD_TOOL in (BACKEND / "app" / "services" / "analytics_connector" / "reused_tools.py").read_text()
+def test_analytics_connector_no_longer_names_the_tool() -> None:
+    assert OLD_TOOL not in (BACKEND / "app" / "services" / "analytics_connector" / "reused_tools.py").read_text()

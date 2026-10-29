@@ -1284,7 +1284,7 @@ def _lookup_lines(
                 for h in hits[name]
             ],
         }
-        return lookup_lists.render(hits, group_categories=group), event
+        return lookup_lists.render(hits, group_categories=group, row_ids=bool(getattr(config, "row_ids", False))), event
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
         return [], {"pieces": [], "hits": [], "failed": True}
@@ -1304,12 +1304,15 @@ class _SpanPrep:
     config: span_extract.SpanConfig | None
     # EEM-CATEGORY-PICK: the parser prompt asks for a category pick, so the Category block is grouped by class.
     group_categories: bool = False
+    # REPORT-UNIFY slice 3: the parser prompt asks for the row id (`parser.ROW_ID_ASK`), so a brand, salesperson or
+    # category line carries it. Off for a bare prep; `_span_prep` takes it from the prompt in use.
+    row_ids: bool = False
 
 
 def _span_prep(
     db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
-    group_categories: bool = False,
+    group_categories: bool = False, row_ids: bool = False,
 ) -> _SpanPrep | None:
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
@@ -1333,7 +1336,7 @@ def _span_prep(
         except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
             logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
-        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories)
+        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories, row_ids)
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
@@ -1468,7 +1471,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                     known = {h.row.key for h in held_hits}
                     held_keys |= known
                     hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
-                hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
+                hits = {name: lookup_lists.cap_hits(name, hs) for name, hs in hits.items()}
                 event["spans"] = [
                     {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates),
                      "candidates": _candidates_of(r), "meaning": r.span.meaning, "matched_by": r.matched_by}
@@ -1504,7 +1507,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 ]
                 for name, hs in hits.items()
             }
-        lines = lookup_lists.render(hits, group_categories=prep.group_categories)
+        lines = lookup_lists.render(hits, group_categories=prep.group_categories, row_ids=prep.row_ids)
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
         lookup_event["hits"] = [
             {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
@@ -5209,7 +5212,7 @@ def _run_stages_body(  # noqa: PLR0915
             span_prep = _span_prep(
                 db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
                 lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
-                group_categories=parser_config.category_pick,
+                group_categories=parser_config.category_pick, row_ids=parser_config.row_ids,
             )
             lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
         elif parser_config.lookup_lists:
@@ -5823,7 +5826,10 @@ def _run_stages_body(  # noqa: PLR0915
         # they leave the verdict here with their mark (no later step, store or session sees either).
         verdict = chat_state.without_kept_aside(verdict)
     if _ranking_words:
-        verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
+        # The words held out of grounding skipped the hidden-key strip above: run it over them before they go back, so
+        # a spec the contact may not see never rides the report ask (security review S2).
+        _held_back = _strip_hidden_spec_entities({"entities": _ranking_words}, hidden_spec)["entities"]
+        verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_held_back]}
     if grounding_notes:
         turn_trace.add("grounding", {"changes": grounding_notes})
     # Fix round 12 on PR #833 (owner ruling 28 Sep 2026): once grounding has read the ask
@@ -5936,7 +5942,22 @@ def _run_stages_body(  # noqa: PLR0915
         if opportunity_lane.own_pending(state_in.pending) is not None:
             state_in = dataclasses_replace(state_in, pending=None)
         parser_ops = (remembered_before.get("_chat_state") or {}).get("changes")
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and report_ask.names_its_own_ask(
+        _company_pick = False
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "company":
+            # The company question's pick from the parser's own output (`sales_company`, `reference_positions`) is the
+            # answer, whatever stray axis the reply also carried: only when the reply types no axis of its own
+            # (`by_words` null or absent, so its `group_by` is a guess) and no count, direction or ranked measure.
+            _candidate = sales_company_ask.as_answer(verdict, open_ask)
+            _typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
+                verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
+            )
+            _declared = _candidate.get("open_question_answer")
+            if not _typed and (_candidate is not verdict or (isinstance(_declared, dict) and _declared.get("mode") == "pick")):
+                # An untyped `group_by` on the answering turn is a guess (R6): the held ask's axis stands.
+                verdict, _company_pick = {**_candidate, "group_by": None}, _candidate is not verdict
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
+            verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and report_ask.names_its_own_ask(
             verdict, open_ask, parser_ops=parser_ops
         ):
             replaced_ask, open_ask = open_ask, None  # a new sales ranking ask, not the answer to the open question
@@ -6340,6 +6361,7 @@ def _run_stages_body(  # noqa: PLR0915
         # run_fetch`'s own `_SALES_REPORT_GRANT` check stays as the second line of
         # defence, for a re-entry path that calls it directly.
         from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
+        from app.services.chatbot.lanes.business import report_ask as _report_ask_lane
 
         from app.services.chatbot.contracts import SALES_FIGURE_STATUSES
 
@@ -6347,7 +6369,7 @@ def _run_stages_body(  # noqa: PLR0915
         # the same money under the same key, refused at the same seam.
         sales_report_grant_refused = (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
-            and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
+            and _report_ask_lane.grant_key(parsed_output) not in set(access.get("attributes") or [])
         )
         if sales_report_grant_refused:
             # REPORT-SMART-L: the sales ranking has ONE 'may ask' rule, shared with the route
@@ -6393,7 +6415,7 @@ def _run_stages_body(  # noqa: PLR0915
             and _CHAT_REPORT_GRANT in _granted
         ) or (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
-            and _SALES_REPORT_GRANT in _granted
+            and _report_ask_lane.grant_key(parsed_output) in _granted
         ) or (
             # SALES-TARGET-CHAT: the target ask is exempt under its own grant; whose customer
             # it may name is the route's call (403 customer_not_permitted).
@@ -8410,10 +8432,10 @@ def _run_stages_body(  # noqa: PLR0915
         # nothing else composed it, exactly the shape `stock_denied` handles the
         # same way just above.
         if answer is None and sales_report_grant_refused and completes_here:
-            from app.services.chatbot.lanes.business import SALES_REPORT_NOT_ENABLED_MESSAGE
+            from app.services.chatbot.lanes.business import report_ask as _refusal_lane
 
             stage[0] = "replied"
-            answer = turn_compose.Answer(text=SALES_REPORT_NOT_ENABLED_MESSAGE)
+            answer = turn_compose.Answer(text=_refusal_lane.not_enabled_line(parsed_output))
 
         # -- the REFUSAL: a customer word outside a scoped contact's links -------- #
         # Once for the whole turn, however many domains the plan fans out to; no picker,

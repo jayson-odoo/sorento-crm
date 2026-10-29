@@ -141,6 +141,10 @@ class ParserConfig:
     # carry neither: their behaviour and schema are unchanged.
     category_pick: bool = False
     message_language: bool = False
+    # REPORT-UNIFY slice 3: the prompt in use carries `ROW_ID_ASK`, so a brand, salesperson or category candidate line
+    # ends with its row id and the parser may answer with it. False for a bare config; `resolve_config` turns it
+    # on only for a version that carries the sentence: every other version is unchanged.
+    row_ids: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -325,7 +329,8 @@ def _build_base_json_schema() -> dict[str, Any]:
             # (owner rulings 26 Sep 2026: never assume the basis or the grain). A null
             # `rank_by` is asked too (no default metric).
             "rank_by": {"type": ["string", "null"], "enum": ["quantity", "amount", None]},
-            "basis": {"type": ["string", "null"], "enum": ["invoiced", "delivered", "ordered", "outstanding", "unclear", None]},
+            # The outstanding kinds (REPORT-UNIFY Q2) are bases of the report ask: a message that names one carries it.
+            "basis": {"type": ["string", "null"], "enum": ["invoiced", "delivered", "ordered", "outstanding", "pending_delivery", "unpaid", "unclear", None]},
             "rank_group": {"type": ["string", "null"], "enum": ["item", "category", "unclear", None]},
             # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold"
             # rank ascending. Same shape and same exemption as the three above.
@@ -903,6 +908,12 @@ def with_opportunity(schema: dict[str, Any]) -> dict[str, Any]:
 
 #: EEM-CATEGORY-PICK: the raw template sentences that turn the two flags on (the `MEANING_ASK` pattern).
 CATEGORY_PICK_ASK = "For a category entity, canonical_code is the label before the colon of the Category candidates line the message means."
+#: REPORT-UNIFY slice 3: the raw template sentence that turns `row_ids` on (the `CATEGORY_PICK_ASK` pattern). A
+#: version that names it prints `[id: <row id>]` on those candidate lines; none is labelled with it yet.
+ROW_ID_ASK = (
+    "For a brand, sales agent or category entity, canonical_code is the label or the id of the candidates line "
+    "the message means."
+)
 LANGUAGE_ASK = 'Also return top-level "message_language": the language the user wrote the current message in.'
 
 
@@ -1059,6 +1070,7 @@ def resolve_config(
         sales_channels=sales_channels,
         opportunity=OPPORTUNITY_LINE in (raw_template or ""),
         category_pick=CATEGORY_PICK_ASK in (raw_template or ""),
+        row_ids=ROW_ID_ASK in (raw_template or ""),
         message_language=LANGUAGE_ASK in (raw_template or ""),
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,

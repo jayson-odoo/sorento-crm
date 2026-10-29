@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   type ColumnDef,
   type PaginationState,
@@ -381,9 +381,15 @@ export const ONE_PAGE: PaginationState = { pageIndex: 0, pageSize: 15 };
 export function ReportPage({
   reportKey,
   breadcrumb,
+  belowHeader,
+  title,
 }: {
   reportKey: string;
+  /** The page title when it is not the report's own (a screen that holds several reports). */
+  title?: string;
   breadcrumb: { label: string; href?: string }[];
+  /** A strip shown directly under the page header (a screen that holds several reports, one tab each). */
+  belowHeader?: ReactNode;
 }) {
   const {
     data: meta,
@@ -668,7 +674,7 @@ export function ReportPage({
   const heading = (
     <Container>
       <PageHeader
-        title={meta?.title ?? 'Report'}
+        title={title ?? meta?.title ?? 'Report'}
         crumbs={breadcrumb.map((crumb) => ({
           title: crumb.label,
           path: crumb.href,
@@ -708,6 +714,7 @@ export function ReportPage({
           ) : null
         }
       />
+      {belowHeader}
     </Container>
   );
 

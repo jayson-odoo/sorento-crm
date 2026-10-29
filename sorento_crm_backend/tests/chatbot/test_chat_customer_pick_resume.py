@@ -18,7 +18,7 @@ from tests.chatbot.test_engine import _parser_output
 from tests.chatbot.test_new_ask_drops_sales_channel import (  # noqa: F401  (fixture)
     CUSTOMER_UUID_1, CUSTOMER_UUID_2, _ambiguous_customer_services, _report_calls, _reply, chat,
 )
-from tests.chatbot.test_sales_analysis_company_pick import ANALYSIS, _calls, _pick
+from tests.chatbot._sales_pick_helpers import ANALYSIS, _calls, _pick
 
 REFUSAL = "I can't break sales down by"
 OCT_2026 = {"date_mode": "month", "date_filter_start": "2026-10-01", "date_filter_end": "2026-10-31"}
@@ -28,7 +28,7 @@ def _t1(order_status: str = "sales_report") -> dict[str, Any]:
     """"Dealer <customer> oct total sales": one customer word matching two accounts."""
     return _parser_output(
         message_type="business_query", domain_hint="sales", intent_hint="check_order", order_status=order_status,
-        sales_channel="dealer", domain_in_message=True, entity_op="replace_combine",
+        sales_channel="dealer", domain_in_message=True, entity_op="replace_combine", basis="delivered",
         entities=[{"raw": "zz demo", "hint": "customer", "canonical_code": None,
                    "current_message": True, "confident": True}],
         **OCT_2026,
@@ -56,7 +56,9 @@ def _ask_then_pick(chat, tag: str, t1: dict[str, Any] | None = None, t2: dict[st
     return chat(t2 or _t2(), text, f"ZZT-cpr-{tag}-2")
 
 
-def _assert_resumed(result: Any, captured: list[tuple[str, dict[str, Any]]], uuid: str = CUSTOMER_UUID_1) -> None:
+def _assert_resumed(
+    result: Any, captured: list[tuple[str, dict[str, Any]]], uuid: str = CUSTOMER_UUID_1, group_by: str | None = None
+) -> None:
     assert REFUSAL not in _reply(result), _reply(result)
     assert _calls(captured, ANALYSIS) == [], f"the pick never runs the company analysis: {captured}"
     calls = _report_calls(captured)
@@ -65,7 +67,7 @@ def _assert_resumed(result: Any, captured: list[tuple[str, dict[str, Any]]], uui
     assert args.get("customer_ids") == [uuid], args
     assert args.get("channel") == "dealer", args
     assert args.get("date_from") == "2026-10-01" and args.get("date_to") == "2026-10-31", args
-    assert not args.get("group_by"), args
+    assert (args.get("group_by") or None) == group_by, args
 
 
 def test_p1_the_prod_pick_with_group_by_customer_resumes_the_held_report(chat):
@@ -79,9 +81,10 @@ def test_p2_a_pick_with_status_sales_report_and_group_by_customer_too(chat):
 
 
 def test_g2_guard_a_pick_with_another_axis_month_is_today_s_report(chat):
-    """Not this rule (month is no roster kind, `without_pick_axis` leaves it): green before the fix too."""
+    """Not this rule (month is no roster kind, `without_pick_axis` leaves it): the pick keeps its month axis, which is
+    a month breakdown of the picked customer now (REPORT-UNIFY: the sales report ask has the month axis)."""
     result, captured = _ask_then_pick(chat, "g2", t2=_t2(group_by="month"))
-    _assert_resumed(result, captured)
+    _assert_resumed(result, captured, group_by="month")
 
 
 def test_p4_the_second_option_picks_the_second_account(chat):
@@ -440,7 +443,7 @@ def test_o8_a_ranking_pick_on_the_narrower_s_roster_resumes_the_ranking(chat, se
          resolve_services=_only_the_group(_group_with_strays(ids), ids))
     assert (chat.session().get("open_question") or {}).get("kind") == "customer_pick", chat.session().get("open_question")
     result, captured = chat(_t2(group_by=None, order_status=None), "1", "ZZT-cpr-o8-2")
-    assert _report_calls(captured) == [], f"a ranking pick never becomes a plain sales report: {captured}"
+    assert not _calls(captured, "crm_sales_report"), f"a ranking pick never becomes a plain sales report: {captured}"
     ran = [args for name, args in captured if name == "crm_report_ask"]
     assert len(ran) == 1, (_reply(result), captured)
     assert set(ran[0].get("customer_ids") or []) == {ids["ac1"], ids["project"]}, ran

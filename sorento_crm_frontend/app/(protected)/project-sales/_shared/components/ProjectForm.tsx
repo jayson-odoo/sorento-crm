@@ -575,7 +575,7 @@ export function ProjectForm(props: ProjectFormProps) {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="project-mukim">Mukim</Label>
+              <Label htmlFor="project-mukim">Area</Label>
               <Input
                 id="project-mukim"
                 value={mukim}

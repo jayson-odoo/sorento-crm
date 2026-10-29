@@ -11,6 +11,7 @@ from app.services.reports.definitions import sponsorship  # noqa: E402,F401
 from app.services.reports.definitions import sales_yearly  # noqa: E402,F401
 from app.services.reports.definitions import sales_by_debtor_type  # noqa: E402,F401
 from app.services.reports.definitions import top_selling_items  # noqa: E402,F401
+from app.services.reports.definitions import sales_and_outstanding  # noqa: E402,F401
 from app.services.reports.definitions import chat_overview  # noqa: E402,F401
 from app.services.reports.definitions import chat_top_asks  # noqa: E402,F401
 from app.services.reports.definitions import chat_bot_failures  # noqa: E402,F401

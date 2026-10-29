@@ -52,11 +52,13 @@ def _definitions():
 
 
 def test_catalogue_has_the_four_bases():
+    """The four sales bases (#1916), plus REPORT-UNIFY's two other outstanding kinds (owner Q2,
+    27 Oct 2026), which read DO lines and billing documents (`tests/test_report_unify_outstanding_bases.py`)."""
     from app.services.reports.ask import CATALOGUE as _DATASETS
 
     CATALOGUE = _DATASETS["sales"]
 
-    assert set(CATALOGUE) == set(BASES), set(CATALOGUE)
+    assert set(CATALOGUE) == {*BASES, "pending_delivery", "unpaid"}, set(CATALOGUE)
 
 
 def test_the_basis_labels():
@@ -121,14 +123,27 @@ def test_both_bases_speak_the_same_words(basis):
 def test_dealer_keys():
     from app.services.reports.ask import DEALER_KEYS
 
-    assert set(DEALER_KEYS) == {"product", "brand", "category", "month"}, DEALER_KEYS
+    # Owner 28 Oct 09:30: a dealer's undelivered-orders answer offers its own open sales orders (`sales_order`); the Yearly
+    # comparison (`year`) is the report ask grouped by year (crew 28 Oct).
+    assert set(DEALER_KEYS) == {"product", "brand", "category", "month", "year", "sales_order"}, DEALER_KEYS
 
 
-def test_no_ask_definition_is_on_the_reports_screen():
-    """The Reports screen catalogue is unchanged: no ask basis registers anywhere."""
-    from app.services.reports.registry import all_definitions
+def test_every_ask_basis_is_on_the_reports_screen_as_the_same_definition():
+    """REPORT-UNIFY slice 4 (owner Q5 (a), plan 3b): the six ask bases are registered on the Reports API as the very
+    definitions the bot runs. (Slice 1 pinned the opposite; the owner reversed it so staff can check the bot's number.)"""
+    from app.services.reports.registry import all_definitions, get
 
-    registered = {d.key for d in all_definitions()}
     for basis, definition in _definitions().items():
-        assert definition.key not in registered, (basis, registered)
-        assert all(d is not definition for d in all_definitions()), basis
+        assert get(definition.key) is definition, basis
+        assert any(d is definition for d in all_definitions()), basis
+
+
+def test_a_spec_value_with_no_registry_label_is_echoed_in_the_words_a_customer_reads():
+    """Crew hand test (59c9d237): the header read "Specification: Trap: p_trap". The shared display rule applies."""
+    from types import SimpleNamespace
+
+    from app.services.reports import spec_set
+
+    row = SimpleNamespace(value_labels=None)
+    assert spec_set.value_text(row, "p_trap") == "P trap"
+    assert spec_set.value_text(SimpleNamespace(value_labels={"p_trap": "P-Trap"}), "p_trap") == "P-Trap"

@@ -3394,6 +3394,7 @@ _REPORT_ASK_PLURALS = {
     "location": "locations",
     "channel": "channels",
     "month": "months",
+    "year": "years",
 }
 
 
@@ -3467,7 +3468,7 @@ def _ask_rows(rows: list, group_by: Any, measure: Any = None, sort: Any = None) 
         else:
             merged[name] = dict(row)
     out = list(merged.values())
-    if group_by == "month":
+    if group_by in ("month", "year"):
         out.sort(key=lambda r: str(r.get("name")))
     elif len(out) < len(rows):
         first, second = {"qty": ("qty", "amount"), "amount": ("amount", "qty")}.get(str(measure), ("count", "amount"))
@@ -3476,6 +3477,39 @@ def _ask_rows(rows: list, group_by: Any, measure: Any = None, sort: Any = None) 
         for i, row in enumerate(out, start=1):
             row["rank"] = i
     return out
+
+
+#: REPORT-UNIFY: why the route could not apply a filter (`not_applied[].reason`), as words, and the label each
+#: filter word is said with. A reason code is never printed as it is.
+_NOT_APPLIED_REASONS = {
+    "per_document": "unpaid invoices are per document",
+    "unknown_spec": "not a specification I know",
+    "unit": "unit not recognised",
+    "invalid_value": "value not readable",
+}
+_NOT_APPLIED_LABELS = {
+    "customer": "Customer", "product": "Product", "brand": "Brand", "category": "Category",
+    "sales_agent": "Sales agent", "customer_agent": "Customers assigned to", "location": "Location",
+    "channel": "Channel", "spec": "Specification",
+}
+
+
+def _not_applied(body: dict) -> list[dict]:
+    """The route's `not_applied`, one entry per filter and reason: `{filter, label, words}`."""
+    out: list[dict] = []
+    for item in body.get("not_applied") or []:
+        word = str(item.get("filter") or "")
+        entry = {
+            "filter": word,
+            "label": _NOT_APPLIED_LABELS.get(word, word.replace("_", " ").capitalize()),
+            "words": _NOT_APPLIED_REASONS.get(str(item.get("reason")), "not applied"),
+        }
+        if entry not in out:
+            out.append(entry)
+    return out
+
+
+_ASK_SO_LIST_OFFER = "Reply 1 for the sales order list."
 
 
 def _report_ask(body: dict) -> str:
@@ -3497,7 +3531,13 @@ def _report_ask(body: dict) -> str:
     agent_note = _top_selling_agent_note(body)  # REPORT-SMART-L R3b: the top selling fill-rate caveat, below 95%
     if agent_note:
         facts.append(agent_note)
-    facts.append(f"Period: {_chat_date(body.get('date_from'))} to {_chat_date(body.get('date_to'))}")
+    if body.get("date_from") is None and body.get("date_to") is None:
+        facts.append("Period: all dates")  # an outstanding basis asked with no period
+    else:
+        facts.append(f"Period: {_chat_date(body.get('date_from'))} to {_chat_date(body.get('date_to'))}")
+    skipped = _not_applied(body)
+    if skipped:
+        facts.append("Not applied: " + "; ".join(f"{n['label']} ({n['words']})" for n in skipped))
     if body.get("compare_to") and body.get("compare_from"):
         facts.append(f"Compared with: {_chat_date(body.get('compare_from'))} to {_chat_date(body.get('compare_until'))}")
     measure = body.get("measure")
@@ -3505,7 +3545,18 @@ def _report_ask(body: dict) -> str:
     basis = body.get("basis_label")
     group_by = body.get("group_by")
     if not group_by:
-        return "\n".join([f"Sales by {basis}", *facts, f"Total {figures}"])
+        # An outstanding kind is not a sale: "Undelivered orders", "Pending delivery", "Unpaid invoices" (the kinds'
+        # own words); every sales basis reads "Sales by <basis>".
+        head = (
+            "Undelivered orders" if body.get("basis") == "outstanding"
+            else basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid")
+            else f"Sales by {basis}"
+        )
+        text = "\n".join([head, *facts, f"Total {figures}"])
+        if body.get("basis") == "outstanding" and not body.get("compare_to"):
+            # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure; pending delivery and unpaid get none.
+            text += "\n\n" + _ASK_SO_LIST_OFFER
+        return text
     rows = _ask_rows(body.get("rows") or [], group_by, measure, body.get("sort"))
     if not rows:
         return "\n".join([f"No {basis} found", *facts])
@@ -3526,9 +3577,10 @@ def _report_ask(body: dict) -> str:
         # REPORT-SMART-L R3a: what the top selling reply said of a least sold ranking (an item that sold nothing is never ranked).
         lines.insert(1, TOP_SELLING_NO_SALE_LINE.replace("Items", "Categories") if group_by == "category" else TOP_SELLING_NO_SALE_LINE)
     for row in rows:
-        if group_by == "month":
-            # A trend, not a ranking: its months in date order, no rank number.
-            lines.append(f"{_ask_month(row.get('name'))} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
+        if group_by in ("month", "year"):
+            # A trend, not a ranking: its months (or years) in date order, no rank number.
+            when = _ask_month(row.get("name")) if group_by == "month" else str(row.get("name"))
+            lines.append(f"{when} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
         else:
             label = row.get("code") if group_by == "category" and _filled(row.get("code")) else row.get("name")
             lines.append(f"{row.get('rank')}. {label} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
@@ -3661,7 +3713,10 @@ def _report_ask_envelope(body: dict) -> dict:
         if rows
         else None
     )
-    return {"result_type": "report_ask", "response": _report_ask(body), "has_result": answered, "drill_rows": drill}
+    return {
+        "result_type": "report_ask", "response": _report_ask(body), "has_result": answered, "drill_rows": drill,
+        "not_applied": _not_applied(body),
+    }
 
 
 def _sales_analysis_envelope(payload: dict) -> dict:

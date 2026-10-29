@@ -90,7 +90,8 @@ def test_r4a_3_guard_the_top_selling_route_still_answers(client, db) -> None:
     assert resp.status_code == 200 and resp.json()["rows"], resp.text
 
 
-def test_r4a_3_guard_the_mcp_tool_is_still_in_the_catalogue() -> None:
+def test_r4a_3_the_mcp_tool_is_gone_from_the_catalogue() -> None:
+    # REPORT-UNIFY (owner ruling Q1): `crm_top_selling_report` is removed from the MCP catalogue.
     import sys
     from pathlib import Path
 
@@ -99,7 +100,7 @@ def test_r4a_3_guard_the_mcp_tool_is_still_in_the_catalogue() -> None:
         sys.path.append(root)
     from sorento_crm_mcp.catalog import CATALOG
 
-    assert any(spec.name == OLD_TOOL for spec in CATALOG)
+    assert not any(spec.name == OLD_TOOL for spec in CATALOG)
 
 
 def test_r4a_3_guard_a_top_10_selling_items_chat_ask_runs_the_report_engine(console, monkeypatch) -> None:
