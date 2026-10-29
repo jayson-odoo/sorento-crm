@@ -248,7 +248,7 @@ def _resolve_provider(db) -> tuple[Any, str, str, str | None]:
     """(provider client, provider name, model, reasoning effort). Raises _AgentUnavailable."""
     from app.models.ai_assistant import AIAssistantConfig
     from app.services import ai_prompt_registry
-    from app.services.llm_provider import get_provider, resolve_api_key
+    from app.services.llm_provider import resolve_api_key
 
     name, model = ai_prompt_registry.agent_model(db, PROMPT_KEY)
     if not name:
@@ -260,10 +260,22 @@ def _resolve_provider(db) -> tuple[Any, str, str, str | None]:
     key = resolve_api_key(cfg, name)
     if not key:
         raise _AgentUnavailable(f"no API key is configured for {name}")
-    try:
-        return get_provider(name, key, model), name, model or "", effort
-    except ValueError as exc:
-        raise _AgentUnavailable("the configured model provider is not supported") from exc
+    return _WrappedProvider(name, key, model or ""), name, model or "", effort
+
+
+class _WrappedProvider:
+    """The production model client: every call goes through `chatbot.llm_call`, the chatbot
+    package's one wrapper around the provider (rate limits waited out, one hard deadline)."""
+
+    def __init__(self, name: str, key: str, model: str) -> None:
+        self.name, self._key, self.model = name, key, model
+
+    def chat(self, messages: list[dict], *, timeout: float, model: str | None = None, **kwargs: Any) -> Any:
+        from app.services.chatbot import llm_call
+
+        return llm_call.chat(
+            self.name, self._key, model or self.model, messages, deadline_seconds=timeout, timeout=timeout, **kwargs
+        )
 
 
 def _system_prompt(db, user_name: str) -> str:
@@ -354,9 +366,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             raise TimeoutError("the turn ran out of time")
         started = clock()
         try:
-            result = provider.chat(
-                messages, tools=tools, reasoning_effort=effort, model=model, timeout=timeout
-            )
+            result = send(messages, tools=tools, reasoning_effort=effort, model=model, timeout=timeout)
         except Exception as exc:  # noqa: BLE001 - detail is logged, the user sees a fixed reason
             logger.warning("agent: model call failed (%s)", kind, exc_info=True)
             raise _ProviderFailed() from exc
@@ -403,6 +413,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             effort = ai_prompt_registry.agent_reasoning_effort(db, PROMPT_KEY)
             name, picked = ai_prompt_registry.agent_model(db, PROMPT_KEY)
             provider_name, model = name or DEFAULT_PROVIDER, picked or DEFAULT_MODEL
+        send = provider.chat
 
         if mcp_call is None and mcp_builder is None:
             from app.services.chatbot.lanes.business.services import _mcp_call

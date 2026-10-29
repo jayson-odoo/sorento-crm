@@ -635,3 +635,22 @@ def test_build_context_carries_the_held_argument_permissions(db, held):
     seed_user(db, contact_pk=contact["pk"])
     ctx = build_context(db, contact["respond_id"])
     assert ctx.arg_permissions == ("finance.billing_documents.view",)
+
+
+def test_the_production_client_calls_the_model_through_llm_call(monkeypatch):
+    """The chatbot package's one model wrapper (`llm_call.chat`) carries every agent call."""
+    from app.services.chatbot import llm_call
+    from app.services.chatbot.agent import loop
+
+    seen = {}
+
+    def fake_chat(provider, api_key, model, messages, *, deadline_seconds, **kwargs):
+        seen.update(provider=provider, model=model, deadline=deadline_seconds, kwargs=kwargs)
+        return "ok"
+
+    monkeypatch.setattr(llm_call, "chat", fake_chat)
+    client = loop._WrappedProvider("gemini", "k-1", "gemini-3.5-flash")
+    assert client.chat([{"role": "user", "content": "hi"}], tools=None, reasoning_effort="low", timeout=7) == "ok"
+    assert seen["provider"] == "gemini" and seen["model"] == "gemini-3.5-flash"
+    assert seen["deadline"] == 7 and seen["kwargs"]["timeout"] == 7
+    assert seen["kwargs"]["reasoning_effort"] == "low"
