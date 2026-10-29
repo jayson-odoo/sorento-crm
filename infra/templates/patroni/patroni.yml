@@ -1,0 +1,122 @@
+# Patroni config for BOTH CRM nodes (A = CRM box, B = KVM 8). Only the env differs per node:
+#   PATRONI_NAME=crm-a|crm-b, PATRONI_RESTAPI_CONNECT_ADDRESS=<THIS_WG_IP>:8008,
+#   PATRONI_POSTGRESQL_CONNECT_ADDRESS=<THIS_WG_IP>:5432, plus the passwords below.
+# Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md section 2 (timings table).
+scope: sorento-crm
+namespace: /sorento/
+
+restapi:
+  listen: 0.0.0.0:8008          # published on the tunnel address + 127.0.0.1 only (compose)
+  # connect_address from PATRONI_RESTAPI_CONNECT_ADDRESS
+  # Unsafe endpoints (POST/PATCH: failover, switchover, restart, config) need this login:
+  # PATRONI_RESTAPI_USERNAME / PATRONI_RESTAPI_PASSWORD from patroni.env. GETs (/primary,
+  # /cluster, /liveness) stay open for HAProxy, the role watcher and ha-checks.
+  # Without this login anything that reaches the port (n8n's Code nodes on node B (the KVM 8, which also runs n8n)
+  # included) could POST a failover.
+  authentication:
+    username: patroni-admin
+    # password from PATRONI_RESTAPI_PASSWORD; the image's entrypoint refuses to start without it.
+  # Defence in depth only (container traffic can arrive masqueraded as a member address; the
+  # real guard is templates/host/docker-user.nft).
+  allowlist:
+    - 127.0.0.1
+    - <A_WG_IP>
+    - <B_WG_IP>
+
+etcd3:
+  # hosts: from PATRONI_ETCD3_HOSTS in /etc/sorento-ha/ha-members.env (the one place the voters
+  # are named, so moving the witness is a config change). Kept out of this file on purpose.
+  # etcd auth + TLS are on (templates/etcd/etcd.env.template): PATRONI_ETCD3_USERNAME=patroni,
+  # PATRONI_ETCD3_PASSWORD from patroni.env. A user that can write /sorento/ can move the leader.
+  protocol: https
+  cacert: /etc/etcd/pki/ca.crt
+  cert: /etc/etcd/pki/patroni.crt
+  key: /etc/etcd/pki/patroni.key
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 16777216     # 16 MB: further behind = no automatic promotion
+    failsafe_mode: true
+    synchronous_mode: false               # async by default; same-region RTT makes sync viable, see plan section 3
+    postgresql:
+      use_pg_rewind: true
+      remove_data_directory_on_rewind_failure: true
+      remove_data_directory_on_diverged_timelines: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        wal_log_hints: "on"               # required by pg_rewind
+        hot_standby: "on"
+        max_wal_senders: 5
+        max_replication_slots: 5
+        max_wal_size: 4GB
+        wal_keep_size: 1GB
+        max_slot_wal_keep_size: 20GB      # a dead replica can never fill the leader's disk
+        max_standby_streaming_delay: 30s
+        archive_mode: "on"
+        archive_command: "wal-g wal-push %p"
+        archive_timeout: 60               # PITR RPO bound about 60 s
+        # Copy prod's current value (SHOW shared_preload_libraries) before adopting; pgvector
+        # itself needs no preload. Never leave this empty if prod preloads something today.
+        shared_preload_libraries: "<PROD_SHARED_PRELOAD_LIBRARIES>"
+    # use_slots creates a slot per member automatically; Patroni drops it when that member's
+    # key expires (member_slots_ttl on Patroni 4), so a member gone for good stops pinning WAL.
+
+postgresql:
+  listen: 0.0.0.0:5432           # published on 127.0.0.1 and the tunnel address only (compose)
+  # connect_address from PATRONI_POSTGRESQL_CONNECT_ADDRESS
+  # MUST be prod's current data directory (`SHOW data_directory` on prod, or the container's
+  # $PGDATA). A wrong path looks empty: Patroni would initdb a NEW cluster and take the leader
+  # key with an empty database. Check before the first start (plan section 9 step 6).
+  data_dir: <PROD_DATA_DIRECTORY>
+  # Patroni's own superuser connection goes over the local socket (`local all all peer`); over
+  # TCP it would hit the `postgres ... reject` rule below and the node would never come up.
+  use_unix_socket: true
+  pgpass: /tmp/pgpass
+  authentication:
+    superuser:
+      username: postgres          # password: PATRONI_SUPERUSER_PASSWORD
+    replication:
+      username: replicator        # password: PATRONI_REPLICATION_PASSWORD
+    rewind:
+      username: rewinder          # password: PATRONI_REWIND_PASSWORD
+  # Replicas: fall back to the archive if streaming falls out of the slot window.
+  recovery_conf:
+    restore_command: "wal-g wal-fetch %f %p"
+  create_replica_methods: [basebackup]
+  basebackup:
+    checkpoint: fast
+  # `host`, not `hostssl`: these addresses exist only inside WireGuard, which already encrypts
+  # and authenticates the link. Switch to hostssl only together with ssl=on + certs.
+  # The superuser works over the local socket only (security review S1). The app and
+  # pgbouncer roles come from the CRM compose network, pinned to one /24 with compose `ipam`,
+  # never a broad range that would take in the n8n networks.
+  pg_hba:
+    - local   all          all                                  peer
+    - host    all          postgres     0.0.0.0/0               reject
+    - host    all          <APP_DB_USER>,<PGBOUNCER_AUTH_USER>  127.0.0.1/32   scram-sha-256
+    - host    all          <APP_DB_USER>,<PGBOUNCER_AUTH_USER>  <CRM_COMPOSE_SUBNET_24>  scram-sha-256
+    - host    replication  replicator   <A_WG_IP>/32           scram-sha-256
+    - host    replication  replicator   <B_WG_IP>/32           scram-sha-256
+    - host    all          rewinder     <A_WG_IP>/32           scram-sha-256
+    - host    all          rewinder     <B_WG_IP>/32           scram-sha-256
+    # n8n's sorento-crm-db credential reaches node A's pgbouncer via node B's HAProxy over the
+    # tunnel; pgbouncer then connects locally, so no extra Postgres rule is needed for it.
+
+# Arms only if the container's postgres user can open /dev/watchdog: the host needs softdog
+# loaded and the udev rule in templates/host/ (root-owned 0600 by default, and Patroni runs as
+# postgres). In "automatic" mode a missing watchdog is only a log line, so check for
+# "watchdog activated" in the Patroni log, then switch to "required".
+watchdog:
+  mode: automatic
+  device: /dev/watchdog
+  safety_margin: 5
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false
