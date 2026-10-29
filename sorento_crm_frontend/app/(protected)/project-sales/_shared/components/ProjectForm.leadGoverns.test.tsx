@@ -277,6 +277,21 @@ vi.mock('../../leads/components/LeadWizardDialog', () => ({
       >
         Finish wizard
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          onDone({
+            id: 'lead-new',
+            lead_code: 'LEAD-000077',
+            title: initialTitle ?? '',
+            customer_id: 'c-1',
+            customer_name: 'KEDAI CONTOH SDN. BHD.',
+            owner_user_id: 'u-2',
+          })
+        }
+      >
+        Finish wizard assigned to Sales B
+      </button>
     </div>
   ),
 }));
@@ -582,5 +597,70 @@ describe('LGR-D8 submit-only salesperson', () => {
     await pickLead('TRX', 'TRX Zus Coffee fit-out');
     await within(section()).findByText('KEDAI CONTOH SDN. BHD.');
     expect((screen.getByLabelText('Salesperson') as HTMLSelectElement).value).toBe('u-me');
+  });
+});
+
+describe('edit mode keeps the project customer when a customerless lead is linked', () => {
+  it('does not send customer_id null and still shows the picker holding the customer', async () => {
+    renderForm({
+      mode: 'edit',
+      project: baseProject({ lead_id: null, lead_code: null, lead_title: null }),
+    });
+    await pickLead('Tanpa', 'Menara Tanpa Pelanggan');
+    const picker = await screen.findByLabelText(/^Customer/);
+    expect(picker).toHaveValue('KEDAI CONTOH SDN. BHD.');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    const body = (updateProject.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+    expect([undefined, 'c-1']).toContain(body.customer_id);
+    expect(body.lead_id).toBe('lead-2');
+  });
+});
+
+describe('LGR-D8 the lead guard holds on its own', () => {
+  const draft = (over: Record<string, unknown> = {}) =>
+    baseProject({ approval_state: 'draft', ...over });
+
+  it('submit-only draft with a customer but no lead: Submit disabled, Save draft enabled', () => {
+    granted = new Set(['projects.registrations.submit']);
+    renderForm({
+      mode: 'edit',
+      project: draft({ lead_id: null, lead_code: null, lead_title: null }),
+    });
+    expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+  });
+
+  it('submit-only draft that had a lead: clearing it disables Submit, Save draft stays enabled', async () => {
+    granted = new Set(['projects.registrations.submit']);
+    renderForm({ mode: 'edit', project: draft() });
+    expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear lead' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeDisabled(),
+    );
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+  });
+
+  it('create mode: picking a lead then clearing it disables Register again', async () => {
+    renderForm({ mode: 'create' });
+    typeTitle('TRX Zus Coffee fit-out');
+    await pickLead('TRX', 'TRX Zus Coffee fit-out');
+    await waitFor(() => expect(registerButton()).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Clear lead' }));
+    await waitFor(() => expect(registerButton()).toBeDisabled());
+  });
+});
+
+describe('LGR-D5 Create lead round trip with an assignee', () => {
+  it('Salesperson becomes the person the new lead was assigned to', async () => {
+    renderForm({ mode: 'create' });
+    fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Tower Q' } });
+    fireEvent.click(await screen.findByRole('button', { name: /Create lead .Tower Q./ }));
+    const wizard = await screen.findByRole('dialog', { name: 'Create lead' });
+    fireEvent.click(within(wizard).getByRole('button', { name: 'Finish wizard assigned to Sales B' }));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Salesperson') as HTMLSelectElement).value).toBe('u-2'),
+    );
   });
 });

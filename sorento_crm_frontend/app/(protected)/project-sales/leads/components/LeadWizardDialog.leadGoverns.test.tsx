@@ -319,3 +319,35 @@ describe('LGR-A10 submit-only salesperson', () => {
     expect(await screen.findByLabelText('Select a salesperson')).toBeInTheDocument();
   });
 });
+
+describe('LGR-D5 the lead handed back carries the assignee', () => {
+  async function assignToAli() {
+    const owner = await screen.findByLabelText('Select a salesperson');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Ali' })).toBeInTheDocument());
+    fireEvent.change(owner, { target: { value: 'u-ali' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create lead' }));
+  }
+
+  it('onDone receives the lead with owner_user_id of the person it was assigned to', async () => {
+    assignLead.mockResolvedValue({ id: 'l1', lead_code: 'LEAD-000001', owner_user_id: 'u-ali' });
+    const { onDone } = renderWizard();
+    await toConfirm();
+    await assignToAli();
+    await waitFor(() => expect(assignLead).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(onDone).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'l1', owner_user_id: 'u-ali' }),
+    );
+  });
+
+  it('when the assign call fails onDone gets the lead as created', async () => {
+    assignLead.mockRejectedValue(new Error('Ali has left'));
+    const { onDone } = renderWizard();
+    await toConfirm();
+    await assignToAli();
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    const lead = (onDone.mock.calls[0] as unknown as [Record<string, unknown>])[0];
+    expect(lead.id).toBe('l1');
+    expect(lead.owner_user_id).not.toBe('u-ali');
+  });
+});
