@@ -225,7 +225,7 @@ def _probe(db: Session | None = None) -> ProbeFn:
     return call
 
 
-def _mcp_call(db: Session | None = None) -> McpCallFn:
+def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) -> McpCallFn:
     def call(name: str, args: dict[str, Any]) -> Any:
         """One MCP tool call at the CONFIGURED url (H52, D10).
 
@@ -270,7 +270,8 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
         # own 20 is a different budget for a different surface (a user watching a screen,
         # not a customer waiting on WhatsApp inside a whole turn's latency target).
         # `CHATBOT_MCP_TIMEOUT_SECONDS` overrides it per environment.
-        timeout = int(getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
+        # `timeout_seconds` is a caller's own tighter budget (the agent's turn clock).
+        timeout = int(timeout_seconds or getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
         client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
         result = parse_mcp_content(client.call_tool(name, args))
         # CONTACT-BRAND-SCOPE: the probes (cross-domain, did-you-mean, siblings) read through

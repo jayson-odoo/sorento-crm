@@ -192,6 +192,7 @@ def run_agent_turn(
     text: str,
     provider=None,
     mcp_call=None,
+    mcp_builder: Callable[[int], Callable[[str, dict], Any]] | None = None,
     catalog=None,
     clock: Callable[[], float] = time.monotonic,
 ) -> AgentTurnResult:
@@ -285,10 +286,11 @@ def run_agent_turn(
             name, picked = ai_prompt_registry.agent_model(db, PROMPT_KEY)
             provider_name, model = name or DEFAULT_PROVIDER, picked or DEFAULT_MODEL
 
-        if mcp_call is None:
+        if mcp_call is None and mcp_builder is None:
             from app.services.chatbot.lanes.business.services import _mcp_call
 
-            mcp_call = _mcp_call(db)
+            def mcp_builder(seconds: int):  # noqa: F811 - the production builder
+                return _mcp_call(db, timeout_seconds=seconds)
         if catalog is None:
             try:
                 from app.config import settings
@@ -385,9 +387,12 @@ def run_agent_turn(
                     if idx >= budgets.calls_per_round:
                         out = ToolResult("denied", message="Too many calls this round; ask again next round.")
                     else:
+                        # Each call gets what is left of the turn, at most 10 s.
+                        seconds = max(1, int(min(remaining(), MCP_CALL_TIMEOUT)))
                         out = dispatch(
-                            db, ctx, name, args, call=mcp_call, catalog=catalog,
-                            timeout=max(1.0, min(remaining(), MCP_CALL_TIMEOUT)),
+                            db, ctx, name, args,
+                            call=mcp_call if mcp_call is not None else mcp_builder(seconds),
+                            catalog=catalog, timeout=float(seconds),
                         )
                     ms = int((clock() - started) * 1000)
                     payload = out.to_json()

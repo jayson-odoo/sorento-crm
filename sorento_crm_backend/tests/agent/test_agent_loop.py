@@ -451,3 +451,29 @@ def test_a_new_conversation_hides_earlier_turns_from_the_next_turn(db, contact):
 
     contents = [m["content"] for m in second.seen[0]["messages"] if isinstance(m.get("content"), str)]
     assert "first question" not in contents
+
+
+# ------------------------------------------------------------------ per-call timeout
+
+
+def test_the_per_call_timeout_shrinks_with_the_remaining_budget(db, contact):
+    from app.services.agent.loop import run_agent_turn
+
+    clock = {"t": 0.0}
+    seen: list[int] = []
+
+    def builder(seconds):
+        seen.append(seconds)
+        return Mcp()
+
+    provider = ScriptedProvider(
+        [asks(call(cid="c1")), asks(call(cid="c2")), answer("There are 12 units.")],
+        on_call=lambda n: clock.__setitem__("t", clock["t"] + 20.0) if n <= 2 else None,
+    )
+    run_agent_turn(
+        db, contact_respond_id=contact["respond_id"], text="stock?", provider=provider,
+        mcp_builder=builder, catalog=CATALOG, clock=lambda: clock["t"],
+    )
+
+    # budget 45 s: after 20 s used 25 left (capped at 10), after 40 s used 5 left
+    assert seen == [10, 5]

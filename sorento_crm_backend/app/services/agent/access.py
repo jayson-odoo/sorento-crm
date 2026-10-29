@@ -34,6 +34,9 @@ class AgentContext:
 
 
 def build_context(db, contact_respond_id: str) -> AgentContext:
+    # Scope note for P1: reads are limited by the contact's brand scope, its reveal grants and
+    # what the routes allow for the contact id. Company scope of the linked user is not applied
+    # here, because the routes scope by contact id and the call itself runs as the integration.
     from app.models.access import RespondContact
     from app.models.base import company_scope, set_brand_scope
     from app.models.user import User, UserStatus
