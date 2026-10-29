@@ -18,7 +18,7 @@ rejected."
   `awaiting` / `changed` = To confirm (`app/models/project_so.py:767-782`).
 - OI header Outstanding = at least one non-cancelled line with a row in awaiting/changed, else
   Completed (`app/services/order_inquiry_header_service.py:291`, `_rows_agg` 186-241).
-- Purchasing's Confirm press = `acknowledge_rows` (`app/services/project_order_inquiry_service.py:9232`).
+- Purchasing's Confirm press = `acknowledge_rows` (`app/services/project_order_inquiry_service.py:9234`).
 - Reorder plan counts project demand ONLY on acknowledged/changed rows
   (`app/services/scm/demand.py:383-393`, `:764`, `:848`); awaiting rows are a chip
   (`app/services/scm/reorder_run_service.py:1265-1290`).
@@ -27,7 +27,16 @@ rejected."
 - Links: one target each - PO line, SPO allocation, or confirmed CS reserve
   (`app/models/project_so.py` `OrderInquiryLink`, CHECK at ~1239).
 
-(Confirm/Unconfirm UI paths, purchasing email + Excel triggers: filled from the code map.)
+- Manual presses: OI Lines "Confirm (N)" / "Unconfirm (N)"
+  (`sorento_crm_frontend/app/(protected)/project-sales/order-inquiries/components/OrderInquiriesClient.tsx:1976`, `:1864`),
+  OI detail "Confirm" / "Unconfirm" (`.../order-inquiries/[id]/components/OrderInquiryDetail.tsx:922`, `:828`);
+  routes `POST /order-inquiries/acknowledge` / `unacknowledge`
+  (`app/api/v1/projects/order_inquiries.py:871`, `:929`). `link-now` (`:1022`) links acknowledged rows only.
+- The OI Confirm press sends no email, notification or Excel; it stamps and runs the auto-link
+  (`project_order_inquiry_service.py:9234-9318`). Unconfirm writes one audit line (`:9461`).
+- Out of scope, unchanged: the board / planning-sheet SO Confirm (CS supply decision). It raises
+  the rows and sends the purchasing handover email + Excel + in-app task
+  (`project_order_inquiry_service.py:14971`, `:14684`, `:14887`). Reject keeps its own email (`:15257`).
 
 ## Proposed rule (pending owner answers)
 
@@ -37,7 +46,10 @@ rejected."
 
 ## Open questions
 
-See the behaviour card (`crew report --ask`, 29 Oct).
+Behaviour card filed 29 Oct (crew state file `oi-auto-confirm-card-29oct.md`, kept out of this
+public repo because it quotes real OI numbers). Q1 partial qty, Q2 SPO counts as PO, Q3 row
+loses its PO, Q4 reorder plan's acknowledged-only gate, Q5 rows with a PO state but no link.
+Recommended design: derive at read time from links + reject, so no stored flag and no backfill.
 
 ## Slices
 
