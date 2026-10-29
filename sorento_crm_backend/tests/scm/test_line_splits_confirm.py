@@ -82,11 +82,13 @@ def _so402757(api, *, with_splits: bool, line18_now="121", batch_18: bool = True
     supplier = _supplier(world)
     _po, po_line = _po_line(world, supplier, qty=51, expected_date=date(2026, 8, 20))
     _link(world, row_2, po_line, qty=51, document="202607-S0402")
-    for row in (row_2, row_18):
-        row.ack_state = ACK_ACKNOWLEDGED
-        row.acknowledged_by = world.actor
-        row.acknowledged_at = datetime.utcnow()
+    # OI-AUTO-CONFIRM: row 2 is Done by its link; row 18 has no link, so it is Done only by a
+    # person's Confirm (the press: `acknowledge_rows`), a manual override.
+    ProjectOrderInquiryService(db).acknowledge_rows([str(row_18.id)], actor_user_id=world.actor)
     db.commit()
+    db.refresh(row_2)
+    db.refresh(row_18)
+    assert row_18.ack_override == "confirmed" and row_18.ack_state == ACK_ACKNOWLEDGED
 
     # AutoCount: line 2 51 -> 2, line 18 82 -> 121, dates unchanged
     core_2.qty_ordered, line_2.qty = Decimal("2"), Decimal("2")
@@ -159,10 +161,11 @@ def test_a_linked_split_is_not_cancelled_on_the_origin_nor_re_ordered_on_the_tar
     live_18 = _live(s, s.line_18, IV_ORDER)
     assert len(live_18) == 1, "no second ORDER row for the 49 on line 18"
     assert _linked(s, live_18[0]) == Decimal("49")
-    # Line 18's own qty also changed (82 -> 121 with 49 in = its own CANCEL 10). OI-AUTO-CONFIRM:
-    # it holds 49 of 121 and never held a link at 82, so it is To order (the old seed
-    # forced it `acknowledged` with no link, a state the system no longer produces).
-    assert live_18[0].ack_state == ACK_AWAITING
+    # Line 18's own qty also changed (82 -> 121 with 49 in = its own CANCEL 10), so the owner's
+    # 17 Sep 2026 handshake ruling sends the restated acknowledged row back to To confirm.
+    # OI-AUTO-CONFIRM: it was a manual Confirm; a CS split clears the override and stamps
+    # `changed` because 49 of 121 is not covered.
+    assert live_18[0].ack_state == ACK_CHANGED
 
     remarks = [(h.get("line_no"), h["line"]["remark"], h["line"]["qty"]) for h in told]
     delays_49 = [h for h in told if h.get("line_no") == 2 and h["line"]["qty"] == "49"]
