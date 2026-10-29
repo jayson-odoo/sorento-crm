@@ -687,3 +687,12 @@ Each item: red test first (tester), then fix (coder), kill-proof. R = reviewer, 
 - J-4 (nits): docstring at `embedding_backfill_service.py` ~:447 (no "or Start"), the ai_assistant comment and trace span
   name the question the ranking uses, the always-true ternary at `settings/embeddings/page.tsx` ~:118, the duplicate
   `hashlib` import.
+
+## Review fix round 5 (browser pass on 99a7c0fd27, 29 Oct; FE only + one comment)
+
+- K-1: the header's "Record search reads" cell never overlaps: the model text and the "<model> in progress" badge sit
+  on separate lines or wrap (flex-wrap / stacked), both widths.
+- K-2: at 375 the header stat labels and the embedder name wrap instead of clipping (no truncation without a title);
+  each stat keeps its full text visible or in a title.
+- K-3: the LookupWordsGrid Vectors column has an explicit size wide enough for "n / m" so it does not clip at 1280.
+- K-4: the stale "the job also clears it" comment in `app/api/v1/system/embeddings.py` (~:198) is corrected.
