@@ -127,11 +127,11 @@ describe('sample request detail tabs', () => {
       </SampleRequestDetailTabs>,
     );
 
-  it('limited user (view_own, no view): no SLA Tracking tab', () => {
+  it('limited user (view_own, no view): children only, no tab strip (the portal form carries its own)', () => {
     held = new Set(['projects.sample_requests.view_own']);
     mount();
-    expect(tabs()).toContain('Details');
-    expect(tabs()).not.toContain('SLA Tracking');
+    expect(screen.getByText('Details content')).toBeInTheDocument();
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
   it('staff (view): SLA Tracking tab stays', () => {
