@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QUOTE-CUSTOMER-AMEND mock v2</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), same set as documentation/mockups/OI-SPLIT-VIEW */
+:root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--input:#e4e4e7;--primary:#3b82f6;--primary-soft:#eff6ff;--destructive:#dc2626;--destructive-soft:#fef2f2;--destructive-line:#fecaca;--success:#15803d;--success-soft:#f0fdf4;--success-line:#bbf7d0;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--info:#1d4ed8;--info-soft:#eff6ff;--info-line:#bfdbfe;--page:#f7f7f8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1360px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:1040px}
+.nav{position:sticky;top:0;z-index:50;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:1040px}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--foreground);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px}
+.mut{color:var(--muted-fg)}
+.num{font-variant-numeric:tabular-nums;text-align:right}
+.desk{width:1280px;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.main{padding:20px 24px;overflow:hidden}
+.row2{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.phone{width:375px;max-width:100%;flex:none;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.phone .main{padding:16px}
+.cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px;border-top:1px solid var(--border);background:#fff}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--input);background:#fff;font:500 13px Inter,ui-sans-serif,system-ui,sans-serif;white-space:nowrap;color:var(--foreground);cursor:pointer}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.ghost{border-color:transparent}
+.btn.sm{height:26px;font-size:12px;padding:0 9px}
+.btn.okb{background:var(--success);border-color:var(--success);color:#fff}
+.btn[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+.full{width:100%}
+.badge{display:inline-flex;align-items:center;border-radius:6px;padding:0 7px;font-size:11.5px;line-height:20px;font-weight:500;white-space:nowrap;border:1px solid transparent}
+.badge.sec{background:var(--muted);color:#3f3f46}
+.badge.ok{background:var(--success-soft);color:var(--success);border-color:var(--success-line)}
+.badge.warn{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-line)}
+.badge.bad{background:var(--destructive-soft);color:var(--destructive);border-color:var(--destructive-line)}
+.badge.info{background:var(--info-soft);color:var(--info);border-color:var(--info-line)}
+.ph{border:1px solid var(--border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:0 0 14px}
+.ph .t{font-size:19px;font-weight:600}
+.ph .r{margin-left:auto;display:flex;gap:8px}
+.crumb{color:var(--muted-fg);font-size:12.5px;margin:0 0 8px}
+.tabs{display:flex;gap:22px;border-bottom:1px solid var(--border);margin:0 0 14px;font-size:13.5px}
+.tabs span{padding:8px 0;color:var(--muted-fg)}
+.tabs .on{color:var(--primary);border-bottom:2px solid var(--primary);font-weight:500}
+.card{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#fff;margin:0 0 14px}
+.card .hd{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.card .hd b{font-size:15px;margin-right:auto}
+.card .bd{padding:14px 16px}
+.scroll{overflow-x:auto}
+table.g{border-collapse:collapse;table-layout:fixed;font-size:13px;width:100%}
+table.g th{font-weight:500;color:var(--muted-fg);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);background:#fafafa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.g td{padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+table.g tfoot td{font-weight:600;background:#fafafa}
+tr.chg td{background:#fffbeb}
+tr.rem td{background:var(--destructive-soft)}
+tr.rem .strike{text-decoration:line-through;color:var(--muted-fg)}
+.inp{height:30px;border:1px solid var(--input);border-radius:6px;padding:0 8px;font:13px Inter,ui-sans-serif,system-ui,sans-serif;width:100%;text-align:right;font-variant-numeric:tabular-nums;background:#fff}
+.inp.ed{border-color:var(--warning);background:#fffbeb}
+.ro{color:var(--muted-fg);text-align:right;font-variant-numeric:tabular-nums}
+.was{display:block;font-size:11px;color:var(--muted-fg);text-decoration:line-through}
+.delta{display:block;font-size:11px;color:var(--warning)}
+.note{border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:#fafafa;font-size:13px}
+.lbl{font-size:12.5px;font-weight:500;margin:0 0 4px;display:block}
+textarea{width:100%;border:1px solid var(--input);border-radius:6px;padding:8px;font:13px Inter,ui-sans-serif,system-ui,sans-serif;resize:vertical}
+.tot{display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:4px 0}
+.tot b{font-variant-numeric:tabular-nums}
+.callout{border:1px solid var(--info-line);background:var(--info-soft);color:var(--info);border-radius:8px;padding:10px 12px;font-size:13px;margin:0 0 12px}
+.callout.w{border-color:var(--warning-line);background:var(--warning-soft);color:var(--warning)}
+/* phone line card (375px): one card per line instead of a sideways-scrolling table, so inputs are reachable */
+.lc{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:0 0 8px}
+.lc.chg{border-color:var(--warning-line);background:#fffbeb}
+.lc.rem{border-color:var(--destructive-line);background:var(--destructive-soft)}
+.lc .top{display:flex;gap:8px;align-items:baseline}
+.lc .it{font-weight:600;font-size:12px;color:var(--muted-fg);flex:none}
+.lc .ds{font-size:13px;min-width:0;overflow-wrap:anywhere}
+.lc .cd{font-size:11.5px;color:var(--muted-fg)}
+.lc .fl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.lc .fl label{font-size:11.5px;color:var(--muted-fg);display:block;margin-bottom:2px}
+.lc .am{display:flex;justify-content:space-between;font-size:12.5px;margin-top:6px}
+.dec{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--input);border-radius:6px;overflow:hidden;background:#fff}
+.seg button{height:26px;padding:0 10px;font:500 12px Inter,ui-sans-serif,system-ui,sans-serif;border:0;background:#fff;color:var(--foreground);cursor:pointer}
+.seg button+button{border-left:1px solid var(--input)}
+.seg button.acc{background:var(--success);color:#fff}
+.seg button.rej{background:var(--destructive);color:#fff}
+.reason{height:26px;border:1px solid var(--input);border-radius:6px;padding:0 8px;font:12px Inter,ui-sans-serif,system-ui,sans-serif;width:100%}
+table.map{border-collapse:collapse;font-size:12.5px;width:100%;background:#fff;border:1px solid var(--border)}
+table.map th,table.map td{padding:7px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+table.map th{background:#fafafa;font-weight:500;color:var(--muted-fg)}
+code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>QUOTE-CUSTOMER-AMEND, mock v2</h1>
+<p class="intro">Both sides of a customer amendment request. ALL codes, descriptions and prices are FAKE (public repo); the shape is
+a real project quotation's: a priced item followed by zero-priced companion lines at the same quantity. Customer A,
+Project P1, <b>Quotation No. PRJQ-0000-R1</b> (placeholder number, label per the QUOTE-SIGN-PAGE ruling), 40 lines,
+RM 250,000.00; seven lines shown. The minimum price on line 1 (RM 390.00) is illustrative. The sign page shell follows main today; QUOTE-SIGN-PAGE is reshaping it, so the shell is re-fitted
+after that merges, while the line editing, states and staff panel are what this mock asks you to approve.
+Answers assumed: Q1 (a) sign waits, Q2 (a) qty 0 = remove, Q3 (a) draft revision, Q4 (a) existing notification, Q5 (a) note kept.</p>
+
+<nav class="nav">
+<a href="#c1">1 Customer edits (1280)</a><a href="#c2">2 Customer edits (375)</a><a href="#c3">3 Sent, waiting</a>
+<a href="#c4">4 Outcome</a><a href="#s1">5 Staff diff (1280)</a><a href="#s2">6 Staff diff (375)</a><a href="#s3">7 After Apply</a><a href="#map">8 Component map</a>
+</nav>
+
+<!-- ============================================================ 1 -->
+<section id="c1">
+<h2><span class="nb">1</span>Customer: "Suggest changes" mode on the sign page, 1280px</h2>
+<p class="why">The page is the quotation as issued. "Suggest changes" turns the qty and unit price cells into inputs on
+every line; description, code and spec stay plain text (no input exists for them). An edited line turns amber and keeps
+the issued value struck through underneath. Qty 0 marks the line as a removal. Zero-priced companion lines (line 2) have
+a qty input but no price input: their money sits on the parent. Sign is hidden while in this mode, so the customer
+cannot sign and suggest in one go.</p>
+<div class="desk"><div class="main">
+<div class="ph"><div><div class="t">Quotation No. PRJQ-0000-R1</div><div class="mut" style="font-size:13px">Project P1 · for Customer A · 28 Jan 2026</div></div>
+<div class="r"><span class="badge warn">Suggesting changes</span></div></div>
+<div class="card"><div class="hd"><b>Sanitary ware</b><span class="mut" style="font-size:12.5px">3 lines changed</span></div>
+<div class="scroll"><table class="g">
+<colgroup><col style="width:52px"><col style="width:150px"><col><col style="width:110px"><col style="width:70px"><col style="width:140px"><col style="width:150px"></colgroup>
+<thead><tr><th>Line</th><th>Code</th><th>Description</th><th class="num">Qty</th><th>UOM</th><th class="num">Unit price (RM)</th><th class="num">Amount (RM)</th></tr></thead>
+<tbody>
+<tr class="chg"><td>1</td><td>WC-1001</td><td title="ONE PIECE WC, RIMLESS, S-TRAP">ONE PIECE WC, RIMLESS, S-TRAP</td>
+<td><input class="inp ed" value="110"><span class="was num">120</span></td><td>UNIT</td><td><input class="inp ed" value="380.00"><span class="was num">400.00</span></td>
+<td class="num">41,800.00<span class="was">48,000.00</span></td></tr>
+<tr class="chg"><td>2</td><td>CON-0001</td><td>FLEXIBLE CONNECTOR 100MM</td>
+<td><input class="inp ed" value="110"><span class="was num">120</span></td><td>UNIT</td><td class="ro">-</td><td class="num"></td></tr>
+<tr><td>3</td><td>PED-2002</td><td>CLOSE COUPLED PEDESTAL, S-TRAP</td>
+<td><input class="inp" value="80"></td><td>UNIT</td><td><input class="inp" value="300.00"></td><td class="num">24,000.00</td></tr>
+<tr><td>4</td><td>CIS-2002</td><td>CLOSE COUPLED CISTERN ONLY</td>
+<td><input class="inp" value="80"></td><td>UNIT</td><td class="ro">-</td><td class="num"></td></tr>
+<tr><td>11</td><td>VAL-0300</td><td>ANGLE VALVE</td>
+<td><input class="inp" value="200"></td><td>UNIT</td><td><input class="inp" value="6.00"></td><td class="num">1,200.00</td></tr>
+<tr class="chg"><td>14</td><td>BSN-4004</td><td>COUNTERTOP BASIN 480MM</td>
+<td><input class="inp" value="120"></td><td>UNIT</td><td><input class="inp ed" value="150.00"><span class="was num">160.00</span></td>
+<td class="num">18,000.00<span class="was">19,200.00</span></td></tr>
+<tr class="rem"><td>40</td><td class="strike">SHW-5005</td><td class="strike">ROUND SHOWER HEAD 4"</td>
+<td><input class="inp ed" value="0"><span class="was num">10</span></td><td>UNIT</td><td><input class="inp" value="10.00"></td>
+<td class="num"><span class="badge bad">Remove</span><span class="was">100.00</span></td></tr>
+</tbody></table></div></div>
+<div class="row2" style="align-items:stretch">
+<div style="flex:1;min-width:300px"><label class="lbl" for="n1">Anything else (optional)</label>
+<textarea id="n1" rows="3">Please deliver the WCs in two batches.</textarea></div>
+<div style="width:340px;max-width:100%">
+<div class="tot"><span class="mut">Quoted total</span><b>RM 250,000.00</b></div>
+<div class="tot"><span class="mut">With your changes</span><b>RM 242,500.00</b></div>
+<div class="tot"><span class="mut">Difference</span><b style="color:var(--warning)">- RM 7,500.00</b></div>
+<div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end"><span class="btn ghost">Discard changes</span><span class="btn pri">Send 4 changes</span></div>
+</div></div>
+</div><div class="cap">QuotationSignClient (mode switch, note, totals, send) + QuotationSignScopes ScopeTable (edit mode)</div></div>
+</section>
+
+<!-- ============================================================ 2 -->
+<section id="c2">
+<h2><span class="nb">2</span>Customer: the same request on a phone, 375px</h2>
+<p class="why">On a phone the wide table becomes one card per line, so the qty and price inputs are within reach without
+scrolling sideways (today's read-only table scrolls inside its own gutter; inputs in a scrolling table are hard to hit).
+"Show changed only" helps on a 60-line quotation. Send sits in a sticky footer.</p>
+<div class="row2">
+<div class="phone"><div class="main">
+<div style="font-weight:600;font-size:16px">Quotation No. PRJQ-0000-R1</div>
+<div class="mut" style="font-size:12.5px;margin-bottom:10px">Project P1 · Customer A</div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span class="badge warn">Suggesting changes</span>
+<label style="font-size:12px"><input type="checkbox"> Show changed only</label></div>
+<div class="lc chg"><div class="top"><span class="it">1</span><div><div class="ds">ONE PIECE WC, RIMLESS, S-TRAP</div><div class="cd">WC-1001 · UNIT</div></div></div>
+<div class="fl"><div><label>Qty</label><input class="inp ed" value="110"><span class="was num">120</span></div><div><label>Unit price (RM)</label><input class="inp ed" value="380.00"><span class="was num">400.00</span></div></div>
+<div class="am"><span class="mut">Amount</span><b class="num">RM 41,800.00</b></div></div>
+<div class="lc chg"><div class="top"><span class="it">2</span><div><div class="ds">FLEXIBLE CONNECTOR 100MM</div><div class="cd">CON-0001 · goes with line 1</div></div></div>
+<div class="fl"><div><label>Qty</label><input class="inp ed" value="110"><span class="was num">120</span></div><div><label>Unit price</label><div class="ro" style="line-height:30px">-</div></div></div></div>
+<div class="lc"><div class="top"><span class="it">3</span><div><div class="ds">CLOSE COUPLED PEDESTAL, S-TRAP</div><div class="cd">PED-2002 · UNIT</div></div></div>
+<div class="fl"><div><label>Qty</label><input class="inp" value="80"></div><div><label>Unit price (RM)</label><input class="inp" value="300.00"></div></div>
+<div class="am"><span class="mut">Amount</span><b class="num">RM 24,000.00</b></div></div>
+<div class="lc rem"><div class="top"><span class="it">40</span><div><div class="ds" style="text-decoration:line-through">ROUND SHOWER HEAD 4"</div><div class="cd">SHW-5005 · UNIT</div></div><span class="badge bad" style="margin-left:auto">Remove</span></div>
+<div class="fl"><div><label>Qty</label><input class="inp ed" value="0"><span class="was num">10</span></div><div><label>Unit price (RM)</label><input class="inp" value="10.00"></div></div></div>
+<label class="lbl" for="n2" style="margin-top:10px">Anything else (optional)</label><textarea id="n2" rows="2">Please deliver the WCs in two batches.</textarea>
+</div>
+<div style="border-top:1px solid var(--border);padding:10px 16px;background:#fff">
+<div class="tot"><span class="mut">With your changes</span><b>RM 242,500.00</b></div>
+<span class="btn pri full">Send 4 changes</span></div>
+<div class="cap">375px · sticky footer</div></div>
+
+<div class="phone"><div class="main">
+<div style="font-weight:600;font-size:16px">Quotation No. PRJQ-0000-R1</div>
+<div class="mut" style="font-size:12.5px;margin-bottom:10px">Project P1 · Customer A</div>
+<div class="callout">Not ready to sign? You can suggest new quantities or prices on any line, or tell us what else should change.</div>
+<span class="btn full" style="margin-bottom:8px">Suggest changes</span>
+<span class="btn pri full">Sign and accept</span>
+<p class="mut" style="font-size:12px;margin-top:10px">Entry point, before editing: the "Request changes" button of today becomes "Suggest changes" and opens mode 1/2. One button, not two.</p>
+</div><div class="cap">375px · entry point</div></div>
+</div>
+</section>
+
+<!-- ============================================================ 3 -->
+<section id="c3">
+<h2><span class="nb">3</span>Customer: sent, waiting for an answer (Q1 a)</h2>
+<p class="why">After sending, the page quotes the request back read-only. Sign is disabled and the page says WHICH reason applies, right under the button: an open request (left) or the unticked terms (right).
+A second send is not offered (the server answers 409 to a stale tab).</p>
+<div class="row2">
+<div class="phone"><div class="main">
+<div style="font-weight:600;font-size:16px">Quotation No. PRJQ-0000-R1</div>
+<div class="callout w"><b>Your changes are with Sorento</b><br>Sent 30 Oct, 14:05. Your salesperson will answer each line. You can sign once they have.</div>
+<div class="lc chg"><div class="top"><span class="it">1</span><div class="ds">ONE PIECE WC, RIMLESS, S-TRAP</div></div>
+<div class="am"><span class="mut">Qty</span><span class="num">120 → 110</span></div><div class="am"><span class="mut">Unit price</span><span class="num">400.00 → 380.00</span></div></div>
+<div class="lc chg"><div class="top"><span class="it">2</span><div class="ds">FLEXIBLE CONNECTOR 100MM</div></div><div class="am"><span class="mut">Qty</span><span class="num">120 → 110</span></div></div>
+<div class="lc chg"><div class="top"><span class="it">14</span><div class="ds">COUNTERTOP BASIN 480MM</div></div><div class="am"><span class="mut">Unit price</span><span class="num">160.00 → 150.00</span></div></div>
+<div class="lc rem"><div class="top"><span class="it">40</span><div class="ds">ROUND SHOWER HEAD 4"</div><span class="badge bad" style="margin-left:auto">Remove</span></div></div>
+<div class="note">"Please deliver the WCs in two batches."</div>
+<span class="btn pri full" aria-disabled="true" style="margin-top:12px">Sign and accept</span>
+<p style="font-size:12.5px;color:var(--warning);margin:6px 0 0">You can sign once Sorento has answered your suggested changes (sent 30 Oct, 14:05).</p>
+</div><div class="cap">375px · open request: reason 1 (terms tick hidden)</div></div>
+<div class="phone"><div class="main">
+<div style="font-weight:600;font-size:16px">Quotation No. PRJQ-0000-R1</div>
+<div class="mut" style="font-size:12.5px;margin-bottom:10px">Revision 1 · Project P1 · Customer A</div>
+<label style="display:flex;gap:8px;font-size:13px;align-items:flex-start"><input type="checkbox" style="margin-top:3px"> I have read the terms and conditions</label>
+<span class="btn pri full" aria-disabled="true" style="margin-top:12px">Sign and accept</span>
+<p class="mut" style="font-size:12.5px;margin:6px 0 0">Tick that you have read the terms to sign.</p>
+<p class="mut" style="font-size:12px;margin-top:10px">No open request: the only reason is the terms tick (QUOTE-SIGN-PAGE). The open-request reason is checked first; the two never show together, and the server answers a stale tab with the same sentence.</p>
+</div><div class="cap">375px · no request: reason 2</div></div>
+</div>
+</section>
+
+<!-- ============================================================ 4 -->
+<section id="c4">
+<h2><span class="nb">4</span>Customer: the outcome, on the same link</h2>
+<p class="why">Once staff press Apply, the PRJQ-0000-R1 link shows each line's answer and the reason for a "not accepted".
+PRJQ-0000-R1 itself can no longer be signed: the revised quotation, PRJQ-0000-R2, comes with its own link, sent by the salesperson as today.</p>
+<div class="row2">
+<div class="phone"><div class="main">
+<div style="font-weight:600;font-size:16px">Quotation No. PRJQ-0000-R1</div>
+<div class="callout"><b>Sorento answered your changes</b><br>3 accepted, 1 not accepted. Your salesperson will send the revised quotation, Quotation No. PRJQ-0000-R2, for signing.</div>
+<div class="lc"><div class="top"><span class="it">1</span><div class="ds">ONE PIECE WC, RIMLESS, S-TRAP</div><span class="badge ok" style="margin-left:auto">Accepted</span></div>
+<div class="am"><span class="mut">Qty / price</span><span class="num">110 × 380.00</span></div></div>
+<div class="lc"><div class="top"><span class="it">2</span><div class="ds">FLEXIBLE CONNECTOR 100MM</div><span class="badge ok" style="margin-left:auto">Accepted</span></div></div>
+<div class="lc"><div class="top"><span class="it">14</span><div class="ds">COUNTERTOP BASIN 480MM</div><span class="badge sec" style="margin-left:auto">Not accepted</span></div>
+<div class="am"><span class="mut">Stays at</span><span class="num">160.00</span></div><div class="mut" style="font-size:12px;margin-top:4px">"Already at the project price."</div></div>
+<div class="lc"><div class="top"><span class="it">40</span><div class="ds">ROUND SHOWER HEAD 4"</div><span class="badge ok" style="margin-left:auto">Removed</span></div></div>
+</div><div class="cap">375px · answered</div></div>
+<div class="phone"><div class="main">
+<div style="font-weight:600;font-size:16px">Quotation No. PRJQ-0000-R1</div>
+<div class="callout w"><b>This quotation has been replaced by Quotation No. PRJQ-0000-R2.</b><br>Ask your contact at Sorento for the latest link.</div>
+<p class="mut" style="font-size:12px">A superseded revision: no edit and no sign (new; today an old revision can still be signed).</p>
+</div><div class="cap">375px · superseded</div></div>
+</div>
+</section>
+
+<!-- ============================================================ 5 -->
+<section id="s1">
+<h2><span class="nb">5</span>Staff: the request on the quotation document, 1280px</h2>
+<p class="why">The quotation document page shows a "Customer request" card on top of the Signatures tab, with a count on the tab.
+Rows are the AmendmentDeltaTable in a new quotation mode: one row per changed field, issued → requested, the change,
+and Accept / Reject per row. A requested price under the line's stored minimum carries the "Below minimum" badge, which says
+the revision will need approval. Reject takes an optional reason that the customer sees. Apply is enabled once every row is decided.</p>
+<div class="desk"><div class="main">
+<div class="crumb">Project Sales / Project P1 / Quotations / PRJQ-0000</div>
+<div class="ph"><div><div class="t">Quotation No. PRJQ-0000-R1</div><div class="mut" style="font-size:13px">Revision 1 · issued 28 Jan 2026 · Customer A</div></div>
+<span class="badge warn">Changes requested</span><div class="r"><span class="btn">Download PDF</span><span class="btn pri">Revise</span></div></div>
+<div class="tabs"><span>Letter</span><span>Scopes</span><span class="on">Signatures · 1</span><span>Activity</span></div>
+<div class="card"><div class="hd"><b>Customer request on PRJQ-0000-R1</b><span class="mut" style="font-size:12.5px">From the customer's contact · 30 Oct 2026, 14:05 · 4 lines</span></div>
+<div class="bd" style="padding-bottom:0"><div class="note" style="margin-bottom:12px"><span class="mut">Note:</span> "Please deliver the WCs in two batches."</div></div>
+<div class="scroll"><table class="g">
+<colgroup><col style="width:48px"><col style="width:140px"><col><col style="width:90px"><col style="width:200px"><col style="width:140px"><col style="width:300px"></colgroup>
+<thead><tr><th>Line</th><th>Product</th><th>Description</th><th>Field</th><th>Issued → requested</th><th class="num">Line change (RM)</th><th>Decision</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>WC-1001</td><td title="ONE PIECE WC, RIMLESS, S-TRAP">ONE PIECE WC, RIMLESS, S-TRAP</td><td>Qty</td><td class="num">120 → 110</td><td class="num" rowspan="2" style="vertical-align:middle">- 6,200.00</td>
+<td><div class="dec"><span class="seg"><button class="acc">Accept</button><button>Reject</button></span></div></td></tr>
+<tr><td></td><td></td><td></td><td>Unit price</td><td class="num">400.00 → 380.00 <span class="badge bad" title="Minimum RM 390.00 (illustrative)">Below minimum</span></td>
+<td><div class="dec"><span class="seg"><button class="acc">Accept</button><button>Reject</button></span><span class="mut" style="font-size:11.5px">needs approval</span></div></td></tr>
+<tr><td>2</td><td>CON-0001</td><td>FLEXIBLE CONNECTOR 100MM</td><td>Qty</td><td class="num">120 → 110</td><td class="num">0.00</td>
+<td><div class="dec"><span class="seg"><button class="acc">Accept</button><button>Reject</button></span></div></td></tr>
+<tr><td>14</td><td>BSN-4004</td><td>COUNTERTOP BASIN 480MM</td><td>Unit price</td><td class="num">160.00 → 150.00</td><td class="num">- 1,200.00</td>
+<td><div class="dec"><span class="seg"><button>Accept</button><button class="rej">Reject</button></span><input class="reason" style="width:140px" value="Already at the project price."></div></td></tr>
+<tr><td>40</td><td>SHW-5005</td><td>ROUND SHOWER HEAD 4"</td><td>Qty</td><td class="num">10 → 0 <span class="badge bad">Remove</span></td><td class="num">- 100.00</td>
+<td><div class="dec"><span class="seg"><button class="acc">Accept</button><button>Reject</button></span></div></td></tr>
+</tbody>
+<tfoot><tr><td colspan="5">Accepted 4 · Rejected 1 · Undecided 0</td><td class="num">- 6,300.00</td><td></td></tr></tfoot>
+</table></div>
+<div class="bd" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--border)">
+<span class="mut" style="font-size:12.5px;margin-right:auto">Apply opens PRJQ-0000-R2 as a draft with the accepted rows. 1 accepted price is below minimum, so PRJQ-0000-R2 needs approval before it can be issued.</span>
+<span class="btn pri">Apply 4 accepted</span></div>
+</div>
+</div><div class="cap">QuotationChangesRequestedPanel (grows into the request card) + AmendmentDeltaTable (quotation mode) + Badge</div></div>
+</section>
+
+<!-- ============================================================ 6 -->
+<section id="s2">
+<h2><span class="nb">6</span>Staff: the same at 375px</h2>
+<p class="why">The DataGrid scrolls inside its card at 375px, as AmendmentDeltaTable already does for SO revisions; the Decision
+column is pinned so Accept / Reject stay reachable.</p>
+<div class="row2"><div class="phone"><div class="main">
+<div style="font-weight:600;font-size:16px">Quotation No. PRJQ-0000-R1</div><div style="margin:4px 0 10px"><span class="badge warn">Changes requested</span></div>
+<div class="card"><div class="hd"><b>Customer request on PRJQ-0000-R1</b></div>
+<div class="scroll"><table class="g" style="width:560px">
+<colgroup><col style="width:140px"><col style="width:80px"><col style="width:150px"><col style="width:190px"></colgroup>
+<thead><tr><th>Product</th><th>Field</th><th>Issued → req.</th><th>Decision</th></tr></thead>
+<tbody>
+<tr><td>WC-1001</td><td>Qty</td><td class="num">120 → 110</td><td><span class="seg"><button class="acc">Accept</button><button>Reject</button></span></td></tr>
+<tr><td>WC-1001</td><td>Price</td><td class="num">400.00 → 380.00</td><td><span class="seg"><button class="acc">Accept</button><button>Reject</button></span></td></tr>
+<tr><td>BSN-4004</td><td>Price</td><td class="num">160.00 → 150.00</td><td><span class="seg"><button>Accept</button><button class="rej">Reject</button></span></td></tr>
+</tbody></table></div>
+<div class="bd"><span class="btn pri full">Apply 4 accepted</span></div></div>
+</div><div class="cap">375px</div></div></div>
+</section>
+
+<!-- ============================================================ 7 -->
+<section id="s3">
+<h2><span class="nb">7</span>Staff: after Apply</h2>
+<p class="why">PRJQ-0000-R2 is a draft on the Scopes tab with the accepted values written through the normal line writer, so line 1 carries
+the existing below-minimum flag. The existing approval panel then asks for a manager before Issue (approval gate unchanged).
+The request card collapses to a summary with the decisions.</p>
+<div class="desk"><div class="main">
+<div class="ph"><div><div class="t">Quotation No. PRJQ-0000-R2</div><div class="mut" style="font-size:13px">Revision 2, draft · from the customer's request on R1</div></div>
+<span class="badge sec">Draft</span><div class="r"><span class="btn pri">Request approval</span></div></div>
+<div class="callout w">1 line is priced below the floor, so this quotation needs a manager's approval before it can be sent to the customer.</div>
+<div class="card"><div class="hd"><b>Customer request on PRJQ-0000-R1</b><span class="badge ok">Applied to PRJQ-0000-R2</span><span class="mut" style="font-size:12.5px">4 accepted · 1 rejected · 30 Oct, 15:20 by the salesperson</span></div></div>
+<div class="tot" style="max-width:420px"><span class="mut">PRJQ-0000-R1 total</span><b>RM 250,000.00</b></div>
+<div class="tot" style="max-width:420px"><span class="mut">PRJQ-0000-R2 draft total</span><b>RM 243,700.00</b></div>
+</div><div class="cap">QuotationApprovalPanel (existing) + QuotationDocumentPageHeader</div></div>
+</section>
+
+<!-- ============================================================ 8 -->
+<section id="map">
+<h2><span class="nb">8</span>Element to component map</h2>
+<p class="why">Paths are main today; the two sign-page files are being reshaped by QUOTE-SIGN-PAGE and are re-checked once it merges.</p>
+<table class="map">
+<thead><tr><th>Element</th><th>Component (repo path)</th><th>Change</th></tr></thead>
+<tbody>
+<tr><td>Entry button "Suggest changes", mode switch, note, totals, Send, waiting and outcome states (1-4)</td><td><code>sorento_crm_frontend/app/(auth)/quotation-sign/[token]/components/QuotationSignClient.tsx</code></td><td>Replaces the free-text Request changes block (:280-330); Sign disabled while a request is open</td></tr>
+<tr><td>Qty / price inputs per line, amber changed row, removal row, phone line cards (1-2)</td><td><code>.../quotation-sign/[token]/components/QuotationSignScopes.tsx</code> (<code>ScopeTable</code>)</td><td>New edit mode prop; read-only mode unchanged</td></tr>
+<tr><td>Public data + submit</td><td><code>.../quotation-sign/services/quotationSignService.ts</code>, <code>app/api/v1/public/quotation_sign.py</code></td><td>New <code>POST /{token}/amendment-request</code>; page payload gains line ids and the request</td></tr>
+<tr><td>Staff per-row diff, Accept / Reject, reason (5-6)</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/AmendmentDeltaTable.tsx</code></td><td>Quotation mode (row: line, field, from, to, decision), not a fork</td></tr>
+<tr><td>Request card, note, Apply (5, 7)</td><td><code>.../quotation-documents/[documentId]/components/QuotationChangesRequestedPanel.tsx</code></td><td>Grows from the note-only panel</td></tr>
+<tr><td>Below minimum badge, approval after Apply (5, 7)</td><td><code>components/ui/badge</code>, <code>.../components/QuotationApprovalPanel.tsx</code></td><td>Unchanged gate (<code>assert_issuable</code>)</td></tr>
+<tr><td>"Changes requested" header pill, tab count</td><td><code>QuotationDocumentPageHeader.tsx</code>, <code>QuotationDocumentTabs.tsx</code></td><td>Reads the open request</td></tr>
+</tbody></table>
+</section>
+</div>
+</body>
+</html>
