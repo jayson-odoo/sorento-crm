@@ -2280,10 +2280,11 @@ describe('QuotationVersionEditor sets (SET-QUOTE-LINE)', () => {
     expect(options[0]).not.toHaveTextContent('Set');
     expect(options[0]).not.toHaveTextContent('parts');
     expect(options[0]).not.toHaveTextContent('Water closet set');
-    // the product follows the set, and keeps its name beside the code
+    // the product follows the set, its code alone too (QUOTE-UI-POLISH, owner 29 Oct: "just show
+    // product code only"; it used to keep its name beside the code)
     const productAt = options.findIndex((o) => /SRT-BASIN-02/.test(o.textContent ?? ''));
     expect(productAt).toBeGreaterThan(0);
-    expect(options[productAt].textContent).toMatch(/SRT-BASIN-02.+\S/);
+    expect(options[productAt].textContent?.trim()).toBe('SRT-BASIN-02');
   });
 
   it('F1: picking the set stages product_set_id and no product_id', async () => {
