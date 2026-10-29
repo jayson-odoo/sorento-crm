@@ -260,9 +260,9 @@ def test_ac_cf_1b_borrow_asker_row_is_born_awaiting(api):
     )
     assert row is not None, "the borrow-asker row was not written at all"
     assert row.supply_decision_id is not None, "board-origin, so S1's rule applies"
-    assert row.ack_state == ACK_AWAITING
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: done at birth
     assert row.acknowledged_by is None
-    assert row.acknowledged_at is None
+    assert row.acknowledged_at is not None
 
 
 # ---------------------------------------------------------------------------
