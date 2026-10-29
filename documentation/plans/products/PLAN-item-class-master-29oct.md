@@ -1,7 +1,8 @@
 # PLAN - ITEM-CLASS-MASTER: AutoCount ItemClass as an ingest master (contract 2.11)
 
-**Status:** Build (small fix track: backend only, no migration, no auth/RBAC change, the ingest
-surface gains one entity on the existing door). CRM branch is based on #1972
+**Status:** Review done (standard track: backend only and no migration, but it adds a new entity
+on the external ingest/read/deletions doors with three permission-map entries, so security
+review ran; reviewer READY, security no C/H/M). CRM branch is based on #1972
 (`claude/item-class-sync-rbac-4sehj5`, head 7a0c583b) because #1972 is not merged yet; rebase
 after it merges.
 
@@ -73,6 +74,10 @@ every run is a full-list pull, and a class gone from the list goes to `/deletion
   `brand_class_ids` JSONB, which the referrer probe cannot see; a hard delete would leave a
   dangling id there (and the CRM screen refuses that delete with 409 for the same reason).
   `is_active = false`, row and reference kept, re-push reactivates (AutoCount is master).
+- **D5a Intended (reviewer S2):** a deactivated class keeps any contact narrowing that names it.
+  `contact_brand_scope` reads class ids, never `is_active`, so retiring a class in AutoCount
+  neither widens nor narrows anyone. The Brands card select omits inactive classes, but a saved
+  one stays on the card. This is the same as a manual deactivate on the Item Classes screen.
 - **D5b Accepted (security L1):** a re-push of a known `source_ref` with a different `code`
   renames that row, and contacts narrowed to its id follow the rename. This matches brands and
   a rename on the Item Classes screen. The SS ref is `<book>:<ItemClass>`, so the ref and the
