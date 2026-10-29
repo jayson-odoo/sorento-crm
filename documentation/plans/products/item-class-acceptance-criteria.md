@@ -9,7 +9,9 @@ Plan: `PLAN-item-class-29oct.md`. Owner answers 29 Oct: Q1 (a), Q2 (a), Q3 as pr
   `update_tenant` from below 0.20.0, an empty task keeps its first-save preset seed).
 - **AC-2** A CRM product push with an unknown `item_class_code` back-creates one item class
   (code = name = value), links the product and warns `item_class_created`; the same code in any
-  case/spacing reuses the row; absent/blank leaves the stored link untouched; classes are per
+  case/spacing reuses the row; absent leaves the stored link untouched, blank clears it (crew
+  ruling 29 Oct, security M1: the class narrows access, so a class AutoCount cleared must not
+  linger); classes are per
   company; `GET /external/contract` lists the field and the warning.
 
 ## Reference data, list, form

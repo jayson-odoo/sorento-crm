@@ -97,7 +97,7 @@ export default function ItemClassFormDialog({ open, onOpenChange }: ItemClassFor
                 <FormItem>
                   <FormLabel>Name</FormLabel>
                   <FormControl>
-                    <Input {...field} maxLength={100} disabled={isSaving} />
+                    <Input {...field} maxLength={150} disabled={isSaving} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

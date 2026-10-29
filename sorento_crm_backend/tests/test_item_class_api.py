@@ -302,3 +302,99 @@ def test_migration_grants_follow_the_brand_slugs() -> None:
         assert "master_data.item_classes.view" in _slugs(holder)
         assert "master_data.item_classes.edit" not in _slugs(holder)
         assert not any(s.startswith("master_data.item_classes") for s in _slugs(bystander))
+
+
+# --------------------------------------------------------------------- review round (S2-S4)
+
+
+def _other_company(db):
+    from app.models.company import Company
+
+    row = Company(id=str(uuid.uuid4()), name=f"{MARKER} other", code=f"ZIA{uuid.uuid4().hex[:6]}")
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _scope_override(db, scope):
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
+    def _scope():
+        set_company_scope(db, scope)
+        return None
+
+    app.dependency_overrides[apply_company_scope] = _scope
+    set_company_scope(db, scope)
+
+
+def test_product_refuses_a_class_of_another_company(env) -> None:
+    """S3: classes are per company; a caller seeing two companies cannot cross-link them."""
+    client, db = env
+    other = _other_company(db)
+    foreign = ItemClass(id=str(uuid.uuid4()), item_class_code=unique_code("FRN")[:50],
+                        item_class_name=f"{MARKER} FRN", company_id=other.id)
+    db.add(foreign)
+    p = _product(db)
+    db.commit()
+    _scope_override(db, frozenset({DEFAULT_COMPANY_ID, str(other.id)}))
+    res = client.put(f"{PRODUCTS}/{p.id}", json={"item_class_id": foreign.id})
+    assert res.status_code == 422, res.text
+    own = _class(db, "OWN")
+    db.commit()
+    res = client.put(f"{PRODUCTS}/{p.id}", json={"item_class_id": own.id})
+    assert res.status_code == 200, res.text
+
+
+def test_same_code_in_another_company_is_not_a_conflict(env) -> None:
+    """S4: an all-companies caller writes into the incumbent company; another company's row
+    with the same code does not block it."""
+    client, db = env
+    other = _other_company(db)
+    code = unique_code("SHARED")[:50]
+    db.add(ItemClass(id=str(uuid.uuid4()), item_class_code=code, item_class_name=f"{MARKER} S",
+                     company_id=other.id))
+    db.commit()
+    _scope_override(db, None)
+    res = client.post(BASE + "/", json={"item_class_code": code, "item_class_name": "Shared"})
+    assert res.status_code == 201, res.text
+    res = client.post(BASE + "/", json={"item_class_code": code.lower(), "item_class_name": "Again"})
+    assert res.status_code == 409, res.text
+
+
+def test_delete_ignores_a_class_list_of_a_brand_the_contact_no_longer_has(env) -> None:
+    """S2: a dormant entry (brand dropped from brand_ids) narrows nothing, so it does not block."""
+    client, db = env
+    from app.models.access import RespondContact
+
+    sorento, mocha, row = _brand(db, "SORENTO"), _brand(db, "MOCHA"), _class(db, "DORMANT")
+    db.add(RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')}",
+                          brand_ids=[mocha.id], brand_class_ids={sorento.id: [row.id]}))
+    db.commit()
+    res = client.delete(f"{BASE}/{row.id}")
+    assert res.status_code == 200, res.text
+
+
+def test_tag_brand_write_drops_class_lists_of_dropped_brands(env) -> None:
+    """S2: a tag that changes the brands prunes class lists for brands it drops, so re-adding the
+    brand later does not silently bring the old narrowing back."""
+    _, db = env
+    from app.models.access import RespondContact
+    from app.services.contact_tag_apply import ALL, _w_columns
+
+    sorento, mocha, row = _brand(db, "SORENTO"), _brand(db, "MOCHA"), _class(db, "TAGGED")
+    contact = RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')}",
+                             brand_ids=[sorento.id, mocha.id],
+                             brand_class_ids={sorento.id: [row.id], mocha.id: [row.id]})
+    db.add(contact)
+    db.flush()
+
+    def _brands(want):
+        _w_columns(db, contact, [{"section": "brands", "key": "brands", "_raw": {"expected": want}}], _USER_ID)
+
+    _brands({mocha.id})
+    assert contact.brand_class_ids == {mocha.id: [row.id]}
+    _brands({sorento.id, mocha.id})
+    assert contact.brand_class_ids == {mocha.id: [row.id]}
+    _brands(ALL)
+    assert contact.brand_ids is None and contact.brand_class_ids is None

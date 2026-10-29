@@ -40,8 +40,9 @@ brand, applied everywhere brand scoping applies.
   `products.item_class_id` nullable FK SET NULL + index. Not the category table with a kind:
   ItemType already set the "own table" precedent and categories carry class/brand hints, stock
   limits and searchability that mean nothing for an item class.
-- **D2 Ingest.** `CanonicalProduct.item_class_code`, the `item_type_code` rule exactly: absent or
-  "" leaves the link untouched; unknown value back-created, warning `item_class_created`.
+- **D2 Ingest.** `CanonicalProduct.item_class_code`, the `item_type_code` rule except for blank:
+  absent leaves the link untouched, "" clears it (crew ruling 29 Oct, security M1); unknown
+  value back-created, warning `item_class_created`.
 - **D3 Shared service.** hapi `ItemClass` -> canonical `item_class_code` next to where
   `ItemType` -> `item_type_code` is mapped (SS PR).
 - **D4 UI.** Reference Data > Item Classes (list + modal create/edit + detail, copy of Brands);
@@ -64,9 +65,11 @@ brand, applied everywhere brand scoping applies.
   stamp, RQ export args, turn ctx) already passes the set through untouched, so only
   `contact_brand_scope.py` reads tokens (`_split_scope`); the 8 `brand_predicate` call sites pass
   `Product.item_class_id` as a 4th column.
-- **D8 Writers.** Only the contact card writes `brand_class_ids`. The tag-apply, setup engine,
-  access-copy and access-sheet writers touch `brand_ids` only; the reader ignores class lists for
-  brands outside `brand_ids`, so they cannot widen access.
+- **D8 Writers.** The contact card writes `brand_class_ids`; access-copy carries it (security
+  H1); tag-apply prunes class lists of the brands it drops (review S2), so re-adding a brand later
+  never brings an old narrowing back. The setup engine and access-sheet writers touch `brand_ids`
+  only; the reader and the delete guard ignore class lists for brands outside `brand_ids`, so no
+  writer can widen access.
 - **D9 Delete guard.** Deleting a class a contact is limited to is a 409 (it would leave that brand
   narrowed to nothing while the card reads as "every class").
 

@@ -1138,15 +1138,17 @@ class ProductService:
         )
         self.db.flush()
 
-    def _assert_item_class(self, item_class_id: Optional[str]) -> None:
-        """422 for an item class id the caller cannot see (ITEM-CLASS)."""
+    def _assert_item_class(self, item_class_id: Optional[str], company_id: Optional[str]) -> None:
+        """422 for an item class id the caller cannot see, or one of another company than the
+        product's (classes are per company; ITEM-CLASS review S3)."""
         if not item_class_id:
             return
         try:
             uuid.UUID(str(item_class_id))
         except ValueError:
             raise AppException(422, "Unknown item class", code="UNKNOWN_ITEM_CLASS") from None
-        if self.db.query(ItemClass.id).filter(ItemClass.id == str(item_class_id)).first() is None:
+        row = self.db.query(ItemClass.company_id).filter(ItemClass.id == str(item_class_id)).first()
+        if row is None or (company_id and str(row[0]) != str(company_id)):
             raise AppException(422, "Unknown item class", code="UNKNOWN_ITEM_CLASS")
 
     def create_product(self, product_data: ProductCreate, created_by: str):
@@ -1160,7 +1162,14 @@ class ProductService:
         
         data = product_data.model_dump()
         data["product_code"] = product_code
-        self._assert_item_class(data.get("item_class_id"))
+        if data.get("item_class_id"):
+            from app.models.base import get_company_scope
+            from app.services.company_scope import resolve_write_company_id
+
+            self._assert_item_class(
+                data["item_class_id"],
+                data.get("company_id") or resolve_write_company_id(get_company_scope(self.db), ambiguous=None),
+            )
         # Live finding, 2026-09-06: derive from product_rules.derivation_text
         # (description if non-blank else name), not the raw description column
         # directly - the ESB maps AutoCount's Description onto name and sends
@@ -1205,7 +1214,7 @@ class ProductService:
         
         update_data = product_data.model_dump(exclude_unset=True)
         if update_data.get("item_class_id"):
-            self._assert_item_class(update_data["item_class_id"])
+            self._assert_item_class(update_data["item_class_id"], product.company_id)
         if update_data:
             update_data["updated_by"] = updated_by
             update_data["updated_at"] = datetime.utcnow()

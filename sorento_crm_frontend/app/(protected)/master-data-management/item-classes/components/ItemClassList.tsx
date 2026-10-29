@@ -167,7 +167,7 @@ export default function ItemClassList() {
       rowHref={(row) => `/master-data-management/item-classes/${row.id}`}
       rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
-      emptyMessage="No item classes yet. Add one to group products."
+      emptyMessage="No item classes yet"
     >
       <Card>
         <CardHeader className="block">

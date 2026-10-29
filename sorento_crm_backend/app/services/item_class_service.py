@@ -108,16 +108,23 @@ class ItemClassService:
             "product_count": count,
         }
 
-    def _duplicate_code(self, code: str, *, exclude_id: Optional[str] = None) -> bool:
+    def _duplicate_code(self, code: str, company_id: Optional[str], *, exclude_id: Optional[str] = None) -> bool:
+        """Codes are unique per company, so only the target company's rows count (review S4)."""
         q = self.db.query(ItemClass.id).filter(
             func.lower(func.trim(ItemClass.item_class_code)) == code.strip().lower()
         )
+        if company_id:
+            q = q.filter(ItemClass.company_id == str(company_id))
         if exclude_id:
             q = q.filter(ItemClass.id != exclude_id)
         return q.first() is not None
 
     def create(self, data: ItemClassCreate) -> ItemClass:
-        if self._duplicate_code(data.item_class_code):
+        from app.models.base import get_company_scope
+        from app.services.company_scope import resolve_write_company_id
+
+        target = resolve_write_company_id(get_company_scope(self.db), ambiguous=None)
+        if self._duplicate_code(data.item_class_code, target):
             raise handle_conflict("An item class with this code already exists.")
         payload = data.model_dump()
         payload["item_class_code"] = payload["item_class_code"].strip()
@@ -131,7 +138,7 @@ class ItemClassService:
         row = self.get(item_class_id)
         update_data = data.model_dump(exclude_unset=True)
         if "item_class_code" in update_data and update_data["item_class_code"] is not None:
-            if self._duplicate_code(update_data["item_class_code"], exclude_id=item_class_id):
+            if self._duplicate_code(update_data["item_class_code"], row.company_id, exclude_id=item_class_id):
                 raise handle_conflict("An item class with this code already exists.")
             update_data["item_class_code"] = update_data["item_class_code"].strip()
         for key, value in update_data.items():
@@ -153,7 +160,9 @@ class ItemClassService:
                 text(
                     "SELECT count(*) FROM respond_contacts rc, jsonb_each(rc.brand_class_ids) e "
                     "WHERE rc.brand_class_ids IS NOT NULL AND jsonb_typeof(rc.brand_class_ids) = 'object' "
-                    "AND jsonb_typeof(e.value) = 'array' AND e.value ? :cid"
+                    "AND jsonb_typeof(e.value) = 'array' AND e.value ? :cid "
+                    # A list for a brand no longer in brand_ids narrows nothing (review S2).
+                    "AND e.key = ANY(rc.brand_ids::text[])"
                 ),
                 {"cid": str(row.id)},
             ).scalar() or 0

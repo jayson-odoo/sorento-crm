@@ -261,7 +261,7 @@ export default function ItemClassDetailPage({ params }: { params: Promise<{ id: 
                 {editing && draft ? (
                   <Input
                     id="item-class-name"
-                    maxLength={100}
+                    maxLength={150}
                     value={draft.item_class_name}
                     onChange={(e) => setDraft({ ...draft, item_class_name: e.target.value })}
                   />
