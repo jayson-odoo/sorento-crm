@@ -1389,14 +1389,21 @@ def _fresh_args(
         args["spec"] = [jsc.js_string(t) for t in jsc.array(parse_output["report_ask_spec"])]
 
     codes: list[str] = []
+    outstanding_ask = parse_output.get("capability_from") == "outstanding"
     for e in _current_entities(parse_output, "warehouse"):
         token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
         if not token:
             continue
         found = business_services.resolve_warehouse_token(db, token) if db is not None else []
+        if not found and outstanding_ask:
+            # Item 9 (owner 29 Oct, as before #1922): an outstanding ask's unknown location word narrows nothing and is
+            # not answered (`_resolve_report_product_and_location`); one location word per turn (D5).
+            break
         if not found:
             return None, f"I don't know '{token}' as a location."
         codes.extend(c for c in found if c not in codes)
+        if outstanding_ask:
+            break
     if codes:
         args["warehouse_codes"] = codes
     if unbound:
@@ -1786,6 +1793,8 @@ def _settle(
         for e in jsc.array(parse_output.get("entities"))
         if isinstance(e, dict) and e.get("current_message") is not False
     } & _FILTER_HINTS
+    if parse_output.get("capability_from") == "outstanding":
+        named -= {"warehouse"}  # item 9: an outstanding ask's unknown location narrows nothing, as before #1922
     if named and parse_output.get("capability_from") and not set(args) - _NON_FILTER_ARGS and not held_product:
         # A sales total or outstanding ask that NAMED a subject which resolved to no filter would run over everything.
         return None, CATALOGUE_LINE
