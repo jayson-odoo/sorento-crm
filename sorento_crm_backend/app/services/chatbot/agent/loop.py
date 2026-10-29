@@ -212,6 +212,20 @@ def _value_forms(value: Any) -> set[str]:
     return forms
 
 
+#: Keys that carry bookkeeping or free text, never a figure the user asked about: paging and
+#: scoring fields, any `*_id` / `*_ids`, and name-like text ("Basin 600" is not 600 units).
+_NOT_FIGURE_KEYS = frozenset(
+    {"more", "page", "limit", "offset", "total_count", "score", "has_result", "rank",
+     "name", "product_name", "label", "description", "title", "display"}
+)
+
+
+def _figure_key(key: Any) -> bool:
+    """May a value under this key back a figure?"""
+    k = str(key).lower()
+    return k not in _NOT_FIGURE_KEYS and not k.endswith(("_id", "_ids"))
+
+
 def _number_leaves(data: Any) -> set[str]:
     """Normal forms of every numeric VALUE in `data`: JSON numbers and the numbers inside string
     values. Keys, UUIDs, dates and identifiers never count."""
@@ -219,8 +233,9 @@ def _number_leaves(data: Any) -> set[str]:
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
-            for v in node.values():
-                walk(v)
+            for k, v in node.items():
+                if _figure_key(k):
+                    walk(v)
         elif isinstance(node, list):
             for v in node:
                 walk(v)
@@ -263,8 +278,12 @@ def _column_totals(data: Any) -> set[str]:
         if isinstance(node, list):
             rows = [r for r in node if isinstance(r, dict)]
             sums: dict[str, Decimal] = {}
+            if rows:
+                found.add(_normal(str(len(rows))))  # the number of rows is a figure too
             for row in rows:
                 for key, value in row.items():
+                    if not _figure_key(key):
+                        continue
                     number = _as_decimal(value)
                     if number is not None:
                         sums[key] = sums.get(key, Decimal(0)) + number
@@ -281,8 +300,9 @@ def _column_totals(data: Any) -> set[str]:
             for item in node:
                 walk(item)
         elif isinstance(node, dict):
-            for v in node.values():
-                walk(v)
+            for k, v in node.items():
+                if _figure_key(k):
+                    walk(v)
 
     walk(data)
     return found

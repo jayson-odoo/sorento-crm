@@ -729,7 +729,7 @@ def test_a_repair_that_cites_the_real_rows_is_accepted(db, contact, resolver):
     assert "(not verified)" not in result.reply_text
 
 
-def test_a_number_missing_from_figures_is_a_violation(db, contact, resolver):
+def test_a_number_no_tool_result_holds_is_a_violation(db, contact, resolver):
     provider = Provider(
         [
             asks(call(STOCK, {"query": "x"}, "c1")),
@@ -742,7 +742,7 @@ def test_a_number_missing_from_figures_is_a_violation(db, contact, resolver):
     assert "(not verified)" in result.reply_text
 
 
-def test_a_figure_citing_a_call_that_did_not_succeed_is_a_violation(db, contact, resolver):
+def test_a_number_absent_from_every_result_is_a_violation_even_when_cited(db, contact, resolver):
     bad = lambda cid: answer_call(  # noqa: E731
         "There are 12 units.", figures=[{"value": "12", "call_id": "nope"}], cid=cid
     )

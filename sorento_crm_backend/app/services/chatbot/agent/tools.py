@@ -476,7 +476,7 @@ def redact_ids(text: str, ids: tuple[str, ...]) -> str:
     """`text` without the given ids (the contact's own): each becomes "(id)"."""
     for ident in ids:
         ident = str(ident or "").strip()
-        if len(ident) >= 4:
+        if len(ident) >= 6:  # a shorter value is as likely a quantity as an id
             text = re.sub(rf"(?<![A-Za-z0-9]){re.escape(ident)}(?![A-Za-z0-9])", "(id)", text)
     return text
 
@@ -695,13 +695,12 @@ def _find_products(db: Any, args: dict, seen: set[str]) -> ToolResult:
 
     for word in query.split():
         like = "%" + _escaped(word) + "%"
-        # Every word must match somewhere: code, name, description or remark.
+        # Every word must match somewhere: code, name or description (not the internal remark).
         q = q.filter(
             or_(
                 Product.product_code.ilike(like, escape="\\"),
                 Product.product_name.ilike(like, escape="\\"),
                 Product.description.ilike(like, escape="\\"),
-                Product.remark.ilike(like, escape="\\"),
             )
         )
     total = q.count()

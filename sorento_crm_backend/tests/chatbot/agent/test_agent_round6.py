@@ -102,7 +102,7 @@ def test_every_word_must_match_somewhere_and_a_stray_word_pulls_nothing(db, worl
     assert sorted(_codes(_find(db, world, {"query": "wc"}, set()))) == ["ZZT-BOTH", "ZZT-WCONLY"]
     # the words may sit in different fields of one product
     mixed = _product(db, code="ZZT-MIX", name="baby")
-    mixed.remark = "wc"
+    mixed.description = "wc"  # a different field of the same product
     db.flush()
     assert "ZZT-MIX" in _codes(_find(db, world, {"query": "baby wc"}, set()))
     assert seat and wc_only
@@ -348,3 +348,82 @@ def test_the_echo_of_the_injected_guards_is_not_shown_to_the_model(db, contact):
     shown = json.dumps(_tool_msgs(provider.seen[1]["messages"])[0])
     assert rid not in shown
     assert '"qty": 3' in shown
+
+
+# ------------------------------------------------------------------ round 6b
+
+
+def _reply_after(db, contact, text, result):
+    """The reply when the answer (no citations) is checked against one STOCK result, with one repair."""
+    provider = Provider(
+        [asks(call(STOCK, {"query": "x"}, "c1")), answer6(text), answer6(text, cid="a2")]
+    )
+    return run(db, contact, provider, Mcp(result), text="how is it?").reply_text
+
+
+def test_bookkeeping_numbers_back_nothing(db, contact):
+    products = {
+        "items": [
+            {"id": "11111111-2222-4333-8444-555555555555", "code": "ZZT-A", "name": "a", "brand": None, "category": "c"},
+            {"id": "11111111-2222-4333-8444-555555555556", "code": "ZZT-B", "name": "b", "brand": None, "category": "c"},
+        ],
+        "more": 0,
+        "has_result": True,
+        "page": 1,
+        "limit": 50,
+        "total_count": 77,
+        "score": 0.93,
+    }
+    reply = _reply_after(db, contact, "2 units in stock, 0 incoming", products)
+    assert "0 incoming" not in reply and "(not verified) incoming" in reply
+    assert "2 units in stock" in reply  # two product rows
+    for key_number in ("50", "77", "0.93"):
+        assert "(not verified)" in _reply_after(db, contact, f"There are {key_number} units.", products)
+
+
+def test_a_name_with_a_number_does_not_back_a_quantity(db, contact):
+    result = {"items": [{"name": "Basin 600", "product_name": "Basin 600 white", "label": "Size 600"}], "has_result": True}
+    assert "(not verified)" in _reply_after(db, contact, "There are 600 units.", result)
+
+
+def test_a_real_zero_quantity_still_backs_zero(db, contact):
+    reply = _reply_after(db, contact, "There are 0 units.", {"items": [{"qty": 0, "name": "Basin"}], "has_result": True})
+    assert reply == "There are 0 units."
+
+
+def test_a_key_ending_in_id_backs_nothing(db, contact):
+    result = {"items": [{"warehouse_id": 4321, "qty": 5}], "has_result": True}
+    assert "(not verified)" in _reply_after(db, contact, "There are 4321 units.", result)
+
+
+def test_a_three_row_column_backs_the_sum_of_all_three_only(db, contact):
+    rows = {"items": [{"qty": 5}, {"qty": 7}, {"qty": 9}], "has_result": True}
+    assert "(not verified)" in _reply_after(db, contact, "12 units in total.", rows)
+    assert _reply_after(db, contact, "21 units in total.", rows) == "21 units in total."
+
+
+def test_the_row_count_backs_a_figure(db, contact):
+    rows = {"items": [{"qty": 4}, {"qty": 6}], "has_result": True}
+    text = "10 units across 2 orders."
+    assert _reply_after(db, contact, text, rows) == text
+
+
+# ------------------------------------------------------------------ L6, nits
+
+
+def test_a_word_only_in_the_remark_does_not_match(db, world):
+    p = _product(db, code="ZZT-REM", name="plain")
+    p.remark = "secretword"
+    p.description = "visible words"
+    db.flush()
+    assert _find(db, world, {"query": "secretword"}, set()).status == "empty"
+    assert _codes(_find(db, world, {"query": "visible"}, set())) == ["ZZT-REM"]
+
+
+def test_redact_ids_replaces_only_whole_tokens_of_six_or_more_characters():
+    from app.services.chatbot.agent.tools import redact_ids
+
+    assert redact_ids("stock 548193 and 5481931120 and 548193112.", ("548193112",)) == (
+        "stock 548193 and 5481931120 and (id)."
+    )
+    assert redact_ids("size 4321 here", ("4321",)) == "size 4321 here"  # too short to be an id token
