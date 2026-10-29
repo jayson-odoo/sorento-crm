@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drawing Escalate Mock</title>
+<title>Drawing Escalate Mock v2</title>
 <!-- QUOTE-DRAWING-ESCALATE mock (29 Oct). Static: the Drawing cell of the quotation lines grid
      in each state. Masked data only. Plan: ../PLAN-quote-drawing-escalate-29oct.md -->
 <style>
@@ -61,109 +61,138 @@
     border-radius: 8px; padding: 8px 12px; background: var(--bg); box-shadow: 0 2px 8px rgba(0,0,0,.08); font-size: 13px; }
   .bell { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; max-width: 360px; font-size: 13px; }
   .bell b { display: block; }
+  .flag.prog { border-color: var(--primary); color: var(--primary); }
+  .pdf { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 100%; aspect-ratio: 1; border: 1px solid var(--border); border-radius: 4px; background: var(--soft);
+    font-size: 10px; font-weight: 600; color: var(--fg); gap: 2px; text-decoration: none; }
+  .pdf svg { width: 16px; height: 16px; }
+  .task { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex;
+    flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; max-width: 720px; }
+  .task .meta { font-size: 12px; color: var(--muted); }
+  .task a { color: var(--primary); text-decoration: none; font-weight: 600; }
+  .btns { display: flex; gap: 6px; }
+  .btn { font: inherit; font-size: 12px; height: 28px; padding: 0 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg); cursor: pointer; }
+  .btn.ghost { border-color: transparent; }
+  .due-soon { color: var(--amber); font-weight: 600; }
   @media (max-width: 480px) { body { padding: 16px; } }
 </style>
 </head>
 <body>
-<h1>Drawing cell: escalate a missing drawing</h1>
-<p class="lead">Quotation lines grid, Drawing column (56px wide, unchanged). One row per state.
-Hover text is shown under each row label. Product codes are masked.</p>
+<h1>Drawing cell: escalate a missing drawing (v2)</h1>
+<p class="lead">v2 folds in the owner's answers of 30 Oct. Quotation lines grid, Drawing column
+(56px wide, unchanged). One row per state; hover text under each label. Product codes are masked.</p>
 
 <div class="wrap">
 <table class="grid">
   <thead><tr><th>State</th><th class="drawing">Drawing</th><th>Product</th><th>What the cell does</th></tr></thead>
   <tbody>
     <tr>
-      <td>1. Drawing on file<br><span class="state">today, unchanged</span></td>
+      <td>1. Drawing image on file<br><span class="state">today, unchanged</span></td>
       <td class="drawing"><span class="thumb" title="TS-0001.png"></span></td>
       <td>PRD-AAA-01</td>
-      <td>Thumbnail opens the viewer. No escalate.</td>
+      <td>Thumbnail opens the viewer. No Escalate.</td>
     </tr>
     <tr>
-      <td>2. No drawing, read-only user<br><span class="state">no projects.projects.edit</span></td>
-      <td class="drawing"><span class="t2 muted">no drawing</span></td>
+      <td>2. PDF drawing only<br><span class="state">new (Q6): a PDF counts as a drawing</span></td>
+      <td class="drawing"><a class="pdf" href="#" title="TS-0002.pdf, opens in a new tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PDF</a></td>
       <td>PRD-BBB-02</td>
-      <td>Same as today.</td>
+      <td>Opens the PDF in a new tab. No Escalate. The printed quotation shows no drawing for this line, as today (documents embed images only).</td>
     </tr>
     <tr>
-      <td>3. No drawing, can edit<br><span class="state">hover: "Ask marketing for a drawing of PRD-CCC-03"</span></td>
-      <td class="drawing">
-        <button class="esc" aria-label="Escalate missing drawing for PRD-CCC-03">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
-          Escalate
-        </button>
-      </td>
+      <td>3. No drawing<br><span class="state">hover: "Ask for a drawing of PRD-CCC-03"</span></td>
+      <td class="drawing"><button class="esc" aria-label="Escalate missing drawing for PRD-CCC-03"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>Escalate</button></td>
       <td>PRD-CCC-03</td>
-      <td>One click, no dialog. Files the request (or joins the open one) and flips to state 5.</td>
+      <td>Anyone who can open the quotation, on every saved line without a drawing, draft or issued (Q7). One click, no dialog. Opens the task, or joins the open one.</td>
     </tr>
     <tr>
       <td>4. Escalating<br><span class="state">request in flight</span></td>
-      <td class="drawing">
-        <button class="esc" aria-busy="true" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" stroke-dasharray="14 40"/></svg>
-          Escalate
-        </button>
-      </td>
+      <td class="drawing"><button class="esc" aria-busy="true" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" stroke-dasharray="14 40"/></svg>Escalate</button></td>
       <td>PRD-CCC-03</td>
-      <td>Disabled until the server answers. Error: toast with the server's message, cell back to state 3.</td>
+      <td>Disabled until the server answers. Error: toast with the server's message, back to state 3.</td>
     </tr>
     <tr>
-      <td>5. Escalated, on time<br><span class="state">hover: "Escalated 29 Oct 2026, 4:12 PM by 2 people. Due 30 Oct, 4:12 PM."</span></td>
-      <td class="drawing">
-        <span class="flag">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
-          Escalated<br>29 Oct
-        </span>
-      </td>
+      <td>5. Escalated, waiting for the team<br><span class="state">hover: "Escalated 29 Oct 2026, 4:12 PM by 2 people. Due 30 Oct, 4:12 PM."</span></td>
+      <td class="drawing"><span class="flag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>Escalated<br>29 Oct</span></td>
       <td>PRD-CCC-03</td>
       <td>Same on every line and quotation with this product. Not clickable.</td>
     </tr>
     <tr>
-      <td>6. Escalated, under 4h left<br><span class="state">amber, the SLA chips' at-risk rule</span></td>
-      <td class="drawing"><span class="flag risk">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
-          Escalated<br>28 Oct</span></td>
+      <td>6. Responded<br><span class="state">the team pressed Respond; hover adds "Responded 29 Oct, 5:03 PM"</span></td>
+      <td class="drawing"><span class="flag prog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>Responded<br>29 Oct</span></td>
+      <td>PRD-CCC-03</td>
+      <td>Date is the response date. Still not clickable.</td>
+    </tr>
+    <tr>
+      <td>7. Escalated, under 4h left<br><span class="state">amber, the SLA chips' at-risk rule</span></td>
+      <td class="drawing"><span class="flag risk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>Escalated<br>28 Oct</span></td>
       <td>PRD-DDD-04</td>
-      <td>Colour follows the resolution deadline (<code>AT_RISK_MS</code>).</td>
+      <td>Colour follows the task's deadline (<code>AT_RISK_MS</code>), in state 5 or 6.</td>
     </tr>
     <tr>
-      <td>7. Escalated, overdue</td>
-      <td class="drawing"><span class="flag late">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
-          Escalated<br>27 Oct</span></td>
+      <td>8. Overdue</td>
+      <td class="drawing"><span class="flag late"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>Escalated<br>27 Oct</span></td>
       <td>PRD-EEE-05</td>
-      <td>Red. The form-SLA overdue scan has already moved it up a tier on its own.</td>
+      <td>Red. The normal SLA overdue scan moves the task up a tier on its own.</td>
     </tr>
     <tr>
-      <td>8. Drawing added<br><span class="state">request closed itself</span></td>
+      <td>9. Drawing added, task still open<br><span class="state">adding a drawing does not close it (Q4)</span></td>
       <td class="drawing"><span class="thumb" title="TS-0005.png"></span></td>
       <td>PRD-EEE-05</td>
-      <td>Back to state 1 on the next read of the quotation (draft versions only).</td>
+      <td>The drawing shows at once (the cell reads the product live). The assignee gets a bell to resolve the task.</td>
+    </tr>
+    <tr>
+      <td>10. Resolved without a drawing<br><span class="state">hover: "Last request resolved 30 Oct, no drawing on file"</span></td>
+      <td class="drawing"><button class="esc" aria-label="Escalate missing drawing for PRD-FFF-06"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>Escalate</button></td>
+      <td>PRD-FFF-06</td>
+      <td>Back to Escalate (N2): a new click opens a new task.</td>
+    </tr>
+    <tr>
+      <td>11. Off-catalogue line<br><span class="state">unchanged</span></td>
+      <td class="drawing"><span class="t2 muted">-</span></td>
+      <td>(typed text)</td>
+      <td>No product, nothing to escalate.</td>
     </tr>
   </tbody>
 </table>
 </div>
 
+<h2>The team's side: My Pending (N1)</h2>
+<div class="task">
+  <div>
+    <a href="#">Product drawing PRD-CCC-03</a>
+    <div class="meta">Tier 1 &middot; Respond &middot; 2 requesters &middot; <span class="due-soon">Due 30 Oct, 4:12 PM</span></div>
+  </div>
+  <div class="btns"><button class="btn">Respond</button><button class="btn ghost">Resolve</button><button class="btn ghost">Extend</button></div>
+</div>
+<p class="note">The same row and buttons a conversation ticket has today; Respond turns into Resolve
+once pressed. The title opens the product page, where the drawing is uploaded. The step's team,
+policy and events are set by the admin in SLA Management, Form SLA config (team set pre-filled
+<code>marketing_product</code>).</p>
+
 <h2>Feedback</h2>
-<div class="toast">Escalated: marketing will add a drawing for PRD-CCC-03</div>
-<p class="note">After a click in state 3. When the product already had an open request:
-"Already escalated: you will be told when the drawing is added".</p>
-<div class="bell" style="margin-top:12px"><b>Drawing added for PRD-EEE-05</b><span class="muted">Opens the quotation you escalated it from.</span></div>
-<p class="note">In-app notification to every requester when the request closes itself. Nothing on WhatsApp or email.</p>
+<div class="toast">Escalated: you will be told when the request is resolved</div>
+<p class="note">After a click in state 3. When the product already had an open task: "Already
+escalated: added you to the request".</p>
+<div class="bell" style="margin-top:12px"><b>Drawing added for PRD-EEE-05</b><span class="muted">Resolve the request when done.</span></div>
+<p class="note">To the assignee, when a drawing is linked while the task is open.</p>
+<div class="bell" style="margin-top:12px"><b>Drawing request for PRD-EEE-05 resolved</b><span class="muted">Opens the quotation you escalated it from.</span></div>
+<p class="note">To every requester, on Resolve. Nothing on WhatsApp or email.</p>
 
 <h2>Element to component map</h2>
 <table class="map">
   <thead><tr><th>Element</th><th>Component / source</th><th>Change</th></tr></thead>
   <tbody>
-    <tr><td>Drawing cell, all states</td><td><code>app/(protected)/project-sales/[projectId]/components/QuotationLineFileCell.tsx</code> (read-only branch, :144-150)</td><td>The "no drawing" branch renders a new <code>DrawingEscalation</code> piece instead of plain text when the user can edit.</td></tr>
-    <tr><td>Column (56px)</td><td><code>QuotationLinesGrid.tsx</code> :841-853 (<code>DrawingCell</code> :250)</td><td>None; passes <code>canEdit</code> through.</td></tr>
-    <tr><td>Escalate button (dashed)</td><td>Same styling as the cell's own "Choose" trigger, <code>QuotationLineFileCell.tsx</code> :170-178</td><td>New small component in the same folder, no new shared variant.</td></tr>
-    <tr><td>Escalated colour rule</td><td><code>AT_RISK_MS</code> + chip colours, <code>sla-management/conversation-sla-tracking/components/TicketSlaChips.tsx</code> :18, :51-57</td><td>Export <code>chipClass</code> and reuse it; no copy.</td></tr>
-    <tr><td>Hover dates</td><td><code>formatDateTimeInMalaysia</code>, <code>lib/helpers</code></td><td>Reuse.</td></tr>
-    <tr><td>Icon</td><td><code>lucide-react</code> <code>Flag</code></td><td>Reuse.</td></tr>
-    <tr><td>Toast + error text</td><td><code>extractApiError</code> (<code>lib/api-client</code>), the project's mutation-hook pattern</td><td>New <code>useEscalateDrawing</code> mutation, invalidates the quotation lines query.</td></tr>
-    <tr><td>Data</td><td><code>line.technical_drawing</code> from <code>project_quotation_service.py</code> :1519</td><td>Cell gains <code>escalation: {opened_at, due_at_resolution, requester_count} | null</code>.</td></tr>
-    <tr><td>Bell notification</td><td><code>NotificationService</code> (BE), existing bell</td><td>Reuse.</td></tr>
+    <tr><td>Drawing cell, all states</td><td><code>app/(protected)/project-sales/[projectId]/components/QuotationLineFileCell.tsx</code> (read-only branch, :144-150)</td><td>The "no drawing" branch renders a new <code>DrawingEscalation</code> piece; a <code>pdf</code> state renders the PDF tile.</td></tr>
+    <tr><td>Column (56px)</td><td><code>QuotationLinesGrid.tsx</code> :841-853 (<code>DrawingCell</code> :250)</td><td>None.</td></tr>
+    <tr><td>Escalate tile (dashed)</td><td>Same styling as the cell's "Choose" trigger, <code>QuotationLineFileCell.tsx</code> :170-178</td><td>New small component in the same folder.</td></tr>
+    <tr><td>Escalated colour rule</td><td><code>AT_RISK_MS</code> + chip colours, <code>sla-management/conversation-sla-tracking/components/TicketSlaChips.tsx</code> :18, :51-57</td><td>Export <code>chipClass</code> and reuse it.</td></tr>
+    <tr><td>PDF tile</td><td><code>lucide-react</code> <code>FileText</code>; signed URL from the drawing cell</td><td>New state <code>pdf</code> on <code>technical_drawing</code>.</td></tr>
+    <tr><td>Respond / Resolve on My Pending</td><td><code>MyPendingSLAWidget.tsx</code> :704-740 (buttons hidden for form rows today), <code>ENTITY_ROUTES</code> :82</td><td>Show them for <code>product_drawing</code> rows; add the type's route (product page) and label.</td></tr>
+    <tr><td>Step setup</td><td><code>FormSLAConfigDialog.tsx</code> :123-129, <code>_shared/formSLAService.ts</code> :374, :386</td><td>Add type "Product drawing", its events (escalate, respond, resolve), pre-fill team set.</td></tr>
+    <tr><td>Toast + error text</td><td><code>extractApiError</code> (<code>lib/api-client</code>), mutation-hook pattern</td><td>New <code>useEscalateDrawing</code>, invalidates the quotation lines query.</td></tr>
+    <tr><td>Data</td><td><code>line.technical_drawing</code> from <code>project_quotation_service.py</code> :1519</td><td>Cell gains <code>escalation: {opened_at, responded_at, due_at, requester_count, last_resolved_at} | null</code>.</td></tr>
+    <tr><td>Bells</td><td><code>NotificationService</code> (BE), existing bell</td><td>Reuse.</td></tr>
   </tbody>
 </table>
 </body>

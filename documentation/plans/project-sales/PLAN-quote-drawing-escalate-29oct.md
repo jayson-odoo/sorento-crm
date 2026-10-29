@@ -1,8 +1,8 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Plan, behaviour card filed, waiting on owner approval (M lane, standard track: new
-endpoint + several files, expected diff over 300 lines; no new table, no migration if Q2 and Q5
-go as recommended)
+Status: Plan, behaviour card v2 (owner answers 30 Oct folded in) filed, waiting on owner approval
+(M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
+table, no migration)
 
 Source: owner team meeting 29 Oct (Project Sales module). When a quotation line's product has no
 technical drawing, the salesperson needs an "Escalate" action on that line, mirroring the existing
@@ -19,7 +19,10 @@ confirm before any code.
   set per line at :202, served on every line read by `project_quotation_service.py:1519`.
 - What counts as a drawing: an image (`image/*`), not deleted, typed exactly
   "Technical Specifications" (`product_image_service.py:84`, `_on_file` :140-146, `files_for`
-  :148-180). A PDF drawing, or an image typed anything else, is NOT a drawing to this screen.
+  :148-180). A PDF drawing, or an image typed anything else, is NOT a drawing to this screen
+  today. The quotation documents embed the drawing's image bytes
+  (`project_quotation_pdf_service.py:372`, `project_quotation_excel_service.py:430`), so a PDF
+  can never be the line's printed drawing.
 - **The "existing messaging escalation"** is the WhatsApp bot's hand-off: when a customer asks
   for a product document the bot can't answer, it offers to escalate
   (`chatbot_reply_copy.py:52-58`) and the escalation lane
@@ -36,33 +39,56 @@ confirm before any code.
   their single marketing stage (`form_sla_service.py:42-43`), configured in SLA Management, not
   seeded.
 
-## Behaviour card (for owner approval)
+- **How a form-SLA task is responded to and resolved today.** Not by a button on the task: the
+  My Pending widget hides Respond/Resolve on form rows (`MyPendingSLAWidget.tsx:704`, `!form`) and
+  shows the stage's next action as text (`sla_service._form_next_actions`, :2180-2229). The stage
+  moves when the form's own record emits the configured `respond_event` / `resolve_event`
+  (`form_sla_service.py:342-420`). Event names per type come from `FORM_SLA_EVENT_OPTIONS`
+  (`_shared/formSLAService.ts:374`), and the admin picks them in the Form SLA config dialog
+  (`FormSLAConfigDialog.tsx:216, 342-366`); agent and team set are free-text fields there
+  (:322, :331).
+- **Who can open a quotation:** `projects.projects.view` or `view_own` (`api/v1/projects/quotations.py:66-69`).
+
+## Behaviour card v2 (for owner approval)
+
+Owner answers 30 Oct: Q1 the receiver is configurable through the existing team-set
+configuration, default the marketing product team, nothing hard-coded. Q2 (a) a task on the
+existing SLA tracker. Q3 (a) one open request per product. Q4 no auto-close: the team responds to
+and resolves the SLA task the normal way; adding a drawing may notify. Q5 configurable, the admin
+sets the step up in SLA Management, no seeded data. Q6 a PDF drawing counts as a drawing. Q7
+Escalate on every line without a drawing.
 
 ### Rules
 
-1. On a quotation line whose Drawing cell is "no drawing" (product on catalogue, no image typed
-   Technical Specifications), the cell shows an **Escalate** button instead of the bare text.
-   Only for users who can edit the project (`projects.projects.edit`,
-   `api/v1/projects/quotation_documents.py:58`); others see "no drawing" as today.
-2. Escalate files **one drawing request per PRODUCT**, not per line. It is a form-SLA tracker:
-   `source_entity_type = "product_drawing"`, `source_entity_id = <product id>`, assigned by
-   round-robin in the configured team, with the SLA policy's deadline. No new tracker table.
-3. If the product already has an open request (from this or any other quotation, by anyone),
-   Escalate does not open a second one: it adds the salesperson as a requester on the open one
-   (an event-log row on the tracker naming the requester and the quotation) and the cell shows
-   the existing request's state.
-4. The cell then reads **"Escalated <when>"** (the request's first escalation time, Malaysia
-   time) with the SLA countdown chip the SLA screens already use (`TicketSlaChips`), on every
-   line of every quotation that uses that product.
-5. The request **closes itself** when an image typed Technical Specifications is linked to the
-   product (or an already-linked image is retyped to it), using the same rule the cell uses, so
-   "closed" and "the cell shows a drawing" can never disagree. Every requester gets an in-app
-   notification ("Drawing added for <product code>") linking back to their quotation. No
-   WhatsApp, no email.
-6. The assignee sees it in their SLA task list like any form SLA, and can also close it
-   by hand (the existing resolve action) if the product genuinely has no drawing.
-7. Issued (frozen) quotation versions show the same escalated state but are never changed by the
-   drawing arriving: the drawing reaches the next revision, as today.
+1. **Has a drawing** means: the product has a file typed "Technical Specifications" that is an
+   image OR a PDF, not deleted (Q6). Only images can be shown in the cell and printed, as today.
+2. **Escalate shows on every saved line whose product has no drawing** (Q7), on every version,
+   draft or issued, including a SET line (it escalates its driver part, `line_product_id` :91-104),
+   for anyone who can open the quotation (`view` or `view_own`). Not on an off-catalogue line (no
+   product to draw) and not on an unsaved line (shown after Save, as the cell does today).
+3. **A product with only a PDF drawing** shows a PDF tile in the cell that opens the file in a new
+   tab. No Escalate. The quotation documents print no drawing for it, as today (they embed images
+   only).
+4. **Escalate opens one request per PRODUCT** (Q3): a form-SLA task on the existing tracker table
+   (Q2), `source_entity_type = "product_drawing"`, `source_entity_id = <product id>`. The admin
+   sets the step up in SLA Management > Form SLA config (Q5): access agent, team set, SLA policy,
+   and which events respond and resolve it. Choosing type "Product drawing" pre-fills team set
+   `marketing_product` (Q1 default, the team set the WhatsApp bot routes product-attachment asks
+   to, `policy_rows.py:76-81`); the admin can change it. Nothing about the team is in code.
+5. **A product with an open request**: the next Escalate joins it. The caller is recorded as a
+   requester (an event-log row on the tracker naming them and the quotation); no second task.
+6. **The cell reads "Escalated <date>"** on every line of every quotation with that product,
+   coloured by the task's deadline (neutral, amber under 4h, red overdue), hover "Escalated <date>
+   by N people. Due <date>." After the team responds it reads "Responded <date>".
+7. **The team works it the normal SLA way** (Q4): the task lands on the assignee's My Pending
+   with **Respond** and then **Resolve** buttons (open question N1 for where), round-robin
+   assignee, working-hours deadline, overdue escalation up the tiers, extend, take-over, all as
+   today. The row links to the product's page, where the drawing is uploaded.
+8. **Adding a drawing does not close the task.** It notifies the assignee in-app ("Drawing added
+   for <code>, resolve the request when done").
+9. **Resolving notifies every requester** in-app: "Drawing request for <code> resolved", linking
+   to the quotation they escalated from. No WhatsApp, no email. The cell then shows the drawing
+   if one is on file, else "no drawing" with Escalate again (open question N2).
 
 ### Examples from dev data (crew, 29 Oct; 20 Oct prod restore, read-only; counts and codes only)
 
@@ -87,8 +113,8 @@ times, which is what one-request-per-product (Q3) is for: one task per product, 
 that are PDFs, not images; no image of another type is named like a drawing. Active products
 with a PDF drawing only: 178 of 11,059 without an image (1.6%). They are mostly Sorento SRTWT
 codes, and one PDF is often shared by several variants (SRTWT2215 and SRTWT2216 share one;
-SRTWT6808's covers 6 variants). The cell shows "no drawing" for these today, so Escalate shows;
-the request closes only when an IMAGE arrives (rule 5) or by hand.
+SRTWT6808's covers 6 variants). The cell shows "no drawing" for these today. Under v2 (Q6) they
+count as having a drawing: the cell shows a PDF tile and no Escalate (rule 3).
 
 **What this means for the questions.** About 3 in 4 quoted lines will lack a drawing, so Escalate
 will be on most lines. Team load and the per-product dedupe (Q1, Q3) matter more than whether a
@@ -98,58 +124,57 @@ PDF counts as a drawing: counting PDFs would clear under 2% of the gap. Catalogu
 ### Edge cases
 
 - **Two salespeople escalate the same product** (same or different quotations, even at the same
-  second): one open request; the second is recorded as a requester. The form-SLA idempotency
-  check (`form_sla_service.py:899`) is read-then-write, so the endpoint locks the product row
-  (`SELECT ... FOR UPDATE`) around it and two clicks cannot open two trackers. Tested.
-- **Drawing added while the request is open**: closes, every requester notified once (rule 5).
-- **Drawing added, later deleted, product escalated again**: a new request (the old one stays
-  closed as history).
-- **Product with no brand / no owner team**: routing is the configured team set, not the brand,
-  so a brandless product still routes. If the stage has no team configured at all, Escalate
-  answers "No team is set up for drawing requests" (409) and creates nothing; it never fails
-  silently (`emit_event` would otherwise skip without a word, :383-384).
-- **Off-catalogue line / SET line**: off-catalogue has no product, so no button. A SET line uses
-  its driver part's product (`project_quotation_image_service.line_product_id`, :91-104).
-- **Line added this session, not saved**: no button until Save (the cell claims nothing for an
-  unsaved line today, `QuotationLineFileCell.tsx:117`).
+  second): one open task; the second is recorded as a requester. The form-SLA idempotency check
+  (`form_sla_service.py:899`) is read-then-write, so the endpoint locks the product row
+  (`SELECT ... FOR UPDATE`) around it and two clicks cannot open two tasks. Tested.
+- **Same person escalates twice**: recorded once.
+- **Drawing added while the task is open**: the task stays open, the assignee is notified (rule 8);
+  the cell shows the drawing at once (it reads the product live) while the task waits to be
+  resolved.
+- **Resolved without a drawing** (the team says none exists): requesters are told; the cell shows
+  Escalate again (N2).
+- **Drawing later deleted**: the cell goes back to "no drawing" and Escalate; a new task opens.
+- **Product with no brand**: routing is the configured team set, not the brand, so it routes.
+- **Step not set up**: Escalate answers "No team is set up for drawing requests" (409) and
+  creates nothing; it never fails silently (`emit_event` would otherwise skip without a word,
+  `form_sla_service.py:383-384`).
+- **Stage reuses the WhatsApp agent's code**: the admin must give the step its own access agent
+  code; naming the conversation agent in a form-SLA stage reclassifies it as a form-SLA agent
+  (`form_sla_service.py:49-66`) and changes its tier-1 routing. Stated in the hand-test setup.
 
-### Questions (owner)
+### Open questions (v2, at most 4)
 
-**Q1. Who receives it?** (a) the `marketing_product` team set, the team the WhatsApp bot already
-routes product-attachment requests to (`policy_rows.py:76-81`); (b) `purchasing`, which takes
-product/spec questions (:66); (c) per brand. **Recommendation: (a)**, it is the same team for the
-same kind of ask, and brand narrowing can follow later if one team proves too broad.
+**N1. Where does the assignee press Respond and Resolve?** (a) on the task's row in My Pending,
+the same two buttons a conversation ticket has there today (`MyPendingSLAWidget.tsx:704-740`),
+shown for this type only; the row's link opens the product page to upload the drawing; (b) a
+Respond/Resolve banner on the product's page. **Recommendation: (a)**, it is where the team
+already works SLA tasks, and it needs no new screen on the product page.
 
-**Q2. What does it create?** (a) a form-SLA tracker on the existing table, keyed by product,
-requesters as event-log rows (no new table, lane stays M); (b) a new `drawing_requests` table
-with its own status (lane becomes L). **Recommendation: (a)**, it already carries the assignee,
-round-robin, working-hours deadline, overdue escalation, the assignee's task list and manual
-close.
+**N2. Resolved without a drawing: can it be escalated again?** (a) yes, the cell goes back to
+Escalate and a new task opens; the hover shows when the last one was resolved; (b) block
+re-escalation for some days. **Recommendation: (a)**, simplest, and a repeat ask is a real signal.
 
-**Q3. One open request per product, later escalations add the requester as a follower?**
-(a) yes; (b) one per quotation line. **Recommendation: (a)**, marketing draws a product once.
+**N3. A PDF-only drawing on the quotation document.** (a) the cell shows a PDF tile that opens it,
+the printed quotation shows no drawing for that line (as today); (b) also render the PDF's first
+page into the PDF/Excel quotation (lane becomes L). **Recommendation: (a)**.
 
-**Q4. Close itself when an image typed Technical Specifications is linked, notifying every
-requester in-app?** (a) yes; (b) close by hand only. **Recommendation: (a)**; manual close stays
-available for "this product has no drawing".
-
-**Q5. How is the stage set up?** (a) an admin adds a "Product drawing" stage in SLA Management >
-Form SLA config (agent, team set `marketing_product`, policy), exactly as price tag requests were
-set up, no migration; (b) a migration seeds it. Note: the stage needs its own access agent code,
-because naming the WhatsApp conversation agent in a form-SLA stage reclassifies that agent as a
-form-SLA agent (`form_sla_service.py:49-66`) and changes its tier-1 routing.
-**Recommendation: (a)**, no data guesses in a migration on a public repo, and until it is set up
-Escalate answers plainly instead of failing silently.
+**N4. Who may escalate** (Q7, "every line"). (a) anyone who can open the quotation (`view` or
+`view_own`); (b) only `projects.projects.edit`. **Recommendation: (a)**, escalating changes no
+quotation data.
 
 ## Mock
 
-`mockups/quote-drawing-escalate-29oct-mock.html`: the eight cell states and the element-to-component
+`mockups/quote-drawing-escalate-29oct-mock.html` (v2): the cell states and the element-to-component
 map.
 
 ## Tests (red first, after approval)
 
-- BE: dedupe per product (second escalate adds a requester, no second tracker; concurrent
-  escalates make one); auto-close on linking a Technical Specifications image and on retyping
-  one, not on a PDF; every requester notified once; 403 without `projects.projects.edit`; 409
-  with no configured stage; line read carries the request state.
-- FE: cell states (no drawing read-only, Escalate button, Escalated + chip, drawing shown).
+- BE: dedupe per product (a second escalate adds a requester, no second task; the same person
+  twice is one requester; concurrent escalates make one); a PDF typed Technical Specifications
+  counts as a drawing (no escalate, 409 "already has a drawing"); adding a drawing does NOT
+  resolve and notifies the assignee; respond and resolve through the configured events, resolve
+  notifies every requester once; 403 without view/view_own, 404 for a quotation outside own
+  scope; 409 with no configured step; the line read carries the request state; no team code in
+  the service.
+- FE: cell states (Escalate, escalating, Escalated, Responded, PDF tile, drawing shown,
+  off-catalogue blank); My Pending Respond/Resolve on a product_drawing row.
