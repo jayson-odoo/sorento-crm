@@ -103,7 +103,7 @@ def resolve_master_by_code(
 
     Fix round (Group 3, `PLAN-autocount-pull-preview-perf.md`): `ORDER BY
     created_at, id` before `.first()` - every model here (`Warehouse`,
-    `Supplier`, `ProductCategory`, `UnitOfMeasure`, `Product`, `Brand`, `ItemType`) has
+    `Supplier`, `ProductCategory`, `UnitOfMeasure`, `Product`, `Brand`, `ItemType`, `ItemClass`) has
     `created_at`, so this is safe for every caller; it picks the OLDEST row
     deterministically for the rare case two rows normalize to the same code
     (the unique constraint is on the exact stored string, not the

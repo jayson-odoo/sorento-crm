@@ -153,6 +153,8 @@ class TestEntityTypeAllowlist:
             "order_lines",
             # autocount-brands-ingest AC-15: brands joined the ingest surface.
             "brands",
+            # ITEM-CLASS-MASTER (contract 2.11): AutoCount ItemClass joined as a master.
+            "item_classes",
             # Finance S0 (#1309): billing document headers, in the `finance` schema.
             "billing_documents",
             # AC-BILLING S5 (contract 2.10): a debtor ref, pointing at the customer's row.
