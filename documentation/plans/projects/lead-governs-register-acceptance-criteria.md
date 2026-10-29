@@ -62,7 +62,8 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
   salesperson; otherwise Salesperson stays the signed-in user. A lead with no assignee leaves Salesperson as it was.
 - **LGR-D5** The Lead picker's "Create lead '<text>'" row opens the wizard with the text as its title; on Create lead
   the new lead is picked, and its customer fills Customer read-only.
-- **LGR-D6** AI extract never sets Customer (title, developer, parties, type, state, mukim still fill as today).
+- **LGR-D6** AI extract never sets Customer (title, developer, parties, type, state, mukim still fill as today), and its
+  review on the register form lists no Customer row (a row that is never applied would mislead).
 - **LGR-D7** Edit: Lead optional. With a lead, Customer is read-only and shows the project's customer; picking a
   different lead re-fills it from that lead. With no lead, Customer is the editable, clearable picker it is today.
 - **LGR-D8** Submit-only salesperson: the form shows the same Lead / Customer / Salesperson section (Lead picker no
