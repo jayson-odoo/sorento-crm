@@ -334,6 +334,7 @@ _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 _URL = re.compile(r"\bhttps?://\S+", re.I)
 _IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b")
 _HOST = re.compile(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+){2,}\b", re.I)
+_HOST_PORT = re.compile(r"\b[\w.-]+:\d{2,5}\b")
 _PATH = re.compile(r"\S*/api/v\d\S*")
 _HTTP_ERR = re.compile(r"returned HTTP (\d{3})\s*:?\s*(.*)", re.S)
 
@@ -357,6 +358,18 @@ def _id_args(args: dict) -> dict[str, list[Any]]:
     return out
 
 
+def _collect_uuids(data: Any, seen: set[str]) -> None:
+    """Every UUID value in an ok result (not keys) is an id the model has been shown this turn."""
+    if isinstance(data, dict):
+        for v in data.values():
+            _collect_uuids(v, seen)
+    elif isinstance(data, list):
+        for v in data:
+            _collect_uuids(v, seen)
+    elif isinstance(data, str) and _UUID.match(data.strip()):
+        seen.add(data.strip().lower())
+
+
 def _check_ids(args: dict, seen: set[str]) -> ToolResult | None:
     for key, values in _id_args(args).items():
         for value in values:
@@ -372,7 +385,7 @@ def _check_ids(args: dict, seen: set[str]) -> ToolResult | None:
 def clean_detail(text: Any) -> str:
     """A route's own detail text with URLs, hosts and paths removed, at most 200 characters."""
     out = str(text or "")
-    for pattern in (_URL, _PATH, _IPV4, _HOST):
+    for pattern in (_URL, _PATH, _IPV4, _HOST_PORT, _HOST):
         out = pattern.sub("", out)
     return re.sub(r"\s+", " ", out).strip()[:MAX_DETAIL_CHARS]
 
@@ -485,7 +498,8 @@ def _resolve(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
     list_kinds = [k for k in allowed if k in LIST_KINDS]
     by_token: dict[str, dict] = {}
     if entity_kinds:
-        body = {"tokens": terms, "raw_tokens": terms, "allowed_entity_types": entity_kinds, "dry_run": True}
+        body = {"tokens": terms, "raw_tokens": terms, "allowed_entity_types": entity_kinds,
+                "dry_run": True, "semantic_fallback": False}  # the code reader's LLM calls are not tracked
         try:
             raw = business_services._resolve_entity(db)(body)
         except Exception:  # noqa: BLE001
@@ -637,4 +651,5 @@ def dispatch(
     if _is_empty(data, tool.render):
         return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
     data, more = cap_result(data)
+    _collect_uuids(data, seen)
     return ToolResult("ok", data=data, more=more)

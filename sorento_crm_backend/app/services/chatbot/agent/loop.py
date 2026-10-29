@@ -110,10 +110,23 @@ def _normal(token: str) -> str:
         return plain
 
 
+_UUID_TEXT = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+# An identifier: letters and digits joined by "-" or "/" (a product code, an order or packing number).
+_IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+\b")
+
+
+def _identifier_blank(m: "re.Match[str]") -> str:
+    token = m.group(0)
+    return " " * len(token) if re.search(r"[A-Za-z]", token) else token
+
+
 def _mask(text: str) -> str:
-    """`text` with dates and list markers blanked to spaces of the same length."""
+    """`text` with UUIDs, dates, identifiers (a hyphenated code with a letter in it) and list
+    markers blanked to spaces of the same length."""
     blank = lambda m: " " * len(m.group(0))  # noqa: E731
+    text = _UUID_TEXT.sub(blank, text)
     text = _DATE.sub(blank, text)
+    text = _IDENTIFIER.sub(_identifier_blank, text)
     return _LIST_MARKER.sub(lambda m: m.group(1) + " " * len(m.group(2)), text)
 
 
@@ -173,8 +186,8 @@ def _value_forms(value: Any) -> set[str]:
 
 
 def _number_leaves(data: Any) -> set[str]:
-    """Normal forms of every numeric VALUE in `data`: JSON numbers and numeric strings. Keys,
-    UUIDs and dates are never numbers here."""
+    """Normal forms of every numeric VALUE in `data`: JSON numbers and the numbers inside string
+    values. Keys, UUIDs, dates and identifiers never count."""
     found: set[str] = set()
 
     def walk(node: Any) -> None:
@@ -189,9 +202,10 @@ def _number_leaves(data: Any) -> set[str]:
         elif isinstance(node, (int, float)):
             found.add(_normal(str(node)))
         elif isinstance(node, str):
-            plain = node.strip().replace(",", "")
-            if _PLAIN_NUMBER.fullmatch(plain):
-                found.add(_normal(plain))
+            # Numbers inside a formatted string ("51 (O/S: 36)", "RM 12.50", a report's text)
+            # back figures; UUIDs, dates and identifiers are masked out by `_figures`.
+            for _, _, _, forms in _figures(node):
+                found.update(forms)
 
     walk(data)
     return found
@@ -217,15 +231,21 @@ def _found_ids(ledger: dict[str, dict]) -> set[str]:
     return ids
 
 
+def _fold_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.casefold()).strip()
+
+
 def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: set[str]) -> bool:
     entry = ledger.get(str(call_id))
     if not entry:
         return False
-    low = what.lower()
+    low = _fold_text(what)
     if entry["name"] == RESOLVE and entry["status"] == "ok" and isinstance(entry["data"], dict):
         for r in entry["data"].get("results") or []:
-            term = str(r.get("term") or "").lower()
-            if r.get("status") == "not_found" and term and (term in low or low in term):
+            term = _fold_text(str(r.get("term") or ""))
+            if r.get("status") == "not_found" and term and (
+                term == low or re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low)
+            ):
                 return True
         return False
     if entry["status"] == "empty":
@@ -279,7 +299,8 @@ def final_reply(args: Any, bad_numbers: list[str], bad_not_found: list[str]) -> 
         text = f"I could not confirm that nothing exists for: {'; '.join(bad_not_found)}. {text}".strip()
     if not_checked:
         text = f"{text}\n\nNot checked: {'; '.join(not_checked)}.".strip()
-    return text, bool(not_checked)
+    # No UUIDs in what a person reads.
+    return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 
 
 def violation_message(bad_numbers: list[str], bad_not_found: list[str], empty_text: bool) -> str:

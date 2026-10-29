@@ -441,3 +441,5 @@ hits were reported honestly only 3 of 6 times. Permission violations: 0 of 26 (k
    yourself; always finish with the answer tool, citing call ids.
 8. Migration: no `CREATE SCHEMA` (472 creates `chatbot`; the statement needs the database CREATE privilege even
    with IF NOT EXISTS).
+
+Round 5c notes: the brand-scope filter on closed-list brands in `crm_resolve` is stricter than `set_brand_scope` (only in-scope brand rows are returned, because brand rows themselves are not filtered by the session criterion). Numbers inside formatted strings back figures (a report's text, "51 (O/S: 36)", "RM 12.50"); UUIDs, dates, identifiers with a letter joined by "-" or "/", and keys never do. Every UUID value in an ok result of this turn is a known id for later calls; the reply text never carries a UUID.
