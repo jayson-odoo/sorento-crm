@@ -176,8 +176,11 @@ export function ProjectForm(props: ProjectFormProps) {
   const fetchArchitectOptions = useFetchPartyOptions('architect');
   const fetchContractorOptions = useFetchPartyOptions('main_contractor');
   const fetchCustomerOptions = useFetchCustomerOptions();
-  const types = useProjectTypes();
-  const templates = useProjectTemplates(typeId || undefined);
+  // Both routes need projects.types.view: without it the type and template show as the
+  // project's own text and nothing is requested.
+  const canViewTypes = useHasPermission('projects.types.view');
+  const types = useProjectTypes({ enabled: canViewTypes });
+  const templates = useProjectTemplates(typeId || undefined, { enabled: canViewTypes });
   const states = useLookupSetOptions('my_state');
   const fetchLeadOptions = useFetchLeadOptions();
   const users = useQuery({
@@ -503,7 +506,14 @@ export function ProjectForm(props: ProjectFormProps) {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="project-type">Project type</Label>
+              <Label id="project-type-label" htmlFor="project-type">
+                Project type
+              </Label>
+              {!canViewTypes ? (
+                <p id="project-type" aria-labelledby="project-type-label" className="text-sm">
+                  {project?.type_name || '-'}
+                </p>
+              ) : (
               <SearchableSelect
                 id="project-type"
                 value={typeId}
@@ -524,12 +534,20 @@ export function ProjectForm(props: ProjectFormProps) {
                 }))}
                 placeholder="Select a type"
               />
+              )}
             </div>
           </div>
 
           {typeId && (
             <div className="space-y-1.5">
-              <Label htmlFor="project-template">Template</Label>
+              <Label id="project-template-label" htmlFor="project-template">
+                Template
+              </Label>
+              {!canViewTypes ? (
+                <p id="project-template" aria-labelledby="project-template-label" className="text-sm">
+                  {project?.template_name || '-'}
+                </p>
+              ) : (
               <SearchableSelect
                 id="project-template"
                 value={templateId}
@@ -547,6 +565,7 @@ export function ProjectForm(props: ProjectFormProps) {
                 placeholder="Select a template"
                 emptyMessage="No templates for this type"
               />
+              )}
             </div>
           )}
 

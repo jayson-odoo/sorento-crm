@@ -217,10 +217,11 @@ export function useProjectTypes(options: { enabled?: boolean } = {}) {
   });
 }
 
-export function useProjectTemplates(typeId?: string) {
+export function useProjectTemplates(typeId?: string, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['project-templates', typeId ?? null],
     queryFn: () => listProjectTemplates(typeId),
+    enabled: options.enabled ?? true,
   });
 }
 

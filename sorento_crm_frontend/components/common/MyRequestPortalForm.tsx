@@ -14,6 +14,7 @@
  */
 
 import { useMemo, type ReactNode } from 'react';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import DeferredActionButton from '@/components/common/DeferredActionButton';
@@ -112,18 +113,66 @@ function AttachmentRemove({ kind, attachment, disabled, onRemoved }: AttachmentR
   );
 }
 
-/** The portal component under it talks to My Requests, on the CRM's paths, with D7 deletes. */
+/** The calls of a kind's own service that change a row. */
+const SERVICE_WRITE =
+  /^(create|update|submit|cancel|revise|collect|delete|approve|requestChanges|requestPriceTagExport)/;
+
+/** `fn`, then (once it resolved) the kind's staff list and My Requests refetch. A throw skips both. */
+function refreshing<A extends unknown[], R>(
+  qc: QueryClient,
+  keyOf: (...args: never[]) => string | undefined,
+  fn: (...args: A) => Promise<R>,
+): (...args: A) => Promise<R> {
+  return async (...args: A) => {
+    const result = await fn(...args);
+    const list = (keyOf as (...a: unknown[]) => string | undefined)(...args);
+    if (list) void qc.invalidateQueries({ queryKey: [list] });
+    void qc.invalidateQueries({ queryKey: [MY_REQUEST_KEY] });
+    return result;
+  };
+}
+
+/** A service with every write wrapped to refresh `list`. */
+function refreshingService<T extends object>(qc: QueryClient, list: string, service: T): T {
+  const out: Record<string, unknown> = { ...(service as Record<string, unknown>) };
+  for (const [name, fn] of Object.entries(service)) {
+    if (typeof fn === 'function' && SERVICE_WRITE.test(name)) {
+      out[name] = refreshing(qc, () => list, fn as (...a: unknown[]) => Promise<unknown>);
+    }
+  }
+  return out as T;
+}
+
+/** The portal component under it talks to My Requests, on the CRM's paths, with D7 deletes. Its
+ *  writes refresh the CRM list of their kind (those lists never go stale on their own). */
 export function MyRequestClientProvider({ children }: { children: ReactNode }) {
+  const qc = useQueryClient();
   // One client per form: its lookup sets are cached per client, never shared with the portal's.
-  const client = useMemo<SubmissionClient>(
-    () => ({
-      ...createMyRequestsSubmissionApi(),
+  const client = useMemo<SubmissionClient>(() => {
+    const api = createMyRequestsSubmissionApi();
+    const listOf = (kind: unknown) => LIST_KEYS[String(kind)];
+    return {
+      ...api,
+      saveDraft: refreshing(qc, listOf, api.saveDraft),
+      submitDraft: refreshing(qc, listOf, api.submitDraft),
+      deleteDraftSubmission: refreshing(qc, listOf, api.deleteDraftSubmission),
+      saveRevisionDraft: refreshing(qc, listOf, api.saveRevisionDraft),
+      discardRevisionDraft: refreshing(qc, listOf, api.discardRevisionDraft),
+      reviseSubmission: refreshing(qc, listOf, api.reviseSubmission),
+      uploadAttachment: refreshing(qc, listOf, api.uploadAttachment),
+      sampleRequest: api.sampleRequest && refreshingService(qc, 'sample-requests', api.sampleRequest),
+      newProductApplication:
+        api.newProductApplication &&
+        refreshingService(qc, 'new-product-applications', api.newProductApplication),
+      salesOpportunity:
+        api.salesOpportunity && refreshingService(qc, 'sales-opportunities', api.salesOpportunity),
+      priceTagRequest:
+        api.priceTagRequest && refreshingService(qc, 'price-tag-requests', api.priceTagRequest),
       paths: myRequestsPaths,
       deletes: { DraftDelete, AttachmentRemove },
       embedded: true,
-    }),
-    [],
-  );
+    };
+  }, [qc]);
   return <SubmissionClientProvider client={client}>{children}</SubmissionClientProvider>;
 }
 
