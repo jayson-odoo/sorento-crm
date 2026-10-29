@@ -216,3 +216,25 @@ def test_a_named_location_filter_drops_by_location(client, db):
         period=None,
     )
     assert [g["axis"] for g in body["summary"]["groups"]] == ["customer"], body["summary"]
+
+
+def test_office_staff_without_the_reveal_get_no_agent_axis_or_agent_filter_on_pending_delivery(client, db):
+    """Security S1: the opening is pending delivery as before #1922, which had no agent dimension. Without the reveal the
+    agent axis and the agent filters stay refused (`own_book_only`)."""
+    w = _pending_world(db)
+    contact = _holder(db)
+    for params in (
+        {"group_by": "sales_agent", "top_n": 10}, {"sales_agent_ids": [w.a1.id]}, {"customer_agent_ids": [w.a1.id]},
+    ):
+        resp = _ask(client, contact, basis="pending_delivery", product_ids=[w.pc.id], period=None, **params)
+        assert resp.status_code == 403 and resp.json()["code"] == "report_dimension_not_allowed", (params, resp.text)
+
+
+def test_a_linked_contact_may_open_its_own_delivery_order_list(client, db):
+    """Security N1: the DO list is the dealer's own rows (`enforce_customer_scope`), as before #1922."""
+    w = _pending_world(db)
+    contact = _holder(db, office=False)
+    _link(db, contact, w.c1)
+    db.commit()
+    body = _ok(client, contact, basis="pending_delivery", product_ids=[w.pc.id], group_by="delivery_order", top_n=50, period=None)
+    assert len(body["rows"]) == 2 and sum(r["qty"] for r in body["rows"]) == 3, body["rows"]
