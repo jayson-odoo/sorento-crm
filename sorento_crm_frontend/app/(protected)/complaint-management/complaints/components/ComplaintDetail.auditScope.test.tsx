@@ -15,6 +15,7 @@ const push = vi.fn();
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(''),
+  usePathname: () => '/complaint-management/complaints/cmp-1',
 }));
 const slaSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/app/(protected)/sla-management/_shared/formSLAService', () => ({
