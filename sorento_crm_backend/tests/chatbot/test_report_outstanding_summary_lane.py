@@ -297,11 +297,11 @@ def test_rpt009_dealer_outstanding_only_after_a_product_ask_keeps_the_product(do
 ASKS = [{"domain": "inventory", "intent": "check_stock"}, {"domain": "order", "intent": "check_order"}]
 
 
-def _v70_b6e9() -> dict[str, Any]:
+def _v70_b6e9(asks: Any = ASKS) -> dict[str, Any]:
     """v70's reading of "SRT5733 stock and outstanding": a stock ask and a sales report whose basis word is outstanding
     (`sales_basis`), the shape the pre-#1922 lane turned into the outstanding report (`sales_basis_ask.as_report_ask`)."""
     return _status(
-        "sales_report", _e(PRODUCT, "product"), basis=None, sales_basis="outstanding", asks=ASKS,
+        "sales_report", _e(PRODUCT, "product"), basis=None, sales_basis="outstanding", asks=asks,
         state_changes=list(KEEP), **NO_DATES,
     )
 
@@ -348,3 +348,43 @@ def test_rpt030_a_dealer_asking_undelivered_orders_gets_its_pending_delivery_wit
     args = _only_report_ask(calls)
     assert args["basis"] == "pending_delivery", args
     assert text.startswith("Sales order figures are not enabled for your account."), text
+
+
+def test_b6e9_v70_with_no_asks_list_is_still_the_do_summary(do_only, do_only_world) -> None:
+    """Crew: v189 emits `asks: null` on these turns; the outstanding reading must not depend on a filled list."""
+    do_only.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
+    text, calls = do_only.say(_v70_b6e9(asks=None), "SRT5733 stock and outstanding")
+    (args,) = [a for n, a in calls if n == "crm_report_ask"]
+    assert args["basis"] == "pending_delivery" and "Which period" not in text, (args, text)
+
+
+def _so_document_ask(*entities: dict[str, Any]) -> dict[str, Any]:
+    """v189's reading of rpt-030 / rpt-038 ("<customer> outstanding sales order"): `so_outstanding` with the SO
+    document word, `asks` null (crew's gate verdicts, 29 Oct)."""
+    return _status(
+        "so_outstanding", *entities, basis=None, document=["SO"], asks=None, entity_op="replace_combine",
+        scope_intent="specific", **NO_DATES,
+    )
+
+
+def test_rpt038_a_dealer_naming_its_customer_and_outstanding_sales_order_gets_pending_delivery(dealer_no_reveal) -> None:
+    dealer_no_reveal.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
+    text, calls = dealer_no_reveal.say(
+        _so_document_ask(_e("ZZT OWN DEALER SDN BHD", "customer")), "ZZT OWN DEALER SDN BHD OUTSTANDING SALES ORDER",
+    )
+    reports = [a for n, a in calls if n == "crm_report_ask"]
+    assert reports and reports[0]["basis"] == "pending_delivery", (calls, text)
+    assert text.startswith("Sales order figures are not enabled for your account."), text
+    assert "Outstanding is not enabled" not in text, text
+
+
+def test_rpt030_shape_a_dealer_naming_its_customer_and_a_brand_gets_pending_delivery(dealer_no_reveal) -> None:
+    from tests.test_report_unify_outstanding_bases import _brand  # noqa: F401  (brand row helper)
+    from tests._pg_fixture import unique_code  # noqa: F401
+
+    dealer_no_reveal.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
+    text, calls = dealer_no_reveal.say(
+        _so_document_ask(_e("ZZT OWN DEALER SDN BHD", "customer"), _e("mocha", "brand")),
+        "ZZT OWN DEALER SDN BHD\nany outstanding mocha item in sales order",
+    )
+    assert "Outstanding is not enabled" not in text, (calls, text)
