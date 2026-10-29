@@ -560,25 +560,25 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
   });
 });
 
-describe('ProjectForm: type drives Template and delivery fields (AC-PF015, PF016, PF019, PF020)', () => {
-  it('shows Template only once a type is chosen', () => {
+describe('ProjectForm: type drives To-do list template and delivery fields (AC-PF015, PF016, PF019, PF020)', () => {
+  it('shows To-do list template only once a type is chosen', () => {
     renderForm({ mode: 'create' });
-    expect(screen.queryByLabelText('Template')).toBeNull();
+    expect(screen.queryByLabelText('To-do list template')).toBeNull();
   });
 
-  it('clears Template when the type changes', async () => {
+  it('clears To-do list template when the type changes', async () => {
     listProjectTemplates.mockResolvedValue([
       { id: 'tp1', name: 'Standard', has_forked_status_graph: false },
     ]);
     renderForm({ mode: 'create' });
     await pickType('ty2', 'Hotel');
     await waitFor(() =>
-      expect(within(screen.getByLabelText('Template')).getByText('Standard')).toBeInTheDocument(),
+      expect(within(screen.getByLabelText('To-do list template')).getByText('Standard')).toBeInTheDocument(),
     );
-    fireEvent.change(screen.getByLabelText('Template'), { target: { value: 'tp1' } });
+    fireEvent.change(screen.getByLabelText('To-do list template'), { target: { value: 'tp1' } });
     fireEvent.change(screen.getByLabelText('Project type'), { target: { value: 'ty1' } });
     await waitFor(() =>
-      expect((screen.getByLabelText('Template') as HTMLSelectElement).value).toBe(''),
+      expect((screen.getByLabelText('To-do list template') as HTMLSelectElement).value).toBe(''),
     );
   });
 

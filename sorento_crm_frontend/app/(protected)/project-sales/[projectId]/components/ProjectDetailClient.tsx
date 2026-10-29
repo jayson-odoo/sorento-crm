@@ -464,7 +464,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               <Fact label="State" value={project.state} />
               <Fact label="Area" value={project.mukim} />
               <Fact label="Project type" value={project.type_name} />
-              <Fact label="Template" value={project.template_name} />
+              <Fact label="To-do list template" value={project.template_name} />
               <Fact label="Reference" value={project.admin_ref} />
             </Section>
 
