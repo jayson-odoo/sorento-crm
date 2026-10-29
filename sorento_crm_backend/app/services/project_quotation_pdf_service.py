@@ -27,6 +27,7 @@ must degrade to a clear message, never take the API down.
 """
 from __future__ import annotations
 
+import base64
 import logging
 import re
 from datetime import date, datetime
@@ -34,7 +35,8 @@ from decimal import Decimal, InvalidOperation
 from html import escape, unescape
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy.orm import Session
+import httpx
+from sqlalchemy.orm import Session, object_session
 
 from app.models.company import Company
 from app.models.projects import (
@@ -50,10 +52,14 @@ from app.services import geo_places
 from app.services import product_image_service as product_images
 from app.services.complaint_pdf_service import PDFRenderingUnavailable
 from app.services.error_handler import AppException
+from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
 
 logger = logging.getLogger(__name__)
 
 ZERO = Decimal("0.00")
+
+LOGO_FETCH_TIMEOUT_SECONDS = 3
+MAX_LOGO_BYTES = 1_048_576
 
 # The sample workbook's column set, in its order. PRODUCT IMAGE is conditional per scope
 # (AC-F4): a page of blank cells is worse than no column, and it squeezes the columns that do
@@ -263,18 +269,67 @@ def _sender(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
     admin already maintains them. Any missing piece renders as nothing rather than as `None`.
     """
     name = None
+    logo_url = None
     if document.company_id:
         company = db.query(Company).filter(Company.id == str(document.company_id)).first()
         name = company.name if company is not None else None
+        logo_url = company.logo_url if company is not None else None
 
     settings = db.query(SystemSetting).order_by(SystemSetting.id).first()
     if not name and settings is not None:
         name = settings.name
     return {
         "name": name,
+        "logo_url": logo_url,
         "address_lines": _lines_of(settings.address if settings is not None else None),
         "phone": settings.support_phone if settings is not None else None,
     }
+
+
+def fetch_logo_data_uri(url: Optional[str]) -> Optional[str]:
+    """The company logo as an inline data URI, or None. Never raises: a logo is decoration.
+
+    The url is the company's own setting, so it passes the outbound guard before a socket opens.
+    Redirects are NOT followed: the guard only vets the first hop, so a redirect to an internal
+    address would walk around it. Streamed with a hard cap, by header and by running total.
+    """
+    if not url:
+        return None
+    try:
+        assert_safe_outbound_url(url, label="The logo url")
+    except OutboundUrlRejected as exc:
+        logger.warning("Quotation PDF logo skipped, url refused: %s", exc)
+        return None
+    try:
+        with httpx.Client(timeout=LOGO_FETCH_TIMEOUT_SECONDS, follow_redirects=False) as client:
+            with client.stream("GET", url) as response:
+                if not 200 <= response.status_code < 300:
+                    logger.warning("Quotation PDF logo skipped, status %s", response.status_code)
+                    return None
+                content_type = (response.headers.get("content-type") or "").split(";")[0]
+                content_type = content_type.strip().lower()
+                if not content_type.startswith("image/"):
+                    logger.warning("Quotation PDF logo skipped, content type %s", content_type)
+                    return None
+                declared = response.headers.get("content-length")
+                if declared and declared.strip().isdigit() and int(declared) > MAX_LOGO_BYTES:
+                    logger.warning("Quotation PDF logo skipped, %s bytes declared", declared)
+                    return None
+                chunks: List[bytes] = []
+                downloaded = 0
+                for chunk in response.iter_bytes():
+                    downloaded += len(chunk)
+                    if downloaded > MAX_LOGO_BYTES:
+                        logger.warning("Quotation PDF logo skipped, body over the cap")
+                        return None
+                    chunks.append(chunk)
+    except Exception as exc:  # noqa: BLE001 - any failure leaves the letterhead name only
+        logger.warning("Quotation PDF logo skipped, download failed: %s", exc)
+        return None
+    data = b"".join(chunks)
+    if not data:
+        return None
+    return f"data:{content_type};base64,{base64.b64encode(data).decode()}"
 
 
 def _lines_of(raw: Optional[str]) -> List[str]:
@@ -307,14 +362,23 @@ def _header_html(
     sender: Dict[str, Any],
 ) -> str:
     sender_bits: List[str] = []
+    logo = fetch_logo_data_uri(sender.get("logo_url"))
     if sender["name"]:
         sender_bits.append(f'<div class="sender-name">{_cell(sender["name"])}</div>')
     sender_bits += [f"<div>{_cell(line)}</div>" for line in sender["address_lines"]]
     if sender["phone"]:
         sender_bits.append(f'<div>Tel: {_cell(sender["phone"])}</div>')
 
-    refs = [("Our Ref", _cell(issue.our_ref_text)), ("Your Ref", _cell(document.your_ref))]
+    refs = [
+        ("Quotation No.", _cell(f"{document.document_no}-R{issue.issue_no}")),
+        ("Your Ref", _cell(document.your_ref)),
+    ]
     refs.append(("Date", _date(document.doc_date or issue.issued_at)))
+    contact = ", ".join(
+        part for part in (document.signatory_name, document.signatory_phone) if part
+    )
+    if contact:
+        refs.append(("Sales contact", _cell(contact)))
     ref_rows = "".join(
         f"<tr><th>{escape(label)}</th><td>{value}</td></tr>" for label, value in refs
     )
@@ -335,9 +399,11 @@ def _header_html(
         else ""
     )
 
+    logo_html = f'<img class="letterhead-logo" src="{escape(logo)}"/>' if logo else ""
+
     return f"""
   <div class="top">
-    <div class="sender">{"".join(sender_bits)}</div>
+    <div class="sender-wrap">{logo_html}<div class="sender">{"".join(sender_bits)}</div></div>
     <table class="refs">{ref_rows}</table>
   </div>
   <div class="to">
@@ -509,37 +575,49 @@ def _sign_off_html(
 
     Sorento's signature is always present: an unsigned document cannot be issued (AC-H1), and it is
     COPIED onto the issue, so re-signing the draft later cannot rewrite what this revision carried.
-    The customer block is omitted rather than shown empty - an unsigned issue is a legitimate
-    resting state (AC-H8), and a blank "Accepted by" box on a printed page reads as a failure.
+    Two columns side by side: Sorento on the left, the customer on the right. Before acceptance the
+    customer column carries blank lines to fill in by hand.
     """
-    bits = [
-        '<div class="closing">We trust the above prices are to your satisfaction.</div>',
-        '<div class="closing">Thank You.</div>',
-    ]
+    closing = (
+        '<div class="closing">We trust the above prices are to your satisfaction.</div>'
+        '<div class="closing">Thank You.</div>'
+    )
     sorento = _signature(db, issue.sorento_signature_id)
+    left = ['<div class="accepted-title">For Sorento</div>']
     picture = _signature_img(sorento)
-    if picture:
-        bits.append(f'<div class="sig-box">{picture}</div>')
+    left.append(f'<div class="sig-box">{picture}</div>' if picture else '<div class="sig-line"></div>')
     if document.signatory_name:
-        bits.append(f'<div class="signatory">{_cell(document.signatory_name)}</div>')
+        left.append(f'<div class="signatory">{_cell(document.signatory_name)}</div>')
     if document.signatory_phone:
-        bits.append(f'<div class="signatory-phone">{_cell(document.signatory_phone)}</div>')
-    bits.append(_signature_place_html(sorento))
-    signoff = f'<div class="signoff">{"".join(bits)}</div>'
+        left.append(f'<div class="signatory-phone">{_cell(document.signatory_phone)}</div>')
+    left.append(_signature_place_html(sorento))
 
     customer = _signature(db, issue.customer_signature_id)
+    right = ['<div class="accepted-title">Accepted by</div>']
     if customer is None:
-        return signoff
+        # Blank lines to sign, print and date by hand: an unsigned issue is a legitimate resting
+        # state (AC-H8) and the printed copy can still be countersigned on paper.
+        right += [
+            '<div class="sig-line"></div>',
+            '<div class="blank-label">Name:</div><div class="sig-line"></div>',
+            '<div class="blank-label">Date:</div><div class="sig-line"></div>',
+        ]
+    else:
+        right += [
+            f'<div class="sig-box">{_signature_img(customer)}</div>',
+            f'<div class="signatory">{_cell(customer.signer_name)}</div>',
+        ]
+        if issue.accepted_at:
+            right.append(f'<div>Date: {_date(issue.accepted_at)}</div>')
+        right.append(_signature_place_html(customer))
 
-    accepted = [
-        '<div class="accepted-title">Accepted by</div>',
-        f'<div class="sig-box">{_signature_img(customer)}</div>',
-        f'<div class="signatory">{_cell(customer.signer_name)}</div>',
-    ]
-    if issue.accepted_at:
-        accepted.append(f'<div>Date: {_date(issue.accepted_at)}</div>')
-    accepted.append(_signature_place_html(customer))
-    return f'{signoff}<div class="accepted">{"".join(accepted)}</div>'
+    return (
+        f'<div class="signoff">{closing}'
+        f'<div class="signoff-row">'
+        f'<div class="signoff-col sorento">{"".join(left)}</div>'
+        f'<div class="signoff-col customer">{"".join(right)}</div>'
+        f"</div></div>"
+    )
 
 
 _STYLE = """
@@ -591,9 +669,13 @@ _STYLE = """
      enough to compete with the money above it. */
   .sig-gps { margin-top: 2px; font-size: 8px; color: #444; }
   img.sig { height: 44px; max-width: 180px; }
-  .accepted { margin-top: 16px; border-top: 1px solid #ccc; padding-top: 6px;
-              break-inside: avoid; }
+  .signoff-row { display: flex; gap: 40px; margin-top: 8px; }
+  .signoff-col { flex: 1; }
   .accepted-title { font-weight: 700; }
+  .sig-line { border-bottom: 1px solid #333; height: 26px; margin-top: 4px; }
+  .blank-label { margin-top: 6px; color: #555; }
+  .sender-wrap { display: flex; align-items: flex-start; gap: 10px; }
+  .sender-wrap img { height: 40px; max-width: 120px; object-fit: contain; }
 """
 
 
@@ -626,9 +708,15 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
 
 def build_filename(issue: ProjectQuotationIssue) -> str:
     """Named after the reference the customer quotes back, so a saved file is identifiable."""
-    ref = (issue.our_ref_text or "").strip()
-    if not ref:
-        ref = f"R{issue.issue_no}"
+    document_no = None
+    session = object_session(issue)
+    if session is not None:
+        document_no = (
+            session.query(ProjectQuotationDocument.document_no)
+            .filter(ProjectQuotationDocument.id == issue.document_id)
+            .scalar()
+        )
+    ref = f"{document_no}-R{issue.issue_no}" if document_no else f"R{issue.issue_no}"
     safe = re.sub(r"[^A-Za-z0-9]+", "-", ref).strip("-") or "quotation"
     return f"quotation-{safe}.pdf"
 
