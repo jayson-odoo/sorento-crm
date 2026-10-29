@@ -4,6 +4,10 @@ Status: Plan; rule ruled (owner 28 Oct ~09:30: the SO's order type decides). Roo
 the DO feed gap (2b), dated by R12 and crew's dry run: 19 Aug 2025 to 19 Aug 2026 (2d, 2e). R11: the incident apply did not land.
 Owner 29 Oct ~22:45: ask 1 (a), the shared-service DO history load for the gap, dry run on a prod copy first
 (run plan and dry-run result: 2e; dry run clean 29 Oct, real run on the copy next); ask 2 (a), set apart from Jan 2026 (crew fills R9). crew-lane: SALES-SPLIT-TALLY.
+Code (30 Oct): the bulk class re-derive keeps a stored class when the rule gives none
+(`agent_class_service.rederive(keep_unset=True)`, script and screen preview), reviewed READY; R16
+predicts its dry run. Merge-ready for release #8; after it the owner runs the dry run, checks it
+against R16, then `--apply`. R9 is committed on prod (owner, 30 Oct 01:19).
 Track: small fix (expected diff well under 300 lines, no migration, no RBAC change). Follows
 `PLAN-sales-unified-27oct.md` (#1916, live in prod 745be3f35b). Read-only owner SQL:
 `evidence/sales-split-tally-owner-sql-28oct.md`. No agent code or per-agent figure is committed

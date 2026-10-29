@@ -772,3 +772,66 @@ WHERE o.deleted_at IS NULL AND o.order_date >= '2025-08-01' AND o.order_date < '
 GROUP BY 1 ORDER BY 1;
 ROLLBACK;
 ```
+
+# Round 6 (30 Oct): the re-derive, after the fix (48f124b8, release #8)
+
+## R16. What the fixed re-derive dry run will show (READ ONLY)
+
+Purpose: the totals `python -m scripts.sales_order_class_rederive --company SRT` prints after
+release #8, computed in SQL by the same rule (`agent_class_service._rederive` with
+`keep_unset=True`): the stated order type (`project` when it contains "project" or "contract",
+else `retail`), else the agent's dated class row covering the order's month, else (an agent with
+no row at all) the `sales_agents.demand_class` mirror; an order the rule gives no class is left
+as it is and not listed. Run it now (R9 is committed) and compare it with the script's TOTAL lines
+after the release: the two must agree to the order and the cent before `--apply`.
+
+Expected: no row with `after` empty (there is no `'-'` target); every row is an agent whose class
+differs from its orders' old stamp. The second query is the same per agent (crew masks the codes).
+
+```sql
+BEGIN READ ONLY;
+WITH so AS (
+  SELECT s.id, s.sales_agent_id, s.demand_class AS before,
+         CASE WHEN btrim(coalesce(s.order_type, '')) <> '' THEN
+                CASE WHEN lower(s.order_type) LIKE '%project%' OR lower(s.order_type) LIKE '%contract%'
+                     THEN 'project' ELSE 'retail' END
+              WHEN EXISTS (SELECT 1 FROM sales.agent_classes ac WHERE ac.sales_agent_id = s.sales_agent_id) THEN
+                (SELECT ac.demand_class FROM sales.agent_classes ac
+                 WHERE ac.sales_agent_id = s.sales_agent_id AND s.order_date IS NOT NULL
+                   AND (ac.from_month IS NULL OR ac.from_month <= date_trunc('month', s.order_date)::date)
+                   AND (ac.to_month IS NULL OR ac.to_month >= date_trunc('month', s.order_date)::date)
+                 LIMIT 1)
+              ELSE a.demand_class END AS after
+  FROM public.sales_orders s
+  JOIN companies c ON c.id = s.company_id AND c.code = 'SRT'
+  LEFT JOIN public.sales_agents a ON a.id = s.sales_agent_id),
+moved AS (
+  SELECT so.*, (SELECT coalesce(sum(l.line_total), 0) FROM public.sales_order_lines l
+                WHERE l.sales_order_id = so.id) AS rm
+  FROM so WHERE so.after IS NOT NULL AND so.after IS DISTINCT FROM so.before)
+SELECT coalesce(before, '-') AS before, after, count(*) AS orders, sum(rm) AS rm
+FROM moved GROUP BY 1, 2 ORDER BY 1, 2;
+-- Per agent (the script's per-agent lines, summed over months).
+WITH so AS (
+  SELECT s.id, s.sales_agent_id, s.demand_class AS before,
+         CASE WHEN btrim(coalesce(s.order_type, '')) <> '' THEN
+                CASE WHEN lower(s.order_type) LIKE '%project%' OR lower(s.order_type) LIKE '%contract%'
+                     THEN 'project' ELSE 'retail' END
+              WHEN EXISTS (SELECT 1 FROM sales.agent_classes ac WHERE ac.sales_agent_id = s.sales_agent_id) THEN
+                (SELECT ac.demand_class FROM sales.agent_classes ac
+                 WHERE ac.sales_agent_id = s.sales_agent_id AND s.order_date IS NOT NULL
+                   AND (ac.from_month IS NULL OR ac.from_month <= date_trunc('month', s.order_date)::date)
+                   AND (ac.to_month IS NULL OR ac.to_month >= date_trunc('month', s.order_date)::date)
+                 LIMIT 1)
+              ELSE a.demand_class END AS after
+  FROM public.sales_orders s
+  JOIN companies c ON c.id = s.company_id AND c.code = 'SRT'
+  LEFT JOIN public.sales_agents a ON a.id = s.sales_agent_id)
+SELECT coalesce(a.sales_agent, '(no agent)') AS agent, coalesce(so.before, '-') AS before, so.after,
+       count(*) AS orders,
+       sum((SELECT coalesce(sum(l.line_total), 0) FROM public.sales_order_lines l WHERE l.sales_order_id = so.id)) AS rm
+FROM so LEFT JOIN public.sales_agents a ON a.id = so.sales_agent_id
+WHERE so.after IS NOT NULL AND so.after IS DISTINCT FROM so.before
+GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
+ROLLBACK;
+```

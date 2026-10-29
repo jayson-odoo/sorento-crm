@@ -114,3 +114,49 @@ def test_the_screens_rederive_preview_reports_what_the_script_would_write(db):
     rows = [r for r in rederive_preview(current_user={}, db=db)["data"]
             if r["agent"] in {a.sales_agent for a in agents}]
     assert sorted((r["before"], r["after"]) for r in rows) == [("retail", "other"), ("retail", "project")]
+
+
+def test_owner_sql_r16_predicts_the_fixed_scripts_totals_to_the_order_and_the_cent():
+    """R16 (`sales-split-tally-owner-sql-28oct.md`) names its schemas, so it runs on the real
+    ones inside a rolled-back transaction; the script's own rule is the oracle."""
+    from collections import defaultdict
+    from decimal import Decimal
+
+    from sqlalchemy import text
+
+    from app.services.sales import agent_class_service as svc
+    from tests._pg_fixture import pg_session
+    from tests.test_sales_split_tally_owner_sql import _blocks, _statements
+
+    with pg_session() as s:
+        set_company_scope(s, None)
+        if s.execute(text("SELECT count(*) FROM sales_orders so JOIN companies c ON c.id = so.company_id "
+                          "WHERE c.code = 'SRT'")).scalar():
+            pytest.skip("this database holds real SRT sales orders")
+        s.execute(text("UPDATE companies SET code = 'SRT' WHERE id = :id"), {"id": DEFAULT_COMPANY_ID})
+        _seed(s)
+        dated = agent(s, unique_code("ZZTDAT"))
+        s.add(SalesAgentClass(sales_agent_id=dated.id, demand_class="project", from_month=date(2026, 3, 1)))
+        mirror = agent(s, unique_code("ZZTMIR"), demand_class="retail")
+        s.flush()
+        _order(s, dated, demand_class="retail", when=date(2026, 2, 10))   # no row covers Feb: kept
+        _order(s, dated, demand_class="retail", when=date(2026, 3, 10))   # -> project
+        _order(s, mirror, demand_class="project")                          # mirror -> retail
+        _order(s, mirror, demand_class=None, order_type="Contract")        # stated -> project
+        _order(s, dated, demand_class="retail", when=None)                 # no date: kept
+        opener = agent(s, unique_code("ZZTOPN"))
+        s.add(SalesAgentClass(sales_agent_id=opener.id, demand_class="retail"))
+        s.flush()
+        _order(s, opener, demand_class="project", when=None)               # no date, open row: kept
+
+        expected = defaultdict(lambda: [0, Decimal(0)])
+        for m in svc.rederive(s, company_id=DEFAULT_COMPANY_ID, keep_unset=True):
+            expected[(m.before or "-", m.after)][0] += m.orders
+            expected[(m.before or "-", m.after)][1] += m.amount
+
+        (block,) = _blocks("R16.")
+        totals, per_agent = _statements(block, {})
+        got = {(r.before, r.after): [r.orders, r.rm] for r in s.execute(text(totals))}
+        assert got == dict(expected)
+        assert all(r.after is not None for r in s.execute(text(per_agent)))
+        assert sum(r.orders for r in s.execute(text(per_agent))) == sum(n for n, _ in expected.values())
