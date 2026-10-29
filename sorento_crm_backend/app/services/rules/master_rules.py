@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.procurement import Supplier
-from app.models.product import Brand, ItemType, Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, ItemClass, ItemType, Product, ProductCategory, UnitOfMeasure
 
 #: The exact-match code column per master this module resolves through.
 #: Customers are absent on purpose - codes are not unique per company yet, so the
@@ -38,6 +38,7 @@ _CODE_COLUMNS: dict[type, str] = {
     Product: "product_code",
     Brand: "brand_code",
     ItemType: "item_type_code",
+    ItemClass: "item_class_code",
 }
 
 #: The matching name column, for `ensure_reference`'s "code = name = raw
@@ -48,6 +49,7 @@ _NAME_COLUMNS: dict[type, str] = {
     UnitOfMeasure: "uom_name",
     Brand: "brand_name",
     ItemType: "item_type_name",
+    ItemClass: "item_class_name",
 }
 
 

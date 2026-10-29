@@ -22,19 +22,10 @@ from tests.chatbot.test_semantic_bridge import (  # noqa: F401
 
 # 1. the request asks for the dimension the floors were calibrated on
 def test_gemini_requests_ask_for_1536_dimensions(monkeypatch, gemini, fresh_cache):
-    bodies = []
-    from app.services.llm_provider import GeminiProvider
-
-    orig = gemini.request
-
-    def spy(provider_self, method, path, *, json_body=None, **kw):
-        bodies.append(json_body)
-        return orig(provider_self, method, path, json_body=json_body, **kw)
-
-    monkeypatch.setattr(GeminiProvider, "_request", lambda self, *a, **kw: spy(self, *a, **kw))
     with blank_session() as db:
         _embedder_world(monkeypatch, db, provider="gemini", model=GEM_MODEL)
         ll.embedder(db).pieces(["zz gold"])
+    bodies = gemini.bodies
     assert bodies and all(r.get("outputDimensionality") == 1536 for b in bodies for r in b["requests"]), bodies
 
 

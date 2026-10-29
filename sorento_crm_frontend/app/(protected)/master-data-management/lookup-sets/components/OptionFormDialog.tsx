@@ -9,15 +9,26 @@ import { numberFieldError } from '@/lib/number-field';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import KeywordChipInput from './KeywordChipInput';
-import { useCreateOption, useUpdateOption } from '../hooks/useLookupSets';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useAliasTargets, useCreateOption, useUpdateOption } from '../hooks/useLookupSets';
 import type { LookupKeyword, LookupOption } from '../types/lookup.types';
 
+/** Fallback for a caller that has not read the set's `alias_set` flag yet. */
+const KNOWN_ALIAS_KEYS: ReadonlySet<string> = new Set([
+  'attachment_type_alias',
+  'brand_alias',
+  'sales_channel_alias',
+]);
+
 export default function OptionFormDialog({
-  open, onOpenChange, setId, editing,
+  open, onOpenChange, setId, setKey, aliasSet, editing,
 }: {
   open: boolean; onOpenChange: (o: boolean) => void;
-  setId: string; editing?: LookupOption | null;
+  setId: string; setKey?: string; aliasSet?: boolean; editing?: LookupOption | null;
 }) {
+  // The lookup set API says whether it is an alias set; the key list only covers a caller without the flag.
+  const isAlias = aliasSet ?? (!!setKey && KNOWN_ALIAS_KEYS.has(setKey));
+  const targets = useAliasTargets(setId, isAlias && open);
   const create = useCreateOption(setId);
   const update = useUpdateOption(setId);
   const [value, setValue] = useState('');
@@ -59,7 +70,23 @@ export default function OptionFormDialog({
           <DialogTitle>{editing ? 'Edit option' : 'Add option'}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <div><Label>Value (canonical)</Label><Input value={value} onChange={(e) => setValue(e.target.value)} /></div>
+          <div>
+            <Label>Value (canonical)</Label>
+            {isAlias ? (
+              <SearchableSelect
+                value={value}
+                onChange={(v) => {
+                  setValue(v);
+                  const picked = (targets.data ?? []).find((t) => t.value === v);
+                  if (picked && !label) setLabel(picked.label);
+                }}
+                options={(targets.data ?? []).map((t) => ({ value: t.value, label: t.label }))}
+                placeholder="Select a record"
+              />
+            ) : (
+              <Input value={value} onChange={(e) => setValue(e.target.value)} />
+            )}
+          </div>
           <div><Label>Label (display)</Label><Input value={label} onChange={(e) => setLabel(e.target.value)} /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><Label>Sort order</Label>

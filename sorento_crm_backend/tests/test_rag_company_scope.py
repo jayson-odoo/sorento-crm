@@ -108,10 +108,12 @@ def emb_rows(db, mocha):
     from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
 
     suffix = uuid.uuid4().hex[:8]
-    source_type = f"zzrag_{suffix}"
+    # F-1: keep-set source (`promotion`) isolated by a unique source_id prefix.
+    marker = f"zzrag_{suffix}"
+    source_type = "promotion"
     vec = [0.05] * 1536
     for tag, cid in (("sorento", SORENTO), ("mocha", mocha), ("shared", None)):
-        sid = f"{source_type}:{tag}"
+        sid = f"{marker}:{tag}"
         doc = EmbeddingDocument(
             source_type=source_type, source_id=sid, source_key=sid,
             title=f"ZZRAG {tag}", body_text=f"ZZRAG body {tag}", metadata_json={},
@@ -125,11 +127,11 @@ def emb_rows(db, mocha):
             document_id=doc.id, source_type=source_type, source_id=sid, chunk_index=0,
             chunk_text=f"ZZRAG chunk {tag}",
             chunk_hash=hashlib.sha256(f"c-{tag}".encode()).hexdigest(),
-            embedding=vec, model_name="zzrag", model_version="v1", embedding_provider="test",
+            embedding=vec, model_name="text-embedding-3-small", model_version="v1", embedding_provider="test",
             source_hash=doc.source_hash, metadata_json={}, company_id=cid, is_current=True,
         ))
     db.flush()
-    return {"source_type": source_type, "vec": vec}
+    return {"source_type": source_type, "marker": marker, "vec": vec}
 
 
 def test_mocha_scoped_search_excludes_sorento_entity(db, mocha, emb_rows):
@@ -139,7 +141,7 @@ def test_mocha_scoped_search_excludes_sorento_entity(db, mocha, emb_rows):
         rows = EmbeddingReadService(db).search_current(
             emb_rows["vec"], top_k=10, source_type=emb_rows["source_type"]
         )
-    companies = {str(c.company_id) if c.company_id is not None else None for c, _d, _s in rows}
+    companies = {str(c.company_id) if c.company_id is not None else None for c, _d, _s in rows if c.source_id.startswith(emb_rows["marker"])}
     assert mocha in companies          # own company visible
     assert None in companies           # shared knowledge visible
     assert SORENTO not in companies    # AC-I4: another company's entity never leaks

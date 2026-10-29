@@ -13,6 +13,7 @@ from app.schemas.lookup import (
     LookupBindingCreate, LookupBindingResponse, LookupBindingDefaultUpdate,
 )
 from app.services.error_handler import handle_internal_error
+from app.services.lookup_alias_targets import is_alias_set
 from app.services.lookup_set_service import LookupSetService
 from app.services.lookup_option_service import LookupOptionService
 from app.services.lookup_binding_service import LookupBindingService
@@ -117,12 +118,47 @@ def _set_to_response(db: Session, s) -> dict:
         "is_active": s.is_active,
         "option_count": opt_count,
         "binding_count": bind_count,
+        "alias_set": is_alias_set(s.set_key),
         "created_at": s.created_at,
         "updated_at": s.updated_at,
     }
 
 
 # ----- Options nested -----
+
+def _flag_orphans(db: Session, set_id: str, options) -> None:
+    """Options of an alias set carry `orphaned`: their value is not among the set's targets."""
+    from app.models.lookup import LookupSet
+    from app.services.lookup_alias_targets import alias_targets
+
+    set_obj = db.query(LookupSet).filter(LookupSet.id == set_id).first()
+    targets = alias_targets(db, set_obj.set_key, scoped=False) if set_obj else None
+    if targets is None:
+        return
+    known = {t["value"].strip().casefold() for t in targets}
+    for option in options:
+        option.orphaned = (option.value or "").strip().casefold() not in known
+
+
+@router.get("/{set_id}/alias-targets")
+def get_alias_targets(
+    set_id: str,
+    current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
+    db: Session = Depends(get_db),
+):
+    """What this alias set's option values may name; 404 for a set that is not an alias set."""
+    from fastapi import HTTPException
+
+    from app.models.lookup import LookupSet
+    from app.services.lookup_alias_targets import alias_targets
+
+    validate_uuid_path(set_id, resource="Lookup Set")
+    set_obj = db.query(LookupSet).filter(LookupSet.id == set_id).first()
+    targets = alias_targets(db, set_obj.set_key) if set_obj else None
+    if targets is None:
+        raise HTTPException(status_code=404, detail="Not an alias set")
+    return targets
+
 
 @router.get("/{set_id}/options", response_model=ListResponse[LookupOptionResponse])
 def list_options(
@@ -134,7 +170,9 @@ def list_options(
 ):
     try:
         validate_uuid_path(set_id, resource="Lookup Set")
-        return LookupOptionService(db).list(set_id, page=page, limit=limit)
+        result = LookupOptionService(db).list(set_id, page=page, limit=limit)
+        _flag_orphans(db, set_id, result["data"])
+        return result
     except Exception as e:
         raise handle_internal_error(str(e))
 
