@@ -78,6 +78,14 @@ export interface SignaturePadProps {
    * when null, the ecohub rule: an absent value is stated, not hidden.
    */
   extraMetadata?: { label: string; value?: string | null }[];
+  /**
+   * Opt-in. When given, the commit button and the locked canvas stay tappable while not ready
+   * (aria-disabled, nothing is committed) and call this instead, so the caller can show why.
+   * Without it the button is natively disabled, exactly as before.
+   */
+  onNotReadyAttempt?: () => void;
+  /** Opt-in. Rendered beside the commit button; told whether anything is drawn or typed yet. */
+  renderFooterHint?: (state: { hasContent: boolean }) => React.ReactNode;
   /** Set false to skip the geolocation prompt entirely (e.g. an internal desk signature). */
   requestGeolocation?: boolean;
   className?: string;
@@ -171,6 +179,8 @@ export function SignaturePad({
   label = 'Signature',
   commitLabel = 'Apply signature',
   extraMetadata,
+  onNotReadyAttempt,
+  renderFooterHint,
   requestGeolocation = true,
   className,
 }: SignaturePadProps) {
@@ -331,6 +341,7 @@ export function SignaturePad({
   // Pointer Events only: mouse, finger and stylus arrive through this one path, so there is
   // no second set of touch handlers to keep in step with the first.
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (disabled && !readOnly) onNotReadyAttempt?.();
     if (locked || mode !== 'draw' || activePointerRef.current !== null) return;
     // Capture keeps the stroke alive when the pointer leaves the canvas mid-gesture, instead
     // of ending it at the edge and leaving a half signature.
@@ -533,8 +544,16 @@ export function SignaturePad({
         />
       </CardContent>
 
-      <CardFooter className="justify-end gap-2.5 py-3">
-        <Button type="button" disabled={disabled || !hasContent} onClick={commit}>
+      <CardFooter
+        className={cn('justify-end gap-2.5 py-3', renderFooterHint && 'flex-wrap sm:flex-nowrap')}
+      >
+        {renderFooterHint?.({ hasContent })}
+        <Button
+          type="button"
+          disabled={onNotReadyAttempt ? undefined : disabled || !hasContent}
+          aria-disabled={onNotReadyAttempt && (disabled || !hasContent) ? true : undefined}
+          onClick={onNotReadyAttempt && (disabled || !hasContent) ? onNotReadyAttempt : commit}
+        >
           {commitLabel}
         </Button>
       </CardFooter>

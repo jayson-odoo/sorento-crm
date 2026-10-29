@@ -110,6 +110,8 @@ export type QuotationSignPage = {
   doc_date: string | null;
   subject_title: string | null;
   sender_name: string | null;
+  /** The company logo, null when none is set. */
+  sender_logo_url: string | null;
   recipient_name: string | null;
   recipient_address: string | null;
   attn_name: string | null;
@@ -117,6 +119,7 @@ export type QuotationSignPage = {
   cover_letter: string | null;
   terms: string | null;
   signatory_name: string | null;
+  signatory_phone: string | null;
   scopes: QuotationSignScope[];
   grand_total: string;
   sorento_signature: QuotationSignSignature | null;
@@ -141,6 +144,8 @@ export type QuotationSignAcceptBody = {
   /** Sent as strings so a browser's 13-decimal fix reaches Postgres exactly as observed. */
   gps_lat: string | null;
   gps_lng: string | null;
+  /** The customer ticked the Terms box. The backend refuses an issue with terms without it. */
+  terms_accepted: boolean;
 };
 
 export async function getQuotationSignPage(token: string): Promise<QuotationSignPage> {
