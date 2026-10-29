@@ -63,7 +63,7 @@ def _scratch(monkeypatch, rows=0):
             if rows:
                 conn.exec_driver_sql(
                     f'INSERT INTO "{schema}".embedding_chunks (embedding, model_name, is_current, source_type) '
-                    f"SELECT array_fill((n % 7 + 1)::real / 10, ARRAY[1536])::vector, "
+                    f"SELECT array_fill((n %% 7 + 1)::real / 10, ARRAY[1536])::vector, "
                     f"'{MODEL}', true, 'product' FROM generate_series(1, {rows}) n"
                 )
             scratch = tuple((f'"{schema}".embedding_chunks', n, c) for _t, n, c in ei.online_indexes(MODEL))
@@ -144,14 +144,19 @@ def test_upgrade_calls_ensure_indexes_online_with_512mb_work_mem_and_resets_it(m
 
 
 def test_work_mem_is_reset_even_when_the_helper_raises(monkeypatch):
+    seen = {}
+
     def boom(bind, indexes):
+        seen["bind"] = bind
+        seen["during"] = bind.execute(sa.text("SHOW maintenance_work_mem")).scalar()
         raise RuntimeError("boom")
 
     monkeypatch.setattr(online_index, "ensure_indexes_online", boom)
+    with engine.connect() as probe:
+        before = probe.execute(sa.text("SHOW maintenance_work_mem")).scalar()
     state = {}
 
     with engine.connect() as conn:
-        before = conn.execute(sa.text("SHOW maintenance_work_mem")).scalar()
         try:
             ctx = MigrationContext.configure(conn)
             try:
@@ -162,6 +167,7 @@ def test_work_mem_is_reset_even_when_the_helper_raises(monkeypatch):
             state["after"] = conn.execute(sa.text("SHOW maintenance_work_mem")).scalar()
         finally:
             conn.rollback()
+    assert seen["during"] == "512MB"
     assert state["after"] == before and state["after"] != "512MB"
 
 
