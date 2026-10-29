@@ -1768,6 +1768,15 @@ def _settle(
         top_n = source["top_n"]  # S6c: the count on screen stays
     if top_n is None and parse_output.get("report_breakdown") is True and args.get("group_by"):
         top_n = BREAKDOWN_TOP_N  # a breakdown lists every row (`by_capability`)
+    # An ask routed from an outstanding status (`as_outstanding`), not a sales ranking that merely names that basis.
+    outstanding_ask = parse_output.get("capability_from") == "outstanding"
+    if outstanding_ask and args.get("group_by"):
+        # REPORT-OUTSTANDING-SUMMARY item 4 (owner 29 Oct, as before #1922): an outstanding breakdown asks neither "How
+        # many?" nor the measure. Every row, ranked by quantity as the old report ranked its groups (R10), unless the
+        # user named a count or a measure.
+        if top_n is None:
+            top_n = BREAKDOWN_TOP_N
+        args.setdefault("measure", "qty")
     if args.get("compare_to") and args.get("group_by") == "month":
         return None, COMPARE_BY_MONTH_LINE
     given = {**_given_choices(args), **_given_top_n(args, top_n)}
@@ -1783,7 +1792,8 @@ def _settle(
         given["sales_agent"] = rf.Resolved("ambiguous", options=tuple((i, str(n)) for i, n in agent_pick))
     company_options: list[list[str]] = []
     own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) == 3]
-    if own and not dealer and parse_output.get("ranking_refine") is not True:
+    if own and not dealer and parse_output.get("ranking_refine") is not True and not outstanding_ask:
+        # Item 4: never the company question on an outstanding ask (pre-#1922 it ran over the contact's own companies).
         # R1: the company the message (the parser's `sales_company`) names, among the contact's own; else, with two or
         # more companies and no named subject (a customer, product, brand, category, agent or spec), the company question.
         said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()

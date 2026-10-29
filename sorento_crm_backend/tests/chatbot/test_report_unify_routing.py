@@ -288,14 +288,14 @@ def test_ac_ru_11_the_kind_question_is_the_owners_wording(bot) -> None:
     assert calls == [] and KIND_QUESTION in text, text
 
 
-def test_ac_ru_11_the_kind_is_folded_into_the_one_question_with_the_measure_of_a_ranking(bot) -> None:
-    """AC-RU-11: a ranking that also lacks its measure gets ONE reply asking both (the plan's folded question)."""
+def test_ac_ru_11_an_outstanding_ranking_asks_the_kind_alone(bot) -> None:
+    """AC-RU-11 as amended by the owner 29 Oct (item 4, as before #1922): the kind is asked, never the measure."""
     text, calls = bot.say(
         _status("outstanding", group_by="customer", top_n=5, measure=None, basis=None, **NO_DATES),
         "top 5 customers outstanding",
     )
     assert calls == [], calls
-    assert KIND_QUESTION in text and MEASURE_Q in text, text
+    assert KIND_QUESTION in text and MEASURE_Q not in text, text
 
 
 def test_ac_ru_11_the_reply_naming_the_kind_runs_the_first_ask_with_its_filters_kept(bot) -> None:
