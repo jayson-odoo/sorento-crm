@@ -1,9 +1,9 @@
 # PLAN: Agentic phase 1 - the agent foundation (read-only, explicit entry)
 
-Status: Build (red-first). Card v3 answered by the owner 30 Oct ~00:59 (Q1 a, Q2 a, Q3 a + budgets as settings,
-Q4 continuous context with compaction, Q5 a). Track: full lane (migration: contact switch, budget settings,
-`chatbot.agent_conversations`; new endpoint; permission layer). Lane AGENTIC-P1, branch
-`claude/agentic-crm-chatbot-p1-fhvvb0`, base origin/main ec29a81c.
+Status: PR #1982 open, ready for CI. Reviewer READY and security reviewer SECURE (after fix rounds 3-4); browser
+verification PASS; red-first throughout. Paid eval (crew, cap USD 5) outstanding. Full lane (migration: contact
+switch, budget settings, `chatbot.agent_conversations`; new endpoints; permission layer). Lane AGENTIC-P1, branch
+`claude/agentic-crm-chatbot-p1-fhvvb0`.
 
 Parent: `PLAN-agentic-crm-29oct.md` (components 1, 3, 4, 8). P0 (#1979, c9ff4958c9, on main) keeps Gemini thought
 signatures / Claude thinking across tool rounds (`ChatResult.continuation`, `app/services/llm_provider.py:26-54`)
