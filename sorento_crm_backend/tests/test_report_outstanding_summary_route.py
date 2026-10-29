@@ -427,3 +427,32 @@ def test_a_by_channel_breakdown_of_undelivered_orders_keeps_the_ordered_quantity
     s = _ok(client, _staff(db), basis="outstanding", product_ids=[p1.id], group_by="channel", top_n=10,
             period=None)["summary"]
     assert [(r["name"], r["ordered_qty"], r["qty"]) for r in _group(s, "channel")] == [("Dealer", 10, 6)], s
+
+
+# ================================================================ eval send-back hard guard: no unpaged list
+
+
+def test_a_2000_row_document_list_returns_one_page_of_20_and_the_total(client, db):
+    """Eval rpt-010 printed 2,491 delivery orders in ONE message. The route returns one page (20, latest first) and
+    the count; `group_offset` asks a later page; past the end is an empty page."""
+    from tests._sales_report_do_seed import line, seed_do
+
+    cust = seed_customer(db, name=unique_code("CustP"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WP"))
+    p = make_product(db, unique_code("P2K"))
+    start = date(2020, 1, 1)
+    from datetime import timedelta
+
+    for i in range(2000):
+        seed_do(db, customer_id=cust.id, order_date=start + timedelta(days=i), source_book="db1",
+                lines=[line(p.id, wh.id, 1, total="10.00")])
+    db.commit()
+    ask = dict(basis="pending_delivery", product_ids=[p.id], group_by="delivery_order", top_n=50, period=None)
+    first = _ok(client, _staff(db), **ask)
+    assert first["documents_total"] == 2000 and len(first["documents"]) == 20, (first.get("documents_total"),)
+    assert first["documents"][0]["do_date"] == (start + timedelta(days=1999)).isoformat(), first["documents"][0]
+    last = _ok(client, _staff(db), group_offset=1980, **ask)
+    assert len(last["documents"]) == 20 and last["group_offset"] == 1980, last.get("group_offset")
+    assert last["documents"][-1]["do_date"] == start.isoformat(), last["documents"][-1]
+    past = _ok(client, _staff(db), group_offset=2000, **ask)
+    assert past["documents"] == [] and past["documents_total"] == 2000, past

@@ -265,3 +265,37 @@ def test_a_page_that_ends_exactly_on_the_last_row_offers_no_more():
     body["summary"]["groups"][1]["rows"] = body["summary"]["groups"][1]["rows"][:40]
     text = _report_ask(body)
     assert "C39:" in text and 'Reply "more"' not in text, text
+
+
+# ================================================================ eval send-back hard guard: the document list pages
+
+
+def _doc_page(offset, total=2000):
+    shown = max(0, min(20, total - offset))
+    docs = [
+        {"do_number": f"DO-{offset + i + 1:05d}", "customer_name": "C", "product_code": "P", "location": "W",
+         "do_qty": 1, "delivered_qty": 0, "pending_qty": 1, "do_date": "2026-10-01"}
+        for i in range(shown)
+    ]
+    body = _body("pending_delivery", "pending delivery", PRODUCT, None, total=(total, 10.0 * total))
+    return {**body, "group_by": "delivery_order", "documents": docs, "documents_total": total, "group_offset": offset}
+
+
+def test_a_2000_row_delivery_order_list_prints_twenty_and_offers_more():
+    text = _report_ask(_doc_page(0))
+    assert "1. " in text and "20. " in text and "21. " not in text, text
+    assert text.rstrip().endswith('Reply "more" to see the next 20.'), text[-200:]
+    assert len(text) < 10000, len(text)
+
+
+def test_a_later_page_numbers_on_and_the_last_page_offers_no_more():
+    text = _report_ask(_doc_page(1980))
+    assert "1981. " in text and "2000. " in text and 'Reply "more"' not in text, text[-300:]
+    assert "That is all 2,000." in _report_ask(_doc_page(2000))
+
+
+def test_the_document_list_envelope_carries_its_window():
+    from sorento_crm_mcp.presenters import _report_ask_envelope
+
+    env = _report_ask_envelope(_doc_page(20))
+    assert env["group_window"] == {"offset": 20, "shown": 20, "total": 2000}, env.get("group_window")
