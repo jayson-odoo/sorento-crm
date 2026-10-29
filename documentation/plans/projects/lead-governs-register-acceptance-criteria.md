@@ -7,7 +7,8 @@ Terms: an **edit holder** holds `projects.projects.edit`. A **submit-only salesp
 `projects.registrations.submit` without `projects.projects.edit` (`BE/api/v1/projects/projects.py:87-89`); after
 PORTAL-P4 (#1953, migrations `pp3_0001` / `pp4_0001`) the `salesperson` role holds exactly that plus
 `projects.projects.view_own`. A **limited reader** holds `projects.projects.view_own` without `projects.projects.view`
-(`BE/services/own_scope.py:41-43`). A user's **own leads** = leads whose `owner_user_id` OR `created_by` is that user.
+(`BE/services/own_scope.py:41-43`). A user's **own leads** = leads whose `owner_user_id` is that user (security review 29 Oct, finding M2: `created_by`
+was dropped so reads and writes follow one rule; a submit-only creator owns their lead anyway, LGR-H3).
 Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-29oct.md`.
 
 ## A. Create lead wizard
@@ -93,6 +94,12 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
   A lead that is not one of the caller's own leads -> 404 `lead_not_found` (same answer as a missing lead, nothing
   leaks). With a lead, LGR-E2 / LGR-E3 customer rules apply and the lead is linked (409 rule, marks it qualified),
   exactly as for an edit holder.
+- **LGR-E7** (security L3) Whether the caller may link the lead is decided BEFORE any customer comparison: a lead the
+  caller may not link answers 404 / 403 the same way whatever `customer_id` the request carries.
+- **LGR-E8** (security L4) On the submit-only path the 409 `lead_already_linked` message names no other project (no
+  code, no title).
+- **LGR-E9** (security L5) A `PUT` or submit that sends a `customer_id` different from the customer of the project's
+  current lead (when that lead has one) -> 422 `project_customer_not_lead_customer`, even without a lead change.
 
 ## F. Qualify
 
@@ -104,6 +111,8 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
 - **LGR-H1** `GET /project-sales/leads`: allowed with `projects.projects.view` (all leads, unchanged) OR
   `projects.projects.view_own`. A limited reader gets only their own leads, `total` counts only those, and every
   filter / search / sort applies inside that set. Holding neither -> 403.
+  Each row's `possible_duplicates` names only the caller's own leads (security M1: never another user's lead code,
+  id or owner).
 - **LGR-H2** `GET /project-sales/leads/{id}`: a limited reader gets their own lead; any other lead -> 404.
 - **LGR-H3** `POST /project-sales/leads`: allowed with `projects.projects.edit` (unchanged) OR
   `projects.registrations.submit`. A submit-only caller's lead is owned by the caller (`owner_user_id` = caller,
