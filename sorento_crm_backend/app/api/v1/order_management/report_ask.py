@@ -62,6 +62,7 @@ _PARAMS = frozenset(
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
         "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine", "spec", "company",
+        "group_offset",
     }
 )
 #: The chat dataset's own query keys (CA-3); any other is 422 `unknown_param`.
@@ -262,6 +263,9 @@ def report_ask(
         None, description="previous_period (the same number of days just before) | last_year (the same dates)."
     ),
     mine: bool = Query(False, description="A salesperson's own customers only."),
+    group_offset: Optional[int] = Query(
+        None, ge=0, description="An outstanding summary's page start: the first row of its long breakdown to show (a 'more')."
+    ),
     company: Optional[str] = Query(
         None, description="A company name, code or id; narrows the contact's own companies to that one (403 if not theirs)."
     ),
@@ -661,6 +665,8 @@ def report_ask(
                 filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
             ),
         }
+        if group_offset is not None:
+            data["summary"]["group_offset"] = group_offset  # item 6: the page a "more" asked for (the presenter cuts it)
     if basis_norm in ask.DOCUMENT_LISTS and group_norm == ask.DOCUMENT_LISTS[basis_norm]["column"] and data.get("status") == "ok":
         # REPORT-OUTSTANDING-SUMMARY item 7 (owner 29 Oct): the document list as before #1922, every row.
         data = {**data, "documents": ask.document_rows(

@@ -1000,6 +1000,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
             "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec", "company",
+            "group_offset",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),

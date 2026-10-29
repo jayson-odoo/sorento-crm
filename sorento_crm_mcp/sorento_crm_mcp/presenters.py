@@ -3575,18 +3575,34 @@ def _ask_summary(basis: Any, summary: dict) -> list[str]:
             outstanding,
             f"DO date range: {days}",
         ]
-    for group in summary.get("groups") or []:
-        axis = str(group.get("axis") or "")
-        rows = [{**r, "name": None if r.get("name") == _ASK_BLANK else r.get("name")} for r in group.get("rows") or []]
-        lines.append(f"*_By {str(group.get('label') or axis).lower()}_*")
-        shown = rows if axis == "location" else rows[:OUTSTANDING_GROUP_CAP]
-        lines.extend(_outstanding_group(shown, name_key="name", total_key=total_key, outstanding_key="qty"))
-        extra = len(rows) - len(shown)
-        if extra > 0:
-            noun = _ASK_SUMMARY_NOUNS.get(axis, axis.replace("_", " "))
-            lines.append(f"... and {extra} more {noun}{'' if extra == 1 else 's'}")
+    # Item 6 (owner 29 Oct, as before #1922): every group but By location pages 20 rows at a time; "more" asks the next.
+    offset, longest = _ask_summary_window(summary)
+    if offset and offset >= longest:
+        lines.extend(["", f"That is all {longest:,}."])
+    else:
+        for group in summary.get("groups") or []:
+            axis = str(group.get("axis") or "")
+            rows = [{**r, "name": None if r.get("name") == _ASK_BLANK else r.get("name")} for r in group.get("rows") or []]
+            shown = rows if axis == "location" else rows[offset : offset + OUTSTANDING_GROUP_CAP]
+            if offset and axis != "location" and not shown:
+                continue  # a shorter group has no rows on this page
+            lines.append(f"*_By {str(group.get('label') or axis).lower()}_*")
+            lines.extend(_outstanding_group(shown, name_key="name", total_key=total_key, outstanding_key="qty"))
+    left = longest - offset - OUTSTANDING_GROUP_CAP
+    if left > 0:
+        lines.extend(["", f'Reply "more" to see the next {min(OUTSTANDING_GROUP_CAP, left):,}.'])
     lines.extend(["", _ASK_SO_LIST_OFFER if so else _ASK_DO_LIST_OFFER])
     return lines
+
+
+def _ask_summary_window(summary: dict) -> tuple[int, int]:
+    """The page start a "more" asked for (0 on the first page) and the longest paged group's row count."""
+    offset = summary.get("group_offset")
+    offset = offset if isinstance(offset, int) and not isinstance(offset, bool) and offset > 0 else 0
+    longest = max(
+        (len(g.get("rows") or []) for g in summary.get("groups") or [] if g.get("axis") != "location"), default=0
+    )
+    return offset, longest
 
 
 def _report_ask(body: dict) -> str:
@@ -3810,10 +3826,19 @@ def _report_ask_envelope(body: dict) -> dict:
         if rows
         else None
     )
-    return {
+    envelope = {
         "result_type": "report_ask", "response": _report_ask(body), "has_result": answered, "drill_rows": drill,
         "not_applied": _not_applied(body),
     }
+    summary = body.get("summary")
+    if body.get("status") == "ok" and isinstance(summary, dict):
+        offset, longest = _ask_summary_window(summary)
+        if longest > OUTSTANDING_GROUP_CAP or offset:
+            # Item 6: the lane arms "more" off this, as it does the pre-#1922 report's (`_outstanding_envelope`).
+            envelope["group_window"] = {
+                "offset": offset, "shown": max(0, min(OUTSTANDING_GROUP_CAP, longest - offset)), "total": longest,
+            }
+    return envelope
 
 
 def _sales_analysis_envelope(payload: dict) -> dict:

@@ -82,6 +82,8 @@ class ReportAskSummary(BaseModel):
     date_first: Optional[str] = None
     date_last: Optional[str] = None
     groups: List[ReportAskSummaryGroup] = []
+    # Item 6: the page start a "more" asked for (absent = the first page).
+    group_offset: Optional[int] = None
 
 
 class ReportAskResponse(BaseModel):

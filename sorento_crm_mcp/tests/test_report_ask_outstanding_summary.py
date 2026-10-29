@@ -116,7 +116,7 @@ def test_a_location_with_no_code_reads_unassigned_and_a_long_group_is_capped():
     }, total=(425, 25.0))
     text = _report_ask(body)
     assert "Unassigned: 425 (O/S: 425)" in text
-    assert "... and 5 more customers" in text and "C20:" not in text
+    assert 'Reply "more" to see the next 5.' in text and "C20:" not in text  # item 6: paged, as before #1922
 
 
 def test_nothing_outstanding_says_so_with_no_offer():
