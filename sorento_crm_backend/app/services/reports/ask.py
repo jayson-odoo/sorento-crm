@@ -75,7 +75,8 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
         "pending_delivery": {
             "definition": delivery_order_lines.PENDING_DEFINITION,
             "label": "pending delivery",
-            "dimensions": DIMENSIONS,
+            # REPORT-OUTSTANDING-SUMMARY: "Reply 1 for the delivery order list." lists the figure's own DOs.
+            "dimensions": (*DIMENSIONS, "delivery_order"),
             "filters": FILTERS,
         },
         "unpaid": {
@@ -118,6 +119,7 @@ GROUP_LABELS = {
     "month": "Month",
     "year": "Year",
     "sales_order": "Sales order",
+    "delivery_order": "Delivery order",
 }
 
 CHAT_GROUP_LABELS = {
@@ -283,10 +285,12 @@ def run_ask(
     sort: str = "desc",
     top_n: Optional[int] = None,
     scope_customers: Optional[list[str]] = None,
+    also: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """The ranked rows, their cut and the whole set's total. `filters` maps a spec word to
     RESOLVED ids (channel: `dealer` / `project`); `warehouse_codes` are the raw codes named.
-    `company_grants` is the contact's own company ids (fail closed: none, no rows)."""
+    `company_grants` is the contact's own company ids (fail closed: none, no rows). `also`: more
+    summed measures of the definition, carried as whole numbers on every row and the total."""
     from app.schemas.report import ReportViewConfig
     from app.services.reports import engine
 
@@ -327,7 +331,7 @@ def run_ask(
         {
             "params": params,
             "detail": {"columns": [], "order": []},
-            "pivot": {"rows": rows_key, "cols": "all", "measures": [*MEASURES, *((measure,) if counted else ())]},
+            "pivot": {"rows": rows_key, "cols": "all", "measures": [*MEASURES, *((measure,) if counted else ()), *also]},
         }
     )
     pivot = engine.run_summary(
@@ -339,6 +343,8 @@ def run_ask(
     body["total"] = {"qty": _qty(grand.get("qty")), "amount": _money_edge(grand.get("amount"))}
     if counted:
         body["total"]["count"] = int(Decimal(grand.get(measure) or 0))
+    for key in also:
+        body["total"][key] = _qty(grand.get(key))
     if not group_by:
         return body
 
@@ -368,12 +374,58 @@ def run_ask(
             "rank": i, "name": name, "qty": _qty(qty), "amount": _money_edge(amount), "keys": keys.get(name, []),
             **({"count": int(count)} if counted else {}),
             **({"code": codes[name]} if codes.get(name) else {}),
+            **{key: _qty((pivot.row_totals.get(name) or {}).get(key)) for key in also},
         }
         for i, (name, qty, amount, count) in enumerate(shown, start=1)
     ]
     body["total_count"] = len(ranked)
     body["more"] = len(ranked) - len(shown)
     return body
+
+
+# ----------------------------------------------------------------------- summary (REPORT-OUTSTANDING-SUMMARY)
+
+#: The outstanding kinds that carry a summary (`report-outstanding-summary-behaviour-card.md`), and for each the
+#: grouping that counts its documents, the one that dates them, and the extra measures its lines print.
+SUMMARY_BASES: dict[str, dict[str, Any]] = {
+    "outstanding": {"documents": "sales_order", "day": "order_day", "also": ("ordered_qty",)},
+    "pending_delivery": {"documents": "delivery_order", "day": "day", "also": ()},
+}
+
+
+def outstanding_summary(
+    db: Session, *, basis: str, second: Optional[str], by_location: bool, date_from: date, date_to: date,
+    **run: Any,
+) -> dict[str, Any]:
+    """The pre-#1922 outstanding summary, on this engine: the document count, the totals, the document date range,
+    By location and By customer / By product (`second`; None when the ask named both). Every figure is `run_ask` over
+    the SAME definition and filters as the total, so the summary cannot disagree with it. `run` is the total's own
+    `run_ask` keywords, less the grouping."""
+    shape = SUMMARY_BASES[basis]
+    also = shape["also"]
+    run = {**run, "basis": basis, "measure": "qty", "sort": "desc"}
+
+    def grouped(group_by: str) -> dict[str, Any]:
+        return run_ask(db, group_by=group_by, date_from=date_from, date_to=date_to, top_n=None, also=also, **run)
+
+    total = run_ask(db, group_by=None, date_from=date_from, date_to=date_to, also=also, **run)
+    days = sorted(r["name"] for r in grouped(shape["day"])["rows"])
+
+    def rows(group_by: str) -> list[dict[str, Any]]:
+        return [
+            {"name": r["name"], "qty": r["qty"], "amount": r["amount"], **{k: r.get(k, 0) for k in also}}
+            for r in grouped(group_by)["rows"]
+        ]
+
+    return {
+        "documents": grouped(shape["documents"])["total_count"],
+        **{k: v for k, v in total["total"].items() if k in ("qty", "amount", *also)},
+        "date_first": days[0] if days else None,
+        "date_last": days[-1] if days else None,
+        "by_location": rows("location") if by_location else [],
+        "second": second,
+        "by_second": rows(second) if second else [],
+    }
 
 
 # ----------------------------------------------------------------------- compare (REPORT-SMART-1021)

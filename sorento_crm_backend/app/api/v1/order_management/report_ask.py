@@ -191,7 +191,7 @@ def _echo(
 
 #: REPORT-SMART-1021: keys a sales body carries only when counted or compared, so a body
 #: that is neither stays what every caller already reads.
-_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate")
+_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate", "summary")
 
 
 def _drop_unset(part: dict, compared: bool) -> dict:
@@ -209,6 +209,9 @@ def _response(data: dict) -> JSONResponse:
     _drop_unset(content["total"], compared)
     for row in content["rows"]:
         _drop_unset(row, compared)
+    for row in (content.get("summary") or {}).get("by_location", []) + (content.get("summary") or {}).get("by_second", []):
+        if row.get("ordered_qty") is None:
+            row.pop("ordered_qty")
     return JSONResponse(content=content)
 
 
@@ -620,6 +623,28 @@ def report_ask(
         policy=policy, company_grants=grants, sort=sort_norm,
     )
     data = ask.run_ask(db, date_from=date_from, date_to=date_to, top_n=top_n, **run)
+    product_subject = bool(code or named_products)
+    customer_subject = bool(named_customers) or scoped is not None
+    if (
+        basis_norm in ask.SUMMARY_BASES and group_norm is None and compare_norm is None
+        and (product_subject or customer_subject) and data.get("status") == "ok"
+    ):
+        # REPORT-OUTSTANDING-SUMMARY (behaviour card 29 Oct): an outstanding kind naming a product or a customer gets
+        # the pre-#1922 summary (R13: a product is broken down by customer, a customer by product, both by neither).
+        # A dealer keeps to its own keys (no location, no customer axis).
+        second = "customer" if product_subject and not customer_subject else (
+            "product" if customer_subject and not product_subject else None
+        )
+        if scoped is not None and second not in (None, *ask.DEALER_KEYS):
+            second = None
+        data = {
+            **data,
+            "summary": ask.outstanding_summary(
+                db, basis=basis_norm, second=second, by_location=scoped is None,
+                date_from=date_from, date_to=date_to,
+                filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
+            ),
+        }
     if compare_norm is not None and data.get("status") == "ok":
         # REPORT-SMART-1021: the earlier window, every row (matched by name), one call.
         earlier_from, earlier_to = ask.compare_window(compare_norm, date_from, date_to)

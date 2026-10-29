@@ -169,6 +169,21 @@ def _definition(basis: str) -> reg.ReportDefinition:
             (reg.Column("sales_order", "Sales order", "text", "dimension", lambda c: SalesOrder.so_number, size=140),)
             if basis == "outstanding" else ()
         ),
+        # REPORT-OUTSTANDING-SUMMARY: the undelivered-orders summary's Order date range (the SO's own date, as the
+        # pre-#1922 summary dated it) and its Ordered line (the whole quantity of each line still owing some).
+        *(
+            (
+                reg.Column(
+                    "order_day", "Order date", "text", "dimension",
+                    lambda c: sa.func.to_char(SalesOrder.order_date, "YYYY-MM-DD"), size=110,
+                ),
+                reg.Column(
+                    "ordered_qty", "Ordered qty", "integer", "measure",
+                    lambda c: sa.case((qty_expr > 0, SalesOrderLine.qty_ordered), else_=0), size=100,
+                ),
+            )
+            if basis == "outstanding" else ()
+        ),
         reg.Column("month", "Month", "text", "dimension", lambda c: sa.func.to_char(_bucket_expr(), "YYYY-MM"), size=110),
         reg.Column("year", "Year", "text", "dimension", lambda c: sa.cast(sa.cast(sa.extract("year", _bucket_expr()), sa.Integer), sa.Text), size=90),
         reg.Column("all", "All", "text", "dimension", lambda c: sa.cast(sa.literal("all"), sa.Text), size=80),

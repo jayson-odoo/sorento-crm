@@ -58,6 +58,28 @@ class ReportAskTotal(BaseModel):
     change_pct: Optional[float] = None
 
 
+class ReportAskSummaryRow(BaseModel):
+    name: str
+    qty: int
+    amount: float
+    # Undelivered orders only: the whole quantity of the lines still owing some.
+    ordered_qty: Optional[int] = None
+
+
+class ReportAskSummary(BaseModel):
+    """REPORT-OUTSTANDING-SUMMARY: the pre-#1922 outstanding summary (`reports.ask.outstanding_summary`)."""
+
+    documents: int
+    qty: int
+    amount: float
+    ordered_qty: Optional[int] = None
+    date_first: Optional[str] = None
+    date_last: Optional[str] = None
+    by_location: List[ReportAskSummaryRow] = []
+    second: Optional[str] = None  # customer | product | None (both named)
+    by_second: List[ReportAskSummaryRow] = []
+
+
 class ReportAskResponse(BaseModel):
     status: str  # ok | refused | busy | no_products
     message: Optional[str] = None
@@ -82,6 +104,8 @@ class ReportAskResponse(BaseModel):
     # REPORT-SMART-L R3b: an item / category ranking with an agent filter carries the share of the window's
     # sales orders that carry any agent (the old top selling note); absent otherwise.
     sales_agent_fill_rate: Optional[float] = None
+    # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or a customer; absent otherwise.
+    summary: Optional[ReportAskSummary] = None
 
 
 class ReportAskChatRow(BaseModel):
