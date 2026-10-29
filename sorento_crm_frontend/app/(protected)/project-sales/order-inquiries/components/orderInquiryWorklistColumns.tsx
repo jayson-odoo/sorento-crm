@@ -236,6 +236,23 @@ export function documentChipsOf(
   return [...chips.filter((chip) => !chip.deadReason), ...chips.filter((chip) => chip.deadReason)];
 }
 
+/** OI-AUTO-CONFIRM (AC-AC-10b): a reserve link is not a document; the PO cell prints it as
+ * plain text, "Reserved @ BRW 3". */
+export function reserveTextOf(links: { kind?: string; document?: string | null; qty?: string | null }[] | null | undefined): string | null {
+  const texts = (links ?? [])
+    .filter((link) => link.kind === 'reserve')
+    .map((link) => [link.document, link.qty].filter(Boolean).join(' '));
+  return texts.length > 0 ? texts.join(', ') : null;
+}
+
+export function ReserveText({ text }: { text: string }) {
+  return (
+    <span className="block truncate text-xs font-medium tabular-nums text-muted-foreground" title={text}>
+      {text}
+    </span>
+  );
+}
+
 export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
   return documentChipsOf(
     (row.links ?? []).map((link) => ({ row, link })),
@@ -372,7 +389,10 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
   const [open, setOpen] = React.useState(false);
   const [suggestionOpen, setSuggestionOpen] = React.useState(false);
   const numbers = documentsOf(row, kind);
-  if (numbers.length === 0) return <Muted>-</Muted>;
+  if (numbers.length === 0) {
+    const reserve = kind === 'po' ? reserveTextOf(row.links) : null;
+    return reserve ? <ReserveText text={reserve} /> : <Muted>-</Muted>;
+  }
   const [first, ...rest] = numbers;
   const what = row.item_code ?? row.so_number ?? 'this row';
   // The PO trigger keeps the id the info icon carried, so AC-A5's lightbox contract holds

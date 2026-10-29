@@ -47,6 +47,8 @@ import {
 import {
   DeliveryDateCell,
   documentChipsOf,
+  ReserveText,
+  reserveTextOf,
   type DocumentEntry,
   ItemCodeCell,
   LocationCell,
@@ -55,6 +57,7 @@ import {
   RaisedCell,
   SupplierCell,
 } from '../../components/orderInquiryWorklistColumns';
+import { ackOverrideHint, ackStatusText } from '../../../_shared/lib/orderInquiryAck';
 import { DocumentStatePills, WorklistPill } from '../../components/orderInquiryDocumentPills';
 import type {
   OrderInquiryLineSplit,
@@ -131,7 +134,15 @@ function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' 
   // positioned against the whole cell rather than one trigger.
   const [open, setOpen] = React.useState(false);
   const chips = lineDocumentsOf(line, kind);
-  if (chips.length === 0) return <span className="text-muted-foreground">-</span>;
+  if (chips.length === 0) {
+    const reserve =
+      kind === 'po' ? reserveTextOf(line.liveRows.flatMap((row) => row.links ?? [])) : null;
+    return reserve ? (
+      <ReserveText text={reserve} />
+    ) : (
+      <span className="text-muted-foreground">-</span>
+    );
+  }
   const [first, ...rest] = chips;
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -869,6 +880,16 @@ export function useOrderInquiryHeaderLinesColumns({
             ) : (
               <OrderInquiryLineStatePill state={line.state} />
             );
+          // OI-AUTO-CONFIRM: a person's Confirm / Unconfirm shows as a "manual" tag, who and
+          // when on hover.
+          const manualTag = primary.ack_override ? (
+            <span
+              className="shrink-0 text-xs text-muted-foreground"
+              title={ackOverrideHint(primary) ?? undefined}
+            >
+              {ackStatusText(primary)}
+            </span>
+          ) : null;
           // AC-ND-13 (owner ruling 26 Sep, G3): ONE History icon on every line - rows,
           // decisions and reserve history behind one dialog - never gated on a core line
           // or on `canReserve`.
@@ -900,6 +921,7 @@ export function useOrderInquiryHeaderLinesColumns({
             return (
               <div className="flex min-w-0 items-center gap-1">
                 <span className="shrink-0">{pill}</span>
+{manualTag}
                 {history}
                 {coreLineId ? (
                   <SoLineAttachmentsButton
@@ -915,6 +937,7 @@ export function useOrderInquiryHeaderLinesColumns({
           return (
             <div className="flex min-w-0 items-center gap-1">
               <span className="shrink-0">{pill}</span>
+{manualTag}
               {history}
               {coreLineId ? (
                 <SoLineAttachmentsButton

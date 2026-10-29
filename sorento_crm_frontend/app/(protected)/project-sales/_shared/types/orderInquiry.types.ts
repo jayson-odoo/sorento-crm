@@ -101,8 +101,9 @@ export interface OrderInquiryRaiseHistoryEntry {
  */
 export interface OrderInquiryLink {
   id: string;
-  /** Which book the document lives in. `spo` is only ever offered to an ORDER BACK row. */
-  kind: 'po' | 'spo';
+  /** Which book the document lives in. `spo` is only ever offered to an ORDER BACK row.
+   * `reserve` is a CS stock reserve (document "Reserved @ <code>"), not a purchase document. */
+  kind: 'po' | 'spo' | 'reserve';
   /** `202607-S0105`, `SPO-2026/08-0061`. Never an id. */
   document: string;
   /** `L3` when the book numbered the line. Absent when it did not - never invented. */
@@ -302,6 +303,10 @@ export interface OrderInquiryAckFields {
   /** OI-PRODUCT-FOLLOW: the item code before a Confirm moved the row onto the SO line's
    * new product - the "was X" under the Product cell. */
   previous_item_code?: string | null;
+  /** OI-AUTO-CONFIRM: a person's Confirm / Unconfirm over the automatic rule. */
+  ack_override?: 'confirmed' | 'unconfirmed' | string | null;
+  ack_override_at?: string | null;
+  ack_override_by_name?: string | null;
 }
 
 export interface OrderInquiryRow extends OrderInquiryAckFields {

@@ -106,6 +106,7 @@ import type { StagedReserveEntry } from '../[id]/components/orderInquiryHeaderLi
 import {
   ACK_ANY,
   ACK_FILTER_OPTIONS,
+  ACK_LABELS,
   ackStateOf,
   isBulkRejectable,
 } from '../../_shared/lib/orderInquiryAck';
@@ -2032,7 +2033,7 @@ export function OrderInquiriesClient({
         {canAcknowledge ? (
           <SupplyKindCard
             kind="to_confirm"
-            label="To confirm"
+            label={ACK_LABELS.awaiting}
             swatchClass="bg-amber-500"
             selected={ackFilter === 'to_confirm'}
             disabled={false}
