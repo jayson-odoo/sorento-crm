@@ -118,7 +118,11 @@ from app.models.projects import (
     ProjectTask,
 )
 from app.services.error_handler import AppException
-from app.services.oi_auto_confirm_backfill import compute_done, live_link_filters
+from app.services.oi_auto_confirm_backfill import (
+    cancelled_line_stmt,
+    compute_done,
+    live_cover_stmt,
+)
 from app.services.scm import goods_chain, order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.pool_predicate import is_project_reserve, is_site_pool
@@ -3100,6 +3104,7 @@ class ProjectOrderInquiryService:
         if not new_item_code:
             return None
         moved: List[OrderInquiryRow] = []
+        amended: List[Tuple[OrderInquiryRow, Any, bool, bool]] = []
         old_code: Optional[str] = None
         for row in rows:
             if row.item_code == new_item_code or not self._is_catalogue_code(row.item_code):
@@ -3109,11 +3114,12 @@ class ProjectOrderInquiryService:
             row.item_code = new_item_code
             product_note = f"Was item {old_code}"
             row.note = f"{row.note}; {product_note}" if row.note else product_note
-            self._amended_by_cs(row)
+            self._amended_by_cs(row, batch=amended)
             moved.append(row)
         if not moved:
             return None
         self.db.flush()
+        self._settle_amended(amended)
         for row in moved:
             self._dispatch_changed_with_links(
                 inquiry, row, had_link=bool(self._links_of(row.id))
@@ -3254,6 +3260,7 @@ class ProjectOrderInquiryService:
                 row for row in targets if row.state != INQUIRY_RAISED
             ] or targets
         previous_date = handover_pool[0].delivery_date
+        amended: List[Tuple[OrderInquiryRow, Any, bool, bool]] = []
         for row in targets:
             previous_qty = _dec(row.qty)
             row_previous_date = row.delivery_date
@@ -3282,8 +3289,9 @@ class ProjectOrderInquiryService:
             # stamp on an awaiting row would answer it about a row nobody had read. The
             # Was/Now table is unaffected: it reads `previous_qty` /
             # `previous_delivery_date`, which every stamped row gets either way.
-            self._amended_by_cs(row)
+            self._amended_by_cs(row, batch=amended)
         self.db.flush()
+        self._settle_amended(amended)
         # Batched (round 3, nit): one grouped load for every target's links rather than
         # one query per row - the same `_links_by_row` the raise/settle paths above
         # already reach for once a caller is walking a SET rather than one row.
@@ -6932,6 +6940,7 @@ class ProjectOrderInquiryService:
         that is cut into the plan's remaining rows at their dates, its links following the
         quantity (`_split_row`), a moved date sending a row purchasing had taken on back to
         them (AC-E1). An explicit cancel split is purchasing's CANCEL BALANCE."""
+        amended: List[Tuple[OrderInquiryRow, Any, bool, bool]] = []
         for line_id, plan in acted.items():
             line = plan["line"]
             want = list(plan["rows"])
@@ -6984,7 +6993,7 @@ class ProjectOrderInquiryService:
                     source.previous_qty = source.qty
                     source.qty = first_qty
                     source.supply_decision_id = decision.id
-                    self._amended_by_cs(source)
+                    self._amended_by_cs(source, batch=amended)
                     self.refresh_link_state([source])
                 if placed:
                     # Purchasing placed it: a split never sends it back to raised.
@@ -6995,7 +7004,7 @@ class ProjectOrderInquiryService:
                     # OI-SPLIT-VIEW (UAC A5): filed under this revision like a moved qty, so
                     # the Confirm's preview (and Simulate) lists the row it moved.
                     source.supply_decision_id = decision.id
-                    self._amended_by_cs(source)
+                    self._amended_by_cs(source, batch=amended)
             # AC-G17: each plan row keeps links only up to its own qty; the rest goes back.
             for row in self._split_line_rows(line_id):
                 linked = sum((_dec(link.qty) for link in self._links_of(row.id)), _ZERO)
@@ -7029,6 +7038,7 @@ class ProjectOrderInquiryService:
                         )
                     )
             self.db.flush()
+        self._settle_amended(amended)
 
     def _cut_rows_in_place(
         self,
@@ -7052,12 +7062,14 @@ class ProjectOrderInquiryService:
         pairs = [(row, by_date.get(row.delivery_date)) for row in rows]
         if any(plan is None or plan[0] > _dec(row.qty) for row, plan in pairs):
             return False
+        amended: List[Tuple[OrderInquiryRow, Any, bool, bool]] = []
         for row, (qty, _when) in pairs:
             # No links, so the row's state (raised, or placed by hand) stands as it is.
             row.previous_qty = row.qty
             row.qty = qty
             row.supply_decision_id = decision.id
-            self._amended_by_cs(row)
+            self._amended_by_cs(row, batch=amended)
+        self._settle_amended(amended)
         return True
 
     def _apply_pure_splits(
@@ -8362,6 +8374,8 @@ class ProjectOrderInquiryService:
         links_by_row = self.links_for_rows([row.id for row in rows])
         suggested_links_by_row = self.suggested_links_for_rows([row.id for row in rows])
         linked_by_row = self._linked_qty_by_row([row.id for row in rows])
+        open_qty_by_row = self.open_qty_by_row(rows)
+        reserve_label_by_row = self.reserve_labels_for_rows([row.id for row in rows])
         # OI-LINE-SPLIT (UAC D3): the splits of each row's line (origin view), one read.
         splits_by_line = self.splits_for_lines([row.so_line_id for row in rows])
         # OI-SPLIT-VIEW (UAC B1 to B5): each row's line split popup, one batched read.
@@ -8453,6 +8467,8 @@ class ProjectOrderInquiryService:
                     # carries nothing suggested.
                     "suggested_links": suggested_links_by_row.get(row.id, []),
                     "linked_qty": _qty_str(linked_by_row.get(row.id, _ZERO)),
+                    "open_qty": _qty_str(open_qty_by_row.get(row.id, _ZERO)),
+                    "reserve_label": reserve_label_by_row.get(row.id),
                     "has_link_candidate": self.has_link_candidate(
                         row.verb, product_by_row.get(row.id), candidates
                     ),
@@ -8610,9 +8626,12 @@ class ProjectOrderInquiryService:
                 # would otherwise keep printing its documents on the SO detail beside the
                 # revision that replaced it.
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
-                # OI-AUTO-CONFIRM (AC-AC-10b): a reserve link is returned too, as an entry
-                # of kind "reserve" (document "Reserved @ <warehouse>"), so a reserve-only
-                # row shows its cover instead of "-".
+                # PLAN-oi-request-cs-reserve.md (AC-RS-12): a reserve link is not a PO or
+                # an SPO document - this reader's whole vocabulary is "which BOOK is this
+                # on" - so it never leaks in here as a `kind="po"` entry with every book
+                # column blank. `reserved_qty` (the worklist serializer) is where it
+                # actually surfaces.
+                OrderInquiryLink.reserve_request_row_id.is_(None),
                 # LINKAGE-UNIFY U3 (owner ruling Q5): a link on a retired SPO line with
                 # nothing received is LISTED, no longer hidden (R7/AC-E9 lifted for
                 # links): the placement stays, and its `dead_reason` says why it brings
@@ -8661,7 +8680,6 @@ class ProjectOrderInquiryService:
             spo_supply_po_line_id,
         ) in rows:
             is_spo = link.spo_allocation_id is not None
-            is_reserve = link.reserve_request_row_id is not None
             location = warehouse_code or (spo_location_code if is_spo else None)
             tier, _sub = link_location_tier(stock_location, location, pools)
             arrives = spo_expected_date if is_spo else po_expected_date
@@ -8692,7 +8710,7 @@ class ProjectOrderInquiryService:
                 po_chains_by_row.setdefault(link.row_id, []).append(chain)
             entry = {
                     "id": link.id,
-                    "kind": "reserve" if is_reserve else ("spo" if is_spo else "po"),
+                    "kind": "spo" if is_spo else "po",
                     # S3 (`PLAN-oi-cascade-skip-early-arrival.md`): the target itself,
                     # so a reader deciding whether THIS row's own SO claims the line
                     # (`scm.order_link_claim`) can ask without a second query per link.
@@ -9323,6 +9341,8 @@ class ProjectOrderInquiryService:
             )
         now = datetime.utcnow()
         transitioned = 0
+        confirmed_ids: List[str] = []
+        prior_states: List[Dict[str, Any]] = []
         for row in rows:
             # Already acknowledged: left untouched rather than re-stamped, so a repeated
             # press cannot move who took the row on or when. Both AWAITING (never
@@ -9330,13 +9350,38 @@ class ProjectOrderInquiryService:
             # Confirm is the one press that takes either kind of To-confirm row on.
             if row.ack_state == ACK_ACKNOWLEDGED:
                 continue
+            prior_states.append({"id": str(row.id), "ack_state": row.ack_state})
             row.ack_state = ACK_ACKNOWLEDGED
             row.acknowledged_by = actor_user_id
             row.acknowledged_at = now
             row.ack_override = OVERRIDE_CONFIRMED
             row.ack_override_by = actor_user_id
             row.ack_override_at = now
+            confirmed_ids.append(str(row.id))
             transitioned += 1
+        if confirmed_ids:
+            # One audit row per batch (the generic listener never sees this model), the same
+            # manual-event pattern `unacknowledge_rows` uses.
+            from app.audit_context import get_audit_context
+            from app.services.audit_service import log_audit
+
+            _, ip_address = get_audit_context()
+            log_audit(
+                self.db,
+                "project_order_inquiry_rows",
+                confirmed_ids[0],
+                "UPDATE",
+                old_values={"rows": prior_states},
+                new_values={"ack_state": ACK_ACKNOWLEDGED, "row_ids": confirmed_ids},
+                user_id=actor_user_id,
+                company_id=rows[0].company_id,
+                ip_address=ip_address,
+                description=f"Confirm: {len(confirmed_ids)} row(s) marked Done by hand",
+            )
+        if confirmed_ids:
+            # Companions bundled to a row just marked Done by hand follow it.
+            self.db.flush()
+            self.auto_confirm(confirmed_ids)
         transitioned += self._acknowledge_used_rows_of(
             rows, actor_user_id=actor_user_id, now=now
         )
@@ -9484,6 +9529,8 @@ class ProjectOrderInquiryService:
             touched_ids.append(row_id)
             updated += 1
         if touched_ids:
+            self.db.flush()
+            self.auto_confirm(touched_ids)  # companions follow their host back to To order
             from app.audit_context import get_audit_context
             from app.services.audit_service import log_audit
 
@@ -10081,13 +10128,62 @@ class ProjectOrderInquiryService:
             self._drop_suggested_links(to_drop)
         self.auto_confirm([row.id for row in rows])
 
-    def _amended_by_cs(self, row: OrderInquiryRow, *, rederive: bool = True) -> None:
+    def _live_cover(self, row_ids: Sequence[str]) -> Dict[str, Tuple[Decimal, Any, int]]:
+        """`row id -> (live covered qty, newest live link time, live link count)`; the ONE
+        reading of "live cover" (`live_cover_stmt`), shared with the backfill."""
+        if not row_ids:
+            return {}
+        return {
+            str(row_id): (_dec(qty), newest, int(count))
+            for row_id, qty, newest, count in self.db.execute(live_cover_stmt(list(row_ids)))
+        }
+
+    def open_qty_by_row(self, rows: Sequence[OrderInquiryRow]) -> Dict[str, Decimal]:
+        """`max(qty - live cover - bundled_qty, 0)` per row, the figure "N left" prints.
+        Reserve links count as cover (they are links)."""
+        cover = self._live_cover([row.id for row in rows])
+        return {
+            row.id: max(
+                _dec(row.qty) - cover.get(row.id, (_ZERO, None, 0))[0] - _dec(row.bundled_qty),
+                _ZERO,
+            )
+            for row in rows
+        }
+
+    def reserve_labels_for_rows(self, row_ids: Sequence[str]) -> Dict[str, str]:
+        """`row id -> "Reserved @ <warehouse code>"` for rows holding a CS reserve."""
+        wanted = [row_id for row_id in row_ids if row_id]
+        if not wanted:
+            return {}
+        labels: Dict[str, List[str]] = {}
+        for row_id, document in (
+            self.db.query(OrderInquiryLink.row_id, OrderInquiryLink.document)
+            .filter(
+                OrderInquiryLink.row_id.in_(wanted),
+                OrderInquiryLink.reserve_request_row_id.isnot(None),
+            )
+            .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+        ):
+            if document and document not in labels.setdefault(row_id, []):
+                labels[row_id].append(document)
+        return {row_id: ", ".join(docs) for row_id, docs in labels.items() if docs}
+
+    def _amended_by_cs(
+        self,
+        row: OrderInquiryRow,
+        *,
+        rederive: bool = True,
+        batch: Optional[List[Tuple[OrderInquiryRow, Any, bool, bool]]] = None,
+    ) -> None:
         """OI-AUTO-CONFIRM: THE writer for "CS amended this row". It clears a manual
         override (the amendment is news the press did not cover), stamps `changed` /
         `changed_at` on a row that was acknowledged, then lets the rule decide: a row still
         covered (or used, or information-only) goes straight back to Done with no changed
         stamp, unless a person's manual Confirm was just cleared (that person is told);
-        one that is not covered stays `changed` (To order)."""
+        one that is not covered stays `changed` (To order).
+
+        A caller walking many rows passes a `batch` list and ends the walk with
+        `_settle_amended(batch)`: one `auto_confirm` for the lot instead of one per row."""
         had_override = row.ack_override is not None
         if had_override:
             row.ack_override = None
@@ -10098,8 +10194,20 @@ class ProjectOrderInquiryService:
         if was_read:
             row.changed_at = datetime.utcnow()
             row.ack_state = ACK_CHANGED
-        if rederive and (was_read or had_override):
-            self.auto_confirm([row.id])
+        if not rederive or not (was_read or had_override):
+            return
+        if batch is not None:
+            batch.append((row, prior_changed_at, was_read, had_override))
+            return
+        self._settle_amended([(row, prior_changed_at, was_read, had_override)])
+
+    def _settle_amended(self, batch: Sequence[Tuple[OrderInquiryRow, Any, bool, bool]]) -> None:
+        """The second half of `_amended_by_cs`: one `auto_confirm` for the whole batch, then
+        a row that went straight back to Done with no override cleared keeps its old stamp."""
+        if not batch:
+            return
+        self.auto_confirm([row.id for row, *_rest in batch])
+        for row, prior_changed_at, was_read, had_override in batch:
             if was_read and not had_override and row.ack_state == ACK_ACKNOWLEDGED:
                 row.changed_at = prior_changed_at
 
@@ -10139,44 +10247,31 @@ class ProjectOrderInquiryService:
         if host_ids:
             for host in self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(host_ids)).all():
                 rows[host.id] = host
-        live = (
-            self.db.query(
-                OrderInquiryLink.row_id,
-                func.sum(OrderInquiryLink.qty),
-                func.max(OrderInquiryLink.linked_at),
-            )
-            .outerjoin(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
-            .outerjoin(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
-            .filter(
-                OrderInquiryLink.row_id.in_(list(rows)),
-                *live_link_filters(
-                    OrderInquiryLink.__table__,
-                    PurchaseOrderLine.__table__,
-                    SPOAllocation.__table__,
-                ),
-            )
-            .group_by(OrderInquiryLink.row_id)
-            .all()
-        )
-        linked = {row_id: _dec(qty) for row_id, qty, _newest in live}
-        newest_link = {row_id: newest for row_id, _qty, newest in live}
-        done = compute_done(rows, linked)
+        cover = self._live_cover(list(rows))
+        linked = {row_id: qty for row_id, (qty, _newest, _count) in cover.items()}
+        counts = {row_id: count for row_id, (_qty, _newest, count) in cover.items()}
+        cancelled = {
+            str(row_id)
+            for (row_id,) in self.db.execute(cancelled_line_stmt(list(rows)))
+        }
+        # An Unconfirm holds until a link newer than the press arrives, which hands the row
+        # back to the rule: released here so every verdict below reads the same override.
+        for row in rows.values():
+            if row.ack_override == OVERRIDE_UNCONFIRMED:
+                newest = cover.get(row.id, (None, None, 0))[1]
+                if newest is not None and row.ack_override_at is not None and newest > row.ack_override_at:
+                    row.ack_override = None
+                    row.ack_override_by = None
+                    row.ack_override_at = None
+        done = compute_done(rows, linked, counts, cancelled)
 
         now = datetime.utcnow()
         for row in rows.values():
             if row.state == INQUIRY_CANCELLED or row.ack_state == ACK_REJECTED:
                 continue
-            # A person's press outranks the rule: Confirm sticks; Unconfirm holds until a
-            # link newer than the press arrives, which hands the row back to the rule.
-            if row.ack_override == OVERRIDE_CONFIRMED:
+            # A person's press outranks the rule (read by `compute_done`): leave the row.
+            if row.ack_override is not None:
                 continue
-            if row.ack_override == OVERRIDE_UNCONFIRMED:
-                newest = newest_link.get(row.id)
-                if newest is None or row.ack_override_at is None or newest <= row.ack_override_at:
-                    continue
-                row.ack_override = None
-                row.ack_override_by = None
-                row.ack_override_at = None
             if done[row.id]:
                 if row.ack_state != ACK_ACKNOWLEDGED:
                     row.ack_state = ACK_ACKNOWLEDGED
@@ -10185,6 +10280,9 @@ class ProjectOrderInquiryService:
             elif row.ack_state == ACK_ACKNOWLEDGED:
                 row.ack_state = ACK_AWAITING
                 row.acknowledged_by = None
+                row.acknowledged_at = None
+            elif row.ack_state == ACK_CHANGED and row.acknowledged_by is None:
+                # A stamp the system made says nothing once the row is not done any more.
                 row.acknowledged_at = None
         self.db.flush()
 

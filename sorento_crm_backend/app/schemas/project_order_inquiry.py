@@ -304,6 +304,9 @@ class OrderInquiryRowOut(BaseModel):
     #: `qty - linked_qty` is what still flows to reorder planning, and is exactly what
     #: `scm.committed_v` now nets (migration 422).
     linked_qty: str = "0"
+    #: OI-AUTO-CONFIRM: what is still to order, and the CS reserve in words.
+    open_qty: str = "0"
+    reserve_label: Optional[str] = None
     #: PLAN-scm-supplied-with-companions.md S5. `bundled_qty` never exceeds
     #: `qty - linked_qty`; `bundled_with` is null on an un-bundled row. Both declared
     #: here because `response_model` drops a field it has not been told about
@@ -616,6 +619,10 @@ class OrderInquiryWorklistRow(BaseModel):
     #: `taken_from_po`/`remaining_open`, both of which already include it (they sum by
     #: `row_id` with no target filter).
     reserved_qty: str = "0"
+    #: OI-AUTO-CONFIRM: "Reserved @ <warehouse code>" when CS reserved stock for the row, else
+    #: null; and what is still to order (qty less live cover less bundled, never below zero).
+    reserve_label: Optional[str] = None
+    open_qty: str = "0"
     #: Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): the OPEN reserve request row's
     #: own `qty_requested` for this row - "0" when `reserve_state` is not `requested`.
     #: The Lines grid's `Request to reserve N` pill and the tick's default stage both

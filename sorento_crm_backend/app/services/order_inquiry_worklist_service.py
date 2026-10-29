@@ -1868,6 +1868,9 @@ class OrderInquiryWorklistService:
         split_views = ProjectOrderInquiryService(self.db).split_views_for_lines(
             [row.so_line_id for row in rows]
         )
+        oi_service = ProjectOrderInquiryService(self.db)
+        open_qty = oi_service.open_qty_by_row(rows)
+        reserve_labels = oi_service.reserve_labels_for_rows([row.id for row in rows])
         return {
             "data": [
                 self._serialize(
@@ -1883,6 +1886,8 @@ class OrderInquiryWorklistService:
                     raise_events_by_row,
                     splits_by_line,
                     split_views,
+                    open_qty,
+                    reserve_labels,
                 )
                 for row in rows
             ],
@@ -2511,6 +2516,8 @@ class OrderInquiryWorklistService:
         raise_events_by_row: Optional[Dict[str, Dict[str, Any]]] = None,
         splits_by_line: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         split_views: Optional[Dict[str, Dict[str, Any]]] = None,
+        open_qty: Optional[Dict[str, Decimal]] = None,
+        reserve_labels: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -2584,6 +2591,10 @@ class OrderInquiryWorklistService:
             # requested again on the balance reads `requested`, never `reserved`).
             "reserve_state": self._reserve_state(row),
             "reserved_qty": _qty_str(_dec(getattr(row, "reserved_qty", None))),
+            # OI-AUTO-CONFIRM: the reserve's own words (a reserve is not a document link), and
+            # what is still to order: qty less live cover less bundled, never below zero.
+            "reserve_label": (reserve_labels or {}).get(row.id),
+            "open_qty": _qty_str((open_qty or {}).get(row.id, _dec(row.qty))),
             # 6e.2: "0" when there is no open request row, same default shape as
             # `reserved_qty` above.
             "requested_qty": _qty_str(_dec(getattr(row, "requested_qty", None))),

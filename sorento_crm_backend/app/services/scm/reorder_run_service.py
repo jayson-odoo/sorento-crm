@@ -1245,7 +1245,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
 
 
 def awaiting_acknowledgement_rows(db: Session) -> int:
-    """How many order inquiry rows are waiting for purchasing to take them on.
+    """How many order inquiry rows are still To order (awaiting or changed).
 
     The plan page's chip (`PLAN-scm-oi-handshake.md` section 4, AC-H10): the plan counts
     acknowledged rows only, so the awaiting ones would otherwise be invisible on the very
