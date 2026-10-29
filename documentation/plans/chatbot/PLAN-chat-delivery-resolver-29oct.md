@@ -21,7 +21,7 @@ Status: in progress (small fix track: backend only, one additive column)
 1. Parse the real shape: highest lifecycle value of `status[]` (pending < sent < delivered < read;
    `failed` wins) lands in `delivery_status`; `delivered_ts` / `read_ts` from those entries;
    `respond_ts` = earliest entry (creation), as `_message_timestamp` already does.
-   `pending` alone writes nothing (the row stays open).
+   `pending` alone is stored as `pending` and the row stays open.
 2. Non-terminal rows (NULL, `pending`, `sent`, `delivered`, `not_sent`) keep being polled on
    a backoff schedule anchored on the send time (`respond_ts or sent_at`): attempts due at
    +1, +2, +5, +15, +30, +60 min, +4 h, +12 h, +24 h (a late tick skips ahead to the next
