@@ -19,6 +19,8 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError } from '@/lib/number-field';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -78,6 +80,10 @@ const CLOSED_LISTS_OPTIONS: { value: ChatbotClosedListsMode; label: string }[] =
   { value: 'index', label: 'Index (per-turn matches)' },
 ];
 
+// Equal to the backend bounds (app/api/v1/user_management/settings.py), so a figure that
+// passes here is never refused by the server.
+const PARSER_MAX_TOKENS_RULES = { min: 1024, max: 32768, integer: true };
+
 export default function ChatbotSettingsPage() {
   const settingsQuery = useChatbotSettings();
   const save = useSaveChatbotSettings();
@@ -100,12 +106,21 @@ export default function ChatbotSettingsPage() {
   const [tierOrderDraft, setTierOrderDraft] = useState<string[] | null>(null);
   const [ladderDraft, setLadderDraft] = useState<string[] | null>(null);
   const [orderingConfirmOpen, setOrderingConfirmOpen] = useState(false);
+  // The field keeps what was typed; it becomes a number only in the save payload.
+  const [parserTokens, setParserTokens] = useState<string | null>(null);
+  // Set by a Save that found a wrong number; the sentence then follows the typing.
+  const [checked, setChecked] = useState(false);
 
   const ladderDomain = (domainsQuery.data ?? []).find((d) => d.name === DEFAULT_LADDER_DOMAIN);
 
   useEffect(() => {
     if (settingsQuery.data && draft === null) setDraft(settingsQuery.data);
   }, [settingsQuery.data, draft]);
+  useEffect(() => {
+    if (settingsQuery.data && parserTokens === null) {
+      setParserTokens(String(settingsQuery.data.chatbot_parser_max_output_tokens));
+    }
+  }, [settingsQuery.data, parserTokens]);
   useEffect(() => {
     if (memoryQuery.data && memoryDraft === null) setMemoryDraft(memoryQuery.data);
   }, [memoryQuery.data, memoryDraft]);
@@ -143,6 +158,9 @@ export default function ChatbotSettingsPage() {
       </div>
     );
   }
+
+  const parserTokensValue = parserTokens ?? String(draft.chatbot_parser_max_output_tokens);
+  const parserTokensError = numberFieldError(parserTokensValue, PARSER_MAX_TOKENS_RULES);
 
   const set = <K extends keyof ChatbotSettings>(key: K, value: ChatbotSettings[K]) =>
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -199,6 +217,22 @@ export default function ChatbotSettingsPage() {
               checked={draft.chatbot_composer_enabled}
               onCheckedChange={(next) => set('chatbot_composer_enabled', next === true)}
             />
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <Label htmlFor="chatbot-parser-max-output-tokens" className="font-normal">
+              Parser max output tokens
+            </Label>
+            <div className="w-full sm:w-56">
+              <NumberInput
+                id="chatbot-parser-max-output-tokens"
+                min={1024}
+                max={32768}
+                step={1}
+                value={parserTokensValue}
+                onChange={(e) => setParserTokens(e.target.value)}
+                error={checked ? parserTokensError : undefined}
+              />
+            </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <Label htmlFor="chatbot-closed-lists" className="font-normal">
@@ -299,7 +333,11 @@ export default function ChatbotSettingsPage() {
           variant="outline"
           disabled={saving}
           onClick={() => {
-            if (settingsQuery.data) setDraft(settingsQuery.data);
+            if (settingsQuery.data) {
+              setDraft(settingsQuery.data);
+              setParserTokens(String(settingsQuery.data.chatbot_parser_max_output_tokens));
+              setChecked(false);
+            }
             if (memoryQuery.data) setMemoryDraft(memoryQuery.data);
             if (tierOrderQuery.data) setTierOrderDraft(tierOrderQuery.data);
             if (ladderDomain) setLadderDraft(ladderDomain.ladder);
@@ -311,9 +349,19 @@ export default function ChatbotSettingsPage() {
           type="button"
           disabled={saving}
           onClick={() => {
+            setChecked(true);
+            if (parserTokensError) return;
             // Re-seed each draft from what came back, not from what was typed: the
             // row the backend returns is what was actually persisted.
-            save.mutate(draft, { onSuccess: (saved) => setDraft(saved) });
+            save.mutate(
+              { ...draft, chatbot_parser_max_output_tokens: Number(parserTokensValue) },
+              {
+                onSuccess: (saved) => {
+                  setDraft(saved);
+                  setParserTokens(String(saved.chatbot_parser_max_output_tokens));
+                },
+              },
+            );
             if (memoryDraft) {
               saveMemory.mutate(memoryDraft, { onSuccess: (saved) => setMemoryDraft(saved) });
             }

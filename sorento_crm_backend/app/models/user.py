@@ -777,6 +777,10 @@ class SystemSetting(Base):
     chatbot_parser_reasoning_effort = Column(
         String(16), nullable=False, server_default="off", default="off"
     )
+    # PARSER-MAX-TOKENS: the parser's answer budget in output tokens (Settings > Chatbot), on every
+    # provider; held to 1024-32768 on read (`head/parser.max_output_tokens_setting`) and on write (the
+    # settings API). Read per parse, so a change reaches the next turn.
+    chatbot_parser_max_output_tokens = Column(Integer, nullable=False, server_default="8192", default=8192)
 
 
 class UserQuickAccess(Base):

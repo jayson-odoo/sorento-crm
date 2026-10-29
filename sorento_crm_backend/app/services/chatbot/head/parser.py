@@ -40,8 +40,16 @@ PROMPT_KEY = "chatbot_semantic_parser"
 # with the rest of the bot's fixed sentences, because the ENDPOINT sends the same string
 # when the TAIL fails and it cannot import this package (AC-002).
 from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY as PARSER_ERROR_REPLY
+from app.services.llm_provider import ResponseTruncated
 
-PARSER_MAX_TOKENS = 2048
+# The parser's answer budget when `system_settings.chatbot_parser_max_output_tokens` sets none
+# (PARSER-MAX-TOKENS, prod turn 5ad8f394, 29 Oct 2026: a 63-code stock check needs ~90 output
+# tokens a line and stopped on MAX_TOKENS at 2048). Output is billed as used, so room a turn does
+# not use costs nothing. Gemini 3.x adds its thinking budget and `GEMINI_3_ANSWER_HEADROOM` on top.
+PARSER_MAX_TOKENS = 8192
+#: The stored budget is held to this range (`max_output_tokens_setting`); the settings API refuses
+#: a value outside it (`app/api/v1/user_management/settings.py`).
+PARSER_MAX_TOKENS_RANGE = (1024, 32768)
 
 # Bounded in `llm_call.chat`, not here (CHATBOT-QUEUE-FIX, prod turn a45f spent 230 s in
 # this call): every attempt carries `llm_call.ATTEMPT_TIMEOUT_SECONDS` with the SDK's own
@@ -122,6 +130,9 @@ class ParserConfig:
     # the system prompt carries each full list as one fixed pointer line and the candidate
     # block carries the index lines (`head/closed_lists_index`). Only with closed_lists.
     closed_lists_index: bool = False
+    # PARSER-MAX-TOKENS: `system_settings.chatbot_parser_max_output_tokens` as read for this parse,
+    # sent as the answer budget on every provider (`max_output_tokens_setting`).
+    max_output_tokens: int = PARSER_MAX_TOKENS
     # LEAN: `system_settings.chatbot_parser_reasoning_effort` as read for this parse (REASONING_EFFORTS).
     # `parse` puts it on an OpenAI request only when it is not `off` (`sent_reasoning_effort`).
     reasoning_effort: str = "off"
@@ -951,8 +962,8 @@ def closed_lists_schema(
 
 #: The stored parser reasoning efforts; anything else (a typo, "none", an effort this list does not hold) is `off`.
 #: `off` and `low` only (LEAN review S1): minimal, medium and high are unmeasured, and medium / high can spend the
-#: whole PARSER_MAX_TOKENS ceiling on reasoning. Trigger to widen: a measured arm shows a value is needed, and
-#: PARSER_MAX_TOKENS is raised with it in the same change.
+#: whole answer budget (`ParserConfig.max_output_tokens`) on reasoning. Trigger to widen: a measured arm shows a
+#: value is needed, and PARSER_MAX_TOKENS is raised with it in the same change.
 REASONING_EFFORTS = frozenset({"off", "low"})
 
 
@@ -967,7 +978,7 @@ def reasoning_effort_setting(db: Session) -> str:
 
 
 #: PARSER-GEMINI-LITE: label efforts held back on OpenAI for the reason REASONING_EFFORTS gives (they can
-#: spend the whole PARSER_MAX_TOKENS ceiling on reasoning); lift with that ceiling. Gemini takes them, with
+#: spend the whole answer budget on reasoning); lift with that budget. Gemini takes them, with
 #: answer headroom per level (`llm_provider._gemini_thinking`).
 OPENAI_CAPPED_LABEL_EFFORTS = frozenset({"medium", "high", "xhigh"})
 
@@ -984,6 +995,22 @@ def sent_reasoning_effort(config: ParserConfig) -> str:
         return label_effort
     effort = getattr(config, "reasoning_effort", "off")
     return effort if effort in REASONING_EFFORTS and getattr(config, "provider", None) == "openai" else "off"
+
+
+def max_output_tokens_setting(db: Session) -> int:
+    """`system_settings.chatbot_parser_max_output_tokens`, read now (no cache, like `reasoning_effort_setting`);
+    no row or no value is PARSER_MAX_TOKENS, and a value outside PARSER_MAX_TOKENS_RANGE is clamped and logged."""
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting.chatbot_parser_max_output_tokens).first()
+    value = row[0] if row is not None else None
+    if value is None:
+        return PARSER_MAX_TOKENS
+    low, high = PARSER_MAX_TOKENS_RANGE
+    clamped = min(max(int(value), low), high)
+    if clamped != value:
+        logger.warning("chatbot_parser_max_output_tokens %s is outside %s-%s; using %s", value, low, high, clamped)
+    return clamped
 
 
 def resolve_config(
@@ -1074,6 +1101,7 @@ def resolve_config(
         message_language=LANGUAGE_ASK in (raw_template or ""),
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
+        max_output_tokens=max_output_tokens_setting(db),
         reasoning_effort=reasoning_effort_setting(db),
         label_reasoning_effort=agent_reasoning_effort(db, PROMPT_KEY),
         model_source=model_source,
@@ -1340,6 +1368,28 @@ def _base_schema(config: ParserConfig) -> dict[str, Any]:
     return with_message_language(schema) if config.message_language else schema
 
 
+def _usage(config: ParserConfig, result: Any, effort: str, started: float) -> dict[str, Any]:
+    """What one parser call billed, for the `understood` facts and the usage row."""
+    return {
+        "provider": config.provider,
+        "model": config.model,
+        # The id the provider says answered (a dated snapshot of the alias asked for),
+        # the effort asked for, and the call's wall clock, retries and backoff included
+        # (PARSER-GEMINI-LITE: what a model comparison reads off the trace).
+        "model_answered": str(getattr(result, "model", "") or ""),
+        "reasoning_effort": effort,
+        "latency_ms": int((time.perf_counter() - started) * 1000),
+        "prompt_tokens": int(getattr(result, "prompt_tokens", 0) or 0),
+        "completion_tokens": int(getattr(result, "completion_tokens", 0) or 0),
+        "total_tokens": int(getattr(result, "total_tokens", 0) or 0),
+        # The prompt-cache hit (LLM-TEST-COST): how much of `prompt_tokens` was billed
+        # at the cached rate.
+        "cached_tokens": int(getattr(result, "cached_tokens", 0) or 0),
+        # LEAN: the part of `completion_tokens` spent reasoning, None when the provider reports none.
+        "reasoning_tokens": getattr(result, "reasoning_tokens", None),
+    }
+
+
 def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     """One structured-output call. Raises `ParserError`; never returns a default.
 
@@ -1368,7 +1418,7 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             config.model,
             messages,
             temperature=0.0,
-            max_tokens=PARSER_MAX_TOKENS,
+            max_tokens=config.max_output_tokens,
             json_schema=config.json_schema or _base_schema(config),
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
             # One cache bucket per published prompt version: every parse on it shares
@@ -1382,28 +1432,17 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
         failure.latency_ms = int((time.perf_counter() - started) * 1000)
         raise failure from exc
     except Exception as exc:  # noqa: BLE001 - provider/transport failure is a failed stage
-        failure = ParserError(f"parser provider call failed: {exc}")
+        # PARSER-MAX-TOKENS: an answer cut short on the cap was billed, so it carries its usage and the
+        # engine writes the `was_answered = false` row; any other failure never returned, so it has none.
+        cut_short = exc.result if isinstance(exc, ResponseTruncated) else None
+        failure = ParserError(
+            f"parser provider call failed: {exc}",
+            usage=_usage(config, cut_short, effort, started) if cut_short is not None else None,
+        )
         failure.latency_ms = int((time.perf_counter() - started) * 1000)
         raise failure from exc
 
-    usage = {
-        "provider": config.provider,
-        "model": config.model,
-        # The id the provider says answered (a dated snapshot of the alias asked for),
-        # the effort asked for, and the call's wall clock, retries and backoff included
-        # (PARSER-GEMINI-LITE: what a model comparison reads off the trace).
-        "model_answered": str(getattr(result, "model", "") or ""),
-        "reasoning_effort": effort,
-        "latency_ms": int((time.perf_counter() - started) * 1000),
-        "prompt_tokens": int(getattr(result, "prompt_tokens", 0) or 0),
-        "completion_tokens": int(getattr(result, "completion_tokens", 0) or 0),
-        "total_tokens": int(getattr(result, "total_tokens", 0) or 0),
-        # The prompt-cache hit (LLM-TEST-COST): how much of `prompt_tokens` was billed
-        # at the cached rate.
-        "cached_tokens": int(getattr(result, "cached_tokens", 0) or 0),
-        # LEAN: the part of `completion_tokens` spent reasoning, None when the provider reports none.
-        "reasoning_tokens": getattr(result, "reasoning_tokens", None),
-    }
+    usage = _usage(config, result, effort, started)
     try:
         content = (result.content or "").strip()
         if not content:
