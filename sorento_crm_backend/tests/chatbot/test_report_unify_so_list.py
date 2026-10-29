@@ -39,8 +39,10 @@ def _route_body(monkeypatch):
 
 
 def _outstanding(kind: str) -> dict[str, Any]:
+    # A customer subject: with none the ask is the document list itself (owner 29 Oct, item 3), never the offer.
     return _parser_output(
-        domain_hint="order", intent_hint="check_order", order_status="outstanding", entities=[], group_by=None,
+        domain_hint="order", intent_hint="check_order", order_status="outstanding",
+        entities=[_e(lane_tests.CUSTOMER_NAME, "customer")], group_by=None,
         top_n=None, measure=None, basis=kind, domain_in_message=True, state_changes=list(KEEP),
         date_filter_start=None, date_filter_end=None,
     )
