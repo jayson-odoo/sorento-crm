@@ -3,7 +3,7 @@ import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   listLookupSets, getLookupSet, createLookupSet, updateLookupSet,
-  listOptions, createOption, updateOption, deleteOption,
+  listOptions, getAliasTargets, createOption, updateOption, deleteOption,
   listBindings, addBinding, removeBinding, setBindingDefaultValue,
   listEligibility, resolveLookup,
 } from '../services/lookupSetService';
@@ -51,6 +51,15 @@ export function useOptions(setId: string | null) {
     queryKey: [KEY, setId, 'options'],
     queryFn: () => listOptions(setId!),
     enabled: !!setId,
+  });
+}
+/** The records an alias set's option may name; asked for only when the set is an alias set. */
+export function useAliasTargets(setId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: [KEY, setId, 'alias-targets'],
+    queryFn: () => getAliasTargets(setId!),
+    enabled: !!setId && enabled,
+    staleTime: 60_000,
   });
 }
 export function useCreateOption(setId: string) {

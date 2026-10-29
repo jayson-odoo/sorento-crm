@@ -21,7 +21,7 @@ export default function LookupSetDetailPage({ params }: { params: Promise<{ id: 
       </Container>
       <Container className="space-y-6">
         <SetInfoCard set={set} />
-        <OptionsSection setId={id} />
+        <OptionsSection setId={id} setKey={set.set_key} aliasSet={set.alias_set} />
         <BindingsSection setId={id} />
         <TestResolveCard setKey={set.set_key} />
       </Container>

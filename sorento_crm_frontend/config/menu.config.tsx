@@ -1136,6 +1136,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             path: '/master-data-management/lookup-sets',
             permission: 'master_data.lookup_sets.view',
           },
+          {
+            title: 'Embeddings',
+            path: '/system-management/embeddings',
+            permission: 'master_data.lookup_sets.view',
+          },
         ],
       },
       {
@@ -2494,6 +2499,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Lookup Sets',
         path: '/master-data-management/lookup-sets',
+        permission: 'master_data.lookup_sets.view',
+      },
+      {
+        title: 'Embeddings',
+        path: '/system-management/embeddings',
         permission: 'master_data.lookup_sets.view',
       },
       {
