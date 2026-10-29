@@ -25,7 +25,7 @@ export function PortalPriceTagRequest({ requestId }: { requestId?: string }) {
     <div className="space-y-4">
       <PageHeader
         title={requestId ? 'Price Tag Request' : 'New Price Tag Request'}
-        actions={<BackToList listPath="/dealer-kit/price-tag-requests" label="Back to price tag requests" />}
+        actions={<BackToList listPath="/dealer-kit/price-tag-requests" label="Back to price tag requests" hideForLimited="price_tag_request" />}
       />
       <MyRequestClientProvider>
         <PriceTagRequestForm requestId={requestId} />

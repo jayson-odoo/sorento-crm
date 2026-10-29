@@ -80,7 +80,7 @@ import { recordActionItems } from '@/components/common/recordActions';
 import { useComplaintActions } from '../actions';
 import ComplaintNotifiableFieldDialog from './ComplaintNotifiableFieldDialog';
 import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
-import ComplaintFulfilmentOrdersReadOnly from './ComplaintFulfilmentOrdersReadOnly';
+import ComplaintFulfilmentOrdersSection from './ComplaintFulfilmentOrdersSection';
 import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
 import { complaintsPagerQuery } from '../hooks/useComplaints';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
@@ -111,7 +111,7 @@ export default function ComplaintDetail(props: ComplaintDetailProps) {
     return (
       <div className="space-y-6">
         <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} />
-        <ComplaintFulfilmentOrdersReadOnly complaintId={props.complaintId} />
+        <ComplaintFulfilmentOrdersSection complaintId={props.complaintId} readOnly />
       </div>
     );
   }

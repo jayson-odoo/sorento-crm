@@ -729,6 +729,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     <BackToList
       listPath="/dealer-kit/price-tag-requests"
       label="Back to price tag requests"
+      hideForLimited="price_tag_request"
     />
   );
 

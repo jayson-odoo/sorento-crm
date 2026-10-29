@@ -533,13 +533,13 @@ export function DataGridListToolbar<TData extends object>({
               */}
               <div
                 data-slot="data-grid-list-toolbar-search"
-                className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-none [&>*]:min-w-0 [&>*]:flex-wrap"
+                className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-initial [&>*]:min-w-0 [&>*]:flex-wrap"
               >
                 {searchSlot}
               </div>
               {filters ? (
                 filters.kind === 'listQuery' ? (
-                  <Button variant="outline" size="sm" className="gap-1.5" aria-label="Filters" title="Filters" onClick={() => setFilterOpen(true)}>
+                  <Button variant="outline" size="sm" className="gap-1.5" aria-label={filters.advancedFilter ? 'Filters On' : 'Filters'} title="Filters" onClick={() => setFilterOpen(true)}>
                     <Filter className="size-4" />
                     <span className="hidden sm:inline">Filters</span>
                     {filters.advancedFilter ? (
@@ -549,7 +549,13 @@ export function DataGridListToolbar<TData extends object>({
                 ) : (
                   <DropdownMenu modal={filters.modal ?? true}>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="gap-1.5" aria-label="Filters" title="Filters">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        aria-label={filters.active ? `Filters ${filters.activeCount ?? 'On'}` : 'Filters'}
+                        title="Filters"
+                      >
                         <Filter className="size-4" />
                         <span className="hidden sm:inline">Filters</span>
                         {filters.active ? (

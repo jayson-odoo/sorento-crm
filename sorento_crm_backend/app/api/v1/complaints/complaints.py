@@ -42,7 +42,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 #: The list and the detail open to `view_own` too; the router guard (`complaint_own_scope`)
-#: narrows a holder of `view_own` alone to their own complaints.
+#: narrows a holder of `view_own` alone to their own complaints. The complaint's
+#: fulfilment-orders row read (a salesperson's read-only DO list) is open to them on their own row.
 _VIEW_OR_VIEW_OWN = [
     "complaint_management.complaints.view",
     "complaint_management.complaints.view_own",

@@ -10,7 +10,7 @@ For a limited user it fails closed:
 
 - the list (``_READS`` role ``list``) is open; the route narrows it with ``RequestScope``, which
   it receives by depending on this same guard (FastAPI caches it per request);
-- a row read (role ``row``: detail, revisions) answers 404 unless the row is theirs
+- a row read (role ``row``: detail, revisions, and the complaint's fulfilment-orders list) answers 404 unless the row is theirs
   (``own_scope.request_in_scope``: their contact submitted it);
 - every other route answers 403, so a route added later is closed to them until it is
   classified here.
