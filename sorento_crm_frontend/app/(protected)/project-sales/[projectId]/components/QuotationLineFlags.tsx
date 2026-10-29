@@ -26,17 +26,12 @@ const FLOOR_LEVEL_LABELS: Record<string, string> = {
  * (the server's). A line never shows two pills. **Below floor** is the server's too: while the
  * draft matches the saved row the saved verdicts show, and the moment it diverges the server is
  * asked (debounced, via `useLineVerdict`) with the same functions the save runs.
+ *
+ * Two cells read it (owner meeting, 29 Oct): Non-standard stays in the Product cell, the floor
+ * sits under the price in the Rate cell and reads "Minimum price RM x". Both ask the same query
+ * key, so React Query asks the server once.
  */
-export function LineFlags({
-  quotationId,
-  line,
-  draft,
-}: {
-  /** Null on a scope not saved yet: the verdict is asked of a saved scope only. */
-  quotationId: string | null;
-  line: QuotationLine | null;
-  draft: LineDraft;
-}) {
+function useLineFacts(quotationId: string | null, line: QuotationLine | null, draft: LineDraft) {
   const productId = (draft.product_id ?? '').trim();
   const setId = (draft.product_set_id ?? '').trim();
   const price = (draft.unit_price ?? '').trim();
@@ -61,61 +56,86 @@ export function LineFlags({
   const nonStandard = pristine
     ? line.is_non_standard
     : Boolean(verdict.data?.is_non_standard);
-  const floorText = pristine
-    ? line
-      ? describeFloor(line)
-      : ''
+  const floor = pristine
+    ? describeFloor(line)
     : describeVerdictFloor(verdict.data ?? null);
 
-  const noTarget = !productId && !setId;
-  if (!noTarget && !belowFloor && !nonStandard) return null;
+  return { noTarget: !productId && !setId, belowFloor, nonStandard, floor };
+}
+
+/** The Product cell's flag: Non-standard, once. */
+export function LineFlags({
+  quotationId,
+  line,
+  draft,
+}: {
+  /** Null on a scope not saved yet: the verdict is asked of a saved scope only. */
+  quotationId: string | null;
+  line: QuotationLine | null;
+  draft: LineDraft;
+}) {
+  const { noTarget, nonStandard } = useLineFacts(quotationId, line, draft);
+  if (!noTarget && !nonStandard) return null;
 
   return (
-    <div className="space-y-0.5">
-      <div className="flex flex-wrap items-center gap-1">
-        {belowFloor && (
-          <Badge
-            variant="destructive"
-            className="gap-1 text-2xs"
-            title={floorText}
-          >
-            <AlertTriangle className="size-3" aria-hidden />
-            Below floor
-          </Badge>
-        )}
-        {(noTarget || nonStandard) && (
-          <Badge
-            variant="secondary"
-            className="gap-1 text-2xs"
-            title={
-              noTarget ? 'Not a catalogue product' : 'Outside the series this scope is quoted from'
-            }
-          >
-            <TriangleAlert className="size-3" aria-hidden />
-            Non-standard
-          </Badge>
-        )}
-      </div>
-      {belowFloor && floorText && (
-        <p className="whitespace-normal break-words text-xs text-destructive">{floorText}</p>
-      )}
+    <div className="flex flex-wrap items-center gap-1">
+      <Badge
+        variant="secondary"
+        className="gap-1 text-2xs"
+        title={noTarget ? 'Not a catalogue product' : 'Outside the series this scope is quoted from'}
+      >
+        <TriangleAlert className="size-3" aria-hidden />
+        Non-standard
+      </Badge>
     </div>
   );
 }
 
-function describeVerdictFloor(verdict: QuotationLineVerdict | null): string {
-  if (!verdict?.floor_value) return 'Below the floor for this item.';
+/** The Rate cell's flag, under the price: "Minimum price RM x" and where that was set. */
+export function MinimumPriceFlag({
+  quotationId,
+  line,
+  draft,
+}: {
+  quotationId: string | null;
+  line: QuotationLine | null;
+  draft: LineDraft;
+}) {
+  const { belowFloor, floor } = useLineFacts(quotationId, line, draft);
+  if (!belowFloor) return null;
+
+  return (
+    <div className="mt-1 space-y-0.5 text-end">
+      <Badge
+        variant="destructive"
+        className="h-auto gap-1 whitespace-normal rounded-md py-0.5 text-start text-2xs leading-tight"
+        title={floor.source}
+      >
+        <AlertTriangle className="size-3" aria-hidden />
+        {floor.value ? `Minimum price ${formatMyr(floor.value)}` : 'Minimum price'}
+      </Badge>
+      <p className="whitespace-normal break-words text-2xs text-destructive">{floor.source}</p>
+    </div>
+  );
+}
+
+type FloorFacts = { value: string | null; source: string };
+
+const NO_FLOOR_VALUE = 'Below the minimum price for this item.';
+
+function describeVerdictFloor(verdict: QuotationLineVerdict | null): FloorFacts {
+  if (!verdict?.floor_value) return { value: null, source: NO_FLOOR_VALUE };
   const level = verdict.floor_level
     ? (FLOOR_LEVEL_LABELS[verdict.floor_level] ?? verdict.floor_level)
     : 'this item';
-  return `Floor is ${formatMyr(verdict.floor_value)}, set on ${level}.`;
+  return { value: verdict.floor_value, source: `Set on ${level}.` };
 }
 
 /** Says which rule bit, so the salesperson knows whose policy to argue with. */
-function describeFloor(line: QuotationLine): string {
-  if (!line.floor_value_applied) return 'Below the floor for this item.';
+function describeFloor(line: QuotationLine): FloorFacts {
+  if (!line.floor_value_applied) return { value: null, source: NO_FLOOR_VALUE };
   const level = line.floor_level_applied
     ? (FLOOR_LEVEL_LABELS[line.floor_level_applied] ?? line.floor_level_applied)
     : 'policy';
-  return `Floor was ${formatMyr(line.floor_value_applied)}, set on ${level}.`;
+  return { value: line.floor_value_applied, source: `Set on ${level}.` };
 }

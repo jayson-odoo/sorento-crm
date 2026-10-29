@@ -29,12 +29,15 @@ reading "Minimum price RM x", instead of a "Below floor" pill in the product cel
    pristine, `useLineVerdict` once the draft diverges); React Query dedupes the one key.
 3. Line save toasts (`useQuotationLineMutations`): "Below the minimum price of RM x."
    (create adds "Management has been notified.").
-4. `PriceFloorPanel` (product / category forms + product detail) title reads "Minimum price";
-   the panel's own body wording says "minimum price" instead of "floor". The ProductForm
-   `disabledReason` follows.
+4. `PriceFloorPanel` (product / category forms + product detail) title reads "Minimum price".
+   Only the title (crew ruling 29 Oct: brief scope, minimise change management).
 
-Out of scope (raised as a non-blocking ask): Price Floors page + sidebar entry, series
-"Floor" columns, quotation approval panel, quotation re-check summary, `PriceFloorDialog`.
+Out of scope (crew ruling (a), 29 Oct; listed in the PR body as a follow-up question for the
+owner, not changed): Price Floors page + sidebar entry (`config/menu.config.tsx:225`,
+`price-floors/page.tsx:19`), series "Floor" columns (`SeriesProductsTable.tsx:142`,
+`SeriesSetsTable.tsx:109`), quotation approval panel (`QuotationApprovalPanel.tsx:36`),
+quotation re-check summary (`QuotationVersionEditor.tsx:639,644`), `PriceFloorPanel` body text
+and buttons, `PriceFloorDialog`, ProductForm `disabledReason`.
 
 ## Tests (red first)
 

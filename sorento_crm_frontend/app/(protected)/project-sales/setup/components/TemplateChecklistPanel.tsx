@@ -84,7 +84,7 @@ export function TemplateChecklistPanel({ template }: { template: ProjectTemplate
               Starting checklist for {template.name}
             </CardTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Copied into every new project of this template. Existing projects keep the
+              Copied into every new project of this to-do list template. Existing projects keep the
               checklist they were registered with.
             </p>
           </div>
@@ -107,7 +107,7 @@ export function TemplateChecklistPanel({ template }: { template: ProjectTemplate
             </p>
           ) : rows.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-              <h3 className="text-sm font-semibold">This template has no checklist</h3>
+              <h3 className="text-sm font-semibold">This to-do list template has no checklist</h3>
               <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                 A project registered against it starts with nothing to do, so its next
                 action stays empty until somebody adds a task by hand.
@@ -230,7 +230,7 @@ export function TemplateChecklistPanel({ template }: { template: ProjectTemplate
                 &quot;{deleting.name}&quot; has already been copied into{' '}
                 {deleting.in_use_count} project task
                 {deleting.in_use_count === 1 ? '' : 's'}. Those copies carry their own
-                history, so deleting the template item would leave them orphaned.
+                history, so deleting the to-do list template item would leave them orphaned.
                 {deleting.is_active
                   ? ' Deactivate it instead to keep it off future projects.'
                   : ' It is already inactive, so no new project will copy it.'}

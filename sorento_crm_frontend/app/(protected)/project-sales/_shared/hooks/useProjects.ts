@@ -8,6 +8,7 @@ import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from '@/lib/toast';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { projectCodeLabel } from '../lib/projectCode';
+import { formatMyrExact } from '../lib/money';
 import { getProductSetsForLineSelect } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
   addStakeholder,
@@ -1198,7 +1199,7 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
       // while somebody is working down a column of twenty lines.
       if (line.is_below_floor) {
         toast.warning(
-          `Below the floor of ${line.floor_value_applied}. Management has been notified.`,
+          `Below the minimum price of ${formatMyrExact(line.floor_value_applied)}. Management has been notified.`,
         );
       }
     },
@@ -1211,7 +1212,9 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
     onSuccess: (line) => {
       invalidate();
       if (line.is_below_floor) {
-        toast.warning(`Below the floor of ${line.floor_value_applied}.`);
+        toast.warning(
+          `Below the minimum price of ${formatMyrExact(line.floor_value_applied)}.`,
+        );
       }
     },
     onError: (error: Error) => toast.error(error.message),

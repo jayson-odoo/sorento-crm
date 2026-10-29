@@ -541,7 +541,7 @@ export async function createProjectTemplate(
     body: JSON.stringify(body),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to create the template'));
+    throw new Error(await extractApiError(response, 'Failed to create the to-do list template'));
   return response.json();
 }
 
@@ -554,7 +554,7 @@ export async function updateProjectTemplate(
     body: JSON.stringify(body),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to save the template'));
+    throw new Error(await extractApiError(response, 'Failed to save the to-do list template'));
   return response.json();
 }
 
@@ -563,7 +563,7 @@ export async function deleteProjectTemplate(templateId: string): Promise<void> {
     method: 'DELETE',
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to delete the template'));
+    throw new Error(await extractApiError(response, 'Failed to delete the to-do list template'));
 }
 
 // ------------------------------------------------------------------- tasks
