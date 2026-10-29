@@ -115,16 +115,29 @@ def test_turn_validates_the_body(client, patch_run, body):
     assert patch_run.calls == []
 
 
-def test_get_conversation_lists_the_current_conversations_turns(client, session_factory):
+def _agent_contact_with_conversation(session_factory):
+    """A switched-on contact with a linked user, and the conversation a turn would have made
+    for them (round 3: the conversation routes build the agent context like the turn does)."""
     from app.services.agent import memory
+    from app.services.agent.access import build_context, grants_hash
+    from tests.agent._seed import seed_agent_contact
 
     db = session_factory()
-    conv = memory.current_conversation(db, "ZZT-ROUTE-1")
+    contact = seed_agent_contact(db)
+    ctx = build_context(db, contact["respond_id"])
+    conv = memory.current_conversation(
+        db, contact["respond_id"], user_id=ctx.user_id, grants_hash=grants_hash(ctx)
+    )
+    return db, contact, conv
+
+
+def test_get_conversation_lists_the_current_conversations_turns(client, session_factory):
+    db, contact, conv = _agent_contact_with_conversation(session_factory)
     t1 = seed_turn(db, conv, minute=1, text="first", reply="reply one")
     t2 = seed_turn(db, conv, minute=2, text="second", reply="reply two")
     db.commit()
 
-    resp = client.get(CONVERSATION, params={"contact_respond_id": "ZZT-ROUTE-1"})
+    resp = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]})
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -137,11 +150,16 @@ def test_get_conversation_lists_the_current_conversations_turns(client, session_
     assert first["created_at"]
 
 
-def test_get_conversation_for_a_new_contact_is_empty(client):
-    resp = client.get(CONVERSATION, params={"contact_respond_id": "ZZT-ROUTE-EMPTY"})
+def test_get_conversation_for_a_new_contact_is_empty(client, session_factory):
+    from tests.agent._seed import seed_agent_contact
+
+    db = session_factory()
+    contact = seed_agent_contact(db)
+    db.commit()
+    resp = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["conversation_id"]
+    assert body["conversation_id"] is None  # round 3: reading never creates a conversation
     assert body["turns"] == []
 
 
@@ -155,19 +173,16 @@ def test_get_conversation_needs_the_contact_id(client):
 
 
 def test_new_conversation_returns_a_fresh_id_and_empties_the_next_read(client, session_factory):
-    from app.services.agent import memory
-
-    db = session_factory()
-    conv = memory.current_conversation(db, "ZZT-ROUTE-2")
+    db, contact, conv = _agent_contact_with_conversation(session_factory)
     seed_turn(db, conv, minute=1, text="old", reply="old reply")
     db.commit()
 
-    resp = client.post(NEW, json={"contact_respond_id": "ZZT-ROUTE-2"})
+    resp = client.post(NEW, json={"contact_respond_id": contact["respond_id"]})
 
     assert resp.status_code == 200, resp.text
     new_id = resp.json()["conversation_id"]
     assert new_id and new_id != str(conv.id)
-    after = client.get(CONVERSATION, params={"contact_respond_id": "ZZT-ROUTE-2"}).json()
+    after = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]}).json()
     assert after["conversation_id"] == new_id
     assert after["turns"] == []
 

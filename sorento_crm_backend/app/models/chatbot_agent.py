@@ -36,3 +36,7 @@ class AgentConversation(Base):
     # `created_at` of the last turn folded into `summary`.
     summary_through = Column(DateTime(timezone=True), nullable=True)
     summary_tokens = Column(Integer, nullable=True)
+    # Who the conversation was started for, and a digest of the contact's reveal grants then.
+    # A different user or grant set starts a new conversation (history is not carried across).
+    user_id = Column(String, nullable=True)
+    grants_hash = Column(String(64), nullable=True)

@@ -30,6 +30,8 @@ EXPECTED = {
 
 STOCK = "crm_inventory_stock_balance_list"
 SUPPLIER_GRANT = "purchase_orders.supplier"
+# Round 3: the PO tools are behind the contact's placed reveal, as in today's bot.
+PLACED_GRANT = "purchase_orders.placed"
 
 CATALOG = {
     name: {
@@ -177,7 +179,7 @@ def test_model_supplied_contact_and_space_are_replaced_by_the_contexts():
 
     assert out.status == "ok"
     assert rec.calls == [
-        (STOCK, {"query": "x", "contact_id": "ZZT-RESPOND-1", "space_id": "364817"})
+        (STOCK, {"query": "x", "contact_id": "ZZT-RESPOND-1", "space_id": "364817", "view": "render"})
     ]
 
 
@@ -232,7 +234,7 @@ def _keys(out):
 
 def test_a_restricted_field_is_dropped_when_the_contact_lacks_the_grant():
     rec = Recorder(result=_po_envelope())
-    out = _dispatch("crm_procurement_po_placed_list", {"query": "x"}, rec, ctx=_ctx(grants=()))
+    out = _dispatch("crm_procurement_po_placed_list", {"query": "x"}, rec, ctx=_ctx(grants={PLACED_GRANT}))
     assert out.status == "ok"
     assert _keys(out) == ["product_code"]
     assert "ZZT SUPPLIER SECRET" not in json.dumps(out.data)
@@ -241,7 +243,7 @@ def test_a_restricted_field_is_dropped_when_the_contact_lacks_the_grant():
 def test_a_restricted_field_is_kept_when_the_contact_holds_the_grant():
     rec = Recorder(result=_po_envelope())
     out = _dispatch(
-        "crm_procurement_po_placed_list", {"query": "x"}, rec, ctx=_ctx(grants={SUPPLIER_GRANT})
+        "crm_procurement_po_placed_list", {"query": "x"}, rec, ctx=_ctx(grants={SUPPLIER_GRANT, PLACED_GRANT})
     )
     assert out.status == "ok"
     assert _keys(out) == ["product_code", "supplier"]

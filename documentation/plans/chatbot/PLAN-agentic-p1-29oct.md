@@ -75,16 +75,19 @@ catalogue's `inputSchema` with `contact_id`/`space_id` stripped (they are server
 
 P1 set (all already on the chatbot's read-only allow-list, `lanes/business/fetch.py:1475`):
 
-| Tool | Reads | User permission (screen view slug) |
-| --- | --- | --- |
-| `crm_report_ask` | The one report service: sales / outstanding ranked or totalled by one dimension and period | `order_management.orders.view` (the route's own) |
-| `crm_inventory_stock_balance_list` | Stock on hand | `inventory.stock.view` |
-| `crm_incoming_stock_by_product`, `crm_incoming_stock_shipments` | Incoming quantities, ETAs, allocation signal | `procurement.packing_lists.view` |
-| `crm_procurement_grn_summary` | Received quantities | `procurement.grn.view` |
-| `crm_procurement_po_last_cost_list`, `crm_procurement_po_placed_list` | Last cost / supplier, POs placed | `scm.purchase_orders.view` |
-| `crm_procurement_spo_allocations_last_receipt_list` | Last receipt | `procurement.spo_allocations.view` |
-| `crm_order_management_orders_by_product_list` | SO / DO lines and outstanding by product | `order_management.orders.view` (the route's own) |
-| `crm_lookup_resolve` | Names, codes, brands, categories, customers to ids | `master_data.products.view` |
+| Tool | Reads | User permission (screen view slug) | Contact grant (today's bot) |
+| --- | --- | --- | --- |
+| `crm_report_ask` | The one report service: sales / outstanding ranked or totalled by one dimension and period | `order_management.orders.view` (the route's own) | none on the tool: the route decides the sales / outstanding reveal from the contact id. Arguments: `basis=unpaid` also needs the user's `finance.billing_documents.view`; `dataset=chat` needs the user's `chatbot.analytics.view` and the contact's `chatbot.analytics` |
+| `crm_inventory_stock_balance_list` | Stock on hand | `inventory.stock.view` | none; the contact's stock switch (`chatbot_stock_allowed`) must be on; `include_sellable` only with `inventory.sellable` |
+| `crm_incoming_stock_by_product`, `crm_incoming_stock_shipments` | Incoming quantities, ETAs, allocation signal | `procurement.packing_lists.view` | none |
+| `crm_procurement_grn_summary` | Received quantities | `procurement.grn.view` | `purchase_orders.placed` |
+| `crm_procurement_po_last_cost_list` | Last cost / supplier | `scm.purchase_orders.view` | `purchase_orders.cost` |
+| `crm_procurement_po_placed_list` | POs placed | `scm.purchase_orders.view` | `purchase_orders.placed` |
+| `crm_procurement_spo_allocations_last_receipt_list` | Last receipt | `procurement.spo_allocations.view` | `purchase_orders.placed` |
+| `crm_order_management_orders_by_product_list` | SO / DO lines and outstanding by product | `order_management.orders.view` (the route's own) | none (outstanding fields are field-restricted) |
+| `crm_lookup_resolve` | Names, codes, brands, categories, customers to ids | `master_data.products.view` | none |
+
+Every call carries `view=render` (set by the server, never the model), because only the render view carries `restricted_fields`; a result that is not a render envelope is refused and never reaches the model.
 
 Most of these routes only require a signed-in caller (for example `inventory/stock.py:239`). So the slug is the
 view permission of the screen showing the same data (`config/menu.config.tsx`; `external/ingest.py:153`

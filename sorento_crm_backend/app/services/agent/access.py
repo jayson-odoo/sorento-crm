@@ -6,6 +6,7 @@ checks the same again at call time.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 
@@ -31,6 +32,8 @@ class AgentContext:
     user_id: str
     user_name: str
     grants: frozenset[str]
+    #: `respond_contacts.chatbot_stock_allowed`: may this contact check stock (today's bot gate).
+    stock_allowed: bool = True
 
 
 def build_context(db, contact_respond_id: str) -> AgentContext:
@@ -92,11 +95,20 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         user_id=user_id,
         user_name=user_name,
         grants=grants,
+        stock_allowed=getattr(contact, "chatbot_stock_allowed", True) is not False,
     )
 
 
 def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
     """REGISTRY entries whose slug the linked user holds, in registry order."""
-    from app.services.agent.tools import _permitted
+    from app.services.agent.tools import _permitted, contact_allows
 
-    return [t for t in REGISTRY.values() if _permitted(db, ctx.user_id, t.user_permission)]
+    return [
+        t for t in REGISTRY.values()
+        if _permitted(db, ctx.user_id, t.user_permission) and contact_allows(ctx, t)
+    ]
+
+
+def grants_hash(ctx: AgentContext) -> str:
+    """Stable digest of the contact's reveal grants; a change starts a new conversation."""
+    return hashlib.sha256("\n".join(sorted(ctx.grants)).encode()).hexdigest()

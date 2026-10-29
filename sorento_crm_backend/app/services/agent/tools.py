@@ -27,24 +27,54 @@ RESULT_CHAR_CAP = 12_000
 class ToolDef:
     name: str
     user_permission: str
+    #: The reveal the contact must hold before today's bot calls this tool's domain
+    #: (`turn/policy_rows.py`, `answer.DOMAIN_GRANT_REQUIRED`, `turn/sub_asks.GRANT`); None
+    #: where today's bot requires none.
+    contact_grant: str | None = None
 
 
-def _defs(*rows: tuple[str, str]) -> dict[str, ToolDef]:
-    return {name: ToolDef(name, slug) for name, slug in rows}
+def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
+    return {name: ToolDef(name, slug, grant) for name, slug, grant in rows}
 
 
+# crm_report_ask: the sales / outstanding reveal is decided by the route itself from the
+# contact id (salesperson book and open pending delivery are exceptions it already knows),
+# so the tool carries none; the chat dataset is gated below in ARG_CONTACT_GRANTS.
 REGISTRY: dict[str, ToolDef] = _defs(
-    ("crm_report_ask", "order_management.orders.view"),
-    ("crm_inventory_stock_balance_list", "inventory.stock.view"),
-    ("crm_incoming_stock_by_product", "procurement.packing_lists.view"),
-    ("crm_incoming_stock_shipments", "procurement.packing_lists.view"),
-    ("crm_procurement_grn_summary", "procurement.grn.view"),
-    ("crm_procurement_po_last_cost_list", "scm.purchase_orders.view"),
-    ("crm_procurement_po_placed_list", "scm.purchase_orders.view"),
-    ("crm_procurement_spo_allocations_last_receipt_list", "procurement.spo_allocations.view"),
-    ("crm_order_management_orders_by_product_list", "order_management.orders.view"),
-    ("crm_lookup_resolve", "master_data.products.view"),
+    ("crm_report_ask", "order_management.orders.view", None),
+    ("crm_inventory_stock_balance_list", "inventory.stock.view", None),
+    ("crm_incoming_stock_by_product", "procurement.packing_lists.view", None),
+    ("crm_incoming_stock_shipments", "procurement.packing_lists.view", None),
+    ("crm_procurement_grn_summary", "procurement.grn.view", "purchase_orders.placed"),
+    ("crm_procurement_po_last_cost_list", "scm.purchase_orders.view", "purchase_orders.cost"),
+    ("crm_procurement_po_placed_list", "scm.purchase_orders.view", "purchase_orders.placed"),
+    ("crm_procurement_spo_allocations_last_receipt_list", "procurement.spo_allocations.view", "purchase_orders.placed"),
+    ("crm_order_management_orders_by_product_list", "order_management.orders.view", None),
+    ("crm_lookup_resolve", "master_data.products.view", None),
 )
+
+#: Tools that read stock: today's bot refuses them for a contact with `chatbot_stock_allowed` off.
+STOCK_TOOLS = frozenset({"crm_inventory_stock_balance_list"})
+
+#: Argument values that need more than the tool's own slug, on `crm_report_ask`
+#: (`order_management/report_ask.py`: unpaid needs `finance.billing_documents.view` on the
+#: act-as user; the chat dataset is the analytics screen's data).
+ARG_PERMISSIONS: dict[tuple[str, str], str] = {
+    ("basis", "unpaid"): "finance.billing_documents.view",
+    ("dataset", "chat"): "chatbot.analytics.view",
+}
+ARG_CONTACT_GRANTS: dict[tuple[str, str], str] = {
+    ("dataset", "chat"): "chatbot.analytics",
+}
+#: `view=render` is what makes the MCP attach `restricted_fields`; it is never the model's choice.
+VIEW_PARAM = "view"
+SELLABLE_PARAM = "include_sellable"
+SELLABLE_GRANT = "inventory.sellable"
+#: Keys the presenter envelope always carries one of; a raw route payload carries none.
+ENVELOPE_KEYS = ("has_result", "result_type", "items", "answers", "response")
+FIXED_ERROR = "The tool failed."
+FIXED_TIMEOUT = "The tool did not answer in time."
+FIXED_NOT_ENVELOPE = "The tool returned an unexpected shape, so its data was not used."
 
 
 @dataclass
@@ -68,9 +98,36 @@ def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
         meta = catalog.get(tool.name)
         if not isinstance(meta, dict):
             continue
-        out.append(mcp_schema_to_openai_tool(tool.name, meta))
+        schema = mcp_schema_to_openai_tool(tool.name, meta)
+        params = schema["function"]["parameters"]
+        # The model never chooses the view: dispatch always sends render.
+        params["properties"] = {k: v for k, v in params["properties"].items() if k != VIEW_PARAM}
+        params["required"] = [r for r in params.get("required") or [] if r != VIEW_PARAM]
+        out.append(schema)
     return out
 
+
+def contact_allows(ctx: Any, tool: ToolDef) -> bool:
+    """The contact side of a tool: its reveal grant, and the stock switch for stock tools."""
+    if tool.contact_grant and tool.contact_grant not in ctx.grants:
+        return False
+    if tool.name in STOCK_TOOLS and not getattr(ctx, "stock_allowed", True):
+        return False
+    return True
+
+
+def _arg_value(args: dict, key: str) -> str:
+    value = args.get(key)
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def clip_args(args: Any, limit: int = 500) -> Any:
+    """`args` as stored in the digest and the trace: at most `limit` characters of JSON."""
+    try:
+        raw = json.dumps(args, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return {"_unreadable": True}
+    return args if len(raw) <= limit else {"_clipped": raw[:limit]}
 
 def _permitted(db: Any, user_id: str, slug: str) -> bool:
     from app.services.user_service import UserPermissionService
@@ -149,37 +206,55 @@ def dispatch(
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
     if not _permitted(db, ctx.user_id, tool.user_permission):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
+    if not contact_allows(ctx, tool):
+        return ToolResult("denied", message=f"{name} is outside this contact's access.")
     meta = catalog.get(name)
     if not isinstance(meta, dict):
         return ToolResult("error", message=f"{name} is not available right now.")
     if not isinstance(args, dict):
         return ToolResult("invalid", message="Arguments must be an object of named values.")
     schema = meta.get("inputSchema") if isinstance(meta.get("inputSchema"), dict) else {}
-    allowed = set((schema.get("properties") or {}).keys()) | set(GUARD_PARAMS)
+    allowed = set((schema.get("properties") or {}).keys()) | set(GUARD_PARAMS) | {VIEW_PARAM}
     unknown = sorted(k for k in args if k not in allowed)
     if unknown:
         return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
 
-    clean = {k: v for k, v in args.items() if k not in GUARD_PARAMS}
+    if name == "crm_report_ask":
+        for (key, value), slug in ARG_PERMISSIONS.items():
+            if _arg_value(args, key) == value and not _permitted(db, ctx.user_id, slug):
+                return ToolResult("denied", message=f"{key}={value} is outside this user's access.")
+        for (key, value), grant in ARG_CONTACT_GRANTS.items():
+            if _arg_value(args, key) == value and grant not in ctx.grants:
+                return ToolResult("denied", message=f"{key}={value} is outside this contact's access.")
+
+    clean = {k: v for k, v in args.items() if k not in GUARD_PARAMS and k != VIEW_PARAM}
+    if SELLABLE_GRANT not in ctx.grants:
+        clean.pop(SELLABLE_PARAM, None)
     clean["contact_id"] = ctx.contact_respond_id
     if ctx.space_id is not None:
         clean["space_id"] = ctx.space_id
+    # Only the render view carries `restricted_fields`, which the field drop below relies on.
+    clean[VIEW_PARAM] = "render"
 
     try:
         raw = call(name, clean)
     except ToolNotAllowed as exc:
         return ToolResult("denied", message=str(exc) or f"{name} is not allowed for this contact.")
     except TimeoutError:
-        return ToolResult("timeout", message=f"{name} did not answer in time.")
+        return ToolResult("timeout", message=FIXED_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - a tool failure is a result the model can work around
         if is_timeout(exc):
-            return ToolResult("timeout", message=f"{name} did not answer in time.")
+            return ToolResult("timeout", message=FIXED_TIMEOUT)
         logger.warning("agent: tool %s failed", name, exc_info=True)
-        return ToolResult("error", message=f"{name} failed: {str(exc)[:200] or type(exc).__name__}.")
+        return ToolResult("error", message=FIXED_ERROR)
 
     data = _as_data(raw)
-    if isinstance(data, dict):
-        axis = clean.get("group_by")
-        drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
+    # Fail closed: a result that is not a render envelope has not been through the presenter,
+    # so nothing in it can be trusted to be field-scoped.
+    if not (isinstance(data, dict) and any(k in data for k in ENVELOPE_KEYS)):
+        logger.warning("agent: %s returned a non-envelope result", name)
+        return ToolResult("error", message=FIXED_NOT_ENVELOPE)
+    axis = clean.get("group_by")
+    drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
     data, more = cap_result(data)
     return ToolResult("ok", data=data, more=more)

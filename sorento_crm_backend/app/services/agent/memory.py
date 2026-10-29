@@ -24,20 +24,42 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def current_conversation(db, contact_respond_id: str) -> AgentConversation:
-    conv = (
+def latest_conversation(db, contact_respond_id: str) -> AgentConversation | None:
+    """The contact's newest conversation, or None. Never writes."""
+    return (
         db.query(AgentConversation)
         .filter(AgentConversation.contact_respond_id == contact_respond_id)
         .order_by(AgentConversation.created_at.desc())
         .first()
     )
-    return conv if conv is not None else new_conversation(db, contact_respond_id)
 
 
-def new_conversation(db, contact_respond_id: str) -> AgentConversation:
+def belongs_to(conv: AgentConversation, user_id: str | None, grants_hash: str | None) -> bool:
+    """Was `conv` started for this user and grant set? Both must be given to be checked."""
+    if user_id is None and grants_hash is None:
+        return True
+    return conv.user_id == user_id and conv.grants_hash == grants_hash
+
+
+def current_conversation(
+    db, contact_respond_id: str, *, user_id: str | None = None, grants_hash: str | None = None
+) -> AgentConversation:
+    """The newest conversation. Given a user and grants digest, a newest row started for a
+    different user or grant set is not continued: a new one starts instead."""
+    conv = latest_conversation(db, contact_respond_id)
+    if conv is not None and belongs_to(conv, user_id, grants_hash):
+        return conv
+    return new_conversation(db, contact_respond_id, user_id=user_id, grants_hash=grants_hash)
+
+
+def new_conversation(
+    db, contact_respond_id: str, *, user_id: str | None = None, grants_hash: str | None = None
+) -> AgentConversation:
     # created_at is set here, not by the column default: two rows made in one transaction
     # would share now() and the "newest" row would be undefined.
-    conv = AgentConversation(contact_respond_id=contact_respond_id, created_at=_now())
+    conv = AgentConversation(
+        contact_respond_id=contact_respond_id, created_at=_now(), user_id=user_id, grants_hash=grants_hash
+    )
     db.add(conv)
     db.flush()
     return conv

@@ -243,16 +243,24 @@ class AgentTurnResponse(BaseModel):
     tool_calls: list[AgentToolCall] = Field(default_factory=list)
 
 
+class AgentConversationToolCall(BaseModel):
+    name: str
+    status: str
+
+
 class AgentConversationTurn(BaseModel):
     turn_id: str
     text: str
     reply_text: str
     status: str
     created_at: datetime
+    rounds: int | None = None
+    limit_hit: str | None = None
+    tool_calls: list[AgentConversationToolCall] = Field(default_factory=list)
 
 
 class AgentConversationResponse(BaseModel):
-    conversation_id: str
+    conversation_id: str | None = None
     turns: list[AgentConversationTurn] = Field(default_factory=list)
 
 

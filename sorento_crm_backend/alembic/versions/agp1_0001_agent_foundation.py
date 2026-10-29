@@ -43,8 +43,13 @@ def upgrade() -> None:
         "created_at timestamptz NOT NULL DEFAULT now(), "
         "summary text, "
         "summary_through timestamptz, "
-        "summary_tokens integer)"
+        "summary_tokens integer, "
+        "user_id varchar, "
+        "grants_hash varchar(64))"
     )
+    # The table may already exist from an earlier run of this revision.
+    op.execute("ALTER TABLE chatbot.agent_conversations ADD COLUMN IF NOT EXISTS user_id varchar")
+    op.execute("ALTER TABLE chatbot.agent_conversations ADD COLUMN IF NOT EXISTS grants_hash varchar(64)")
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_agent_conversations_contact "
         "ON chatbot.agent_conversations (contact_respond_id)"
