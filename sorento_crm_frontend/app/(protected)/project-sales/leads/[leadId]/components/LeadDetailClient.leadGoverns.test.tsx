@@ -241,14 +241,6 @@ function renderDetail() {
  * page: `role="tablist"` / `role="tab"`, and the open one is `aria-selected`
  * rather than the `aria-current="page"` the hand-rolled `<nav>` set.
  */
-/** Secondary actions live behind the gear now. Radix opens on pointerdown, not click. */
-function openGearMenu() {
-  fireEvent.pointerDown(screen.getByRole('button', { name: 'Lead actions' }), {
-    button: 0,
-    ctrlKey: false,
-  });
-}
-
 async function openTab(name: string) {
   // Radix activates a tab on mousedown, which jsdom does not synthesize
   // from a click.

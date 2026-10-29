@@ -572,7 +572,7 @@ describe('LeadDetailClient Customer tab', () => {
 
     expect(await screen.findByText('No customer yet')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Set the customer' }));
-    expect(await screen.findByText('Who told us, and who buys')).toBeInTheDocument();
+    expect(await screen.findByText('Who told us, and the customer')).toBeInTheDocument();
   });
 
   it('shows a skeleton while the account loads', async () => {

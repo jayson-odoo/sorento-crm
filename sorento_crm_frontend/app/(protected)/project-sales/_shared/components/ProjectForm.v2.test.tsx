@@ -750,7 +750,7 @@ describe('AI extract from the form', () => {
     expect(post[0].form?.get('text')).toBe(TITLE);
   });
 
-  it('C7 lists only match and new proposals with a pill per field; not-found is absent', async () => {
+  it('C7 lists only match and new proposals with a pill per field; not-found and Customer are absent (LGR-D6)', async () => {
     renderForm();
     const dialog = await openDialog();
     const review = await runExtract(dialog);
@@ -758,7 +758,7 @@ describe('AI extract from the form', () => {
     expect(within(rowOf('Developer')).getByText('Match')).toBeInTheDocument();
     expect(within(rowOf('Architect')).getByText('New')).toBeInTheDocument();
     expect(within(rowOf('Main contractor')).getByText('New')).toBeInTheDocument();
-    expect(within(rowOf('Customer')).getByText('Match')).toBeInTheDocument();
+    expect(within(review).queryByText('Customer')).toBeNull();
     expect(within(review).queryByText('Project type')).toBeNull();
     expect(within(rowOf('Architect')).getByRole('button', { name: /drop|remove/i })).toBeInTheDocument();
   });

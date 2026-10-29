@@ -30,6 +30,14 @@ const listLeads = vi.fn();
 const getLeadMetrics = vi.fn();
 const listingKeys: (string | null | undefined)[] = [];
 
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { id: 'u-me', name: 'Sales A' } }, status: 'authenticated' }),
+}));
+
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+}));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/leads',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
