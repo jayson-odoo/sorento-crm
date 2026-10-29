@@ -4,6 +4,9 @@ Status: CARD v3 + MOCK v3 filed for the owner (29 Oct 2026): owner answered v1 Q
 embedder setting, the keep set (S1 pending), threshold tuning and performance. No code. Track: L.
 Owner answered S1, T1, P1 (b), P2, G1, G2, M1 (a): BUILD (UAC `lookup-embed-central-acceptance-criteria.md`)
 (`documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`).
+BUILT (29 Oct 2026): slices 1-6 + review fix rounds 1-5 on PR #1967; reviewer READY, security-reviewer CLEAN, final
+browser pass PASS (1280 / 375), owner hand test PASS (~23:35). Merged origin/main c97eda2785, lec_0001 re-parented onto
+idea_capture_fields_0001 (single head lec_0003_lookup_words_sync). PR ready for review; crew labels ci and merges on green.
 
 ## Owner words (29 Oct 2026, verbatim)
 
