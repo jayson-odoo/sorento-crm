@@ -88,7 +88,16 @@ def _tool_payloads(messages):
 
 
 def _real_envelope(basis="delivered", scale=1):
-    """The backend's report-ask body for ~25 sales agents, through the MCP presenter with view=render."""
+    """The backend's report-ask body for ~25 sales agents, through the MCP presenter with view=render.
+
+    The backend CI job does not install `sorento_crm_mcp`, so the package next to this checkout is put
+    on `sys.path` (the same way `tests/chatbot/test_field_reveal_keys_pinned_to_catalog.py` reads it)."""
+    import sys
+    from pathlib import Path
+
+    mcp_root = Path(__file__).resolve().parents[4] / "sorento_crm_mcp"
+    if str(mcp_root) not in sys.path:
+        sys.path.append(str(mcp_root))
     from sorento_crm_mcp.presenters import present_response
 
     names = ["FANNY I", "YMH I", "LONG I"] + [f"AGENT {chr(65 + i)} I" for i in range(22)]
