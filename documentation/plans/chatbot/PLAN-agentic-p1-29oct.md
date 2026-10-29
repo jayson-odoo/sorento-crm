@@ -88,7 +88,7 @@ Scope, both sides (R3):
 - Contact scope: every call carries the contact's `contact_id` + `space_id`; the routes apply customer scope,
   reveal grants, audience and stock-location policy from it (as `report_ask.py:1-9` documents), exactly as for
   today's turns. The table also carries each tool's reveal grant (the runner's `GRANT` map,
-  `turn/sub_asks.py:80`) and the dispatcher refuses when the contact lacks it.
+  `turn/sub_asks.py:76`) and the dispatcher refuses when the contact lacks it.
 - User permissions: each table row names the permission slug its route requires; the dispatcher checks the
   linked user holds it before the call. A refused call returns a typed `denied` result to the model, which says
   so in the answer.
