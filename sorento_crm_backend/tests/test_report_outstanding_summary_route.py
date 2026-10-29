@@ -257,3 +257,50 @@ def test_a_linked_contact_may_open_its_own_delivery_order_list(client, db):
     db.commit()
     body = _ok(client, contact, basis="pending_delivery", product_ids=[w.pc.id], group_by="delivery_order", top_n=50, period=None)
     assert len(body["rows"]) == 2 and sum(r["qty"] for r in body["rows"]) == 3, body["rows"]
+
+
+# ================================================================ item 1 (owner 29 Oct): dealers as before #1922
+
+
+def _dealer(db, w):
+    contact = _holder(db, "sales_orders.outstanding", office=False)
+    _link(db, contact, w.c1)
+    db.commit()
+    return contact
+
+
+def test_a_dealer_summary_keeps_by_location(client, db):
+    """C1's pending delivery (pA W1 3, pC W2 2 + 1): By location then By product, its own rows only."""
+    w = _pending_world(db)
+    body = _ok(client, _dealer(db, w), basis="pending_delivery", period=None)
+    s = body["summary"]
+    assert [g["axis"] for g in s["groups"]] == ["location", "product"], s
+    assert sorted(_rows(_group(s, "location"))) == sorted(
+        [(w.w1.warehouse_code, 3, D("300.00")), (w.w2.warehouse_code, 3, D("300.00"))]
+    ), s
+
+
+def test_a_dealer_may_name_a_location_and_group_by_location(client, db):
+    w = _pending_world(db)
+    dealer = _dealer(db, w)
+    body = _ok(client, dealer, basis="pending_delivery", warehouse_codes=[w.w2.warehouse_code], period=None)
+    assert body["total"]["qty"] == 3, body["total"]  # C1's W2 lines only (pC 2 + 1)
+    by_loc = _ok(client, dealer, basis="pending_delivery", group_by="location", top_n=10, period=None)
+    assert sum(r["qty"] for r in by_loc["rows"]) == 6, by_loc["rows"]
+
+
+def test_a_dealer_is_still_refused_the_agent_and_channel_on_outstanding(client, db):
+    w = _pending_world(db)
+    dealer = _dealer(db, w)
+    for params in ({"group_by": "sales_agent", "top_n": 10}, {"channel": "dealer"}, {"group_by": "customer", "top_n": 10}):
+        resp = _ask(client, dealer, basis="pending_delivery", period=None, **params)
+        assert resp.status_code == 403, (params, resp.text)
+
+
+def test_a_dealer_keeps_the_location_refusal_on_the_sales_bases(client, db):
+    w = _pending_world(db)
+    contact = _holder(db, "sales_orders.sales_report", office=False)
+    _link(db, contact, w.c1)
+    db.commit()
+    resp = _ask(client, contact, basis="ordered", warehouse_codes=[w.w1.warehouse_code])
+    assert resp.status_code == 403, resp.text
