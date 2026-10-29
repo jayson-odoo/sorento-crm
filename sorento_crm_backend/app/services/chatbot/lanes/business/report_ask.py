@@ -518,6 +518,16 @@ def without_pick_axis(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
     return {**verdict, "group_by": None}
 
 
+def outstanding_by_basis(verdict: dict[str, Any]) -> dict[str, Any]:
+    """Eval send-back (#b6e9 on the prod prompt v70): a sales report or analysis whose basis word is "outstanding"
+    (`sales_basis`) is an outstanding ask, as before #1922 (`sales_basis_ask.as_report_ask`); its kind is still the
+    owner's rule (the kinds the contact may see; asked when two, never defaulted). Parser fields only."""
+    for key in ("order_status", "status"):
+        if jsc.js_string(verdict.get(key) or "").strip() in SALES_STATUSES:
+            verdict = {**verdict, key: "outstanding"}
+    return {k: v for k, v in verdict.items() if k != "sales_basis"}
+
+
 def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool = True) -> dict[str, Any]:
     """Engine seam, before grounding (REPORT-SMART-1021 step 2, REPORT-UNIFY Q1; `seam=False` is `run_fetch`'s own
     pass over what the seam left, which lets a pick or a document through): every sales figure ask
@@ -528,6 +538,11 @@ def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool 
     # Engine keys only this seam writes: never taken from the parser's own emission.
     verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}
     status = jsc.js_string(verdict.get("order_status") or "").strip()
+    replying = _dict(verdict.get("open_question_answer")).get("mode") is not None
+    if status in SALES_STATUSES and verdict.get("sales_basis") == "outstanding" and not replying and not basis_from(verdict):
+        # A FRESH ask naming no basis of its own: "outstanding" answering the sales basis question carries that answer
+        # as its `basis` (BASIS_OPTIONS' Outstanding, the total's own), and stays that total.
+        verdict, status = outstanding_by_basis(verdict), "outstanding"
     if verdict.get("intent_hint") == "low_stock_report" and verdict.get("domain_hint") == "inventory":
         return verdict  # the reorder report is its own ask (`low_stock_ask`), whatever order status the parser also read
     if status == "top_selling":

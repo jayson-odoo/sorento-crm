@@ -304,7 +304,8 @@ def _v70_b6e9() -> dict[str, Any]:
 def test_b6e9_v70_a_do_only_contact_gets_stock_then_the_do_summary_with_no_question(do_only, do_only_world) -> None:
     do_only.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
     text, calls = do_only.say(_v70_b6e9(), "SRT5733 stock and outstanding")
-    args = _only_report_ask(calls)
+    assert calls[0][0] == "crm_inventory_stock_balance_list", calls  # the stock half still runs, first
+    (args,) = [a for n, a in calls if n == "crm_report_ask"]
     assert args["basis"] == "pending_delivery" and len(args["product_ids"]) == 1, args
     assert "date_from" not in args and "Which period" not in text and KIND_QUESTION not in text, text
     assert "Delivery orders: 3" in text and text.rstrip().endswith(DO_OFFER), text
