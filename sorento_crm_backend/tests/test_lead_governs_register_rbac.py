@@ -442,3 +442,39 @@ def test_e9_a_submit_payload_with_another_customer_than_the_leads_is_refused(v2)
     assert res.status_code == 422, res.text
     assert res.json()["code"] == "project_customer_not_lead_customer"
     assert project_of(v2, pid).approval_state == "draft"
+
+
+# ------------------------------------------------------------------ reviewer: a later customer pick fills the empty lead
+
+
+def _customerless_draft(w):
+    lead = _own_lead(w, customer_id=None)
+    res = _register(w, w.sub_a, submit=False, lead_id=lead.id)
+    assert res.status_code == 201, res.text
+    return lead, res.json()["id"]
+
+
+def test_e6_a_customer_added_by_the_draft_put_fills_the_empty_lead_on_submit(v2):
+    lead, pid = _customerless_draft(v2)
+    put = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"customer_id": v2.customer.id})
+    assert put.status_code == 200, put.text
+    res = submit_existing(v2, v2.sub_a, pid)
+    assert res.status_code == 200, res.text
+    assert profile_of(v2, pid).customer_id == v2.customer.id
+    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
+
+
+def test_e6_a_customer_in_the_submit_payload_fills_the_empty_lead(v2):
+    lead, pid = _customerless_draft(v2)
+    res = submit_existing(v2, v2.sub_a, pid, {"customer_id": v2.customer.id})
+    assert res.status_code == 200, res.text
+    assert profile_of(v2, pid).customer_id == v2.customer.id
+    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
+
+
+def test_e6_a_lead_that_already_has_a_customer_never_changes_on_submit(v2):
+    lead = _own_lead(v2)
+    pid = _register(v2, v2.sub_a, submit=False, lead_id=lead.id, customer_id=v2.customer.id).json()["id"]
+    res = submit_existing(v2, v2.sub_a, pid, {"customer_id": v2.customer.id})
+    assert res.status_code == 200, res.text
+    assert reload_lead(v2, lead.id).customer_id == v2.customer.id

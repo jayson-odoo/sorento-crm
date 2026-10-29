@@ -240,3 +240,14 @@ def test_f1_a_lead_without_a_customer_qualifies_as_before(v2):
     assert res.status_code == 201, res.text
     profile = profile_of(v2, res.json()["id"])
     assert profile is None or profile.customer_id is None
+
+
+def test_e4_a_later_customer_pick_without_a_lead_change_fills_the_empty_lead(v2):
+    old = seed_project(v2.db, v2.company_id, title("LinkedEmpty"), owner=v2.owner)
+    lead = lead_row(v2, customer_id=None, owner=v2.owner)
+    old.lead_id = lead.id
+    v2.db.commit()
+    res = as_user(v2, v2.owner).put(f"{STAFF}/{old.id}", json={"customer_id": v2.customer.id})
+    assert res.status_code == 200, res.text
+    assert profile_of(v2, old.id).customer_id == v2.customer.id
+    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
