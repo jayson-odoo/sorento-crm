@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Send quotation via WhatsApp (mockup v1)</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/set-quote-line */
+:root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--destructive:#dc2626;--success:#15803d;--success-soft:#f0fdf4;--page:#f7f7f8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0 0 4px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:920px}
+.nav{position:sticky;top:0;z-index:5;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:900px}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--primary);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px;font-weight:600;vertical-align:middle}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.desk{width:1280px;max-width:100%;flex:none;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--page)}
+.phone{width:375px;flex:none;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--page)}
+.cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px;border-top:1px solid var(--border);background:#fff}
+.shell{padding:20px 24px;min-height:420px;position:relative}
+.phone .shell{padding:14px;min-height:640px}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.crumb{font-size:12px;color:var(--muted-fg)}
+.ttl{font-size:20px;font-weight:600;margin:2px 0 4px}
+.phone .ttl{font-size:17px}
+.meta{font-size:12.5px;color:var(--muted-fg);display:flex;gap:14px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11.5px;font-weight:500;background:var(--success-soft);color:var(--success)}
+.btns{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--border);background:#fff;font-size:12.5px;font-weight:500;color:var(--foreground);white-space:nowrap}
+.btn.pri{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.icon{width:32px;padding:0}
+.btn.off{opacity:.45}
+.ico{width:14px;height:14px;display:inline-block;flex:none}
+.menu{position:absolute;right:24px;top:62px;width:270px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.10);padding:4px;z-index:2}
+.phone .menu{right:14px;left:auto;top:118px;width:260px}
+.mi{display:flex;gap:8px;align-items:flex-start;padding:7px 8px;border-radius:5px;font-size:13px}
+.mi .ico{margin-top:2px;color:var(--muted-fg)}
+.mi .d{display:block;font-size:12px;color:var(--muted-fg)}
+.mi.new{background:var(--primary-soft);outline:1px dashed #93c5fd}
+.mi.off{opacity:.5}
+.mi.red{color:var(--destructive)}
+.mi.red .ico{color:var(--destructive)}
+.sep{height:1px;background:var(--border);margin:4px -4px}
+.ghostcard{margin-top:18px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px}
+.ph{display:block;height:9px;border-radius:4px;background:var(--muted);margin:8px 0}
+.scrim{position:absolute;inset:0;background:rgba(9,9,11,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:3}
+.dlg{width:100%;max-width:512px;background:#fff;border-radius:10px;border:1px solid var(--border);box-shadow:0 16px 40px rgba(0,0,0,.18);padding:20px;display:flex;flex-direction:column;gap:14px}
+.phone .dlg{padding:16px}
+.dlg h3{margin:0;font-size:16px;font-weight:600}
+.lbl{font-size:12.5px;font-weight:500;margin-bottom:4px;display:block}
+.inp{border:1px solid var(--border);border-radius:6px;min-height:34px;padding:7px 10px;font-size:13px;background:#fff}
+.inp.ph-text{color:#a1a1aa}
+.msg{border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:13px;background:var(--muted);white-space:pre-wrap;word-break:break-word;line-height:1.5}
+.msg a{color:#1d4ed8}
+.foot{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.phone .foot{flex-direction:column-reverse;align-items:stretch}
+.feed{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;max-width:640px}
+.ev{display:flex;gap:10px;font-size:13px;padding:8px 0;border-top:1px solid var(--border)}
+.ev:first-child{border-top:0}
+.dot{width:8px;height:8px;border-radius:4px;background:#a1a1aa;margin-top:6px;flex:none}
+.when{font-size:12px;color:var(--muted-fg)}
+table{border-collapse:collapse;width:100%;max-width:1100px;font-size:12.5px;background:#fff}
+th,td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
+th{background:var(--muted);font-weight:500}
+code{font:12px ui-monospace,Menlo,monospace;background:var(--muted);padding:1px 4px;border-radius:4px;word-break:break-all}
+.note{border-left:3px solid var(--primary);background:var(--primary-soft);padding:6px 10px;font-size:12px;border-radius:0 6px 6px 0;margin:10px 0 0;max-width:900px}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Send quotation via WhatsApp (mockup v1)</h1>
+<p class="intro">Lane QUOTE-SEND-WHATSAPP. Shows the card's recommended answers (Q1 a, Q2 a, Q3 a, Q4 a, Q5 a). Data:
+quotation PRJQ-2026-0003 from the shared dev copy, names and subject masked (CUSTOMER A, ATTN A, SALES REP A, PROJECT A, SUBJECT A).
+Numbers are masked or fake; the copy holds no mobile numbers at all.</p>
+<div class="nav"><a href="#s1">1 Gear menu</a><a href="#s2">2 Prompt, number found</a><a href="#s3">3 Prompt, no mobile</a><a href="#s4">4 After Send to Customer</a><a href="#s5">5 Activity line</a><a href="#s6">6 Not yet sent</a><a href="#map">Component map</a></div>
+
+<svg width="0" height="0" style="position:absolute">
+ <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 1 1 0 10h-2M8 12h8"/></symbol>
+ <symbol id="i-wa" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+ <symbol id="i-dl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15V3M7 10l5 5 5-5M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></symbol>
+ <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z"/></symbol>
+ <symbol id="i-pen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+ <symbol id="i-del" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></symbol>
+ <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+ <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+</svg>
+
+<!-- 1 -->
+<section id="s1">
+<h2><span class="nb">1</span>Gear menu on a sent quotation: "Send via WhatsApp" after "Copy counter-sign link"</h2>
+<p class="why">Same item on the list row "..." (one action set). Rule 1. The new item is outlined in blue here only.</p>
+<div class="row">
+ <div class="desk"><div class="shell">
+  <div class="hdr">
+   <div><div class="crumb">Project Sales / PROJECT A / Quotations</div>
+    <div class="ttl">PRJQ-2026-0003 <span class="pill">Sent R1</span></div>
+    <div class="meta"><span>To CUSTOMER A</span><span>Attn ATTN A</span><span>Signed by SALES REP A</span></div></div>
+   <div class="btns"><span class="btn"><svg class="ico"><use href="#i-dl"/></svg>PRJQ-2026-0003 (R1)</span><span class="btn icon"><svg class="ico"><use href="#i-gear"/></svg></span></div>
+  </div>
+  <div class="menu">
+   <div class="mi"><svg class="ico"><use href="#i-edit"/></svg>Edit quotation</div>
+   <div class="mi"><svg class="ico"><use href="#i-pen"/></svg>Sign again</div>
+   <div class="mi"><svg class="ico"><use href="#i-dl"/></svg><span>Download PDF<span class="d">Prepared in My Downloads</span></span></div>
+   <div class="mi"><svg class="ico"><use href="#i-dl"/></svg><span>Download Excel<span class="d">Prepared in My Downloads</span></span></div>
+   <div class="mi"><svg class="ico"><use href="#i-link"/></svg>Copy counter-sign link</div>
+   <div class="mi new"><svg class="ico"><use href="#i-wa"/></svg>Send via WhatsApp</div>
+   <div class="sep"></div>
+   <div class="mi red off"><svg class="ico"><use href="#i-del"/></svg>Delete quotation</div>
+  </div>
+  <div class="ghostcard" style="max-width:780px"><span class="ph" style="width:40%"></span><span class="ph" style="width:85%"></span><span class="ph" style="width:70%"></span><span class="ph" style="width:55%"></span></div>
+ </div><div class="cap">1280 px</div></div>
+ <div class="phone"><div class="shell">
+  <div class="crumb">Project Sales / PROJECT A</div>
+  <div class="ttl">PRJQ-2026-0003 <span class="pill">Sent R1</span></div>
+  <div class="meta"><span>To CUSTOMER A</span></div>
+  <div class="btns" style="margin-top:8px;justify-content:flex-end"><span class="btn"><svg class="ico"><use href="#i-dl"/></svg>R1</span><span class="btn icon"><svg class="ico"><use href="#i-gear"/></svg></span></div>
+  <div class="menu">
+   <div class="mi"><svg class="ico"><use href="#i-edit"/></svg>Edit quotation</div>
+   <div class="mi"><svg class="ico"><use href="#i-pen"/></svg>Sign again</div>
+   <div class="mi"><svg class="ico"><use href="#i-dl"/></svg>Download PDF</div>
+   <div class="mi"><svg class="ico"><use href="#i-dl"/></svg>Download Excel</div>
+   <div class="mi"><svg class="ico"><use href="#i-link"/></svg>Copy counter-sign link</div>
+   <div class="mi new"><svg class="ico"><use href="#i-wa"/></svg>Send via WhatsApp</div>
+   <div class="sep"></div>
+   <div class="mi red off"><svg class="ico"><use href="#i-del"/></svg>Delete quotation</div>
+  </div>
+ </div><div class="cap">375 px</div></div>
+</div>
+</section>
+
+<!-- 2 -->
+<section id="s2">
+<h2><span class="nb">2</span>The prompt, when the recipient field holds a mobile (test data only: none on the copy)</h2>
+<p class="why">Rules 2-5. "To" prefilled from the first mobile, local 012 turned into 60 12; editable, not saved back. The
+message is exactly what WhatsApp opens with. "Open WhatsApp" is a plain link to
+<code>https://wa.me/6012xxxxx45?text=Hi%20ATTN%20A%2C%0A%0AHere%20is%20our%20quotation%20...</code> in a new tab.</p>
+<div class="row">
+ <div class="desk"><div class="shell" style="min-height:470px">
+  <div class="ghostcard"><span class="ph" style="width:30%"></span><span class="ph" style="width:80%"></span><span class="ph" style="width:60%"></span></div>
+  <div class="scrim"><div class="dlg">
+   <h3>Send R1 via WhatsApp</h3>
+   <div><span class="lbl">To</span><div class="inp">+60 12-xxx xx45</div></div>
+   <div><span class="lbl">Message</span><div class="msg">Hi ATTN A,
+
+Here is our quotation PRJQ-2026-0003-R1 for SUBJECT A.
+You can view and accept it here:
+<a>https://crm.example/quotation-sign/Xk2...9Qa</a>
+
+Thank you,
+SALES REP A</div></div>
+   <div class="foot"><span class="btn ghost">Close</span><span class="btn"><svg class="ico"><use href="#i-copy"/></svg>Copy link</span><span class="btn pri"><svg class="ico"><use href="#i-wa"/></svg>Open WhatsApp</span></div>
+  </div></div>
+ </div><div class="cap">1280 px</div></div>
+ <div class="phone"><div class="shell">
+  <div class="scrim"><div class="dlg">
+   <h3>Send R1 via WhatsApp</h3>
+   <div><span class="lbl">To</span><div class="inp">+60 12-xxx xx45</div></div>
+   <div><span class="lbl">Message</span><div class="msg">Hi ATTN A,
+
+Here is our quotation PRJQ-2026-0003-R1 for SUBJECT A.
+You can view and accept it here:
+<a>https://crm.example/quotation-sign/Xk2...9Qa</a>
+
+Thank you,
+SALES REP A</div></div>
+   <div class="foot"><span class="btn pri"><svg class="ico"><use href="#i-wa"/></svg>Open WhatsApp</span><span class="btn"><svg class="ico"><use href="#i-copy"/></svg>Copy link</span><span class="btn ghost">Close</span></div>
+  </div></div>
+ </div><div class="cap">375 px</div></div>
+</div>
+</section>
+
+<!-- 3 -->
+<section id="s3">
+<h2><span class="nb">3</span>The prompt, when the field has no mobile (the normal case on today's data)</h2>
+<p class="why">Card examples 1, 2, 4, 5: landline <code>03-xxxx xx58</code>, <code>+60x-xxxx xx88</code>, a slash list, or empty.
+"To" stays blank; Open WhatsApp then goes to <code>https://wa.me/?text=...</code> and WhatsApp asks which chat. A number
+typed here is used for this send only.</p>
+<div class="row">
+ <div class="phone"><div class="shell">
+  <div class="scrim"><div class="dlg">
+   <h3>Send R1 via WhatsApp</h3>
+   <div><span class="lbl">To</span><div class="inp ph-text">Mobile number</div></div>
+   <div><span class="lbl">Message</span><div class="msg">Hi ATTN A,
+
+Here is our quotation PRJQ-2026-0003-R1 for SUBJECT A.
+You can view and accept it here:
+<a>https://crm.example/quotation-sign/Xk2...9Qa</a>
+
+Thank you,
+SALES REP A</div></div>
+   <div class="foot"><span class="btn pri"><svg class="ico"><use href="#i-wa"/></svg>Open WhatsApp</span><span class="btn"><svg class="ico"><use href="#i-copy"/></svg>Copy link</span><span class="btn ghost">Close</span></div>
+  </div></div>
+ </div><div class="cap">375 px</div></div>
+</div>
+</section>
+
+<!-- 4 -->
+<section id="s4">
+<h2><span class="nb">4</span>Right after "Send to Customer R1" succeeds (Q5 a)</h2>
+<p class="why">The header button issues the revision exactly as today; on success the same prompt opens on its own for
+the new revision. Close = nothing else happens (the salesperson may email instead). On failure no prompt.</p>
+<div class="row">
+ <div class="desk"><div class="shell" style="min-height:470px">
+  <div class="hdr">
+   <div><div class="crumb">Project Sales / PROJECT A / Quotations</div>
+    <div class="ttl">PRJQ-2026-0003 <span class="pill">Sent R1</span></div>
+    <div class="meta"><span>To CUSTOMER A</span><span>Attn ATTN A</span></div></div>
+   <div class="btns"><span class="btn"><svg class="ico"><use href="#i-dl"/></svg>PRJQ-2026-0003 (R1)</span><span class="btn icon"><svg class="ico"><use href="#i-gear"/></svg></span></div>
+  </div>
+  <div class="scrim"><div class="dlg">
+   <h3>Send R1 via WhatsApp</h3>
+   <div><span class="lbl">To</span><div class="inp ph-text">Mobile number</div></div>
+   <div><span class="lbl">Message</span><div class="msg">Hi ATTN A,
+
+Here is our quotation PRJQ-2026-0003-R1 for SUBJECT A.
+You can view and accept it here:
+<a>https://crm.example/quotation-sign/Xk2...9Qa</a>
+
+Thank you,
+SALES REP A</div></div>
+   <div class="foot"><span class="btn ghost">Close</span><span class="btn"><svg class="ico"><use href="#i-copy"/></svg>Copy link</span><span class="btn pri"><svg class="ico"><use href="#i-wa"/></svg>Open WhatsApp</span></div>
+  </div></div>
+ </div><div class="cap">1280 px, the moment after pressing "Send to Customer R1"</div></div>
+</div>
+</section>
+
+<!-- 5 -->
+<section id="s5">
+<h2><span class="nb">5</span>Project activity line when "Open WhatsApp" is pressed (Q4 a)</h2>
+<p class="why">Worded "opened": wa.me cannot tell us the message was sent. Does not clear the Unattended badge.</p>
+<div class="feed">
+ <div class="ev"><span class="dot"></span><div>Quotation PRJQ-2026-0003-R1 link opened in WhatsApp by SALES REP A<div class="when">29 Oct 2026, 16:05</div></div></div>
+ <div class="ev"><span class="dot"></span><div>Quotation PRJQ-2026-0003 created by SALES REP A<div class="when">29 Oct 2026, 15:52</div></div></div>
+</div>
+</section>
+
+<!-- 6 -->
+<section id="s6">
+<h2><span class="nb">6</span>Not yet sent to the customer: both link items disabled with the existing hint</h2>
+<div class="row">
+ <div class="phone"><div class="shell" style="min-height:330px">
+  <div class="ttl">PRJQ-2026-0004</div>
+  <div class="menu" style="top:56px">
+   <div class="mi"><svg class="ico"><use href="#i-edit"/></svg>Edit quotation</div>
+   <div class="mi"><svg class="ico"><use href="#i-pen"/></svg>Sign quotation</div>
+   <div class="mi off"><svg class="ico"><use href="#i-dl"/></svg><span>Download PDF<span class="d">Send it to the customer first</span></span></div>
+   <div class="mi off"><svg class="ico"><use href="#i-dl"/></svg><span>Download Excel<span class="d">Send it to the customer first</span></span></div>
+   <div class="mi off"><svg class="ico"><use href="#i-link"/></svg><span>Copy counter-sign link<span class="d">Send it to the customer first</span></span></div>
+   <div class="mi off new"><svg class="ico"><use href="#i-wa"/></svg><span>Send via WhatsApp<span class="d">Send it to the customer first</span></span></div>
+   <div class="sep"></div>
+   <div class="mi red"><svg class="ico"><use href="#i-del"/></svg>Delete quotation</div>
+  </div>
+ </div><div class="cap">375 px</div></div>
+</div>
+</section>
+
+<section id="map">
+<h2>Element to component map (repo paths under sorento_crm_frontend/)</h2>
+<table>
+<tr><th>Element</th><th>Reuses</th></tr>
+<tr><td>"Send via WhatsApp" menu item, disabled hint</td><td>one more <code>RecordAction</code> in <code>app/(protected)/project-sales/[projectId]/quotation-documents/actions.tsx</code> (rendered by <code>components/common/DetailActionsMenu.tsx</code> + <code>RowActionsMenu.tsx</code> via <code>recordActions.tsx</code>); hint text reused from the copy action</td></tr>
+<tr><td>Prompt shell, title, footer buttons</td><td><code>components/ui/dialog.tsx</code> + <code>components/ui/button.tsx</code>, same shape as <code>[documentId]/components/QuotationSignLinkDialog.tsx</code> (new sibling <code>QuotationWhatsAppDialog.tsx</code>)</td></tr>
+<tr><td>"To" field</td><td><code>components/ui/input.tsx</code> (type tel)</td></tr>
+<tr><td>Message box</td><td>read-only text block, muted background (no new primitive)</td></tr>
+<tr><td>Link minting</td><td><code>useQuotationDocumentMutations().signLink</code> (<code>_shared/hooks/useQuotationDocuments.ts:257</code>), same call as Copy counter-sign link</td></tr>
+<tr><td>Copy link button</td><td><code>hooks/use-copy-to-clipboard</code>, as in QuotationSignLinkDialog</td></tr>
+<tr><td>Open WhatsApp URL</td><td><code>waMeUrl</code> from <code>app/(auth)/portal/lib/portal-paths.ts:108</code>, moved to a shared lib so both use one helper; number cleanup added in front of it</td></tr>
+<tr><td>Auto-open after Send to Customer</td><td><code>mutations.issue</code> success in <code>[documentId]/components/QuotationDocumentClient.tsx:406-417</code></td></tr>
+<tr><td>Activity line</td><td>backend <code>record_project_event</code> (<code>app/services/project_activity_service.py:107</code>), shown by the existing project Activities feed</td></tr>
+</table>
+<p class="note">Not in this lane: any message sent by the system (respond.io), templates, saving a typed number back to
+the quotation or the customer.</p>
+</section>
+</div>
+</body>
+</html>
