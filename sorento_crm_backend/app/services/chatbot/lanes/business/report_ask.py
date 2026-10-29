@@ -227,6 +227,8 @@ KIND_QUESTION = "Undelivered orders or pending delivery?"
 #: invoices (only when the user names them). The kind question offers only the kinds the contact may see; a contact
 #: that may see one (pending delivery without the Outstanding reveal, as before #1922) gets it with no question.
 ASKED_KINDS = ("outstanding", "pending_delivery")
+#: A kind never offered but taken when the user names it, a reply to the kind question included ("unpaid invoices").
+NAMED_KINDS = ("unpaid",)
 #: The parser's outstanding document statuses that already name their kind: a sales order backlog, a delivery
 #: order backlog. `outstanding_both` and the bare `outstanding` name none.
 STATUS_KIND = {"so_outstanding": "outstanding", "do_outstanding": "pending_delivery"}
@@ -309,7 +311,7 @@ def _resolve_basis(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
     """An answering turn's basis: the PARSER's own reading of the reply (`reply_basis`); the kind question
     (an outstanding ask) takes one of the three kinds only."""
     basis = extras.get("reply_basis")
-    allowed = ASKED_KINDS if extras.get("kind_ask") else BASES
+    allowed = OUTSTANDING_KINDS if extras.get("kind_ask") else BASES
     return rf.Resolved("ok", value=basis, label=basis) if basis in allowed else rf.Resolved("unknown")
 
 
@@ -867,7 +869,7 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
     kind = position = None
     if declared:
         picked = {p for p in jsc.array(answer.get("picked")) if isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= len(options)}
-        if answer.get("mode") == "fill" and verdict.get("basis") in OUTSTANDING_KINDS and verdict.get("basis") in offered:
+        if answer.get("mode") == "fill" and verdict.get("basis") in OUTSTANDING_KINDS and verdict.get("basis") in (*offered, *NAMED_KINDS):
             kind = verdict.get("basis")  # a fill naming an offered kind: the kind, so a subject bound beside it is kept
         elif answer.get("mode") not in ("pick", "cancel") and (
             verdict.get("capability_from") or verdict.get("order_status") or _binds_subject(verdict)
@@ -878,7 +880,7 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
             return verdict
         else:
             kind = options[next(iter(picked)) - 1][0]
-    elif verdict.get("basis") in OUTSTANDING_KINDS and verdict.get("basis") in offered:
+    elif verdict.get("basis") in OUTSTANDING_KINDS and verdict.get("basis") in (*offered, *NAMED_KINDS):
         kind = verdict.get("basis")
     elif len(positions) == 1:
         position = next(iter(positions))
@@ -894,6 +896,9 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
         return {**{k: v for k, v in verdict.items() if k != "open_question_answer"}, "order_status": "outstanding", "basis": kind}
     if declared:
         return verdict
+    if kind not in offered:
+        # A named kind that is never offered (unpaid, owner 29 Oct) has no position: it answers as the parser's fill.
+        return {**verdict, "open_question_answer": {"mode": "fill", "picked": [], "items": [], "qty_for_all": None}}
     return {**verdict, "open_question_answer": {"mode": "pick", "picked": [position or offered.index(kind) + 1], "items": [], "qty_for_all": None}}
 
 
@@ -1557,6 +1562,8 @@ def _settle(
             # The basis (or kind) question: the parser's pick of an offered option, else its own `basis` reading when it is
             # one of the options the question offers; anything else is no basis (never "invoiced" for a kind question).
             offered = {v for v, _l in (_basis_offered(extras) if extras.get("kind_ask") else BASIS_OPTIONS)}
+            if extras.get("kind_ask"):
+                offered |= set(NAMED_KINDS)  # named, never offered (owner 29 Oct)
             picked = rf.picked_option(slot, _dict(parse_output.get("required_ask_answer")))
             said = picked.value if picked.status == "ok" else next(
                 (v for v in (parse_output.get("basis"), parse_output.get("sales_basis")) if v in offered), None

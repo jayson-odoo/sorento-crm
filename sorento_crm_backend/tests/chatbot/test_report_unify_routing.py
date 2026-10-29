@@ -77,7 +77,7 @@ YEAR = {"date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31"}
 SEP = {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
 OCT = {"date_filter_start": "2026-10-01", "date_filter_end": "2026-10-31"}
 NO_DATES = {"date_filter_start": None, "date_filter_end": None}
-KIND_WORDS = ("undelivered orders", "pending delivery", "unpaid invoices")
+KIND_WORDS = ("undelivered orders", "pending delivery")  # owner 29 Oct: unpaid is named, never offered
 KIND_QUESTION = "Undelivered orders or pending delivery?"
 MEASURE_Q = "By quantity or by amount?"
 BASIS_LABELS = {
@@ -271,7 +271,7 @@ def test_ac_ru_12_a_sales_report_by_any_axis_the_old_tool_could_not_draw_is_repo
 # ================================================================ AC-RU-11: outstanding is never defaulted
 
 
-def test_ac_ru_11_an_outstanding_ask_naming_no_kind_asks_the_three_kinds_and_runs_nothing(bot) -> None:
+def test_ac_ru_11_an_outstanding_ask_naming_no_kind_asks_the_two_kinds_and_runs_nothing(bot) -> None:
     """AC-RU-11 / P7, P12, R: order_status outstanding with a customer and no kind: no tool call, the kinds asked."""
     text, calls = bot.say(
         _status("outstanding", _customer(bot), basis=None, **NO_DATES), "outstanding for zzt rank customer"
