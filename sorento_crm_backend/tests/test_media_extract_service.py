@@ -1180,7 +1180,7 @@ def test_image_lane_on_gemini_uses_the_gemini_key_column_and_its_own_default_mod
 
         assert isinstance(provider, GeminiProvider)
         assert provider_name == "gemini"
-        assert model_name == "gemini-2.5-flash"
+        assert model_name == "gemini-3.5-flash"
         assert provider.api_key == "ZZT-gemini-key"
 
 
@@ -1723,7 +1723,7 @@ def test_image_lane_never_inherits_the_assistants_model_across_providers():
         )
 
         assert provider_name == "gemini"
-        assert model_name == "gemini-2.5-flash"
+        assert model_name == "gemini-3.5-flash"
 
 
 def test_image_lane_inherits_the_assistants_model_when_the_provider_matches():

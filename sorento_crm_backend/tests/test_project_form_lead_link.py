@@ -171,16 +171,33 @@ def api():
 _REGISTER_CUSTOMER: dict = {}
 
 
+def _create_lead(client, **overrides):
+    # LEAD-GOVERNS-REGISTER B1: a lead carries a customer, so every test lead gets the
+    # fixture's customer unless a test names its own.
+    payload = {"title": _title("Lead"), "customer_id": _REGISTER_CUSTOMER["id"]}
+    payload.update(overrides)
+    return client.post(LEADS_BASE, json=payload)
+
+
 def _register(client, **overrides):
+    """Register a project. LEAD-GOVERNS-REGISTER E1: a project needs its lead, so unless the
+    test passes `lead_id` a filler lead (the fixture's customer) is created for it first."""
     payload = {"title": _title("Project"), "customer_id": _REGISTER_CUSTOMER["id"]}
     payload.update(overrides)
+    payload = {k: v for k, v in payload.items() if v is not None}  # None = leave the key out
+    if "lead_id" not in payload:
+        filler = _create_lead(client)
+        assert filler.status_code == 201, filler.text
+        payload["lead_id"] = filler.json()["id"]
     return client.post(f"{PROJECTS_BASE}/", json=payload)
 
 
-def _create_lead(client, **overrides):
-    payload = {"title": _title("Lead")}
-    payload.update(overrides)
-    return client.post(LEADS_BASE, json=payload)
+def _register_without_lead(client, **overrides):
+    """A project that ends up with no lead, the shape of one registered before the rule:
+    registered with a filler lead, then unlinked through the edit route."""
+    made = _register(client, **overrides)
+    assert made.status_code == 201, made.text
+    return client.put(f"{PROJECTS_BASE}/{made.json()['id']}", json={"lead_id": None})
 
 
 # --------------------------------------------------------- register / update basics
@@ -211,7 +228,7 @@ def test_register_with_a_lead_id_links_it_and_stamps_admin_ref(api):
 def test_update_links_a_lead_and_marks_it_qualified(api):
     """AC-PF052."""
     client, db, _company_id, _user_id = api
-    project = _register(client).json()
+    project = _register_without_lead(client).json()
     lead = _create_lead(client).json()
 
     response = client.put(
@@ -241,7 +258,7 @@ def test_linking_a_lead_another_project_already_carries_is_refused_on_update(api
     lead = _create_lead(client).json()
     incumbent = _register(client, lead_id=lead["id"]).json()
 
-    challenger = _register(client).json()
+    challenger = _register_without_lead(client).json()
 
     response = client.put(
         f"{PROJECTS_BASE}/{challenger['id']}", json={"lead_id": lead["id"]}

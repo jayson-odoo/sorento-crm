@@ -53,7 +53,7 @@ from ._sample_request_seed import make_customer, second_company, sorento
 __all__ = [
     "ALL", "APPROVE", "MANAGE", "STAFF", "LIST", "AI_EXTRACT", "SUBMIT", "VIEW", "VIEW_OWN", "EDIT",
     "as_contact", "as_user", "developer", "project", "project_type", "uid", "v2",
-    "title", "register_body", "save_draft", "submit_new", "submit_existing", "approve_as_manager",
+    "title", "register_body", "seed_lead", "save_draft", "submit_new", "submit_existing", "approve_as_manager",
     "reject_as_manager", "notes", "channels_of", "approved_project", "email_jobs",
 ]
 
@@ -169,20 +169,48 @@ def v2(monkeypatch):
 # ------------------------------------------------------------------ bodies and calls
 
 
-def register_body(w, **over) -> dict:
+def seed_lead(w, user: str, customer_id=None):
+    """A lead of `user`'s own, straight in the database (LEAD-GOVERNS-REGISTER E1: a register
+    call needs a lead). It has NO customer unless one is given, so the register body's own
+    `customer_id` is the one the project stores and the lead then takes (E3)."""
+    from app.models.projects import ProjectLead
+    from app.services.project_clash_service import normalise_project_title
+
+    text = f"CONTOH Lead {uuid.uuid4().hex}"
+    row = ProjectLead(
+        id=uid(),
+        company_id=w.company_id,
+        lead_code=f"ZZT-L{uuid.uuid4().hex[:12]}",
+        title=text,
+        normalised_title=normalise_project_title(text),
+        customer_id=customer_id,
+        owner_user_id=user,
+        created_by=user,
+        outcome="open",
+    )
+    w.db.add(row)
+    w.db.flush()
+    return row
+
+
+def register_body(w, *, user: str | None = None, no_lead: bool = False, **over) -> dict:
+    """A register body. Unless `no_lead` or an explicit `lead_id`, it carries a fresh lead of
+    `user` (default: the staff owner), so the project can be registered under the lead rule."""
     body = {"title": title(), "customer_id": w.customer.id}
     body.update(over)
+    if not no_lead and "lead_id" not in body:
+        body["lead_id"] = seed_lead(w, user or w.owner).id
     return {k: v for k, v in body.items() if v is not None}
 
 
 def save_draft(w, user: str, **over):
-    body = register_body(w, **over)
+    body = register_body(w, user=user, **over)
     body["submit"] = False
     return as_user(w, user).post(LIST, json=body)
 
 
 def submit_new(w, user: str, **over):
-    body = register_body(w, **over)
+    body = register_body(w, user=user, **over)
     body["submit"] = True
     return as_user(w, user).post(LIST, json=body)
 

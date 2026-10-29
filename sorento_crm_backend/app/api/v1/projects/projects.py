@@ -408,8 +408,19 @@ def register_project(
 
         from app.services import project_registration_service as registrations
 
-        registrations.require_customer(payload.customer_id)
-        svc.check_company_refs(db, company_id, {"customer_id": payload.customer_id})
+        from app.services import project_lead_service as leads
+
+        registrations.require_lead(payload.lead_id)
+        lead = leads.lead_for_registration(
+            db,
+            payload.lead_id,
+            actor_user_id=current_user["id"],
+            own_leads_only=False,
+            permissions=permissions,
+        )
+        customer_id = leads.customer_from_lead(lead, payload.customer_id)
+        registrations.require_customer(customer_id)
+        svc.check_company_refs(db, company_id, {"customer_id": customer_id})
 
         owner = payload.owner_user_id
         if owner and owner != current_user["id"] and MANAGE not in permissions:
@@ -423,6 +434,7 @@ def register_project(
 
         body = payload.model_dump(exclude_unset=True)
         details = {k: v for k, v in body.items() if k in _PROFILE_KEYS}
+        details["customer_id"] = customer_id
 
         project = svc.register_project(
             db,
@@ -435,18 +447,15 @@ def register_project(
             owner_user_id=owner,
             details=details,
         )
-        if payload.lead_id:
-            # Same transaction as the registration: a refused link rolls the project
-            # back with it, so no project is left without the lead it was meant to carry.
-            from app.services.project_lead_service import set_project_lead
-
-            set_project_lead(
-                db,
-                project,
-                payload.lead_id,
-                actor_user_id=current_user["id"],
-                permissions=permissions,
-            )
+        # Same transaction as the registration: a refused link rolls the project
+        # back with it, so no project is left without the lead it was meant to carry.
+        leads.set_project_lead(
+            db,
+            project,
+            payload.lead_id,
+            actor_user_id=current_user["id"],
+            permissions=permissions,
+        )
         db.commit()
         db.refresh(project)
         return svc.serialize_project(

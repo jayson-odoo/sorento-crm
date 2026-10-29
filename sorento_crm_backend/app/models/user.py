@@ -605,6 +605,12 @@ class SystemSetting(Base):
     # and shipping a paid model switched on by default is not a decision this
     # feature gets to make on an operator's behalf.
     media_image_degraded_model = Column(Text, nullable=True)
+    # The PO / delivery schedule document reader (`document_extraction`). Same shape as
+    # the image pair above. NULL falls back to DOCUMENT_AI_PROVIDER / DOCUMENT_AI_MODEL;
+    # migration po_read_0001 seeds gemini / gemini-3.5-flash so prod never depends on
+    # the env for it (29 Oct 2026: a new Google key 404s on gemini-2.5-flash).
+    document_ai_provider = Column(Text, nullable=True)
+    document_ai_model = Column(Text, nullable=True)
     media_transcribe_model = Column(Text, nullable=False, server_default="whisper-1", default="whisper-1")
     # Voice's own degraded tier, and it ships NULL and UNSEEDED on purpose. The
     # image tiers were measured (PLAN section 14.1) so migration 358 seeds them;
@@ -777,6 +783,10 @@ class SystemSetting(Base):
     chatbot_parser_reasoning_effort = Column(
         String(16), nullable=False, server_default="off", default="off"
     )
+    # PARSER-MAX-TOKENS: the parser's answer budget in output tokens (Settings > Chatbot), on every
+    # provider; held to 1024-32768 on read (`head/parser.max_output_tokens_setting`) and on write (the
+    # settings API). Read per parse, so a change reaches the next turn.
+    chatbot_parser_max_output_tokens = Column(Integer, nullable=False, server_default="8192", default=8192)
 
 
 class UserQuickAccess(Base):

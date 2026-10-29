@@ -88,17 +88,23 @@ def test_rw4_a_pending_project_never_blocks_a_staff_registration_of_the_same_tit
     project(world.db, world.company_id, "Setia Alam Phase 3C", developer_party=dev, approval_state="rejected")
     from ._sample_request_seed import make_customer
 
+    from ._lead_governs_register_support import staff_lead
+
     customer_id = make_customer(world.db, world.company_id).id
+    lead_a = staff_lead(world.db, world.company_id, world.staff, customer_id)
+    lead_b = staff_lead(world.db, world.company_id, world.staff, customer_id)
     world.db.commit()
     c = as_user(world, world.staff)
     same = c.post(
         f"{STAFF}/",
-        json={"title": "Setia Alam Phase 3B", "developer_party_id": dev.id, "customer_id": customer_id},
+        json={"title": "Setia Alam Phase 3B", "developer_party_id": dev.id, "customer_id": customer_id,
+              "lead_id": lead_a},
     )
     assert same.status_code == 201, same.text
     near = c.post(
         f"{STAFF}/",
-        json={"title": "setia alam ph 3c", "developer_party_id": dev.id, "customer_id": customer_id},
+        json={"title": "setia alam ph 3c", "developer_party_id": dev.id, "customer_id": customer_id,
+              "lead_id": lead_b},
     )
     assert near.status_code == 201, near.text
 
