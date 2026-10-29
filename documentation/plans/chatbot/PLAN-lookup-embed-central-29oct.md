@@ -1,6 +1,6 @@
 # PLAN: LOOKUP-EMBED-CENTRAL - one source per lookup list, one lookup-vector table, one screen to see them
 
-Status: CARD + MOCK v1 filed for the owner (29 Oct 2026). No code. Track: L (new table + migration, new screen).
+Status: CARD + MOCK v2 filed for the owner (29 Oct 2026; v2 answers the owner's Lavish note on v1). No code. Track: L (new table + migration, new screen).
 Build starts only after the owner answers Q1-Q5 and approves the mock
 (`documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`).
 
@@ -61,8 +61,21 @@ Vectors:
   `app/main.py:416`); a turn embeds missing texts lazily inside a 3 s budget (`EMBED_TIMEOUT`, `lookup_lists.py:89`).
 - Embedder = production label of prompt key `chatbot_lookup_embedder` (`lookup_lists.py:87`, `:1245-1257`); Gemini
   sized down to 1536 dims (`:914`), 100 texts per request (`:912`), 429 retry waits 15/30/60 s (`:919`).
-- Meaning floors are per LIST, calibrated on text-embedding-3-small (`lookup_lists.py:46-50`, read at `:287`,
-  `:381`); they apply unchanged to gemini-embedding-001.
+- Two matchers, both comparing a phrase with EVERY text of a row (`LookupRow.texts`, `lookup_lists.py:124-135`):
+  label, code, class label, alias column words, alias set words, attachment type description words (built by the
+  loaders above); the best text wins.
+  - Span path (prompt marker LOOKUP SPANS, `engine.py:1414-1446`): the span model names the phrase, then
+    `list_resolver.resolve` (`head/list_resolver.py:344-420`) scores each row on exact (folded text equal, 1.000),
+    spelling (trigram similarity, `:286`), partial (IDF-weighted share of the phrase's words a row word matches,
+    `:290-305`) and vector (cosine, `:310-330`, any model). A row passes when ANY signal reaches its list floor
+    (spelling / partial `FLOORS` `:43-54`; vector per model, gemini-embedding-001 table `:59-63`: category 0.70,
+    file_type 0.65, sales_channel 0.65, brand 0.60, customer 0.75 ...); its score is the strongest signal; rows
+    within 0.03 make the phrase ambiguous (`:77`). The span model may also hand an English form, tried first (`:350-360`).
+  - Fallback / LOOKUP LISTS path (`engine.py:1274`, `lookup_lists.shortlist` `:349-396`): spelling + vector, but
+    vector only for text-embedding-3-small (`lookup_lists.py:310`); with gemini it is spelling only. Its floors
+    (`:46-50`) are 3-small ones.
+  - Chinese words have no ASCII trigrams (`lookup_lists.py:160-163`): 零售 / 马桶 match by exact word or vector only.
+  - Which marker prod's parser prompt carries: UNVERIFIED in this lane (SPAN-PASS-PROD lane owns it).
 - RAG tables `embedding_documents` / `embedding_chunks` (`app/models/embeddings.py:72-150`): document chunks of
   business records, `document_id` FK NOT NULL, `is_current` / `superseded_at` versioning, `company_id`,
   `Vector(1536)`; fed by `embedding_queue` (`:29-62`). Different lifecycle from lookup words.
@@ -71,31 +84,30 @@ Dev sizes (sorento_cagent_stack, 15 Oct dev copy, read-only, 29 Oct): 114 catego
 11 class labels and 44 `product_type` values as type rows; 22 attachment types, of which the file type loader offers 8
 (the `chatbot_prompt_vars.py:322-331` filter: product-carried or unused) plus 1 certificate kind; 12 brands, 71
 warehouses, 114 sales agents (23 with aliases), 5,864 customers, 53 spec keys. Category + file type + sales channel
-rows = 438 distinct texts.
+rows = 438 distinct texts (502 with the 55 type rows + the certificate kind).
 
 ## Real examples (dev data, cached gemini-embedding-001 vectors, no API call made)
 
 Vectors: `crew/state/eval/eem/s3/vec_store` (gemini-embedding-001, 1536 dims, written by the EEM S3 gate on the org
-key, 27 Oct); 359 of the 438 category / file type / sales channel texts have one. Rows rebuilt from
-sorento_cagent_stack exactly as the loaders build them (generator: the mock's own script, numbers below are its
-output). Score = cosine of the phrase to the row's nearest text.
+key, 27 Oct); 422 of the 502 category / type / file type / sales channel texts have one. Rows rebuilt from
+sorento_cagent_stack as the loaders build them; scores computed by the LIVE span resolver code (`list_resolver`
+`resolve`, `_score_list`, `_meaning_scores`, gemini floors) fed those vectors (mock v2 generator).
 
-| Phrase | Top row (list) | Score | Nearest text (its home) | Next row | Score |
-|---|---|---|---|---|---|
-| 马桶 | SRT-WC, M-WC, IDC-WC, CB-WC, BRT-WC (category, class Water Closet) | 1.000 | 马桶 (search_synonyms) | - | - |
-| smart toilet | the 5 Water Closet categories | 0.759 | 马桶 (search_synonyms) | SRT-UB (class Urinal) | 0.675 |
-| mixer tap | SRT-FT, M-FT, CB-FT, BRT-FT (category, class Tap) | 0.825 | water tap (search_synonyms) | BRT-SH / CB-SH via "hand shower" | 0.683 |
-| high resolution photo | Product Photos (file type) | 0.708 | Photo (description word) | Combo Image | 0.601 |
-| project | project (sales channel) | 1.000 | project (code constant) | Product Photos via "picture" (alias set); MISC (category) | 0.620; 0.600 |
-| dealer | dealer (sales channel) | 1.000 | dealer (code constant) | DISPLAY (category) | 0.585 |
-| 零售 / retail | no vector cached; the dealer row's only text is "dealer" | - | - | - | - |
+| Phrase | Verdict | Spelling (text) / floor | Vector (text) / floor | Notes |
+|---|---|---|---|---|
+| smart toilet | ambiguous: 5 Water Closet categories + class row Water Closet (+1) | 0.538 (toilet, alias column) / 0.40 | 0.759 (马桶, alias column) / 0.70 | passes by vector |
+| toilit (typo) | ambiguous: 5 Water Closet categories, Toilet brush, Toilet seat | 0.400 (toilet) / 0.40 | none cached | passes by partial 0.83 (one edit) |
+| mixer tap | resolved: Mixer tap (product_type row) by exact 1.000 | 1.000 / 0.40 | 0.991 / 0.70 | Kitchen tap 0.838, Shower tap 0.825 pass by vector but are 0.16 behind |
+| high resolution photo | resolved: Product Photos by vector 0.708 | 0.273 (Photo, description word) / 0.50 | 0.708 (Photo) / 0.65 | Combo Image 0.601 fails |
+| project | resolved: sales channel project by exact 1.000 | 1.000 | - | Product Photos 0.620 < 0.65, MISC 0.600 < 0.70: fail |
+| 零售 | unresolved | 0 (no trigrams) | none cached | dealer row's only text is "dealer" |
 
 Findings the screen makes visible:
-- "零售" / "retail" can only reach dealer by meaning today (no alias home for sales channel). With a
-  `sales_channel_alias` option (dealer <- retail, 零售) they match by spelling at 1.000, no meaning needed.
-- Gemini's unrelated pairs land at 0.59-0.62 (project -> Product Photos 0.620 > file_type floor 0.59; project ->
-  MISC 0.600, dealer -> DISPLAY 0.585 > category floor 0.55): the 3-small floors are low for gemini. Out of scope
-  here (a separate floor re-score lane), but the screen shows score vs floor per row so it is seen.
+- "零售" / "retail" can only reach dealer by vector today (no alias home for sales channel). With a
+  `sales_channel_alias` option (dealer <- retail, 零售) they resolve exact at 1.000, no vector needed.
+- CORRECTION of v1: v1 showed the 3-small floors (`lookup_lists.py:46-50`) and claimed gemini noise clears them.
+  The span path uses the gemini floors (`list_resolver.py:59-63`): project -> Product Photos 0.620 and MISC 0.600
+  FAIL there. No floor re-score lane is needed on this evidence.
 - PROMPT_SYNONYMS barely reaches dev rows: entries match a row by exact label (`lookup_lists.py:498-500`). Category
   keys: "water closet" and "kitchen sink" match class rows; "water tap" matches nothing (the class is "Tap"). File type
   keys photo / image / video / drawing / technical drawing / 3d model / certificate match no dev type name
@@ -155,10 +167,13 @@ re-embeds in the background; until it completes, turns embed their own misses as
 ### Screen (mock: `documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`)
 
 `System > Lookup Words` (`/master-data-management/lookup-words`, beside Lookup Sets, permission
-`master_data.lookup_sets.view`). Header: embedder model + coverage ("359 / 438 texts with a vector"), one CTA
-"Embed missing". Line tabs per list. DataGrid per list: row label, source table, words (chips coloured by home:
-name/code, alias column, alias set), vector status. Card "Try a phrase": nearest rows with score, list floor and
-whether the span pass would offer it. No 2-D plot (Q4).
+`master_data.lookup_sets.view`). Header: embedder model + coverage ("422 / 502 texts with a vector"), one CTA
+"Embed missing". Line tabs per list. DataGrid per list: row label, source table, words grouped by home
+(Label, Alias column, Alias set, Description words), each with a vector dot, vector status. Card "Try a phrase"
+(v2): the resolver's verdict (resolved / ambiguous / unresolved), then per candidate row the spelling score + the
+text it was spelt like, the vector (cosine) score + the nearest text, each text's home, partial, the list's floors
+and pass/fail with the winning signal. It runs the span resolver on the phrase as typed (no span model call; one
+embed call for a phrase with no vector). No 2-D plot (Q4).
 
 ### Edge cases
 
