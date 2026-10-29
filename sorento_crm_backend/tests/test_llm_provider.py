@@ -1523,13 +1523,6 @@ def test_gemini_reports_the_answering_model_and_reasoning_tokens(monkeypatch):
     assert result.model == "gemini-3.5-flash-lite-001"
 
 
-def test_anthropic_accepts_reasoning_effort_and_ignores_it(monkeypatch):
-    stub = _StubAnthropicClient()
-    monkeypatch.setattr(AnthropicProvider, "_client", lambda self, **_k: stub)
-    AnthropicProvider("k").chat([{"role": "user", "content": "hi"}], reasoning_effort="low")
-    assert "reasoning_effort" not in stub.last_kwargs
-
-
 def test_a_refused_effort_value_is_not_remembered_against_the_model(monkeypatch):
     """`minimal` on a model that takes other efforts is a 400 `unsupported_value`. That is
     a fact about the VALUE, so the next call (another effort, or the same after the label
@@ -1591,3 +1584,235 @@ def test_a_model_that_takes_no_effort_is_remembered_and_not_asked_again(monkeypa
     provider.chat([{"role": "user", "content": "hi"}], reasoning_effort="low")
     assert len(refusals) == 1
     assert "reasoning_effort" not in stub.last_kwargs
+
+
+# ---- AGENTIC-P0-PROVIDER: native continuation + Anthropic reasoning effort ----
+
+# Opaque bytes the provider hands out; they must go back exactly as received.
+_SIG = "c2lnbmVkLWJ5LWdlbWluaQ=="
+
+
+def _gemini_signed_calls_response() -> dict:
+    """Gemini 3 signs the first function call of a step; a parallel call carries none."""
+    return {
+        "candidates": [
+            {
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {"functionCall": {"name": "stock_balance", "args": {"code": "SRTKS6647"}}, "thoughtSignature": _SIG},
+                        {"functionCall": {"name": "stock_balance", "args": {"code": "SRTKS6648"}}},
+                    ],
+                },
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {"promptTokenCount": 11, "candidatesTokenCount": 5, "totalTokenCount": 16},
+    }
+
+
+def _echo(result: ChatResult) -> dict:
+    """The assistant message a tool loop appends after a tool-calling round."""
+    return {
+        "role": "assistant",
+        "content": result.content or "",
+        "tool_calls": [
+            {
+                "id": call["id"],
+                "type": "function",
+                "function": {"name": call["name"], "arguments": json.dumps(call["arguments"])},
+            }
+            for call in result.tool_calls
+        ],
+        "continuation": result.continuation,
+    }
+
+
+def test_gemini_returns_a_signed_function_call_turn_as_its_continuation(monkeypatch):
+    _install(monkeypatch, _GeminiTransport(_gemini_signed_calls_response()))
+    result = GeminiProvider("k").chat([{"role": "user", "content": "stock?"}])
+    assert [c["arguments"]["code"] for c in result.tool_calls] == ["SRTKS6647", "SRTKS6648"]
+    assert result.continuation == {
+        "provider": "gemini",
+        "parts": _gemini_signed_calls_response()["candidates"][0]["content"]["parts"],
+    }
+
+
+def test_gemini_sends_the_thought_signature_back_with_its_function_call(monkeypatch):
+    t = _install(monkeypatch, _GeminiTransport(_gemini_signed_calls_response()))
+    provider = GeminiProvider("k")
+    first = provider.chat([{"role": "user", "content": "stock?"}])
+    t.payload = _gemini_text_response()
+    provider.chat(
+        [
+            {"role": "user", "content": "stock?"},
+            _echo(first),
+            {"role": "tool", "tool_call_id": first.tool_calls[0]["id"], "content": json.dumps({"on_hand": 12})},
+            {"role": "tool", "tool_call_id": first.tool_calls[1]["id"], "content": json.dumps({"on_hand": 0})},
+        ]
+    )
+    contents = t.body["contents"]
+    assert contents[1] == {
+        "role": "model",
+        "parts": _gemini_signed_calls_response()["candidates"][0]["content"]["parts"],
+    }
+    # The responses are still keyed by the NAME of the call they answer.
+    assert contents[2]["parts"] == [{"functionResponse": {"name": "stock_balance", "response": {"on_hand": 12}}}]
+    assert contents[3]["parts"] == [{"functionResponse": {"name": "stock_balance", "response": {"on_hand": 0}}}]
+
+
+def test_gemini_without_a_signature_has_no_continuation(monkeypatch):
+    unsigned = _gemini_signed_calls_response()
+    del unsigned["candidates"][0]["content"]["parts"][0]["thoughtSignature"]
+    _install(monkeypatch, _GeminiTransport(unsigned))
+    assert GeminiProvider("k").chat([{"role": "user", "content": "stock?"}]).continuation is None
+
+
+def test_gemini_rebuilds_a_turn_whose_continuation_belongs_to_another_provider():
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "stock_balance", "arguments": "{}"}}],
+        "continuation": {"provider": "anthropic", "content": [{"type": "thinking", "thinking": "", "signature": "s"}]},
+    }
+    assert _convert_messages_to_gemini([message]) == [
+        {"role": "model", "parts": [{"functionCall": {"name": "stock_balance", "args": {}}}]}
+    ]
+
+
+class _AntThinkingBlock:
+    def __init__(self, thinking: str, signature: str) -> None:
+        self.type = "thinking"
+        self.thinking = thinking
+        self.signature = signature
+
+
+class _AntRedactedThinkingBlock:
+    def __init__(self, data: str) -> None:
+        self.type = "redacted_thinking"
+        self.data = data
+
+
+def _anthropic_call(monkeypatch, **chat_kwargs) -> tuple[dict, ChatResult]:
+    stub = _StubAnthropicClient()
+    monkeypatch.setattr(AnthropicProvider, "_client", lambda self, **_k: stub)
+    result = AnthropicProvider("k").chat([{"role": "user", "content": "hi"}], **chat_kwargs)
+    return stub.last_kwargs, result
+
+
+def test_anthropic_without_an_effort_sends_what_it_always_did(monkeypatch):
+    kwargs, result = _anthropic_call(monkeypatch, model="claude-sonnet-4-6", temperature=0.0, max_tokens=2048)
+    assert "thinking" not in kwargs and "output_config" not in kwargs
+    assert kwargs["temperature"] == 0.0 and kwargs["max_tokens"] == 2048
+    assert result.continuation is None
+
+
+@pytest.mark.parametrize(
+    "model", ["claude-sonnet-4-6", "claude-opus-4-8", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-1"]
+)
+def test_claude_4_6_and_later_take_an_effort_as_adaptive_thinking(monkeypatch, model):
+    kwargs, _ = _anthropic_call(monkeypatch, model=model, temperature=0.0, max_tokens=2048, reasoning_effort="medium")
+    assert kwargs["thinking"] == {"type": "adaptive"}
+    assert kwargs["output_config"] == {"effort": "medium"}
+    # Thinking refuses a set temperature; its room is added to the answer budget, not taken from it.
+    assert "temperature" not in kwargs
+    assert kwargs["max_tokens"] > 2048
+
+
+def test_claude_4_6_takes_no_effort_as_low_effort_without_thinking(monkeypatch):
+    kwargs, _ = _anthropic_call(monkeypatch, model="claude-sonnet-4-6", temperature=0.0, max_tokens=2048, reasoning_effort="none")
+    assert "thinking" not in kwargs
+    assert kwargs["output_config"] == {"effort": "low"}
+    assert kwargs["max_tokens"] == 2048
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-opus-4-20250514", "claude-3-7-sonnet-20250219"],
+)
+def test_older_claude_takes_an_effort_as_a_thinking_budget(monkeypatch, model):
+    budgets = []
+    for effort in ("low", "medium", "high"):
+        kwargs, _ = _anthropic_call(monkeypatch, model=model, temperature=0.0, max_tokens=2048, reasoning_effort=effort)
+        assert kwargs["thinking"]["type"] == "enabled"
+        budget = kwargs["thinking"]["budget_tokens"]
+        assert budget >= 1024  # the smallest budget Anthropic takes
+        assert kwargs["max_tokens"] == 2048 + budget
+        assert "temperature" not in kwargs and "output_config" not in kwargs
+        budgets.append(budget)
+    assert budgets == sorted(budgets) and budgets[0] < budgets[-1]
+
+
+def test_older_claude_takes_no_effort_as_no_thinking(monkeypatch):
+    kwargs, _ = _anthropic_call(monkeypatch, model="claude-haiku-4-5", temperature=0.0, max_tokens=2048, reasoning_effort="minimal")
+    assert "thinking" not in kwargs and "output_config" not in kwargs
+    assert kwargs["temperature"] == 0.0 and kwargs["max_tokens"] == 2048
+
+
+def test_anthropic_refuses_an_effort_it_cannot_honour(monkeypatch):
+    stub = _StubAnthropicClient()
+    monkeypatch.setattr(AnthropicProvider, "_client", lambda self, **_k: stub)
+    provider = AnthropicProvider("k")
+    # Thinking is refused alongside a forced tool, which is how structured output works here.
+    with pytest.raises(ValueError):
+        provider.chat(
+            [{"role": "user", "content": "hi"}],
+            model="claude-sonnet-4-6",
+            json_schema={"type": "object", "properties": {}},
+            reasoning_effort="low",
+        )
+    with pytest.raises(ValueError):
+        provider.chat([{"role": "user", "content": "hi"}], model="claude-sonnet-4-6", reasoning_effort="turbo")
+    assert stub.last_kwargs is None  # neither reached the API
+
+
+def test_anthropic_replays_its_thinking_blocks_verbatim_in_a_tool_loop(monkeypatch):
+    stub = _StubAnthropicClient()
+    stub.messages._next = _AntResponse(
+        content=[
+            _AntThinkingBlock("weigh the stock codes", "sig-1"),
+            _AntRedactedThinkingBlock("ZW5jcnlwdGVk"),
+            _AntTextBlock("checking"),
+            _AntToolUseBlock("toolu_1", "stock_balance", {"code": "SRTKS6647"}),
+        ],
+        usage=_AntUsage(3, 4),
+    )
+    monkeypatch.setattr(AnthropicProvider, "_client", lambda self, **_k: stub)
+    provider = AnthropicProvider("k")
+    tools = [{"type": "function", "function": {"name": "stock_balance", "parameters": {"type": "object"}}}]
+    first = provider.chat([{"role": "user", "content": "stock?"}], model="claude-sonnet-4-6", tools=tools, reasoning_effort="medium")
+
+    assert first.content == "checking"  # thinking never surfaces as the answer
+    native = [
+        {"type": "thinking", "thinking": "weigh the stock codes", "signature": "sig-1"},
+        {"type": "redacted_thinking", "data": "ZW5jcnlwdGVk"},
+        {"type": "text", "text": "checking"},
+        {"type": "tool_use", "id": "toolu_1", "name": "stock_balance", "input": {"code": "SRTKS6647"}},
+    ]
+    assert first.continuation == {"provider": "anthropic", "content": native}
+
+    provider.chat(
+        [
+            {"role": "user", "content": "stock?"},
+            _echo(first),
+            {"role": "tool", "tool_call_id": "toolu_1", "content": json.dumps({"on_hand": 12})},
+        ],
+        model="claude-sonnet-4-6",
+        tools=tools,
+        reasoning_effort="medium",
+    )
+    sent = stub.last_kwargs["messages"]
+    assert sent[1] == {"role": "assistant", "content": native}
+    assert sent[2]["content"][0]["tool_use_id"] == "toolu_1"
+
+
+def test_anthropic_rebuilds_a_turn_whose_continuation_belongs_to_another_provider():
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "stock_balance", "arguments": "{}"}}],
+        "continuation": {"provider": "gemini", "parts": [{"functionCall": {"name": "x", "args": {}}, "thoughtSignature": "s"}]},
+    }
+    assert _convert_messages_to_anthropic([message]) == [
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "c1", "name": "stock_balance", "input": {}}]}
+    ]
