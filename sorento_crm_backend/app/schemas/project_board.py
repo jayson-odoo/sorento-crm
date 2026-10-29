@@ -676,6 +676,8 @@ class BoardContribution(BaseModel):
     #: it sits in has not ended, so the bucket flag alone would undercount it.
     is_past: bool = False
     fulfilment_location: Optional[str] = None
+    #: That warehouse's own name, for the List view's Location tooltip (PLAN-SO-LOCATION).
+    fulfilment_location_name: Optional[str] = None
     #: The same warehouse by ID, addressing only. Needed on the LINE and not merely on the
     #: sources: an amendment that reserves on a line the engine proposed nothing for has no
     #: Reserve source to read a warehouse off, and inventing one from the code would be
