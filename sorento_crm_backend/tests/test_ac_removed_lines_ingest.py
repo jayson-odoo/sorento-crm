@@ -527,7 +527,8 @@ def test_ac_rl_20_an_actioned_row_on_a_removed_so_line_is_only_flagged(env):
 
     snap = _row_snapshot(env, actioned)
     assert snap["state"] == INQUIRY_ACTIONED, snap
-    assert snap["ack_state"] == ACK_CHANGED, snap
+    # ruling (c): the mirror row holds no live link, nothing to order on a cancelled line
+    assert snap["ack_state"] == ACK_ACKNOWLEDGED, snap
 
 
 # ============================================================== guards (AC-RL-30..34)

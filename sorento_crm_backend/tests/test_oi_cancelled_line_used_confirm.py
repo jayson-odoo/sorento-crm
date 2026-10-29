@@ -480,8 +480,7 @@ def test_so_edit_cancel_flags_an_acknowledged_row_changed(db, row_state):
     line = db.get(SalesOrderLine, line.id)
     row = db.get(OrderInquiryRow, row.id)
     assert line.line_status == "cancelled"
-    assert row.ack_state == ACK_CHANGED
-    assert row.changed_at is not None
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
 @pytest.mark.parametrize(
@@ -538,9 +537,8 @@ def test_so_edit_repeated_cancel_does_not_reflag_a_reconfirmed_row(db):
     line = db.get(SalesOrderLine, line.id)
     row = db.get(OrderInquiryRow, row.id)
     assert line.line_status == "cancelled"
-    assert row.ack_state == ACK_CHANGED
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
     first_changed_at = row.changed_at
-    assert first_changed_at is not None
 
     # purchasing re-confirms
     row.ack_state = ACK_ACKNOWLEDGED
@@ -624,8 +622,7 @@ def test_autocount_cancel_push_flags_an_acknowledged_row_changed(env, row_state)
     row = env.db.get(OrderInquiryRow, row.id)
     updated_core_line = env.so_lines(header["id"])[0]
     assert updated_core_line["line_status"] == "cancelled"
-    assert row.ack_state == ACK_CHANGED
-    assert row.changed_at is not None
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
 @pytest.mark.parametrize(
@@ -684,9 +681,8 @@ def test_autocount_repeated_cancel_push_does_not_reflag_a_reconfirmed_row(env):
     env.post(INGEST_SO, [dict(record, status="cancelled")])
     env.db.expire_all()
     row = env.db.get(OrderInquiryRow, row.id)
-    assert row.ack_state == ACK_CHANGED
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
     first_changed_at = row.changed_at
-    assert first_changed_at is not None
 
     row.ack_state = ACK_ACKNOWLEDGED
     env.db.flush()
@@ -750,8 +746,7 @@ def test_autocount_leftover_referenced_line_flags_an_acknowledged_row_changed(en
         # retired like Transfer to Cancel SO, not flagged (supersedes the C1 flag here).
         assert row.state == INQUIRY_CANCELLED
     else:
-        assert row.ack_state == ACK_CHANGED
-        assert row.changed_at is not None
+        assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
 def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(env):
@@ -828,8 +823,7 @@ def test_autocount_deletion_flags_an_acknowledged_row_changed(env, row_state):
     row = env.db.get(OrderInquiryRow, row.id)
     updated_line = env.so_lines(header["id"])[0]
     assert updated_line["line_status"] == "cancelled"
-    assert row.ack_state == ACK_CHANGED
-    assert row.changed_at is not None
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
 def test_autocount_repeated_deletion_does_not_reflag_a_reconfirmed_row(env):
@@ -908,6 +902,11 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
         row_a = _oi_row(
             db, company_a, inquiry_a.id, mirror_a.id, product_a.product_code, "8",
         )
+        # a live link keeps the flag at `changed` under ruling (c), so the scope guard
+        # still tells the flipped row from the untouched one
+        allocation_a = _spo_allocation(db, company_a, product_a, qty=8)
+        _link(db, company_a, row_a.id, "8", spo_allocation_id=allocation_a.id,
+              document=allocation_a.spo_number)
 
         product_b = _product(db, f"ZZT-CLX-B-{_uid()[:6]}", f"{MARKER} company b")
         _so_b, core_line_b, _pso_b, mirror_b = _line_chain(

@@ -113,7 +113,26 @@ def _reserve_scene(worklist_api):
     dead_line = _purchase_order(db, company_id)["line"]
     dead_row = _line_row("10", 8, "R1DEAD", po_line_id=dead_line.id)
     dead_line.line_status = "cancelled"
-    bundled_row = _line_row("10", 9, "R1BUND", bundled_qty=Decimal("3"))
+    # a REAL companion rule so `derive_bundles` (run by the reserve commit below) keeps
+    # bundled_qty: 3 hosts at ratio 1 bundle 3 of the companion's 10
+    from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
+    from .test_order_inquiry_worklist import _product as _wl_product
+
+    companion_product = _wl_product(db, f"{WL_MARKER}-R1BUND", "r1 companion")
+    host_product = _wl_product(db, f"{WL_MARKER}-R1HOST", "r1 host")
+    companion_product.company_id = company_id
+    host_product.company_id = company_id
+    db.flush()
+    rule = ProductCompanionRule(
+        id=_uid(), company_id=company_id, companion_product_id=companion_product.id,
+        supplier_id=None, ratio=Decimal("1"), is_active=True,
+    )
+    db.add(rule)
+    db.flush()
+    db.add(ProductCompanionRuleHost(rule_id=rule.id, host_product_id=host_product.id))
+    db.flush()
+    _line_row("3", 11, "R1HOST")
+    bundled_row = _line_row("10", 9, "R1BUND")
     db.commit()
 
     warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}".upper())
