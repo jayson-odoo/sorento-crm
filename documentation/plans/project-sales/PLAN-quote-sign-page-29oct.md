@@ -1,8 +1,9 @@
 # PLAN: quotation sign page + PDF: logo, quotation number, one card of sections, terms checkbox, side-by-side signatures (QUOTE-SIGN-PAGE)
 
-Status: Build, fix round 1. Mock v2 approved 29 Oct 23:16; PR #1987 (draft). Red b321f58474 + 141d9daa48, fix
-6e260ce67d / 0889de7a06 / f972d2c7cd, kill-proof posted. Reviewer NOT READY (3 blockers) + security should-fix (logo
-fetch: compression, total deadline, Pillow re-encode, referrer): red tests for round 1 in progress.
+Status: Review done, owner hand test filed. PR #1987. Red-first: b321f58474, 141d9daa48, 32431af01d, 97c0f0ef04 (test
+only) before each fix; kill-proofs posted. Reviewer READY (d4f048be2e), security CLEAN (round 2), browser pass on
+d4f048be2e PASS (PDF logo needs a storage-CDN url on crew copies: their egress is blocked). Final head adds the
+logo-fetch docstring DNS note (8b002a9582).
 Track: M (feature track: changed wording and layout on an existing screen + PDF, a new required consent on the
 public accept endpoint; no migration planned, no auth/RBAC change). UAC: `quote-sign-page-29oct-acceptance-criteria.md`.
 security-reviewer joins (server fetch of the admin-entered logo URL; public accept endpoint gains a required field).
