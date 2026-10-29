@@ -2289,3 +2289,23 @@ describe('AC-AC-10b: a reserve link prints in the PO cell as "Reserved @ <code> 
     expect(within(cell).queryByRole('link')).toBeNull();
   });
 });
+
+describe('OI-AUTO-CONFIRM: a row with a PO link AND a reserve link shows both chips in the PO cell', () => {
+  it('prints the PO number and "Reserved @ BRW 3" together', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-both',
+        qty: '8',
+        linked_qty: '8',
+        links: [
+          { id: 'p1', kind: 'po', document: '202607-S0105', po_id: 'po-1', qty: '5' },
+          { id: 'r1', kind: 'reserve', document: 'Reserved @ BRW', qty: '3' },
+        ],
+      } as never),
+    ]);
+
+    const cell = screen.getByTestId('row-row-both');
+    expect(within(cell).getByText('202607-S0105')).toBeInTheDocument();
+    expect(within(cell).getByText('Reserved @ BRW 3')).toBeInTheDocument();
+  });
+});

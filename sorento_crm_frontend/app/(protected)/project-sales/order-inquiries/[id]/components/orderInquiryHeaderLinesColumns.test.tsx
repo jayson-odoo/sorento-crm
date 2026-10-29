@@ -728,9 +728,9 @@ describe('AC-ND-7 (owner ruling 26 Sep, G1): no Was / now on the line row', () =
     return column.cell({ row: { original: lineRow } });
   }
 
-  it('B1: the #1248 line State reads To confirm, per the approved mockup', () => {
+  it('B1: the #1248 line State reads To order, per the approved mockup', () => {
     render(<>{cellOf('state', case1248())}</>);
-    expect(screen.getByText('To confirm')).toBeInTheDocument();
+    expect(screen.getByText('To order')).toBeInTheDocument();
     expect(screen.queryByText('To buy')).not.toBeInTheDocument();
   });
 
@@ -1012,5 +1012,121 @@ describe('AC-AC-10b: the Lines tab PO cell prints a reserve link as "Reserved @ 
     expect(screen.getByText('Reserved @ BRW 3')).toBeInTheDocument();
     expect(screen.queryByText('-')).not.toBeInTheDocument();
     expect(screen.queryByTestId('document-detail-trigger-Reserved @ BRW')).toBeNull();
+  });
+});
+
+describe('OI-AUTO-CONFIRM (approved mock panels 2 and 3): the State column reads the status, not the supply pill', () => {
+  function stateCell(row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find((c) => (c as { id?: string }).id === 'state') as
+      | { cell: (context: unknown) => React.ReactNode }
+      | undefined;
+    expect(column).toBeDefined();
+    const [lineRow] = toLineRows(foldInquiryLines([row]));
+    return column!.cell({ row: { original: lineRow } });
+  }
+
+  it('a live awaiting line reads To order, never To buy', () => {
+    render(<>{stateCell(linesRow({ id: 's1', core_line_id: 'cl-s1', state: 'raised', ack_state: 'awaiting' }))}</>);
+    expect(screen.getByText('To order')).toBeInTheDocument();
+    expect(screen.queryByText('To buy')).not.toBeInTheDocument();
+  });
+
+  it('a part-covered awaiting line reads "To order \u00b7 8 left", not Partly on PO/SPO', () => {
+    render(
+      <>
+        {stateCell(
+          linesRow({
+            id: 's2',
+            core_line_id: 'cl-s2',
+            qty: '10',
+            state: 'partly_linked',
+            ack_state: 'awaiting',
+            links: [{ id: 'l', kind: 'po', document: 'PO-1', qty: '2' }],
+          } as never),
+        )}
+      </>,
+    );
+    expect(screen.getByText('To order \u00b7 8 left')).toBeInTheDocument();
+    expect(screen.queryByText('Partly on PO/SPO')).not.toBeInTheDocument();
+  });
+
+  it('a done line reads Done, not On PO/SPO', () => {
+    render(<>{stateCell(linesRow({ id: 's3', core_line_id: 'cl-s3', state: 'placed', ack_state: 'acknowledged' }))}</>);
+    expect(screen.getByText('Done')).toBeInTheDocument();
+    expect(screen.queryByText('On PO/SPO')).not.toBeInTheDocument();
+  });
+
+  it('a manual Done reads "Done \u00b7 manual" with who and when on hover', () => {
+    render(
+      <>
+        {stateCell(
+          linesRow({
+            id: 's4',
+            core_line_id: 'cl-s4',
+            state: 'placed',
+            ack_state: 'acknowledged',
+            ack_override: 'confirmed',
+            ack_override_by_name: 'Aisyah',
+            ack_override_at: '2026-10-13T06:05:00Z',
+          } as never),
+        )}
+      </>,
+    );
+    const text = screen.getByText('Done \u00b7 manual');
+    expect(text.getAttribute('title') ?? '').toMatch(/Confirmed by Aisyah/);
+    expect(screen.queryByText('On PO/SPO')).not.toBeInTheDocument();
+  });
+
+  it('an unconfirmed line reads "To order \u00b7 manual"', () => {
+    render(
+      <>
+        {stateCell(
+          linesRow({
+            id: 's5',
+            core_line_id: 'cl-s5',
+            state: 'raised',
+            ack_state: 'awaiting',
+            ack_override: 'unconfirmed',
+          } as never),
+        )}
+      </>,
+    );
+    expect(screen.getByText('To order \u00b7 manual')).toBeInTheDocument();
+  });
+
+  it('a rejected line reads Rejected', () => {
+    render(<>{stateCell(linesRow({ id: 's6', core_line_id: 'cl-s6', state: 'raised', ack_state: 'rejected' }))}</>);
+    expect(screen.getByText('Rejected')).toBeInTheDocument();
+    expect(screen.queryByText('To buy')).not.toBeInTheDocument();
+  });
+
+  it('a cancelled SO line keeps its Line cancelled pill', () => {
+    render(<>{stateCell(linesRow({ id: 's7', core_line_id: 'cl-s7', line_cancelled: true }))}</>);
+    expect(screen.getByText('Line cancelled')).toBeInTheDocument();
+  });
+
+  it('a line with only used rows keeps Nothing to buy', () => {
+    render(<>{stateCell(linesRow({ id: 's8', core_line_id: 'cl-s8', redirected_to_pool: true }))}</>);
+    expect(screen.getByText('Nothing to buy')).toBeInTheDocument();
+  });
+
+  it('a row with a PO link and a reserve link shows both chips in the PO cell', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find((c) => (c as { id?: string }).id === 'po_number') as {
+      cell: (context: unknown) => React.ReactNode;
+    };
+    const row = linesRow({
+      id: 'po-and-reserve',
+      qty: '8',
+      links: [
+        { id: 'p1', kind: 'po', document: '202607-S0105', po_id: 'po-1', qty: '5' },
+        { id: 'r1', kind: 'reserve', document: 'Reserved @ BRW', qty: '3' },
+      ],
+    } as never);
+    const [lineRow] = toLineRows(foldInquiryLines([row]));
+    renderWithClient(<>{column.cell({ row: { original: lineRow } })}</>);
+    expect(screen.getByText('202607-S0105')).toBeInTheDocument();
+    expect(screen.getByText('Reserved @ BRW 3')).toBeInTheDocument();
   });
 });

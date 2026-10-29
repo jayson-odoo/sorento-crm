@@ -1332,10 +1332,10 @@ describe('AC-OH-70: the Filters popover scrolls (`oi-worklist-one-header-accepta
     await screen.findByText('SO385126');
 
     openFilters();
-    // "Confirmed" also names the toolbar's own active-filter chip once one is set
+    // "Done" (was Confirmed) also names the toolbar's own active-filter chip once one is set
     // (`activeSummary`, e.g. "Confirmed: Rejected") - the popover's own FIELD label is
     // the plain `<label>` element among the matches.
-    const confirmedLabel = (await screen.findAllByText('Confirmed')).find(
+    const confirmedLabel = (await screen.findAllByText('Done')).find(
       (node) => node.tagName === 'LABEL',
     );
     expect(confirmedLabel).toBeDefined();
