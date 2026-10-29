@@ -480,6 +480,7 @@ def test_ac_lec_11_index_names_and_ddl_shape():
             assert sum(f"source_type = '{s}'" in d for d in ddl) == 1
 
 
+@pytest.mark.serial_ddl
 def test_ac_lec_10_search_current_orders_by_distance_and_uses_the_keep_set_index(db):
     from app.services import embedding_indexes
 
@@ -498,6 +499,7 @@ def test_ac_lec_10_search_current_orders_by_distance_and_uses_the_keep_set_index
     assert "Index Scan" in plan and any(n in plan for n in names), plan
 
 
+@pytest.mark.serial_ddl
 def test_ac_lec_11_attachment_filtered_read_uses_its_index_and_returns_five_of_five(db):
     from app.services import embedding_indexes
 
@@ -515,6 +517,7 @@ def test_ac_lec_11_attachment_filtered_read_uses_its_index_and_returns_five_of_f
     assert attach and any(n in plan for n in attach), plan
 
 
+@pytest.mark.serial_ddl
 def test_ac_lec_11_non_hot_filtered_read_returns_five_of_five_by_iterative_scan(db):
     _create_indexes(db)
     # promotion is 30% of the rows and far from the query; the keep-set index alone would return none.

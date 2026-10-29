@@ -395,7 +395,9 @@ def test_rag_phrase_never_returns_a_master_less_debtor_under_a_company_scope(db,
     code = _seed_debtor(db, world)
     set_company_scope(db, frozenset({world["a"]}))
     hits = er._rag_resolve_phrase(db, f"zzt3 debtor {world['suffix']}", frozenset({"promotion"}))
-    assert code not in {h.canonical_code for h in hits}
+    # The seed's key comes back as `debtor:<code>` (no customer entity maps it), so that is what must be absent;
+    # asserting the bare code was vacuous and stayed green with the exclusion removed (review R4).
+    assert f"debtor:{code}" not in {h.canonical_code for h in hits}
     assert f"ZZT3CA{world['suffix']}" in {h.canonical_code for h in hits}
 
 
@@ -403,7 +405,9 @@ def test_rag_phrase_never_returns_a_master_less_debtor_under_unset_scope(db, wor
     code = _seed_debtor(db, world)
     set_company_scope(db, UNSET)
     hits = er._rag_resolve_phrase(db, f"zzt3 debtor {world['suffix']}", frozenset({"promotion"}))
-    assert code not in {h.canonical_code for h in hits}
+    # The seed's key comes back as `debtor:<code>` (no customer entity maps it), so that is what must be absent;
+    # asserting the bare code was vacuous and stayed green with the exclusion removed (review R4).
+    assert f"debtor:{code}" not in {h.canonical_code for h in hits}
 
 
 def test_rag_phrase_still_returns_a_master_less_debtor_to_staff(db, world):
