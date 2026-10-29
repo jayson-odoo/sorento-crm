@@ -44,15 +44,16 @@ def test_h1_a_limited_reader_lists_only_their_own_leads(v2):
     owned, made, theirs = _three_leads(v2)
     res = as_user(v2, v2.sub_a).get(LEADS)
     assert res.status_code == 200, res.text
-    assert ids_of(res) == {owned.id, made.id}
-    assert res.json()["pagination"]["total"] == 2
+    # Own = owner_user_id only (security M2): the lead A created but B owns is not A's.
+    assert ids_of(res) == {owned.id}
+    assert res.json()["pagination"]["total"] == 1
 
 
 def test_h1_the_total_and_filters_stay_inside_the_own_set(v2):
     owned, made, theirs = _three_leads(v2)
     page = as_user(v2, v2.sub_a).get(LEADS, params={"limit": 1})
     assert page.status_code == 200, page.text
-    assert page.json()["pagination"]["total"] == 2
+    assert page.json()["pagination"]["total"] == 1
     assert len(page.json()["data"]) == 1
 
     search = as_user(v2, v2.sub_a).get(LEADS, params={"query": "Only B"})
@@ -62,7 +63,7 @@ def test_h1_the_total_and_filters_stay_inside_the_own_set(v2):
 
     by_owner = as_user(v2, v2.sub_a).get(LEADS, params={"owner_user_id": v2.sub_b})
     assert by_owner.status_code == 200, by_owner.text
-    assert ids_of(by_owner) == {made.id}
+    assert ids_of(by_owner) == set()
 
 
 def test_h1_a_view_only_to_own_reader_without_submit_lists_own_leads(v2):
@@ -84,11 +85,11 @@ def test_h1_holding_neither_slug_is_403(v2):
     assert as_user(v2, v2.nobody).get(LEADS).status_code == 403
 
 
-def test_h2_a_limited_reader_opens_their_own_lead_and_one_they_created(v2):
+def test_h2_a_limited_reader_opens_their_own_lead_but_not_one_they_only_created(v2):
     owned, made, theirs = _three_leads(v2)
     client = as_user(v2, v2.sub_a)
     assert client.get(f"{LEADS}/{owned.id}").status_code == 200
-    assert client.get(f"{LEADS}/{made.id}").status_code == 200
+    assert client.get(f"{LEADS}/{made.id}").status_code == 404
 
 
 def test_h2_anyone_elses_lead_is_a_404_for_a_limited_reader(v2):
@@ -253,6 +254,23 @@ def test_e6_a_lead_that_is_not_theirs_is_a_404_lead_not_found(v2, submit):
     assert projects_titled(v2, name) == 0
 
 
+@pytest.mark.parametrize("step", ["draft", "submit", "submit_existing"])
+def test_e6_a_lead_they_created_but_do_not_own_is_a_404(v2, step):
+    made = lead_row(v2, customer_id=v2.customer.id, owner=v2.sub_b, created_by=v2.sub_a)
+    name = title("CreatedNotOwned")
+    if step == "submit_existing":
+        pid = _register(v2, v2.sub_a, submit=False, customer_id=v2.customer.id).json()["id"]
+        res = submit_existing(v2, v2.sub_a, pid, {"lead_id": made.id})
+    else:
+        res = _register(
+            v2, v2.sub_a, submit=step == "submit", title=name, lead_id=made.id,
+            customer_id=v2.customer.id,
+        )
+    assert res.status_code == 404, res.text
+    assert res.json()["code"] == "lead_not_found"
+    assert projects_titled(v2, name) == 0
+
+
 def test_e6_a_missing_lead_gives_the_same_answer(v2):
     res = _register(v2, v2.sub_a, submit=True, lead_id=str(uuid.uuid4()), customer_id=v2.customer.id)
     assert res.status_code == 404, res.text
@@ -322,4 +340,105 @@ def test_e6_the_submit_body_naming_someone_elses_lead_is_a_404(v2):
     res = submit_existing(v2, v2.sub_a, pid, {"lead_id": theirs.id})
     assert res.status_code == 404, res.text
     assert res.json()["code"] == "lead_not_found"
+    assert project_of(v2, pid).approval_state == "draft"
+
+
+# ------------------------------------------------------------------ security review round (M1, L3, L4, L5)
+
+
+def _dups(res, lead_id):
+    row = next(r for r in res.json()["data"] if r["id"] == lead_id)
+    return row["possible_duplicates"]
+
+
+def test_m1_a_limited_readers_duplicate_hints_name_only_their_own_leads(v2):
+    mine = lead_row(v2, customer_id=v2.customer.id, owner=v2.sub_a, name="Setia Alam Phase 9")
+    other = lead_row(v2, customer_id=v2.customer.id, owner=v2.sub_b, name="Setia Alam Phase 9")
+    res = as_user(v2, v2.sub_a).get(LEADS)
+    assert res.status_code == 200, res.text
+    assert ids_of(res) == {mine.id}
+    hints = _dups(res, mine.id)
+    assert all(h["lead_id"] != other.id for h in hints), hints
+    assert other.lead_code not in res.text
+    assert other.id not in res.text
+
+
+def test_m1_a_view_holder_still_gets_the_duplicate_hint(v2):
+    mine = lead_row(v2, customer_id=v2.customer.id, owner=v2.sub_a, name="Setia Alam Phase 9")
+    other = lead_row(v2, customer_id=v2.customer.id, owner=v2.sub_b, name="Setia Alam Phase 9")
+    res = as_user(v2, v2.owner).get(LEADS)
+    assert res.status_code == 200, res.text
+    assert other.id in {h["lead_id"] for h in _dups(res, mine.id)}
+
+
+def test_e7_a_lead_the_caller_may_not_link_answers_the_same_whatever_the_customer(v2):
+    user = active_user(v2.db, "Edit Own Z")
+    v2.perms[user] = {VIEW_OWN, EDIT}
+    v2.db.commit()
+    other_customer = new_customer(v2)
+    theirs = lead_row(v2, customer_id=v2.customer.id, owner=v2.sub_b)
+    v2.db.commit()
+    answers = []
+    for customer in (v2.customer.id, other_customer.id, None):
+        res = as_user(v2, user).post(
+            LIST, json={k: v for k, v in {
+                "title": title("E7"), "lead_id": theirs.id, "customer_id": customer,
+            }.items() if v is not None},
+        )
+        answers.append((res.status_code, res.json().get("code")))
+    assert answers[0][0] in (403, 404), answers
+    assert len(set(answers)) == 1, answers
+    assert answers[0][1] != "project_customer_not_lead_customer"
+
+
+def test_e8_the_409_on_the_submit_only_path_names_no_other_project(v2):
+    lead = _own_lead(v2)
+    holder_title = title("HoldsTheLead")
+    first = as_user(v2, v2.manager).post(
+        LIST, json={"title": holder_title, "lead_id": lead.id, "customer_id": v2.customer.id}
+    )
+    assert first.status_code == 201, first.text
+    code = first.json()["project_code"]
+    assert code
+    res = _register(v2, v2.sub_a, submit=True, lead_id=lead.id, customer_id=v2.customer.id)
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "lead_already_linked"
+    assert code not in res.text
+    assert holder_title not in res.text
+
+
+def _staff_project_with_lead(w):
+    lead = lead_row(w, customer_id=w.customer.id, owner=w.owner)
+    res = as_user(w, w.owner).post(
+        LIST, json={"title": title("E9"), "lead_id": lead.id, "customer_id": w.customer.id}
+    )
+    assert res.status_code == 201, res.text
+    return res.json()["id"]
+
+
+def test_e9_a_put_with_another_customer_than_the_leads_is_refused(v2):
+    other = new_customer(v2)
+    pid = _staff_project_with_lead(v2)
+    res = as_user(v2, v2.owner).put(f"{STAFF}/{pid}", json={"customer_id": other.id})
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "project_customer_not_lead_customer"
+    assert profile_of(v2, pid).customer_id == v2.customer.id
+
+
+def test_e9_a_put_with_the_leads_customer_or_none_is_fine(v2):
+    pid = _staff_project_with_lead(v2)
+    same = as_user(v2, v2.owner).put(f"{STAFF}/{pid}", json={"customer_id": v2.customer.id})
+    assert same.status_code == 200, same.text
+    none = as_user(v2, v2.owner).put(f"{STAFF}/{pid}", json={"title": title("E9 renamed")})
+    assert none.status_code == 200, none.text
+    assert profile_of(v2, pid).customer_id == v2.customer.id
+
+
+def test_e9_a_submit_payload_with_another_customer_than_the_leads_is_refused(v2):
+    other = new_customer(v2)
+    lead = _own_lead(v2)
+    pid = _register(v2, v2.sub_a, submit=False, lead_id=lead.id, customer_id=v2.customer.id).json()["id"]
+    res = submit_existing(v2, v2.sub_a, pid, {"customer_id": other.id})
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "project_customer_not_lead_customer"
     assert project_of(v2, pid).approval_state == "draft"
