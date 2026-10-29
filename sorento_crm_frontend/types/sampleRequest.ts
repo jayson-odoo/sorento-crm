@@ -40,6 +40,9 @@ export interface SampleRequestWrite {
   customer_name?: string | null;
   project_id?: string | null;
   project_title?: string | null;
+  /** The quotation the lines were pre-filled from (SAMPLE-FROM-QUOTE); the issue is null when it was never issued. */
+  quotation_document_id?: string | null;
+  quotation_issue_id?: string | null;
   scope_note?: string | null;
   delivery_date?: string | null;
   delivery_mode?: SampleRequestDeliveryMode | null;
@@ -80,6 +83,8 @@ export interface SampleRequestDetail extends SampleRequestWrite {
   customer_code: string | null;
   project_code: string | null;
   project_name: string | null;
+  /** The source quotation as a person reads it, e.g. `<document no> (R2)`; null when none. */
+  quotation_ref: string | null;
   request_date: string | null;
   submitted_at: string | null;
   confirmed_at: string | null;
@@ -112,6 +117,31 @@ export interface SampleRequestRow {
   salesperson_name: string | null;
   line_count: number;
   board_mounting: boolean;
+}
+
+/** One quotation document of the project, as the pre-fill picker lists it. */
+export interface SampleRequestQuotationOption {
+  id: string;
+  document_no: string;
+  issue_id: string | null;
+  issue_no: number | null;
+  /** `<document no> (R2)` or `<document no> (not issued)`. */
+  label: string;
+}
+
+/** A quotation line that could not become a sample line. */
+export interface SampleRequestPrefillSkip {
+  reason: 'no_product' | 'inactive';
+  description: string;
+}
+
+/** The rows a new request on a project starts with (SAMPLE-FROM-QUOTE). No prices. */
+export interface SampleRequestQuotationPrefill {
+  documents: SampleRequestQuotationOption[];
+  document_id: string | null;
+  issue_id: string | null;
+  lines: { product_id: string; product_code: string; product_name: string; brand_name: string | null }[];
+  skipped: SampleRequestPrefillSkip[];
 }
 
 export interface SampleRequestProductHit {
