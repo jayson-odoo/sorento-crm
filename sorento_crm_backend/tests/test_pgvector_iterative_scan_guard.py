@@ -46,7 +46,7 @@ class _FakeDb:
 
 @pytest.fixture(autouse=True)
 def _fresh_cache(monkeypatch):
-    monkeypatch.setattr(ei, "_ITERATIVE_SCAN_SUPPORTED", None)
+    monkeypatch.setattr(ei, "_ITERATIVE_SCAN_SUPPORTED", None, raising=False)
 
 
 @pytest.mark.parametrize("version", ["0.8.0", "0.8.2", "0.9.1", "0.10.0", "1.0"])
@@ -116,3 +116,17 @@ def test_no_raw_iterative_scan_set_outside_the_guard():
         if p.name != "embedding_indexes.py" and "hnsw.iterative_scan" in p.read_text(encoding="utf-8")
     ]
     assert offenders == []
+
+
+def test_real_server_narrowed_record_search_keeps_the_transaction_usable():
+    """On the real server, whatever its pgvector version: the non-hot narrowed search returns and the
+    transaction survives it. On pgvector < 0.8 this raised `invalid configuration parameter name`."""
+    from sqlalchemy import text
+
+    from app.services.embedding_service import EmbeddingReadService
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        hits = EmbeddingReadService(db).search_current([1.0] + [0.0] * 1535, top_k=5, source_type="promotion")
+        assert hits == []
+        assert db.execute(text("SELECT 1")).scalar() == 1
