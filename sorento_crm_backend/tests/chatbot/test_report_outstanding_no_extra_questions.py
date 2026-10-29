@@ -38,3 +38,26 @@ def test_an_outstanding_ranking_asks_neither_the_measure_nor_how_many() -> None:
     assert line is None and outcome is not None and outcome.done, (line, outcome and outcome.reply)
     args = outcome.extras.get("args") or {}
     assert args.get("measure") == "qty", args
+
+
+# ---------------------------------------------------------------- item 1: a dealer's location on outstanding
+
+
+def _warehouse_entity() -> dict[str, Any]:
+    return {"raw": "BRW", "hint": "warehouse", "canonical_code": None, "current_message": True, "confident": True}
+
+
+def test_a_dealers_location_word_stays_a_location_on_an_outstanding_ask() -> None:
+    """Item 1 (owner 29 Oct, as before #1922): the seam that strips a dealer's location words leaves an outstanding ask's."""
+    parse = _outstanding(entities=[_warehouse_entity()])
+    assert report_ask.dealer_location_words(parse) == parse
+    assert not report_ask._dealer_outside(parse, "location")
+    assert not report_ask._dealer_outside(parse, None)
+
+
+def test_a_dealers_location_word_is_still_refused_on_a_sales_ask() -> None:
+    parse = report_ask.by_capability({
+        "order_status": "sales_report", "domain_hint": "order", "intent_hint": "check_order",
+        "entities": [_warehouse_entity()], "basis": "delivered", "group_by": None,
+    }, seam=False)
+    assert report_ask._dealer_outside(report_ask.dealer_location_words(parse), None)
