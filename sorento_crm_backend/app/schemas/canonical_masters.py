@@ -92,6 +92,18 @@ class CanonicalBrand(_Canonical):
     is_active: Optional[bool] = None
 
 
+class CanonicalItemClass(_Canonical):
+    """AutoCount ItemClass (ITEM-CLASS-MASTER, contract 2.11), the brands master exactly.
+    Syncs BEFORE brands and products, so a product's `item_class_code` links a real master row
+    instead of back-creating the code = name placeholder. Caps are the `item_classes` column
+    widths (`app/models/product.py`)."""
+
+    code: str = Field(..., min_length=1, max_length=50)
+    name: str = Field(..., min_length=1, max_length=150)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class CanonicalUnitOfMeasure(_Canonical):
     """Likewise for products.base_uom_id."""
 
@@ -197,6 +209,9 @@ class CanonicalProduct(_Canonical):
     # AutoCount ItemType (ITEM-TYPE-CRM). Back-created like brand_code; absent or
     # blank leaves the stored link untouched.
     item_type_code: Optional[str] = Field(None, max_length=100)
+    # AutoCount ItemClass (ITEM-CLASS). Back-created like item_type_code, but "" (or null)
+    # CLEARS the product's class; absent leaves it untouched.
+    item_class_code: Optional[str] = Field(None, max_length=100)
     # CRM-owned (PLAN D14, price-tag-feedback-r2). Overwrites the stored value
     # only when non-empty; empty/absent leaves a manually entered barcode
     # untouched - see `master_ingest_service._product_columns`.

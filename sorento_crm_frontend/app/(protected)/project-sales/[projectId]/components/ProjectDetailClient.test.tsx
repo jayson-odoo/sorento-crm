@@ -444,6 +444,16 @@ describe('the overview, read as sections', () => {
     expect(screen.getByText('123 Jalan Setia')).toBeInTheDocument();
   });
 
+  it('names the project template a To-do list template (owner meeting, 29 Oct)', () => {
+    projectFixture = project({ template_name: 'New build' });
+
+    renderDetail();
+
+    expect(screen.getByText('To-do list template')).toBeInTheDocument();
+    expect(screen.getByText('New build')).toBeInTheDocument();
+    expect(screen.queryByText('Template')).toBeNull();
+  });
+
   it('names the lead this project came from, and links to it', () => {
     projectFixture = project({
       lead_id: 'lead-1',

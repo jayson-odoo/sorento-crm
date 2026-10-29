@@ -9,11 +9,17 @@ flag the route suppresses both for that request; instead it writes one IMPORT au
 batch that names every order it wrote. It queues no embedding work at all (DO-BACKFILL-CRM,
 AC-DH46, `tests/test_do_backfill_quiet_hooks.py`).
 Without the flag nothing changes.
+
+Since LOOKUP-EMBED-CENTRAL (#1967) `order` and `order_line` are outside RECORD_KEEP_SET, so
+`enqueue_pending` drops their events and a plain push queues none either (owner ruling S1 (a),
+documentation/plans/chatbot/PLAN-lookup-embed-central-29oct.md). The embedding tests below put
+them back into the keep set (`orders_embedded`) so the flag's suppression stays measurable.
 """
 from __future__ import annotations
 
 import copy
 
+import pytest
 from sqlalchemy import select
 
 from app.models.audit import AuditLog
@@ -26,6 +32,16 @@ from tests.test_ingest_autocount_do_grn import (  # noqa: F401 - env is a fixtur
     env,
     grn_records,
 )
+
+
+@pytest.fixture
+def orders_embedded(monkeypatch):
+    """Embed DOs again for one test, so a plain push queues the DO and its lines."""
+    from app.services import embedding_settings
+
+    monkeypatch.setattr(embedding_settings, "RECORD_KEEP_SET",
+                        embedding_settings.RECORD_KEEP_SET | {"order", "order_line"})
+
 
 def _post(env, url, records, **extra):
     body = {"companyCode": env.company_code, "book": "db1", "records": records, **extra}
@@ -59,7 +75,16 @@ def _landed_ids(env, doc_key) -> list[str]:
     return [str(order.id)] + [str(l.id) for l in env.order_lines(order.id)]
 
 
-def test_plain_push_still_audits_and_enqueues_embeddings(env):
+def test_plain_push_queues_no_embedding_outside_the_keep_set(env):
+    """LOOKUP-EMBED-CENTRAL: with the real keep set a plain DO push audits but queues nothing."""
+    res = env.push_do([copy.deepcopy(do_records()[0])])
+    assert _records(res)["db1:DO:900001"]["outcome"] == "created"
+    ids = _landed_ids(env, 900001)
+    assert _queue_rows(env, ids) == 0
+    assert _audit_rows(env, ids[0]) >= 1
+
+
+def test_plain_push_still_audits_and_enqueues_embeddings(env, orders_embedded):
     """AC-DH41: the baseline the flag is measured against."""
     res = env.push_do([copy.deepcopy(do_records()[0])])
     assert _records(res)["db1:DO:900001"]["outcome"] == "created"
@@ -69,7 +94,7 @@ def test_plain_push_still_audits_and_enqueues_embeddings(env):
     assert _summary_rows(env) == []
 
 
-def test_backfill_push_writes_no_row_audit_and_no_embedding_event(env):
+def test_backfill_push_writes_no_row_audit_and_no_embedding_event(env, orders_embedded):
     """AC-DH40: no audit row per DO; AC-DH46: no queue event for the DO or any line."""
     res = _post(env, DO_INGEST, [copy.deepcopy(r) for r in do_records()], backfill=True)
     recs = _records(res)
@@ -125,7 +150,7 @@ def test_backfill_push_writes_nothing_on_the_so_side(env):
     assert env.order_lines(env.order(900001).id)[0].sales_order_line_id == str(line.id)
 
 
-def test_suppression_ends_with_the_backfill_request(env):
+def test_suppression_ends_with_the_backfill_request(env, orders_embedded):
     """AC-DH40: a later plain push on the same session audits and enqueues again."""
     _post(env, DO_INGEST, [copy.deepcopy(do_records()[0])], backfill=True)
     env.push_do([copy.deepcopy(do_records()[1])])
@@ -156,7 +181,7 @@ def test_backfill_flag_is_refused_on_other_entities(env):
     assert res.json().get("code") == "INVALID_BODY"
 
 
-def test_backfill_false_is_a_plain_push(env):
+def test_backfill_false_is_a_plain_push(env, orders_embedded):
     res = _post(env, DO_INGEST, [copy.deepcopy(do_records()[0])], backfill=False)
     assert _records(res)["db1:DO:900001"]["outcome"] == "created"
     ids = _landed_ids(env, 900001)

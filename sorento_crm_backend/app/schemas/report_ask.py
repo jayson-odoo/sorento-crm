@@ -6,7 +6,7 @@ not name (LESSONS-LEARNT.md).
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -58,6 +58,34 @@ class ReportAskTotal(BaseModel):
     change_pct: Optional[float] = None
 
 
+class ReportAskSummaryRow(BaseModel):
+    name: str
+    qty: int
+    amount: float
+    # Undelivered orders only: the whole quantity of the lines still owing some.
+    ordered_qty: Optional[int] = None
+
+
+class ReportAskSummaryGroup(BaseModel):
+    axis: str  # a report ask dimension: location, customer, product, sales_agent ...
+    label: str
+    rows: List[ReportAskSummaryRow] = []
+
+
+class ReportAskSummary(BaseModel):
+    """REPORT-OUTSTANDING-SUMMARY: the pre-#1922 outstanding summary (`reports.ask.outstanding_summary`)."""
+
+    documents: int
+    qty: int
+    amount: float
+    ordered_qty: Optional[int] = None
+    date_first: Optional[str] = None
+    date_last: Optional[str] = None
+    groups: List[ReportAskSummaryGroup] = []
+    # Item 6: the page start a "more" asked for (absent = the first page).
+    group_offset: Optional[int] = None
+
+
 class ReportAskResponse(BaseModel):
     status: str  # ok | refused | busy | no_products
     message: Optional[str] = None
@@ -82,6 +110,14 @@ class ReportAskResponse(BaseModel):
     # REPORT-SMART-L R3b: an item / category ranking with an agent filter carries the share of the window's
     # sales orders that carry any agent (the old top selling note); absent otherwise.
     sales_agent_fill_rate: Optional[float] = None
+    # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or a customer; absent otherwise.
+    summary: Optional[ReportAskSummary] = None
+    # REPORT-OUTSTANDING-SUMMARY item 7: an SO / DO list's documents, as the pre-#1922 `so_rows` / `do_rows` (one row per
+    # document: number, customer_name, product_code, location, the quantities and the date); absent otherwise.
+    documents: Optional[List[Dict[str, Any]]] = None
+    # Eval hard guard: `documents` is one page; the whole list's count and the page's first row.
+    documents_total: Optional[int] = None
+    group_offset: Optional[int] = None
 
 
 class ReportAskChatRow(BaseModel):

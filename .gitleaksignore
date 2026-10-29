@@ -2,6 +2,12 @@
 # 136495ef presenters.py:2113 is the keyword-argument call into _outstanding_group
 # (name_key=name_key, total_key=total_key, outstanding_key=outstanding_key): parameter names, no secret.
 136495ef9b993cfdb03191d312f344f7e853ae5e:sorento_crm_mcp/sorento_crm_mcp/presenters.py:generic-api-key:2113
+# REPORT-OUTSTANDING-SUMMARY (#1973): the same _outstanding_group keyword-argument call from the report-ask summary
+# (the outstanding key is the measure name qty): parameter names, no secret.
+09d88d5f50a6975396917454bf9120c28e769cd6:sorento_crm_mcp/sorento_crm_mcp/presenters.py:generic-api-key:3553
+09d88d5f50a6975396917454bf9120c28e769cd6:sorento_crm_mcp/sorento_crm_mcp/presenters.py:generic-api-key:3561
+facfea69f9ea3242a6f8364bcce079775590ece3:sorento_crm_mcp/sorento_crm_mcp/presenters.py:generic-api-key:3558
+fd6d257d79ca7c29d5b762a20efed85ed5394475:sorento_crm_mcp/sorento_crm_mcp/presenters.py:generic-api-key:3590
 # 6a8cf09c test_runtime_settings.py:21 was the made-up test fixture "ZztSecret0123456789A" (never a
 # real or dev key, never copied from any env or DB); replaced by test-secret-not-real-0000 in e5aee456.
 # Confirmation: https://github.com/jayson-odoo/sorento-crm/pull/1561#issuecomment-6093881308
@@ -14,3 +20,9 @@ a9b1b46c2f515c54ec958e12fa0067b5877a8929:sorento_crm_backend/tests/test_runtime_
 9bf3312b9dae5a5666bafcc6d7f81285b0dd58ae:sorento_crm_backend/tests/test_respond_webhook_ingest.py:generic-api-key:198
 9bf3312b9dae5a5666bafcc6d7f81285b0dd58ae:sorento_crm_backend/tests/test_respond_webhook_ingest.py:generic-api-key:227
 dbcc51b9b06fb995636e2f843c86ef2c85490ed3:sorento_crm_backend/tests/test_inbox_queue_replay_tool.py:generic-api-key:62
+# LOOKUP-EMBED-CENTRAL (#1967): embeddingsStubs.ts row `key:` values are made-up UUID-shaped grid row keys in a
+# vitest stub (5b0a2c1e-1111-4222-8333-..., 6c1b3d2f-2222-4333-8444-...), never a credential.
+27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:42
+27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:54
+27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:68
+27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:79

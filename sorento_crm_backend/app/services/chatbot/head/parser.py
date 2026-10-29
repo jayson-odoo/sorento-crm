@@ -987,9 +987,9 @@ OPENAI_CAPPED_LABEL_EFFORTS = frozenset({"medium", "high", "xhigh"})
 
 
 def sent_reasoning_effort(config: ParserConfig) -> str:
-    """The effort `parse` actually sends: the label's own when it sets one (any provider but Anthropic, which
-    takes none; on OpenAI not one in OPENAI_CAPPED_LABEL_EFFORTS), else the stored one on OpenAI, `off`
-    (none sent) otherwise. The trace records this, so it says what the provider was asked for."""
+    """The effort `parse` actually sends: the label's own when it sets one (any provider but Anthropic, whose
+    structured-output call takes none; on OpenAI not one in OPENAI_CAPPED_LABEL_EFFORTS), else the stored one
+    on OpenAI, `off` (none sent) otherwise. The trace records this, so it says what the provider was asked for."""
     provider = getattr(config, "provider", None)
     if provider == "anthropic":
         return "off"

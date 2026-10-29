@@ -277,7 +277,7 @@ def scope_product_filter(db: Session, value):
     scope = get_brand_scope(db)
     if not scope:
         return value
-    stmt = select(Product.id).where(brand_predicate(scope, Product.brand_id, Product.company_id))
+    stmt = select(Product.id).where(brand_predicate(scope, Product.brand_id, Product.company_id, Product.item_class_id))
     if has_product_filter(value):
         stmt = stmt.where(Product.id.in_(value))
     return stmt

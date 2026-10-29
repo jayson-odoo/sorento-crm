@@ -7,7 +7,8 @@ Tests for the scheduled-escalation work-list endpoint and backend-owned escalati
 - /integration/escalate route passes the resolved assignee into the service and exposes
   escalated_at / escalation_reason in the response
 
-Uses mocks to avoid PostgreSQL-specific DB. Run with: pytest tests/test_sla_due_escalations.py -v
+Route tests use a mocked session; the breach-filter tests seed their own rows on the blank
+Postgres scratch schema, so the file runs in CI. Run with: pytest tests/test_sla_due_escalations.py -v
 """
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch

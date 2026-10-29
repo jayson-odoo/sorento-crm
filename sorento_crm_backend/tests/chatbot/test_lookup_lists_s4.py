@@ -195,6 +195,9 @@ def test_contact_with_no_link_and_no_office_access_gets_no_customer_block(sessio
 # ------------------------------------------------------------------ long warm-up
 
 
+from tests.chatbot._embed_http import patch_openai_embeddings
+
+
 def test_a_warm_up_longer_than_the_turn_budget_still_completes_and_turns_never_wait(monkeypatch):
     from app.services import llm_provider
 
@@ -206,12 +209,13 @@ def test_a_warm_up_longer_than_the_turn_budget_still_completes_and_turns_never_w
         def create(self, *, model, input):
             calls.append(len(input))
             time.sleep(0.9)
-            return types.SimpleNamespace(data=[types.SimpleNamespace(embedding=[1.0, 0.0]) for _ in input])
+            return types.SimpleNamespace(data=[types.SimpleNamespace(embedding=[1.0] + [0.0] * 1535) for _ in input])
 
     client = types.SimpleNamespace(embeddings=_Embeddings())
-    monkeypatch.setattr(llm_provider.OpenAIProvider, "_client", lambda self, **kw: client)
+    patch_openai_embeddings(monkeypatch, client.embeddings.create)
     rows = [ll.LookupRow("customer", f"c{i}", f"Zzcust {i}", (f"zzcust {i}",)) for i in range(300)]
     embed = ll.provider_embedder("sk-test")
+    ll._import_sdk()  # the cold SDK import runs on the caller (#1902); it is not the warm-up being timed
 
     t0 = time.monotonic()
     ll.warm(rows, embed)

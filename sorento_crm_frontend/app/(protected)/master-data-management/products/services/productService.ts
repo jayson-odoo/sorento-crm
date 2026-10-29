@@ -35,6 +35,8 @@ export interface GetProductsParams extends DataGridApiFetchParams {
    * recipient scoped to specific brands.
    */
   brand_id?: string;
+  /** One item class id, or a comma-separated list (filtered with IN). */
+  item_class_id?: string;
   status?: 'active' | 'inactive' | 'all';
   price_min?: number;
   price_max?: number;
@@ -62,6 +64,7 @@ export async function getProducts(
     searchQuery,
     category_id,
     brand_id,
+    item_class_id,
     status,
     price_min,
     price_max,
@@ -82,6 +85,7 @@ export async function getProducts(
     ...(searchQuery ? { query: searchQuery } : {}),
     ...(category_id ? { category_id } : {}),
     ...(brand_id ? { brand_id } : {}),
+    ...(item_class_id ? { item_class_id } : {}),
     ...(status && status !== 'all' ? { status } : {}),
     ...(price_min ? { price_min: String(price_min) } : {}),
     ...(price_max ? { price_max: String(price_max) } : {}),
@@ -596,6 +600,7 @@ export async function exportProducts(
   if (filters) {
     if (filters.category_id) queryParams.set('category_id', filters.category_id);
     if (filters.brand_id) queryParams.set('brand_id', filters.brand_id);
+    if (filters.item_class_id) queryParams.set('item_class_id', filters.item_class_id);
     if (filters.is_active !== undefined)
       queryParams.set('is_active', String(filters.is_active));
     if (filters.search) queryParams.set('search', filters.search);

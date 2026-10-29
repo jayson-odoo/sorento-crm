@@ -2175,3 +2175,91 @@ def test_the_merge_step_leaves_a_head_that_already_holds_main(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert _git(runner, "rev-parse", "HEAD") == head
     assert outputs == {"main": main}
+
+
+# ---------------------------------------------------------------------------
+# FORMS-REGRESSION: a PR touching forms lifecycle code runs every forms chain
+# in the PR gate (owner, 30 Oct 2026), and every release runs them (core tier).
+# ---------------------------------------------------------------------------
+
+FORMS_CHAIN_FILES = sorted(
+    p.relative_to(REPO / "sorento_crm_backend").as_posix()
+    for p in (REPO / "sorento_crm_backend" / "tests").glob("test_forms_chain_*.py")
+) + ["tests/test_form_handling_lock_routes.py", "tests/test_sla_due_escalations.py",
+     "tests/test_complaint_status_guard.py"]
+
+
+def _run_forms_detect(tmp_path, path: str) -> dict:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "main")
+    main = _git(repo, "rev-parse", "HEAD")
+    (repo / path).parent.mkdir(parents=True, exist_ok=True)
+    (repo / path).write_text("x\n")
+    _git(repo, "add", path)
+    _git(repo, "commit", "-q", "-m", "pr")
+    output = tmp_path / "out"
+    output.write_text("")
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Detect a forms lifecycle change")],
+        cwd=repo, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "MAIN": main, "GITHUB_OUTPUT": str(output)},
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return dict(line.split("=", 1) for line in output.read_text().splitlines() if "=" in line)
+
+
+@pytest.mark.parametrize("path", [
+    "sorento_crm_backend/app/services/procurement_service.py",
+    "sorento_crm_backend/app/services/complaints_service.py",
+    "sorento_crm_backend/app/services/form_action_service.py",
+    "sorento_crm_backend/app/services/portal_revision_service.py",
+    "sorento_crm_backend/app/services/handling_lock_service.py",
+    "sorento_crm_backend/app/services/sla_service.py",
+    "sorento_crm_backend/app/api/v1/procurement/purchase_requests.py",
+    "sorento_crm_backend/app/api/v1/public/portal.py",
+    "sorento_crm_backend/app/models/sla.py",
+    "sorento_crm_backend/app/tasks/respond_io_tasks.py",
+    "sorento_crm_backend/app/schemas/procurement.py",
+    "sorento_crm_backend/app/services/user_service.py",
+    "sorento_crm_backend/app/services/dealer_kit/tag_data_service.py",
+    "sorento_crm_backend/app/models/integration.py",
+    "sorento_crm_backend/tests/conftest.py",
+    "sorento_crm_backend/tests/test_forms_chain_complaint.py",
+    "sorento_crm_backend/tests/_forms_chain_support.py",
+    ".github/workflows/deploy.yml",
+])
+def test_a_forms_path_runs_the_forms_chains(tmp_path, path):
+    assert _run_forms_detect(tmp_path, path) == {"run": "true"}
+
+
+@pytest.mark.parametrize("path", [
+    "sorento_crm_backend/app/services/chatbot/turn_service.py",
+    "sorento_crm_backend/app/api/v1/scm/orders.py",
+    "sorento_crm_frontend/app/page.tsx",
+    "documentation/plans/forms/PLAN-x.md",
+])
+def test_any_other_path_leaves_the_forms_chains_off(tmp_path, path):
+    assert _run_forms_detect(tmp_path, path) == {"run": "false"}
+
+
+def test_the_pr_gate_runs_the_forms_chains_under_xdist_on_the_bootstrapped_db():
+    steps = _lean_gate_steps()
+    run = steps["Run the forms lifecycle chains (executing gate)"]
+    assert "        if: steps.forms.outputs.run == 'true'" in run
+    assert "tests/test_forms_chain_*.py" in run and "--dist load" in run
+    for f in FORMS_CHAIN_FILES[-3:]:
+        assert f in run, f"the PR gate step does not run {f}"
+    for name in ("Relax Postgres durability for the test run", "Bootstrap the database"):
+        assert "steps.forms.outputs.run == 'true'" in steps[name], name
+    names = list(steps)
+    assert names.index("Detect a forms lifecycle change") > names.index("Merge main's current head into the PR head")
+    assert names.index("Run the forms lifecycle chains (executing gate)") > names.index("Bootstrap the database")
+
+
+def test_every_release_runs_the_forms_chains():
+    core = (REPO / "sorento_crm_backend" / "tests" / "release_core.txt").read_text(encoding="utf-8").split()
+    assert len(FORMS_CHAIN_FILES) >= 9
+    missing = [f for f in FORMS_CHAIN_FILES if f not in core]
+    assert not missing, f"add to tests/release_core.txt: {missing}"

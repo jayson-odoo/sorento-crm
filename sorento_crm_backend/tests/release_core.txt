@@ -46,3 +46,16 @@ tests/chatbot/test_escalation_round5_escalation_words_win.py
 
 # Schema guard.
 tests/test_schema_uuid_id_principle.py
+
+# Forms lifecycle regression chains (FORMS-REGRESSION, 30 Oct 2026): submit, reject,
+# revise, draft, outbox, extension, undo, revert, handle and escalation over the real
+# routes, per form kind. The PR gate runs the same set when a PR touches forms code.
+tests/test_forms_chain_purchase_request.py
+tests/test_forms_chain_complaint.py
+tests/test_forms_chain_stock_inquiry.py
+tests/test_forms_chain_price_tag.py
+tests/test_forms_chain_sample_request.py
+tests/test_forms_chain_project_registration.py
+tests/test_form_handling_lock_routes.py
+tests/test_sla_due_escalations.py
+tests/test_complaint_status_guard.py

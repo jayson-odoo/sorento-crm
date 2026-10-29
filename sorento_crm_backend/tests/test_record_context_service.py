@@ -329,6 +329,9 @@ import pytest as _pytest
         ("closed", "approved", "Closed"),
         ("submitted", None, "Submitted"),
         ("draft", None, "Draft"),
+        # Void is terminal: it wins over a still-pending (legacy) or closed approval.
+        ("voided", "pending", "Voided"),
+        ("voided", "voided", "Voided"),
     ],
 )
 def test_pr_display_status_combines_lifecycle_and_approval(

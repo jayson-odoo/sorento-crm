@@ -40,6 +40,7 @@ export const ProductSchema = z.object({
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   category_id: z.string().uuid({ message: 'Category is required.' }),
   brand_id: z.string().uuid().optional().nullable(),
+  item_class_id: z.string().uuid().optional().nullable(),
   barcode: z
     .string()
     .max(100, { message: 'Barcode must not exceed 100 characters.' })
