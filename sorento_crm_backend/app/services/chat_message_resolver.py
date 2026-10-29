@@ -155,6 +155,9 @@ def _pending_rows(db: Session, limit: int, now: datetime) -> list[ChatHistory]:
             attempts < MAX_RESOLVE_ATTEMPTS,
             # Bounds the scan and keeps this from quietly backfilling history.
             anchor >= now - RESOLVE_LOOKBACK,
+            # Same bound on the bare column so the (type, sent_at) indexes can serve it;
+            # widened by the tolerance respond_ts may sit from sent_at.
+            ChatHistory.sent_at >= now - RESOLVE_LOOKBACK - _MESSAGE_ID_CLOCK_TOLERANCE,
             due,
         )
         .order_by(ChatHistory.id.asc())
@@ -180,17 +183,18 @@ def _apply_payload(row: ChatHistory, payload: dict) -> bool:
     entries = _status_entries(payload)
     values = [e.get("value") for e in entries if isinstance(e.get("value"), str)]
 
-    if row.respond_ts is None:
+    clock_was_missing = row.respond_ts is None
+    if clock_was_missing:
         stamps = [_epoch_to_naive_utc(e.get("timestamp")) for e in entries]
         stamps = [s for s in stamps if s is not None]
         # Earliest entry = creation; an incoming message has no entries, only its id.
         row.respond_ts = min(stamps) if stamps else respond_ts_from_message_id(
-            payload.get("messageId"), sent_at=row.sent_at
+            row.message_id, sent_at=row.sent_at
         )
 
     if row.type != "outgoing" or not values:
-        # Nothing about delivery here; resolved only if the clock is now known.
-        return row.respond_ts is not None
+        # Nothing about delivery here; resolved only if this call supplied the clock.
+        return clock_was_missing and row.respond_ts is not None
 
     row.delivery_trace = entries
     if "failed" in values:
@@ -275,7 +279,9 @@ def resolve_pending(
                 row.id, row.message_id, row.contact_id,
                 row.resolve_attempts, MAX_RESOLVE_ATTEMPTS,
             )
-            if row.type == "outgoing":
+            # Only a row Respond has never shown us: a 404 after a confirmed sent /
+            # delivered (a rotated workspace key, say) must not erase that receipt.
+            if row.type == "outgoing" and row.delivery_status in (None, "pending", "not_sent"):
                 row.delivery_error = str(exc)
                 if age >= timedelta(minutes=NOT_SENT_AFTER_MINUTES):
                     # Provisional until the schedule ends: a later 200 upgrades it.

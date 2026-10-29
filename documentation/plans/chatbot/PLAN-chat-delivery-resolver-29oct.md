@@ -1,6 +1,6 @@
 # PLAN: chat delivery status resolver (lane CHAT-DELIVERY-RESOLVER)
 
-Status: in progress (small fix track: backend only, one additive column)
+Status: review READY, awaiting CI + owner merge (small fix track: backend only, one additive migration)
 
 ## Problem (measured on prod, main 02bc416d9e)
 

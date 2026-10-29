@@ -418,8 +418,9 @@ def test_one_bad_row_does_not_abort_the_batch(db):
 
 
 def test_response_without_status_or_clock_is_not_resolved(db):
-    row = _row(db, respond_ts=None)
-    client = FakeClient({LAGGED_ID: {}})
+    # A non-timestamp id, so the message id cannot supply the clock either.
+    row = _row(db, message_id="m1", respond_ts=None)
+    client = FakeClient({"m1": {}})
     out = svc.resolve_pending(db, client=client, limit=10, now=_at(1))
     db.refresh(row)
     assert out["resolved"] == 0
@@ -470,3 +471,27 @@ def test_id_far_from_sent_at_is_rejected():
     assert svc.respond_ts_from_message_id(
         "1784602125363985", sent_at=datetime(2020, 1, 1)
     ) is None
+
+
+def test_a_404_after_a_confirmed_delivery_keeps_the_receipt(db):
+    """A later 404 (rotated workspace key, say) must not erase a real delivery."""
+    row = _row(db)
+    client = FakeClient({LAGGED_ID: LAGGED_DISPATCHED})
+    svc.resolve_pending(db, client=client, limit=10, now=_at(1))
+
+    client.responses.clear()
+    client.raises[LAGGED_ID] = _not_found()
+    out = svc.resolve_pending(db, client=client, limit=10, now=_at(240))
+
+    db.refresh(row)
+    assert len(client.calls) == 2
+    assert out["not_sent"] == 0
+    assert row.delivery_status == "delivered"
+    assert row.delivery_error is None
+
+
+def test_empty_response_on_a_row_with_its_clock_is_not_counted_resolved(db):
+    _row(db)
+    client = FakeClient({LAGGED_ID: {"status": []}})
+    out = svc.resolve_pending(db, client=client, limit=10, now=_at(1))
+    assert out["resolved"] == 0
