@@ -4,8 +4,6 @@ Postgres only (blank_session); every row is seeded here. No network: httpx.Clien
 texts of every embeddings request. Vectors are tiny and padded to 1536.
 Run: SORENTO_ENV_FILE=.env.ci-tests PGGSSENCMODE=disable no_proxy='*' venv/bin/pytest tests/chatbot/test_lookup_embed_central_slice4.py -q -n 2
 
-Script contract assumed (same as scripts/add_zh_category_synonyms.py): module `scripts/move_prompt_synonyms.py`
-with `plan(db)` and `run(db, *, apply=False) -> {"plan": [...], "added": int}`; the caller commits.
 """
 from __future__ import annotations
 
@@ -304,44 +302,7 @@ def test_ac_lec_18_a_class_label_row_carries_the_synonyms_of_its_categories(db):
     assert "mangkuk tandas" not in wc.texts
 
 
-def _script():
-    path = BACKEND / "scripts" / "move_prompt_synonyms.py"
-    assert path.exists(), f"missing {path}"
-    spec = importlib.util.spec_from_file_location("move_prompt_synonyms", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _synonyms(db, cat):
-    db.expire_all()
-    return list(db.get(ProductCategory, cat.id).search_synonyms or [])
-
-
-def test_ac_lec_18_the_script_dry_run_lists_a_missing_word_and_writes_nothing(db):
-    script = _script()
-    a = _category(db, "ZZT4 WC A", class_label="Water Closet", synonyms=["tandas"])
-    b = _category(db, "ZZT4 WC B", class_label="Water Closet", synonyms=[])
-    result = script.run(db, apply=False)
-    assert "mangkuk tandas" in json.dumps(result["plan"], default=str)
-    assert _synonyms(db, a) == ["tandas"] and _synonyms(db, b) == []
-
-
-def test_ac_lec_18_the_script_apply_adds_the_word_to_every_active_class_category_and_is_idempotent(db):
-    script = _script()
-    a = _category(db, "ZZT4 WC A", class_label="Water Closet", synonyms=["tandas"])
-    b = _category(db, "ZZT4 WC B", class_label="Water Closet", synonyms=[])
-    off = _category(db, "ZZT4 WC Off", class_label="Water Closet", synonyms=[], active=False)
-    other = _category(db, "ZZT4 Tap", class_label="Tap", synonyms=[])
-    first = script.run(db, apply=True)
-    assert first["added"] > 0
-    for cat in (a, b):
-        assert "mangkuk tandas" in _synonyms(db, cat)
-    assert _synonyms(db, a).count("tandas") == 1
-    assert "mangkuk tandas" not in _synonyms(db, off) and "mangkuk tandas" not in _synonyms(db, other)
-    second = script.run(db, apply=True)
-    assert second["added"] == 0
-    assert _synonyms(db, b).count("mangkuk tandas") == 1
+# The synonyms move is now migration lec_0004_prompt_synonyms (tests/test_migration_lec_0004_prompt_synonyms.py).
 
 
 # ================================================================== task + scheduler

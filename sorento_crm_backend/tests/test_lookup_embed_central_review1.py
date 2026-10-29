@@ -472,39 +472,7 @@ def test_f12_a_well_formed_model_name_is_accepted(client, db, allow, monkeypatch
     assert client.put(f"{SETTINGS}/general", json={"embedding_model": "text-embedding-3-large.v2_x"}).status_code == 200
 
 
-# ================================================================== F-7: the script matches types by name or code
-def _script():
-    import importlib.util
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parents[1] / "scripts" / "move_prompt_synonyms.py"
-    spec = importlib.util.spec_from_file_location("move_prompt_synonyms_r1", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_f7_an_entry_with_no_attachment_type_is_listed_unmatched_and_creates_no_option(db):
-    from app.models.lookup import LookupOption
-
-    script = _script()
-    result = script.run(db, apply=True)
-    assert db.query(LookupOption).count() == 0
-    assert "unmatched" in json.dumps(result, default=str).lower()
-
-
-def test_f7_a_type_is_matched_by_its_code_and_the_words_land_on_its_option(db):
-    from app.models.lookup import LookupOption, LookupOptionKeyword
-    from app.models.resources import AttachmentType
-
-    db.add(AttachmentType(id=str(uuid.uuid4()), code="photo", type_name="Product Photos", allowed_extensions="jpg"))
-    db.flush()
-    _script().run(db, apply=True)
-    db.expire_all()
-    options = db.query(LookupOption).all()
-    assert {o.value for o in options} <= {"Product Photos", "photo"} and options, [o.value for o in options]
-    words = {k.keyword for k in db.query(LookupOptionKeyword).all()}
-    assert {"gambar", "foto"} <= words
+# F-7 (type matched by name or code, unmatched skipped) now lives in tests/test_migration_lec_0004_prompt_synonyms.py.
 
 
 # ================================================================== F-8: alias targets offer code and name
