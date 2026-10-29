@@ -9,12 +9,12 @@
 Additive and defaulted; guarded so a re-run is harmless.
 
 Revision ID: agp1_0001_agent_foundation
-Revises: item_class_0001
+Revises: lec_0004_prompt_synonyms
 """
 from alembic import op
 
 revision = "agp1_0001_agent_foundation"
-down_revision = "item_class_0001"
+down_revision = "lec_0004_prompt_synonyms"
 branch_labels = None
 depends_on = None
 
