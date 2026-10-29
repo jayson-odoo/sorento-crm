@@ -331,8 +331,10 @@ def fetch_logo_data_uri(url: Optional[str]) -> Optional[str]:
 
     - identity encoding only, and any content-encoded answer is refused, so the 1 MB cap bounds
       real bytes and not a decompression bomb;
-    - a wall-clock limit of LOGO_FETCH_TIMEOUT_SECONDS on the whole fetch, headers included,
-      against a slow drip;
+    - a wall-clock limit of LOGO_FETCH_TIMEOUT_SECONDS covering connect, TLS, headers and body,
+      against a slow drip. DNS sits outside it: the guard's getaddrinfo runs before the clock, and
+      the connect-time lookup runs on asyncio's default executor, which asyncio.run waits for on
+      shutdown. Both are bounded by the system resolver, and the url is admin-set;
     - the content type is the server's claim, so the bytes are decoded and re-encoded by Pillow
       (`product_image_service._downscale`) and only that output is embedded. An SVG or anything
       else Pillow cannot read is left out.
@@ -344,13 +346,17 @@ def fetch_logo_data_uri(url: Optional[str]) -> Optional[str]:
     except ValueError as exc:  # OutboundUrlRejected and every malformed-url error are ValueErrors
         logger.warning("Quotation PDF logo skipped, url refused: %s", exc)
         return None
-    # Callers are sync (the download route and the export task), so asyncio.run is safe here; inside
-    # a running loop it raises and the logo is skipped like any other failure.
-    coro = _download_logo(url)
+    # Callers are sync (the download route and the export task), so asyncio.run is safe here.
     try:
-        data = asyncio.run(asyncio.wait_for(coro, LOGO_FETCH_TIMEOUT_SECONDS))
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        logger.warning("Quotation PDF logo skipped, called inside a running event loop")
+        return None
+    try:
+        data = asyncio.run(asyncio.wait_for(_download_logo(url), LOGO_FETCH_TIMEOUT_SECONDS))
     except Exception as exc:  # noqa: BLE001 - incl. TimeoutError: the letterhead keeps the name only
-        coro.close()
         logger.warning("Quotation PDF logo skipped, download failed: %r", exc)
         return None
     if not data:
