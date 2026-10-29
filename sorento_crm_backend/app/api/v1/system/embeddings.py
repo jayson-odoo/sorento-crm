@@ -69,6 +69,8 @@ def request_rebuild(
     db: Session = Depends(get_db),
 ):
     item = EmbeddingEventService(db).request_rebuild(source_type=source_type, source_id=source_id, triggered_by=current_user.get("id"))
+    if item is None:
+        return {"id": None, "status": "skipped"}  # not a source the platform embeds any more
     return {"id": str(item.id), "status": item.status}
 
 

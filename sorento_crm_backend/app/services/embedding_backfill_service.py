@@ -128,7 +128,7 @@ class EmbeddingBackfillService:
                 if dry_run:
                     continue
                 try:
-                    self.event_service.queue_event(
+                    queued_item = self.event_service.queue_event(
                         source_type=source,
                         source_id=str(row["id"]),
                         source_key=row.get("source_key"),
@@ -138,7 +138,8 @@ class EmbeddingBackfillService:
                         payload=row.get("payload"),
                         triggered_by=triggered_by or "system",
                     )
-                    stats.queued += 1
+                    if queued_item is not None:
+                        stats.queued += 1
                 except Exception:
                     stats.failed += 1
             if remaining is not None:

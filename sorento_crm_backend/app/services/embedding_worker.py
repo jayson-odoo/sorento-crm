@@ -834,6 +834,16 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         if queue_item.status in {"completed", "skipped"}:
             return {"status": queue_item.status, "queue_id": queue_id}
 
+        # LOOKUP-EMBED-CENTRAL: only the keep set is embedded. A row of any other source (queued before
+        # the producers were narrowed) is retired without an embed call; its old chunks are left alone.
+        from app.services.embedding_settings import RECORD_KEEP_SET
+
+        if queue_item.source_type not in RECORD_KEEP_SET:
+            queue_item.status = "skipped"
+            queue_item.processed_at = datetime.utcnow()
+            db.commit()
+            return {"status": "skipped", "queue_id": queue_id}
+
         # Claim under the row lock (EMBED-QUEUE-DEDUPE): a transaction that found this row
         # pending and queued nothing must commit before the source is read below.
         queue_item = _claim(db, queue_id)

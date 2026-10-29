@@ -16,6 +16,13 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+#: Minimum cosine similarity for a vector hit to widen a filter, per records-search model (the lookup floors of
+#: the same models); a nearest neighbour is always returned, so without a floor noise would join the filter.
+VECTOR_FLOOR_BY_MODEL = {"text-embedding-3-small": 0.55, "gemini-embedding-001": 0.70}
+DEFAULT_VECTOR_FLOOR = 0.70
+#: Callers still name the old source; a product is now found through its specification sentence.
+_READ_SOURCE = {"product": "product_spec"}
+
 
 def resolve_via_embedding_then_ilike(
     db: Session,
@@ -47,16 +54,22 @@ def resolve_via_embedding_then_ilike(
         return None, []
 
     canonical_values: list[str] = []
-    if canonical_model is not None and canonical_fields:
-        try:
-            from app.api.v1.external.rag import _embed_query
-            from app.services.embedding_service import EmbeddingReadService, parse_debtor_seed_id
+    source_type = _READ_SOURCE.get(source_type, source_type)
+    from app.services.embedding_settings import RECORD_KEEP_SET
 
-            vec = _embed_query(term)
+    # A source outside the keep set is not embedded: the raw ilike below is the whole search.
+    if canonical_model is not None and canonical_fields and source_type in RECORD_KEEP_SET:
+        try:
+            from app.services.embedding_service import EmbeddingReadService, parse_debtor_seed_id
+            from app.services.embedding_settings import embed_search_texts, records_search_model
+
+            model = records_search_model(db)
+            vec = embed_search_texts([term], model, timeout=20)[0]
             hits = EmbeddingReadService(db).search_current(
                 vec, source_type=source_type, top_k=top_k
             )
-            source_ids = [str(c.source_id) for c, _, _ in hits if c.source_id]
+            floor = VECTOR_FLOOR_BY_MODEL.get(model, DEFAULT_VECTOR_FLOOR)
+            source_ids = [str(c.source_id) for c, _, sim in hits if c.source_id and float(sim) >= floor]
             if source_ids:
                 # Real master rows: look up canonical fields by id.
                 master_ids = [sid for sid in source_ids if parse_debtor_seed_id(sid) is None]

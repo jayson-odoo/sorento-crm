@@ -138,6 +138,7 @@ _EMBED_LOCK = threading.Lock()
 #: rows pays the timeout once, not once per row.
 EMBED_BACKOFF_SECONDS = 30
 _EMBED_DOWN_UNTIL = 0.0
+_EMBED_MODEL: Optional[str] = None
 
 
 def clear_embedding_cache() -> None:
@@ -147,22 +148,30 @@ def clear_embedding_cache() -> None:
         _EMBED_DOWN_UNTIL = 0.0
 
 
-def embed_texts(texts: List[str], *, timeout: int = REGISTRATION_EMBED_TIMEOUT) -> List[Optional[List[float]]]:
+def embed_texts(
+    texts: List[str], *, timeout: int = REGISTRATION_EMBED_TIMEOUT, model: Optional[str] = None
+) -> List[Optional[List[float]]]:
     """Vectors for `texts`, one network call for everything not seen before.
 
     Cached by the text itself (LRU, `EMBED_CACHE_SIZE`): a registration is read again and
     again while it waits in the queue, and its text does not change between reads.
     """
+    global _EMBED_MODEL
+    model = model or settings.embedding_model_name
     with _EMBED_LOCK:
+        if _EMBED_MODEL != model:  # vectors of another model are not comparable
+            _EMBED_CACHE.clear()
+            _EMBED_MODEL = model
         missing = list(dict.fromkeys(t for t in texts if t not in _EMBED_CACHE))
     if missing:
         global _EMBED_DOWN_UNTIL
-        from app.services import embedding_worker
 
         if time.monotonic() < _EMBED_DOWN_UNTIL:
             raise RuntimeError("embedding provider recently failed")
         try:
-            vectors = embedding_worker._embed_text_chunks(missing, timeout=timeout)
+            from app.services.embedding_settings import embed_search_texts
+
+            vectors = embed_search_texts(missing, model, timeout=timeout)
         except Exception:
             with _EMBED_LOCK:
                 _EMBED_DOWN_UNTIL = time.monotonic() + EMBED_BACKOFF_SECONDS
@@ -182,8 +191,8 @@ def embed_texts(texts: List[str], *, timeout: int = REGISTRATION_EMBED_TIMEOUT) 
         return out
 
 
-def embed_text(text: str) -> List[float]:
-    return embed_texts([text])[0]
+def embed_text(text: str, model: Optional[str] = None) -> List[float]:
+    return embed_texts([text], model=model)[0]
 
 
 def semantic_matches(db: Session, *, company_id: str, text: str, top_k: int = 10) -> List[Tuple[str, float]]:
@@ -193,8 +202,10 @@ def semantic_matches(db: Session, *, company_id: str, text: str, top_k: int = 10
     never a reason a registration cannot be read.
     """
     try:
-        vector = embed_text(text)
         from app.services.embedding_service import EmbeddingReadService
+        from app.services.embedding_settings import records_search_model
+
+        vector = embed_text(text, records_search_model(db))
 
         with db.begin_nested():
             hits = EmbeddingReadService(db).search_current(vector, top_k=top_k, source_type="project")

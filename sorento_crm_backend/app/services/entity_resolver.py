@@ -2911,20 +2911,10 @@ def _tier2_fuzzy_lookup(
 # Source types in embedding_chunks that correspond to primary business entities.
 # Child tables (order_line, picking_line, ...) are excluded: they'd match on noise.
 _EMBEDDING_SOURCE_TYPES: dict[str, str] = {
-    "product": "product",
-    "order": "customer_order",
-    "inbound_shipment": "inbound_shipment",
-    "spo_allocation": "spo_allocation",
-    "picking_header": "grn",
+    # A product is found through its rendered specification sentence: `source_id` of a
+    # `product_spec` chunk is the product id.
+    "product_spec": "product",
     "promotion": "promotion",
-    # Customer master rows + synthetic `debtor:<code>` chunks seeded from
-    # distinct orders.debtor_code with no master row. Lets tokens like
-    # "fira ventures" resolve to entity_type=customer via vector similarity
-    # against the seeded debtor chunk text.
-    "customer": "customer",
-    # Transporter master (code + name) so "search DO by transporter X"
-    # resolves to entity_type=transporter via vector similarity.
-    "transporter": "transporter",
     "attachment": "attachment",
     "form": "form",
     # Certificate register rows (number + scheme + body + issuer + title +
@@ -2933,6 +2923,29 @@ _EMBEDDING_SOURCE_TYPES: dict[str, str] = {
     # answered by SQL.
     "certificate": "certificate",
 }
+
+
+def _search_seam(model: str):
+    """The embed callable of one records-search model; one object per model so the query-vector cache
+    (keyed by the seam) never mixes two models' vectors."""
+    seam = _SEARCH_SEAMS.get(model)
+    if seam is None:
+        from app.services.embedding_settings import embed_search_texts
+
+        def seam(texts, _model=model):
+            return embed_search_texts(list(texts), _model)
+
+        _SEARCH_SEAMS[model] = seam
+    return seam
+
+
+_SEARCH_SEAMS: dict[str, Any] = {}
+
+
+def _in_list_sql(values) -> str:
+    return ", ".join("'" + str(v).replace("'", "''") + "'" for v in values)
+
+
 EMBEDDING_MIN_SIMILARITY = 0.80
 EMBEDDING_CONFIDENCE_GAP = 0.05
 
@@ -3045,14 +3058,11 @@ def _tier3_embedding_lookup(
     confident match, or an empty list when ambiguous / below threshold."""
     # Local imports: these modules pull in heavy deps; we only want to pay the cost
     # on the last-resort path.
-    try:
-        from app.services.embedding_worker import _embed_text_chunks
-    except Exception:
-        logger.exception("Tier-3 embedding worker import failed; skipping")
-        return []
+    from app.services.embedding_settings import records_search_model
 
+    model = records_search_model(db)
     try:
-        query_vec = _memo_embedding(db, token, _embed_text_chunks)
+        query_vec = _memo_embedding(db, token, _search_seam(model))
     except Exception:
         logger.exception("Tier-3 query embedding failed for token=%s", token)
         return []
@@ -3074,8 +3084,9 @@ def _tier3_embedding_lookup(
                1 - (ec.embedding <=> CAST(:vec AS vector)) AS similarity
         FROM embedding_chunks ec
         JOIN embedding_documents ed ON ed.source_type = ec.source_type AND ed.source_id = ec.source_id
-        WHERE ec.is_current = TRUE
-          AND ec.source_type = ANY(:types)
+        WHERE ec.model_name = {_in_list_sql([model])}
+          AND ec.is_current
+          AND ec.source_type IN ({_in_list_sql(allowed_types)})
           {scope_sql}
         ORDER BY ec.embedding <=> CAST(:vec AS vector)
         LIMIT 5
@@ -3087,7 +3098,7 @@ def _tier3_embedding_lookup(
         # query in the request would die on InFailedSqlTransaction.
         with db.begin_nested():
             rows = db.execute(
-                sql, {"vec": list(query_vec), "types": list(allowed_types), **scope_params}
+                sql, {"vec": list(query_vec), **scope_params}
             ).all()
     except Exception:
         logger.exception("Tier-3 vector query failed for token=%s", token)
@@ -5218,10 +5229,9 @@ def _prefetch_embeddings(db: Session, tokens: list[str]) -> None:
     memo = _RESOLVE_MEMO.get()
     if memo is None:
         return
-    try:
-        from app.services.embedding_worker import _embed_text_chunks
-    except Exception:  # noqa: BLE001 - the per-token path below is the fallback
-        return
+    from app.services.embedding_settings import records_search_model
+
+    _embed_text_chunks = _search_seam(records_search_model(db))
     scope = _scope_key(db)
     todo = []
     for token in dict.fromkeys(tokens):
@@ -6027,12 +6037,9 @@ def _rag_resolve_phrase(
     `debtor:<code>`), so the returned `canonical_code` is the value the caller
     should feed directly into SQL filter buckets.
     """
-    try:
-        from app.services.embedding_worker import _embed_text_chunks
-    except Exception:
-        logger.exception("RAG embedding worker import failed; phrase=%s", phrase)
-        return []
+    from app.services.embedding_settings import records_search_model
 
+    model = records_search_model(db)
     allowed_source_types = [
         src for src, ent in _EMBEDDING_SOURCE_TYPES.items() if ent in allowed_entity_types
     ]
@@ -6040,7 +6047,7 @@ def _rag_resolve_phrase(
         return []
 
     try:
-        query_vec = _embed_text_chunks([phrase])[0]
+        query_vec = _search_seam(model)([phrase])[0]
     except Exception:
         logger.exception("RAG embed failed for phrase=%s", phrase)
         return []
@@ -6055,8 +6062,9 @@ def _rag_resolve_phrase(
         FROM embedding_chunks ec
         JOIN embedding_documents ed
           ON ed.source_type = ec.source_type AND ed.source_id = ec.source_id
-        WHERE ec.is_current = TRUE
-          AND ec.source_type = ANY(:types)
+        WHERE ec.model_name = {_in_list_sql([model])}
+          AND ec.is_current
+          AND ec.source_type IN ({_in_list_sql(allowed_source_types)})
           {scope_sql}
         ORDER BY ec.embedding <=> CAST(:vec AS vector)
         LIMIT :k
@@ -6069,7 +6077,7 @@ def _rag_resolve_phrase(
         with db.begin_nested():
             rows = db.execute(
                 sql,
-                {"vec": list(query_vec), "types": allowed_source_types, "k": top_k, **scope_params},
+                {"vec": list(query_vec), "k": top_k, **scope_params},
             ).all()
     except Exception:
         logger.exception("RAG vector query failed for phrase=%s", phrase)

@@ -21,7 +21,7 @@ from app.services.embedding_service import EmbeddingReadService
 router = APIRouter()
 
 
-def _embed_query(query: str) -> list[float]:
+def _embed_query(query: str, model: str | None = None) -> list[float]:
     from app.services import llm_cassette
 
     if llm_cassette.mode() == "replay":
@@ -31,11 +31,9 @@ def _embed_query(query: str) -> list[float]:
         return _embed_text_chunks([query])[0]
     if not settings.openai_api_key:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Embedding provider not configured")
-    from app.services.embedding_client import embed_texts
+    from app.services.embedding_settings import embed_search_texts
 
-    vector = embed_texts(
-        [query], "openai", settings.embedding_model_name, api_key=settings.openai_api_key, timeout=20
-    )[0]
+    vector = embed_search_texts([query], model or settings.embedding_model_name, timeout=20)[0]
     if not vector:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Embedding provider returned empty vector")
     return vector
@@ -51,7 +49,9 @@ def semantic_search(
     if not query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
 
-    query_embedding = _embed_query(query)
+    from app.services.embedding_settings import records_search_model
+
+    query_embedding = _embed_query(query, records_search_model(db))
     rows = EmbeddingReadService(db).search_current(
         query_embedding,
         top_k=body.top_k,
