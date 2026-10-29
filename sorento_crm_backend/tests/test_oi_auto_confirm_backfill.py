@@ -207,3 +207,30 @@ def test_ac_ac_24_a_second_run_changes_nothing(bundle_world):
     assert first > 0
     assert second == 0
     assert before == {k: (_read(w, r).ack_state, r.acknowledged_at) for k, r in s.items()}
+
+
+def test_a_companion_bundled_to_a_rejected_host_is_not_done_after_the_backfill(bundle_world):
+    """The stored bundle still covers the companion's qty, but its host was refused: the
+    backfill must not read the bundled qty as cover (compute_done's rejected-host check)."""
+    from app.services.oi_auto_confirm_backfill import backfill_auto_confirm
+
+    w = bundle_world
+    host = w.row("C2", 1)
+    _po_link(w, host, "C2", 1)
+    _set(w, host, ack=ACK_REJECTED)
+    comp = w.row("CKSW015", 1)
+    w.db.execute(
+        text(
+            f"UPDATE {_bundles.P}.order_inquiry_rows SET bundled_qty = 1, "
+            "bundled_with_row_id = :h WHERE id = :i"
+        ),
+        {"h": host.id, "i": comp.id},
+    )
+    _set(w, comp, ack=ACK_AWAITING, state="placed")
+    w.db.flush()
+
+    backfill_auto_confirm(w.db.connection())
+    w.db.flush()
+
+    assert _read(w, comp).ack_state != ACK_ACKNOWLEDGED
+    assert _read(w, host).ack_state == ACK_REJECTED
