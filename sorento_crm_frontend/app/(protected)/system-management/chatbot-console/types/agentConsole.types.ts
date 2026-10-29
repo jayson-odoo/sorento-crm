@@ -22,6 +22,16 @@ export interface AgentTurnResponse {
   rounds: number;
   usage: AgentUsage;
   tool_calls: AgentToolCall[];
+  steps?: AgentSteps;
+}
+
+/** What a turn did, from its stored trace; the console shows it under the reply. */
+export interface AgentSteps {
+  rounds: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  tool_calls: { name: string; status: string; ms: number }[];
 }
 
 export interface AgentConversationTurn {
@@ -34,6 +44,7 @@ export interface AgentConversationTurn {
   rounds?: number | null;
   limit_hit?: AgentTurnResponse['limit_hit'];
   tool_calls?: { name: string; status: string }[];
+  steps?: AgentSteps;
 }
 
 export interface AgentConversationResponse {

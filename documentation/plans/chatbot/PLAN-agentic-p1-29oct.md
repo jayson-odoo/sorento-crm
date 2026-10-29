@@ -169,7 +169,8 @@ On any limit: one final call with no tools, told to answer with what it has and 
 
 - Reuse the turn trace (`app/services/chatbot/trace.py`): one record per round (model, tokens in/out/cached,
   reasoning tokens, latency) and one event per tool call (name, arguments, status, ms, result size). Persisted on
-  the `chatbot.turns` row, so the existing trace screen shows it.
+  the `chatbot.turns` row. The console Agent tab shows each turn's steps (rounds, tokens, tool calls); the Chat History
+  trace screen does not list agent turns (they are `is_test`), later.
 - Usage rows into `ai_assistant_usage_logs` with `feature = "chatbot_agent"` (as `chatbot/usage.py` does for the
   parser), for console and eval turns too, so the eval cost is measured from the log.
 - No private reasoning is stored or shown; only the opaque continuation needed within the turn.
@@ -459,3 +460,5 @@ Round 7:
 1. Root cause of the true figures flagged in S1: call ids were not unique across rounds. Gemini names a call `gemini_<index>_<tool>`, so a second `crm_report_ask` in a later round reused the first one's id and overwrote its ledger entry, and the delivered report the figures came from was no longer there to check. Ids are now made unique per turn (`~2`, `~3` suffix). The real presenter output, the cap and the echo strip were checked and were not the cause.
 2. A `crm_report_ask` on a sales basis without an explicit `basis` is invalid (the owner's rule: never default the basis); outstanding kinds and the chat dataset are not sales.
 3. A denial (permission, contact grant, or a route 403) closes its data domain for the rest of the turn (sales, outstanding, chat); the denied message ends "Do not get this information another way."
+
+Round 8: `GET agent/conversation` turns and the `POST agent/turn` response carry `steps` (rounds, tokens, tool calls), built from the stored trace; the Agent tab shows them in a collapsed "Steps" disclosure. A number after a heading or bullet mark at line start is never a figure.

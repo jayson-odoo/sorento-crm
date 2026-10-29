@@ -92,7 +92,9 @@ def budgets_from_settings(db) -> Budgets:
 # ------------------------------------------------------------------ figure check
 
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_LIST_MARKER = re.compile(r"(?m)^(\s*)(\d{1,2}[.)])(?=\s)")
+# A number that starts a line, after any markdown heading or bullet marks, and is followed by "." or ")"
+# and a space: a list number or a section number ("### 3. Stock", "- 3. Stock"), never a figure.
+_LIST_MARKER = re.compile(r"(?m)^(\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?)(\d{1,3}[.)])(?=\s|$)")
 _UNITS = r"(?:pcs|pc|units?|ctns?|cartons?|kg|x|k|%)"
 _CURRENCY = r"(?:RM|MYR|USD|CNY|SGD)"
 # A figure is a run of digits (thousands separators allowed, optional decimals), with an

@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, cleanup, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import AgentConsole from './AgentConsole';
@@ -221,5 +221,56 @@ describe('AgentConsole', () => {
     expect(meta).toHaveTextContent('Stock balance: empty');
     expect(meta).not.toHaveTextContent(/answer/i);
     expect(meta).not.toHaveTextContent(/plan/i);
+  });
+
+  it('shows a collapsed Steps disclosure on a reloaded turn and lists the steps when opened', async () => {
+    getAgentConversation.mockResolvedValue({
+      conversation_id: 'cv1',
+      turns: [
+        {
+          turn_id: 't0',
+          text: 'q',
+          reply_text: 'a',
+          status: 'done',
+          created_at: '2026-10-29T09:00:00Z',
+          steps: {
+            rounds: 3,
+            prompt_tokens: 12345,
+            completion_tokens: 67,
+            cached_tokens: 0,
+            tool_calls: [
+              { name: 'crm_report_ask', status: 'ok', ms: 120 },
+              { name: 'crm_resolve', status: 'empty', ms: 3 },
+            ],
+          },
+        },
+      ],
+    });
+    renderConsole();
+    const steps = await screen.findByTestId('agent-steps');
+    const toggle = within(steps).getByRole('button', { name: 'Steps' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(steps).not.toHaveTextContent('3 rounds');
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(steps).toHaveTextContent('3 rounds');
+    expect(steps).toHaveTextContent('Tokens: 12,345 in, 67 out');
+    expect(steps).toHaveTextContent('Sales report: ok (120 ms)');
+    expect(steps).toHaveTextContent('Find names and codes: empty (3 ms)');
+    expect(steps.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
+  });
+
+  it('has no Steps disclosure for a turn that stored none', async () => {
+    getAgentConversation.mockResolvedValue({
+      conversation_id: 'cv1',
+      turns: [
+        { turn_id: 't0', text: 'q', reply_text: 'a', status: 'done', created_at: '2026-10-29T09:00:00Z' },
+      ],
+    });
+    renderConsole();
+    expect(await screen.findByText('a')).toBeInTheDocument();
+    expect(screen.queryByTestId('agent-steps')).not.toBeInTheDocument();
   });
 });

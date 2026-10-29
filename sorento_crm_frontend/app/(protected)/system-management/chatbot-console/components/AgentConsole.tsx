@@ -19,6 +19,7 @@ import {
   agentToolLabel,
   type AgentConversationTurn,
   type AgentReplyMeta,
+  type AgentSteps,
 } from '../types/agentConsole.types';
 
 async function fetchContactOptions(
@@ -67,6 +68,41 @@ function Bubble({
       >
         {children}
       </div>
+    </div>
+  );
+}
+
+/** The turn's steps, collapsed until asked for: rounds, tokens and each tool call with its time. */
+function StepsDisclosure({ steps }: { steps: AgentSteps }) {
+  const [open, setOpen] = useState(false);
+  const calls = steps.tool_calls.filter((c) => !AGENT_HIDDEN_TOOLS.has(c.name));
+  return (
+    <div
+      className="mt-1 text-xs text-muted-foreground"
+      data-testid="agent-steps"
+    >
+      <button
+        type="button"
+        className="underline-offset-2 hover:underline"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        Steps
+      </button>
+      {open ? (
+        <ul className="mt-1 space-y-0.5">
+          <li>{steps.rounds === 1 ? '1 round' : `${steps.rounds} rounds`}</li>
+          <li>
+            Tokens: {steps.prompt_tokens.toLocaleString('en-US')} in,{' '}
+            {steps.completion_tokens.toLocaleString('en-US')} out
+          </li>
+          {calls.map((call, index) => (
+            <li key={`${call.name}-${index}`}>
+              {agentToolLabel(call.name)}: {call.status} ({call.ms} ms)
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -191,6 +227,9 @@ export default function AgentConsole() {
                     agent.metaByTurn[turn.turn_id] ?? metaFromTurn(turn);
                   return meta ? <ReplyMeta meta={meta} /> : null;
                 })()}
+                {turn.steps && turn.steps.rounds > 0 ? (
+                  <StepsDisclosure steps={turn.steps} />
+                ) : null}
               </Bubble>
             ) : null}
           </div>

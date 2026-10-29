@@ -740,6 +740,7 @@ def agent_turn(
         rounds=result.rounds,
         usage=result.usage,
         tool_calls=result.tool_calls,
+        steps=agent_memory.steps_for_turn(db, result.turn_id),
     )
 
 
@@ -782,6 +783,7 @@ def agent_conversation(
                     AgentConversationToolCall(name=str(d.get("name") or ""), status=str(d.get("status") or ""))
                     for d in digest
                 ],
+                steps=agent_memory.steps_from_trace(row.trace),
             )
         )
     return AgentConversationResponse(conversation_id=str(conv.id), turns=turns)

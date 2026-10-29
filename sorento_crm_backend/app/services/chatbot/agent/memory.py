@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -143,3 +144,50 @@ def maybe_compact(
     conv.summary_tokens = max(1, len(summary) // 4)
     db.flush()
     return True
+
+
+#: Calls that are the loop's own plumbing, never a lookup a person asked about.
+_HIDDEN_STEP_TOOLS = frozenset({"answer", "plan"})
+
+
+def steps_from_trace(trace: object) -> dict:
+    """What one turn did, read from its stored trace: model rounds, tokens and each tool call.
+    `agent_round` events carry the tokens of every model call (a final or repair call adds tokens,
+    not a round); `agent_tool` events are the tool calls, minus the hidden `answer` / `plan` calls
+    and the note that stands for calls past the per-round cap."""
+    steps: dict = {"rounds": 0, "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "tool_calls": []}
+    if not isinstance(trace, list):
+        return steps
+    for event in trace:
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("kind")
+        if kind == "agent_round":
+            if event.get("kind_of_call") == "round":
+                steps["rounds"] += 1
+            for key in ("prompt_tokens", "completion_tokens", "cached_tokens"):
+                value = event.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    steps[key] += int(value)
+        elif kind == "agent_tool":
+            name = str(event.get("name") or "")
+            if not name or name in _HIDDEN_STEP_TOOLS or name.startswith("("):
+                continue
+            ms = event.get("ms")
+            steps["tool_calls"].append(
+                {
+                    "name": name,
+                    "status": str(event.get("status") or ""),
+                    "ms": int(ms) if isinstance(ms, (int, float)) and not isinstance(ms, bool) else 0,
+                }
+            )
+    return steps
+
+
+def steps_for_turn(db, turn_id: str) -> dict:
+    try:
+        uuid.UUID(str(turn_id))
+    except ValueError:
+        return steps_from_trace(None)
+    row = db.get(ChatbotTurn, turn_id)
+    return steps_from_trace(row.trace if row is not None else None)
