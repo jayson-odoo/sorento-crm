@@ -518,6 +518,18 @@ def without_pick_axis(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
     return {**verdict, "group_by": None}
 
 
+def offers_outstanding_basis(open_slot: Any) -> bool:
+    """Is the open question one that offers Outstanding as a SALES basis (the sales basis ask, or this ask's basis
+    question before its basis is settled, never the kind question)? There "outstanding" is the answer, not a new ask."""
+    slot = _dict(open_slot)
+    if slot.get("ask") == "sales_basis":
+        return True
+    return (
+        slot.get("ask") == ASK_NAME and not _dict(slot.get("extras")).get("kind_ask")
+        and not _dict(_dict(slot.get("values")).get("basis")).get("value")
+    )
+
+
 def outstanding_by_basis(verdict: dict[str, Any]) -> dict[str, Any]:
     """Eval send-back (#b6e9 on the prod prompt v70): a sales report or analysis whose basis word is "outstanding"
     (`sales_basis`) is an outstanding ask, as before #1922 (`sales_basis_ask.as_report_ask`); its kind is still the
