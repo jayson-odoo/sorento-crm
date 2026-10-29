@@ -2520,3 +2520,34 @@ describe('QuotationVersionEditor sets (SET-QUOTE-LINE)', () => {
     }
   });
 });
+
+describe('QuotationVersionEditor product picker, code only (QUOTE-UI-POLISH AC-QUP-7)', () => {
+  // In Sorento the product code IS the product name, so a name beside the code printed the code
+  // twice and the grey copy cut long codes short (owner, 29 Oct: "just show product code only").
+  beforeEach(() => {
+    getProductsForLineSelect.mockResolvedValue([
+      { ...PRODUCTS[0], id: 'p10', product_code: 'MWC7611-R', product_name: 'MWC7611-R' },
+      { ...PRODUCTS[0], id: 'p11', product_code: 'MWC7610-P', product_name: 'Wall-hung WC' },
+    ]);
+    getProductSetsForLineSelect.mockResolvedValue([SET_REF]);
+  });
+  afterEach(() => {
+    getProductsForLineSelect.mockResolvedValue(PRODUCTS);
+    getProductSetsForLineSelect.mockResolvedValue([]);
+  });
+
+  it('shows each product and set code once, on one column, never truncated', async () => {
+    await renderEditing();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' }));
+
+    const same = await screen.findByRole('option', { name: /MWC7611-R/ });
+    expect(same).toHaveTextContent(/^MWC7611-R$/);
+    // A product whose name differs still shows its code alone.
+    expect(screen.getByRole('option', { name: /MWC7610-P/ })).toHaveTextContent(/^MWC7610-P$/);
+    expect(screen.getByRole('option', { name: /CWC1009-RL/ })).toHaveTextContent(/^CWC1009-RL$/);
+
+    for (const option of screen.getAllByRole('option')) {
+      expect(option.querySelector('.truncate')).toBeNull();
+    }
+  });
+});

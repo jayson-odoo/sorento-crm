@@ -185,6 +185,15 @@ describe('ProjectsGrid: registrations that wait for a decision (RW12)', () => {
       '/project-sales/p-pend',
     );
   });
+
+  it('QUOTE-UI-POLISH AC-QUP-8: the Code and Project links carry no underline, hover included', async () => {
+    renderGrid([project()]);
+    const title = await screen.findByRole('link', { name: 'Staff Registered Tower' });
+    const code = screen.getByRole('link', { name: 'PRJ-000142' });
+    for (const link of [title, code]) {
+      expect(link.className).not.toMatch(/underline/);
+    }
+  });
 });
 
 describe('ProjectsGrid: the typed developer of a registration (review round 3)', () => {
