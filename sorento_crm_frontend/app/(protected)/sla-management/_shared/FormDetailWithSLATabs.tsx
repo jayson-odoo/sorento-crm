@@ -22,9 +22,6 @@ export interface FormDetailExtraTab {
    * label-only trigger rather than a filler icon.
    */
   icon?: ReactNode;
-  /** Its content reads a route that needs the form's `view`: hidden when `limited`, as the SLA
-   *  Tracking tab is. */
-  staffOnly?: boolean;
 }
 
 interface FormDetailWithSLATabsProps {
@@ -35,12 +32,6 @@ interface FormDetailWithSLATabsProps {
   extraTabs?: FormDetailExtraTab[];
   /** Prepends a "Comments (N)" tab right after Details, holding that form's comment thread. */
   commentsKind?: FormCommentKind;
-  /**
-   * The reader holds the form's `view_own` and not its `view` (PORTAL-P4-REQUESTS,
-   * `useRequestScope`): no SLA Tracking tab (`/conversation-sla-tracking/by-source` needs `view`)
-   * and no `staffOnly` tab.
-   */
-  limited?: boolean;
 }
 
 /** The thread's tab: the count shares the thread's query, and a voided form reads only. */
@@ -80,10 +71,8 @@ function Shell({
   sourceEntityType,
   sourceEntityId,
   children,
-  extraTabs = [],
-  limited = false,
+  extraTabs: tabs = [],
 }: FormDetailWithSLATabsProps) {
-  const tabs = limited ? extraTabs.filter((tab) => !tab.staffOnly) : extraTabs;
   return (
     <Tabs defaultValue="details">
       {/* The house underlined strip (same as the product/user detail pages), so
@@ -100,12 +89,10 @@ function Shell({
             <span>{tab.label}</span>
           </TabsTrigger>
         ))}
-        {!limited && (
-          <TabsTrigger value="sla">
-            <Timer />
-            <span>SLA Tracking</span>
-          </TabsTrigger>
-        )}
+        <TabsTrigger value="sla">
+          <Timer />
+          <span>SLA Tracking</span>
+        </TabsTrigger>
       </TabsList>
       <TabsContent value="details" className="m-0">
         {children}
@@ -115,14 +102,12 @@ function Shell({
           {tab.content}
         </TabsContent>
       ))}
-      {!limited && (
-        <TabsContent value="sla" className="m-0">
-          <FormSLATrackingTab
-            sourceEntityType={sourceEntityType}
-            sourceEntityId={sourceEntityId}
-          />
-        </TabsContent>
-      )}
+      <TabsContent value="sla" className="m-0">
+        <FormSLATrackingTab
+          sourceEntityType={sourceEntityType}
+          sourceEntityId={sourceEntityId}
+        />
+      </TabsContent>
     </Tabs>
   );
 }

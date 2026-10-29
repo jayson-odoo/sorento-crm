@@ -10,8 +10,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mapMock = vi.fn();
@@ -93,18 +92,6 @@ describe('Revisions tab on the complaint shell', () => {
     complaintMock.mockReturnValue({ data: { revision_no: 2 }, isLoading: false });
     mount();
     expect(tabs()).toContain('Revisions');
-  });
-
-  it('limited user: the tab body reads the lineage through my-requests, not a staff route', async () => {
-    held = new Set(['complaint_management.complaints.view_own']);
-    mapMock.mockReturnValue({ data: { complaint: true } });
-    complaintMock.mockReturnValue({ data: { id: 'cp-1', revision_no: 0, status: 'processed_by_cs' }, isLoading: false });
-    mount();
-    await userEvent.setup().click(screen.getByRole('tab', { name: 'Revisions' }));
-    await waitFor(() =>
-      expect(apiFetch.mock.calls.map((c) => String(c[0]))).toContain('/api/v1/my-requests/submissions/complaint/cp-1/revisions'),
-    );
-    expect(apiFetch.mock.calls.map((c) => String(c[0])).filter((u) => /complaints?(-management)?\/.*revisions/.test(u) && !u.includes('my-requests'))).toEqual([]);
   });
 });
 

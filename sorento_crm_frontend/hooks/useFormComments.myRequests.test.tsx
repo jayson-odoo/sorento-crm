@@ -46,13 +46,6 @@ async function post() {
 }
 
 describe('posting a comment on a stock inquiry', () => {
-  it('limited user: POST /api/v1/my-requests/submissions/stock_inquiry/si-1/comments', async () => {
-    held = new Set(['procurement.stock_inquiries.view_own']);
-    const calls = await post();
-    expect(calls).toContainEqual(['/api/v1/my-requests/submissions/stock_inquiry/si-1/comments', 'POST']);
-    expect(calls.some(([u, m]) => u.startsWith('/api/v1/form-comments/') && m === 'POST')).toBe(false);
-  });
-
   it('staff user (control): POST /api/v1/form-comments/stock_inquiry/si-1', async () => {
     held = new Set(['procurement.stock_inquiries.view']);
     const calls = await post();

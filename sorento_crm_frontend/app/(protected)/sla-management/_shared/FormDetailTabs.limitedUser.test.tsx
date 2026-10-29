@@ -67,13 +67,6 @@ describe.each(KINDS)('%s detail tabs', (source, revisionsKind, base) => {
       </FormDetailTabsWithRevisions>,
     );
 
-  it('limited user: no SLA Tracking tab', () => {
-    held = new Set([`${base}.view_own`]);
-    mount();
-    expect(tabs()).not.toContain('SLA Tracking');
-    expect(tabs()).toContain('Details');
-  });
-
   it('staff (view): SLA Tracking tab stays', () => {
     held = new Set([`${base}.view`, `${base}.view_own`]);
     mount();

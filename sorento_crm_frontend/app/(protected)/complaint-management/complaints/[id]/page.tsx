@@ -58,15 +58,12 @@ async function ComplaintDetailWrapper({
       sourceEntityId={id}
       revisionsKind="complaint"
       commentsKind="complaint"
-      portalFormWhenLimited
       extraTabs={[
         {
           value: 'fulfilment',
           label: 'Fulfilment DOs',
           icon: <Truck />,
           content: <ComplaintFulfilmentOrdersSection complaintId={id} />,
-          // The fulfilment DOs route needs the complaint's `view`.
-          staffOnly: true,
         },
       ]}
     >

@@ -46,7 +46,6 @@ async function StockInquiryDetailWrapper({
       sourceEntityId={id}
       revisionsKind="stock_inquiry"
       commentsKind="stock_inquiry"
-      portalFormWhenLimited
     >
       <RecordEntityRegistrar entityType="stock_inquiry" id={id} />
       <StockInquiryDetail inquiryId={id} />

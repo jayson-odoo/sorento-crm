@@ -7,12 +7,6 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDate } from '@/lib/helpers';
-import {
-  OwnAttachmentDelete,
-  OwnAttachmentDownload,
-  OwnAttachmentUpload,
-} from '@/components/common/OwnRequestAttachmentActions';
-import { myRequestsAttachmentDownloadUrl, type MyRequestKind } from '@/services/myRequestsService';
 import { useDeleteComplaintAttachment, useDeleteComplaintResponseAttachment } from '../hooks/useComplaints';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import { linkComplaintAttachment } from '../services/complaintService';
@@ -36,20 +30,12 @@ interface ComplaintManualAttachmentsSectionProps {
   complaintId: string;
   /** Attachments from complaint detail (complaint_attachments table). Pass complaint.attachments. */
   attachments?: ComplaintAttachment[];
-  /** No link / unlink: a salesperson reading their own request (PORTAL-P4-REQUESTS). */
-  readOnly?: boolean;
-  /** A salesperson on their own request: upload and remove their own files through My Requests (P4-16). */
-  requestKind?: MyRequestKind;
 }
 
 export default function ComplaintManualAttachmentsSection({
   complaintId,
   attachments: attachmentsFromComplaint = [],
-  readOnly = false,
-  requestKind,
 }: ComplaintManualAttachmentsSectionProps) {
-  const own = requestKind != null;
-  const refreshKeys = useMemo<unknown[][]>(() => [['complaint', complaintId], ['complaints']], [complaintId]);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -71,11 +57,8 @@ export default function ComplaintManualAttachmentsSection({
   );
 
   const downloadUrl = useCallback(
-    (attachmentId: string) =>
-      own
-        ? myRequestsAttachmentDownloadUrl(attachmentId)
-        : `/api/v1/resource-management/attachments/${attachmentId}/download`,
-    [own],
+    (attachmentId: string) => `/api/v1/resource-management/attachments/${attachmentId}/download`,
+    [],
   );
 
   const previewItems = useMemo<AttachmentPreviewItem[]>(
@@ -186,40 +169,31 @@ export default function ComplaintManualAttachmentsSection({
                 <ExternalLink className="size-4" />
                 View
               </Button>
-              {own && link.attachment_id ? (
-                <OwnAttachmentDownload attachmentId={link.attachment_id} filename={displayName} />
-              ) : (
-                <Button variant="outline" size="sm" asChild onClick={(e) => e.stopPropagation()}>
-                  <a
-                    href={
-                      link.attachment_id
-                        ? downloadUrl(link.attachment_id)
-                        : (link.file_url ?? '#')
-                    }
-                    download={displayName}
-                  >
-                    <Download className="size-4" />
-                    Download
-                  </a>
-                </Button>
-              )}
-              {requestKind && link.uploaded_by_role === 'contact' && (
-                <OwnAttachmentDelete linkId={link.id} refreshKeys={refreshKeys} />
-              )}
-              {!readOnly && !own && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setUnlinkTarget({ id: link.id, name: displayName, isResponseAttachment });
-                  }}
-                  disabled={unlinkPending}
+              <Button variant="outline" size="sm" asChild onClick={(e) => e.stopPropagation()}>
+                <a
+                  href={
+                    link.attachment_id
+                      ? downloadUrl(link.attachment_id)
+                      : (link.file_url ?? '#')
+                  }
+                  download={displayName}
                 >
-                  <Trash2 className="size-4" />
-                  Unlink
-                </Button>
-              )}
+                  <Download className="size-4" />
+                  Download
+                </a>
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setUnlinkTarget({ id: link.id, name: displayName, isResponseAttachment });
+                }}
+                disabled={unlinkPending}
+              >
+                <Trash2 className="size-4" />
+                Unlink
+              </Button>
             </div>
           );
         },
@@ -228,7 +202,7 @@ export default function ComplaintManualAttachmentsSection({
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [attachments, unlinkPending, readOnly, own, requestKind, refreshKeys, downloadUrl],
+    [attachments, unlinkPending, downloadUrl],
   );
 
   return (
@@ -241,14 +215,10 @@ export default function ComplaintManualAttachmentsSection({
           </span>
         }
         toolbar={
-          requestKind ? (
-            <OwnAttachmentUpload kind={requestKind} requestId={complaintId} refreshKeys={refreshKeys} />
-          ) : readOnly ? undefined : (
-            <Button onClick={() => setLinkDialogOpen(true)}>
-              <Link2 className="size-4" />
-              Link Attachment
-            </Button>
-          )
+          <Button onClick={() => setLinkDialogOpen(true)}>
+            <Link2 className="size-4" />
+            Link Attachment
+          </Button>
         }
         columns={columns}
         rows={attachments}

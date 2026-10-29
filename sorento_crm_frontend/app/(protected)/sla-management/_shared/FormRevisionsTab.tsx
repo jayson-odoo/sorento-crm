@@ -26,8 +26,6 @@ import {
   useComplaint,
   useComplaintRevisions,
 } from '@/app/(protected)/complaint-management/complaints/hooks/useComplaints';
-import { useRequestScope } from '@/hooks/useRequestScope';
-import { useMyRequestRevisions } from '@/hooks/useMyRequests';
 
 /**
  * The "Revisions" tab on an office detail page (UAC H2, round 6).
@@ -54,9 +52,7 @@ import { useMyRequestRevisions } from '@/hooks/useMyRequests';
  * Purchase requests and sponsorship forms are ONE backend route
  * (`/purchase-requests/{id}/revisions`), so both map to the same hook.
  *
- * A complaint (PORTAL-P4-REQUESTS, owner Q6 a) has no revision exports; a salesperson
- * limited to their own complaints reads the lineage through My Requests, the staff route
- * being closed to them.
+ * A complaint (PORTAL-P4-REQUESTS, owner Q6 a) has no revision exports.
  */
 export type FormRevisionsKind =
   | 'stock_inquiry'
@@ -75,12 +71,9 @@ export default function FormRevisionsTab(props: FormRevisionsTabProps) {
 }
 
 function ComplaintRevisionsTab({ entityId }: { entityId: string }) {
-  const { limited } = useRequestScope('complaint');
   const complaint = useComplaint(entityId);
   const revisionNo = Number(complaint.data?.revision_no ?? 0);
-  const staffQuery = useComplaintRevisions(limited ? null : entityId, revisionNo);
-  const mineQuery = useMyRequestRevisions('complaint', limited ? entityId : null, revisionNo);
-  const query = limited ? mineQuery : staffQuery;
+  const query = useComplaintRevisions(entityId, revisionNo);
   return (
     <RevisionsSection
       entries={query.data as FormRevisionEntry[] | undefined}

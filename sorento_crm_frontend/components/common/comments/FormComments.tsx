@@ -7,11 +7,9 @@ import LoadErrorState from '@/components/common/LoadErrorState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-import { useRequestScope } from '@/hooks/useRequestScope';
 import {
   FORM_COMMENTS_KEY,
   useAddFormComment,
-  useDeleteMyComment,
   useEditFormComment,
   useFormCommentsQuery,
 } from '@/hooks/useFormComments';
@@ -64,32 +62,6 @@ function FormCommentDelete({
   );
 }
 
-/** A salesperson's own comment (PORTAL-P4-REQUESTS): the portal's immediate delete. */
-function MyCommentDelete({
-  kind,
-  entityId,
-  commentId,
-}: {
-  kind: FormCommentKind;
-  entityId: string;
-  commentId: string;
-}) {
-  const remove = useDeleteMyComment(kind, entityId);
-  return (
-    <Button
-      type="button"
-      variant="dim"
-      size="sm"
-      className="h-7 gap-1 px-1.5"
-      disabled={remove.isPending}
-      onClick={() => remove.mutate(commentId)}
-    >
-      <Trash2 className="size-3.5" />
-      Delete
-    </Button>
-  );
-}
-
 /**
  * Staff side of a form submission's comment thread (CRM detail pages): the thread shared with
  * ideation, read as one story - the staff reply first, comments oldest first, the composer last.
@@ -110,7 +82,6 @@ export function FormComments({
     useFormCommentsQuery(kind, entityId);
   const add = useAddFormComment(kind, entityId);
   const edit = useEditFormComment(kind, entityId);
-  const { limited } = useRequestScope(kind);
   const { isDeleting, report } = useDeletingIds();
 
   if (isError) {
@@ -156,18 +127,14 @@ export function FormComments({
           onEdit={async (commentId, body) => {
             await edit.mutateAsync({ commentId, body });
           }}
-          renderDelete={(c) =>
-            limited ? (
-              <MyCommentDelete kind={kind} entityId={entityId} commentId={c.id} />
-            ) : (
-              <FormCommentDelete
-                kind={kind}
-                entityId={entityId}
-                commentId={c.id}
-                onActive={report}
-              />
-            )
-          }
+          renderDelete={(c) => (
+            <FormCommentDelete
+              kind={kind}
+              entityId={entityId}
+              commentId={c.id}
+              onActive={report}
+            />
+          )}
         />
       </CardContent>
     </Card>

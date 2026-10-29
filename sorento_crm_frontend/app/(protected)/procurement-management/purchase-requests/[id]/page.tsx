@@ -46,7 +46,6 @@ async function PurchaseRequestDetailWrapper({
       sourceEntityId={id}
       revisionsKind="purchase_request"
       commentsKind="purchase_request"
-      portalFormWhenLimited
     >
       <RecordEntityRegistrar entityType="purchase_request" id={id} />
       <PurchaseRequestDetail requestId={id} />

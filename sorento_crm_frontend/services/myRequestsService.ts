@@ -20,7 +20,6 @@ import type {
   PortalSubmissionDetail,
   RequestorOption,
 } from '@/app/(auth)/portal/lib/portal-client';
-import { saveBlobAs } from '@/lib/save-blob';
 
 const BASE = '/api/v1/my-requests';
 
@@ -266,12 +265,4 @@ export async function deleteAttachment(linkId: string): Promise<void> {
 /** Bytes of an attachment on their own request, keyed on the attachment id (as the portal's route). */
 export function myRequestsAttachmentDownloadUrl(attachmentId: string): string {
   return `${BASE}/attachments/${encodeURIComponent(attachmentId)}/download`;
-}
-
-/** Save an attachment on their own request. Fetched through `apiFetch`, so an admin viewing as
- *  them sends the impersonation header; a plain link would fetch as the admin. */
-export async function downloadMyRequestAttachment(attachmentId: string, filename: string): Promise<void> {
-  const res = await apiFetch(myRequestsAttachmentDownloadUrl(attachmentId));
-  if (!res.ok) throw new Error(await extractApiError(res, 'Download failed.'));
-  saveBlobAs(await res.blob(), filename);
 }

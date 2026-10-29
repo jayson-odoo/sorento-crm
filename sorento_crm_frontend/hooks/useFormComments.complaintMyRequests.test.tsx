@@ -19,7 +19,7 @@ vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), warning: vi.fn(), err
 const apiFetch = vi.fn();
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
-import { useAddFormComment, useFormCommentsQuery } from './useFormComments';
+import { useAddFormComment } from './useFormComments';
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -49,27 +49,10 @@ async function post() {
 }
 
 describe('posting a comment on a complaint', () => {
-  it('limited user: POST /api/v1/my-requests/submissions/complaint/cp-1/comments', async () => {
-    held = new Set(['complaint_management.complaints.view_own']);
-    const calls = await post();
-    expect(calls).toContainEqual(['/api/v1/my-requests/submissions/complaint/cp-1/comments', 'POST']);
-    expect(calls.some(([u, m]) => u.startsWith('/api/v1/form-comments/') && m === 'POST')).toBe(false);
-  });
-
   it('staff user (control): POST /api/v1/form-comments/complaint/cp-1', async () => {
     held = new Set(['complaint_management.complaints.view']);
     const calls = await post();
     expect(calls).toContainEqual(['/api/v1/form-comments/complaint/cp-1', 'POST']);
     expect(calls.some(([u]) => u.startsWith('/api/v1/my-requests/'))).toBe(false);
-  });
-});
-
-describe('reading the thread on a complaint', () => {
-  it('limited user: GET /api/v1/my-requests/submissions/complaint/cp-1/comments', async () => {
-    held = new Set(['complaint_management.complaints.view_own']);
-    renderHook(() => useFormCommentsQuery('complaint', 'cp-1'), { wrapper });
-    await waitFor(() => expect(apiFetch).toHaveBeenCalled());
-    expect(seen()).toContainEqual(['/api/v1/my-requests/submissions/complaint/cp-1/comments', 'GET']);
-    expect(seen().some(([u]) => u.startsWith('/api/v1/form-comments/'))).toBe(false);
   });
 });
