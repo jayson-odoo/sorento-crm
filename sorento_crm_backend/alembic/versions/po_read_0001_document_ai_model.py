@@ -1,7 +1,7 @@
 """PO-READ-MODEL: the document reader's provider and model live in System Settings
 
 Revision ID: po_read_0001_document_ai_model
-Revises: unpaid_0001_chatbot_ar_role
+Revises: chan_alias_0001_sales_channel
 Create Date: 2026-10-29 00:00:00.000000
 
 Prod, 29 Oct 2026: every PO upload failed "No page of this document could be read". The
@@ -16,7 +16,7 @@ already saved is never overwritten. Additive and idempotent; downgrade drops the
 from alembic import op
 
 revision = "po_read_0001_document_ai_model"
-down_revision = "unpaid_0001_chatbot_ar_role"
+down_revision = "chan_alias_0001_sales_channel"
 branch_labels = None
 depends_on = None
 
