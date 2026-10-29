@@ -1,0 +1,217 @@
+# PLAN: LOOKUP-EMBED-CENTRAL - one source per lookup list, one lookup-vector table, one screen to see them
+
+Status: CARD + MOCK v1 filed for the owner (29 Oct 2026). No code. Track: L (new table + migration, new screen).
+Build starts only after the owner answers Q1-Q5 and approves the mock
+(`documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`).
+
+## Owner words (29 Oct 2026, verbatim)
+
+- "it is either we use the lookup set, or we have embedding table, i want to centralize this" ... "I want the
+  embedding to be centralized, meaning yes for those data I embed and can visualize maybe, but those lookup words for
+  the word like dealer, project, category maybe, attachment type maybe will also be embedded and looked up
+  semantically, i want this visibility".
+- ~10:2x: "the lookup set, it cannot be always us maintaining it right? for example, attachment type comes from
+  attachment type table, spec comes from spec table, category comes from category table, i cannot be configuring the
+  lookup set every time a new record is added to these tables, it should be interlinked and I can just optionally add
+  the lookup if alias are needed".
+- Standing rule: semantic / parser only, no regex or word lists in code.
+
+## Journey
+
+The owner opens one screen, picks a list (Category, File type, Sales channel ...), sees every row the chatbot can
+match, where each row comes from (its master table), every word it is matched on (name, code, aliases) and whether
+that word has a vector for the live embedder. He types any phrase ("零售", "smart toilet") and sees the rows the span
+pass would offer, with score and the list's floor. A new category or attachment type shows up there (and is matched)
+without anyone touching a lookup set. When a row needs an extra word, he adds it once, on the alias home of that list.
+
+## Facts (origin/main 98773e5aa9)
+
+Rows already come from master tables, read live every turn:
+- `load_rows` is called per turn (`app/services/chatbot/engine.py:1265`, `:1325`) and at start-up warm (`:1365`).
+- Loaders: category `head/lookup_lists.py:647-685` (product_categories, searchable + active, plus class labels and
+  `product_type` registry values as `type:` rows via `turn_runtime.product_type_names`, `turn_runtime.py:823-835`);
+  spec `:503-543` (product_spec_registry); file_type `:546-561` (attachment_types via
+  `chatbot_prompt_vars.py:314-334`, `:393`); brand `:564-582`; promotion_kind `:585-592`; location `:595-605`
+  (warehouses); salesperson `:608-629` (sales_agents); customer `:632-644` (customers).
+- The ONE list with no table: sales_channel, rows from code constant `SALES_CHANNELS = ("dealer", "project")`
+  (`app/services/reports/ask.py:386`), loaded at `lookup_lists.py:693`, text = the code value only.
+
+Aliases live in four different places today:
+1. Master-table columns: `product_categories.search_synonyms` (`app/models/product.py:57`),
+   `sales_agents.aliases` (`app/models/sales_agent.py:67`), `product_spec_registry.synonyms` / `user_synonyms`
+   (`app/models/product_spec.py:66`, `:120`), and attachment_types.description split on `, ; /` into words
+   (`chatbot_prompt_vars.py:362-375`).
+2. Lookup sets keyed by option value = the master record's name or code, wired by set_key in code:
+   `attachment_type_alias` (`chatbot_prompt_vars.py:341-359`), `brand_alias` (value = brand code,
+   `turn_runtime.py:573-582`).
+3. Code dict `PROMPT_SYNONYMS` (`lookup_lists.py:67-83`): 3 category entries (water tap, water closet, kitchen sink;
+   they match the class-label `type:` rows, since category_name is code-like, e.g. `SRT-WC`) + 8 file type entries.
+4. Code constant rows: SALES_CHANNELS above, no alias home at all.
+
+`lookup_bindings` is NOT an alias link. A binding says "column T.C takes its values FROM set S" (a dropdown;
+`app/models/lookup.py:72-90`), checked against an eligibility registry (`lookup_binding_service.py:24`), and
+creating one requires every distinct existing column value to be an option already (`lookup_binding_service.py:41`).
+Reusing it for aliases would force every attachment type / category into the set, exactly the upkeep the owner
+rejects. Dev bindings today: complaints.* (4), purchase_requests.sponsor_subject / sales_type, forms.form_type;
+`attachment_type_alias` has no binding (query on sorento_cagent_stack, 29 Oct).
+
+Vectors:
+- Per-process cache keyed `(model, sha1(text))` (`lookup_lists.py:898-908`), cap 20,000 (`:92`); a per-model shared
+  file + flock per container (#1959, `:924-981`); start-up warm thread (`engine.py:1345-1385`, started at
+  `app/main.py:416`); a turn embeds missing texts lazily inside a 3 s budget (`EMBED_TIMEOUT`, `lookup_lists.py:89`).
+- Embedder = production label of prompt key `chatbot_lookup_embedder` (`lookup_lists.py:87`, `:1245-1257`); Gemini
+  sized down to 1536 dims (`:914`), 100 texts per request (`:912`), 429 retry waits 15/30/60 s (`:919`).
+- Meaning floors are per LIST, calibrated on text-embedding-3-small (`lookup_lists.py:46-50`, read at `:287`,
+  `:381`); they apply unchanged to gemini-embedding-001.
+- RAG tables `embedding_documents` / `embedding_chunks` (`app/models/embeddings.py:72-150`): document chunks of
+  business records, `document_id` FK NOT NULL, `is_current` / `superseded_at` versioning, `company_id`,
+  `Vector(1536)`; fed by `embedding_queue` (`:29-62`). Different lifecycle from lookup words.
+
+Dev sizes (sorento_cagent_stack, read-only, 29 Oct): 114 categories (39 carry search_synonyms), 21 non-certificate
+attachment types (16 with description words), 12 brands, 71 warehouses, 114 sales agents (23 with aliases), 5,864
+customers, 53 spec keys. Category + file type + sales channel alone = 601 texts.
+
+## Real examples (dev data, cached gemini-embedding-001 vectors, no API call made)
+
+Vectors: `crew/state/eval/eem/s3/vec_store` (gemini-embedding-001, 1536 dims, written by the EEM S3 gate on the org
+key, 27 Oct); 454 of the 601 category / file type / sales channel texts have one. Rows rebuilt from
+sorento_cagent_stack exactly as the loaders build them. Score = cosine, best text of the row.
+
+| Phrase | Top row (list) | Score | Matched text (its home) | Next row | Score |
+|---|---|---|---|---|---|
+| 马桶 | SRT-WC, M-WC, IDC-WC, CB-WC, BRT-WC (category, class Water Closet) | 1.000 | 马桶 (search_synonyms) | - | - |
+| smart toilet | the 5 Water Closet categories | 0.759 | 马桶 (search_synonyms) | - | - |
+| mixer tap | SRT-FT, M-FT, CB-FT, BRT-FT (category, class Tap) | 0.825 | water tap (search_synonyms) | CB-FH via "hose" | ~0.61 |
+| high resolution photo | Product Photos (file type) | 0.711 | photo (attachment_type_alias set) | Combo Image | 0.601 |
+| project | project (sales channel) | 1.000 | project (code constant) | Promotion (file type) | 0.624 |
+| dealer | dealer (sales channel) | 1.000 | dealer (code constant) | DISPLAY (category) | 0.585 |
+| 零售 / retail | no vector cached; the dealer row's only text is "dealer" | - | - | - | - |
+
+Two findings the screen makes visible:
+- "零售" / "retail" can only reach dealer by meaning today (no alias home for sales channel). With a
+  `sales_channel` alias (dealer <- retail, 零售, kedai runcit) they match by spelling at 1.000, no meaning needed.
+- Gemini's unrelated pairs land at 0.57-0.62 (project -> Promotion 0.624 > file_type floor 0.59; dealer -> DISPLAY
+  0.585 > category floor 0.55): the 3-small floors are too low for gemini. Out of scope here (a separate floor
+  re-score lane), but the screen shows score vs floor per row so it is seen.
+- PROMPT_SYNONYMS' 3 category entries are already data on dev: every Water Closet category carries
+  water closet, wc, toilet, toilet bowl, closet, tandas, 马桶, 坐厕 in search_synonyms; Tap carries
+  paip, kepala paip, water tap, 水龙头. UNVERIFIED on prod (no prod reads in crew lanes; owner-run read-only SQL
+  in "Rollout").
+
+## ARCHITECTURE
+
+- Layer: `head/lookup_lists.py` stays the one place that builds lookup rows (one loader per list). New: one
+  `LookupVector` model + `lookup_vector_service.py` (read / write vectors by `(model, sha1)`), one RQ task
+  `lookup_vectors.sync`, one read-only API `GET /api/v1/master-data/lookup-words` (+ `POST .../try`), one FE page.
+- Shared mechanism: the vector store behind `_vector_embedder` (`lookup_lists.py:990`) swaps the shared file
+  for the table; the in-process cache stays as the hot layer. Every list goes through the same store; no list gets
+  its own path.
+- Fixed classes: every list's rows from its master table (or code constant), every alias from that list's ONE alias
+  home, every vector from the one table. Nothing is per-phrase or per-list special-cased.
+
+## Card
+
+### Per list (proposal = recommended answers below)
+
+| List | Rows from (auto, no set upkeep) | Alias home today | Alias home proposed | Embed trigger |
+|---|---|---|---|---|
+| Category | product_categories (searchable, active) | search_synonyms column + PROMPT_SYNONYMS dict | search_synonyms column (unchanged) | sync job + lazy |
+| Class / type rows | distinct class_label + product_type registry values | PROMPT_SYNONYMS dict | union of its categories' search_synonyms; product_type values: registry user_synonyms | sync job + lazy |
+| Spec | product_spec_registry | synonyms / user_synonyms columns | unchanged | sync job + lazy |
+| File type | attachment_types (non-certificate) | description words + attachment_type_alias set + dict | description words + attachment_type_alias set, option picked from attachment types | sync job + lazy |
+| Brand | brands (active, session companies) | brand_alias set (not on dev) | brand_alias set, option picked from brands | sync job + lazy |
+| Promotion kind | promotion types | none | none (add a set only when a word is needed) | sync job + lazy |
+| Location | warehouses (active) | none | none (same) | sync job + lazy |
+| Salesperson | sales_agents (active) | aliases column | unchanged | sync job + lazy |
+| Customer | customers (active, scoped) | none | none | sync job + lazy |
+| Sales channel | code constant dealer / project | none | `sales_channel_alias` set, option = dealer / project | sync job + lazy |
+
+Rule: rows NEVER come from a lookup set. An alias set is optional, one per list, keyed by the master record's code
+(today's attachment_type_alias / brand_alias convention); its option picker lists the master records, and an option
+whose code no longer exists is shown as orphaned on the screen (not silently dropped).
+
+### Lookup-vector table (proposal)
+
+`lookup_vectors`: `id` uuid pk, `model` varchar(128), `text_sha1` char(40), `text` text, `dims` int,
+`embedding` vector(1536) null, `status` (`ok` / `failed`), `error` text null, `embedded_at`, `last_seen_at`
+(last sync that found a live row carrying the text; texts unseen for 30 days are pruned by the sync). Unique
+`(model, text_sha1)`. No source / list columns: one text serves many rows (马桶 sits on 5 categories); the screen
+joins LIVE rows to vectors by hash, so a renamed or deleted record can never leave a stale "source" behind.
+No company_id: the table holds words, not records; every read that lists rows goes through `load_rows` under the
+viewer's company scope.
+
+Flow: worker start = one SELECT of the label model's vectors into the in-process cache (no provider call);
+a turn that meets a text with no vector embeds it inside today's 3 s budget and INSERTs it (ON CONFLICT DO
+NOTHING); the sync job diffs live texts vs the table every 10 min (scheduler), on an embedder label flip, and on the
+screen's "Embed missing" button, embedding in 100-text chunks with today's 429 waits. A model flip therefore
+re-embeds in the background; until it completes, turns embed their own misses as they do today.
+
+### Screen (mock: `documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`)
+
+`System > Lookup Words` (`/master-data-management/lookup-words`, beside Lookup Sets, permission
+`master_data.lookup_sets.view`). Header: embedder model + coverage ("454 / 601 texts embedded"), one CTA
+"Embed missing". Line tabs per list. DataGrid per list: row label, source table, words (chips coloured by home:
+name/code, alias column, alias set), vector status. Card "Try a phrase": nearest rows with score, list floor and
+whether the span pass would offer it. No 2-D plot (Q4).
+
+### Edge cases
+
+- Same word on two lists (photo -> file type and a category synonym): both rows shown with their list's floor.
+- Alias option whose master code was renamed or deleted: orphaned badge on the screen; never matched.
+- Customer / brand / location rows are company-scoped: the screen and Try card read rows under the viewer's scope.
+- Embed failure (429, bad key): row status `failed` + error on screen; the turn path falls back to spelling as today.
+- Model with other dims (3072): refused by the sync with a clear error (column is 1536).
+- Dev OpenAI key is dead: text-embedding-3-small rows can no longer be embedded on dev; the screen shows `failed`.
+
+### Cost and limits
+
+- Gemini embed: USD 0.15 per 1M input tokens (price used by the S3 guard, `crew/state/eval/eem/s3/gem_guard_s3.py:15`;
+  UNVERIFIED against the current price page). Full backfill ~7-8k texts x ~8 tokens = ~60k tokens = ~USD 0.01 per
+  model. Steady state: only new or edited words. Try-a-phrase: 1 embed call per search (~USD 0.000001).
+- Rate: 100 texts per request -> ~80 requests per full backfill, sent serially with the 15/30/60 s 429 waits.
+  Gemini embed RPM / daily quota for the org key: UNVERIFIED (not read; owner to confirm from AI Studio).
+- Org key ledger applies to every build-lane call (`crew/state/eval/gemini-org-key-ledger.md`).
+
+### Migration, rollback, prod rollout
+
+- One additive alembic migration: `lookup_vectors` + unique index. No data migration; no change to lookup_sets /
+  lookup_bindings schema.
+- Data moves (owner-visible, done on the screen or by a one-off script the owner runs): PROMPT_SYNONYMS file type
+  words into attachment_type_alias options; sales channel set created with dealer / project options.
+- Rollback: revert the PR (cache code returns to the shared file); the table is left unused, drop later.
+- Prod steps for the owner: (1) run the read-only SQL below to confirm the dict's category words are on prod's
+  categories; (2) deploy; (3) open Lookup Words, press Embed missing (~USD 0.01); (4) try 零售 / retail / 马桶.
+
+Owner-run read-only check (prod):
+```sql
+SELECT class_label, count(*) AS categories,
+       count(*) FILTER (WHERE search_synonyms ?| array['马桶','tandas','水龙头','kepala paip','sinki dapur','厨房水槽']) AS with_dict_words
+FROM product_categories WHERE is_active AND is_searchable IS NOT FALSE
+  AND class_label ILIKE ANY (array['%closet%','%tap%','%sink%']) GROUP BY class_label;
+```
+
+### Questions (options, recommendation)
+
+Q1. Where does a list's alias live?
+(a) Keep the master-table alias columns that exist (category, spec, salesperson); lists without one get ONE optional
+alias set keyed by master code (file type, brand, sales channel; others only when needed); delete PROMPT_SYNONYMS.
+(b) Move every alias into lookup sets, drop the columns (39 categories + 23 sales agents re-entered as options).
+(c) Add an alias column to every master table, retire the alias sets.
+Recommend (a): zero upkeep for new records, words stay where the record is edited, no re-entry.
+
+Q2. Sales channel (dealer / project), the only list with no table: rows stay the code constant, aliases in a
+`sales_channel_alias` set (a) or a new `sales_channels` master table (b)?
+Recommend (a): the report engine filters on those two values (`reports/ask.py:386`); a table adds a screen for two rows.
+
+Q3. What embeds a new or edited word?
+(a) Sync job every 10 min + on label flip + "Embed missing" button, plus today's lazy turn path.
+(b) A save listener on every source table (8 tables) enqueueing an embed per change.
+(c) Lazy turn path + button only.
+Recommend (a): one mechanism covers create, edit, model flip and backfill; (b) is 8 hooks to keep in step.
+
+Q4. The screen: (a) per-list DataGrid + "Try a phrase" card, no plot; (b) add a 2-D plot of the vectors.
+Recommend (a): a 2-D projection of 1536-dim cosine space misplaces neighbours; Try-a-phrase answers "what matches".
+
+Q5. RAG chunks (`embedding_chunks`, OpenAI, dev key dead): (a) stay in their own table, the screen shows lookup
+words only; (b) the screen gets a read-only "Records" tab with RAG counts per source and model; (c) merge into one table.
+Recommend (a): different shape (document FK, versioning, company); (c) would rewrite the RAG pipeline for no user gain.
