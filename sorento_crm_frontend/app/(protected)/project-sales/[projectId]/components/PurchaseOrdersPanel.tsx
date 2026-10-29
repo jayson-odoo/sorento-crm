@@ -6,7 +6,6 @@ import type { ColumnDef, ExpandedState } from '@tanstack/react-table';
 import {
   ChevronDown,
   ChevronRight,
-  Columns3,
   Pencil,
   Plus,
   Trash2,
@@ -16,7 +15,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -419,35 +418,36 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         // the count comes from the standard pagination bar ("1 - 1 of 1"). "N with something to
         // check" is gone outright: it named no PO and led nowhere, and the To check COLUMN
         // already says which row and what about it.
+        // The app's list toolbar, as on the Quotations tab: Columns on the left, then the
+        // Actions menu and the primary at the right end. Recording by hand is the rarer way
+        // in, so it sits in Actions and the upload stays the one primary button.
         toolbar={({ table }) => (
-          <>
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1.5">
-                  <Columns3 className="size-4" aria-hidden />
-                  Columns
-                </Button>
-              }
-            />
-            {canWorkOnProject(project) && (
-              <>
+          <DataGridListToolbar
+            table={table}
+            exportConfig={false}
+            alignActionsEnd
+            secondaryActionsAsMenu
+            secondaryActions={
+              canWorkOnProject(project)
+                ? [
+                    {
+                      key: 'record',
+                      label: 'Record a PO',
+                      icon: Plus,
+                      onClick: () => setCreating(true),
+                    },
+                  ]
+                : []
+            }
+            primaryAction={
+              canWorkOnProject(project) ? (
                 <Button type="button" size="sm" onClick={() => setUploadingFor({ po: null })}>
                   <Upload className="size-4" aria-hidden />
                   Upload a PO document
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setCreating(true)}
-                >
-                  <Plus className="size-4" aria-hidden />
-                  Record a PO
-                </Button>
-              </>
-            )}
-          </>
+              ) : undefined
+            }
+          />
         )}
         columns={columns}
         rows={rows}
