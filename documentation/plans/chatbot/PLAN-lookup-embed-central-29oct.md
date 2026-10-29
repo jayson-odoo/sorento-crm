@@ -286,3 +286,60 @@ Recommend (a): a one-setting rollback for two weeks, then ~1.7 GB back.
 
 N5. The flip itself: (a) a button on the screen (enabled at 100%, owner only); (b) a System Settings value the
 owner edits. Recommend (a): the screen already shows the coverage that gates it.
+
+## Which business records are worth embedding (owner question 29 Oct: "code sucks against embedding, no?")
+
+Evidence (no prod reads; the chat connector's bot_turns carry no resolver tier, so prod frequency is UNVERIFIED):
+- What decides a lookup today: dev turn traces (sorento_cagent_stack = prod copy, chatbot.turns, 6-22 Sep, 1,794
+  resolver gates, `trace[].raw.resolve_gate.ctx.gate.resolutions[].matches[0].match_tier`): 561 tokens; 0 decided by
+  embedding. product: exact 192 / prefix 26 / substring 4; attachment_type: substring 46 / word 34 / exact 4 / prefix 2;
+  inbound_shipment exact 27; customer_order exact 20; certificate exact 3; customer exact 2; no match 201. The
+  semantic step still ran on 356 gates: p50 1,428 ms, p95 2,993 ms, max 7,641 ms.
+- Order of tiers in the chatbot's resolver (`entity_resolver.resolve_references`): exact `:5475` -> prefix /
+  substring `:5505` -> head-code retry `:5572` -> LLM code reader `:5615` -> cross-type `:5703` -> embedding `:5766`,
+  only for tokens still empty, similarity >= 0.80 and gap >= 0.05 (`:2936-2937`), at most 1 hit.
+- Code share = share of value tokens that are codes / numbers / ids (300 random current chunks per source).
+
+| Source | Chunks (dev) | Embedded text (`embedding_worker.py`) | Code share | Read by | Recommend |
+|---|---|---|---|---|---|
+| spo_allocation | 82,534 | SPO no, shipment / product uuid, qty, status (`:389-398`) | 0.59 | tier3 + entity filters (exact wins) | DROP |
+| order | 74,902 | order no, type; debtor, salesman, transporter, remarks (`:471-481`) | 0.67 | tier3, entity filters | DROP (numbers exact; names via customer) |
+| order_line | 40,289 | uuids, qty, price (`:605-614`) | 0.71 | generic /external/rag/search only | DROP |
+| promotion_product | 24,719 | product code, promo price, %; promo line, product name (`:341-350`) | 0.74 | generic only | DROP (promotion + product cover it) |
+| product | 15,403 | code, category, brand; name, description (`:127-137`) | 0.81 | tier3, entity filters, fuzzy_resolver | NAME + DESCRIPTION ONLY |
+| product_attachment | 12,318 | uuids, primary, sort, fixed keywords (`:437-447`) | 0.13 (boilerplate) | generic only | DROP |
+| attachment | 8,083 | file name, description; path, uuid (`:212-224`) | 0.10 | tier3, entity filters | KEEP (file name + description) |
+| inbound_shipment_line | 4,530 | uuids, qty, status, batch (`:373-382`) | 0.43 | generic only | DROP |
+| picking_header | 2,595 | picking / SPO no, statuses, notes (`:405-414`) | 0.32 | tier3 | DROP |
+| picking_line | 957 | uuids, qty, condition (`:421-430`) | 0.57 | generic only | DROP |
+| customer | 796 | code, country, email, phone; name (`:547-556`) | 0.58 | tier3, entity filters, fuzzy_resolver | DROP (names: trigram) |
+| promotion_attachment | 791 | uuids, fixed keywords (`:454-464`) | 0.27 (boilerplate) | generic only | DROP |
+| promotion | 685 | dates; description (`:191-198`) | 0.62 | tier3, entity filters | KEEP (description) |
+| certificate | 569 | scheme, number, covered codes; body, issuer, title (`:256-267`) | 0.64 | tier3 | KEEP (title, issuer, body) |
+| inbound_shipment | 365 | shipment no, status, dates; notes (`:357-366`) | 0.38 | tier3, entity filters | DROP |
+| mcp_tool | 186 | capability text, aliases, typical questions (`:101-114`) | 0.05 | /external/rag/tool-search, AI assistant | KEEP |
+| conversation_frame | 118 | frame summary (`:621-623`) | 0.06 | /external/memory/frames/search (chatbot recall deleted, `chatbot/turn/memory.py:452-457`) | KEEP (n8n use UNVERIFIED) |
+| form | 46 | form name, purpose (`:289-298`) | 0.14 | tier3, entity filters | KEEP |
+| transporter | 14 | code; name (`:570-576`) | 0.52 | tier3, entity filters | DROP (trigram) |
+| order_status | 8 | code; name, description (`:590-598`) | 0.24 | generic only | DROP |
+| schema_doc | 6 | field keys, labels (`:316-325`) | 0.01 | generic only | DROP |
+| project | 0 on dev | title, developer, state, mukim (`:498-506`) | - | duplicate check `project_registration_service.py:200` | KEEP |
+
+Readers that matter (`entity_resolver.py`, `embedding_service.py`, `fuzzy_resolver.py`):
+- Chatbot: `resolve_references` in process (`lanes/business/services.py:142-169`, `resolve_gate.py:408/1579`,
+  `head/grounding.py:491`, `engine.py:9503`); embedding is the last tier and decided 0 of 561 tokens on the traces.
+- Staff list filters (`resolve_entities_to_filters` `:6182`): substring -> trigram -> embedding (min 0.20, top 15).
+- `fuzzy_resolver.py:55-129` (order / incoming / GRN list search): on EVERY call it ORs the top 10 vector hits'
+  codes / names into the ILIKE filter with NO similarity floor, so a staff search can pull in unrelated customers or
+  products. Dropping customer embeddings and keeping product name + description with a floor fixes it.
+- `/external/rag/search` (`rag.py:46-85`, all sources): no in-repo caller; the n8n consumer is UNVERIFIED.
+
+Effect of the recommendation:
+- Keep set: product (name + description), attachment, promotion, certificate, form, mcp_tool, conversation_frame,
+  project = 25,090 chunks today (9.3% of 269,914), ~5.1M characters (~1.3M tokens): ~USD 0.19 to re-embed on
+  gemini-embedding-001 (price UNVERIFIED), ~251 batch requests: minutes with a capped job (vs ~112 h on today's
+  queue for all 270k). Gemini vectors + HNSW for 25k chunks: ~0.35 GB instead of ~3.9 GB.
+- Dropped sources stop writing (no embed calls, no queue churn: on dev 680,984 of the 888,712 pending queue events
+  are order + spo_allocation) and readers stop asking for them; their 3-small rows stay (owner N4 (c)).
+- A filtered vector search on a 25k index where products are 60% keeps its results (on the 270k shared index a
+  product-only search returned 0 of 5 rows, measured 29 Oct; see Performance).
