@@ -413,3 +413,41 @@ Effect of the recommendation:
   are order + spo_allocation) and readers stop asking for them; their 3-small rows stay (owner N4 (c)).
 - A filtered vector search on a 25k index where products are 60% keeps its results (on the 270k shared index a
   product-only search returned 0 of 5 rows, measured 29 Oct; see Performance).
+
+## Build slices (lead pattern: tester red tests first per slice, one coder kept alive, reviewer + security-reviewer once)
+
+Track L. Migration: one alembic revision (head id <= 32 chars, re-parent with `./scripts/alembic-reparent.sh`), plus
+idempotent SQL for crew at `/Users/tehjayson/Documents/foundryx/crew/state/migrations/LOOKUP-EMBED-CENTRAL.sql`
+(ADD COLUMN IF NOT EXISTS; index DDL CONCURRENTLY IF NOT EXISTS; the P2 DROP INDEX held for the owner). Tests run on a
+throwaway Postgres DB via `SORENTO_ENV_FILE=.env.ci-tests` (never the shared dev DB), pytest `-n 2`, touched files only,
+plus `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_limit.py`.
+
+1. **Setting + embed function** (AC-LEC-1..4): system_settings columns (both dict builders), migration copying the
+   `chatbot_lookup_embedder` label, `resolve_embedder()`, `embed_texts()`; lookup_lists production embedder
+   (`lookup_lists.py:1243-1259`), worker `_embed_text_chunks` (`embedding_worker.py:646-676`), `rag._embed_query`
+   (`rag.py:23-43`), `OpenAIProvider.embed` (`llm_provider.py:555-558`) all go through it. Tests: settings GET/PUT
+   carry the fields; migration fills from a seeded label and leaves NULL without one; resolver order setting > label >
+   default; embed_texts batches 100, refuses non-1536, no other module posts to an embeddings URL (grep test).
+2. **Keep set + product_spec + readers** (AC-LEC-5..12): keep-set constant; listeners / worker skip other sources;
+   `enqueue_spec_embedding` wired on rendered_text change; readers' source maps `product` -> `product_spec`
+   (`entity_resolver.py:2913-2935`, `_rag_resolve_phrase` callers `:6036`, `fuzzy_resolver.py:56` canonical model);
+   model filter on every reader; `search_current` ORDER BY distance (`embedding_service.py:255,272`); per-model keep-set
+   partial index + per-source indexes (attachment, product_spec) with literal predicates; iterative scan elsewhere;
+   fuzzy_resolver floor. Tests: AC-LEC-9 two-model fixture (a 3-small and a gemini chunk, search returns only the
+   search model's); EXPLAIN shows the partial / per-source index; k of k on a 30% source; fuzzy floor drops a far hit.
+3. **Dual write, backfill job, guard** (AC-LEC-8, 13, 14): RQ task on an existing queue, rpm cap setting, resumable,
+   failed after 3 tries, guard flips the search model and builds the model's indexes. Tests: dual write while models
+   differ; rerun skips done docs; failed rows do not block; flip only at 100%; switching back re-runs.
+4. **Lookup words in the family** (AC-LEC-15..18): lookup_word documents, 10-min scheduled sync + embed-missing task,
+   worker start SELECT replaces the shared file (`lookup_lists.py:924-981`, `engine.py:1345-1385`), PROMPT_SYNONYMS
+   removal (`lookup_lists.py:67-83`, `_with_synonyms` `:498-500`) + one-off script. Tests: sync creates / updates /
+   retires docs by source_hash; start-up load makes no provider call; a turn miss writes a chunk; dict gone and the
+   script's dry run lists the 3 words missing on dev.
+5. **API + FE** (AC-LEC-19..24): `/api/v1/system/embeddings/*` endpoints (permission master_data.lookup_sets.view /
+   .edit), Embeddings page + menu entry (`config/menu.config.tsx:1131` group), System Settings Embeddings tab
+   (`user-management/settings/layout.tsx:306-361`), alias option master picker (lookup-sets OptionFormDialog). Mock:
+   `documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`. vitest on touched components; agent-browser 1280 + 375
+   via sidebar on the crew test copy (crew runs it; hand test script at laneboard/scripts/<PR>.md).
+6. **Floors re-check** (AC-LEC-25): copy `scratchpad/tune/tune_floors.py` into `sorento_crm_backend/scripts/eval/`,
+   add 30+ masked meaning-only phrases per main list (category, file type, brand, sales channel) as a fixture, embed
+   only the new phrases (ledger line first, ~USD 0.0001), re-run, table in the PR body.
