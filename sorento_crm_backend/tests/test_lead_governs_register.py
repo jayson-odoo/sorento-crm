@@ -176,6 +176,34 @@ def test_e4_changing_to_a_lead_with_another_customer_than_requested_is_refused(v
     assert profile_of(v2, pid).customer_id == v2.customer.id
 
 
+def _give_customer(w, project_id, customer_id):
+    from app.models.projects import ProjectSalesProfile
+
+    w.db.add(ProjectSalesProfile(project_id=project_id, customer_id=customer_id))
+    w.db.commit()
+
+
+def test_e4_linking_a_customerless_lead_fills_its_empty_customer_from_the_project(v2):
+    old = seed_project(v2.db, v2.company_id, title("Filler"), owner=v2.owner)
+    _give_customer(v2, old.id, v2.customer.id)
+    lead = lead_row(v2, customer_id=None, owner=v2.owner)
+    res = as_user(v2, v2.owner).put(f"{STAFF}/{old.id}", json={"lead_id": lead.id})
+    assert res.status_code == 200, res.text
+    assert project_of(v2, old.id).lead_id == lead.id
+    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
+
+
+def test_e4_linking_never_overwrites_a_lead_customer_that_is_set(v2):
+    other = new_customer(v2)
+    old = seed_project(v2.db, v2.company_id, title("Keeper"), owner=v2.owner)
+    _give_customer(v2, old.id, v2.customer.id)
+    lead = lead_row(v2, customer_id=other.id, owner=v2.owner)
+    res = as_user(v2, v2.owner).put(f"{STAFF}/{old.id}", json={"lead_id": lead.id})
+    assert res.status_code == 200, res.text
+    assert reload_lead(v2, lead.id).customer_id == other.id
+    assert profile_of(v2, old.id).customer_id == other.id
+
+
 def test_e4_an_edit_without_a_lead_change_leaves_the_stored_customer(v2):
     lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
     pid = _register(

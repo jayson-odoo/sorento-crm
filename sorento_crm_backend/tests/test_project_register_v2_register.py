@@ -159,7 +159,9 @@ def test_g1_approve_ignores_brand_ids(v2):
 
 def test_g1_lead_qualify_ignores_brand_ids(v2):
     brand = _brand(v2)
-    lead = as_user(v2, v2.root).post(LEADS, json={"title": title("Lead")})
+    lead = as_user(v2, v2.root).post(
+        LEADS, json={"title": title("Lead"), "customer_id": v2.customer.id}
+    )
     assert lead.status_code in (200, 201), lead.text
     res = as_user(v2, v2.root).post(
         f"{LEADS}/{lead.json()['id']}/qualify", json={"brand_ids": [brand.id]}

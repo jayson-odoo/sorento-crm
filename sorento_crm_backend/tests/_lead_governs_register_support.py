@@ -32,8 +32,33 @@ def lead_row(w, *, customer_id=None, owner=None, created_by=None, name: str | No
         outcome="open",
     )
     w.db.add(row)
-    w.db.flush()
+    # Committed: the app shares this session and rolls it back on a refusal, which would
+    # otherwise wipe the seed before the test reads it again.
+    w.db.commit()
     return row
+
+
+def staff_lead(db, company_id, user, customer_id):
+    """A lead of `user` carrying `customer_id`, flushed (the caller commits). For older suites
+    whose world is not the v2 one; returns the lead id."""
+    from app.models.projects import ProjectLead
+    from app.services.project_clash_service import normalise_project_title
+
+    text = f"CONTOH Lead {uuid.uuid4().hex}"
+    row = ProjectLead(
+        id=str(uuid.uuid4()),
+        company_id=company_id,
+        lead_code=f"ZZT-L{uuid.uuid4().hex[:12]}",
+        title=text,
+        normalised_title=normalise_project_title(text),
+        customer_id=customer_id,
+        owner_user_id=user,
+        created_by=user,
+        outcome="open",
+    )
+    db.add(row)
+    db.flush()
+    return row.id
 
 
 def new_customer(w):
@@ -80,6 +105,6 @@ def ids_of(res) -> set:
 
 
 __all__ = [
-    "LEADS", "LIST", "STAFF", "title", "lead_row", "new_customer", "reload_lead", "profile_of",
+    "LEADS", "LIST", "STAFF", "title", "lead_row", "staff_lead", "new_customer", "reload_lead", "profile_of",
     "project_of", "projects_titled", "customer_count", "ids_of",
 ]
