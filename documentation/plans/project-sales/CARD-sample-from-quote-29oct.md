@@ -50,32 +50,60 @@ portal forms, the same component. So the pre-fill is built once, inside that sin
    replaced by the new project's lines. If the user deleted, added or edited any row, the rows stay as
    they are (we never throw away their work). Clearing the project leaves the rows.
 4. **Which lines.** Every line of the chosen quotation that resolves to an active catalogue product,
-   in quotation order (scope order, then line order), rate-only alternates included. A product SET
-   line contributes its parts' products. Lines with no product (free text) and lines whose product is
-   inactive are left out and listed in a one-line note under the table (Q3).
+   in quotation order (scope order, then line order), rate-only alternates included. For an issued
+   quotation the lines are those of the version EACH SCOPE HAD IN THAT ISSUE
+   (`quotation_issue_scopes.version_id`), not the scope's current version: the two differ as soon as a
+   scope is revised after issuing (seen on a crew test copy: latest issue holds v2, working copy v3).
+   A product SET line contributes its parts' products (`set_parts_snapshot`). Lines with no product
+   (free text) and lines whose product is inactive are left out and listed in a one-line note under
+   the table (Q3). Discontinued-but-active products are pre-filled like any other (Q3).
 5. **Same product twice** (two scopes, or a set part that is also its own line): one row (Q4).
 6. **Qty** per row: 1 (Q2). **Remark**: empty.
 7. **Each row** keeps the existing Remove line control; Add item still adds a blank row.
-8. **Long quotations.** No cap: a 200-line quotation gives up to 200 rows (fewer after Q4). The table
-   already scrolls; nothing to paginate.
+8. **Long quotations.** No cap. On the real proxy data (below) the largest item list has 622 lines,
+   which Q4's de-duplication brings down to a few dozen rows; the table already scrolls, nothing to
+   paginate.
 9. **One form, one code path.** The pre-fill lives in the shared portal `SampleRequestForm`, so the
    portal and the CRM (My Requests, through #1953's injected client) run the same code. It reads one
    backend route at the portal-relative path, which #1953's fetcher maps to `/api/v1/my-requests`
    for the CRM; the route reuses `assert_portal_project_allowed` and returns product id, code and
    description only (no prices).
 
-## Examples (masked)
+## Examples (masked, from the shared dev DB, crew 29 Oct)
 
-The cloud sandbox has no access to the dev database, so these are the five shapes the model allows,
-not counted rows. Crew can confirm each exists on dev with the query at the end before the build.
+Crew ran the query below read-only on the shared dev DB (a 20 Oct production restore). Only shapes
+and counts are recorded here; no project, customer, document or product identifiers.
 
-| # | Project shape | Pre-filled rows | Note shown |
-|---|---|---|---|
-| A | Project P-A, one document Q-A, issued R1 with 2 scopes (8 + 4 product lines) | 12 rows, qty 1 | none |
-| B | Project P-B, one document revised R1 -> R3; a second document Q-B2 (showroom) never issued | rec: picker shows Q-B1 (R3) and Q-B2 (draft); default Q-B1 R3 lines | none |
-| C | Project P-C, no quotation | 1 blank row (today's form) | none |
-| D | Q-D R1 has 10 lines, 2 of them free text ("Bespoke vanity top") and 1 discontinued SKU | 7 rows | "3 quotation lines not added: 2 have no product, 1 product is inactive" |
-| E | Q-E R2: same basin in scope "Type A units" and "Type B units", plus a set whose part is that basin | 1 basin row (Q4 a) | none |
+**Real quotations are almost empty (the module is new).** The whole DB holds 3 quotation documents,
+2 scopes, 2 versions, 4 lines (3 product lines, 1 product-set line, 0 free text, 0 rate-only) and
+**0 issues**, across 11 projects.
+
+| # | Real shape | Pre-filled rows (rules 4-5) |
+|---|---|---|
+| A | One document, one scope, never issued: 1 product line + 1 set line with 3 active parts | 4 rows (the product + the 3 set parts) |
+| B | One document, one scope, never issued: 2 product lines | 2 rows |
+| C | One document with 0 scopes (and 8 projects with no document at all) | 1 blank row, as today |
+| B' | Crew test copy only (not real data): one document issued R1..R3; R3 holds scope 1 at v2 while its working copy is v3, plus scope 2 at v1; 1 product line + 1 set line of 3 parts | 4 rows from v2 (rule 4), not v3 |
+
+So on real data today **every** pre-fill comes from a never-issued document (Q1 (a)'s fallback is the
+common path, and Q1 (b) would pre-fill nothing), and shapes D (free text / inactive) and E (repeats)
+do not exist in quotations yet.
+
+**Scale and repeats, using project sales orders as the proxy** (910 project SOs, 27,401 lines: the
+closest thing to a big real quotation):
+
+| Shape | Count |
+|---|---|
+| Lines per SO | median 14, max 622; 151 SOs have 50+ lines |
+| SOs repeating a product | 677 of 910 (16,732 repeated lines) |
+| Largest SO after Q4 de-duplication | 622 lines -> 33 rows; another 321 -> 26; a 14-line SO of one product x14 -> 1 row |
+| Lines without a product / inactive product | 0 / 0 |
+| SOs carrying discontinued-but-active products | 154 (475 lines); one 14-line SO has 7 of them |
+
+Catalogue: about 12.4k active products, of which about 2.5k are also flagged discontinued
+(`products.is_discontinued`, `models/product.py:316`); 455 inactive. The sample request save rule and
+the item picker check `is_active` only (`sample_request_service.py:185-219`, `search_products`
+filter :574), so a discontinued-but-active product is already pickable and saveable by hand today.
 
 ```sql
 -- Read-only. One row per quotation document: how many documents its project has, its latest issue and
@@ -95,8 +123,11 @@ SELECT left(md5(d.project_id::text), 8)                                   AS pro
        COUNT(l.id) FILTER (WHERE l.product_id IS NOT NULL AND p.is_active) AS active_product_lines,
        COUNT(l.id) FILTER (WHERE l.product_id IS NOT NULL AND NOT p.is_active) AS inactive_product_lines,
        COUNT(l.id) FILTER (WHERE l.product_set_id IS NOT NULL)            AS set_lines,
+       COALESCE(SUM(jsonb_array_length(l.set_parts_snapshot))
+                FILTER (WHERE l.product_set_id IS NOT NULL), 0)           AS set_parts,
        COUNT(l.id) FILTER (WHERE l.product_id IS NULL AND l.product_set_id IS NULL) AS free_text_lines,
        COUNT(l.product_id) - COUNT(DISTINCT l.product_id)                 AS repeated_product_lines
+       -- (set lines are not counted as repeats: COUNT(l.product_id) skips their NULL product_id)
 FROM projects.quotation_documents d
 LEFT JOIN latest lt ON lt.document_id = d.id
 LEFT JOIN projects.quotation_issue_scopes s ON s.issue_id = lt.issue_id
@@ -119,28 +150,39 @@ appears above the items (default: the most recently issued); a never-issued docu
 current versions. (b) Latest issue only; never-issued documents are ignored, no picker (first issued
 document wins). (c) Current working versions of every scope of every document.
 **Rec: (a)**: the issue is what the customer holds and what the samples are for; the picker only shows
-when there is a real choice.
+when there is a real choice. Note the dev data: no quotation has been issued yet, so (b) would
+pre-fill nothing today and (a)'s never-issued fallback is what every user would see at first.
 
 **Q2. Sample qty per row?** (a) 1. (b) The quoted quantity (often hundreds of units).
 **Rec: (a)**: a sample is one piece; the user raises it where needed.
 
-**Q3. Quotation lines with no product (free text) or an inactive product?** (a) Left out, with a
-one-line note under the table naming how many and why. (b) Left out silently. (c) Added as a row with
-an empty product the user must fill or delete.
-**Rec: (a)**: a sample line must name an active product (`sample_request_service.py:185`), so (c)
-blocks submit until fixed; (b) hides what was skipped.
+**Q3. Quotation lines with no product (free text), an inactive product, or a discontinued (still
+active) product?** (a) Free text and inactive are left out with a one-line note naming how many and
+why; discontinued-but-active products ARE pre-filled like any other. (b) As (a), but discontinued
+products are also left out and counted in the note. (c) Free text added as a row with an empty
+product the user must fill or delete.
+**Rec: (a)**: a sample line must name an active product (`sample_request_service.py:185`), so
+inactive lines cannot be saved and (c) blocks submit until fixed; discontinued-but-active products
+are pickable and saveable by hand today (:574), and a discontinued item already quoted is exactly
+the one that may need a sample from demo stock before it runs out. Dev data has 0 free-text and 0
+inactive quotation lines, so the note will rarely show.
 
 **Q4. Same product in two scopes (or as a set part and its own line)?** (a) One row. (b) One row per
 quotation line.
-**Rec: (a)**: one sample of the product is enough; duplicates are just more deletes.
+**Rec: (a)**: one sample of the product is enough; duplicates are just more deletes. The proxy data
+makes this the biggest effect in the lane: 677 of 910 real project item lists repeat a product, and
+the largest goes from 622 lines to 33 rows.
 
-**Q5. Store the source quotation on the request?** (a) Yes: nullable `sample_requests.quotation_issue_id`
-(FK `quotation_issues`, SET NULL), shown read-only on the detail page. This is a MIGRATION, and the
-lane would publish the idempotent SQL for the dev copy. (b) No: the request only lists products, as
-today.
-**Rec: (a)** if the owner wants "which revision did we sample from" answerable later (the same reason
-`project_samples.quotation_version_id` exists, `models/projects.py:1606`); otherwise (b) keeps the
-lane migration-free. Note (a) needs a NULL for Q1's never-issued fallback.
+**Q5. Store the source quotation on the request?** (a) Yes, two nullable columns:
+`sample_requests.quotation_document_id` (FK `quotation_documents`, SET NULL; which letterhead) and
+`quotation_issue_id` (FK `quotation_issues`, SET NULL; which revision, NULL when the pre-fill came
+from a never-issued document), shown read-only on the detail page. This is a MIGRATION, and the lane
+would publish the idempotent SQL for the dev copy. (b) No: the request only lists products, as today.
+**Rec: (a)** if the owner wants "which quotation and revision did we sample from" answerable later (the
+same reason `project_samples.quotation_version_id` exists, `models/projects.py:1606`); otherwise (b)
+keeps the lane migration-free. An issue column alone is not enough: dev data has 0 issues, so it would
+be NULL on every request made today; the document column is what carries the link until quotations
+start being issued.
 
 ## UI
 
