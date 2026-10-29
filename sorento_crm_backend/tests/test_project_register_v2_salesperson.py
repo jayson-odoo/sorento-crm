@@ -18,6 +18,7 @@ from ._project_register_v2_support import (  # noqa: F401
     register_body,
     reject_as_manager,
     save_draft,
+    seed_lead,
     submit_existing,
     submit_new,
     title,
@@ -175,11 +176,18 @@ def test_j4_submit_from_a_draft_does_the_same(v2):
 
 
 def test_j4_required_fields_are_enforced_on_submit(v2):
-    res = as_user(v2, v2.sub_a).post(LIST, json={"title": title(), "submit": True})
+    # Each carries a lead with no customer, so the customer is the one thing missing.
+    lead = seed_lead(v2, v2.sub_a)
+    res = as_user(v2, v2.sub_a).post(
+        LIST, json={"title": title(), "submit": True, "lead_id": lead.id}
+    )
     assert res.status_code == 422, res.text
     assert res.json()["code"] == "project_customer_required"
 
-    pid = as_user(v2, v2.sub_a).post(LIST, json={"title": title(), "submit": False}).json()["id"]
+    lead = seed_lead(v2, v2.sub_a)
+    pid = as_user(v2, v2.sub_a).post(
+        LIST, json={"title": title(), "submit": False, "lead_id": lead.id}
+    ).json()["id"]
     res = submit_existing(v2, v2.sub_a, pid)
     assert res.status_code == 422, res.text
     assert _project(v2, pid).approval_state == "draft"
@@ -293,9 +301,14 @@ def test_j3b_edit_is_offered_only_on_a_draft_or_a_rejected_registration(v2):
     assert as_user(v2, v2.sub_a).get(f"{STAFF}/{waiting}").json()["can_edit"] is True
 
 
-def test_j3c_a_lead_id_from_a_submit_only_user_is_not_linked(v2):
-    lead = as_user(v2, v2.owner).post("/api/v1/project-sales/leads", json={"title": title("Lead")})
+def test_j3c_a_lead_id_that_is_not_the_submit_only_users_own_is_a_404(v2):
+    """LEAD-GOVERNS-REGISTER E6 replaces "a submit-only user's lead_id is not linked": the
+    submit-only path now takes a lead, but only one of the caller's own."""
+    lead = as_user(v2, v2.owner).post(
+        "/api/v1/project-sales/leads",
+        json={"title": title("Lead"), "customer_id": v2.customer.id},
+    )
     assert lead.status_code in (200, 201), lead.text
     res = save_draft(v2, v2.sub_a, lead_id=lead.json()["id"])
-    assert res.status_code == 201, res.text
-    assert res.json()["lead_id"] is None
+    assert res.status_code == 404, res.text
+    assert res.json()["code"] == "lead_not_found"

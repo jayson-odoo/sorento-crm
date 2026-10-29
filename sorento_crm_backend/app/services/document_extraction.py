@@ -32,6 +32,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -40,7 +41,12 @@ from typing import Callable, Optional
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.services.llm_provider import ImagePart, get_provider, resolve_api_key
+from app.services.llm_provider import (
+    ImagePart,
+    default_model_for,
+    get_provider,
+    resolve_api_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +251,70 @@ def _assistant_config(db: Session):
     )
 
 
+def _reader_model(db: Session) -> tuple[str, str]:
+    """The provider and model the document reader runs on.
+
+    System Settings first (``document_ai_provider`` / ``document_ai_model``, the same
+    shape as the photo lane's pair), so the model is picked on a screen, never only in
+    a server env: on 29 Oct 2026 the env default ``gemini-2.5-flash`` 404'd for a new
+    Google key and nothing on any screen could change it. The env
+    (``DOCUMENT_AI_PROVIDER`` / ``DOCUMENT_AI_MODEL``) is only the fallback for an install
+    with nothing saved. A saved provider with no model gets that provider's default,
+    never the env model, which belongs to whatever provider the env names. A saved
+    model with no saved provider is ignored: a model id means nothing without the
+    provider it was picked from, and pairing it with the env provider is how a
+    `gpt-4o` ends up posted to Google.
+    """
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting).first()
+    saved_provider = (getattr(row, "document_ai_provider", None) or "").strip().lower()
+    saved_model = (getattr(row, "document_ai_model", None) or "").strip()
+    if saved_provider:
+        return saved_provider, saved_model or default_model_for(saved_provider)
+    provider_name = (settings.document_ai_provider or "").strip().lower()
+    return provider_name, settings.document_ai_model or default_model_for(provider_name)
+
+
+# What Gemini, OpenAI and Anthropic say when a key cannot use a model. `404` only as a
+# whole word: "resulted in 140452 tokens" in a context-length error is not a 404.
+_MODEL_UNAVAILABLE = re.compile(
+    r"\b404\b|not_found|not found|no longer available|does not exist|is not supported"
+)
+
+# Key-shaped fragments a provider may echo back (OpenAI's 401 names a masked `sk-...`).
+_KEY_FRAGMENT = re.compile(r"\b(?:sk-[A-Za-z0-9_*.-]+|AIza[0-9A-Za-z_-]+)")
+
+
+def is_model_unavailable(error: str) -> bool:
+    """A provider answer that means "this key cannot use this model", not "this page"."""
+    text = (error or "").lower()
+    return "model" in text and _MODEL_UNAVAILABLE.search(text) is not None
+
+
+def redact_key_fragments(text: str) -> str:
+    """Strip anything shaped like an API key before a provider error is stored or shown."""
+    return _KEY_FRAGMENT.sub("[key]", text or "")
+
+
+def page_failure_reason(errors) -> str:
+    """The first page error, as a sentence to append to a "could not be read" message.
+
+    Prod 29 Oct 2026: every page 404'd on a model the key could not use, the reason sat
+    in ``extracted_json.pages[].error`` and the panel said only "No page could be read".
+    One reason, not one per page: when every page fails it is nearly always the same one.
+    """
+    reason = redact_key_fragments(next((str(e) for e in errors if e), ""))
+    if not reason:
+        return ""
+    hint = (
+        " Pick another document reading model in System Settings > Chatbot Media."
+        if is_model_unavailable(reason)
+        else ""
+    )
+    return f" Reason: {reason[:240]}{hint}"
+
+
 def _prepare_prompt(db: Session, prompt_key: str) -> tuple[str, set[str]]:
     """Resolve ``prompt_key``'s live template ONCE, before any page runs.
 
@@ -321,7 +391,9 @@ def extract_document(
     nothing truthful to attribute it to yet. Recording a guess would be worse than the
     blank.
     """
-    provider_name = (settings.document_ai_provider or "").strip().lower()
+    provider_name, chosen_model = _reader_model(db)
+    if model:
+        chosen_model = model
     api_key = resolve_api_key(_assistant_config(db), provider_name)
     if not api_key:
         env_var = _ENV_KEY_NAME.get(provider_name, "OPENAI_API_KEY")
@@ -332,7 +404,6 @@ def extract_document(
             "The document is stored and can be completed by hand."
         )
 
-    chosen_model = model or settings.document_ai_model
     provider = get_provider(provider_name, api_key, chosen_model)
     rendered_pages = _render_pages_rich(content, mime)
     page_total = len(rendered_pages)
@@ -362,7 +433,7 @@ def extract_document(
             page.error = "the model's answer was not valid JSON"
             page.raw_text = (answer.content or "")[:2000]
         except Exception as exc:  # noqa: BLE001 - one bad page must not lose the rest
-            page.error = str(exc)[:300]
+            page.error = redact_key_fragments(str(exc))[:300]
             logger.warning("extraction failed on page %s: %s", index, page.error)
         page.elapsed_ms = int((time.perf_counter() - page_started) * 1000)
         return page
@@ -390,6 +461,17 @@ def extract_document(
                     )
 
     result.pages = [pages_by_no[no] for no in sorted(pages_by_no)]
+    unavailable = next(
+        (p.error for p in result.pages if p.error and is_model_unavailable(p.error)), None
+    )
+    if unavailable:
+        # One line per document, naming the model, so the next "nothing could be read"
+        # is diagnosed from the log in seconds rather than from a support thread.
+        logger.error(
+            "document reader: model not available: %s (%s). Pick another document "
+            "reading model in System Settings.",
+            result.model, unavailable[:200],
+        )
     result.elapsed_ms = int((time.perf_counter() - started) * 1000)
     _log_usage(db, result, prompt_key=prompt_key, provider=provider.name)
     return result

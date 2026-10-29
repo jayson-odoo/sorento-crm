@@ -533,20 +533,9 @@ export interface ProjectLead {
   updated_at?: string | null;
 }
 
-/** Step 1 of the wizard when the informant has never bought anything. */
-export interface LeadNewCustomer {
-  customer_name: string;
-  customer_code?: string | null;
-  email?: string | null;
-  phone_number?: string | null;
-  registration_number?: string | null;
-  notes?: string | null;
-}
-
 export interface ProjectLeadBody {
   title: string;
   customer_id?: string | null;
-  new_customer?: LeadNewCustomer | null;
   developer_party_id?: string | null;
   source?: LeadSource | null;
   source_detail?: string | null;

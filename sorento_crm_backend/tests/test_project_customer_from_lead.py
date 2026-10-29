@@ -20,10 +20,30 @@ from .test_project_form_lead_link import (  # noqa: F401  (api is a fixture)
     _client,
     _create_lead,
     _register,
+    _register_without_lead,
     api,
 )
 
 CUSTOMERS_VIEW = "order_management.customers.view"
+
+
+def _lead_with_customer(client, db, company_id, name, phone=None):
+    """A lead whose customer is a fresh debtor of this name (a lead needs a customer now, and
+    the lead route no longer creates one inline)."""
+    from app.models.order import Customer
+
+    customer = Customer(
+        id=str(uuid.uuid4()),
+        customer_code=f"ZZT-C{uuid.uuid4().hex}",
+        customer_name=name,
+        phone_number=phone,
+        company_id=company_id,
+    )
+    db.add(customer)
+    db.flush()
+    res = _create_lead(client, customer_id=customer.id)
+    assert res.status_code == 201, res.text
+    return res.json()
 
 
 def _as(db, user_id, perms):
@@ -42,13 +62,7 @@ def _registered_before_v2(db, project_id):
 
 def test_a_project_names_its_customer_with_phone_and_main_contact(api):
     client, db, company_id, _user_id = api
-    lead = _create_lead(
-        client,
-        new_customer={
-            "customer_name": f"zzt Gamuda Builders {uuid.uuid4().hex[:8]}",
-            "phone_number": "012-345 6789",
-        },
-    ).json()
+    lead = _lead_with_customer(client, db, company_id, f"zzt Gamuda Builders {uuid.uuid4().hex[:8]}", phone="012-345 6789")
     assert lead["customer_id"], lead
     db.add(
         CustomerContact(
@@ -70,27 +84,23 @@ def test_a_project_names_its_customer_with_phone_and_main_contact(api):
     assert body["customer_attn"] == "Lim Wei Ming"
 
 
-def test_the_picked_customer_wins_over_the_leads_buyer(api):
-    client, _db, _company_id, _user_id = api
-    lead = _create_lead(
-        client,
-        new_customer={"customer_name": f"zzt Lead Buyer {uuid.uuid4().hex[:8]}"},
-    ).json()
+def test_the_project_takes_the_customer_of_its_lead(api):
+    """LEAD-GOVERNS-REGISTER E2 replaces "the picked customer wins over the lead's buyer":
+    the lead's customer is the project's, and the request need not name one."""
+    client, db, company_id, _user_id = api
+    lead = _lead_with_customer(client, db, company_id, f"zzt Lead Buyer {uuid.uuid4().hex[:8]}")
     assert lead["customer_id"] != _REGISTER_CUSTOMER["id"]
 
-    project = _register(client, lead_id=lead["id"]).json()
+    project = _register(client, lead_id=lead["id"], customer_id=None).json()
     body = client.get(f"{PROJECTS_BASE}/{project['id']}").json()
 
-    assert body["customer_id"] == _REGISTER_CUSTOMER["id"]
+    assert body["customer_id"] == lead["customer_id"]
 
 
 def test_an_older_project_with_no_picked_customer_reads_its_leads_buyer(api):
-    client, db, _company_id, _user_id = api
-    lead = _create_lead(
-        client,
-        new_customer={"customer_name": f"zzt Older Buyer {uuid.uuid4().hex[:8]}"},
-    ).json()
-    project = _register(client, lead_id=lead["id"]).json()
+    client, db, company_id, _user_id = api
+    lead = _lead_with_customer(client, db, company_id, f"zzt Older Buyer {uuid.uuid4().hex[:8]}")
+    project = _register(client, lead_id=lead["id"], customer_id=lead["customer_id"]).json()
     _registered_before_v2(db, project["id"])
 
     body = client.get(f"{PROJECTS_BASE}/{project['id']}").json()
@@ -101,7 +111,7 @@ def test_an_older_project_with_no_picked_customer_reads_its_leads_buyer(api):
 
 def test_a_project_with_no_picked_customer_and_no_lead_has_no_customer(api):
     client, db, _company_id, _user_id = api
-    project = _register(client).json()
+    project = _register_without_lead(client).json()
     _registered_before_v2(db, project["id"])
     body = client.get(f"{PROJECTS_BASE}/{project['id']}").json()
 
@@ -112,11 +122,8 @@ def test_a_project_with_no_picked_customer_and_no_lead_has_no_customer(api):
 
 
 def test_the_list_carries_the_customer_too(api):
-    client, _db, _company_id, _user_id = api
-    lead = _create_lead(
-        client,
-        new_customer={"customer_name": f"zzt List Buyer {uuid.uuid4().hex[:8]}"},
-    ).json()
+    client, db, company_id, _user_id = api
+    lead = _lead_with_customer(client, db, company_id, f"zzt List Buyer {uuid.uuid4().hex[:8]}")
     project = _register(client, lead_id=lead["id"], customer_id=lead["customer_id"]).json()
 
     rows = client.get(f"{PROJECTS_BASE}/", params={"limit": 200}).json()["data"]
@@ -128,13 +135,7 @@ def test_phone_and_contact_need_the_customers_view_grant(api):
     """Security review, 13 Oct: the customer master's phone and main contact sit behind
     order_management.customers.view, so a project reader without it sees the name only."""
     client, db, company_id, _user_id = api
-    lead = _create_lead(
-        client,
-        new_customer={
-            "customer_name": f"zzt Gated Buyer {uuid.uuid4().hex[:8]}",
-            "phone_number": "+60 11-111 1111",
-        },
-    ).json()
+    lead = _lead_with_customer(client, db, company_id, f"zzt Gated Buyer {uuid.uuid4().hex[:8]}", phone="+60 11-111 1111")
     db.add(
         CustomerContact(
             company_id=company_id,

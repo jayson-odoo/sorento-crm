@@ -165,13 +165,12 @@ export function LeadsGrid({
       {
         id: 'customer_name',
         accessorFn: (row) => row.customer_name ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Buyer" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
         size: 170,
         enableSorting: false,
-        meta: { headerTitle: 'Buyer', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (
-          // "Not known yet" rather than a blank: on a fresh lead nobody knows who will
-          // place the order, and an empty cell reads as missing data instead of a fact.
+          // "Not known yet" rather than a blank: an empty cell reads as missing data instead of a fact.
           <span className="block truncate" title={row.original.customer_name ?? ''}>
             {row.original.customer_name ?? <Muted>Not known yet</Muted>}
           </span>
