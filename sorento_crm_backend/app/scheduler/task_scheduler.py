@@ -182,6 +182,15 @@ def _handler_notification_delivery_processor(db, task):
     return run_sync_rq_jobs("notifications", max_jobs=20)
 
 
+def _handler_lookup_words_sync(db, task):
+    """Hand the lookup-word sync to the worker (it can embed thousands of texts; the scheduler must not)."""
+    from app.services.queue_service import enqueue_job
+    from app.tasks.embedding_backfill import embed_missing_lookup_words
+
+    job = enqueue_job(embed_missing_lookup_words, queue_name="imports")
+    return {"queued": True, "job_id": getattr(job, "id", None)}
+
+
 def _handler_embedding_job_processor(db, task):
     """Process embedding jobs: Redis RQ first; optional Postgres embedding_queue fallback."""
     batch_size = max(1, int(settings.embedding_queue_batch_size))
@@ -791,6 +800,7 @@ def register_task_handlers():
     register_handler("import_job_processor", _handler_import_job_processor)
     register_handler("notification_delivery_processor", _handler_notification_delivery_processor)
     register_handler("embedding_job_processor", _handler_embedding_job_processor)
+    register_handler("lookup_words_sync", _handler_lookup_words_sync)
     register_handler("embedding_queue_prune", _handler_embedding_queue_prune)
     register_handler("embedding_queue_dedupe", _handler_embedding_queue_dedupe)
     register_handler("user_sla_daily_summary", _handler_user_sla_daily_summary)
