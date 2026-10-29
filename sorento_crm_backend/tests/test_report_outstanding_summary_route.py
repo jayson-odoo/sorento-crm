@@ -355,3 +355,14 @@ def test_a_ranking_by_another_axis_carries_no_documents(client, db):
     w = _pending_world(db)
     body = _ok(client, _staff(db), basis="pending_delivery", group_by="customer", top_n=10, period=None)
     assert body.get("documents") is None, body
+
+
+# ================================================================ item 6 (owner 29 Oct): "more" paging, as before #1922
+
+
+def test_the_route_echoes_the_group_offset_on_a_summary(client, db):
+    w = _pending_world(db)
+    body = _ok(client, _staff(db), basis="pending_delivery", product_ids=[w.pc.id], group_offset=20, period=None)
+    assert body["summary"]["group_offset"] == 20, body["summary"]
+    first = _ok(client, _staff(db), basis="pending_delivery", product_ids=[w.pc.id], period=None)
+    assert first["summary"].get("group_offset") in (None, 0), first["summary"]

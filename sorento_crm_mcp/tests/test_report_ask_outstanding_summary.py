@@ -222,3 +222,38 @@ def test_the_sales_order_list_prints_the_pre_1922_rows():
         "1. *SO Number:* SO-1", "*Customer:* Customer A", "*Product:* P-1", "*Location:* WH-A", "*Ordered:* 10",
         "*Transferred to DO:* 4", "*Outstanding:* 6", "*Order Date:* 05/08/2026",
     ])
+
+
+def _long(offset=None):
+    rows = [{"name": f"C{i:02d}", "qty": 60 - i, "amount": 1.0} for i in range(45)]
+    summary = {
+        "documents": 45, "qty": 1710, "amount": 45.0, "date_first": "2026-01-01", "date_last": "2026-02-01",
+        "groups": [
+            {"axis": "location", "label": "Location", "rows": [{"name": "WH-A", "qty": 1710, "amount": 45.0}]},
+            {"axis": "customer", "label": "Customer", "rows": rows},
+        ],
+    }
+    if offset is not None:
+        summary["group_offset"] = offset
+    return _body("pending_delivery", "pending delivery", PRODUCT, summary, total=(1710, 45.0))
+
+
+def test_a_long_group_pages_twenty_with_a_more_line():
+    """Item 6 (owner 29 Oct, as before #1922): 20 rows, then `Reply "more" to see the next 20.`, then the offer."""
+    text = _report_ask(_long())
+    assert "C19:" in text and "C20:" not in text, text
+    assert text.endswith('Reply "more" to see the next 20.\n\nReply 1 for the delivery order list.'), text
+    assert "... and" not in text, text
+
+
+def test_the_second_page_shows_the_next_twenty_and_the_last_page_the_rest():
+    second = _report_ask(_long(20))
+    assert "C20:" in second and "C39:" in second and "C19:" not in second and "C40:" not in second, second
+    assert 'Reply "more" to see the next 5.' in second, second
+    last = _report_ask(_long(40))
+    assert "C44:" in last and "C39:" not in last and 'Reply "more"' not in last, last
+
+
+def test_past_the_end_says_that_is_all():
+    text = _report_ask(_long(60))
+    assert "That is all 45." in text and "C44:" not in text, text
