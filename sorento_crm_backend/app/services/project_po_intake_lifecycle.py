@@ -92,6 +92,27 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
 logger = logging.getLogger(__name__)
 
 
+def _first_page_reason(page_blobs: Sequence[Dict[str, Any]]) -> str:
+    """The first stored page error, as a sentence for the "could not be read" panel.
+
+    Prod 29 Oct 2026: every page 404'd on a model the key could not use, the reason sat
+    in ``extracted_json.pages[].error`` and the panel said only "No page could be read".
+    One reason, not one per page: when every page fails it is nearly always the same one.
+    Provider errors carry the model's message, never the key (sent as a header).
+    """
+    from app.services.document_extraction import _is_model_unavailable
+
+    reason = next((str(b["error"]) for b in page_blobs if b.get("error")), "")
+    if not reason:
+        return ""
+    hint = (
+        " Pick another document reading model in System Settings > Chatbot media."
+        if _is_model_unavailable(reason)
+        else ""
+    )
+    return f" Reason: {reason[:240]}{hint}"
+
+
 class POIntakeLifecycleMixin:
     """Requires ``self.db``. The facade class supplies it."""
 
@@ -810,7 +831,8 @@ class POIntakeLifecycleMixin:
             version.extraction_error = (
                 "No page of this document could be read. The file is stored; the lines "
                 "can be filled in by hand."
-            )
+                + _first_page_reason(page_blobs)
+            )[:500]
         else:
             version.extraction_state = STATE_DONE
             version.extraction_error = (
