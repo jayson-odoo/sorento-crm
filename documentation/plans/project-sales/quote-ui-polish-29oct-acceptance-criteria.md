@@ -13,4 +13,6 @@ Plan: `PLAN-quote-ui-polish-29oct.md` (same folder). Owner, 29 Oct ~10:00.
   wrap). Sets show their code once too.
 - AC-QUP-8: Pipeline > Grid: the Code and Project cells show no underline, on hover or otherwise; clicking a row
   still opens the project.
+- AC-QUP-10: No screen says "Mukim": the project form, the project overview, the staff and portal AI extract reviews
+  and the portal registration form all say "Area"; the saved value is unchanged.
 - AC-QUP-9: All of the above usable at 375px and 1280px.

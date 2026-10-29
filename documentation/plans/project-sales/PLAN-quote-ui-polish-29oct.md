@@ -1,6 +1,6 @@
 # PLAN: quotation series default, product picker code only, projects list no underline (QUOTE-UI-POLISH)
 
-Status: Build. Small fix track (3 frontend tweaks, no migration, no auth/RBAC, no new ingest; expected diff well
+Status: Build (code + red/kill proof done; PR, review, browser pass next). Small fix track (3 frontend tweaks, no migration, no auth/RBAC, no new ingest; expected diff well
 under 300 lines). UAC: `quote-ui-polish-29oct-acceptance-criteria.md` (same folder).
 
 Owner, 29 Oct ~10:00 (verbatim): "for the series, if it is only 1 option then we should default, why in quotation,
@@ -51,6 +51,23 @@ open-in-new-tab, guarded by `ProjectsGrid.approval.test.tsx:181`).
 
 Not changed, flagged: `leads/components/LeadsGrid.tsx:101,115` carries the same two `hover:underline` cells.
 
+## 4. Mukim is called Area (owner extra item, 29 Oct)
+
+Owner (verbatim): "rename our Mukim to Area, I want the language in our system to be unified". Labels only: the DB
+column `projects.sales_profile.mukim` and the API field `mukim` stay.
+
+Every user-visible "Mukim" (grep of FE, BE, MCP, user guides, i18n, e2e; exports, email and print templates have none):
+
+- `sorento_crm_frontend/app/(protected)/project-sales/_shared/components/ProjectForm.tsx:578` project form label
+- `sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectDetailClient.tsx:465` overview fact
+- `sorento_crm_frontend/app/(protected)/project-sales/_shared/components/ProjectAIExtractDialog.tsx:33` staff AI extract review
+- `sorento_crm_frontend/app/(auth)/portal/components/SubmissionForm.tsx:274` portal registration form
+- `sorento_crm_backend/app/services/ai_extract/form_schema_registry.py:448` portal AI extract review label (served by
+  `/ai-extract/schema`, rendered by `components/common/ai-extract/AIExtractDialog.tsx:610`)
+
+Left as is: the extract notes the model reads (`form_schema_registry.py:410,450`), which quote the document's own
+word MUKIM so the model finds the value; code comments; identifiers.
+
 ## Tests (red first)
 
 - `QuotationDialog.test.tsx` (new): one active series -> preselected on a scope with none; kept when the scope has
@@ -58,7 +75,10 @@ Not changed, flagged: `leads/components/LeadsGrid.tsx:101,115` carries the same 
 - `QuotationFormClient.test.tsx`: one active series -> the first new scope saves with it; header-only save still
   leaves the untouched first scope out.
 - `QuotationLinesGrid` picker: an option whose description equals its code renders the code once.
-- `ProjectsGrid.v2.test.tsx`: the Code and Project cells carry no underline class.
+- `ProjectsGrid.approval.test.tsx`: the Code and Project links carry no underline class.
+- Area: `ProjectForm.registration.test.tsx` (register form label), `ProjectForm.v2.test.tsx` (AI extract review),
+  `ProjectDetailClient.test.tsx`, `SubmissionForm.projectRegistration*.test.tsx`, BE
+  `tests/test_project_registration_portal.py::test_mukim_is_labelled_area_on_the_extract_review`.
 
 ## Verification
 
