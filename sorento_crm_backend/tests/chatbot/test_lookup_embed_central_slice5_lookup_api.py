@@ -46,13 +46,21 @@ def fresh(monkeypatch):
 
 
 @pytest.fixture
-def client(db, allow, monkeypatch):
+def scope():
+    """The company scope the request runs under: None (all companies) unless a test sets `scope["value"]`."""
+    return {"value": None}
+
+
+@pytest.fixture
+def client(db, allow, scope, monkeypatch):
     from fastapi.testclient import TestClient
 
     from app.database import get_db
     from app.dependencies import get_current_user, get_current_user_or_api_key
     from app.main import app
     from app.models.user import User
+    from app.services.company_scope import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
     from app.services.user_service import UserPermissionService
 
     user = User(
@@ -67,18 +75,24 @@ def client(db, allow, monkeypatch):
     def _db():
         yield db
 
+    def _scope():
+        # The router-level resolver would reset a token-less test request to UNSET; pin the scope the test intends.
+        set_company_scope(db, scope["value"])
+        return scope["value"]
+
     app.dependency_overrides[get_db] = _db
     app.dependency_overrides[get_current_user] = lambda: who
     app.dependency_overrides[get_current_user_or_api_key] = lambda: who
+    app.dependency_overrides[apply_company_scope] = _scope
     try:
         yield TestClient(app)
     finally:
-        for dep in (get_db, get_current_user, get_current_user_or_api_key):
+        for dep in (get_db, get_current_user, get_current_user_or_api_key, apply_company_scope):
             app.dependency_overrides.pop(dep, None)
 
 
 class Transport:
-    """Texts mentioning closet / toilet share axis 0 (the same meaning); anything else gets an axis of its own."""
+    """Texts mentioning gizmo / widget share (words no built-in class row or product type uses) share axis 0 (the same meaning); anything else gets an axis of its own."""
 
     def __init__(self, fail=False):
         self.fail = fail
@@ -86,7 +100,7 @@ class Transport:
 
     def vec(self, t):
         low = t.lower()
-        if "closet" in low or "toilet" in low:
+        if "gizmo" in low or "widget" in low:
             return pad(1.0)
         v = [0.0] * 1536
         v[1 + int(abs(hash(low)) % 1500)] = 1.0
@@ -179,15 +193,15 @@ def test_ac_lec_20_lookup_words_need_the_view_permission(client, allow):
 def test_ac_lec_20_rows_carry_words_with_their_homes_and_vector_status(client, db, allow):
     allow.add(VIEW)
     _setting(db)
-    cat = _category(db, "ZZT5 Closet", code="ZZT5-CL", class_label="ZZT5 Class", synonyms=["zzt5 alias word"])
-    _stored_vector(db, "ZZT5 Closet")
+    cat = _category(db, "ZZT5 Gizmo", code="ZZT5-GZ", class_label="ZZT5 Class", synonyms=["zzt5 alias word"])
+    _stored_vector(db, "ZZT5 Gizmo")
     body = _words(client)
     assert body["list"] == "category"
     (row,) = [r for r in body["rows"] if r["key"] == str(cat.id)]
-    assert row["label"] == "ZZT5 Closet"
+    assert row["label"] == "ZZT5 Gizmo"
     words = {(w["text"], w["home"]): w["has_vector"] for w in row["words"]}
-    assert words[("ZZT5 Closet", "label")] is True
-    assert words[("ZZT5-CL", "code")] is False
+    assert words[("ZZT5 Gizmo", "label")] is True
+    assert words[("ZZT5-GZ", "code")] is False
     assert words[("ZZT5 Class", "class")] is False
     assert words[("zzt5 alias word", "alias_column")] is False
 
@@ -225,7 +239,7 @@ def test_ac_lec_20_every_named_list_is_accepted(client, db, allow, name):
     assert _words(client, name)["list"] == name
 
 
-def test_ac_lec_20_a_customer_of_another_company_is_not_listed_for_a_scoped_user(client, db, allow):
+def test_ac_lec_20_a_customer_of_another_company_is_not_listed_for_a_scoped_user(client, db, allow, scope):
     from app.models.company import Company
     from app.models.order import Customer
     from app.services.company_scope import set_company_scope
@@ -242,7 +256,7 @@ def test_ac_lec_20_a_customer_of_another_company_is_not_listed_for_a_scoped_user
         Customer(id=str(uuid.uuid4()), customer_code="ZZT5CB", customer_name="ZZT5 Other Customer", company_id=b.id, is_active=True),
     ])
     db.flush()
-    set_company_scope(db, frozenset({a.id}))
+    scope["value"] = frozenset({a.id})
     labels = [r["label"] for r in _words(client, "customer")["rows"]]
     assert "ZZT5 Own Customer" in labels and "ZZT5 Other Customer" not in labels
 
@@ -264,53 +278,53 @@ def test_ac_lec_21_an_empty_phrase_is_422(client, allow):
 def test_ac_lec_21_a_meaning_only_phrase_resolves_by_the_vector_signal(client, db, allow, transport):
     allow.add(VIEW)
     _setting(db)
-    cat = _category(db, "ZZT5 Closet", code="ZZT5-CL")
+    cat = _category(db, "ZZT5 Gizmo", code="ZZT5-GZ")
     _category(db, "ZZT5 Kettle", code="ZZT5-KT")
     t = transport()
-    resp = _try(client, "zzt5 toilet bowl")
+    resp = _try(client, "zzt5 widget thing")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["verdict"] in {"resolved", "ambiguous", "unresolved"}
     assert 1 <= len(body["candidates"]) <= 8
     cand = [c for c in body["candidates"] if c["key"] == str(cat.id)][0]
-    assert cand["list"] == "category" and cand["label"] == "ZZT5 Closet"
+    assert cand["list"] == "category" and cand["label"] == "ZZT5 Gizmo"
     assert set(cand["spelling"]) == {"score", "text", "home"}
     assert set(cand["vector"]) == {"score", "text", "home"}
-    assert cand["vector"]["score"] == pytest.approx(1.0, abs=0.01) and cand["vector"]["text"] == "ZZT5 Closet"
+    assert cand["vector"]["score"] == pytest.approx(1.0, abs=0.01) and cand["vector"]["text"] == "ZZT5 Gizmo"
     assert cand["vector"]["home"] == "label"
     assert set(cand["floors"]) == {"spell", "partial", "meaning"}
     assert isinstance(cand["partial"], (int, float, bool)) and isinstance(cand["signal"], str)
     assert cand["passed"] is True
     assert body["verdict"] == "resolved"
-    assert [r for r in t.requests if "zzt5 toilet bowl" in r], "the phrase was not embedded"
+    assert [r for r in t.requests if "zzt5 widget thing" in r], "the phrase was not embedded"
 
 
 def test_ac_lec_21_the_phrase_is_embedded_once(client, db, allow, transport):
     allow.add(VIEW)
     _setting(db)
-    _category(db, "ZZT5 Closet", code="ZZT5-CL")
+    _category(db, "ZZT5 Gizmo", code="ZZT5-GZ")
     t = transport()
-    _try(client, "zzt5 toilet bowl")
-    assert sum(r.count("zzt5 toilet bowl") for r in t.requests) == 1
+    _try(client, "zzt5 widget thing")
+    assert sum(r.count("zzt5 widget thing") for r in t.requests) == 1
 
 
 def test_ac_lec_21_a_spelling_match_scores_in_the_spelling_cell(client, db, allow, transport):
     allow.add(VIEW)
     _setting(db)
-    cat = _category(db, "ZZT5 Closet", code="ZZT5-CL")
+    cat = _category(db, "ZZT5 Gizmo", code="ZZT5-GZ")
     transport()
-    body = _try(client, "ZZT5 Closet").json()
+    body = _try(client, "ZZT5 Gizmo").json()
     cand = [c for c in body["candidates"] if c["key"] == str(cat.id)][0]
-    assert cand["spelling"]["score"] >= cand["floors"]["spell"] and cand["spelling"]["text"] == "ZZT5 Closet"
+    assert cand["spelling"]["score"] >= cand["floors"]["spell"] and cand["spelling"]["text"] == "ZZT5 Gizmo"
     assert cand["passed"] is True
 
 
 def test_ac_lec_21_without_a_working_embedder_the_vector_cell_is_null(client, db, allow, transport):
     allow.add(VIEW)
     _setting(db)
-    cat = _category(db, "ZZT5 Closet", code="ZZT5-CL")
+    cat = _category(db, "ZZT5 Gizmo", code="ZZT5-GZ")
     transport(fail=True)
-    body = _try(client, "ZZT5 Closet").json()
+    body = _try(client, "ZZT5 Gizmo").json()
     cand = [c for c in body["candidates"] if c["key"] == str(cat.id)][0]
     assert cand["vector"] is None and cand["spelling"]["score"] > 0
 
