@@ -130,3 +130,16 @@ def test_real_server_narrowed_record_search_keeps_the_transaction_usable():
         hits = EmbeddingReadService(db).search_current([1.0] + [0.0] * 1535, top_k=5, source_type="promotion")
         assert hits == []
         assert db.execute(text("SELECT 1")).scalar() == 1
+
+
+@pytest.mark.parametrize("source_type, expected_calls", [("promotion", 1), ("attachment", 0), (None, 0)])
+def test_record_search_routes_through_the_guard(monkeypatch, source_type, expected_calls):
+    """`search_current` asks the guard for the iterative scan exactly when the read is post-filtered."""
+    from app.services.embedding_service import EmbeddingReadService
+    from tests._pg_fixture import blank_session
+
+    calls = []
+    monkeypatch.setattr(ei, "set_iterative_scan", lambda db: calls.append(db))
+    with blank_session() as db:
+        EmbeddingReadService(db).search_current([1.0] + [0.0] * 1535, top_k=5, source_type=source_type)
+    assert len(calls) == expected_calls

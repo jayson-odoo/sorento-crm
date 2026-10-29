@@ -1,6 +1,6 @@
 # PLAN: guard `SET LOCAL hnsw.iterative_scan` for pgvector < 0.8 (PGVECTOR-GUARD)
 
-Status: in progress. Small fix track (no migration, no auth/RBAC change, no new ingest surface, diff well under 300 lines).
+Status: PR #1993 ready for review. Small fix track (no migration, no auth/RBAC change, no new ingest surface, diff well under 300 lines).
 
 ## Problem
 

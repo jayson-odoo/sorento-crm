@@ -14,7 +14,8 @@ from app.services.embedding_settings import HOT_FILTERED_SOURCES, RECORD_KEEP_SE
 
 logger = logging.getLogger(__name__)
 
-# `hnsw.iterative_scan` exists only from pgvector 0.8; read the extension version once per process.
+# `hnsw.iterative_scan` exists only from pgvector 0.8; read the extension version once per process
+# (an RQ work-horse is a fresh fork, so once per job there).
 _ITERATIVE_SCAN_SUPPORTED: bool | None = None
 
 
