@@ -135,6 +135,19 @@ def test_brand_without_class_list_keeps_every_product_including_no_class(db, cw)
     assert _visible(db, cw) == {"sorento_noclass", "serene", "diy"}
 
 
+def test_deploy_state_is_inert_scope_is_exactly_the_brand_ids(db, cw) -> None:
+    """AC-10, owner 29 Oct ("inert to prod"): after the migration every contact has
+    `brand_class_ids` NULL, and the first sync gives products a class. The scope must be the very
+    value the pre-ITEM-CLASS code returned (`frozenset(brand_ids)`, no class tokens), and every
+    product of an allowed brand stays visible whatever class it carries."""
+    c = cw.contact(db, [cw.w.sorento.id, cw.w.mocha.id])
+    scope = _svc().contact_brand_scope(db, c.id)
+    assert scope == frozenset({str(cw.w.sorento.id), str(cw.w.mocha.id)})
+    _stamp(db, scope)
+    assert _visible(db, cw) == {"mocha", "sorento_noclass", "serene", "diy"}
+    assert _svc().contact_brand_scope(db, cw.contact(db, None).id) is None
+
+
 def test_brand_limited_to_one_class_shows_only_that_class(db, cw) -> None:
     """Q2 (a) + Q3: SORENTO limited to SERENE hides DIY and the SORENTO product with no class."""
     c = cw.contact(db, [cw.w.sorento.id], {str(cw.w.sorento.id): [str(cw.serene.id)]})

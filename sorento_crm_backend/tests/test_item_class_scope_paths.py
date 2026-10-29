@@ -45,9 +45,22 @@ def narrowed(db, world):
         )
         return c
 
-    out = {"serene": _contact(serene.id), "diy": _contact(diy.id)}
+    out = {
+        "serene": _contact(serene.id),
+        "diy": _contact(diy.id),
+        "brand_only": contact(db, brand_ids=[world.sorento.id], access_code=world.access_code),
+    }
     db.commit()
     return out
+
+
+@pytest.mark.parametrize(("name", "path", "params"), NAMING_PATHS, ids=IDS)
+def test_deploy_state_brand_only_contact_still_sees_a_classed_product(api, world, narrowed, name, path, params) -> None:
+    """AC-10 inert: a contact with brands and no class list (every contact right after the
+    migration) sees the SORENTO product after sync gave it a class, exactly as before."""
+    resp = api.get(path, narrowed["brand_only"], **params)
+    assert resp.status_code == 200, resp.text
+    assert leaks(resp, world) == {"mocha": False, "sorento": True, "null": False}, name
 
 
 @pytest.mark.parametrize(("name", "path", "params"), NAMING_PATHS, ids=IDS)
