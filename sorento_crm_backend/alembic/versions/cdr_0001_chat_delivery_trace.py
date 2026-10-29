@@ -5,14 +5,14 @@ failed / not_sent (lane CHAT-DELIVERY-RESOLVER, 29 Oct 2026). Additive, nullable
 backfill, no index: both are read per row, never filtered on.
 
 Revision ID: cdr_0001_chat_delivery_trace
-Revises: pmt_0001_parser_max_tokens
+Revises: idea_capture_fields_0001
 Create Date: 2026-10-29
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "cdr_0001_chat_delivery_trace"
-down_revision = "pmt_0001_parser_max_tokens"
+down_revision = "idea_capture_fields_0001"
 branch_labels = None
 depends_on = None
 
