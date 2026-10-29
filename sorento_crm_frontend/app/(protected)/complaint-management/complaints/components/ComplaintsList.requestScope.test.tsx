@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -36,11 +36,15 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/services/userSelectService', () => ({ getUserLookup: vi.fn(async () => []) }));
-vi.mock('../../complaint-root-causes/hooks/useComplaintRootCauses', () => ({
-  useComplaintRootCausesSelect: () => ({ data: [] }),
+const rootCauseSelect = vi.fn(async () => []);
+const resolutionSelect = vi.fn(async () => []);
+vi.mock('../../complaint-root-causes/services/complaintRootCauseService', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getComplaintRootCausesSelect: (...a: unknown[]) => rootCauseSelect(...(a as [])),
 }));
-vi.mock('../../complaint-resolutions/hooks/useComplaintResolutions', () => ({
-  useComplaintResolutionsSelect: () => ({ data: [] }),
+vi.mock('../../complaint-resolutions/services/complaintResolutionService', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getComplaintResolutionsSelect: (...a: unknown[]) => resolutionSelect(...(a as [])),
 }));
 vi.mock('@/components/my-downloads/EntityDownloadsButton', () => ({
   EntityDownloadsButton: () => <span>downloads</span>,
@@ -187,5 +191,22 @@ describe('every column header sorts (P4-23), for limited and staff alike', () =>
       if (!sortable) missing.push(title);
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe('lookups behind master-data permissions (owner hand test 2, item 1)', () => {
+  it('limited: root-cause and resolution selects are not requested (no 403 toast)', async () => {
+    renderList(LIMITED);
+    await screen.findByText('CMP-0001');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(rootCauseSelect).not.toHaveBeenCalled();
+    expect(resolutionSelect).not.toHaveBeenCalled();
+  });
+
+  it('staff: both selects are still requested (pin)', async () => {
+    renderList(STAFF);
+    await screen.findByText('CMP-0001');
+    await waitFor(() => expect(rootCauseSelect).toHaveBeenCalled());
+    await waitFor(() => expect(resolutionSelect).toHaveBeenCalled());
   });
 });
