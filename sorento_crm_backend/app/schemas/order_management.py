@@ -4,7 +4,7 @@ CRUD schemas for orders/customers/statuses live in `app/schemas/order.py`; this
 file is for a cross-cutting, read-only response shape scoped to
 `/api/v1/order-management/*` that is a REPORT, not a listing of one entity -
 today, `OutstandingReportResponse`
-(`documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` "Backend
+(`documentation/plans/_archive/chatbot/PLAN-chatbot-outstanding-report.md` "Backend
 contract"; AC-1110 to AC-1119).
 """
 from __future__ import annotations
