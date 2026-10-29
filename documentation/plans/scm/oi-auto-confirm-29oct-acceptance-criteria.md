@@ -15,7 +15,7 @@ cancelled.
 - AC-AC-5 A row covered for part of its qty is NOT done; it shows the qty left to order
   (needs 10, PO covers 6 -> "4 left") (Q1).
 - AC-AC-6 A row with no link and not rejected is not done, whatever its supply state reads
-  (a `placed` row with no link is not done) (Q5).
+  (a `placed` row with no link is not done) (Q5). The one exception is a companion row, AC-AC-10a.
 - AC-AC-7 A row from a sheet-migrated OI that purchasing marked done (`actioned`) is done.
 - AC-AC-8 An information-only row (DELAY, ADVANCE, CANCEL BALANCE and the other non-buy verbs)
   is done at birth.
