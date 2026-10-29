@@ -393,28 +393,44 @@ SUMMARY_BASES: dict[str, dict[str, Any]] = {
 }
 
 
+#: The groupings that list an outstanding figure's documents ("Reply 1 for the ... list."): never a summary.
+DOCUMENT_GROUPS = frozenset({"sales_order", "delivery_order"})
+#: The axes that are a run of time: their rows read oldest first, whatever the sort.
+TIME_AXES = frozenset({"month", "year"})
+
+
 def outstanding_summary(
-    db: Session, *, basis: str, axes: list[str], date_from: date, date_to: date, **run: Any,
+    db: Session, *, basis: str, axes: list[str], date_from: date, date_to: date, sort: str = "desc",
+    top_n: Optional[int] = None, **run: Any,
 ) -> dict[str, Any]:
     """The pre-#1922 outstanding summary, on this engine: the document count, the totals, the document date range and
     one breakdown per axis in `axes` (by default location, then customer or product; the user's own axis instead when
-    one was named, owner 29 Oct). Every figure is `run_ask` over the SAME definition and filters as the total, so the
+    one was named, owner 29 Oct; that axis keeps the ask's own `sort` and `top_n`, and a month or year axis reads oldest
+    first). Every figure is `run_ask` over the SAME definition and filters as the total, so the
     summary cannot disagree with it. `run` is the total's own `run_ask` keywords, less the grouping."""
     shape = SUMMARY_BASES[basis]
     also = shape["also"]
-    run = {**run, "basis": basis, "measure": "qty", "sort": "desc"}
+    named_measure = run.pop("measure", None)
+    run = {**run, "basis": basis}
 
-    def grouped(group_by: str) -> dict[str, Any]:
-        return run_ask(db, group_by=group_by, date_from=date_from, date_to=date_to, top_n=None, also=also, **run)
+    def grouped(group_by: str, *, measure: str = "qty", order: str = "desc", cut: Optional[int] = None) -> dict[str, Any]:
+        return run_ask(
+            db, group_by=group_by, date_from=date_from, date_to=date_to, top_n=cut, also=also, measure=measure,
+            sort=order, **run,
+        )
 
-    total = run_ask(db, group_by=None, date_from=date_from, date_to=date_to, also=also, **run)
+    total = grouped(None)
     days = sorted(r["name"] for r in grouped(shape["day"])["rows"])
     groups = []
     for axis in axes:
-        rows = [
-            {"name": r["name"], "qty": r["qty"], "amount": r["amount"], **{k: r.get(k, 0) for k in also}}
-            for r in grouped(axis)["rows"]
-        ]
+        if top_n is not None and axis not in TIME_AXES:
+            # The user's own axis: its ranking as asked (its measure, direction and count).
+            got = grouped(axis, measure=named_measure if named_measure in MEASURES else "qty", order=sort, cut=top_n)["rows"]
+        else:
+            got = grouped(axis)["rows"]
+        if axis in TIME_AXES:
+            got = sorted(got, key=lambda r: r["name"])
+        rows = [{"name": r["name"], "qty": r["qty"], "amount": r["amount"], **{k: r.get(k, 0) for k in also}} for r in got]
         groups.append({"axis": axis, "label": GROUP_LABELS.get(axis, axis), "rows": rows})
     return {
         "documents": grouped(shape["documents"])["total_count"],

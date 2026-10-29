@@ -635,6 +635,7 @@ def report_ask(
     customer_subject = bool(named_customers) or scoped is not None
     if (
         basis_norm in ask.SUMMARY_BASES and compare_norm is None and not spec_group
+        and group_norm not in ask.DOCUMENT_GROUPS  # the "Reply 1" list is the list (review B1)
         and (product_subject or customer_subject) and data.get("status") == "ok"
     ):
         # REPORT-OUTSTANDING-SUMMARY (owner 29 Oct): an outstanding kind naming a product or a customer gets the
@@ -653,6 +654,7 @@ def report_ask(
             **data,
             "summary": ask.outstanding_summary(
                 db, basis=basis_norm, axes=axes, date_from=date_from, date_to=date_to,
+                sort=sort_norm, top_n=top_n if group_norm else None, measure=measure_norm,
                 filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
             ),
         }
