@@ -344,7 +344,7 @@ def test_p12_dealers_outstanding_for_a_product_is_report_ask_by_customer(bot) ->
     )
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding" and args["group_by"] == "customer", args
-    assert args["product_code"] == PRODUCT_CODE, args
+    assert args["product_ids"] == [bot.ids["product"]] and "product_code" not in args, args  # item 8: the exact row
 
 
 def test_ac_ru_11_an_outstanding_period_the_message_names_is_sent(bot) -> None:

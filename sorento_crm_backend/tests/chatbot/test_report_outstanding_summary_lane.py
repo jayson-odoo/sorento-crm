@@ -80,7 +80,7 @@ def _outstanding_for_the_product(bot: Routing) -> str:
     bot.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
     text, calls = bot.say(_kind_answer("pending_delivery"), "pending delivery")
     args = _only_report_ask(calls)
-    assert args["basis"] == "pending_delivery" and args["product_code"] == PRODUCT, args
+    assert args["basis"] == "pending_delivery" and len(args["product_ids"]) == 1 and "product_code" not in args, args
     assert not args.get("group_by"), args
     return text
 
@@ -104,7 +104,7 @@ def test_reply_one_lists_the_delivery_orders_of_the_same_ask(bot, world) -> None
     text, calls = bot.say(_pick_one(), "1")
     args = _only_report_ask(calls)
     assert args["group_by"] == "delivery_order" and args["basis"] == "pending_delivery", args
-    assert args["product_code"] == PRODUCT, args
+    assert len(args["product_ids"]) == 1 and "product_code" not in args, args
     assert "date_from" not in args and "date_to" not in args, args
     assert "ZZT-DO-2001" in text and "ZZT-DO-2002" in text, text
     assert DO_OFFER not in text, text
@@ -165,7 +165,7 @@ def test_b6e9_a_do_only_contact_gets_the_delivery_order_summary_with_no_question
         "Srt5733 outstanding",
     )
     args = _only_report_ask(calls)
-    assert args["basis"] == "pending_delivery" and args["product_code"] == PRODUCT, args
+    assert args["basis"] == "pending_delivery" and len(args["product_ids"]) == 1 and "product_code" not in args, args
     assert KIND_QUESTION not in text, text
     lines = text.split("\n")
     assert lines[:6] == [  # item 5: the pre-#1922 header and block title

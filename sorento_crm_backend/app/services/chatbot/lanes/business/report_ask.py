@@ -1256,10 +1256,14 @@ def _word_filters(
     return out, None
 
 
-def _product_args(entities: Any, *, total: bool = False) -> tuple[dict[str, Any] | None, str | None]:
+def _product_args(
+    entities: Any, *, total: bool = False, exact: bool = False, typed_codes: Any = ()
+) -> tuple[dict[str, Any] | None, str | None]:
     """The route's product param for the product entities a message named, or the one line to
     say instead. 1b code review S4: the sales report's PREFIX rule (S19), so "SRT5674" covers
-    "SRT5674-N"; several codes travel as the prefix they share."""
+    "SRT5674-N"; several codes travel as the prefix they share. `exact` (an outstanding ask, REPORT-OUTSTANDING-SUMMARY
+    item 8, owner 29 Oct): the rows the shared resolver matched, by id, however many and however unrelated, as the
+    pre-#1922 outstanding report took the resolved codes; never a prefix the route would widen."""
     from app.services.chatbot.lanes.business.fetch import (
         is_mixed_code_set,
         outstanding_product_codes,
@@ -1267,6 +1271,15 @@ def _product_args(entities: Any, *, total: bool = False) -> tuple[dict[str, Any]
     )
 
     products = [e for e in jsc.array(entities) if isinstance(e, dict) and e.get("entity_type") == "product"]
+    if exact:
+        # AC-1119, as the pre-#1922 report's seam (`_resolve_report_product_and_location`): a row whose code is the
+        # code the customer TYPED is the subject, never its family siblings the resolver also returned.
+        typed = [e for e in products if jsc.js_string(e.get("code") or e.get("canonical_code") or "").strip().casefold()
+                 in set(typed_codes)]
+        ids = _gate_ids(typed or products, "product")
+        if len(ids) > DRILL_MAX_KEYS:
+            return None, MIXED_PRODUCTS_LINE
+        return ({"product_ids": ids} if ids else {}), None
     found = outstanding_product_codes(products, {})
     if is_mixed_code_set(found):
         # A word that fanned out to unrelated codes is never frozen on the first of them. A TOTAL never runs on
@@ -1359,7 +1372,15 @@ def _fresh_args(
     if customer_ids:
         args["customer_ids"] = customer_ids
     if "product" in kinds:
-        product_args, line = _product_args(_without_carried_products(parse_output, entities), total=not group_by)
+        product_args, line = _product_args(
+            _without_carried_products(parse_output, entities), total=not group_by,
+            # A spec narrows a product FAMILY (owner Q3, prod turn P8): the family keeps its prefix there.
+            exact=parse_output.get("capability_from") == "outstanding" and not jsc.array(parse_output.get("report_ask_spec")),
+            typed_codes={
+                jsc.js_string(e.get("canonical_code") or e.get("raw") or "").strip().casefold()
+                for e in _current_entities(parse_output, "product")
+            } - {""},
+        )
         if product_args is None:
             return None, line
         args.update(product_args)
