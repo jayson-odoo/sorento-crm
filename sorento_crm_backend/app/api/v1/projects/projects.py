@@ -90,10 +90,13 @@ def _submit_only(permissions) -> bool:
 
 
 def _assert_own_unsubmitted(project, user_id: str) -> None:
-    """A submit-only user edits only their own draft or rejected registration."""
+    """A submit-only user edits only their own draft or rejected registration (not yet approved)."""
     from app.models.projects import APPROVAL_DRAFT, APPROVAL_REJECTED
     from app.services.error_handler import AppException
+    from app.services.project_service import is_approved
 
+    if is_approved(project):
+        return  # a staff or approved project: the general edit check decides
     if project.approval_state not in (APPROVAL_DRAFT, APPROVAL_REJECTED) or str(
         project.owner_user_id or ""
     ) != str(user_id):

@@ -208,12 +208,14 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   // no stage moves) never opens an empty menu.
   const isDraft = project.approval_state === 'draft';
   // J3b: a submit-only user edits only their own draft or rejected registration.
+  // It narrows unapproved registrations only: a staff or approved project follows the general rule.
+  const narrowed = submitOnly && !isProjectApproved(project);
   const submitOnlyEdit =
-    submitOnly && (isDraft || project.approval_state === 'rejected');
+    narrowed && (isDraft || project.approval_state === 'rejected');
   const showEditItem = !canDecide;
   const showDeleteItem = isProjectApproved(project) || isManager;
   const hasGearItems =
-    !submitOnly &&
+    !narrowed &&
     (showEditItem || isManager || secondaryMoves.length > 0 || showDeleteItem);
 
   /**

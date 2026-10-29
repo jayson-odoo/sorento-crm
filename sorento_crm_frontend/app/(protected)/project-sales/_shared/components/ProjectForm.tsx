@@ -48,6 +48,7 @@ import type {
   ProjectRegisterBody,
   ProjectUpdateBody,
 } from '../types/project.types';
+import { isProjectApproved } from '../lib/projectApproval';
 import { ClashWarningPanel } from '../../pipeline/components/ClashWarningPanel';
 import { isAwaitingDecision } from './ApprovalStatePill';
 import { LeadWizardDialog } from '../../leads/components/LeadWizardDialog';
@@ -86,7 +87,11 @@ export function ProjectForm(props: ProjectFormProps) {
   const canCreateParty = useHasPermission(PARTY_EDIT_PERMISSION);
   // A salesperson with the submit slug but no edit rights saves a draft or submits for
   // approval instead of registering (PROJECT-REGISTER-V2 J1).
-  const submitOnly = !canEditProjects && canSubmitRegistration;
+  // A staff or approved project being edited follows the general rule (Save changes).
+  const submitOnly =
+    !canEditProjects &&
+    canSubmitRegistration &&
+    !(mode === 'edit' && project && isProjectApproved(project));
 
   const register = useRegisterProject();
   const update = useUpdateProject(project?.id ?? '');
