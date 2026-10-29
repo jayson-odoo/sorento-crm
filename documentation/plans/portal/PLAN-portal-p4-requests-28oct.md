@@ -164,7 +164,8 @@ opportunity amount as the portal form sends it): identical by construction once 
 | --- | --- | --- | --- |
 | R1 shared SubmissionClient + SI + Complaint (salesperson renders the portal form; BE `register_profile_routes` /me + 5 lookups and ai-extract on my-requests) | a3943deeba | 97801a93d3 (+ test fixes e4b8c3df1c, 16b23b3589) | green (FE 3417, BE 1667 over portal / my-requests files); kill-proof posted 6482225526 (FE 38 red, BE 35 red); main merged 3653b8a8d2 (#1961, #1951); pushed 16b23b3589 |
 | R2 PR + Sponsorship + staff PR detail External reference read-only + stage-action project seed (owner (a)) | abdc9de399 (red-proof 6482508557; test adj. 2f4ed1e6c4, 02b53d7e5f) | d1f50a135d | green (R2 38/38, FE 8989); kill-proof 6483276477 (28 red); pushed d1f50a135d |
-| R3 Price Tag / NPA / Sample Request / Opportunity portal components | - | - | todo |
+| R3a NPA / Sample Request / Opportunity portal components (shared service-injection mechanism, SR stage-action seed, NPA `?stock_inquiry_id=` start) | 41d054b713 (red-proof 6486682988: FE 21 red, BE 43 parity pins green by design) | fe665cbe22 (+ test adj 9ddf9c8c25) | green (R3a 35/35, keep-green FE 9459, BE 51); kill-proof 22 red; main merged ac5faae57b (#1965, #1922), pp3_0001 re-parented onto unpaid_0001 (0fbb849f89); menu snapshot owes main's "Sales & outstanding" |
+| R3b Price Tag portal component (delete OwnPriceTagRequest + dead S7/S7b pieces) | - | - | todo |
 | R4 side-by-side browser pass (portal vs CRM + staff buttons), crew re-files hand test | - | - | todo |
 
 #### R3 architecture (fixed before code, 29 Oct)
