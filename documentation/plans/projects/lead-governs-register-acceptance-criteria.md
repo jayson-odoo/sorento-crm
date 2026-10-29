@@ -96,10 +96,16 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
   exactly as for an edit holder.
 - **LGR-E7** (security L3) Whether the caller may link the lead is decided BEFORE any customer comparison: a lead the
   caller may not link answers 404 / 403 the same way whatever `customer_id` the request carries.
-- **LGR-E8** (security L4) On the submit-only path the 409 `lead_already_linked` message names no other project (no
-  code, no title).
+- **LGR-E8** (security L4) For any limited reader (`projects.projects.view_own` without `view`, submit-only or edit
+  holder) the 409 `lead_already_linked` message names no other project (no code, no title).
 - **LGR-E9** (security L5) A `PUT` or submit that sends a `customer_id` different from the customer of the project's
   current lead (when that lead has one) -> 422 `project_customer_not_lead_customer`, even without a lead change.
+- **LGR-E10** (security re-check 1) The fill of an empty lead customer (E3/E4/E6) happens only when the caller may edit
+  that lead (owner or manage; a submit-only caller: their own lead). A collaborator or approver who saves the project
+  leaves somebody else's lead untouched.
+- **LGR-E11** (security re-check 2) Submitting a registration (`POST /projects/{id}/submit`, or a new submit) re-checks
+  that the lead is still the caller's own; a lead reassigned to someone else since the draft -> 404 `lead_not_found`,
+  nothing submitted, the lead untouched.
 
 ## F. Qualify
 
