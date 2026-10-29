@@ -1,6 +1,7 @@
 # PLAN: PS-REGISTER-CHECK-FIRST (29 Oct 2026)
 
-Status: Waiting on owner (card v1 ask a86444940, mock v1 ask a86445157, both 29 Oct 8c8ebdaaac). Track M (feature
+Status: Build, BE red tests (owner answered Q-A..Q-E all (a) 30 Oct; mock v2 ask filed 30 Oct for the wizard + tabs
+notes; FE slices W and T wait for v2 approval). Track M (feature
 track, local lane; no schema: Requirements is an `attachment_types` row). Build waits for owner approval AND #1953
 (PORTAL-P4-REQUESTS) merge. Merge origin/main again once #1978
 (PS-WORDING) lands (both edit `ProjectForm.tsx`).
@@ -34,12 +35,36 @@ step-2 field list easy to change); lead-name uniqueness (card Q-A).
 
 ## Architecture
 
-(filled after the card is answered: layer, shared mechanism, classes fixed)
+- Layer: service. The gate lives in `change_status` (`BE/services/project_service.py:1380`), the one entry for manual
+  stage moves, so API and any future caller get it; the first-PO automatic move (`project_po_service.py:209`) writes
+  the status itself and stays ungated by design (Q-B a). One helper `has_requirements_document(db, project_id)` reads
+  `entity_attachment_links` + `attachments` + `attachment_types.code`.
+- Seed: `ensure_requirements_document_type` joins `project_seed_service.run` (startup, additive, idempotent), so the
+  FE can resolve the kind by code before the first upload. Data, no schema.
+- Clash: one helper `assert_no_blocking_clash(...)` lifted from `register_project` (`project_service.py:283-303`) and
+  called by `register_project`, `crm_register(submit=True)` and `crm_submit`. Same 409 and message for every caller
+  (class: every path that turns a registration into a submitted one).
+- Rename: strings only; stored `kind` and notification type keys unchanged.
+- FE wizard: create-mode step state inside `ProjectForm` (no new form), `WizardSteps` + Create-lead footer pattern;
+  step-2 sections stay today's JSX so Monday's required-field ruling stays a local change.
+- FE gate: the stage action catches 422 `project_requirements_missing` and opens the dialog; the server is the only
+  judge (no new read field).
 
 ## Slices
 
-(filled after the card is answered)
+1. BE gate + seed (AC-G1..G6, G9).
+2. BE salesperson Check (AC-S1..S4).
+3. Rename BE + FE (AC-R1..R5).
+4. FE requirements dialog + upload kind (AC-G7, G8).
+5. FE wizard (AC-W1..W10), after mock v2 approval.
+6. FE tabs (AC-T1..T3), after mock v2 approval and V1-V3.
 
 ## Test list
 
-(filled after the card is answered; red-first: BE stage guard, rename, Check-before-step-2)
+- BE (tester, red first): `tests/test_project_requirements_gate.py` (G1-G6, incl. first-PO move not gated),
+  `tests/test_project_salesperson_submit_check.py` (S1-S4), notification wording (R1).
+- Existing BE/FE tests that move Registered -> Spec In without a file will go red when the gate lands: the coder adds a
+  Requirements file to their setup; assertions are not weakened.
+- FE (vitest, red first, after v2): ProjectForm wizard (W1-W9), rename strings (R2-R5), stage action dialog (G7),
+  upload kind (G8), tab order + legacy redirects (T1-T3).
+- Global guards: none (no table, no list endpoint).
