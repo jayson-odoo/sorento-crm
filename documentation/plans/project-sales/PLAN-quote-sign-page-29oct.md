@@ -1,6 +1,6 @@
 # PLAN: quotation sign page + PDF: logo, quotation number, one card of sections, terms checkbox, side-by-side signatures (QUOTE-SIGN-PAGE)
 
-Status: Plan. Behaviour card filed to the owner (crew ask), mock next; no code until the owner approves both.
+Status: Plan. Behaviour card (ask a73603971) + mock v1 (7111e5416b) filed, waiting on the owner; UAC drafted on the recommendations; no code until the owner answers and approves the mock.
 Track: M (feature track: changed wording and layout on an existing screen + PDF, a new required consent on the
 public accept endpoint; no migration planned, no auth/RBAC change). UAC: `quote-sign-page-29oct-acceptance-criteria.md`
 (written after the owner answers the card).
