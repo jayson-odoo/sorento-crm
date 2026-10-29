@@ -2122,6 +2122,24 @@ def route_args(outcome: rf.Outcome) -> dict[str, Any]:
     return args
 
 
+#: REPORT-OUTSTANDING-SUMMARY item 3: the route params that make an outstanding ask about a subject (a product, a
+#: customer or a brand, as the pre-#1922 report's subjects); without one the ask is the outstanding document list.
+_SUBJECT_ARGS = ("product_code", "product_ids", "spec", "customer_ids", "brand_ids")
+#: Outstanding kind -> the grouping that lists its documents (`reports.ask.DOCUMENT_LISTS`).
+LIST_GROUPS = {"outstanding": "sales_order", "pending_delivery": "delivery_order"}
+
+
+def document_list_args(args: dict[str, Any], outcome: rf.Outcome) -> dict[str, Any] | None:
+    """Item 3 (owner 29 Oct, as before #1922): an outstanding ask (the kind question's own, `kind_ask`) of undelivered
+    orders or pending delivery that names no subject and no axis is the outstanding document LIST, not a company figure:
+    the args grouped by its document. None for every other ask. The caller applies V1-DOC-SCOPE first."""
+    if not outcome.extras.get("kind_ask") or args.get("group_by") or args.get("basis") not in LIST_GROUPS:
+        return None
+    if any(args.get(k) for k in _SUBJECT_ARGS):
+        return None
+    return {**args, "group_by": LIST_GROUPS[args["basis"]], "top_n": BREAKDOWN_TOP_N}
+
+
 #: SALES-UNIFIED (contract section 7): a billing line has no warehouse, so the route answers an
 #: invoiced ask by location (axis or filter) with 422 `location_needs_order_basis`. Said here
 #: before anything runs.

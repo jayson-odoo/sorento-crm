@@ -2245,6 +2245,17 @@ def run_fetch(
         if not settled.done:
             return _fixed_reply(settled.reply or "", required_ask=settled.slot)
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
+        listed = None if customer_scope.get("enforced") else report_ask.document_list_args(
+            semantic_input["report_ask_args"], settled
+        )
+        if listed is not None:
+            # Item 3 (owner 29 Oct, as before #1922): no subject = the outstanding document list, under V1-DOC-SCOPE
+            # (a non-staff contact with no linked customer owns no document). A dealer's own customers are its subject.
+            if parse_output.get("doc_staff") is not True and not customer_scope.get("ids"):
+                if trace is not None:
+                    trace.add("customer_scope", {"refused": "no_links", "tool": tool_name})
+                return _fixed_reply(_scope_refusal(customer_scope), refused=True)
+            semantic_input["report_ask_args"] = listed
         location_line = report_ask.invoiced_location_line(semantic_input["report_ask_args"])
         if location_line:
             return _fixed_reply(location_line)

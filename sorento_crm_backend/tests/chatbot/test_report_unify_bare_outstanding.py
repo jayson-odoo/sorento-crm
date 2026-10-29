@@ -22,7 +22,9 @@ def test_r4_a_bare_outstanding_asks_the_kind_and_runs_nothing(bot, status) -> No
     assert KIND_QUESTION in text, text
 
 
-def test_r4_the_kind_answer_runs_the_whole_company_figure_never_the_order_list(bot) -> None:
+def test_r4_the_kind_answer_runs_the_outstanding_document_list(bot) -> None:
+    """Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY item 3, as before #1922): no subject = the outstanding document list on
+    the report ask (grouped by delivery order), never the company figure. Supersedes R4's whole-company figure."""
     bot.say(_status("outstanding", basis=None, **NO_DATES), "outstanding")
     text, calls = bot.say(
         _reply(
@@ -33,7 +35,7 @@ def test_r4_the_kind_answer_runs_the_whole_company_figure_never_the_order_list(b
     )
     args = _only_report_ask(calls)
     assert args["basis"] == "pending_delivery", args
-    assert not args.get("customer_ids") and not args.get("product_code") and not args.get("group_by"), args
+    assert not args.get("customer_ids") and not args.get("product_code") and args.get("group_by") == "delivery_order", args
     assert "date_from" not in args and "date_to" not in args, args
 
 

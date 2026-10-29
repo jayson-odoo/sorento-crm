@@ -443,7 +443,8 @@ def test_a_sales_ranking_refine_to_the_outstanding_kind_keeps_the_period_on_scre
 def test_reply_one_under_the_sales_order_list_offer_opens_the_list(bot, shape) -> None:
     """(b) The open offer is answered before any axis check: a parser position 1 opens the list whatever status or
     axis the real parse also carried."""
-    text, calls = bot.say(_status("outstanding", basis="outstanding", **NO_DATES), "undelivered orders")
+    # A subject (the customer): with none the ask is the list itself (owner 29 Oct, item 3), never the offer.
+    text, calls = bot.say(_status("outstanding", _e(CUSTOMER_NAME, "customer"), basis="outstanding", **NO_DATES), "undelivered orders")
     assert "Reply 1 for the sales order list." in text, (text, calls)
     reply = _reply(
         message_type="business_query", domain_hint=None, intent_hint=None, entities=[], reference_positions=[1],
