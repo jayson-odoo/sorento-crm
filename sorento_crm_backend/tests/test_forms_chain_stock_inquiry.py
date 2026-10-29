@@ -141,7 +141,7 @@ def test_reject_resubmit_approve_respond_full_chain_with_outbox(world):
     first = open_tracker(w.db, KIND, sid)
     s = w.as_user(w.staff)
 
-    assert s.post(f"{SI_BASE}/{sid}/project-sales-reject", json={"reason": ""}).status_code in (400, 422)
+    assert s.post(f"{SI_BASE}/{sid}/project-sales-reject", json={"reason": ""}).status_code == 400
     rej = s.post(f"{SI_BASE}/{sid}/project-sales-reject", json={"reason": "wrong project code"})
     assert rej.status_code == 200, rej.text
     assert rej.json()["status"] == "rejected"
@@ -312,4 +312,4 @@ def test_void_stops_the_sla_and_tells_the_contact(world):
                                    json={"void_reason": "again please"}).status_code == 409
     reply = w.as_user(w.staff).post(f"{SI_BASE}/{sid}/update-and-reply",
                                     json={"purchasing_response": "too late"})
-    assert reply.status_code in (400, 409, 422), reply.text
+    assert reply.status_code == 422, reply.text  # the response gate: voided takes no response

@@ -16,8 +16,8 @@ What is real and what is stubbed, on purpose:
   like a delivered in-window text, so the app writes a `success` outbox row.
 * RQ: `queue_service.enqueue_job` records the job instead of pushing to Redis. Complaint
   and stock inquiry sends go through the `respond_io` queue, so `World.drain()` runs those
-  jobs inline on this test's connection, exactly as the worker would, and their outbox
-  rows land in the scratch schema too. Other queues (notification deliveries) stay recorded.
+  jobs inline on this test's session after the request has committed (the worker body
+  itself, with its SessionLocal swapped), and their outbox rows land in the scratch schema. Other queues (notification deliveries) stay recorded.
 * The idempotency middleware is off: it is a 10 second duplicate-submit backstop keyed on
   (session, path, body), and a chain legitimately repeats e.g. a bodyless
   `set-pending-approval` on the same form after a reject and resubmit.

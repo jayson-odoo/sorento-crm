@@ -159,7 +159,7 @@ def test_claim_proof_changes_proof_approve_collect_with_a_send_per_step(world):
 
     assert _move(w, rid, "proof_ready").status_code == 200
     assert _status(w, rid) == "proof_ready"
-    assert len(_sends(w, rid)) > sends
+    assert len(_sends(w, rid)) == sends + 1
     sends = len(_sends(w, rid))
 
     changes = w.as_contact(w.contact).post(f"{SUB}/{KIND}/{rid}/request-changes",
@@ -172,8 +172,9 @@ def test_claim_proof_changes_proof_approve_collect_with_a_send_per_step(world):
     assert approve.status_code == 200, approve.text
     assert _status(w, rid) == "approved"
 
+    sends = len(_sends(w, rid))
     assert _move(w, rid, "ready_for_collection").status_code == 200
-    assert len(_sends(w, rid)) > sends
+    assert len(_sends(w, rid)) == sends + 1
     collect = w.as_contact(w.contact).post(f"{SUB}/{KIND}/{rid}/collect")
     assert collect.status_code == 200, collect.text
     assert _status(w, rid) == "collected"
@@ -229,13 +230,27 @@ def test_revise_after_requesting_changes_counts_and_restarts_the_stage(world):
     assert open_tracker(w.db, KIND, rid).id != first.id
 
 
-def test_void_closes_the_stage(world):
+def test_void_is_terminal(world):
     w = _setup(world)
     rid = _submitted(w)
     res = _move(w, rid, "void")
     assert res.status_code == 200, res.text
     assert _status(w, rid) == "void"
     assert _move(w, rid, "designing").status_code == 409
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="BUG PT-SLA-CLOSE: a price tag request emits only 'submit' to the form SLA "
+    "(portal_price_tag.py submit), so no later move (void, rejected, collected) ever closes "
+    "its stage, and the overdue sweep escalates a finished request. The fix lane removes this.",
+)
+@pytest.mark.parametrize("end", ["void", "rejected"])
+def test_a_finished_request_closes_its_sla_stage(world, end):
+    w = _setup(world)
+    rid = _submitted(w)
+    assert _move(w, rid, end, note="closing it").status_code == 200
+    assert trackers(w.db, KIND, rid, open_only=True) == []
 
 
 # ------------------------------------------------------------------ SLA: extend, escalate, sweep

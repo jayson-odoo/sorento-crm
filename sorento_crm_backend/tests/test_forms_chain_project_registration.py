@@ -57,5 +57,5 @@ def test_draft_save_submit_reject_resubmit_approve_chain(world):
     assert ok.status_code == 200, ok.text
     assert ok.json()["approval_state"] == "approved"
     assert ok.json()["project_code"] == ppf_code(5)
-    assert len([kw for kw in w.sent_kw if kw.get("user_id") == w.applicant_user]) >= 2
+    assert len([kw for kw in w.sent_kw if kw.get("user_id") == w.applicant_user]) == len(told) + 1
     assert outbox(w.db, "projects", rid) == []

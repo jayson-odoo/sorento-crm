@@ -2221,6 +2221,11 @@ def _run_forms_detect(tmp_path, path: str) -> dict:
     "sorento_crm_backend/app/api/v1/public/portal.py",
     "sorento_crm_backend/app/models/sla.py",
     "sorento_crm_backend/app/tasks/respond_io_tasks.py",
+    "sorento_crm_backend/app/schemas/procurement.py",
+    "sorento_crm_backend/app/services/user_service.py",
+    "sorento_crm_backend/app/services/dealer_kit/tag_data_service.py",
+    "sorento_crm_backend/app/models/integration.py",
+    "sorento_crm_backend/tests/conftest.py",
     "sorento_crm_backend/tests/test_forms_chain_complaint.py",
     "sorento_crm_backend/tests/_forms_chain_support.py",
     ".github/workflows/deploy.yml",
@@ -2244,6 +2249,8 @@ def test_the_pr_gate_runs_the_forms_chains_under_xdist_on_the_bootstrapped_db():
     run = steps["Run the forms lifecycle chains (executing gate)"]
     assert "        if: steps.forms.outputs.run == 'true'" in run
     assert "tests/test_forms_chain_*.py" in run and "--dist load" in run
+    for f in FORMS_CHAIN_FILES[-3:]:
+        assert f in run, f"the PR gate step does not run {f}"
     for name in ("Relax Postgres durability for the test run", "Bootstrap the database"):
         assert "steps.forms.outputs.run == 'true'" in steps[name], name
     names = list(steps)
