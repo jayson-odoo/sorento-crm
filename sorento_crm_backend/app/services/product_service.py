@@ -4,10 +4,10 @@ import logging
 import re
 import uuid
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, func, select
 from typing import Any, Optional, List, Callable, Tuple, Iterable
 from decimal import Decimal
-from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+from app.models.product import Product, ProductCategory, Brand, ItemClass, UnitOfMeasure, ProductAttachment
 from app.models.product_set import ProductSet, ProductSetMember
 from app.services.sla_service import MALAYSIA_TZ
 
@@ -334,6 +334,7 @@ class ProductService:
         price_min: Optional[float] = None,
         price_max: Optional[float] = None,
         item_type: Optional[str] = None,
+        item_class_ids: Optional[list[str]] = None,
         length_min: Optional[float] = None,
         length_max: Optional[float] = None,
         width_min: Optional[float] = None,
@@ -398,6 +399,10 @@ class ProductService:
 
         if item_type:
             filters.append(Product.item_type == item_type)
+
+        # ITEM-CLASS: multi-select filter over AutoCount Item Class ids.
+        if item_class_ids:
+            filters.append(Product.item_class_id.in_(item_class_ids))
 
         # Deep link from a "products discontinued" notification: show exactly the
         # products reported in that batch (see product_discontinued_notify_service).
@@ -508,6 +513,11 @@ class ProductService:
             "largest_dimension": largest_dim,
             "smallest_dimension": smallest_dim,
             "discontinued_at": Product.discontinued_notified_at,
+            # ITEM-CLASS: by class name, products with no class last (nulls_last below).
+            "item_class": select(ItemClass.item_class_name)
+            .where(ItemClass.id == Product.item_class_id)
+            .correlate(Product)
+            .scalar_subquery(),
         }
         sort_column = sort_map.get(sort_field, Product.created_at)
         if sort_dir == "desc":
@@ -527,6 +537,7 @@ class ProductService:
         price_min: Optional[float] = None,
         price_max: Optional[float] = None,
         item_type: Optional[str] = None,
+        item_class_ids: Optional[list[str]] = None,
         length_min: Optional[float] = None,
         length_max: Optional[float] = None,
         width_min: Optional[float] = None,
@@ -585,6 +596,7 @@ class ProductService:
             price_min=price_min,
             price_max=price_max,
             item_type=item_type,
+            item_class_ids=item_class_ids,
             length_min=length_min,
             length_max=length_max,
             width_min=width_min,
@@ -626,6 +638,7 @@ class ProductService:
             q.options(
                 joinedload(Product.category),
                 joinedload(Product.brand),
+                joinedload(Product.item_class),
                 joinedload(Product.base_uom),
             )
             .offset(offset)
@@ -1125,6 +1138,17 @@ class ProductService:
         )
         self.db.flush()
 
+    def _assert_item_class(self, item_class_id: Optional[str]) -> None:
+        """422 for an item class id the caller cannot see (ITEM-CLASS)."""
+        if not item_class_id:
+            return
+        try:
+            uuid.UUID(str(item_class_id))
+        except ValueError:
+            raise AppException(422, "Unknown item class", code="UNKNOWN_ITEM_CLASS") from None
+        if self.db.query(ItemClass.id).filter(ItemClass.id == str(item_class_id)).first() is None:
+            raise AppException(422, "Unknown item class", code="UNKNOWN_ITEM_CLASS")
+
     def create_product(self, product_data: ProductCreate, created_by: str):
         """Create a new product."""
         # Trim product_code defensively (schema validator also does this; belt-and-suspenders)
@@ -1136,6 +1160,7 @@ class ProductService:
         
         data = product_data.model_dump()
         data["product_code"] = product_code
+        self._assert_item_class(data.get("item_class_id"))
         # Live finding, 2026-09-06: derive from product_rules.derivation_text
         # (description if non-blank else name), not the raw description column
         # directly - the ESB maps AutoCount's Description onto name and sends
@@ -1179,6 +1204,8 @@ class ProductService:
         product = self.get_product(product_id)
         
         update_data = product_data.model_dump(exclude_unset=True)
+        if update_data.get("item_class_id"):
+            self._assert_item_class(update_data["item_class_id"])
         if update_data:
             update_data["updated_by"] = updated_by
             update_data["updated_at"] = datetime.utcnow()
