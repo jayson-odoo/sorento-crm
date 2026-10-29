@@ -21,6 +21,10 @@ cancelled.
   is done at birth.
 - AC-AC-9 A row whose link is removed (PO cancelled, line dropped in AutoCount, untag) is no
   longer done on the next read, with nobody pressing anything (Q3).
+- AC-AC-10a A companion ("supplied with") row is done only when its own links plus its bundled
+  qty cover its qty AND its host row is done; it never needs a PO of its own (Q5).
+- AC-AC-10b A reserve-only row shows its reserve ("Reserved @ <location>") in the PO/SPO column
+  instead of "-" (Q5).
 - AC-AC-10 A done row CS amends to a qty above its links is not done until the extra is covered;
   a date-only amendment to a covered row leaves it done.
 

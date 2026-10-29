@@ -50,6 +50,10 @@ Behaviour card filed 29 Oct (crew state file `oi-auto-confirm-card-29oct.md`, ke
 public repo because it quotes real OI numbers). Q1 partial qty, Q2 SPO counts as PO, Q3 row
 loses its PO, Q4 reorder plan's acknowledged-only gate, Q5 rows with a PO state but no link.
 Recommended design: derive at read time from links + reject, so no stored flag and no backfill.
+Q5 reshaped after crew's link-gap dig (29 Oct): reserve-only rows are done and show the reserve in
+the PO/SPO column; companion rows follow their host; the 16 stale rows of issue #1215 read To order
+on their own (their stored "On PO/SPO" pill stays wrong until #1215's repair script runs, out of
+scope).
 
 ## Slices
 
