@@ -8,8 +8,11 @@ overrides, documents list drops its Lines column. Override behaviour: crew-note 
 Terms: a row is DONE (stored as `ack_state = acknowledged`, shown "Done") when purchasing has
 nothing left to do on it. A live row is any row not cancelled. A LIVE link is one whose PO line is
 not cancelled and whose SPO allocation is not retired, and whose PO line / SPO allocation is for the
-row's CURRENT item (review round 1: an item swap leaves the old item's link in place but it no
-longer covers the row). Reserve links have no product check.
+row's CURRENT item, read the way the link writers read it: the SO line's product first, the row's
+`item_code` only when the line has none (review rounds 1 and 2: an item swap leaves the old item's
+link in place but it no longer covers the row; 6 rows on the 28 Oct copy carry an item_code that
+differs from their SO line's product while their links follow the line). Reserve links have no
+product check.
 
 ## Row done (written by the system unless a person overrides, see Manual override)
 
@@ -31,15 +34,17 @@ longer covers the row). Reserve links have no product check.
   qty left) until the extra is covered; an amendment that leaves it covered keeps it done.
 - AC-AC-10a A companion ("supplied with") row is done only when its own live links plus its bundled
   qty cover its qty AND its host row is done (a manually confirmed host counts as done; a rejected
-  host is no host). When the host becomes done or not done, its
+  host is no host, also right after the reject press). When the host becomes done or not done, its
   companions follow in the same write.
 - AC-AC-10b A reserved row shows its reserve ("Reserved @ <location> <qty>") in the PO column, beside
   any PO chips. The reserve is NOT a document link (`links_for_rows` keeps leaving reserve links out,
   as on main, so no quantity is counted twice); rows carry `reserve_label` + `reserved_qty` instead.
 - AC-AC-10d Rows carry `open_qty` = qty minus live cover minus bundled qty; "N left" reads it.
-- AC-AC-10e A live row on a CANCELLED SO line with no live link is done (nothing to order); with a live
-  link it is not done until a manual Confirm, and no later automatic write flips it to done
-  (lead ruling (c), ask open with the owner, 30 Oct).
+- AC-AC-10e A live BUY row (ORDER / ORDER_BACK / RESERVE_AND_ORDER, not used) on a CANCELLED SO
+  line with no live link is done (nothing to order); with a live link it is not done until a manual
+  Confirm, even if it was `actioned`, and no later automatic write flips it to done. The flag and
+  every later write decide this in one place (lead ruling (c), ask open with the owner, 30 Oct).
+  Used and information-only rows keep their own rule (AC-AC-8).
 - AC-AC-10c A row the system marks done carries `acknowledged_at` = the moment it became done and
   `acknowledged_by` = NULL (no person pressed anything).
 

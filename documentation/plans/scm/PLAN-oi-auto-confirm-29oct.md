@@ -1,7 +1,6 @@
-# PLAN: OI rows auto-confirm, OI auto-complete, no manual Confirm (OI-AUTO-CONFIRM)
+# PLAN: OI rows auto-confirm, OI auto-complete, Confirm / Unconfirm as manual override (OI-AUTO-CONFIRM)
 
-Status: Review fix round 1 - reviewer NOT READY at e3bdf82240 (legacy fails, reserve double count, item swap), security CLEAN; tests then fixes in progress. Track: full (L). Draft PR #1986.
-changes reorder-plan demand, retires a purchasing press, possible migration/backfill).
+Status: Review fix round 2 - re-review at 81feb5780c: earlier blockers fixed, sweep green (1971/0); open: retired-SPO test gap, cancelled-line actioned rows, reject of a manual host, product read; hand test filed. Track: full (L). Draft PR #1986.
 
 ## Owner ruling (29 Oct 2026, ~21:55)
 
