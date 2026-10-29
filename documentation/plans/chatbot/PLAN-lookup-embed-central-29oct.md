@@ -2,7 +2,7 @@
 
 Status: CARD v3 + MOCK v3 filed for the owner (29 Oct 2026): owner answered v1 Q1-Q5 and v2 N1-N5; v3 adds the
 embedder setting, the keep set (S1 pending), threshold tuning and performance. No code. Track: L.
-Build starts only after the owner answers S1, T1, P1, P2, G1, G2 and approves mock v3
+Owner answered S1, T1, P1 (b), P2, G1, G2, M1 (a): BUILD (UAC `lookup-embed-central-acceptance-criteria.md`)
 (`documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`).
 
 ## Owner words (29 Oct 2026, verbatim)
@@ -134,6 +134,13 @@ Findings the screen makes visible:
   100% guard for records; updated 29 Oct: "better to switch the embedding to a setting instead of a prompt" ->
   System Settings > Embeddings tab (provider + model), prod's label value copied in on deploy, label = fallback only.
 - Owner notes on mock v3: threshold tuning in this lane; performance must be covered (both in card v3).
+- Card v3 answers (29 Oct): S1 (a) keep set, but product = product_spec (spec sentence), not name + description
+  ("description got noise"); T1 (a) keep floors, label 30+ meaning-only phrases in the build; P1 (b) ("anything that
+  makes our system faster should be considered"): per-model partial index + per-source partial indexes for attachment
+  and product_spec; P2 (a); G1 (a); G2 (a); M1 (a) drop mcp_tool + conversation_frame (crew: build (a)).
+- Per-source index cost (scaled from the measured 25,090-row index: 193 MB, 34 s at 512MB): attachment 8,083 rows
+  ~62 MB / ~11 s, product_spec 14,678 rows ~113 MB / ~20 s, per model; the keep-set index ~185 MB / ~33 s. Built
+  CONCURRENTLY (slower; factor UNVERIFIED). Measured win: attachment-filtered p95 0.8 ms vs 127 ms (iterative scan).
 - Owner question (29 Oct): "why we need to embed orders, products ah cause they are code right" -> answered in
   "Which business records are worth embedding" (S1 pending).
 
