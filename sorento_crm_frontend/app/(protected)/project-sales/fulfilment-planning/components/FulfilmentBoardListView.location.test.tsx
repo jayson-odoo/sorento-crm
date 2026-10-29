@@ -227,7 +227,7 @@ describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', (
         onDecide={vi.fn()}
         onDecideMany={vi.fn(async () => ({ saved: 0, failed: 0 }))}
         onDecideBatch={vi.fn(async () => ({ savedKeys: [], failed: [] }))}
-        location={{ value: ['DC1-BB'], onChange }}
+        locationFilterState={{ value: ['DC1-BB'], onChange }}
       />,
     );
     await screen.findByText('SO000003');
@@ -248,7 +248,7 @@ describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', (
         onDecide={vi.fn()}
         onDecideMany={vi.fn(async () => ({ saved: 0, failed: 0 }))}
         onDecideBatch={vi.fn(async () => ({ savedKeys: [], failed: [] }))}
-        location={{ value: ['MWH-BB'], onChange: vi.fn() }}
+        locationFilterState={{ value: ['MWH-BB'], onChange: vi.fn() }}
       />,
     );
     await userEvent.click(await screen.findByRole('button', { name: /^Filters/ }));

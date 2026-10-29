@@ -3444,7 +3444,7 @@ export function FulfilmentBoardPanel({
                 // its own toolbar (`search` below), the grid in its filter strip.
                 externalSearch={productSearch}
                 status={{ value: statusFilter, onChange: setStatusFilter }}
-                location={{ value: locationFilter, onChange: setLocationFilter }}
+                locationFilterState={{ value: locationFilter, onChange: setLocationFilter }}
                 scope={{
                   value: scope,
                   onChange: setScope,

@@ -180,7 +180,7 @@ export interface FulfilmentBoardListViewProps {
   /** The Status filter's state, when the board owns it (shared with the grid view). */
   status?: { value: string[]; onChange: (next: string[]) => void };
   /** The Location filter (PLAN-SO-LOCATION), controlled by the board when handed in, else local. */
-  location?: { value: string[]; onChange: (next: string[]) => void };
+  locationFilterState?: { value: string[]; onChange: (next: string[]) => void };
   /**
    * The Saved | All toggle (owner hand test, 1 Oct 2026), drawn after the search box. Saved = the
    * lines Confirm sends, All = every line. Omitted, the list
@@ -213,7 +213,7 @@ export function FulfilmentBoardListView({
   attachmentsByLine = {},
   search,
   status,
-  location,
+  locationFilterState,
   scope,
 }: FulfilmentBoardListViewProps) {
   /**
@@ -249,8 +249,8 @@ export function FulfilmentBoardListView({
   // PLAN-SO-LOCATION: the SO line's own location, several at once. List view only - the grid
   // already names each cell's locations in its pill strip.
   const [localLocationFilter, setLocalLocationFilter] = React.useState<string[]>([]);
-  const locationFilter = location?.value ?? localLocationFilter;
-  const setLocationFilter = location?.onChange ?? setLocalLocationFilter;
+  const locationFilter = locationFilterState?.value ?? localLocationFilter;
+  const setLocationFilter = locationFilterState?.onChange ?? setLocalLocationFilter;
   const locationOptions = React.useMemo(
     () => locationFilterOptions(contributions, locationFilter),
     [contributions, locationFilter],
