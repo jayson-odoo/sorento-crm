@@ -75,10 +75,11 @@ DELIVERED_STATUS_CODES = ("delivered", "completed")
 
 def _excel_serial_to_datetime(value) -> Optional[datetime]:
     """An Excel date serial (a date cell read without its format) as a datetime, or None
-    when the number is outside Excel's date range (DO-IMPORT-DATE)."""
+    outside 2000-2099 (DO-IMPORT-DATE): a typed number such as ddmmyy 280826 is not a
+    date in the year 2668, so it stays refused rather than imported wrong."""
     from openpyxl.utils.datetime import from_excel
 
-    if not 1 <= value < 2958466:  # 1900-01-01 .. 9999-12-31
+    if not 36526 <= value < 73051:  # 2000-01-01 .. 2099-12-31
         return None
     try:
         converted = from_excel(float(value))
@@ -2933,12 +2934,14 @@ class OrderService:
                 return ""
             return str(value).strip()
 
-        # DO-IMPORT-DATE: Master's Date is every DO's own date; without the column
-        # every row would be refused one by one, so say it once.
-        if "Date" not in {normalize_header(cell.value) for cell in master_sheet[1]}:
-            raise ValueError("Master sheet has no Date column: every delivery order needs its DO date")
-
         master_rows_list = list(iter_sheet_rows(master_sheet, "Master"))
+        # DO-IMPORT-DATE: Master's Date is every DO's own date; without the column
+        # every row would be refused one by one, so say it once. An empty Master tab
+        # (a tracking-only upload) has no rows to refuse.
+        if master_rows_list and "Date" not in {
+            normalize_header(cell.value) for cell in master_sheet[1]
+        }:
+            raise ValueError("Master sheet has no Date column: every delivery order needs its DO date")
         tracking_rows_list = list(iter_sheet_rows(tracking_sheet, "Overall Tracking"))
         master_rows = len(master_rows_list)
         tracking_rows = len(tracking_rows_list)

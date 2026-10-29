@@ -23,7 +23,10 @@ accepts an undated DO too. `bulk_import_orders` (JSON bulk import) has the same 
 
 1. Excel tracking import: a Master row whose Date is blank or unparseable is refused with a per-row
    error, the same way a missing Doc. No. is (`MISSING_DOC_DATE` / `INVALID_DOC_DATE` outcome codes).
-   The row is not created and an existing DO keeps its date.
+   The row is not created and an existing DO keeps its date. On an AutoCount-owned DO the
+   sheet's Date is moot (AutoCount owns it), so the row still applies its other columns. A
+   Master sheet with rows but no Date column is refused once, up front. Excel date serials
+   (2000-2099) parse in both import parsers; any other number stays refused.
 2. API: `OrderCreate.order_date` is required and non-null; `OrderUpdate` rejects an explicit
    `order_date: null` (omitting it still leaves the stored date alone). `OrderResponse` keeps it
    optional so existing NULL rows still read. `bulk_import_orders` refuses a new row with no date

@@ -332,3 +332,35 @@ def test_bulk_import_blank_date_on_autocount_do_is_not_refused(db):
     order = _order(db, number)
     db.refresh(order)
     assert order.order_date == date(2026, 7, 1)
+
+
+def test_import_number_outside_plausible_dates_is_refused(db):
+    """A typed ddmmyy (280826) is not a serial for the year 2668: refuse it visibly."""
+    number = unique_code("DO")
+    result = OrderService(db).import_excel_tracking(
+        _sheet(["Doc. No.", "Date"], [[number, 280826]]), USER
+    )
+    assert _row_errors(result).get(2) == (
+        f"{number}: Date '280826' is not a valid date (use DD/MM/YYYY)"
+    ), result.get("errors")
+    assert _order(db, number) is None
+
+
+def test_import_empty_master_tab_still_applies_tracking(db):
+    number = unique_code("DO")
+    db.add(Order(order_number=number, order_date=date(2026, 7, 1)))
+    db.commit()
+    wb = Workbook()
+    wb.remove(wb.active)
+    wb.create_sheet("Master")
+    tracking = wb.create_sheet("Overall Tracking")
+    tracking.append(["Doc Number", "Date"])
+    tracking.append([number, date(2026, 7, 5)])
+    buf = BytesIO()
+    wb.save(buf)
+
+    OrderService(db).import_excel_tracking(buf.getvalue(), USER)
+
+    order = _order(db, number)
+    db.refresh(order)
+    assert order.actual_delivery_date == date(2026, 7, 5)
