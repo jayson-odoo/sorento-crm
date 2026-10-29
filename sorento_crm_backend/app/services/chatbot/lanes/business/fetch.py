@@ -497,7 +497,8 @@ ORDER_STATUS_TO_SCOPE: dict[str, str] = {
 SO_NOT_ENABLED_MESSAGE = "Sales order figures are not enabled for your account."
 
 #: The outstanding report's group page size, pinned equal to the MCP presenter's
-#: `OUTSTANDING_GROUP_CAP` (the backend image cannot import that package).
+#: `OUTSTANDING_GROUP_CAP` (the backend image cannot import that package) and to the route's document page
+#: (`reports.ask.DOCUMENT_PAGE`): the three 20s must agree for the "next N" wording.
 OUTSTANDING_GROUP_PAGE = 20
 
 ORDER_TOOLS: frozenset[str] = frozenset(
@@ -3007,7 +3008,10 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                 "last_result_set": [{"idx": 1, "label": offer[1], "code": code, "entity_type": offer[2], "keys": []}],
                 "filters": {"tool": "crm_report_ask", "ranking": {"group_by": code}},
             }
-    if frame is not None and pick is None and frame.get("group_by") in ("sales_order", "delivery_order"):
+    if (
+        frame is not None and pick is None and frame.get("group_by") in ("sales_order", "delivery_order")
+        and isinstance(envelope.get("group_window"), dict)  # a list with a "more" to answer; a short one arms nothing
+    ):
         # Eval hard guard: item 3's document list (no subject) is the frame on screen; its "more" is answered under an
         # open pick (`turn/apply._answer_top_selling_pick`), so it arms its kind's list pick ("1" re-lists page one).
         from app.services.chatbot.lanes.business.report_ask import LIST_PICKS

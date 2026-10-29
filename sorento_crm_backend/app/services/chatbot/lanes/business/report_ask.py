@@ -528,7 +528,9 @@ def outstanding_by_basis(verdict: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in verdict.items() if k != "sales_basis"}
 
 
-def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool = True) -> dict[str, Any]:
+def by_capability(
+    verdict: dict[str, Any], *, subject: bool = False, seam: bool = True, answering: bool = False
+) -> dict[str, Any]:
     """Engine seam, before grounding (REPORT-SMART-1021 step 2, REPORT-UNIFY Q1; `seam=False` is `run_fetch`'s own
     pass over what the seam left, which lets a pick or a document through): every sales figure ask
     (`SALES_STATUSES`, any axis the report ask has or none) and every outstanding ask that holds a filter or an
@@ -538,10 +540,10 @@ def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool 
     # Engine keys only this seam writes: never taken from the parser's own emission.
     verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}
     status = jsc.js_string(verdict.get("order_status") or "").strip()
-    replying = _dict(verdict.get("open_question_answer")).get("mode") is not None
+    replying = answering or _dict(verdict.get("open_question_answer")).get("mode") is not None
     if status in SALES_STATUSES and verdict.get("sales_basis") == "outstanding" and not replying and not basis_from(verdict):
-        # A FRESH ask naming no basis of its own: "outstanding" answering the sales basis question carries that answer
-        # as its `basis` (BASIS_OPTIONS' Outstanding, the total's own), and stays that total.
+        # A FRESH ask naming no basis of its own. With a question open (`answering`: the engine's own open slot, never
+        # the parser's mode alone) "outstanding" is that question's answer (BASIS_OPTIONS' Outstanding), and stays it.
         verdict, status = outstanding_by_basis(verdict), "outstanding"
     if verdict.get("intent_hint") == "low_stock_report" and verdict.get("domain_hint") == "inventory":
         return verdict  # the reorder report is its own ask (`low_stock_ask`), whatever order status the parser also read

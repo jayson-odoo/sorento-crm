@@ -2246,10 +2246,14 @@ def run_fetch(
                 {"ask": report_ask.ASK_NAME, "done": bool(settled and settled.done),
                  "values": settled.values if settled else None, "line": line},
             )
+        def _with_so_line(text: str) -> str:
+            # Review (eval round): the SO line rides every reply of a redirected ask, a question asked first included.
+            return "\n\n".join(t for t in (fetch_mod.SO_NOT_ENABLED_MESSAGE, text) if t) if so_redirect else text
+
         if settled is None:
-            return _fixed_reply(line or "", refused=line == report_ask.DEALER_REFUSAL)
+            return _fixed_reply(_with_so_line(line or ""), refused=line == report_ask.DEALER_REFUSAL)
         if not settled.done:
-            return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            return _fixed_reply(_with_so_line(settled.reply or ""), required_ask=settled.slot)
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
         listed = None if customer_scope.get("enforced") else report_ask.document_list_args(
             semantic_input["report_ask_args"], settled
@@ -2260,11 +2264,11 @@ def run_fetch(
             if parse_output.get("doc_staff") is not True and not customer_scope.get("ids"):
                 if trace is not None:
                     trace.add("customer_scope", {"refused": "no_links", "tool": tool_name})
-                return _fixed_reply(_scope_refusal(customer_scope), refused=True)
+                return _fixed_reply(_with_so_line(_scope_refusal(customer_scope)), refused=True)
             semantic_input["report_ask_args"] = listed
         location_line = report_ask.invoiced_location_line(semantic_input["report_ask_args"])
         if location_line:
-            return _fixed_reply(location_line)
+            return _fixed_reply(_with_so_line(location_line))
         unapplied = [
             *report_ask.unapplied_words(parse_output, semantic_input["report_ask_args"]),
             *[str(w) for w in settled.extras.get("not_applied") or []],  # a brand / category / agent word that bound to nothing
@@ -2272,7 +2276,7 @@ def run_fetch(
         if unapplied:
             sole = report_ask.sole_unapplied_question(unapplied, semantic_input["report_ask_args"])
             if sole:
-                return _fixed_reply(sole)
+                return _fixed_reply(_with_so_line(sole))
             semantic_input["report_ask_not_applied"] = unapplied
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]

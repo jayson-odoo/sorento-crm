@@ -5736,7 +5736,7 @@ def _run_stages_body(  # noqa: PLR0915
     # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
     verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
     # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
-    verdict = _report_ask.by_capability(verdict)
+    verdict = _report_ask.by_capability(verdict, answering=bool(state_in.focus.required_ask))
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
         verdict, grounding_notes = grounding.ground(
