@@ -12,15 +12,17 @@
  * Members are read where they are called, never destructured up front: a test that mocks
  * portal-client with only the functions it needs must keep working.
  *
- * The kinds with pages of their own (Sample Request, New Product Application, Sales Opportunity;
- * R3) read their own service the same way, through `clientService`: absent, the portal's module.
+ * The kinds with pages of their own (Sample Request, New Product Application, Sales Opportunity,
+ * Price Tag Request; R3) read their own service the same way, through `clientService`: absent, the
+ * portal's module.
  */
 import { createContext, useContext, type ComponentType, type ReactNode } from 'react';
 import type { AttachmentPreviewItem } from '@/components/common/AttachmentPreviewModal';
 import * as portalClient from './portal-client';
-import type { PortalAttachment, PortalLandingKind, PortalSubmissionKind } from './portal-client';
+import type { PortalAttachment, PortalLandingKind } from './portal-client';
 import { portalFetchBytes } from './portal-preview';
 import type { NewProductApplicationService } from './new-product-application-service';
+import type { PriceTagRequestService } from './price-tag-request-service';
 import type { SalesOpportunityService } from './sales-opportunity-service';
 import type { SampleRequestService } from './sample-request-service';
 
@@ -52,6 +54,7 @@ export type SubmissionApi = Pick<
   | 'aiExtractFromFiles'
   | 'portalAttachmentDownloadUrl'
   | 'fetchPortalAttachmentBytes'
+  | 'getPriceTagDesign'
 >;
 
 /** Where the form's own links and redirects go. Absent: the portal's paths. */
@@ -64,7 +67,7 @@ export interface SubmissionPaths {
 
 /** A draft's delete, rendered in place of the portal's confirm-and-delete button. */
 export interface DraftDeleteProps {
-  kind: PortalSubmissionKind;
+  kind: PortalLandingKind;
   submissionId: string;
   disabled: boolean;
   /** The delete has committed: leave the record. */
@@ -97,9 +100,14 @@ export interface SubmissionClient extends SubmissionApi {
   sampleRequest?: SampleRequestService;
   newProductApplication?: NewProductApplicationService;
   salesOpportunity?: SalesOpportunityService;
+  priceTagRequest?: PriceTagRequestService;
 }
 
-type KindServiceKey = 'sampleRequest' | 'newProductApplication' | 'salesOpportunity';
+type KindServiceKey =
+  | 'sampleRequest'
+  | 'newProductApplication'
+  | 'salesOpportunity'
+  | 'priceTagRequest';
 
 const SubmissionClientContext = createContext<SubmissionClient | null>(null);
 

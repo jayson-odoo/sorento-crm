@@ -8,9 +8,9 @@
  * the portal's own routes (same paths, bodies and answers). The submission routes reuse
  * `myRequestsService`; the profile, lookups and AI extract are added here.
  *
- * Sample Request, New Product Application and Sales Opportunity (R3) are the portal's own services,
- * built by their factories over `myRequestsFetch`: `apiFetch` with the portal prefix swapped for
- * this one. No CRM copy of any of their calls.
+ * Sample Request, New Product Application, Sales Opportunity and Price Tag Request (R3) are the
+ * portal's own services, built by their factories over `myRequestsFetch`: `apiFetch` with the portal
+ * prefix swapped for this one. No CRM copy of any of their calls.
  *
  * Deletes are not here: the CRM parks them (D7), see `MyRequestPortalForm`.
  */
@@ -33,8 +33,14 @@ import type {
 } from '@/app/(auth)/portal/lib/portal-client';
 import type { SubmissionClient, SubmissionPaths } from '@/app/(auth)/portal/lib/submission-client';
 import { makeNewProductApplicationService } from '@/app/(auth)/portal/lib/new-product-application-service';
+import { makePriceTagRequestService } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import { makeSalesOpportunityService } from '@/app/(auth)/portal/lib/sales-opportunity-service';
 import { makeSampleRequestService } from '@/app/(auth)/portal/lib/sample-request-service';
+import {
+  designPayloadFromResponse,
+  type TagSheetDesignPayload,
+  type TagSheetDesignResponse,
+} from '@/lib/dealer-kit/design-payload';
 
 const BASE = '/api/v1/my-requests';
 /** The portal prefix a preview item's bytes route carries (`portal-preview.toPreviewItem`). */
@@ -131,6 +137,13 @@ export async function aiExtractFromFiles(formKey: string, files: File[]): Promis
   );
 }
 
+/** The proof marketing sent on their price tag request, or null while there is none. */
+export async function getPriceTagDesign(id: string): Promise<TagSheetDesignPayload | null> {
+  const res = await apiFetch(`${BASE}/submissions/price_tag_request/${encodeURIComponent(id)}/design`);
+  if (res.status === 404) return null;
+  return designPayloadFromResponse(await unwrap<TagSheetDesignResponse>(res, 'Failed to load the design.'));
+}
+
 /** A portal route's twin under my-requests: same path after the prefix, same attachment ids. */
 const toMyRequests = (url: string) =>
   url.startsWith(`${PORTAL_BASE}/`) ? `${BASE}${url.slice(PORTAL_BASE.length)}` : url;
@@ -191,4 +204,6 @@ export const createMyRequestsSubmissionApi = (): SubmissionClient => ({
   sampleRequest: makeSampleRequestService(myRequestsFetch),
   newProductApplication: makeNewProductApplicationService(myRequestsFetch),
   salesOpportunity: makeSalesOpportunityService(myRequestsFetch),
+  priceTagRequest: makePriceTagRequestService(myRequestsFetch),
+  getPriceTagDesign,
 });

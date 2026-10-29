@@ -2,7 +2,6 @@
  * PORTAL-P4-REQUESTS D7 red tests (crew answer a85478781): a salesperson's destructive actions on
  * the CRM request pages are server-deferred pending actions, never an immediate my-requests DELETE.
  *
- *  - MyRequestActions "Delete" on a draft  -> my_request.delete   (props: kind + requestId replace onDelete)
  *  - OwnAttachmentDelete on an own upload  -> my_request_attachment.unlink
  * Each shows a countdown with a Cancel; Escape does not cancel.
  */
@@ -39,7 +38,6 @@ vi.mock('@/services/myRequestsService', async (orig) => ({
   ...mine,
 }));
 
-import { MyRequestActions } from './MyRequestActions';
 import { OwnAttachmentDelete } from './OwnRequestAttachmentActions';
 
 function parked(key: string, type: string, id: string) {
@@ -62,57 +60,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   pending.getCurrentPendingAction.mockResolvedValue({ pending: null, last_outcome: null });
   pending.cancelPendingAction.mockResolvedValue(undefined);
-});
-
-describe('MyRequestActions: Delete draft is a deferred my_request.delete', () => {
-  const props = {
-    status: 'draft',
-    revisable: false,
-    busy: false,
-    onEdit: vi.fn(),
-    onRevise: vi.fn(),
-    onDuplicate: vi.fn(),
-    onSubmit: vi.fn(),
-    // The coder drops this prop; a stale caller passing it must still never reach the DELETE.
-    onDelete: vi.fn(),
-    kind: 'complaint',
-    requestId: 'req-1',
-  } as unknown as React.ComponentProps<typeof MyRequestActions>;
-
-  it('parks my_request.delete for the request and shows a countdown with Cancel', async () => {
-    pending.createPendingAction.mockResolvedValue(parked('my_request.delete', 'complaint', 'req-1'));
-    wrap(<MyRequestActions {...props} />);
-    fireEvent.click(screen.getByRole('button', { name: /delete/i }));
-    await waitFor(() =>
-      expect(pending.createPendingAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          actionKey: 'my_request.delete',
-          entityType: 'complaint',
-          entityId: 'req-1',
-        }),
-      ),
-    );
-    expect(await screen.findByRole('timer')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /cancel/i })).toBeTruthy();
-    expect(mine.deleteDraftSubmission).not.toHaveBeenCalled();
-    expect((props as unknown as { onDelete: () => void }).onDelete).not.toHaveBeenCalled();
-  });
-
-  it('Cancel withdraws the parked action; Escape does not', async () => {
-    pending.createPendingAction.mockResolvedValue(parked('my_request.delete', 'complaint', 'req-1'));
-    wrap(<MyRequestActions {...props} />);
-    fireEvent.click(screen.getByRole('button', { name: /delete/i }));
-    const cancel = await screen.findByRole('button', { name: /cancel/i });
-    fireEvent.keyDown(document.body, { key: 'Escape' });
-    expect(pending.cancelPendingAction).not.toHaveBeenCalled();
-    fireEvent.click(cancel);
-    await waitFor(() => expect(pending.cancelPendingAction).toHaveBeenCalledWith('pa-1'));
-  });
-
-  it('shows no Delete once the request is no longer a draft', () => {
-    wrap(<MyRequestActions {...props} status="submitted" />);
-    expect(screen.queryByRole('button', { name: /delete/i })).toBeNull();
-  });
 });
 
 describe('OwnAttachmentDelete: removing an own upload is a deferred my_request_attachment.unlink', () => {

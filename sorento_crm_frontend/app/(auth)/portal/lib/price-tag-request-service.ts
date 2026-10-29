@@ -4,6 +4,12 @@
  * Calls `/api/v1/public/portal/submissions/price_tag_request` and
  * `/api/v1/public/portal/lookups` via `portalFetch`.
  *
+ * `makePriceTagRequestService(fetcher)` holds the calls (PORTAL-P4-REQUESTS
+ * R3, form parity); the named exports are the portal's instance over
+ * `portalFetch`. The CRM builds one over its session
+ * (`services/myRequestsSubmissionClient.ts`), so a salesperson's form makes
+ * the portal's calls, the debtor mapping included.
+ *
  * ===========================================================================
  * COMBOS ON A REQUEST LINE (PLAN-price-tag-combos.md D2, slice S2)
  * ===========================================================================
@@ -356,100 +362,6 @@ export type PriceTagRequestLineInput = {
 const BASE = '/api/v1/public/portal/submissions/price_tag_request';
 const LOOKUPS = '/api/v1/public/portal/lookups';
 
-// ---------------------------------------------------------------------------
-// Lookups
-// ---------------------------------------------------------------------------
-
-export async function lookupDebtors(query?: string): Promise<DebtorOption[]> {
-  const usp = new URLSearchParams();
-  if (query) usp.set('q', query);
-  const qs = usp.toString();
-  const url = qs
-    ? `${LOOKUPS}/debtors-for-agent?${qs}`
-    : `${LOOKUPS}/debtors-for-agent`;
-  const res = await portalFetch(url);
-  const items = await unwrap<
-    { customer_code: string | null; customer_name: string | null; debtor_code: string | null; debtor_name: string | null }[]
-  >(res, 'Failed to load debtors');
-
-  return items.map((d) => ({
-    code: d.debtor_code ?? d.customer_code ?? '',
-    name: d.debtor_name ?? d.customer_name ?? '',
-  }));
-}
-
-export async function lookupPromotions(query?: string): Promise<PromotionOption[]> {
-  const usp = new URLSearchParams();
-  if (query) usp.set('q', query);
-  const qs = usp.toString();
-  const url = qs ? `${LOOKUPS}/promotions?${qs}` : `${LOOKUPS}/promotions`;
-  const res = await portalFetch(url);
-  return unwrap<PromotionOption[]>(res, 'Failed to load promotions');
-}
-
-export async function lookupProducts(query?: string): Promise<ProductOption[]> {
-  const usp = new URLSearchParams();
-  if (query) usp.set('q', query);
-  const qs = usp.toString();
-  const url = qs
-    ? `${LOOKUPS}/products?${qs}`
-    : `${LOOKUPS}/products`;
-  const res = await portalFetch(url);
-  const items = await unwrap<
-    { product_code: string; product_name: string | null; category_code: string | null; category_name: string | null }[]
-  >(res, 'Failed to load products');
-
-  return items.map((p) => ({
-    // The portal products endpoint returns product_code, not an id.
-    // Use product_code as the id since that is the identifier available.
-    id: p.product_code,
-    code: p.product_code,
-    name: p.product_name ?? '',
-    product_class: p.category_name ?? null,
-  }));
-}
-
-// TODO: No portal product-sets lookup endpoint exists yet. Keep client-side stub.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function lookupProductSets(query?: string): Promise<ProductSetOption[]> {
-  return [];
-}
-
-/**
- * Sets and products in one list, for the lines table's single Item dropdown.
- *
- * The alternatives picker reads the same call and keeps the products: one endpoint
- * for one question ("what can go on a tag?") beats two round trips per keystroke,
- * and the handful of sets it also returns costs nothing.
- */
-export async function lookupTagItems(query?: string): Promise<TagItemOption[]> {
-  const usp = new URLSearchParams();
-  if (query && query.trim()) usp.set('q', query.trim());
-  const qs = usp.toString();
-  const url = qs
-    ? `${LOOKUPS}/price-tag-items?${qs}`
-    : `${LOOKUPS}/price-tag-items`;
-  const res = await portalFetch(url);
-  return unwrap<TagItemOption[]>(res, 'Failed to load products and sets');
-}
-
-/**
- * The catalogue packages a picked product is sold as, plus whether its class is
- * guarded (D2). Called once per product pick on a line.
- */
-export async function lookupProductCombos(
-  productId: string,
-): Promise<ProductCombosLookup> {
-  const res = await portalFetch(
-    `${LOOKUPS}/product-combos/${encodeURIComponent(productId)}`,
-  );
-  return unwrap<ProductCombosLookup>(res, 'Failed to load the packages for this product');
-}
-
-// ---------------------------------------------------------------------------
-// Line pricing (D1-D4, S7 - see the contract block at the top of this file)
-// ---------------------------------------------------------------------------
-
 export type {
   LinePricingCandidate,
   LinePricingLineInput,
@@ -461,27 +373,6 @@ import type {
   LinePricingLineInput as LinePricingLineInputT,
   LinePricingResult as LinePricingResultT,
 } from '@/lib/dealer-kit/line-pricing-types';
-
-/**
- * One pricing call for every line (D4, S7). Audience-scoped to THIS
- * contact - the portal route reads it off the portal token, not a param
- * this call sends.
- *
- * `_priceMode` is not sent either: the route's body has no `price_mode`
- * field (`LinePricingRequest`, S7) - `sell_price` is a real number in List
- * mode too, and the mode only decides what the FORM does with the answer.
- */
-export async function lookupLinePricing(
-  _priceMode: PriceMode,
-  lines: LinePricingLineInputT[],
-): Promise<LinePricingResultT[]> {
-  const res = await portalFetch(`${LOOKUPS}/line-pricing`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lines }),
-  });
-  return unwrap<LinePricingResultT[]>(res, 'Failed to price these lines');
-}
 
 // ---------------------------------------------------------------------------
 // Refusals that name a field
@@ -528,75 +419,6 @@ async function unwrapNamingFields<T>(res: Response, fallback: string): Promise<T
   throw new PriceTagRequestError(message, code, fields);
 }
 
-// ---------------------------------------------------------------------------
-// CRUD
-// ---------------------------------------------------------------------------
-
-export async function listRequests(
-  q?: string,
-): Promise<PriceTagRequestSummary[]> {
-  const usp = new URLSearchParams();
-  if (q && q.trim()) usp.set('q', q.trim());
-  const qs = usp.toString();
-  const res = await portalFetch(qs ? `${BASE}?${qs}` : BASE);
-  const data = await unwrap<{ items: PriceTagRequestSummary[] }>(
-    res,
-    'Failed to load requests',
-  );
-  return data.items ?? [];
-}
-
-/**
- * The same list in the shape the portal landing's cards read (D45).
- *
- * The price tag endpoint answers its own row type rather than the legacy
- * `PortalSubmissionSummary`, and adapting it HERE is what lets the landing stay
- * ignorant of the difference without any legacy endpoint changing. `doc_number`
- * is the card's primary line, the dealer is its customer line, and a request
- * still carrying `portal_draft_at` is a draft, which is the only thing that
- * tells a saved-but-unsent request from a submitted one.
- */
-export async function listRequestsAsSummaries(
-  q?: string,
-): Promise<PortalSubmissionSummary[]> {
-  const rows = await listRequests(q);
-  return rows.map((r) => {
-    const isDraft = Boolean(r.portal_draft_at);
-    return {
-      id: r.id,
-      kind: 'price_tag_request' as const,
-      // A draft may have no dealer yet, and a card with a blank first line reads
-      // as a broken row rather than an unfinished one.
-      title: r.debtor_name || r.doc_number,
-      document_number: r.doc_number,
-      reference: null,
-      status: r.status,
-      is_editable: isDraft,
-      is_draft: isDraft,
-      created_at: r.created_at,
-      customer_name: r.debtor_name,
-      needed_by_date: r.needed_by_date,
-      // AC-R7: the same revision fields the legacy kinds' own summaries carry
-      // (D45's landing card reads these for the "Rev N" / "Revising" badges) -
-      // the list payload already carries all three, this just stopped
-      // dropping them.
-      revision_no: r.revision_no,
-      last_revised_at: r.last_revised_at,
-      has_revision_draft: r.has_revision_draft,
-    };
-  });
-}
-
-export async function getRequest(id: string): Promise<PriceTagRequestDetail | null> {
-  const res = await portalFetch(
-    `${BASE}/${encodeURIComponent(id)}`,
-  );
-  if (res.status === 404) return null;
-  // D-P6/S8: `is_editable` is the server's own field now (AC-B6) - true for a
-  // draft, or a submitted request at New / Changes requested. No FE mock left.
-  return unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
-}
-
 /**
  * What Save Draft posts, which is whatever the salesperson has filled in so far
  * (D48a). Everything is nullable because the request row is: completeness is
@@ -623,174 +445,415 @@ export interface CreatePriceTagRequestInput {
   lines: PriceTagRequestLineInput[];
 }
 
-export async function createRequest(
-  data: CreatePriceTagRequestInput,
-): Promise<PriceTagRequestDetail> {
-  const res = await portalFetch(BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to create request');
-}
-
-export async function updateRequest(
-  id: string,
-  data: Partial<CreatePriceTagRequestInput>,
-): Promise<PriceTagRequestDetail> {
-  const res = await portalFetch(
-    `${BASE}/${encodeURIComponent(id)}`,
-    {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    },
-  );
-  return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to update request');
-}
-
 /**
- * The salesperson confirming they have the tags (r9 D8).
- *
- * ```
- * POST /api/v1/public/portal/submissions/price_tag_request/{id}/collect
- *   200 { status: "collected" }
- *   409 unless the request is `ready_for_collection`.
- * ```
- *
- * The status and nothing else: the caller refetches the request, so a second
- * copy of the timestamp here would be one more thing that can disagree.
+ * The calls over `fetcher` (`portalFetch`'s shape). `fetchBytes` reads the PDF;
+ * the portal's own is `fetchPortalAttachmentBytes`.
  */
-export async function collectRequest(id: string): Promise<{ status: string }> {
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}/collect`, {
-    method: 'POST',
-  });
-  return unwrap<{ status: string }>(res, 'Failed to mark this collected');
-}
+export function makePriceTagRequestService(
+  fetcher: typeof portalFetch,
+  fetchBytes: (url: string) => Promise<Response> = fetcher,
+) {
+  // ---------------------------------------------------------------------------
+  // Lookups
+  // ---------------------------------------------------------------------------
 
-export async function submitRequest(id: string): Promise<{ status: string }> {
-  const res = await portalFetch(
-    `${BASE}/${encodeURIComponent(id)}/submit`,
-    { method: 'POST' },
-  );
-  return unwrapNamingFields<{ status: string }>(res, 'Failed to submit request');
-}
+  async function lookupDebtors(query?: string): Promise<DebtorOption[]> {
+    const usp = new URLSearchParams();
+    if (query) usp.set('q', query);
+    const qs = usp.toString();
+    const url = qs
+      ? `${LOOKUPS}/debtors-for-agent?${qs}`
+      : `${LOOKUPS}/debtors-for-agent`;
+    const res = await fetcher(url);
+    const items = await unwrap<
+      { customer_code: string | null; customer_name: string | null; debtor_code: string | null; debtor_name: string | null }[]
+    >(res, 'Failed to load debtors');
 
-/** Hard-delete a draft. The server refuses once it has been submitted. */
-export async function deleteRequest(id: string): Promise<void> {
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  });
-  if (res.ok) return;
-  throw new Error(await extractApiError(res, 'Failed to delete draft'));
-}
+    return items.map((d) => ({
+      code: d.debtor_code ?? d.customer_code ?? '',
+      name: d.debtor_name ?? d.customer_name ?? '',
+    }));
+  }
 
-export async function approveRequest(id: string): Promise<{ status: string }> {
-  const res = await portalFetch(
-    `${BASE}/${encodeURIComponent(id)}/approve`,
-    { method: 'POST' },
-  );
-  return unwrap<{ status: string }>(res, 'Failed to approve request');
-}
+  async function lookupPromotions(query?: string): Promise<PromotionOption[]> {
+    const usp = new URLSearchParams();
+    if (query) usp.set('q', query);
+    const qs = usp.toString();
+    const url = qs ? `${LOOKUPS}/promotions?${qs}` : `${LOOKUPS}/promotions`;
+    const res = await fetcher(url);
+    return unwrap<PromotionOption[]>(res, 'Failed to load promotions');
+  }
 
-/**
- * Send the round's change requests (r9 S2/D5).
- *
- * ```
- * POST /api/v1/public/portal/submissions/price_tag_request/{id}/request-changes
- *   { comments: [{ line_id, x, y, w, h, body }], note? }
- *   200 { status: "changes_requested", round, comments: ReviewComment[] }
- * ```
- *
- * One call for the whole round: the pins are placed locally and nothing reaches
- * the server until Send, so a salesperson can put five pins down, delete two,
- * and the request changes state exactly once. The old text-only `{ note }` body
- * stays accepted server-side for one release and lands as a general comment.
- *
- * Contract and the row shape: `lib/dealer-kit/review-comments.ts`.
- *
- */
-export async function requestChanges(
-  id: string,
-  payload: ChangeRequestPayload,
-): Promise<{ status: string; round: number; comments: ReviewComment[] }> {
-  const res = await portalFetch(
-    `${BASE}/${encodeURIComponent(id)}/request-changes`,
-    {
+  async function lookupProducts(query?: string): Promise<ProductOption[]> {
+    const usp = new URLSearchParams();
+    if (query) usp.set('q', query);
+    const qs = usp.toString();
+    const url = qs
+      ? `${LOOKUPS}/products?${qs}`
+      : `${LOOKUPS}/products`;
+    const res = await fetcher(url);
+    const items = await unwrap<
+      { product_code: string; product_name: string | null; category_code: string | null; category_name: string | null }[]
+    >(res, 'Failed to load products');
+
+    return items.map((p) => ({
+      // The portal products endpoint returns product_code, not an id.
+      // Use product_code as the id since that is the identifier available.
+      id: p.product_code,
+      code: p.product_code,
+      name: p.product_name ?? '',
+      product_class: p.category_name ?? null,
+    }));
+  }
+
+  // TODO: No portal product-sets lookup endpoint exists yet. Keep client-side stub.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async function lookupProductSets(query?: string): Promise<ProductSetOption[]> {
+    return [];
+  }
+
+  /**
+   * Sets and products in one list, for the lines table's single Item dropdown.
+   *
+   * The alternatives picker reads the same call and keeps the products: one endpoint
+   * for one question ("what can go on a tag?") beats two round trips per keystroke,
+   * and the handful of sets it also returns costs nothing.
+   */
+  async function lookupTagItems(query?: string): Promise<TagItemOption[]> {
+    const usp = new URLSearchParams();
+    if (query && query.trim()) usp.set('q', query.trim());
+    const qs = usp.toString();
+    const url = qs
+      ? `${LOOKUPS}/price-tag-items?${qs}`
+      : `${LOOKUPS}/price-tag-items`;
+    const res = await fetcher(url);
+    return unwrap<TagItemOption[]>(res, 'Failed to load products and sets');
+  }
+
+  /**
+   * The catalogue packages a picked product is sold as, plus whether its class is
+   * guarded (D2). Called once per product pick on a line.
+   */
+  async function lookupProductCombos(
+    productId: string,
+  ): Promise<ProductCombosLookup> {
+    const res = await fetcher(
+      `${LOOKUPS}/product-combos/${encodeURIComponent(productId)}`,
+    );
+    return unwrap<ProductCombosLookup>(res, 'Failed to load the packages for this product');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Line pricing (D1-D4, S7 - see the contract block at the top of this file)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * One pricing call for every line (D4, S7). Audience-scoped to THIS
+   * contact - the portal route reads it off the portal token, not a param
+   * this call sends.
+   *
+   * `_priceMode` is not sent either: the route's body has no `price_mode`
+   * field (`LinePricingRequest`, S7) - `sell_price` is a real number in List
+   * mode too, and the mode only decides what the FORM does with the answer.
+   */
+  async function lookupLinePricing(
+    _priceMode: PriceMode,
+    lines: LinePricingLineInputT[],
+  ): Promise<LinePricingResultT[]> {
+    const res = await fetcher(`${LOOKUPS}/line-pricing`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    },
-  );
-  return unwrap<{ status: string; round: number; comments: ReviewComment[] }>(
-    res,
-    'Failed to send the change requests',
-  );
-}
-
-/**
- * Every change request sent on this design, all rounds (D6).
- *
- * ```
- * GET /api/v1/public/portal/submissions/price_tag_request/{id}/review-comments
- *   200 ReviewComment[]
- * ```
- *
- */
-export async function listReviewComments(id: string): Promise<ReviewComment[]> {
-  const res = await portalFetch(
-    `${BASE}/${encodeURIComponent(id)}/review-comments`,
-  );
-  return unwrap<ReviewComment[]>(res, 'Failed to load the change requests');
-}
-
-// ---------------------------------------------------------------------------
-// Download the finished PDF (D19/S2)
-// ---------------------------------------------------------------------------
-
-/**
- * The request's latest completed tag sheet PDF, fetched with the portal token
- * and saved through the browser (D19). Same-origin bytes route, not a signed
- * URL: a bucket's presigned link is cross-origin and sends no auth header, so
- * `fetch` is what the gear's Download PDF item actually calls.
- */
-export async function downloadPriceTagPdf(id: string): Promise<void> {
-  const res = await fetchPortalAttachmentBytes(
-    `${BASE}/${encodeURIComponent(id)}/download`,
-  );
-  if (!res.ok) {
-    throw new Error(await extractApiError(res, 'Failed to download the PDF'));
+      body: JSON.stringify({ lines }),
+    });
+    return unwrap<LinePricingResultT[]>(res, 'Failed to price these lines');
   }
-  const blob = await res.blob();
-  const filename =
-    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ||
-    'tag-sheet.pdf';
-  saveBlobAs(blob, filename);
+
+  // ---------------------------------------------------------------------------
+  // CRUD
+  // ---------------------------------------------------------------------------
+
+  async function listRequests(
+    q?: string,
+  ): Promise<PriceTagRequestSummary[]> {
+    const usp = new URLSearchParams();
+    if (q && q.trim()) usp.set('q', q.trim());
+    const qs = usp.toString();
+    const res = await fetcher(qs ? `${BASE}?${qs}` : BASE);
+    const data = await unwrap<{ items: PriceTagRequestSummary[] }>(
+      res,
+      'Failed to load requests',
+    );
+    return data.items ?? [];
+  }
+
+  /**
+   * The same list in the shape the portal landing's cards read (D45).
+   *
+   * The price tag endpoint answers its own row type rather than the legacy
+   * `PortalSubmissionSummary`, and adapting it HERE is what lets the landing stay
+   * ignorant of the difference without any legacy endpoint changing. `doc_number`
+   * is the card's primary line, the dealer is its customer line, and a request
+   * still carrying `portal_draft_at` is a draft, which is the only thing that
+   * tells a saved-but-unsent request from a submitted one.
+   */
+  async function listRequestsAsSummaries(
+    q?: string,
+  ): Promise<PortalSubmissionSummary[]> {
+    const rows = await listRequests(q);
+    return rows.map((r) => {
+      const isDraft = Boolean(r.portal_draft_at);
+      return {
+        id: r.id,
+        kind: 'price_tag_request' as const,
+        // A draft may have no dealer yet, and a card with a blank first line reads
+        // as a broken row rather than an unfinished one.
+        title: r.debtor_name || r.doc_number,
+        document_number: r.doc_number,
+        reference: null,
+        status: r.status,
+        is_editable: isDraft,
+        is_draft: isDraft,
+        created_at: r.created_at,
+        customer_name: r.debtor_name,
+        needed_by_date: r.needed_by_date,
+        // AC-R7: the same revision fields the legacy kinds' own summaries carry
+        // (D45's landing card reads these for the "Rev N" / "Revising" badges) -
+        // the list payload already carries all three, this just stopped
+        // dropping them.
+        revision_no: r.revision_no,
+        last_revised_at: r.last_revised_at,
+        has_revision_draft: r.has_revision_draft,
+      };
+    });
+  }
+
+  async function getRequest(id: string): Promise<PriceTagRequestDetail | null> {
+    const res = await fetcher(
+      `${BASE}/${encodeURIComponent(id)}`,
+    );
+    if (res.status === 404) return null;
+    // D-P6/S8: `is_editable` is the server's own field now (AC-B6) - true for a
+    // draft, or a submitted request at New / Changes requested. No FE mock left.
+    return unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
+  }
+
+  async function createRequest(
+    data: CreatePriceTagRequestInput,
+  ): Promise<PriceTagRequestDetail> {
+    const res = await fetcher(BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to create request');
+  }
+
+  async function updateRequest(
+    id: string,
+    data: Partial<CreatePriceTagRequestInput>,
+  ): Promise<PriceTagRequestDetail> {
+    const res = await fetcher(
+      `${BASE}/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      },
+    );
+    return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to update request');
+  }
+
+  /**
+   * The salesperson confirming they have the tags (r9 D8).
+   *
+   * ```
+   * POST /api/v1/public/portal/submissions/price_tag_request/{id}/collect
+   *   200 { status: "collected" }
+   *   409 unless the request is `ready_for_collection`.
+   * ```
+   *
+   * The status and nothing else: the caller refetches the request, so a second
+   * copy of the timestamp here would be one more thing that can disagree.
+   */
+  async function collectRequest(id: string): Promise<{ status: string }> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/collect`, {
+      method: 'POST',
+    });
+    return unwrap<{ status: string }>(res, 'Failed to mark this collected');
+  }
+
+  async function submitRequest(id: string): Promise<{ status: string }> {
+    const res = await fetcher(
+      `${BASE}/${encodeURIComponent(id)}/submit`,
+      { method: 'POST' },
+    );
+    return unwrapNamingFields<{ status: string }>(res, 'Failed to submit request');
+  }
+
+  /** Hard-delete a draft. The server refuses once it has been submitted. */
+  async function deleteRequest(id: string): Promise<void> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) return;
+    throw new Error(await extractApiError(res, 'Failed to delete draft'));
+  }
+
+  async function approveRequest(id: string): Promise<{ status: string }> {
+    const res = await fetcher(
+      `${BASE}/${encodeURIComponent(id)}/approve`,
+      { method: 'POST' },
+    );
+    return unwrap<{ status: string }>(res, 'Failed to approve request');
+  }
+
+  /**
+   * Send the round's change requests (r9 S2/D5).
+   *
+   * ```
+   * POST /api/v1/public/portal/submissions/price_tag_request/{id}/request-changes
+   *   { comments: [{ line_id, x, y, w, h, body }], note? }
+   *   200 { status: "changes_requested", round, comments: ReviewComment[] }
+   * ```
+   *
+   * One call for the whole round: the pins are placed locally and nothing reaches
+   * the server until Send, so a salesperson can put five pins down, delete two,
+   * and the request changes state exactly once. The old text-only `{ note }` body
+   * stays accepted server-side for one release and lands as a general comment.
+   *
+   * Contract and the row shape: `lib/dealer-kit/review-comments.ts`.
+   *
+   */
+  async function requestChanges(
+    id: string,
+    payload: ChangeRequestPayload,
+  ): Promise<{ status: string; round: number; comments: ReviewComment[] }> {
+    const res = await fetcher(
+      `${BASE}/${encodeURIComponent(id)}/request-changes`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+    );
+    return unwrap<{ status: string; round: number; comments: ReviewComment[] }>(
+      res,
+      'Failed to send the change requests',
+    );
+  }
+
+  /**
+   * Every change request sent on this design, all rounds (D6).
+   *
+   * ```
+   * GET /api/v1/public/portal/submissions/price_tag_request/{id}/review-comments
+   *   200 ReviewComment[]
+   * ```
+   *
+   */
+  async function listReviewComments(id: string): Promise<ReviewComment[]> {
+    const res = await fetcher(
+      `${BASE}/${encodeURIComponent(id)}/review-comments`,
+    );
+    return unwrap<ReviewComment[]>(res, 'Failed to load the change requests');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Download the finished PDF (D19/S2)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The request's latest completed tag sheet PDF, fetched with the portal token
+   * and saved through the browser (D19). Same-origin bytes route, not a signed
+   * URL: a bucket's presigned link is cross-origin and sends no auth header, so
+   * `fetch` is what the gear's Download PDF item actually calls.
+   */
+  async function downloadPriceTagPdf(id: string): Promise<void> {
+    const res = await fetchBytes(
+      `${BASE}/${encodeURIComponent(id)}/download`,
+    );
+    if (!res.ok) {
+      throw new Error(await extractApiError(res, 'Failed to download the PDF'));
+    }
+    const blob = await res.blob();
+    const filename =
+      filenameFromContentDisposition(res.headers.get('Content-Disposition')) ||
+      'tag-sheet.pdf';
+    saveBlobAs(blob, filename);
+  }
+
+  /**
+   * r10 S9: queue a tag sheet export for this request when none is ready yet
+   * (Approve auto-queues one, but a demo caught three requests where that
+   * export failed and nothing on the portal could ask for a second try).
+   *
+   * ```
+   * POST /api/v1/public/portal/submissions/price_tag_request/{id}/export
+   *   202 { download_id: string }
+   *   404 wrong contact's request
+   *   409 request not `approved` or later
+   * ```
+   *
+   * A double click (or the poll racing a slow one) is idempotent server-side
+   * (AC-S9-7): a second call while one is still pending answers 202 with the
+   * SAME `download_id`, never a second queued render.
+   *
+   * The caller polls `getRequest` for `latest_export_status` to flip to
+   * `ready` (or `failed`), same as the designer's own export button.
+   */
+  async function requestPriceTagExport(id: string): Promise<{ status: string }> {
+    const res = await fetcher(
+      `${BASE}/${encodeURIComponent(id)}/export`,
+      { method: 'POST' },
+    );
+    return unwrap<{ status: string }>(res, 'Failed to queue the PDF export');
+  }
+
+  return {
+    lookupDebtors,
+    lookupPromotions,
+    lookupProducts,
+    lookupProductSets,
+    lookupTagItems,
+    lookupProductCombos,
+    lookupLinePricing,
+    listRequests,
+    listRequestsAsSummaries,
+    getRequest,
+    createRequest,
+    updateRequest,
+    collectRequest,
+    submitRequest,
+    deleteRequest,
+    approveRequest,
+    requestChanges,
+    listReviewComments,
+    downloadPriceTagPdf,
+    requestPriceTagExport,
+  };
 }
 
-/**
- * r10 S9: queue a tag sheet export for this request when none is ready yet
- * (Approve auto-queues one, but a demo caught three requests where that
- * export failed and nothing on the portal could ask for a second try).
- *
- * ```
- * POST /api/v1/public/portal/submissions/price_tag_request/{id}/export
- *   202 { download_id: string }
- *   404 wrong contact's request
- *   409 request not `approved` or later
- * ```
- *
- * A double click (or the poll racing a slow one) is idempotent server-side
- * (AC-S9-7): a second call while one is still pending answers 202 with the
- * SAME `download_id`, never a second queued render.
- *
- * The caller polls `getRequest` for `latest_export_status` to flip to
- * `ready` (or `failed`), same as the designer's own export button.
- */
-export async function requestPriceTagExport(id: string): Promise<{ status: string }> {
-  const res = await portalFetch(
-    `${BASE}/${encodeURIComponent(id)}/export`,
-    { method: 'POST' },
-  );
-  return unwrap<{ status: string }>(res, 'Failed to queue the PDF export');
-}
+export type PriceTagRequestService = ReturnType<typeof makePriceTagRequestService>;
+
+export const {
+  lookupDebtors,
+  lookupPromotions,
+  lookupProducts,
+  lookupProductSets,
+  lookupTagItems,
+  lookupProductCombos,
+  lookupLinePricing,
+  listRequests,
+  listRequestsAsSummaries,
+  getRequest,
+  createRequest,
+  updateRequest,
+  collectRequest,
+  submitRequest,
+  deleteRequest,
+  approveRequest,
+  requestChanges,
+  listReviewComments,
+  downloadPriceTagPdf,
+  requestPriceTagExport,
+} = makePriceTagRequestService(portalFetch, fetchPortalAttachmentBytes);

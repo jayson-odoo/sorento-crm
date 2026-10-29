@@ -4,6 +4,10 @@
  * Portal price tag request form - create / edit / view.
  *
  * Wired to real portal API via `price-tag-request-service.ts`.
+ *
+ * A salesperson's price tag request on the CRM is this same form (PORTAL-P4-REQUESTS R3): every
+ * call, path and delete goes through the injected client (`lib/submission-client`), the portal's
+ * own without one.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -63,23 +67,14 @@ import type {
   PriceMode,
   TagItemOption,
 } from '../lib/price-tag-request-service';
+import * as portalPriceTagRequest from '../lib/price-tag-request-service';
 import {
-  lookupDebtors,
-  lookupProductCombos,
-  lookupLinePricing,
-  lookupTagItems,
-  getRequest,
-  createRequest,
-  updateRequest,
-  deleteRequest,
-  submitRequest,
-  approveRequest,
-  requestChanges,
-  listReviewComments,
-  collectRequest,
-  downloadPriceTagPdf,
-  requestPriceTagExport,
-} from '../lib/price-tag-request-service';
+  clientDeletes,
+  clientEmbedded,
+  clientPaths,
+  clientService,
+  useSubmissionClient,
+} from '../lib/submission-client';
 import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
 import { PriceTagDesignReview } from '@/components/dealer-kit/PriceTagDesignReview';
 import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
@@ -101,31 +96,8 @@ import {
   type AIExtractApplyPayload,
 } from './AIExtractDialog';
 import type { AIExtractedProductLine } from '../lib/portal-client';
-import {
-  uploadAttachment,
-  getPriceTagDesign,
-  fetchMe,
-  fetchSubmissionNeighbours,
-  type PortalAttachment,
-  type PortalSubmissionNeighbours,
-} from '../lib/portal-client';
+import type { PortalAttachment, PortalSubmissionNeighbours } from '../lib/portal-client';
 import { codeWithName } from '@/lib/product-display';
-
-/**
- * The portal's own reads for the shared line editor and proof review
- * (PORTAL-P4-REQUESTS S7b). Called through, never captured, so a module
- * the tests replace is read at call time exactly as before the move.
- */
-const PORTAL_LINE_LOOKUPS: PriceTagLineLookups = {
-  lookupTagItems: (query) => lookupTagItems(query),
-  lookupProductCombos: (productId) => lookupProductCombos(productId),
-  lookupLinePricing: (mode, lines) => lookupLinePricing(mode, lines),
-};
-
-const PORTAL_DESIGN_CALLS = {
-  loadDesign: (id: string) => getPriceTagDesign(id),
-  loadReviewComments: (id: string) => listReviewComments(id),
-};
 
 /** Where an AI-extracted product line stands against the catalogue lookup
  *  (D7/AC-S6-2), shown in the extract dialog's own result table. */
@@ -242,6 +214,33 @@ interface Props {
 
 export function PriceTagRequestForm({ requestId, slug }: Props) {
   const router = useRouter();
+  const client = useSubmissionClient();
+  const service = () => clientService(client, 'priceTagRequest', portalPriceTagRequest);
+  const paths = clientPaths(client);
+  // Inside a CRM page its header carries Back; its deletes are parked (D7).
+  const embedded = clientEmbedded(client);
+  const deferredDeletes = clientDeletes(client);
+  const homePath = paths
+    ? paths.home('price_tag_request')
+    : `${portalBase(slug)}?type=price_tag_request`;
+  // The shared line editor's and proof review's reads (PORTAL-P4-REQUESTS S7b). Called
+  // through, never captured, so a module the tests replace is read at call time.
+  const lineLookups = useMemo<PriceTagLineLookups>(() => {
+    const svc = () => clientService(client, 'priceTagRequest', portalPriceTagRequest);
+    return {
+      lookupTagItems: (query) => svc().lookupTagItems(query),
+      lookupProductCombos: (productId) => svc().lookupProductCombos(productId),
+      lookupLinePricing: (mode, lines) => svc().lookupLinePricing(mode, lines),
+    };
+  }, [client]);
+  const designCalls = useMemo(
+    () => ({
+      loadDesign: (id: string) => client.getPriceTagDesign(id),
+      loadReviewComments: (id: string) =>
+        clientService(client, 'priceTagRequest', portalPriceTagRequest).listReviewComments(id),
+    }),
+    [client],
+  );
   const isNew = !requestId;
   // Owner ruling after #948: List price / Promotion / Selling price are real
   // table columns on desktop, not a `colSpan` sub-row. Below the existing
@@ -408,7 +407,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       return;
     }
     let cancelled = false;
-    fetchSubmissionNeighbours('price_tag_request', requestId)
+    client
+      .fetchSubmissionNeighbours('price_tag_request', requestId)
       .then((n) => {
         if (!cancelled) setNeighbours(n);
       })
@@ -418,7 +418,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [requestId]);
+  }, [requestId, client]);
 
   // ---- Sections (D-P1): Customer open by default, everything else opens
   // progressively as the form gains the value the next section needs. A rule
@@ -513,7 +513,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // to, so an EMPTY answer means "nobody has linked it" and is a state the form
     // has to explain (D46a). A FAILED call is a different thing and keeps the
     // toast, or the notice would blame the account for a network fault.
-    lookupDebtors()
+    clientService(client, 'priceTagRequest', portalPriceTagRequest)
+      .lookupDebtors()
       .then((d) => {
         setDebtors(d);
         setDebtorsLoaded(true);
@@ -525,7 +526,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // D1: promotions are no longer looked up for the whole request - each
     // line asks `lookupLinePricing` for the ones that cover IT (S1 effect
     // below).
-  }, []);
+  }, [client]);
 
   // D7 r3 (PLAN-portal-forms-market-segment): a `/new` page makes no request
   // of its own to check visibility - it reads `visible_form_types` off the
@@ -536,7 +537,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // so it is read on an existing draft too; the visibility check stays /new.
   useEffect(() => {
     let cancelled = false;
-    fetchMe()
+    client
+      .fetchMe()
       .then((c) => {
         if (cancelled) return;
         setAttachmentExtensions(c.attachment_allowed_extensions);
@@ -552,14 +554,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [isNew]);
+  }, [isNew, client]);
 
   // ---- Load existing request ----
   useEffect(() => {
     if (!requestId) return;
     let cancelled = false;
     setLoading(true);
-    getRequest(requestId)
+    clientService(client, 'priceTagRequest', portalPriceTagRequest)
+      .getRequest(requestId)
       .then((data) => {
         if (cancelled) return;
         if (!data) {
@@ -603,7 +606,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     lines,
     setLines,
     priceMode,
-    lookups: PORTAL_LINE_LOOKUPS,
+    lookups: lineLookups,
   });
 
   // ---- Duplicate (D-D1): `?from=<id>` copies header fields + lines into a
@@ -615,7 +618,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     const fromId = new URL(window.location.href).searchParams.get('from');
     if (!fromId || !fromId.trim()) return;
     let cancelled = false;
-    getRequest(fromId.trim())
+    clientService(client, 'priceTagRequest', portalPriceTagRequest)
+      .getRequest(fromId.trim())
       .then((data) => {
         if (cancelled || !data) {
           if (!cancelled) toast.error('Could not copy that submission.');
@@ -648,7 +652,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [isNew, openSectionOnce]);
+  }, [isNew, openSectionOnce, client]);
 
   // ---- Debtor options ----
   const debtorOptions = useMemo<SearchableSelectOption[]>(
@@ -956,7 +960,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       const errors: string[] = [];
       for (const file of pendingFiles) {
         try {
-          const att = await uploadAttachment('price_tag_request', id, file);
+          const att = await client.uploadAttachment('price_tag_request', id, file);
           uploaded.push(att);
         } catch (e) {
           const msg = e instanceof Error ? e.message : 'unknown error';
@@ -972,7 +976,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         );
       }
     },
-    [pendingFiles],
+    [pendingFiles, client],
   );
 
   /** A blank or invalid quantity / manual price stops the send; the rows say which. */
@@ -1010,12 +1014,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // but the attachment flush after it failed, which is why this checks
       // `effectiveId` (state) rather than only the `requestId` prop.
       const saved = effectiveId
-        ? await updateRequest(effectiveId, payload)
-        : await createRequest(payload);
+        ? await service().updateRequest(effectiveId, payload)
+        : await service().createRequest(payload);
       if (!effectiveId) setCreatedRequestId(saved.id);
       await flushPendingFiles(saved.id);
       toast.success('Draft saved');
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      router.push(homePath);
     } catch (e) {
       // S4 (code review): the same `line:<index>` -> row mapping Submit uses
       // (`applyFieldErrors`), so a reopened draft whose product lost its
@@ -1035,7 +1039,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numbersInvalid, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug, applyFieldErrors]);
+  }, [numbersInvalid, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, applyFieldErrors, client]);
 
   // ---- Revise (R3-1): sent through the portal revision engine, never the
   // retired post-submit PUT. A reason is required; the same zero-line/
@@ -1074,7 +1078,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // same call Save Draft / Submit already make, before the request the
       // policy will re-check moves on to its post-revision status.
       await flushPendingFiles(effectiveId);
-      const fresh = await getRequest(effectiveId);
+      const fresh = await service().getRequest(effectiveId);
       if (fresh) {
         setRequest(fresh);
         applyRequestFieldsFrom(fresh);
@@ -1091,7 +1095,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       toast.error(e instanceof Error ? e.message : 'Failed to send revision');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numbersInvalid, effectiveId, reviseReason, revise, debtorCode, debtors, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory]);
+  }, [numbersInvalid, effectiveId, reviseReason, revise, debtorCode, debtors, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory, client]);
 
   const handleCancelRevise = useCallback(async () => {
     setReviseMode(false);
@@ -1099,7 +1103,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setPendingFiles([]);
     if (!effectiveId) return;
     try {
-      const fresh = await getRequest(effectiveId);
+      const fresh = await clientService(client, 'priceTagRequest', portalPriceTagRequest).getRequest(
+        effectiveId,
+      );
       if (fresh) {
         setRequest(fresh);
         applyRequestFieldsFrom(fresh);
@@ -1109,23 +1115,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // above; a failed re-fetch leaves that in place rather than erroring
       // out of a Cancel, which is not a save the reader needs told about.
     }
-  }, [effectiveId, applyRequestFieldsFrom]);
+  }, [effectiveId, applyRequestFieldsFrom, client]);
 
   // ---- Delete draft ----
   const handleDeleteDraft = useCallback(async () => {
     if (!requestId) return;
     setDeleting(true);
     try {
-      await deleteRequest(requestId);
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).deleteRequest(requestId);
       toast.success('Draft deleted');
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      router.push(homePath);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to delete draft');
     } finally {
       setDeleting(false);
       setShowDeleteDialog(false);
     }
-  }, [requestId, router, slug]);
+  }, [requestId, router, homePath, client]);
 
   // ---- Submit (D48b: the button is live, the click explains itself) ----
   const handleSubmit = useCallback(async () => {
@@ -1166,13 +1172,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // attachment flush after it failed must update that row, not create a
       // second one.
       const created = effectiveId
-        ? await updateRequest(effectiveId, payload)
-        : await createRequest(payload);
+        ? await service().updateRequest(effectiveId, payload)
+        : await service().createRequest(payload);
       if (!effectiveId) setCreatedRequestId(created.id);
       await flushPendingFiles(created.id);
-      await submitRequest(created.id);
+      await service().submitRequest(created.id);
       toast.success('Request submitted');
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      router.push(homePath);
     } catch (e) {
       // A refusal that named a field or a row goes THERE, once: the summary then
       // says how many things need attention and nothing more, because the same
@@ -1194,35 +1200,36 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
     if (!requestId) return;
     try {
-      await approveRequest(requestId);
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).approveRequest(requestId);
       toast.success('Design approved');
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      router.push(homePath);
     } catch {
       toast.error('Failed to approve');
     }
-  }, [requestId, router, slug]);
+  }, [requestId, router, homePath, client]);
 
   // ---- Mark collected (r9 D8): the salesperson has the tags ----
   const handleCollect = useCallback(async () => {
     if (!requestId) return;
     setCollecting(true);
     try {
-      await collectRequest(requestId);
+      const calls = clientService(client, 'priceTagRequest', portalPriceTagRequest);
+      await calls.collectRequest(requestId);
       toast.success('Marked collected');
-      const data = await getRequest(requestId);
+      const data = await calls.getRequest(requestId);
       if (data) setRequest(data);
     } catch {
       toast.error('Failed to mark this collected');
     } finally {
       setCollecting(false);
     }
-  }, [requestId]);
+  }, [requestId, client]);
 
   // ---- Request changes (r9 D5) ----
   //
@@ -1232,13 +1239,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     async (payload: ChangeRequestPayload) => {
       if (!requestId) return;
       try {
-        await requestChanges(requestId, payload);
+        await clientService(client, 'priceTagRequest', portalPriceTagRequest).requestChanges(
+          requestId,
+          payload,
+        );
         toast.success(
           payload.comments.length === 1
             ? 'Change request sent'
             : `${payload.comments.length} change requests sent`,
         );
-        router.push(`${portalBase(slug)}?type=price_tag_request`);
+        router.push(homePath);
       } catch (error) {
         // Re-thrown, not swallowed: the Design section clears its pins on a
         // resolved promise, so a refused Send used to take the whole round
@@ -1251,7 +1261,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         throw error;
       }
     },
-    [requestId, router, slug],
+    [requestId, router, homePath, client],
   );
 
   // ---- Download PDF (D19): the request's latest completed tag sheet export.
@@ -1263,7 +1273,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     if (!requestId) return;
     setDownloadingPdf(true);
     try {
-      await downloadPriceTagPdf(requestId);
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).downloadPriceTagPdf(
+        requestId,
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to download the PDF');
     } finally {
@@ -1272,7 +1284,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // a failure still toasts, so nothing is lost by not leaving it open.
       setGearOpen(false);
     }
-  }, [requestId]);
+  }, [requestId, client]);
 
   const handleDownloadPdf = useCallback(async () => {
     if (!requestId) return;
@@ -1284,12 +1296,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // and let the poll below pick it up.
     setExportPending(true);
     try {
-      await requestPriceTagExport(requestId);
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).requestPriceTagExport(
+        requestId,
+      );
     } catch (e) {
       setExportPending(false);
       toast.error(e instanceof Error ? e.message : 'Failed to queue the PDF export');
     }
-  }, [requestId, exportStatus, streamDownload]);
+  }, [requestId, exportStatus, streamDownload, client]);
 
   // Poll every 5 s while an export is preparing; stream it the moment the
   // refetched request says ready, surface a toast on failed.
@@ -1302,7 +1316,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     if (!exportPreparing || !requestId) return;
     let cancelled = false;
     const timer = setInterval(() => {
-      getRequest(requestId)
+      clientService(client, 'priceTagRequest', portalPriceTagRequest)
+        .getRequest(requestId)
         .then((fresh) => {
           if (cancelled || !fresh) return;
           setRequest(fresh);
@@ -1325,7 +1340,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [exportPreparing, requestId, streamDownload]);
+  }, [exportPreparing, requestId, streamDownload, client]);
 
   // ---- Loading skeleton ----
   if (loading) {
@@ -1350,9 +1365,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </AlertIcon>
           <AlertTitle>{loadError}</AlertTitle>
         </Alert>
-        <Button variant="outline" onClick={() => router.push(portalBase(slug))}>
-          Back to your forms
-        </Button>
+        {/* Inside a CRM page its header carries Back. */}
+        {!embedded && (
+          <Button variant="outline" onClick={() => router.push(portalBase(slug))}>
+            Back to your forms
+          </Button>
+        )}
       </div>
     );
   }
@@ -1434,8 +1452,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               pending: downloadingPdf,
               onDownload: () => void handleDownloadPdf(),
             }}
-            loadDesign={PORTAL_DESIGN_CALLS.loadDesign}
-            loadReviewComments={PORTAL_DESIGN_CALLS.loadReviewComments}
+            loadDesign={designCalls.loadDesign}
+            loadReviewComments={designCalls.loadReviewComments}
           />
         )}
 
@@ -1573,14 +1591,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
     return (
       <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-          >
-            <ArrowLeft className="size-4 mr-1" /> Back
-          </Button>
+        <div className={`flex items-center gap-2 ${embedded ? 'justify-end' : 'justify-between'}`}>
+          {!embedded && (
+            <Button variant="ghost" size="sm" onClick={() => router.push(homePath)}>
+              <ArrowLeft className="size-4 mr-1" /> Back
+            </Button>
+          )}
           <div className="flex min-w-0 items-center gap-2">
             {/* R3-5/review round 3: the SAME one muted truncating line the
                 legacy kinds' header carries - doc number, revision status
@@ -1650,7 +1666,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 onSelect={(event) => {
                   event.preventDefault();
                   setGearOpen(false);
-                  router.push(portalDuplicatePath('price_tag_request', request.id, slug));
+                  router.push(
+                    paths
+                      ? paths.duplicate('price_tag_request', request.id)
+                      : portalDuplicatePath('price_tag_request', request.id, slug),
+                  );
                 }}
               >
                 <Copy className="size-4" />
@@ -1715,14 +1735,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         // revision where the gear's Revise item was, not a bare heading and
         // a second action row at the bottom of the page.
         <>
-          <div className="flex items-center justify-between gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-            >
-              <ArrowLeft className="size-4 mr-1" /> Back
-            </Button>
+          <div className={`flex items-center gap-2 ${embedded ? 'justify-end' : 'justify-between'}`}>
+            {!embedded && (
+              <Button variant="ghost" size="sm" onClick={() => router.push(homePath)}>
+                <ArrowLeft className="size-4 mr-1" /> Back
+              </Button>
+            )}
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={handleCancelRevise} disabled={revising}>
                 Cancel
@@ -1762,17 +1780,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </>
       ) : (
         <>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-          >
-            <ArrowLeft className="size-4 mr-1" /> Back
-          </Button>
+          {!embedded && (
+            <Button variant="ghost" size="sm" onClick={() => router.push(homePath)}>
+              <ArrowLeft className="size-4 mr-1" /> Back
+            </Button>
+          )}
 
-          <h1 className="text-lg font-semibold">
-            {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
-          </h1>
+          {/* A CRM page's own header already says "New Price Tag Request"; an edit keeps its
+              doc number here. */}
+          {!(embedded && isNew) && (
+            <h1 className="text-lg font-semibold">
+              {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
+            </h1>
+          )}
         </>
       )}
 
@@ -1997,8 +2017,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           (a draft or a brand new form) keeps Save Draft / Submit. */}
       {!reviseMode && (
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-          {/* Delete sits apart from Save and Submit, and asks first. */}
-          {!isNew && isDraft && (
+          {/* Delete sits apart from Save and Submit, and asks first; on a CRM page it is parked
+              on the server instead (D7), a countdown with a Cancel. */}
+          {!isNew && isDraft && (deferredDeletes && requestId ? (
+            <div className="sm:mr-auto">
+              <deferredDeletes.DraftDelete
+                kind="price_tag_request"
+                submissionId={requestId}
+                disabled={saving || submitting}
+                onDeleted={() => router.push(homePath)}
+              />
+            </div>
+          ) : (
             <Button
               variant="outline"
               className="text-destructive sm:mr-auto"
@@ -2008,7 +2038,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               <Trash2 className="size-4 mr-1" />
               Delete Draft
             </Button>
-          )}
+          ))}
           <Button
             variant="outline"
             onClick={handleSaveDraft}

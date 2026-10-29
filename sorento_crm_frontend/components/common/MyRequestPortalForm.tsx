@@ -9,8 +9,8 @@
  * `my_request.delete`, removing an own upload parks `my_request_attachment.unlink`.
  *
  * `MyRequestClientProvider` is that client on its own, for the kinds with portal pages of their
- * own (Sample Request, New Product Application, Sales Opportunity; R3): the CRM page wraps the
- * portal's component in it.
+ * own (Sample Request, New Product Application, Sales Opportunity, Price Tag Request; R3): the CRM
+ * page wraps the portal's component in it.
  */
 
 import { useMemo, type ReactNode } from 'react';
@@ -38,6 +38,7 @@ const LIST_KEYS: Record<string, string> = {
   sample_request: 'sample-requests',
   new_product_application: 'new-product-applications',
   sales_opportunity: 'sales-opportunities',
+  price_tag_request: 'price-tag-requests',
 };
 
 function DraftDelete({ kind, submissionId, disabled, onDeleted }: DraftDeleteProps) {
