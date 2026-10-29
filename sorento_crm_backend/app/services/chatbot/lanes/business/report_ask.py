@@ -975,9 +975,6 @@ def _settled_by_its_axis(values: dict[str, Any], group_by: Any) -> dict[str, Any
 #: REPORT-SMART-L R8: the engine's stamp (`with_held`), frame-shaped (`date_from`, `date_to`, the route params), plus
 #: `product` when the held products are the gate's carried rows. Listed in `required_fields.ENGINE_KEYS`.
 HELD_KEY = "report_held"
-#: Inside `report_held`: the basis the held total / open ask showed. Read only by the period decision in `_settle` (an
-#: outstanding frame keeps its period for a new axis); the basis question never reads it.
-HELD_SOURCE_BASIS = "held_source_basis"
 #: The route params of a held total that stay on the ranking its reply becomes: the period and the filters.
 _HELD_TOTAL_KEYS = (
     "date_from", "date_to", "product_code", "product_ids", "brand_ids", "category_ids", "customer_ids",
@@ -1018,7 +1015,6 @@ def with_held(
     back to `sales_report`, whose lane reuses the held window and products as it always has); ordered or
     outstanding, which that report has not, runs the report-ask total on the held product and period below."""
     domains = held_domains if held_domains is not None else getattr(focus, "domains", None)
-    source_basis = None
     if (
         jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME
         or verdict.get("entity_op") != "reuse"
@@ -1049,13 +1045,10 @@ def with_held(
         # A held TOTAL (a report ask run with no axis): its period and filters stay (what that total showed).
         total = _dict(getattr(focus, "sales_ranking_frame", None))
         held = {k: v for k, v in total.items() if k in _HELD_TOTAL_KEYS and v not in (None, "", [])}
-        source_basis = total.get("basis")
     else:
         window = _dict(getattr(focus, "date_window", None))
         held = {"date_from": window.get("start"), "date_to": window.get("end"), "product": bool(getattr(focus, "products", None))}
         held = {k: v for k, v in held.items() if v}
-    if held and source_basis:
-        held = {**held, HELD_SOURCE_BASIS: source_basis}  # the period decision's only reader (`_settle`)
     return {**verdict, HELD_KEY: held} if held else verdict
 
 
@@ -1874,14 +1867,13 @@ def _settle(
         # An outstanding TOTAL that named its kind shows both measures (no "by quantity or by amount?"); a ranking by an
         # axis still asks what it ranks by (phase 3, S5).
         given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
-    kind_ask_now = parse_output.get("capability_from") == "outstanding" or args.get("basis") in OUTSTANDING_KINDS
-    # An outstanding kind uses only a period NAMED in this message: a period carried from an earlier sales ask is dropped.
-    # AC-RU-16: a "by X" over a frame already on an outstanding kind keeps the period on screen; only a switch from a
-    # sales basis to an outstanding kind drops it.
-    switched = kind_ask_now and (source.get("basis") or source.get(HELD_SOURCE_BASIS)) not in OUTSTANDING_KINDS
-    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or (
-        None if switched else held_period
-    )
+    # REPORT-OUTSTANDING-SUMMARY item 9 (owner 29 Oct, as before #1922): an ask with no period of its own takes the
+    # period on screen, a switch from a sales answer to an outstanding kind and a fresh outstanding ask included; the
+    # header shows it.
+    on_screen = None
+    if (parse_output.get("capability_from") == "outstanding" or args.get("basis") in OUTSTANDING_KINDS) and not frame.get("stale"):
+        on_screen = period_from(frame.get("date_from"), frame.get("date_to"))
+    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or held_period or on_screen
     if period is not None and (parse_output.get("ranking_refine") is not True or args.get("group_by")):
         # A refine with no ranking held has nothing to refine: it is a fresh ask, and a
         # period alone never runs a total (it asks). One that names its own axis (R5 row 7) keeps its period.

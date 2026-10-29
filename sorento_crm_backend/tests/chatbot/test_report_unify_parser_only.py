@@ -476,7 +476,8 @@ def test_p1_a_new_outstanding_axis_after_a_delivered_ranking_asks_the_kind_and_r
     text, calls = bot.say(_answer(1), "the first one")
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding" and args["group_by"] == "customer", args
-    assert "date_from" not in args and "date_to" not in args, args  # a switch from a sales basis drops the held period
+    # Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY item 9, as before #1922): a switch from a sales basis keeps the period.
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
 def test_p2_a_by_x_over_an_outstanding_ranking_keeps_the_held_period(bot) -> None:
@@ -489,16 +490,16 @@ def test_p2_a_by_x_over_an_outstanding_ranking_keeps_the_held_period(bot) -> Non
     assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
-def test_held_total_path_does_not_lend_a_sales_total_period_to_an_outstanding_kind(bot) -> None:
-    """The HELD_KEY path (a held sales TOTAL, no ranking): a new outstanding axis the parser named the kind for drops the
-    sales period (kills M7: always use the held period)."""
+def test_held_total_path_lends_a_sales_total_period_to_an_outstanding_kind(bot) -> None:
+    """The HELD_KEY path (a held sales TOTAL, no ranking): a new outstanding axis the parser named the kind for keeps the
+    sales period on screen (owner 29 Oct, REPORT-OUTSTANDING-SUMMARY item 9, as before #1922)."""
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     text, calls = bot.say(
         _bare_outstanding(basis="outstanding", group_by="customer", rank_direction="top", top_n=5, measure="amount", entity_op="reuse"),
         "outstanding by customer",
     )
     args = _only_report_ask(calls)
-    assert args["basis"] == "outstanding" and "date_from" not in args, args
+    assert args["basis"] == "outstanding" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
 def test_held_outstanding_total_keeps_its_period_for_a_new_axis(bot) -> None:
@@ -512,9 +513,9 @@ def test_held_outstanding_total_keeps_its_period_for_a_new_axis(bot) -> None:
     assert args["group_by"] == "customer" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
-def test_held_sales_total_then_an_outstanding_ask_drops_the_period_and_asks_the_kind(bot) -> None:
+def test_held_sales_total_then_an_outstanding_ask_keeps_the_period_and_asks_the_kind(bot) -> None:
     """The counterpart: a sales total for 2026, then an outstanding ask with no kind: the kind is asked and the sales
-    period is not lent to it."""
+    period on screen carries (owner 29 Oct, REPORT-OUTSTANDING-SUMMARY item 9, as before #1922)."""
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     text, calls = bot.say(
         _bare_outstanding(group_by="customer", rank_direction="top", top_n=5, measure="amount", entity_op="reuse"),
@@ -523,7 +524,7 @@ def test_held_sales_total_then_an_outstanding_ask_drops_the_period_and_asks_the_
     assert calls == [] and "Undelivered orders" in text, (text, calls)
     text, calls = bot.say(_answer(1), "the first one")
     args = _only_report_ask(calls)
-    assert args["basis"] == "outstanding" and "date_from" not in args, args
+    assert args["basis"] == "outstanding" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
 def test_a_kind_answer_that_also_binds_a_customer_runs_for_that_customer_never_the_whole_scope(bot) -> None:
