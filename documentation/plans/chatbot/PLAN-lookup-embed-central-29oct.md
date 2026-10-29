@@ -515,3 +515,32 @@ plus `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_li
   defaults to the setting's; runs `backfill_records` then `apply_search_model_guard`.
 - Settings PUT that changes provider or model enqueues `run_records_backfill` once (no change, no job).
 - Switching back is the same flow: only documents without a current chunk of the target model are embedded.
+
+### Slice 4 contract (lookup words in the store, PROMPT_SYNONYMS gone)
+
+- `app/services/lookup_word_store.py`: `LOOKUP_SOURCE = "lookup_word"`.
+  - `sync_lookup_words(db, *, model=None, embed=True) -> SyncResult(created, updated, retired, embedded)`: rows from
+    `lookup_lists.load_rows` with the widest visibility (as the start-up warm, `engine.py:1345-1385`: salespeople,
+    customers, spec rows); one `embedding_documents` row per lookup row (`source_type = 'lookup_word'`, `source_id =
+    '<list>:<row key>'`, `title` = label, `body_text` = the texts one per line, `source_hash` = sha256 of the texts,
+    `company_id` NULL: rows are listed under the viewer's scope by `load_rows`, and record readers never read
+    `lookup_word`); one chunk per text that has a vector for `model` (default: the setting's model). A text already
+    embedded for `model` in any `lookup_word` chunk is copied, not re-embedded; only new texts call `embed_texts`.
+    Changed rows (new hash) get their chunks rebuilt; documents of rows that no longer exist get `is_active = false`
+    and their chunks `is_current = false`.
+  - `load_lookup_vectors(db, model) -> int`: one SELECT of current `lookup_word` chunks of `model` into the
+    in-process cache (`lookup_lists._cache`, key `_key(text, model)`, unit vectors); no provider call.
+  - `write_back(db, model, vectors: dict[str, list[float]]) -> int`: a turn's freshly embedded row texts become chunks
+    of every active `lookup_word` document whose texts contain them.
+- `lookup_lists.py`: the per-container shared vector file (`_shared_path`, `_lock_shared`, `_read_shared`,
+  `_write_shared`, `CHATBOT_LOOKUP_VECTOR_DIR`) is removed; the warm loads via `load_lookup_vectors`, then embeds only
+  what is still missing and writes it back. `PROMPT_SYNONYMS` and `_with_synonyms` are removed; a class-label `type:`
+  row's texts = the class label + the union of the `search_synonyms` of its categories.
+- Scheduled task `lookup_words_sync` every 600 s (handler registered next to `embedding_job_processor`,
+  `app/scheduler/task_scheduler.py:185,793`), seeded idempotently by migration `lec_0003_lookup_words_sync`
+  (down_revision `lec_0002_embedding_indexes`) the way `143_seed_embedding_job_processor_task.py` seeds its row.
+- RQ task `embed_missing_lookup_words()` (`app/tasks/embedding_backfill.py`, queue `imports`) = `sync_lookup_words`.
+- Script `scripts/move_prompt_synonyms.py` (dry run by default, `--apply` to write): every former PROMPT_SYNONYMS
+  word not already on a row of its class / type is listed; `--apply` adds a category word to the `search_synonyms` of
+  every active category of that class, a file type word as a keyword of that type's `attachment_type_alias` option
+  (creating the option if missing). The 11 entries are a constant inside the script.
