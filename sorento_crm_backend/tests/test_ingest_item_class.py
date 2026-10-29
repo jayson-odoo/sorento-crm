@@ -195,18 +195,31 @@ class TestReuse:
 
 # ===================================================================== AC-3
 class TestAbsentOrBlankLeavesLink:
-    @pytest.mark.parametrize("second_push", [{}, {"item_class_code": ""}, {"item_class_code": None}])
-    def test_absent_or_blank_item_class_leaves_the_stored_link(self, env, second_push):
+    def test_absent_item_class_leaves_the_stored_link(self, env):
         code = unique_code(MARKER)
         ref = _ref("KEEP")
         env.post_product(code=code, source_ref=ref, item_class_code=f"{MARKER}DIY")
         linked = env.product_item_class_id(code, env.company_a)
         assert linked is not None
 
-        _, entry = env.post_product(code=code, source_ref=ref, **second_push)
+        _, entry = env.post_product(code=code, source_ref=ref)
 
         assert entry["outcome"] in ("updated", "unchanged"), entry
         assert env.product_item_class_id(code, env.company_a) == linked
+
+    @pytest.mark.parametrize("blank", ["", "   ", None])
+    def test_blank_item_class_clears_the_stored_link(self, env, blank):
+        """Crew ruling 29 Oct (security M1): AutoCount cleared the class, so the CRM does."""
+        code = unique_code(MARKER)
+        ref = _ref("CLEAR")
+        env.post_product(code=code, source_ref=ref, item_class_code=f"{MARKER}DIY")
+        assert env.product_item_class_id(code, env.company_a) is not None
+
+        _, entry = env.post_product(code=code, source_ref=ref, item_class_code=blank)
+
+        assert entry["outcome"] == "updated", entry
+        assert env.product_item_class_id(code, env.company_a) is None
+        assert "item_class_created" not in entry.get("warnings", [])
 
     def test_a_product_pushed_without_item_class_has_none(self, env):
         code = unique_code(MARKER)

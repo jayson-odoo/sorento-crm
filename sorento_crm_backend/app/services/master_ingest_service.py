@@ -617,14 +617,19 @@ def _product_columns(
             warnings.append("item_type_created")
         columns["item_type_id"] = item_type_id
 
-    # ITEM-CLASS: AutoCount ItemClass, the item type rule above exactly.
-    if "item_class_code" in payload.model_fields_set and payload.item_class_code:
-        item_class_id, created = product_rules.ensure_reference(
-            db, ItemClass, payload.item_class_code, company_id, cache=ref_cache
-        )
-        if created:
-            warnings.append("item_class_created")
-        columns["item_class_id"] = item_class_id
+    # ITEM-CLASS: AutoCount ItemClass, back-created like item type. Unlike item type a blank
+    # value CLEARS the link (crew ruling 29 Oct, security M1): the class narrows contact access,
+    # so a class AutoCount cleared must not linger. Absent = untouched.
+    if "item_class_code" in payload.model_fields_set:
+        if payload.item_class_code and payload.item_class_code.strip():
+            item_class_id, created = product_rules.ensure_reference(
+                db, ItemClass, payload.item_class_code, company_id, cache=ref_cache
+            )
+            if created:
+                warnings.append("item_class_created")
+            columns["item_class_id"] = item_class_id
+        else:
+            columns["item_class_id"] = None
 
     if "list_price" in payload.model_fields_set:
         columns["list_price"] = payload.list_price
