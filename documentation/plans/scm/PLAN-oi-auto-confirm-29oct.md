@@ -76,21 +76,14 @@ already turns that chain into links (`order_inquiry_links.claim_id`), so the rul
 
 ## Rule (as built)
 
-- Row confirmed = has a PO/SPO link OR has a reserve link OR rejected (plus the answers below).
-- OI Completed = every live row confirmed; Outstanding otherwise. Derived at read time.
-- Manual Confirm / Unconfirm presses retired.
+See the UAC (`oi-auto-confirm-29oct-acceptance-criteria.md`), AC-AC-1..24. Stored in `ack_state`,
+written by the system (the card's first "derive at read time" idea was dropped once Q4 kept the
+reorder plan on confirmed rows: about 90 readers stay untouched).
 
-## Open questions
+## Card history
 
 Behaviour card filed 29 Oct (crew state file `oi-auto-confirm-card-29oct.md`, kept out of this
-public repo because it quotes real OI numbers). Q1 partial qty, Q2 SPO counts as PO, Q3 row
-loses its PO, Q4 reorder plan's acknowledged-only gate, Q5 rows with a PO state but no link.
-Recommended design: derive at read time from links + reject, so no stored flag and no backfill.
-Q5 reshaped after crew's link-gap dig (29 Oct): reserve-only rows are done and show the reserve in
-the PO/SPO column; companion rows follow their host; the 16 stale rows of issue #1215 read To order
-on their own (their stored "On PO/SPO" pill stays wrong until #1215's repair script runs, out of
-scope).
-
-## Slices
-
-To be written after the owner answers.
+public repo because it quotes real OI numbers). Q5 reshaped after crew's link-gap dig: reserve-only
+rows are done and show the reserve in the PO column; companion rows follow their host; the 16 stale
+rows of issue #1215 become not done at backfill (their stored "On PO/SPO" supply pill stays wrong
+until #1215's repair script runs, out of scope).
