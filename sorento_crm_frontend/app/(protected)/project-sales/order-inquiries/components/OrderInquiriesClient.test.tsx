@@ -498,7 +498,7 @@ describe('OrderInquiriesClient: reading the page', () => {
   });
 });
 
-describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To confirm is the default view again', () => {
+describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To order (was To confirm) is the default view', () => {
   it('opens on To confirm off no `?ack=` at all, and shows the chip (G4/G5 reversed)', async () => {
     renderClient();
     await screen.findByText('SO385126');
@@ -514,7 +514,7 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To confirm is the default vie
     // actually chosen. Selected by the chip's own Clear button
     // (`aria-label={Clear filter: ${label}}`, `data-grid-list-toolbar.tsx`) rather
     // than `getByTitle`, which also matches the "To confirm" stat tile beside it.
-    expect(screen.getByLabelText('Clear filter: To confirm')).toBeInTheDocument();
+    expect(screen.getByLabelText('Clear filter: To order')).toBeInTheDocument();
   });
 
   it('a URL naming an explicit ?ack= still narrows the list and shows its chip', async () => {
@@ -543,7 +543,7 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To confirm is the default vie
     expect(screen.queryByLabelText(/^Clear filter:/)).not.toBeInTheDocument();
   });
 
-  it('the Confirmed filter offers To confirm, Confirmed, Changed, Rejected, All (AC-CF-13)', async () => {
+  it('the Status filter offers To order, Done, ..., Rejected, All (AC-CF-13, AC-AC-18)', async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       ack: {
@@ -559,14 +559,10 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To confirm is the default vie
 
     openFilters();
     const select = (await screen.findByLabelText('Any')) as HTMLSelectElement;
-    expect([...select.options].map((option) => option.textContent)).toEqual([
-      'Any',
-      'To confirm (1)',
-      'Confirmed (1)',
-      'Changed (1)',
-      'Rejected (0)',
-      'All',
-    ]);
+    const labels = [...select.options].map((option) => option.textContent);
+    expect(labels.slice(0, 3)).toEqual(['Any', 'To order (1)', 'Done (1)']);
+    expect(labels.slice(-2)).toEqual(['Rejected (0)', 'All']);
+    expect(labels.join('|')).not.toMatch(/To confirm|Confirmed/);
   });
 });
 

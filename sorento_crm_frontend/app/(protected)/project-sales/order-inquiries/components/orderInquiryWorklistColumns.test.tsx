@@ -2261,3 +2261,31 @@ describe('OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit beside
     expect(within(row).getByText('-')).toBeInTheDocument();
   });
 });
+
+describe('AC-AC-10b: a reserve link prints in the PO cell as "Reserved @ <code> <qty>"', () => {
+  const reserveRow = () =>
+    worklistRow({
+      id: 'row-reserve',
+      qty: '3',
+      linked_qty: '3',
+      links: [
+        { id: 'r1', kind: 'reserve', document: 'Reserved @ BRW', qty: '3' },
+      ],
+    } as never);
+
+  it('reads "Reserved @ BRW 3" instead of a dash', () => {
+    renderRows([reserveRow()]);
+
+    const cell = screen.getByTestId('row-row-reserve');
+    expect(within(cell).getByText('Reserved @ BRW 3')).toBeInTheDocument();
+    expect(within(cell).queryByText('-')).not.toBeInTheDocument();
+  });
+
+  it('is not a link to a purchase order', () => {
+    renderRows([reserveRow()]);
+
+    const cell = screen.getByTestId('row-row-reserve');
+    expect(within(cell).queryByTestId('document-detail-trigger-Reserved @ BRW')).toBeNull();
+    expect(within(cell).queryByRole('link')).toBeNull();
+  });
+});

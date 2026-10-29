@@ -990,3 +990,27 @@ describe('OI-RESERVE-PILL-QTY round 2: the line reads Requested, Reserve request
     expect(screen.getByText('70')).toBeInTheDocument();
   });
 });
+
+describe('AC-AC-10b: the Lines tab PO cell prints a reserve link as "Reserved @ <code> <qty>"', () => {
+  function poCell(row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const poColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'po_number',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(poColumn).toBeDefined();
+    return poColumn!.cell({ row: { original: row } });
+  }
+
+  it('reads "Reserved @ BRW 3", not a dash, and is not a PO link', () => {
+    const row = linesRow({
+      id: 'row-reserve',
+      links: [{ id: 'r1', kind: 'reserve', document: 'Reserved @ BRW', qty: '3' }],
+    } as never);
+
+    renderWithClient(<>{poCell(row)}</>);
+
+    expect(screen.getByText('Reserved @ BRW 3')).toBeInTheDocument();
+    expect(screen.queryByText('-')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('document-detail-trigger-Reserved @ BRW')).toBeNull();
+  });
+});

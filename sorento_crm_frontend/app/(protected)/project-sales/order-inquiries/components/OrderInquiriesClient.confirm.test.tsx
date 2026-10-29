@@ -557,6 +557,9 @@ describe('AC-CF-12: the To confirm tile', () => {
     expect(
       screen.getByTestId('order-inquiry-strip-to-confirm-count'),
     ).toHaveTextContent('3');
+    // AC-AC-18: the quick chip reads To order.
+    expect(screen.getByTestId('order-inquiry-strip-to-confirm')).toHaveTextContent('To order');
+    expect(screen.getByTestId('order-inquiry-strip-to-confirm')).not.toHaveTextContent('To confirm');
 
     fireEvent.click(screen.getByTestId('order-inquiry-strip-to-confirm'));
 

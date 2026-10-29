@@ -8,7 +8,9 @@ import {
   ACK_ANY,
   ACK_FILTER_OPTIONS,
   ACK_LABELS,
+  ackOverrideHint,
   ackStateOf,
+  ackStatusText,
   bundledHostChangeLines,
   isBulkRejectable,
   isRejectable,
@@ -36,9 +38,10 @@ describe('ackStateOf', () => {
 
 describe('ACK_LABELS (R7: Confirm replaced Acknowledge everywhere a person can see it)', () => {
   it('prints the label the column, the filter and the bulk bar all read', () => {
-    expect(ACK_LABELS.awaiting).toBe('To confirm');
-    expect(ACK_LABELS.acknowledged).toBe('Confirmed');
-    expect(ACK_LABELS.changed).toBe('Changed');
+    // AC-AC-18: To confirm reads To order, Confirmed reads Done; a changed row is still owed.
+    expect(ACK_LABELS.awaiting).toBe('To order');
+    expect(ACK_LABELS.acknowledged).toBe('Done');
+    expect(ACK_LABELS.changed).toBe('To order');
     expect(ACK_LABELS.rejected).toBe('Rejected');
   });
 });
@@ -48,7 +51,7 @@ describe('ACK_ANY / ACK_FILTER_OPTIONS (PLAN-oi-confirm-per-so, AC-CF-13: G4/G5 
     expect(ACK_ANY).toBe('all');
   });
 
-  it('offers To confirm, Confirmed, Changed, Rejected, All - a row is born awaiting again', () => {
+  it('offers To order, Done, Changed, Rejected, All (AC-AC-18)', () => {
     expect(ACK_FILTER_OPTIONS.map((option) => option.value)).toEqual([
       'to_confirm',
       'acknowledged',
@@ -56,13 +59,12 @@ describe('ACK_ANY / ACK_FILTER_OPTIONS (PLAN-oi-confirm-per-so, AC-CF-13: G4/G5 
       'rejected',
       'all',
     ]);
-    expect(ACK_FILTER_OPTIONS.map((option) => option.label)).toEqual([
-      'To confirm',
-      'Confirmed',
-      'Changed',
-      'Rejected',
-      'All',
-    ]);
+    const labels = ACK_FILTER_OPTIONS.map((option) => option.label);
+    expect(labels[0]).toBe('To order');
+    expect(labels[1]).toBe('Done');
+    expect(labels.slice(3)).toEqual(['Rejected', 'All']);
+    expect(labels).not.toContain('To confirm');
+    expect(labels).not.toContain('Confirmed');
   });
 });
 
@@ -220,5 +222,57 @@ describe('bundledHostChangeLines (PLAN-oi-bundled-row-host-change.md)', () => {
       'with X: Was 182 on 01/06/2026, now 280 on 01/03/2027',
       'with Y: 50 on 01/05/2026, no change',
     ]);
+  });
+});
+
+describe('ackStatusText (AC-AC-5, 15, 16, 17b)', () => {
+  const link = (kind: 'po' | 'spo' | 'reserve', qty: string) => ({ kind, qty }) as never;
+
+  it('says how much is left on a part-covered row that is still to order', () => {
+    expect(
+      ackStatusText({
+        ack_state: 'awaiting',
+        qty: '29',
+        links: [link('po', '15'), link('spo', '4'), link('reserve', '2')],
+      } as never),
+    ).toBe('To order \u00b7 8 left');
+  });
+
+  it('says To order with no links, Done when done, Rejected when refused', () => {
+    expect(ackStatusText({ ack_state: 'awaiting', qty: '10', links: [] } as never)).toBe('To order');
+    expect(ackStatusText({ ack_state: 'acknowledged', qty: '10', links: [] } as never)).toBe('Done');
+    expect(ackStatusText({ ack_state: 'rejected', qty: '10', links: [] } as never)).toBe('Rejected');
+  });
+
+  it('tags a manual decision', () => {
+    expect(
+      ackStatusText({ ack_state: 'acknowledged', ack_override: 'confirmed', qty: '10' } as never),
+    ).toBe('Done \u00b7 manual');
+    expect(
+      ackStatusText({ ack_state: 'awaiting', ack_override: 'unconfirmed', qty: '10' } as never),
+    ).toBe('To order \u00b7 manual');
+  });
+});
+
+describe('ackOverrideHint (AC-AC-17b)', () => {
+  it('names who and when, in Malaysia time', () => {
+    expect(
+      ackOverrideHint({
+        ack_override: 'confirmed',
+        ack_override_by_name: 'Aisyah',
+        ack_override_at: '2026-10-13T06:05:00Z',
+      } as never),
+    ).toMatch(/^Confirmed by Aisyah, 13\/10\/2026,? (14:05|2:05 ?pm)$/i);
+    expect(
+      ackOverrideHint({
+        ack_override: 'unconfirmed',
+        ack_override_by_name: 'Joey',
+        ack_override_at: '2026-10-13T06:05:00Z',
+      } as never),
+    ).toMatch(/^Unconfirmed by Joey, 13\/10\/2026,? (14:05|2:05 ?pm)$/i);
+  });
+
+  it('is null on a row nobody overrode', () => {
+    expect(ackOverrideHint({ ack_state: 'acknowledged' } as never)).toBeNull();
   });
 });

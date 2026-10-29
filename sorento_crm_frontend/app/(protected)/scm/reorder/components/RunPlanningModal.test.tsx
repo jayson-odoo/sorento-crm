@@ -574,7 +574,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       // Owner ruling (Lane D fix round 1): one-line menu rows under Project too -
       // "<SO number> - <customer>", the awaiting-ack count appended only when non-zero.
       expect(screen.getByTestId('option-body-SO419517').textContent).toBe(
-        'SO419517 - OTM, 2 awaiting ack',
+        'SO419517 - OTM',
       );
       expect(screen.getByTestId('option-body-SO420374').textContent).toBe('SO420374 - ARC');
 
@@ -711,9 +711,11 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       // Wait on the EFFECT'S VISIBLE RESULT - the third payload's own awaiting count has
       // rendered, so the re-derive effect has definitely run again with fresh
       // `rows_in_range > 0` data for SO2 - before checking the guard held.
-      await waitFor(() =>
-        expect(screen.getByTestId('option-body-SO2').textContent).toContain('4 awaiting ack'),
-      );
+      // AC-AC-22: the awaiting count is gone from the picker, so the arrival is observed
+      // as the third fetch having fired and its result flushed.
+      await waitFor(() => expect(getCandidateOrders.mock.calls.length).toBeGreaterThanOrEqual(3));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.getByTestId('option-body-SO2').textContent).not.toContain('awaiting ack');
       // Fresh data says SO2 qualifies for pre-selection again; the user's own untick must
       // still win. Removing `touchedOrdersRef.current` from the guard (RunPlanningModal.tsx)
       // re-checks SO2 here and fails this assertion.
@@ -990,11 +992,11 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       );
     });
 
-    it('AC-D1: menu rows are one line each - "<SO number> - <customer>[, N awaiting ack]", no second description line', async () => {
+    it('AC-D1: menu rows are one line each - "<SO number> - <customer>", no awaiting-ack suffix (AC-AC-22), no second description line', async () => {
       getCandidateOrders.mockResolvedValueOnce([
         {
           so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
-          rows_total: 5, rows_in_range: 5, rows_raised_in_window: 5, rows_awaiting: 3,
+          rows_total: 5, rows_in_range: 5, rows_raised_in_window: 5, 
           first_delivery: '2026-08-01', last_delivery: '2026-08-05',
         },
       ]);
@@ -1002,7 +1004,8 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       const body = await screen.findByTestId('option-body-SO1');
       // Owner ruling (Lane D fix round 1): the awaiting-ack count DOES join this one
       // line when non-zero - only the old "N lines in range" description is gone.
-      expect(body.textContent).toBe('SO1 - C1, 3 awaiting ack');
+      expect(body.textContent).toBe('SO1 - C1');
+      expect(body.textContent).not.toContain('awaiting ack');
       expect(body.textContent).not.toContain('lines in range');
     });
 
