@@ -1,6 +1,6 @@
 # PLAN: Customer amendment requests on the quotation link (QUOTE-CUSTOMER-AMEND)
 
-Status: Plan - owner answered Q1-Q5 (30 Oct ~00:30); card v3 + mock v3 (`documentation/mockups/QUOTE-CUSTOMER-AMEND/index.html`) filed for approval on PR #1984. Build after the owner approves the mock AND QUOTE-SIGN-PAGE merges. Track: full (migration + new public write path, security review mandatory).
+Status: Plan - owner answered Q1-Q5 (30 Oct ~00:30); card v3 + mock v2 with the owner's layout notes (`documentation/mockups/QUOTE-CUSTOMER-AMEND/index.html`) filed for approval on PR #1984. Build after the owner approves the mock AND QUOTE-SIGN-PAGE merges. Track: full (migration + new public write path, security review mandatory).
 
 Source: owner team meeting 29 Oct 15:40 (Project Sales module); owner answer Q3 29 Oct 22:45 (an accepted amendment produces the next revision under the QUOTE-SIGN-PAGE numbering); owner answers to this card's Q1-Q5, 30 Oct ~00:30 (see Decisions).
 
@@ -93,6 +93,11 @@ The other shapes the brief asks for (a multi-section issue where only the touche
 | Q4 How is the salesperson told? | (a) AND (b): in-app project alert AND WhatsApp/email notice, existing channels, no new provider. | Rule 8 |
 | Q5 Free-text box? | (a) One optional note on the same request. | Rule 3 |
 
+Owner layout notes on mock v1 (30 Oct 00:30), applied in mock v2:
+
+1. "the decision needs to be at proximity to where the customer suggest changes": Accept / Reject sits inline beside each quoted -> suggested value (and a Reject's reason field opens in the same place), not in a far-right Decision column. `AmendmentDeltaTable` gets this as its quotation mode's placement.
+2. "i need the quotation to be more cleanly designed and less information fatigue": only changed lines are open, unchanged lines fold into one row; three columns on the staff side (line, item, suggestion and decision), four on the customer side; ONE summary row (number of suggestions, total before -> after) is the only place totals appear; even row spacing, no grid lines.
+
 ## Storage (proposed, migration)
 
 - `projects.quotation_amendment_requests`: id, company_id, issue_id (FK, cascade), requester_name, note, status (`open` / `applied` / `superseded`), submitted_at, ip_address, applied_at, applied_by, created/updated.
@@ -108,7 +113,7 @@ The other shapes the brief asks for (a multi-section issue where only the touche
 | Staged remove / restore icon | lifted from `.../project-sales/_shared/components/InlineLineTable.tsx:1067-1090` into one shared toggle, used by `InlineLineTable` and `ScopeTable` |
 | Notify (in-app + email + WhatsApp) | `app/services/project_notify_service.py`, new `notify_quotation_amendment_requested` beside `notify_quotation_changes_requested` (:465) |
 | Submit, note, open-request and outcome states | `.../quotation-sign/[token]/components/QuotationSignClient.tsx` (replaces the Request changes block :280-330) |
-| Staff per-line diff + Accept/Reject | `.../project-sales/[projectId]/components/AmendmentDeltaTable.tsx`, new quotation mode (row shape: line, field qty/price, from, to) |
+| Staff per-line diff + Accept/Reject | `.../project-sales/[projectId]/components/AmendmentDeltaTable.tsx`, new quotation mode (row shape: line, field qty/price/removal, from, to) with the decision INLINE beside each change (owner note 1) |
 | Staff panel | `.../quotation-documents/[documentId]/components/QuotationChangesRequestedPanel.tsx` (grows into the request panel) |
 | Below-minimum badge + approval | `QuotationApprovalPanel.tsx` + `Badge` |
 | BE public route | `app/api/v1/public/quotation_sign.py` |
