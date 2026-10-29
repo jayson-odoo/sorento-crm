@@ -16,8 +16,8 @@ What is real and what is stubbed, on purpose:
   like a delivered in-window text, so the app writes a `success` outbox row.
 * RQ: `queue_service.enqueue_job` records the job instead of pushing to Redis. Complaint
   and stock inquiry sends go through the `respond_io` queue, so `World.drain()` runs those
-  jobs inline on this test's connection, exactly as the worker would, and their outbox
-  rows land in the scratch schema too. Other queues (notification deliveries) stay recorded.
+  jobs inline on this test's session after the request has committed (the worker body
+  itself, with its SessionLocal swapped), and their outbox rows land in the scratch schema. Other queues (notification deliveries) stay recorded.
 * The idempotency middleware is off: it is a 10 second duplicate-submit backstop keyed on
   (session, path, body), and a chain legitimately repeats e.g. a bodyless
   `set-pending-approval` on the same form after a reject and resubmit.
@@ -32,8 +32,6 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 import pytest
-from sqlalchemy.orm import Session
-
 from ._pg_fixture import blank_session, unique_code
 
 SORENTO = "00000000-0000-0000-0000-000000000001"
@@ -272,6 +270,20 @@ def form_action(db, action_id: str):
 # ------------------------------------------------------------------ the world
 
 
+class _Unclosable:
+    """The test session handed to a worker body: its commits are this session's commits
+    (so they share the request writes' savepoint semantics), and its close() is a no-op."""
+
+    def __init__(self, db):
+        self._db = db
+
+    def close(self):
+        pass
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
 class World(SimpleNamespace):
     """db, client, the acting principal (`as_user` / `as_contact`), the recorded sends and
     jobs, and the respond_io drain."""
@@ -295,9 +307,7 @@ class World(SimpleNamespace):
         for job in pending:
             job["ran"] = True
             original = database.SessionLocal
-            database.SessionLocal = lambda: Session(  # type: ignore[assignment]
-                bind=self.db.connection(), join_transaction_mode="create_savepoint"
-            )
+            database.SessionLocal = lambda: _Unclosable(self.db)  # type: ignore[assignment]
             try:
                 job["fn"](*job["args"], **job["kwargs"])
             except Exception as exc:  # noqa: BLE001 - see docstring
