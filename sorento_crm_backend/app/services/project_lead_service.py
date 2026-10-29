@@ -39,6 +39,7 @@ from app.models.projects import (
     LEAD_OUTCOME_QUALIFIED,
     LEAD_SOURCES,
     APPROVAL_DRAFT,
+    APPROVAL_REJECTED,
     Project,
     ProjectLead,
     ProjectParty,
@@ -445,8 +446,7 @@ def update_lead(db: Session, lead: ProjectLead, payload: Dict[str, Any]) -> Proj
         lead.title = title
         lead.normalised_title = normalise_project_title(title)
     if "customer_id" in payload:
-        # Explicitly allowed to go back to NULL: a buyer named in error is corrected by
-        # clearing it, not by pointing the lead at some other debtor.
+        # The route refuses clearing a customer the lead has; the service stays permissive.
         _assert_buyer(db, payload.get("customer_id"))
         lead.customer_id = payload["customer_id"]
     if "source" in payload:
@@ -1013,11 +1013,11 @@ def qualify_lead(
         owner_user_id=payload.pop("owner_user_id", None) or lead.owner_user_id,
     )
     project.lead_id = lead.id
-    _mark_qualified(db, lead)
+    mark_qualified(db, lead)
     return project
 
 
-def _mark_qualified(db: Session, lead: ProjectLead) -> None:
+def mark_qualified(db: Session, lead: ProjectLead) -> None:
     """What converting a lead MEANS, shared by Qualify and the project form's link.
 
     Qualified is terminal and the lead may qualify again (AC-O5): a masterplan
@@ -1035,7 +1035,7 @@ def _mark_qualified(db: Session, lead: ProjectLead) -> None:
 def _release_lead(
     db: Session, lead_id: str, *, actor_user_id: str, permissions: Set[str]
 ) -> None:
-    """Undo `_mark_qualified` once no project carries the lead any more (#1339, Q1).
+    """Undo `mark_qualified` once no project carries the lead any more (#1339, Q1).
 
     Only a qualified lead is touched: the conversion was undone, so the lead is open
     again on its first rung and pickable in the project form, and the conversion
@@ -1065,21 +1065,30 @@ def _release_lead(
 
 
 def is_own_lead(lead: ProjectLead, user_id: str) -> bool:
-    """Own = assigned to the user or recorded by them (LEAD-GOVERNS-REGISTER H)."""
-    return bool(user_id) and user_id in (lead.owner_user_id, lead.created_by)
+    """Own = assigned to the user (LEAD-GOVERNS-REGISTER H, security M2)."""
+    return bool(user_id) and lead.owner_user_id == user_id
 
 
 def lead_for_registration(
-    db: Session, lead_id: str, *, actor_user_id: str, own_leads_only: bool
+    db: Session,
+    lead_id: str,
+    *,
+    actor_user_id: str,
+    own_leads_only: bool,
+    permissions: Optional[Set[str]] = None,
 ) -> ProjectLead:
     """The lead a registration names: 404 when missing, and for a submit-only salesperson
-    also when it is not their own (the same answer, so nothing leaks)."""
+    also when it is not their own (the same answer, so nothing leaks). Given the caller's
+    permissions, an edit holder who may not edit the lead is refused here too, before any
+    customer is compared against it (LGR-E7)."""
     from app.services.uuid_path_param import validate_uuid_path
 
     validate_uuid_path(lead_id, resource="Lead")
     lead = db.query(ProjectLead).filter(ProjectLead.id == lead_id).first()
     if lead is None or (own_leads_only and not is_own_lead(lead, actor_user_id)):
         raise AppException(status_code=404, message="Lead not found.", code="lead_not_found")
+    if not own_leads_only and permissions is not None:
+        assert_can_edit_lead(lead, actor_user_id, permissions)
     return lead
 
 
@@ -1095,6 +1104,18 @@ def customer_from_lead(lead: ProjectLead, requested: Optional[str]) -> Optional[
             code="project_customer_not_lead_customer",
         )
     return lead.customer_id
+
+
+def fill_lead_customer(db: Session, project: Project) -> None:
+    """Fill-only: a lead with no customer takes the one its project holds (LGR-E3, E4). A
+    lead's customer already set is never touched."""
+    if not project.lead_id:
+        return
+    lead = db.get(ProjectLead, project.lead_id)
+    profile = db.get(ProjectSalesProfile, project.id)
+    if lead is not None and not lead.customer_id and getattr(profile, "customer_id", None):
+        lead.customer_id = profile.customer_id
+        db.flush()
 
 
 def set_project_lead(
@@ -1160,14 +1181,14 @@ def set_project_lead(
             .first()
         )
         if other is not None:
-            raise AppException(
-                status_code=409,
-                message=(
-                    f"{lead.lead_code} is already linked to {project_label(other)} "
-                    f'"{other.title}". Unlink it there first, or pick another lead.'
-                ),
-                code="lead_already_linked",
+            # A submit-only salesperson may not read the other project, so it is not named.
+            message = (
+                f"{lead.lead_code} is already linked to a project. Pick another lead."
+                if own_leads_only
+                else f"{lead.lead_code} is already linked to {project_label(other)} "
+                f'"{other.title}". Unlink it there first, or pick another lead.'
             )
+            raise AppException(status_code=409, message=message, code="lead_already_linked")
         if lead.outcome == OUTCOME_DISQUALIFIED:
             raise AppException(
                 status_code=422,
@@ -1185,11 +1206,9 @@ def set_project_lead(
             db, previous, actor_user_id=actor_user_id, permissions=permissions
         )
     if lead is not None:
-        profile = db.get(ProjectSalesProfile, project.id)
-        if not lead.customer_id and getattr(profile, "customer_id", None):
-            lead.customer_id = profile.customer_id
-        if project.approval_state != APPROVAL_DRAFT:
-            _mark_qualified(db, lead)
+        fill_lead_customer(db, project)
+        if project.approval_state not in (APPROVAL_DRAFT, APPROVAL_REJECTED):
+            mark_qualified(db, lead)
 
 
 def preview_qualify_clashes(
@@ -1279,6 +1298,7 @@ def serialize_leads(
     actor_user_id: str = "",
     permissions: Optional[Set[str]] = None,
     with_duplicate_hints: bool = False,
+    hints_owned_by: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Bulk-serialise, resolving every id to a label in ONE query per kind.
 
@@ -1330,7 +1350,9 @@ def serialize_leads(
         else {}
     )
 
-    hints = _duplicate_hints(db, leads) if with_duplicate_hints else {}
+    hints = (
+        _duplicate_hints(db, leads, owned_by=hints_owned_by) if with_duplicate_hints else {}
+    )
     project_counts = _project_counts(db, [lead.id for lead in leads])
 
     rows: List[Dict[str, Any]] = []
@@ -1402,7 +1424,7 @@ def _project_counts(db: Session, lead_ids: Sequence[str]) -> Dict[str, int]:
 
 
 def _duplicate_hints(
-    db: Session, leads: Sequence[ProjectLead]
+    db: Session, leads: Sequence[ProjectLead], owned_by: Optional[str] = None
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Informational only (AC-O3). Never blocks, never warns on save.
 
@@ -1416,14 +1438,14 @@ def _duplicate_hints(
     if not keys:
         return {}
 
-    siblings = (
-        db.query(ProjectLead)
-        .filter(
-            ProjectLead.normalised_title.in_(keys),
-            ProjectLead.outcome == OUTCOME_OPEN,
-        )
-        .all()
+    sibling_query = db.query(ProjectLead).filter(
+        ProjectLead.normalised_title.in_(keys),
+        ProjectLead.outcome == OUTCOME_OPEN,
     )
+    if owned_by:
+        # A limited reader is told about their own leads only (security M1).
+        sibling_query = sibling_query.filter(ProjectLead.owner_user_id == owned_by)
+    siblings = sibling_query.all()
     by_key: Dict[str, List[ProjectLead]] = {}
     for sibling in siblings:
         by_key.setdefault(sibling.normalised_title, []).append(sibling)
@@ -1474,12 +1496,7 @@ def list_leads(
 ) -> Dict[str, Any]:
     q = db.query(ProjectLead).filter(ProjectLead.company_id == company_id)
     if reads_own_leads_only(permissions):
-        q = q.filter(
-            or_(
-                ProjectLead.owner_user_id == actor_user_id,
-                ProjectLead.created_by == actor_user_id,
-            )
-        )
+        q = q.filter(ProjectLead.owner_user_id == actor_user_id)
 
     if query:
         like = f"%{query.strip()}%"
@@ -1525,6 +1542,7 @@ def list_leads(
             actor_user_id=actor_user_id,
             permissions=permissions,
             with_duplicate_hints=True,
+            hints_owned_by=actor_user_id if reads_own_leads_only(permissions) else None,
         ),
         "total": total,
         "page": page,

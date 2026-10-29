@@ -1273,15 +1273,24 @@ def update_project(
         set_critical(project, bool(payload["is_critical"]))
 
     own_leads_only = "projects.registrations.submit" in permissions and EDIT_PERMISSION not in permissions
-    if payload.get("lead_id") and payload["lead_id"] != project.lead_id:
-        # The lead governs the customer (LEAD-GOVERNS-REGISTER E4).
+    target_lead = payload["lead_id"] if "lead_id" in payload else project.lead_id
+    if target_lead:
+        # The lead governs the customer (LEAD-GOVERNS-REGISTER E4, E9). The right to link it is
+        # decided first, so a refused lead answers the same whatever customer came with it.
         from app.services import project_lead_service as leads
 
+        changing = target_lead != project.lead_id
         lead = leads.lead_for_registration(
-            db, payload["lead_id"], actor_user_id=actor_user_id, own_leads_only=own_leads_only
+            db,
+            target_lead,
+            actor_user_id=actor_user_id,
+            own_leads_only=own_leads_only and changing,
+            permissions=permissions if changing else None,
         )
-        if lead.customer_id:
-            payload = {**payload, "customer_id": leads.customer_from_lead(lead, payload.get("customer_id"))}
+        if lead.customer_id and (changing or payload.get("customer_id")):
+            picked = leads.customer_from_lead(lead, payload.get("customer_id"))
+            if changing:
+                payload = {**payload, "customer_id": picked}
     apply_sales_details(db, project, payload)
 
     # Present-and-null is an unlink; absent leaves the link alone (#1339).
@@ -1296,6 +1305,9 @@ def update_project(
             permissions=permissions,
             own_leads_only=own_leads_only,
         )
+    from app.services.project_lead_service import fill_lead_customer
+
+    fill_lead_customer(db, project)
     return project
 
 

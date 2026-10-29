@@ -806,7 +806,7 @@ def crm_register(
             if submit:
                 _to_pending(project)
                 if lead:
-                    leads._mark_qualified(db, lead)
+                    leads.mark_qualified(db, lead)
             db.flush()
     except IntegrityError as exc:
         if "uq_projects_company_developer_title" not in str(getattr(exc, "orig", exc)):
@@ -845,7 +845,7 @@ def crm_submit(
     resubmitted = _to_pending(project)
     from app.services import project_lead_service as leads
 
-    leads._mark_qualified(db, db.get(leads.ProjectLead, project.lead_id))
+    leads.mark_qualified(db, db.get(leads.ProjectLead, project.lead_id))
     return resubmitted
 
 

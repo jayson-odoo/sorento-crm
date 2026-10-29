@@ -412,7 +412,11 @@ def register_project(
 
         registrations.require_lead(payload.lead_id)
         lead = leads.lead_for_registration(
-            db, payload.lead_id, actor_user_id=current_user["id"], own_leads_only=False
+            db,
+            payload.lead_id,
+            actor_user_id=current_user["id"],
+            own_leads_only=False,
+            permissions=permissions,
         )
         customer_id = leads.customer_from_lead(lead, payload.customer_id)
         registrations.require_customer(customer_id)
