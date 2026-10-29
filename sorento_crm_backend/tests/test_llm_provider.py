@@ -572,7 +572,7 @@ def test_get_provider_factory():
     assert isinstance(p2, AnthropicProvider)
     p3 = get_provider("gemini", "k")
     assert isinstance(p3, GeminiProvider)
-    assert p3.default_model == "gemini-2.5-flash"
+    assert p3.default_model == "gemini-3.5-flash"
     assert get_provider("gemini", "k", "gemini-2.5-pro").default_model == "gemini-2.5-pro"
     with pytest.raises(ValueError):
         get_provider("nope", "k")
@@ -584,9 +584,9 @@ def test_default_model_for_covers_every_registered_provider():
     assert set(DEFAULT_MODELS) == {"openai", "anthropic", "gemini"}
     assert default_model_for("openai") == "gpt-4o"
     assert default_model_for("anthropic") == "claude-sonnet-4-6"
-    assert default_model_for("gemini") == "gemini-2.5-flash"
+    assert default_model_for("gemini") == "gemini-3.5-flash"
     # Case and padding come off a settings row, so they are normalized.
-    assert default_model_for(" Gemini ") == "gemini-2.5-flash"
+    assert default_model_for(" Gemini ") == "gemini-3.5-flash"
 
 
 def test_get_provider_accepts_every_default_model():

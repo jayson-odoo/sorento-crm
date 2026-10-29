@@ -1271,6 +1271,35 @@ def test_the_version_reports_how_much_of_the_document_was_read(seeded):
     assert body["failed_pages"] == [2]
 
 
+def test_when_no_page_reads_the_panel_says_why(seeded):
+    """Prod 29 Oct: every page 404'd on a model the key could not use, and the panel
+    said only "No page of this document could be read". The reason was stored per page
+    but never reached the one field the panel shows."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-ALL-PAGES-FAIL"))
+    reason = (
+        "Gemini call failed (404): This model models/gemini-2.5-flash is no longer "
+        "available to new users."
+    )
+    service.persist_pages(
+        version,
+        [
+            PageResult(page_no=1, data=None, error=reason),
+            PageResult(page_no=2, data=None, error=reason),
+        ],
+        model="gemini/gemini-2.5-flash",
+    )
+
+    assert version.extraction_state == "failed"
+    assert version.extraction_error.startswith("No page of this document could be read.")
+    assert "gemini-2.5-flash is no longer available to new users" in version.extraction_error
+    assert "System Settings" in version.extraction_error
+    # Said once, not once per page.
+    assert version.extraction_error.count("no longer available") == 1
+    assert version.extracted_json["pages"][0]["error"] == reason
+
+
 def test_the_version_names_its_scan_so_the_viewer_can_read_the_bytes(seeded, monkeypatch):
     """The in-app PDF viewer draws the scan from its bytes, and the signed URL is
     cross-origin with no CORS headers, so a script cannot read it. The version carries
