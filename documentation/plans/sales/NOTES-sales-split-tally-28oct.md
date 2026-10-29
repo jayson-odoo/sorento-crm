@@ -122,7 +122,7 @@ January invoices trace, which needs R1 to R7.
 
 1. R9 dry run (SELECT): every January agent, its class today, the proposed class (AutoCount's
    lists) and January RM; the per-class sums must read retail 6,513,047.67, project 6,084,471.57,
-   other + no agent 2,144,760.05 before anything is written. IRENE stays blank (Q4).
+   other + no agent 2,144,760.05 before anything is written. the agent Q4 leaves blank stays blank.
 2. R9 apply (held for the owner), then `scripts/sales_order_class_rederive.py --company SRT`
    dry run, then `--apply`.
 3. The four set-apart debtors with their start month (R6 to confirm 122,232.99).

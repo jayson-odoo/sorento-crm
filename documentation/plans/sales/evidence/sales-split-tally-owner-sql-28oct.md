@@ -277,7 +277,7 @@ Purpose: the agent-class fix, as a SELECT that changes nothing. Every SRT agent 
 2026 billing document, its class today (dated rows, and the `sales_agents.demand_class` mirror),
 the proposed class, and January RM, plus the RM per proposed class. Proposed (crew lists, owner
 Q3/Q4): an area-suffixed code (ending ` I`, ` II`, ` III`, ` IV`, ` V`) `retail`; the five codes in
-`other_codes` `other`; every other agent with January sales `project`; IRENE blank (untouched).
+`other_codes` `other`; every other agent with January sales `project`; the agent Q4 leaves blank is untouched.
 Crew fills `other_codes` from its Q10 list before relaying (the list is not committed here).
 
 Expected per proposed class: retail 6,513,047.67, project 6,084,471.57, other + no agent
