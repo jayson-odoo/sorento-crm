@@ -1,8 +1,8 @@
 # UAC: QUOTE-SIGN-PAGE (quotation sign page + issued PDF)
 
-Status: owner answered the card 29 Oct ~22:45 (ask a73603971): Q1 a but KEEP the Revision row, Q2 a, Q3 a, Q4 yes
-plus a visible reason when Sign and accept is not ready, Q5 a. Mock v2 (`documentation/mockups/QUOTE-SIGN-PAGE/index.html`)
-waits on approval; build starts after it.
+Status: binding. Owner answered the card 29 Oct ~22:45 (ask a73603971): Q1 a but KEEP the Revision row, Q2 a, Q3 a,
+Q4 yes plus a visible reason when Sign and accept is not ready, Q5 a. Mock v2 approved 29 Oct 23:16. AC1.4 and AC2.6
+tightened in review round 1 (security + reviewer findings).
 
 Terms: "sign page" = `/quotation-sign/{token}`; "PDF" = the issued quotation PDF
 (`project_quotation_pdf_service.build_issue_html`); "issue" = one `quotation_issues` row (one revision).
@@ -16,6 +16,10 @@ Terms: "sign page" = `/quotation-sign/{token}`; "PDF" = the issued quotation PDF
 4. PDF download rules: the URL must pass `assert_safe_outbound_url` (`app/services/outbound_url_guard.py:207`: https
    only, no loopback / private / link-local / own host), 3 s timeout, at most 1 MB, response content type `image/*`.
    Any refusal or failure: the PDF still renders, name only, a warning is logged, no error reaches the user.
+   Round 1 (security review): a malformed URL never raises; the request asks for `Accept-Encoding: identity` and any
+   other `content-encoding` is refused; the 3 s is a total deadline, not per read; the bytes are re-encoded through
+   `product_image_service._downscale` (PNG / JPEG / WebP only, never SVG, content-type not trusted). The sign page logo
+   `<img>` sends no referrer.
 
 ## AC2 Quotation number
 
@@ -27,6 +31,7 @@ Terms: "sign page" = `/quotation-sign/{token}`; "PDF" = the issued quotation PDF
 4. A new issue stores `our_ref_text = "<document_no>-R<issue_no>"`; the draft view (`document_service.py:700-703`) uses
    the same format.
 5. PDF file name: `quotation-PRJQ-2026-0003-R1.pdf`.
+6. The Excel export labels the same value "Quotation No." and the pending download file name uses it (review round 1).
 
 ## AC3 One card of sections
 

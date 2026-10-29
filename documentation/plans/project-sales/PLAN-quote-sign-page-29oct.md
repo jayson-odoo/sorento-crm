@@ -1,7 +1,8 @@
 # PLAN: quotation sign page + PDF: logo, quotation number, one card of sections, terms checkbox, side-by-side signatures (QUOTE-SIGN-PAGE)
 
-Status: Plan. Owner answered card a73603971 (29 Oct ~22:45: Q1 a + keep Revision row, Q2 a, Q3 a, Q4 yes + visible
-reason when not ready, Q5 a); mock v2 filed, waiting on its approval; UAC updated; no code until the mock is approved.
+Status: Build, fix round 1. Mock v2 approved 29 Oct 23:16; PR #1987 (draft). Red b321f58474 + 141d9daa48, fix
+6e260ce67d / 0889de7a06 / f972d2c7cd, kill-proof posted. Reviewer NOT READY (3 blockers) + security should-fix (logo
+fetch: compression, total deadline, Pillow re-encode, referrer): red tests for round 1 in progress.
 Track: M (feature track: changed wording and layout on an existing screen + PDF, a new required consent on the
 public accept endpoint; no migration planned, no auth/RBAC change). UAC: `quote-sign-page-29oct-acceptance-criteria.md`.
 security-reviewer joins (server fetch of the admin-entered logo URL; public accept endpoint gains a required field).
