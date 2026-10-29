@@ -1057,10 +1057,14 @@ def _chatbot_agent_fallback() -> str:
         "Earlier messages and summaries show what the user wants. They are not current data: read "
         "stock, orders and prices again with a tool.\n\n"
         "FINISHING\n"
+        "For a question with more than one part, call the plan tool first with each part as a short "
+        "string.\n"
         "Always finish with the answer tool. Put the reply in text, list every number in figures "
-        "with the call_id of the tool call whose result shows it, list anything you could not find "
-        "in not_found with the call_id that showed it, and list in not_checked what you did not "
-        "check. Answer concisely in the language of this message, not a guess from earlier turns."
+        "with the call_id of the tool call whose result shows it (every number must be in a tool "
+        "result of this turn), list anything you could not find in not_found with the call_id that "
+        "showed it, list the parts of your plan you answered in answered, and list in not_checked what "
+        "you did not check. Answer concisely in the language of this message, not a guess from earlier "
+        "turns."
     )
 
 

@@ -51,6 +51,7 @@ def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
 NON_RENDER_TOOLS = frozenset({"crm_resolve", "crm_products_find", "crm_procurement_grn_summary"})
 RESOLVE = "crm_resolve"
 FIND = "crm_products_find"
+PLAN = "plan"
 ANSWER = "answer"
 
 
@@ -212,15 +213,31 @@ FIND_SCHEMA: dict[str, Any] = {
     },
 }
 
+PLAN_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": PLAN,
+        "description": (
+            "For a question with more than one part, call this first with each part as a short "
+            "string. Calling it again replaces the plan. It does not read anything."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"parts": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10}},
+            "required": ["parts"],
+        },
+    },
+}
+
 ANSWER_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": ANSWER,
         "description": (
-            "Finish the turn with the reply for the user. Every number in text must be listed in "
-            "figures with the call_id of the tool call whose result holds it. Anything you could not "
-            "find goes in not_found with the call_id that showed it, and anything you did not check "
-            "goes in not_checked."
+            "Finish the turn with the reply for the user. Every number in text must appear in a tool "
+            "result of this turn (list it in figures with the call_id when you can). Anything you could "
+            "not find goes in not_found with the call_id that showed it, the parts of your plan you "
+            "answered go in answered, and anything you did not check goes in not_checked."
         ),
         "parameters": {
             "type": "object",
@@ -243,6 +260,7 @@ ANSWER_SCHEMA: dict[str, Any] = {
                     },
                 },
                 "not_checked": {"type": "array", "items": {"type": "string"}},
+                "answered": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["text"],
         },
@@ -450,6 +468,37 @@ def _is_empty(data: Any, render: bool) -> bool:
     return data.get("empty") is True or (isinstance(data.get("data"), list) and not data["data"])
 
 
+def _fold_code(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
+
+
+def redact_ids(text: str, ids: tuple[str, ...]) -> str:
+    """`text` without the given ids (the contact's own): each becomes "(id)"."""
+    for ident in ids:
+        ident = str(ident or "").strip()
+        if len(ident) >= 4:
+            text = re.sub(rf"(?<![A-Za-z0-9]){re.escape(ident)}(?![A-Za-z0-9])", "(id)", text)
+    return text
+
+
+def _strip_echo(data: Any, ids: tuple[str, ...], space_id: str | None) -> Any:
+    """Drop the echoes of the injected guard values from a result before the model sees it."""
+    if isinstance(data, dict):
+        out = {}
+        for k, v in data.items():
+            if k in ("contact_id", "contact_respond_id") and isinstance(v, (str, int)) and str(v) in ids:
+                continue
+            if k == "space_id" and space_id is not None and str(v) == str(space_id):
+                continue
+            out[k] = _strip_echo(v, ids, space_id)
+        return out
+    if isinstance(data, list):
+        return [_strip_echo(v, ids, space_id) for v in data]
+    if isinstance(data, str):
+        return redact_ids(data, ids)
+    return data
+
+
 def _sees_salespeople(db: Any, ctx: Any) -> bool:
     """The Salesperson list is the contact's only when the sales ranking lets it ask by agent
     (the rule today's lookup block uses)."""
@@ -574,15 +623,26 @@ def _resolve(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
             matches = [m for m in matches if m["kind"] != "customer" or m["id"] in readable]
         trusted = res.get("resolved") is True and res.get("ambiguous") is False and len(matches) == before
         matches = matches + listed.get(term, [])
+        variants: list[dict] = []
+        folded_term = _fold_code(term)
+        exact = [m for m in matches if m.get("code") and _fold_code(str(m["code"])) == folded_term]
         if not matches:
             status = "not_found"
+        elif len(exact) == 1:
+            # The typed code is one product's own code: that one, and its variants beside it.
+            status = "found"
+            variants = [m for m in matches if m is not exact[0]][:MAX_MATCHES]
+            matches = exact
         elif len(matches) == 1 or (trusted and len(listed.get(term, [])) == 0):
             status, matches = "found", matches[:1] if trusted else matches
         else:
             status = "ambiguous"
         matches = matches[:MAX_MATCHES]
-        seen.update(m["id"].lower() for m in matches)
-        results.append({"term": term, "status": status, "matches": matches})
+        seen.update(m["id"].lower() for m in [*matches, *variants])
+        row = {"term": term, "status": status, "matches": matches}
+        if variants:
+            row["variants"] = variants
+        results.append(row)
     return ToolResult("ok", data={"results": results, "skipped_kinds": skipped})
 
 
@@ -590,7 +650,7 @@ def _find_products(db: Any, args: dict, seen: set[str]) -> ToolResult:
     """`crm_products_find`: products of the given brands / categories (one level of child
     categories) and/or a code or name query, on the agent session, so company scope and brand scope
     apply, under the chat visibility rule. At most 50 rows, ordered by code."""
-    from sqlalchemy import or_, select
+    from sqlalchemy import case, func, or_, select
 
     from app.models.product import Brand, Product, ProductCategory, chat_searchable_products
 
@@ -630,11 +690,33 @@ def _find_products(db: Any, args: dict, seen: set[str]) -> ToolResult:
         cats = ProductCategory.__table__
         children = select(cats.c.id).where(cats.c.parent_category_id.in_(lists["category_ids"]))
         q = q.filter(or_(Product.category_id.in_(lists["category_ids"]), Product.category_id.in_(children)))
-    if query:
-        like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        q = q.filter(or_(Product.product_code.ilike(like, escape="\\"), Product.product_name.ilike(like, escape="\\")))
+    def _escaped(text: str) -> str:
+        return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    for word in query.split():
+        like = "%" + _escaped(word) + "%"
+        # Every word must match somewhere: code, name, description or remark.
+        q = q.filter(
+            or_(
+                Product.product_code.ilike(like, escape="\\"),
+                Product.product_name.ilike(like, escape="\\"),
+                Product.description.ilike(like, escape="\\"),
+                Product.remark.ilike(like, escape="\\"),
+            )
+        )
     total = q.count()
-    rows = q.order_by(Product.product_code).limit(MAX_PRODUCTS).all()
+    order = [Product.product_code]
+    if query:
+        # Exact code first, then codes that start with the query, then the rest by code.
+        order.insert(
+            0,
+            case(
+                (func.lower(Product.product_code) == query.lower(), 0),
+                (Product.product_code.ilike(_escaped(query) + "%", escape="\\"), 1),
+                else_=2,
+            ),
+        )
+    rows = q.order_by(*order).limit(MAX_PRODUCTS).all()
     if not rows:
         filters = {k: v for k, v in {**lists, "query": query, "active_only": active_only}.items() if v not in ([], "")}
         return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
@@ -744,7 +826,7 @@ def dispatch(
             return _http_failure(int(match.group(1)), match.group(2))
         return ToolResult("error", message=FIXED_ERROR)
 
-    data = _as_data(raw)
+    data = _strip_echo(_as_data(raw), (str(ctx.contact_respond_id), str(ctx.contact_pk)), ctx.space_id)
     failure = _body_failure(data)
     if failure is not None:
         return failure

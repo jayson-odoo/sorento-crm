@@ -175,7 +175,7 @@ def test_found_ambiguous_and_not_found_per_term_and_the_body_sent(held, resolver
     held.update({KIND_SLUGS["product"]})
     resolver.table = {
         "SRTWT7445": [hit("product", "SRTWT7445", UUID_A, "Water closet")],
-        "KOHLER": [hit("product", "KOHLER", UUID_A), hit("product", "KOHLER-1", UUID_B)],
+        "KOHLER": [hit("product", "KOHLER-A", UUID_A), hit("product", "KOHLER-B", UUID_B)],
         "ZZTNOPE": [],
     }
     terms = ["SRTWT7445", "KOHLER", "ZZTNOPE"]
@@ -696,8 +696,9 @@ def test_thousands_separators_in_the_text_match_the_number_in_the_result(db, con
 
 
 def test_a_sum_the_model_made_is_sent_back_once_then_marked_not_verified(db, contact, resolver):
-    bad = answer_call("Total is 12 units.", figures=[{"value": "12", "call_id": "c1"}])
-    again = answer_call("Total is 12 units.", figures=[{"value": "12", "call_id": "c1"}], cid="a2")
+    # Round 6: 12 would be the column total of 5 and 7, so the made-up sum is 13.
+    bad = answer_call("Total is 13 units.", figures=[{"value": "13", "call_id": "c1"}])
+    again = answer_call("Total is 13 units.", figures=[{"value": "13", "call_id": "c1"}], cid="a2")
     provider = Provider([asks(call(STOCK, {"query": "x"}, "c1")), bad, again])
     mcp = Rec(result={"items": [{"qty": 5}, {"qty": 7}], "has_result": True})
 
@@ -706,16 +707,16 @@ def test_a_sum_the_model_made_is_sent_back_once_then_marked_not_verified(db, con
     assert len(provider.seen) == 3  # one repair round only
     verdict = _payload(_tool_msgs(provider.seen[2]["messages"])[-1])
     assert verdict["status"] == "invalid"
-    assert "12" in verdict["message"]
+    assert "13" in verdict["message"]
     assert "(not verified)" in result.reply_text
-    assert "12" not in result.reply_text
+    assert "13" not in result.reply_text
 
 
 def test_a_repair_that_cites_the_real_rows_is_accepted(db, contact, resolver):
     provider = Provider(
         [
             asks(call(STOCK, {"query": "x"}, "c1")),
-            answer_call("Total is 12 units.", figures=[{"value": "12", "call_id": "c1"}]),
+            answer_call("Total is 13 units.", figures=[{"value": "13", "call_id": "c1"}]),
             answer_call(
                 "Two rows: 5 and 7 units.",
                 figures=[{"value": "5", "call_id": "c1"}, {"value": "7", "call_id": "c1"}],
@@ -736,7 +737,8 @@ def test_a_number_missing_from_figures_is_a_violation(db, contact, resolver):
             answer_call("There are 12 units.", cid="a2"),
         ]
     )
-    result = run(db, contact, provider, Rec(result={"items": [{"qty": 12}], "has_result": True}))
+    # Round 6: figures are informational, so a number is unbacked only when no result holds it.
+    result = run(db, contact, provider, Rec(result={"items": [{"qty": 5}], "has_result": True}))
     assert "(not verified)" in result.reply_text
 
 
@@ -745,7 +747,7 @@ def test_a_figure_citing_a_call_that_did_not_succeed_is_a_violation(db, contact,
         "There are 12 units.", figures=[{"value": "12", "call_id": "nope"}], cid=cid
     )
     provider = Provider([asks(call(STOCK, {"query": "x"}, "c1")), bad("a1"), bad("a2")])
-    result = run(db, contact, provider, Rec(result={"items": [{"qty": 12}], "has_result": True}))
+    result = run(db, contact, provider, Rec(result={"items": [{"qty": 5}], "has_result": True}))
     assert "(not verified)" in result.reply_text
 
 

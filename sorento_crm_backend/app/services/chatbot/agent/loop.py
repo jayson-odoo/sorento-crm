@@ -25,6 +25,9 @@ from app.services.chatbot.agent.access import build_context, grants_hash, permit
 from app.services.chatbot.agent.tools import (
     ANSWER,
     ANSWER_SCHEMA,
+    PLAN,
+    PLAN_SCHEMA,
+    redact_ids,
     GUARD_PARAMS,
     RESOLVE,
     TOOL_LABELS,
@@ -235,6 +238,56 @@ def _number_leaves(data: Any) -> set[str]:
     return found
 
 
+def _as_decimal(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))
+    if isinstance(value, str):
+        plain = value.strip().replace(",", "")
+        if _PLAIN_NUMBER.fullmatch(plain):
+            return Decimal(plain)
+    return None
+
+
+def _column_totals(data: Any) -> set[str]:
+    """Normal forms of the sum of each numeric field across every list of rows in `data`: the
+    total a person reads off the rows. Rows are dicts; a presenter row's `fields` ({key, value})
+    are summed per key."""
+    found: set[str] = set()
+
+    def add(total: Decimal) -> None:
+        found.add(_normal(str(total)))
+
+    def walk(node: Any) -> None:
+        if isinstance(node, list):
+            rows = [r for r in node if isinstance(r, dict)]
+            sums: dict[str, Decimal] = {}
+            for row in rows:
+                for key, value in row.items():
+                    number = _as_decimal(value)
+                    if number is not None:
+                        sums[key] = sums.get(key, Decimal(0)) + number
+                fields = row.get("fields")
+                if isinstance(fields, list):
+                    for f in fields:
+                        if isinstance(f, dict) and f.get("key") is not None:
+                            number = _as_decimal(f.get("value"))
+                            if number is not None:
+                                k = f"fields:{f['key']}"
+                                sums[k] = sums.get(k, Decimal(0)) + number
+            for total in sums.values():
+                add(total)
+            for item in node:
+                walk(item)
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+
+    walk(data)
+    return found
+
+
 def _answer_parts(args: Any) -> tuple[str, list[dict], list[dict], list[str]]:
     args = args if isinstance(args, dict) else {}
     text = args.get("text")
@@ -280,15 +333,13 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
 
 def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[list[str], list[str]]:
     """(numbers in the text no tool result backs, not-found claims no tool call backs)."""
-    text, figures, not_found, _ = _answer_parts(args)
+    text, _figures_unused, not_found, _ = _answer_parts(args)
+    # A number is backed when any ok result of this turn holds it, or it is the total of a column
+    # of returned rows. The figures' citations are informational.
     backed: set[str] = set()
-    for fig in figures:
-        entry = ledger.get(str(fig.get("call_id")))
-        if entry and entry["status"] == "ok":
-            leaves = _number_leaves(entry["data"])
-            forms = _value_forms(fig.get("value"))
-            if forms & leaves:
-                backed |= forms
+    for entry in ledger.values():
+        if entry["status"] == "ok":
+            backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
     for _, _, written, forms in _figures(text):
@@ -314,7 +365,27 @@ def _redact_written(text: str, bad: set[str]) -> str:
     return "".join(out)
 
 
-def final_reply(args: Any, bad_numbers: list[str], bad_not_found: list[str]) -> tuple[str, bool]:
+def _same_part(a: str, b: str) -> bool:
+    x, y = _fold_text(a), _fold_text(b)
+    return bool(x and y) and (x == y or (len(y) >= 3 and y in x) or (len(x) >= 3 and x in y))
+
+
+def open_parts(args: Any, plan: list[str], on_limit: bool) -> list[str]:
+    """Planned parts the answer neither answered nor (outside a limit) named as not checked."""
+    args = args if isinstance(args, dict) else {}
+    answered = [str(a) for a in args.get("answered") or []] if isinstance(args.get("answered"), list) else []
+    checked = _answer_parts(args)[3]
+    return [
+        p for p in plan
+        if not any(_same_part(p, a) for a in answered)
+        and (on_limit or not any(_same_part(p, c) for c in checked))
+    ]
+
+
+def final_reply(
+    args: Any, bad_numbers: list[str], bad_not_found: list[str], *, plan: list[str] | None = None,
+    on_limit: bool = False,
+) -> tuple[str, bool]:
     """The user-facing text of an accepted answer, and whether the model named what it did not check."""
     text, _, _, not_checked = _answer_parts(args)
     if bad_numbers:
@@ -323,6 +394,9 @@ def final_reply(args: Any, bad_numbers: list[str], bad_not_found: list[str]) -> 
         text = f"I could not confirm that nothing exists for: {'; '.join(bad_not_found)}. {text}".strip()
     if not_checked:
         text = f"{text}\n\nNot checked: {'; '.join(not_checked)}.".strip()
+    left = open_parts(args, plan or [], on_limit)
+    if left:
+        text = f"{text}\n\nI did not get to: {'; '.join(left)}.".strip()
     # No UUIDs in what a person reads.
     return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 
@@ -333,7 +407,7 @@ def violation_message(bad_numbers: list[str], bad_not_found: list[str], empty_te
         parts.append("text is required")
     if bad_numbers:
         parts.append(
-            "these numbers in text are not backed by a figure whose call_id result holds that value: "
+            "these numbers in text are not in any tool result of this turn and are not a column total of the rows returned: "
             + ", ".join(bad_numbers)
         )
     if bad_not_found:
@@ -653,7 +727,15 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         messages: list[dict] = [{"role": "system", "content": _system_prompt(db, ctx.user_name)}]
         messages.extend(memory.history_messages(db, conv))
         messages.append({"role": "user", "content": text})
-        schemas = tool_schemas(permitted_tools(db, ctx), catalog) + [ANSWER_SCHEMA]
+        schemas = tool_schemas(permitted_tools(db, ctx), catalog) + [PLAN_SCHEMA, ANSWER_SCHEMA]
+        plan_parts: list[str] = []
+        own_ids = (str(ctx.contact_respond_id), str(ctx.contact_pk))
+
+        def scrub(args: dict) -> dict:
+            """The answer's text without the contact's own ids, before anything is verified."""
+            if isinstance(args.get("text"), str):
+                return {**args, "text": redact_ids(args["text"], own_ids)}
+            return args
         ledger: dict[str, dict] = {}
         seen_ids: set[str] = set()
         repaired = False
@@ -666,8 +748,8 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         def answer_of(result_obj: Any) -> dict:
             for c in result_obj.tool_calls or []:
                 if c.get("name") == ANSWER:
-                    return c.get("arguments") if isinstance(c.get("arguments"), dict) else {}
-            return {"text": (result_obj.content or "").strip()}
+                    return scrub(c.get("arguments") if isinstance(c.get("arguments"), dict) else {})
+            return scrub({"text": (result_obj.content or "").strip()})
 
         def forced_final(why: str) -> tuple[str, bool]:
             messages.append(
@@ -682,7 +764,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
             args = answer_of(res)
             bad_numbers, bad_nf = verify_answer(args, ledger, text)
-            return final_reply(args, bad_numbers, bad_nf)
+            return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True)
 
         def add_limit_sentence(reply_text: str, named: bool, word: str) -> str:
             if named:
@@ -710,7 +792,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": nudge})
                     continue
-                final_args = {"text": content}
+                final_args = scrub({"text": content})
                 break
 
             assistant_calls = [
@@ -743,6 +825,15 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 call_id = assistant_calls[idx]["id"]
                 if name == ANSWER:
                     answer_idx = idx
+                    continue
+                if name == PLAN:
+                    parts = args.get("parts") if isinstance(args, dict) else None
+                    if isinstance(parts, list) and 1 <= len(parts) <= 10 and all(isinstance(p, str) and p.strip() for p in parts):
+                        plan_parts[:] = [p.strip() for p in parts]
+                        replies[idx] = ToolResult("ok", message="Plan recorded.").to_json(call_id)
+                        trace.add("agent_plan", {"parts": plan_parts})
+                    else:
+                        replies[idx] = ToolResult("invalid", message="parts must be 1 to 10 non-empty strings.").to_json(call_id)
                     continue
                 started = clock()
                 if tool_index >= budgets.calls_per_round:
@@ -794,7 +885,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             accepted = False
             if answer_idx is not None:
                 args = calls[answer_idx].get("arguments")
-                args = args if isinstance(args, dict) else {}
+                args = scrub(args if isinstance(args, dict) else {})
                 bad_numbers, bad_nf = verify_answer(args, ledger, text)
                 empty_text = not _answer_parts(args)[0]
                 trace.add(
@@ -833,7 +924,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
 
         if final_args is not None:
             bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
-            reply, _ = final_reply(final_args, bad_numbers, bad_nf)
+            reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts)
     except _AgentUnavailable as exc:
         status, error, limit_hit = "failed", str(exc), None
     except _ProviderFailed:

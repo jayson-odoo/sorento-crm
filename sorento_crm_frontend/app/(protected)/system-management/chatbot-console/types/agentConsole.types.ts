@@ -84,8 +84,8 @@ export const AGENT_LIMIT_LABELS: Record<string, string> = {
   error: 'an error',
 };
 
-/** The tool that ends every turn: not a lookup, so it gets no chip. */
-export const AGENT_HIDDEN_TOOLS = new Set(['answer']);
+/** The tools that plan and end a turn: not lookups, so they get no chip. */
+export const AGENT_HIDDEN_TOOLS = new Set(['answer', 'plan']);
 
 export function agentToolLabel(name: string): string {
   return AGENT_TOOL_LABELS[name] ?? name.replace(/^crm_/, '').replace(/_/g, ' ');

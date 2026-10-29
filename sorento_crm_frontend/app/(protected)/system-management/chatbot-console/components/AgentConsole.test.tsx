@@ -208,6 +208,7 @@ describe('AgentConsole', () => {
             { name: 'crm_resolve', status: 'ok' },
             { name: 'crm_products_find', status: 'ok' },
             { name: 'crm_inventory_stock_balance_list', status: 'empty' },
+            { name: 'plan', status: 'ok' },
             { name: 'answer', status: 'ok' },
           ],
         },
@@ -219,5 +220,6 @@ describe('AgentConsole', () => {
     expect(meta).toHaveTextContent('Find products: ok');
     expect(meta).toHaveTextContent('Stock balance: empty');
     expect(meta).not.toHaveTextContent(/answer/i);
+    expect(meta).not.toHaveTextContent(/plan/i);
   });
 });

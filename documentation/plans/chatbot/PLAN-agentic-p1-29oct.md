@@ -447,3 +447,10 @@ hits were reported honestly only 3 of 6 times. Permission violations: 0 of 26 (k
 Round 5c notes: the brand-scope filter on closed-list brands in `crm_resolve` is stricter than `set_brand_scope` (only in-scope brand rows are returned, because brand rows themselves are not filtered by the session criterion). Numbers inside formatted strings back figures (a report's text, "51 (O/S: 36)", "RM 12.50"); UUIDs, dates, identifiers with a letter joined by "-" or "/", and keys never do. Every UUID value in an ok result of this turn is a known id for later calls; the reply text never carries a UUID.
 
 Round 5e: `crm_products_find` is the 11th tool. Its brand and category ids must come from `crm_resolve` (the id rule), the rows are read on the agent session under the chat visibility rule, and its product ids join the ids seen this turn so the stock and incoming tools accept them. A lowercase `may` is a month only when a year follows.
+
+Round 6 (crew re-run 20/30):
+1. `crm_products_find` matches every query word (AND) against code, name, description or remark; exact code first, then code prefix, then by code.
+2. A number is backed when any ok result of this turn holds it (JSON number or inside a string value), or it is the total of a column of returned rows (per key, also per `fields` key of a presenter row); `figures` citations are informational. List markers and section numbers are ignored.
+3. The local `plan` tool (`{parts}`; a later call replaces it; no chip, no digest). `answer` gains `answered`. A planned part neither answered nor named in `not_checked` is appended as "I did not get to: ..."; on a limit every part not answered is listed whatever `not_checked` says. Without a plan the limit sentence is unchanged.
+4. A `crm_resolve` term with exactly one match whose code equals it (case and punctuation folded) is `found`, with the other matches under `variants`; no exact match stays `ambiguous`.
+5. The contact's own Respond id and internal id are replaced by "(id)" in the reply, and their echoes (guard keys and strings) are removed from tool results before the model sees them.
