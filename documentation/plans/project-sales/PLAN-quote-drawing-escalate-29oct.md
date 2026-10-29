@@ -64,49 +64,43 @@ confirm before any code.
 7. Issued (frozen) quotation versions show the same escalated state but are never changed by the
    drawing arriving: the drawing reaches the next revision, as today.
 
-### Examples from dev data (pending: not reachable from the cloud sandbox)
+### Examples from dev data (crew, 29 Oct; 20 Oct prod restore, read-only; counts and codes only)
 
-The dev DB is not reachable from this lane's sandbox, so these are the queries that produce the
-three example sets; crew or the owner runs them and the card is updated with masked rows:
+Rule used is the screen's: typed exactly "Technical Specifications", `image/*`, not deleted.
 
-```sql
--- (a) quotation lines whose product has no drawing (draft versions)
-SELECT q.id AS quotation_version, l.product_code_snapshot
-FROM projects.quotation_lines l
-JOIN projects.quotation_versions q ON q.id = l.version_id
-WHERE l.product_id IS NOT NULL AND l.drawing_attachment_id IS NULL
-  AND NOT EXISTS (
-    SELECT 1 FROM product_attachments pa
-    JOIN attachments a ON a.id = pa.attachment_id
-    JOIN attachment_types t ON t.id = a.attachment_type_id
-    WHERE pa.product_id = l.product_id AND a.is_deleted = false
-      AND a.mime_type ILIKE 'image/%' AND t.type_name = 'Technical Specifications')
-LIMIT 5;
--- (b) the same product missing a drawing on several quotations: (a) grouped by product_id
---     HAVING count(DISTINCT version's quotation) > 1
--- (c) a product whose "drawing" is the wrong kind: a Technical Specifications PDF, or an
---     image of another type whose filename says drawing/spec
-SELECT pa.product_id, a.mime_type, t.type_name
-FROM product_attachments pa JOIN attachments a ON a.id = pa.attachment_id
-LEFT JOIN attachment_types t ON t.id = a.attachment_type_id
-WHERE a.is_deleted = false
-  AND ((t.type_name = 'Technical Specifications' AND a.mime_type NOT ILIKE 'image/%')
-    OR (coalesce(t.type_name,'') <> 'Technical Specifications'
-        AND a.original_filename ~* '(drawing|dwg|spec)'))
-LIMIT 5;
-```
+**Quotation lines (the module is new: 4 lines in the whole DB).**
+- SRTWC286-SH: has a drawing image, the cell shows it. No Escalate.
+- BRAC73080604-0001: no drawing image, no PDF either. Escalate shows.
+- A coupling line on the same quotation: same, Escalate shows.
+- SET SRTWC6405: its driver part SRTWCX6405 has no drawing, so the set line reads "no drawing"
+  through the driver rule (`project_quotation_image_service.line_product_id`) and Escalate files
+  the request for SRTWCX6405, not the set.
+- So 3 of 4 lines would show Escalate; none of them has a PDF drawing.
 
-Case (c) matters: a product with only a PDF drawing shows "no drawing" today and can be
-escalated; the request closes only when an IMAGE typed Technical Specifications arrives (rule 5),
-so marketing either uploads an image or closes it by hand.
+**Same product missing a drawing on several quotations.** Not seen yet on quotations (4 lines),
+but project sales orders show what is coming: of 1,245 products on 910 project SOs, 925 have no
+drawing image, covering 78% of project SO lines. The most-ordered ones (WESERP10B 1,237 lines,
+B2155-NL-BLUE 1,064, C-FH14 663, CB1178A-SS-NEW 414, CB2805A-DIY 401) will each be quoted many
+times, which is what one-request-per-product (Q3) is for: one task per product, many requesters.
+
+**A drawing of the wrong type.** 190 products carry 196 files typed Technical Specifications
+that are PDFs, not images; no image of another type is named like a drawing. Active products
+with a PDF drawing only: 178 of 11,059 without an image (1.6%). They are mostly Sorento SRTWT
+codes, and one PDF is often shared by several variants (SRTWT2215 and SRTWT2216 share one;
+SRTWT6808's covers 6 variants). The cell shows "no drawing" for these today, so Escalate shows;
+the request closes only when an IMAGE arrives (rule 5) or by hand.
+
+**What this means for the questions.** About 3 in 4 quoted lines will lack a drawing, so Escalate
+will be on most lines. Team load and the per-product dedupe (Q1, Q3) matter more than whether a
+PDF counts as a drawing: counting PDFs would clear under 2% of the gap. Catalogue totals: active
+12,435 products, 1,376 with a drawing image, 7,853 with no files at all.
 
 ### Edge cases
 
 - **Two salespeople escalate the same product** (same or different quotations, even at the same
-  second): one open request; the second is recorded as a requester. Race-safe through a partial
-  unique index? No: the form-SLA idempotency check (`form_sla_service.py:899`) is read-then-write;
-  the endpoint takes a row lock on the product (`SELECT ... FOR UPDATE`) around the check so two
-  clicks cannot open two trackers. Tested.
+  second): one open request; the second is recorded as a requester. The form-SLA idempotency
+  check (`form_sla_service.py:899`) is read-then-write, so the endpoint locks the product row
+  (`SELECT ... FOR UPDATE`) around it and two clicks cannot open two trackers. Tested.
 - **Drawing added while the request is open**: closes, every requester notified once (rule 5).
 - **Drawing added, later deleted, product escalated again**: a new request (the old one stays
   closed as history).
