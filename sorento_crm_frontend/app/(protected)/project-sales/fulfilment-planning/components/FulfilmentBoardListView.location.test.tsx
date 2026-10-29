@@ -170,6 +170,7 @@ describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', (
     await waitFor(() => expect(screen.queryByText('SO000001')).not.toBeInTheDocument());
     expect(screen.getByText('SO000002')).toBeInTheDocument();
     expect(screen.getByText('SO000003')).toBeInTheDocument();
+    expect(screen.getByText('Location: BRW-BB, DC1-BB')).toBeInTheDocument();
   });
 
   it('offers No location as a filter option and keeps only those lines', async () => {

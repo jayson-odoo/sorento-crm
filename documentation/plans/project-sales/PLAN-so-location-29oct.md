@@ -1,7 +1,8 @@
 # PLAN-SO-LOCATION: Fulfilment planning shows the SO line's location better
 
-Status: Plan (behaviour card posted as crew-ask, waiting on owner answers). Track: small fix
+Status: Build (on the card's recommended answers while the crew-ask is open). Track: small fix
 (UI on an existing screen, expected diff under 300 lines, no migration, no RBAC change).
+UAC: `so-location-29oct-acceptance-criteria.md`.
 
 Owner, 29 Oct (prod screenshot of /project-sales/fulfilment-planning, List view, "Planning N
 sales orders together"): "this page needs to show the SO line's location better". Example row:
