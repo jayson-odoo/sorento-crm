@@ -40,7 +40,7 @@ def provider_for_model(model: str) -> str:
     return "gemini" if str(model).startswith("gemini") else "openai"
 
 
-def embed_search_texts(texts: list[str], model: str, *, timeout: float | None = None) -> list[list[float]]:
+def embed_search_texts(texts: list[str], model: str, *, timeout: float | None = None, db: Session | None = None) -> list[list[float]]:
     """Embed `texts` with the records-search `model` through the one embedding client (query side of every
     reader). OpenAI uses the settings key; Gemini uses the AI assistant config's key."""
     from app.services import embedding_client
@@ -48,12 +48,16 @@ def embed_search_texts(texts: list[str], model: str, *, timeout: float | None = 
     provider = provider_for_model(model)
     api_key = None
     if provider == "gemini":
-        from app.database import SessionLocal
         from app.services import llm_provider
         from app.services.ai_assistant_service import AIAssistantConfigService
 
-        with SessionLocal() as s:
-            api_key = llm_provider.resolve_api_key(AIAssistantConfigService(s).get(), "gemini")
+        if db is not None:  # the caller's session: no extra connection per call
+            api_key = llm_provider.resolve_api_key(AIAssistantConfigService(db).get(), "gemini")
+        else:
+            from app.database import SessionLocal
+
+            with SessionLocal() as s:
+                api_key = llm_provider.resolve_api_key(AIAssistantConfigService(s).get(), "gemini")
     return embedding_client.embed_texts(texts, provider, model, api_key=api_key, timeout=timeout)
 
 

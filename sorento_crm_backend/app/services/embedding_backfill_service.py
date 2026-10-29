@@ -395,11 +395,48 @@ def _missing_documents(db: Session, model: str):
     )
 
 
-def _count_remaining(db: Session, model: str) -> int:
-    from app.models.embeddings import EmbeddingDocument
+_MISSING_SQL = (
+    "FROM embedding_documents d WHERE d.is_active AND d.source_type = ANY(:keep) "
+    "AND NOT EXISTS (SELECT 1 FROM embedding_chunks c WHERE c.document_id = d.id AND c.model_name = :m AND c.is_current)"
+)
+_FAILS_SQL = "COALESCE((d.metadata->'embed_failures'->>:m)::int, 0)"
 
-    rows = _missing_documents(db, model).with_entities(EmbeddingDocument.metadata_json).all()
-    return sum(1 for (meta,) in rows if _failures(meta, model) < MAX_EMBED_FAILURES)
+
+def _count_remaining(db: Session, model: str) -> int:
+    """Active keep-set documents with no current chunk of `model` that are not given up on (counted in SQL)."""
+    from sqlalchemy import text
+
+    from app.services.embedding_settings import RECORD_KEEP_SET
+
+    return int(
+        db.execute(
+            text(f"SELECT count(*) {_MISSING_SQL} AND {_FAILS_SQL} < :max"),
+            {"keep": sorted(RECORD_KEEP_SET), "m": model, "max": MAX_EMBED_FAILURES},
+        ).scalar()
+        or 0
+    )
+
+
+def count_failed(db: Session, model: str) -> int:
+    """Active keep-set documents given up on for `model` (counted in SQL)."""
+    from sqlalchemy import text
+
+    from app.services.embedding_settings import RECORD_KEEP_SET
+
+    return int(
+        db.execute(
+            text(f"SELECT count(*) {_MISSING_SQL} AND {_FAILS_SQL} >= :max"),
+            {"keep": sorted(RECORD_KEEP_SET), "m": model, "max": MAX_EMBED_FAILURES},
+        ).scalar()
+        or 0
+    )
+
+
+def _counts_against_documents(exc: Exception) -> bool:
+    """Only an error about the documents themselves counts (a 4xx other than auth / rate limit). Auth, rate limit,
+    5xx, a missing key and a dropped connection are not the documents' fault: the run stops uncounted."""
+    status = getattr(exc, "status_code", None)
+    return isinstance(status, int) and 400 <= status < 500 and status not in (401, 403, 429)
 
 
 def failed_documents(db: Session, model: str) -> list[tuple[str, str, int]]:
@@ -455,6 +492,7 @@ def backfill_records(
     embedded = failed = 0
     requests_made = 0
     stopped = False
+    stop_error: list[Exception] = []
 
     def send(group) -> None:
         nonlocal embedded, failed, requests_made, stopped
@@ -467,9 +505,13 @@ def backfill_records(
         texts = [t for _doc, chunks in group for t in chunks]
         try:
             vectors = embed_for_model(db, texts, model)
-        except Exception as exc:  # noqa: BLE001 - counted per document, never fatal to the run
+        except Exception as exc:  # noqa: BLE001
             logger.warning("records backfill request failed (%s): %s", model, exc)
             db.rollback()
+            if not _counts_against_documents(exc):
+                stopped = True
+                stop_error.append(exc)
+                return
             for doc, _chunks in group:
                 meta = dict(doc.metadata_json or {})
                 counts = dict(meta.get("embed_failures") or {})
@@ -536,27 +578,73 @@ def backfill_records(
             break
     if group and not stopped:
         send(group)
+    if stop_error:
+        raise stop_error[0]  # auth / rate / server / key trouble: the job fails visibly, nothing was counted
     remaining = _count_remaining(db, model)
     return BackfillResult(embedded=embedded, failed=failed, remaining=remaining, complete=remaining == 0)
 
 
+MAX_FAILED_SHARE = 0.01
+
+
+def _guard_ready(db: Session, model: str) -> bool:
+    """Every active keep-set document has a current chunk of `model` or is given up on, the model really has
+    current chunks, fewer than 1% of the keep set is given up on, and the setting still names `model`."""
+    from sqlalchemy import text
+
+    from app.services.embedding_settings import RECORD_KEEP_SET, resolve_embedder
+
+    if resolve_embedder(db)[1] != model:
+        return False
+    if _count_remaining(db, model):
+        return False
+    keep = sorted(RECORD_KEEP_SET)
+    has_target = db.execute(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM embedding_chunks c WHERE c.model_name = :m AND c.is_current "
+            "AND c.source_type = ANY(:keep))"
+        ),
+        {"m": model, "keep": keep},
+    ).scalar()
+    if not has_target:
+        return False
+    total = db.execute(
+        text("SELECT count(*) FROM embedding_documents d WHERE d.is_active AND d.source_type = ANY(:keep)"),
+        {"keep": keep},
+    ).scalar() or 0
+    return count_failed(db, model) < MAX_FAILED_SHARE * max(int(total), 1)
+
+
 def apply_search_model_guard(db: Session, model: str) -> bool:
-    """Make `model` the records-search model once every active keep-set document has a current chunk of it
-    (or is given up on). Builds the model's indexes first (CONCURRENTLY, outside any transaction). True when it
-    flipped; False and nothing changed otherwise."""
+    """Make `model` the records-search model once it is safe: `_guard_ready`. Builds the model's indexes first
+    (CONCURRENTLY, outside any transaction; an INVALID index left by an interrupted build is reindexed). True when
+    it flipped; False and nothing changed otherwise."""
     from sqlalchemy import text
 
     from app.models.user import SystemSetting
     from app.services import embedding_indexes
 
-    if _count_remaining(db, model):
+    if not _guard_ready(db, model):
         return False
     statements = embedding_indexes.index_ddl(model)
     if statements:
+        invalid = [
+            r[0]
+            for r in db.execute(
+                text(
+                    "SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid "
+                    "WHERE NOT i.indisvalid AND c.relname = ANY(:n)"
+                ),
+                {"n": list(embedding_indexes.index_names(model).values())},
+            )
+        ]
         db.commit()  # no transaction may be open on this session's connection while another builds the index
         from app.database import engine
 
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("SET maintenance_work_mem = '512MB'"))
+            for name in invalid:
+                conn.execute(text(f'REINDEX INDEX CONCURRENTLY "{name}"'))
             for ddl in statements:
                 conn.execute(text(ddl))
     db.query(SystemSetting).update({"embedding_records_search_model": model})

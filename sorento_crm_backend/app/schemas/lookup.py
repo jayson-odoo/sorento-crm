@@ -97,6 +97,8 @@ class LookupSetResponse(BaseModel):
     is_active: bool
     option_count: int = 0   # populated by service via SQL count(); not an ORM column
     binding_count: int = 0  # populated by service via SQL count(); not an ORM column
+    #: The set's options name master records (`lookup_alias_targets.ALIAS_SET_TARGETS`); the option form picks.
+    alias_set: bool = False
     created_at: datetime
     updated_at: Optional[datetime]
     model_config = ConfigDict(from_attributes=True)

@@ -13,6 +13,7 @@ from app.schemas.lookup import (
     LookupBindingCreate, LookupBindingResponse, LookupBindingDefaultUpdate,
 )
 from app.services.error_handler import handle_internal_error
+from app.services.lookup_alias_targets import is_alias_set
 from app.services.lookup_set_service import LookupSetService
 from app.services.lookup_option_service import LookupOptionService
 from app.services.lookup_binding_service import LookupBindingService
@@ -117,6 +118,7 @@ def _set_to_response(db: Session, s) -> dict:
         "is_active": s.is_active,
         "option_count": opt_count,
         "binding_count": bind_count,
+        "alias_set": is_alias_set(s.set_key),
         "created_at": s.created_at,
         "updated_at": s.updated_at,
     }

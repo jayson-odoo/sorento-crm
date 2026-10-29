@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.lookup import LookupSet, LookupOption, LookupBinding
 from app.schemas.lookup import LookupSetCreate, LookupSetUpdate
 from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.lookup_alias_targets import is_alias_set
 
 
 class LookupSetService:
@@ -49,6 +50,7 @@ class LookupSetService:
                 "is_active": r.is_active,
                 "option_count": opt_counts.get(r.id, 0),
                 "binding_count": bind_counts.get(r.id, 0),
+                "alias_set": is_alias_set(r.set_key),
                 "created_at": r.created_at,
                 "updated_at": r.updated_at,
             })

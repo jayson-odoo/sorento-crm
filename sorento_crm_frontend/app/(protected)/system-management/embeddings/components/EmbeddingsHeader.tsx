@@ -64,8 +64,8 @@ export function EmbeddingsHeader({
         <PageHeader title="Embeddings" actions={cta} />
       </Container>
       <Container>
-        {loading || !overview ? (
-          <Skeleton className="h-14 w-full" />
+        {!overview ? (
+          loading ? <Skeleton className="h-14 w-full" /> : null
         ) : (
           <div className="grid grid-cols-2 gap-4 rounded-lg border border-border p-4 lg:grid-cols-4">
             <Metric label="Embedder">{overview.setting.model}</Metric>

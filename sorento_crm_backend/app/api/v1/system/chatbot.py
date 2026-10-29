@@ -1019,26 +1019,54 @@ def judge_topic_audit_row(
 # LOOKUP-EMBED-CENTRAL: the lookup words behind the Embeddings screen (record side: system/embeddings.py).
 # ---------------------------------------------------------------------------------------------------------------
 class LookupTryBody(BaseModel):
-    phrase: str
+    phrase: str = Field(..., max_length=200)
+
+
+#: A list of people, customers or warehouses is also gated by the permission that opens the master data itself.
+LIST_VIEW_PERMISSIONS = {
+    "customer": "order_management.customers.view",
+    "salesperson": "master_data.sales_agents.view",
+    "location": "inventory.warehouses.view",
+}
+
+
+def _viewable_lists(db: Session, current_user: dict, names) -> set[str]:
+    from app.services.user_service import UserPermissionService
+
+    service = UserPermissionService(db)
+    return {
+        n for n in names
+        if n not in LIST_VIEW_PERMISSIONS or service.check_user_has_permission(current_user["id"], LIST_VIEW_PERMISSIONS[n])
+    }
 
 
 @router.get("/lookup-words", dependencies=[Depends(require_permission("master_data.lookup_sets.view"))])
-def lookup_words(list: str = Query(...), db: Session = Depends(get_db)):
+def lookup_words(
+    list: str = Query(...),
+    current_user: dict = Depends(require_permission("master_data.lookup_sets.view")),
+    db: Session = Depends(get_db),
+):
     from app.services.chatbot.head import lookup_words_view
 
     if list not in lookup_words_view.LIST_NAMES:
         raise HTTPException(status_code=422, detail="Unknown lookup list")
+    if list not in _viewable_lists(db, current_user, [list]):
+        raise HTTPException(status_code=403, detail=f"Permission required: {LIST_VIEW_PERMISSIONS[list]}")
     return lookup_words_view.words_of_list(db, list)
 
 
-@router.post("/lookup-words/try", dependencies=[Depends(require_permission("master_data.lookup_sets.view"))])
-def lookup_words_try(body: LookupTryBody, db: Session = Depends(get_db)):
+@router.post("/lookup-words/try")
+def lookup_words_try(
+    body: LookupTryBody,
+    current_user: dict = Depends(require_permission("master_data.lookup_sets.view")),
+    db: Session = Depends(get_db),
+):
     from app.services.chatbot.head import lookup_words_view
 
     phrase = (body.phrase or "").strip()
     if not phrase:
         raise HTTPException(status_code=422, detail="phrase is required")
-    return lookup_words_view.try_phrase(db, phrase)
+    return lookup_words_view.try_phrase(db, phrase, _viewable_lists(db, current_user, lookup_words_view.LIST_NAMES))
 
 
 @router.post(

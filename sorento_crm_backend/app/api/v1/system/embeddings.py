@@ -102,7 +102,17 @@ def backfill_embeddings(
 # LOOKUP-EMBED-CENTRAL: the Embeddings screen's record side (the lookup-word side lives on the chatbot doorway).
 # ---------------------------------------------------------------------------------------------------------------
 RECORDS_BACKFILL_STOP_KEY = "lec:records_backfill:stop"
+RECORDS_BACKFILL_RUNNING_KEY = "lec:records_backfill:running"
 STOP_FLAG_SECONDS = 3600
+
+
+def _backfill_running() -> bool:
+    from app.services import queue_service
+
+    try:
+        return bool(queue_service.redis_conn.get(RECORDS_BACKFILL_RUNNING_KEY))
+    except Exception:  # noqa: BLE001 - no Redis, no running job to show
+        return False
 
 
 @router.get("/overview", dependencies=[Depends(require_permission("master_data.lookup_sets.view"))])
@@ -148,6 +158,7 @@ def embeddings_overview(db: Session = Depends(get_db)):
     ):
         chunks.setdefault(source_type, {})[model_name] = int(n)
     remaining = backfill._count_remaining(db, model)
+    failed = backfill.count_failed(db, model)
     return {
         "setting": {"provider": provider, "model": model, "backfill_rpm": int(rpm)},
         "records_search_model": records_search_model(db),
@@ -160,7 +171,8 @@ def embeddings_overview(db: Session = Depends(get_db)):
             "target_model": model,
             "ready": remaining == 0,
             "remaining": remaining,
-            "failed": len(backfill.failed_documents(db, model)),
+            "failed": failed,
+            "running": _backfill_running(),
         },
     }
 
@@ -172,7 +184,7 @@ class RecordsBackfillBody(BaseModel):
 @router.post(
     "/records-backfill",
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_permission("master_data.lookup_sets.edit"))],
+    dependencies=[Depends(require_permission("system.settings.update"))],
 )
 def records_backfill(body: RecordsBackfillBody):
     # Looked up at call time: the queue and its Redis connection are patched in tests and never bound here.

@@ -64,7 +64,7 @@ def resolve_via_embedding_then_ilike(
             from app.services.embedding_settings import embed_search_texts, records_search_model
 
             model = records_search_model(db)
-            vec = embed_search_texts([term], model, timeout=20)[0]
+            vec = embed_search_texts([term], model, timeout=20, db=db)[0]
             hits = EmbeddingReadService(db).search_current(
                 vec, source_type=source_type, top_k=top_k
             )

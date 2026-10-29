@@ -1436,67 +1436,29 @@ class AIAssistantChatService:
         enabled_tools: list[str],
         top_k: int,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Top-K MCP tool candidates by embedding similarity on the reformulated query."""
-        logger.info(
-            "AI assistant RAG started query_len=%s enabled_tools=%s top_k=%s",
-            len(standalone_query or ""),
-            len(enabled_tools),
-            top_k,
-        )
-        embed_started = time.perf_counter()
-        query_embedding = self._embed_query(standalone_query)
-        logger.info(
-            "AI assistant embedding generated elapsed_ms=%.1f",
-            (time.perf_counter() - embed_started) * 1000,
-        )
+        """Top-K enabled MCP tools by keyword overlap with the reformulated query.
 
-        search_started = time.perf_counter()
-        candidates = EmbeddingReadService(self.db).search_tool_candidates(
-            query_embedding,
-            query=standalone_query,
-            top_k=max(top_k, 5),
-            include_planned=False,
-        )
-        logger.info(
-            "AI assistant tool candidates fetched count=%s elapsed_ms=%.1f",
-            len(candidates),
-            (time.perf_counter() - search_started) * 1000,
-        )
-        if enabled_tools:
-            allowed = set(enabled_tools)
-            candidates = [c for c in candidates if str(c.get("tool_name")) in allowed]
-            logger.info("AI assistant candidates filtered by enabled tools remaining=%s", len(candidates))
-        # Deterministic single-tool resolution (K=top_k, default 1): the top-`top_k`
-        # candidates are BOUND to the agent; each carries is_current=True.
-        selected_tools = candidates[:top_k]
-        for c in selected_tools:
-            c["is_current"] = True
-        logger.info(
-            "AI assistant selected tools=%s",
-            [
-                {
-                    "tool_name": c.get("tool_name"),
-                    "score": c.get("score"),
-                    "is_current": c.get("is_current"),
-                    "missing_params": c.get("missing_params") or [],
-                    "why_selected": (str(c.get("why_selected") or "")[:120]),
-                }
-                for c in selected_tools
-            ],
-        )
-        # Sources describe ONLY the bound tool(s) - they are injected into the
-        # agent prompt, so listing unbound runners-up here would advertise tools
-        # the agent can't call. Each bound source is is_current=True.
+        Tool vectors are no longer maintained (the keep set holds records only), so this no longer embeds the
+        query or reads tool chunks: a tool is ranked by how many of its name words the query shares.
+        """
+        words = {w for w in re.findall(r"[a-z0-9]+", (standalone_query or "").lower()) if len(w) >= 3}
+        ranked: list[tuple[int, str]] = []
+        for name in enabled_tools:
+            overlap = len(words & {w for w in re.findall(r"[a-z0-9]+", str(name).lower()) if len(w) >= 3})
+            if overlap:
+                ranked.append((overlap, str(name)))
+        ranked.sort(key=lambda r: (-r[0], r[1]))
+        selected_tools = [
+            {"tool_name": name, "score": float(overlap), "why_selected": "keyword overlap", "is_current": True,
+             "chunk_text": "", "missing_params": []}
+            for overlap, name in ranked[:top_k]
+        ]
         sources = [
-            {
-                "title": c.get("tool_name"),
-                "chunk_text": c.get("chunk_text"),
-                "score": c.get("score"),
-                "why_selected": c.get("why_selected"),
-                "is_current": True,
-            }
+            {"title": c["tool_name"], "chunk_text": c["chunk_text"], "score": c["score"],
+             "why_selected": c["why_selected"], "is_current": True}
             for c in selected_tools
         ]
+        logger.info("AI assistant selected tools by keyword=%s", [c["tool_name"] for c in selected_tools])
         return selected_tools, sources
 
     # ---------- Agent loop (OpenAI function calling → MCP tools) ----------

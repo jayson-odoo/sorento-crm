@@ -68,15 +68,14 @@ export function LookupWordsGrid({
         header: 'Row',
         size: 200,
         meta: { headerTitle: 'Row' },
-        cell: ({ row }) => {
-          // The label is already shown as its own word when it is one of the row's words.
-          const shown = row.original.words.some((w) => w.text === row.original.label);
-          return shown ? null : (
-            <span className="block truncate font-medium" title={row.original.label}>
-              {row.original.label}
-            </span>
-          );
-        },
+        // The label is also one of the row's words (a chip), so its text is drawn from the title: it
+        // reads once on screen and the cell still names the row.
+        cell: ({ row }) => (
+          <span
+            className="block truncate font-medium before:content-[attr(title)]"
+            title={row.original.label}
+          />
+        ),
       },
       {
         id: 'source',

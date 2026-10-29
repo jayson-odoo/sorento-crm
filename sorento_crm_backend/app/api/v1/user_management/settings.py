@@ -220,7 +220,7 @@ class SystemSettingUpdate(BaseModel):
     # above - they must appear HERE and in the GET dict, because both are manual. The records-search
     # model is deliberately NOT a field: only the guard writes it.
     embedding_provider: Optional[Literal["openai", "gemini"]] = None
-    embedding_model: Optional[str] = Field(None, max_length=128)
+    embedding_model: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9._-]{1,128}$")
     embedding_backfill_rpm: Optional[int] = Field(None, ge=1, le=600)
 
 
@@ -1131,10 +1131,13 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     if embedder_changed:
         # A new lookup embedder re-embeds the records in the background; the guard flips the search model
         # only once every document has a vector of the new model.
-        from app.services import queue_service
-        from app.tasks.embedding_backfill import run_records_backfill
+        try:
+            from app.services import queue_service
+            from app.tasks.embedding_backfill import run_records_backfill
 
-        queue_service.enqueue_job(run_records_backfill, queue_name="imports")
+            queue_service.enqueue_job(run_records_backfill, queue_name="imports")
+        except Exception:  # noqa: BLE001 - the save stands; the backfill can be started from the Embeddings screen
+            logging.getLogger(__name__).warning("embedding backfill could not be queued after a settings save", exc_info=True)
     if "chatbot_composer_enabled" in update_data:
         from app.modules.chatbot.lane_vocabulary import clear_composer_cache
 

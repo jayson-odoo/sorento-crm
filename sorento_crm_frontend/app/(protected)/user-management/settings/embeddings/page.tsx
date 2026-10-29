@@ -34,14 +34,15 @@ export default function EmbeddingsSettingsPage() {
   const [rpm, setRpm] = useState<string>('');
   const [loaded, setLoaded] = useState(false);
 
+  // Prefill waits for the overview to settle: a setting never saved shows the embedder that actually runs.
   useEffect(() => {
-    if (settings.data && !loaded) {
-      setProvider(settings.data.embedding_provider);
-      setModel(settings.data.embedding_model);
+    if (settings.data && !overview.isLoading && !loaded) {
+      setProvider(settings.data.embedding_provider ?? overview.data?.setting.provider ?? 'openai');
+      setModel(settings.data.embedding_model ?? overview.data?.setting.model ?? 'text-embedding-3-small');
       setRpm(String(settings.data.embedding_backfill_rpm));
       setLoaded(true);
     }
-  }, [settings.data, loaded]);
+  }, [settings.data, overview.isLoading, overview.data, loaded]);
 
   const modelOptions = useMemo(() => {
     const names = new Set([...(MODELS[provider] ?? []), ...(model ? [model] : [])]);
@@ -54,9 +55,10 @@ export default function EmbeddingsSettingsPage() {
   if (!loaded) return <Skeleton className="h-64 w-full" />;
 
   const rpmError = wholeNumberRangeError(rpm, 1, 600);
-  const o = overview.data;
+  const o = overview.isError ? undefined : overview.data; // no overview (403 or failure): the form stands alone
+  const searchModel = settings.data?.embedding_records_search_model ?? null;
   const targetChunks = o?.records.reduce((s, r) => s + (r.chunks_by_model[o.setting.model] ?? 0), 0) ?? 0;
-  const searchChunks = o?.records.reduce((s, r) => s + (r.chunks_by_model[o.records_search_model] ?? 0), 0) ?? 0;
+  const searchChunks = o?.records.reduce((s, r) => s + (r.chunks_by_model[searchModel ?? o.records_search_model] ?? 0), 0) ?? 0;
   const pct = o && searchChunks > 0 ? Math.min(100, Math.round((targetChunks / searchChunks) * 100)) : 0;
 
   return (
@@ -94,31 +96,29 @@ export default function EmbeddingsSettingsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="space-y-3 py-5 text-sm">
-          {overview.isLoading || !o ? (
-            <Skeleton className="h-10 w-full" />
-          ) : (
-            <>
-              <div className="flex flex-wrap items-baseline gap-x-3">
-                <span className="w-32 text-muted-foreground">Lookup words</span>
-                <span>
-                  {num(o.lookup.texts_with_vector)} / {num(o.lookup.texts_total)} with a {o.setting.model} vector
-                </span>
-              </div>
+      {o ? (
+        <Card>
+          <CardContent className="space-y-3 py-5 text-sm">
+            <div className="flex flex-wrap items-baseline gap-x-3">
+              <span className="w-32 text-muted-foreground">Lookup words</span>
+              <span>
+                {num(o.lookup.texts_with_vector)} / {num(o.lookup.texts_total)} with a {o.setting.model} vector
+              </span>
+            </div>
+            {searchModel ? (
               <div className="flex flex-wrap items-baseline gap-x-3">
                 <span className="w-32 text-muted-foreground">Record search</span>
                 <span>
-                  {o.records_search_model}
-                  {o.records_search_model !== o.setting.model
+                  {searchModel}
+                  {searchModel !== o.setting.model
                     ? ` · moves to ${o.setting.model} at 100% · ${num(targetChunks)} / ${num(searchChunks)} · ${pct}%`
                     : ''}
                 </span>
               </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="flex justify-end">
         <Button

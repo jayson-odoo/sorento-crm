@@ -16,7 +16,7 @@ export interface EmbeddingsOverview {
   records_search_model: string;
   lookup: { texts_total: number; texts_with_vector: number };
   records: { source_type: string; documents: number; chunks_by_model: Record<string, number> }[];
-  guard: { target_model: string; ready: boolean; remaining: number; failed: number };
+  guard: { target_model: string; ready: boolean; remaining: number; failed: number; running?: boolean };
 }
 
 export interface LookupWord {

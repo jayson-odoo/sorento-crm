@@ -9,20 +9,34 @@ from sqlalchemy.orm import Session
 
 
 def _attachment_types(db: Session) -> list[dict]:
+    """Both ways an option may key a type: its name and its code."""
     from app.models.resources import AttachmentType
 
-    rows = db.query(AttachmentType.type_name).filter(AttachmentType.type_name.isnot(None)).order_by(AttachmentType.type_name).all()
-    return [{"value": n, "label": n} for (n,) in rows if n and n.strip()]
+    rows = db.query(AttachmentType.code, AttachmentType.type_name).order_by(AttachmentType.type_name).all()
+    out: dict[str, dict] = {}
+    for code, name in rows:
+        if name and name.strip():
+            out.setdefault(name.casefold(), {"value": name, "label": name})
+        if code and code.strip():
+            out.setdefault(code.casefold(), {"value": code, "label": f"{code} ({name})" if name else code})
+    return list(out.values())
 
 
 def _brands(db: Session) -> list[dict]:
-    from sqlalchemy import select
+    """Brand codes of the caller's companies (the session's scope), plus the shared ones."""
+    from sqlalchemy import or_, select
 
+    from app.models.base import get_company_scope
     from app.models.product import Brand
 
-    # Core select: an alias set is shared across companies, so its targets are every brand code, not the viewer's.
     t = Brand.__table__
-    rows = db.execute(select(t.c.brand_code, t.c.brand_name).where(t.c.brand_code.isnot(None)).order_by(t.c.brand_code)).all()
+    query = select(t.c.brand_code, t.c.brand_name).where(t.c.brand_code.isnot(None)).order_by(t.c.brand_code)
+    scope = get_company_scope(db)
+    if isinstance(scope, frozenset):
+        query = query.where(or_(t.c.company_id.in_(list(scope)), t.c.company_id.is_(None)))
+    elif scope is not None:
+        return []  # unresolved scope: fail closed
+    rows = db.execute(query).all()
     return [{"value": code, "label": f"{name} ({code})" if name else code} for code, name in rows if code and code.strip()]
 
 

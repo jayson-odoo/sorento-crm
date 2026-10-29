@@ -21,7 +21,7 @@ from app.services.embedding_service import EmbeddingReadService
 router = APIRouter()
 
 
-def _embed_query(query: str, model: str | None = None) -> list[float]:
+def _embed_query(query: str, model: str | None = None, db: Session | None = None) -> list[float]:
     from app.services import llm_cassette
 
     if llm_cassette.mode() == "replay":
@@ -29,11 +29,13 @@ def _embed_query(query: str, model: str | None = None) -> list[float]:
         from app.services.embedding_worker import _embed_text_chunks
 
         return _embed_text_chunks([query])[0]
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Embedding provider not configured")
-    from app.services.embedding_settings import embed_search_texts
+    from app.services.embedding_settings import embed_search_texts, provider_for_model
 
-    vector = embed_search_texts([query], model or settings.embedding_model_name, timeout=20)[0]
+    model = model or settings.embedding_model_name
+    # The key that matters is the search model's provider's: a gemini search model needs no OpenAI key.
+    if provider_for_model(model) == "openai" and not settings.openai_api_key:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Embedding provider not configured")
+    vector = embed_search_texts([query], model, timeout=20, db=db)[0]
     if not vector:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Embedding provider returned empty vector")
     return vector
@@ -51,7 +53,8 @@ def semantic_search(
 
     from app.services.embedding_settings import records_search_model
 
-    query_embedding = _embed_query(query, records_search_model(db))
+    search_model = records_search_model(db)
+    query_embedding = _embed_query(query, search_model, db)
     rows = EmbeddingReadService(db).search_current(
         query_embedding,
         top_k=body.top_k,
@@ -78,7 +81,7 @@ def semantic_search(
     ]
     return EmbeddingSearchResponse(
         data=data,
-        model=settings.embedding_model_name,
+        model=search_model,
         dimensions=settings.embedding_dimensions,
     )
 
@@ -89,20 +92,5 @@ def tool_search(
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
-    query = (body.query or "").strip()
-    if not query:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
-    query_embedding = _embed_query(query)
-    rows = EmbeddingReadService(db).search_tool_candidates(
-        query_embedding,
-        query=query,
-        top_k=body.top_k,
-        include_planned=body.include_planned,
-        category=body.category,
-        implementation_status=body.implementation_status,
-    )
-    return ToolRagSearchResponse(
-        data=[ToolRagResultItem(**r) for r in rows],
-        model=settings.embedding_model_name,
-        dimensions=settings.embedding_dimensions,
-    )
+    # Tool vectors are retired (the keep set holds records only): nothing to embed, nothing to rank.
+    return ToolRagSearchResponse(data=[], model=settings.embedding_model_name, dimensions=settings.embedding_dimensions)

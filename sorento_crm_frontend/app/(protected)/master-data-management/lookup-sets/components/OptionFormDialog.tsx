@@ -13,20 +13,21 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useAliasTargets, useCreateOption, useUpdateOption } from '../hooks/useLookupSets';
 import type { LookupKeyword, LookupOption } from '../types/lookup.types';
 
-/** The sets whose option value is picked from master records (`lookup_alias_targets.ALIAS_SET_TARGETS`). */
-export const ALIAS_SET_KEYS: ReadonlySet<string> = new Set([
+/** Fallback for a caller that has not read the set's `alias_set` flag yet. */
+const KNOWN_ALIAS_KEYS: ReadonlySet<string> = new Set([
   'attachment_type_alias',
   'brand_alias',
   'sales_channel_alias',
 ]);
 
 export default function OptionFormDialog({
-  open, onOpenChange, setId, setKey, editing,
+  open, onOpenChange, setId, setKey, aliasSet, editing,
 }: {
   open: boolean; onOpenChange: (o: boolean) => void;
-  setId: string; setKey?: string; editing?: LookupOption | null;
+  setId: string; setKey?: string; aliasSet?: boolean; editing?: LookupOption | null;
 }) {
-  const isAlias = !!setKey && ALIAS_SET_KEYS.has(setKey);
+  // The lookup set API says whether it is an alias set; the key list only covers a caller without the flag.
+  const isAlias = aliasSet ?? (!!setKey && KNOWN_ALIAS_KEYS.has(setKey));
   const targets = useAliasTargets(setId, isAlias && open);
   const create = useCreateOption(setId);
   const update = useUpdateOption(setId);

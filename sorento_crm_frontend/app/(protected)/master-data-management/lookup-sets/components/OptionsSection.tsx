@@ -11,7 +11,7 @@ import OptionFormDialog from './OptionFormDialog';
 import type { LookupOption } from '../types/lookup.types';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
-export default function OptionsSection({ setId, setKey }: { setId: string; setKey?: string }) {
+export default function OptionsSection({ setId, setKey, aliasSet }: { setId: string; setKey?: string; aliasSet?: boolean }) {
   const { data: options, isLoading } = useOptions(setId);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<LookupOption | null>(null);
@@ -84,7 +84,7 @@ export default function OptionsSection({ setId, setKey }: { setId: string; setKe
             </ScrollArea>
           )}
       </CardContent>
-      <OptionFormDialog open={formOpen} onOpenChange={setFormOpen} setId={setId} setKey={setKey} editing={editing} />
+      <OptionFormDialog open={formOpen} onOpenChange={setFormOpen} setId={setId} setKey={setKey} aliasSet={aliasSet} editing={editing} />
     </Card>
   );
 }

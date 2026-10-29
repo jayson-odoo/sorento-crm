@@ -6,8 +6,9 @@ import { extractApiError } from '@/lib/api-client';
  * general settings route. `embedding_records_search_model` is read-only here: only the backend guard changes it.
  */
 export interface EmbeddingSettings {
-  embedding_provider: string;
-  embedding_model: string;
+  /** null: the setting was never saved; the resolved embedder (overview) stands in. */
+  embedding_provider: string | null;
+  embedding_model: string | null;
   embedding_records_search_model: string | null;
   embedding_backfill_rpm: number;
 }
@@ -17,22 +18,17 @@ export type EmbeddingSettingsInput = Pick<
   'embedding_provider' | 'embedding_model' | 'embedding_backfill_rpm'
 >;
 
-const DEFAULTS: EmbeddingSettings = {
-  embedding_provider: 'openai',
-  embedding_model: 'text-embedding-3-small',
-  embedding_records_search_model: null,
-  embedding_backfill_rpm: 20,
-};
+const DEFAULT_RPM = 20;
 
 export async function getEmbeddingSettings(): Promise<EmbeddingSettings> {
   const response = await apiFetch('/api/user-management/settings');
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load settings'));
   const row = (await response.json())?.settings ?? {};
   return {
-    embedding_provider: row.embedding_provider ?? DEFAULTS.embedding_provider,
-    embedding_model: row.embedding_model ?? DEFAULTS.embedding_model,
+    embedding_provider: row.embedding_provider ?? null,
+    embedding_model: row.embedding_model ?? null,
     embedding_records_search_model: row.embedding_records_search_model ?? null,
-    embedding_backfill_rpm: row.embedding_backfill_rpm ?? DEFAULTS.embedding_backfill_rpm,
+    embedding_backfill_rpm: row.embedding_backfill_rpm ?? DEFAULT_RPM,
   };
 }
 

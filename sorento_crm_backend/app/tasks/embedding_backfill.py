@@ -22,12 +22,29 @@ def _stop_requested() -> bool:
         return False
 
 
+RECORDS_BACKFILL_RUNNING_KEY = "lec:records_backfill:running"
+
+
+def _set_running(on: bool) -> None:
+    """The Stop button shows only while this flag is up (expires on its own if the worker dies)."""
+    try:
+        from app.services import queue_service
+
+        if on:
+            queue_service.redis_conn.set(RECORDS_BACKFILL_RUNNING_KEY, "1", ex=6 * 3600)
+        else:
+            queue_service.redis_conn.delete(RECORDS_BACKFILL_RUNNING_KEY)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def run_records_backfill(model: str | None = None) -> dict:
     from app.models.embeddings import EmbeddingDocument  # noqa: F401  (mapper registration)
     from app.services.embedding_backfill_service import apply_search_model_guard, backfill_records
     from app.services.embedding_settings import resolve_embedder
 
     db = SessionLocal()
+    _set_running(True)
     try:
         if model is None:
             _provider, model = resolve_embedder(db)
@@ -42,5 +59,6 @@ def run_records_backfill(model: str | None = None) -> dict:
             "remaining": result.remaining, "flipped": flipped,
         }
     finally:
+        _set_running(False)
         db.close()
 

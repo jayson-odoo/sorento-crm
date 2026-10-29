@@ -269,6 +269,8 @@ class EmbeddingReadService:
         )
         # Only the records-search model's vectors are comparable with the query. The predicate is repeated
         # as literal text (never a bind parameter) so the planner can match it to the partial HNSW index.
+        if source_type and source_type not in RECORD_KEEP_SET:
+            return []  # lookup words, dropped sources and tool vectors are never served as records
         model = records_search_model(self.db)
         chunk_filters = [
             literal_column(f"embedding_chunks.model_name = {embedding_indexes._quote(model)}"),

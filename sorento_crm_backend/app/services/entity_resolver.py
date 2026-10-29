@@ -2942,6 +2942,15 @@ def _search_seam(model: str):
 _SEARCH_SEAMS: dict[str, Any] = {}
 
 
+def _iterative_scan_for(db: Session, source_types) -> None:
+    """A read narrowed to sources that have no index of their own is post-filtered from the keep-set index: let the
+    scan keep going until enough rows survive."""
+    from app.services.embedding_settings import HOT_FILTERED_SOURCES
+
+    if any(t not in HOT_FILTERED_SOURCES for t in source_types):
+        db.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
+
+
 def _in_list_sql(values) -> str:
     return ", ".join("'" + str(v).replace("'", "''") + "'" for v in values)
 
@@ -3097,6 +3106,7 @@ def _tier3_embedding_lookup(
         # otherwise leaves the whole transaction aborted - every later
         # query in the request would die on InFailedSqlTransaction.
         with db.begin_nested():
+            _iterative_scan_for(db, allowed_types)
             rows = db.execute(
                 sql, {"vec": list(query_vec), **scope_params}
             ).all()
@@ -6075,6 +6085,7 @@ def _rag_resolve_phrase(
         # otherwise leaves the whole transaction aborted - every later
         # query in the request would die on InFailedSqlTransaction.
         with db.begin_nested():
+            _iterative_scan_for(db, allowed_source_types)
             rows = db.execute(
                 sql,
                 {"vec": list(query_vec), "k": top_k, **scope_params},

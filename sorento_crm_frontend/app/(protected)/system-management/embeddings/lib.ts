@@ -33,3 +33,16 @@ export const sourceName = (source: string) => {
   const text = source.replace(/_/g, ' ');
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
+
+/**
+ * Arrow-key tab switching that takes effect on the key press itself (Radix moves focus a tick later and activates on
+ * focus; this picks the same neighbour at once, so the view never lags the keyboard).
+ */
+export function arrowTabs(values: string[], current: string, change: (value: string) => void) {
+  return (event: { key: string }) => {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    const at = values.indexOf(current);
+    change(values[(at + step + values.length) % values.length]);
+  };
+}

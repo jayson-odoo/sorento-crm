@@ -17,7 +17,7 @@ import {
   useRecordsBackfill,
   useTryPhrase,
 } from './hooks/useEmbeddings';
-import { LIST_TABS } from './lib';
+import { LIST_TABS, arrowTabs } from './lib';
 
 /** System > Embeddings: every lookup word and business record the system embeds, and its vector. */
 export default function EmbeddingsPage() {
@@ -42,8 +42,13 @@ export default function EmbeddingsPage() {
         backfillPending={backfill.isPending}
       />
       <Container className="space-y-5">
-        <Tabs value={mode}>
-          <TabsList variant="line">
+        {overview.isError ? (
+          <p className="text-sm text-destructive">
+            {overview.error instanceof Error ? overview.error.message : 'Could not load embeddings.'}
+          </p>
+        ) : null}
+        <Tabs value={mode} onValueChange={(v) => setMode(v as EmbeddingsMode)}>
+          <TabsList variant="line" onKeyDown={arrowTabs(['lookup', 'records'], mode, (v) => setMode(v as EmbeddingsMode))}>
             <TabsTrigger value="lookup" onClick={() => setMode('lookup')}>
               Lookup words
             </TabsTrigger>
@@ -60,8 +65,8 @@ export default function EmbeddingsPage() {
               pending={tryPhrase.isPending}
               onTry={(phrase) => tryPhrase.mutate(phrase)}
             />
-            <Tabs value={list}>
-              <TabsList variant="line">
+            <Tabs value={list} onValueChange={setList}>
+              <TabsList variant="line" onKeyDown={arrowTabs(LIST_TABS.map((t) => t.value), list, setList)}>
                 {LIST_TABS.map((t) => (
                   <TabsTrigger key={t.value} value={t.value} onClick={() => setList(t.value)}>
                     {t.label}
@@ -78,11 +83,13 @@ export default function EmbeddingsPage() {
           </>
         ) : overview.data ? (
           <>
-            <div className="flex justify-end">
-              <Button variant="outline" onClick={() => backfill.mutate({ action: 'stop' })} disabled={backfill.isPending}>
-                Stop
-              </Button>
-            </div>
+            {overview.data.guard.running ? (
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={() => backfill.mutate({ action: 'stop' })} disabled={backfill.isPending}>
+                  Stop
+                </Button>
+              </div>
+            ) : null}
             <RecordsGrid overview={overview.data} />
           </>
         ) : null}

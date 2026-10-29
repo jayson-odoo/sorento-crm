@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.services.chatbot.head import candidates, list_resolver, lookup_lists as ll, lookup_word_store
+from app.services.chatbot.head import lookup_lists as ll, lookup_word_store, span_extract
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +46,7 @@ def _stored_texts(db: Session, model: str) -> set[str]:
     return {t for (t,) in rows}
 
 
-def _home(row: ll.LookupRow, text: str) -> str | None:
-    if not row.homes:
-        return None
-    try:
-        return row.homes[row.texts.index(text)]
-    except (ValueError, IndexError):
-        return None
+_home = span_extract.word_home
 
 
 def words_of_list(db: Session, list_name: str) -> dict[str, Any]:
@@ -78,81 +72,15 @@ def words_of_list(db: Session, list_name: str) -> dict[str, Any]:
     return {"list": list_name, "rows": rows}
 
 
-def _best_text(row: ll.LookupRow, scores: dict[str, float]) -> dict[str, Any]:
-    if not scores:
-        return {"score": 0.0, "text": None, "home": None}
-    text, score = max(scores.items(), key=lambda kv: kv[1])
-    return {"score": round(float(score), 4), "text": text, "home": _home(row, text)}
-
-
-def try_phrase(db: Session, phrase: str) -> dict[str, Any]:
+def try_phrase(db: Session, phrase: str, allowed_lists: set[str] | None = None) -> dict[str, Any]:
+    """`allowed_lists` limits the rows the phrase is tried against (the lists the caller may view)."""
     from app.services.embedding_settings import resolve_embedder
 
     model = resolve_embedder(db)[1]
-    rows = _rows(db)
+    rows = [r for r in _rows(db) if allowed_lists is None or r.list_name in allowed_lists]
     try:
         lookup_word_store.load_lookup_vectors(db, model)
     except Exception:  # noqa: BLE001 - the embedder below covers what is not stored
         logger.warning("lookup try: stored vectors not loaded", exc_info=True)
     embed = ll.embedder(db)
-    span = list_resolver.Span(phrase)
-    verdict = list_resolver.resolve([span], rows, embed=embed)[0].status
-
-    folded = ll._fold(phrase)
-    grams = candidates.trigrams(folded)
-    indexes = list_resolver._prepare(rows)
-    meaning = None
-    if embed is not None and indexes:
-        texts = sorted({t[1] for ix in indexes.values() for t in ix.texts})
-        meaning = ll._meaning(embed, [phrase], texts, any_model=True)
-
-    pool: list[tuple[bool, float, dict[str, Any]]] = []
-    for name, index in indexes.items():
-        floors = {**list_resolver.FLOORS.get(name, list_resolver._FLOORS_OTHER)}
-        floors["meaning"] = list_resolver._meaning_floor(embed, name)
-        scored = list_resolver._score_list(index, folded, grams)
-        per_row_spell: dict[int, dict[str, float]] = {}
-        per_row_vec: dict[int, dict[str, float]] = {}
-        for i, text, f, g, _w in index.texts:
-            spell = 1.0 if f == folded else candidates.similarity(grams, g)
-            if spell > 0:
-                per_row_spell.setdefault(i, {})[text] = spell
-            if meaning is not None:
-                pidx, tidx, sim = meaning
-                per_row_vec.setdefault(i, {})[text] = float(sim[pidx[phrase], tidx[text]])
-        for i, row in enumerate(index.rows):
-            s = scored.get(i)
-            spell = s.spell if s else 0.0
-            partial = s.partial if s else 0.0
-            vec = per_row_vec.get(i, {})
-            best_vec = max(vec.values()) if vec else 0.0
-            if floors["meaning"] > 1.0:
-                best_vec = 0.0
-            if not (spell > 0 or partial > 0 or best_vec > 0):
-                continue
-            passed = spell >= floors["spell"] or partial >= floors["partial"] or best_vec >= floors["meaning"]
-            signals = (
-                ("exact" if s and s.exact else "spell", spell),
-                ("partial", partial if partial >= floors["partial"] else 0.0),
-                ("meaning", best_vec),
-            )
-            signal, score = max(signals, key=lambda x: x[1])
-            pool.append(
-                (
-                    passed,
-                    score,
-                    {
-                        "list": name,
-                        "key": row.key,
-                        "label": row.label,
-                        "spelling": _best_text(row, per_row_spell.get(i, {})),
-                        "vector": _best_text(row, vec) if meaning is not None else None,
-                        "partial": round(float(partial), 4),
-                        "floors": {k: round(float(v), 4) for k, v in floors.items()},
-                        "passed": bool(passed),
-                        "signal": signal,
-                    },
-                )
-            )
-    pool.sort(key=lambda k: (not k[0], -k[1]))
-    return {"verdict": verdict, "candidates": [c for _p, _s, c in pool[:TRY_LIMIT]]}
+    return span_extract.explain_phrase(phrase, rows, embed)
