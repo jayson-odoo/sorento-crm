@@ -235,6 +235,8 @@ def test_ac_lec_20_an_unknown_list_is_422(client, allow):
 @pytest.mark.parametrize("name", ["category", "spec", "file_type", "brand", "promotion_kind", "location", "salesperson", "customer", "sales_channel"])
 def test_ac_lec_20_every_named_list_is_accepted(client, db, allow, name):
     allow.add(VIEW)
+    # F-3: the lists of customers, people and warehouses also need their own module's view permission
+    allow.update({"order_management.customers.view", "master_data.sales_agents.view", "inventory.warehouses.view"})
     _setting(db)
     assert _words(client, name)["list"] == name
 
@@ -245,6 +247,7 @@ def test_ac_lec_20_a_customer_of_another_company_is_not_listed_for_a_scoped_user
     from app.services.company_scope import set_company_scope
 
     allow.add(VIEW)
+    allow.add("order_management.customers.view")  # F-3
     _setting(db)
     set_company_scope(db, None)
     a = Company(id=str(uuid.uuid4()), name="ZZT5 A", code=f"Z5A{uuid.uuid4().hex[:5]}")

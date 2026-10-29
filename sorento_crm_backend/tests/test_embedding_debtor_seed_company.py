@@ -72,7 +72,7 @@ def _vectors(seed: int) -> tuple[list[float], list[float]]:
     return q, near
 
 
-def _seed_chunk(db, source_id: str, key: str, company_id, vec, source_type: str = "customer") -> None:
+def _seed_chunk(db, source_id: str, key: str, company_id, vec, source_type: str = "promotion") -> None:
     h = hashlib.sha256(f"{source_type}:{source_id}".encode()).hexdigest()
     doc = EmbeddingDocument(
         source_type=source_type,
@@ -233,7 +233,7 @@ def test_worker_refuses_a_seed_whose_company_has_no_such_debtor(db, world):
 # ------------------------------------------------------------- search under a company scope
 
 
-def _seed_both(db, world, source_type: str = "customer") -> None:
+def _seed_both(db, world, source_type: str = "promotion") -> None:
     # B holds the EXACT vector, A the close one: an unscoped ranking puts B first.
     _seed_chunk(db, debtor_seed_id(world["a"], world["code"]), f"debtor:{world['code']}", world["a"], world["near"], source_type)
     _seed_chunk(db, debtor_seed_id(world["b"], world["code"]), f"debtor:{world['code']}", world["b"], world["q"], source_type)
@@ -243,7 +243,7 @@ def test_rag_search_returns_own_company_seed_only(db, world):
     """`/external/rag/search`: red before the fix (every seed dropped under a scope)."""
     _seed_both(db, world)
     set_company_scope(db, frozenset({world["a"]}))
-    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="customer")
+    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="promotion")
     ids = {c.source_id for c, _, _ in rows}
     assert debtor_seed_id(world["a"], world["code"]) in ids
     assert debtor_seed_id(world["b"], world["code"]) not in ids
@@ -252,7 +252,7 @@ def test_rag_search_returns_own_company_seed_only(db, world):
 def test_rag_search_unset_scope_returns_no_seed(db, world):
     _seed_both(db, world)
     set_company_scope(db, UNSET)
-    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="customer")
+    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="promotion")
     assert not [c for c, _, _ in rows if c.source_id.startswith("debtor:")]
 
 
@@ -261,7 +261,7 @@ def test_rag_search_never_returns_a_company_less_debtor_seed(db, world):
     is not shared knowledge: no company scope sees it."""
     _seed_chunk(db, f"debtor:{world['code']}", f"debtor:{world['code']}", None, world["q"])
     set_company_scope(db, frozenset({world["a"]}))
-    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="customer")
+    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="promotion")
     assert f"debtor:{world['code']}" not in {c.source_id for c, _, _ in rows}
 
 

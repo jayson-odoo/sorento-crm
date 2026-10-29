@@ -114,7 +114,10 @@ def emb_data(db):
     from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
 
     suffix = uuid.uuid4().hex[:8]
-    source_type = f"zzemb_{suffix}"
+    # F-1: search_current serves keep-set sources only, so the rows are `promotion`; the unique source_id prefix
+    # isolates them and `_search` keeps only those.
+    marker = f"zzemb_{suffix}"
+    source_type = "promotion"
     company_a = Company(id=str(uuid.uuid4()), name=f"ZZEMB A {suffix}", code=f"EA{suffix}")
     company_b = Company(id=str(uuid.uuid4()), name=f"ZZEMB B {suffix}", code=f"EB{suffix}")
     db.add_all([company_a, company_b])
@@ -123,7 +126,7 @@ def emb_data(db):
 
     vec = [0.1] * 1536
     for tag, company_id in (("a", a), ("b", b), ("shared", None)):
-        source_id = f"{source_type}:{tag}"
+        source_id = f"{marker}:{tag}"
         doc = EmbeddingDocument(
             source_type=source_type,
             source_id=source_id,
@@ -157,7 +160,7 @@ def emb_data(db):
             )
         )
     db.flush()
-    return {"a": a, "b": b, "source_type": source_type, "vec": vec}
+    return {"a": a, "b": b, "source_type": source_type, "marker": marker, "vec": vec}
 
 
 def _search(db, emb_data, scope):
@@ -168,7 +171,7 @@ def _search(db, emb_data, scope):
         rows = EmbeddingReadService(db).search_current(
             emb_data["vec"], top_k=10, source_type=emb_data["source_type"]
         )
-    return {chunk.company_id for chunk, _doc, _sim in rows}
+    return {chunk.company_id for chunk, _doc, _sim in rows if chunk.source_id.startswith(emb_data["marker"])}
 
 
 def test_scoped_search_returns_in_scope_plus_shared_only(db, emb_data):

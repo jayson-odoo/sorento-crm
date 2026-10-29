@@ -41,8 +41,9 @@ def db():
 class Transport:
     """Stub of httpx.Client.send. `fail_models` answer HTTP 500; every request is recorded."""
 
-    def __init__(self, fail_models=()):
+    def __init__(self, fail_models=(), fail_status=500):
         self.fail_models = set(fail_models)
+        self.fail_status = fail_status
         self.requests: list[tuple[str, list[str]]] = []  # (model, texts)
 
     def send(self, request):
@@ -56,7 +57,7 @@ class Transport:
             texts = list(body["input"])
         self.requests.append((model, texts))
         if model in self.fail_models:
-            return httpx.Response(500, json={"error": "zzt provider down"}, request=request)
+            return httpx.Response(self.fail_status, json={"error": "zzt provider down"}, request=request)
         vecs = [pad(1.0, 0.1 * (i % 7)) for i, _ in enumerate(texts)]
         if "batchEmbedContents" in url:
             return httpx.Response(200, json={"embeddings": [{"values": v} for v in vecs]}, request=request)
@@ -76,8 +77,8 @@ def transport(monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", "zzt-openai", raising=False)
     monkeypatch.setattr(settings, "gemini_api_key", "zzt-gemini", raising=False)
 
-    def make(fail_models=()):
-        t = Transport(fail_models)
+    def make(fail_models=(), fail_status=500):
+        t = Transport(fail_models, fail_status)
         monkeypatch.setattr(httpx.Client, "send", lambda self, request, **kw: t.send(request))
         return t
 
@@ -272,7 +273,8 @@ def test_ac_lec_13_a_failing_request_counts_per_document_and_three_failures_mark
     from app.services.embedding_backfill_service import failed_documents
 
     a, b = _doc(db, 1), _doc(db, 2)
-    t = transport(fail_models=[GEM])
+    # F-4: only a per-document error (a 4xx other than 401 / 403 / 429) counts against its documents; a 5xx would not
+    t = transport(fail_models=[GEM], fail_status=400)
     for run in (1, 2):
         _backfill(db, GEM)
         db.expire_all()
@@ -368,6 +370,9 @@ def test_ac_lec_14_a_failed_document_does_not_block_the_flip_and_is_listed(db, d
     from app.services.embedding_backfill_service import apply_search_model_guard, failed_documents
 
     _setting(db, provider="gemini", model=GEM, search=M3S)
+    # F-4: a failed document does not block the flip while failed ones are under 1% of the keep set
+    for n in range(100, 300):
+        _chunk(db, _doc(db, n), GEM)
     _chunk(db, _doc(db, 1), GEM)
     bad = _doc(db, 2, failures={GEM: 3})
     assert apply_search_model_guard(db, GEM) is True

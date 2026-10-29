@@ -40,13 +40,21 @@ def allow():
 
 
 @pytest.fixture
-def client(db, allow, monkeypatch):
+def scope():
+    """The company scope the request runs under (F-10: brand targets follow it and fail closed when unresolved)."""
+    return {"value": None}
+
+
+@pytest.fixture
+def client(db, allow, scope, monkeypatch):
     from fastapi.testclient import TestClient
 
     from app.database import get_db
     from app.dependencies import get_current_user, get_current_user_or_api_key
     from app.main import app
     from app.models.user import User
+    from app.services.company_scope import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
     from app.services.user_service import UserPermissionService
 
     user = User(
@@ -64,10 +72,16 @@ def client(db, allow, monkeypatch):
     app.dependency_overrides[get_db] = _db
     app.dependency_overrides[get_current_user] = lambda: who
     app.dependency_overrides[get_current_user_or_api_key] = lambda: who
+
+    def _scope():
+        set_company_scope(db, scope["value"])
+        return scope["value"]
+
+    app.dependency_overrides[apply_company_scope] = _scope
     try:
         yield TestClient(app)
     finally:
-        for dep in (get_db, get_current_user, get_current_user_or_api_key):
+        for dep in (get_db, get_current_user, get_current_user_or_api_key, apply_company_scope):
             app.dependency_overrides.pop(dep, None)
 
 
@@ -151,7 +165,7 @@ def test_ac_lec_19_overview_shape(client, db, allow):
     assert set(records) <= KEEP and "order" not in records and "lookup_word" not in records
     assert records["promotion"]["documents"] == 3
     assert records["promotion"]["chunks_by_model"] == {M3S: 2, GEM: 1}
-    assert body["guard"] == {"target_model": GEM, "ready": False, "remaining": 1, "failed": 1}
+    assert body["guard"] == {"target_model": GEM, "ready": False, "remaining": 1, "failed": 1, "running": False}
 
 
 def test_ac_lec_19_overview_has_a_row_for_every_keep_set_source(client, db, allow):
@@ -187,7 +201,7 @@ def test_ac_lec_22_records_backfill_needs_the_edit_permission(client, allow, job
 def test_ac_lec_22_start_enqueues_run_records_backfill_and_returns_at_once(client, allow, jobs):
     from app.tasks.embedding_backfill import run_records_backfill
 
-    allow.add(EDIT)
+    allow.add("system.settings.update")  # F-4: the same permission as the existing /backfill
     calls, _redis = jobs
     resp = client.post(BACKFILL, json={"action": "start"})
     assert resp.status_code == 202, resp.text
@@ -196,7 +210,7 @@ def test_ac_lec_22_start_enqueues_run_records_backfill_and_returns_at_once(clien
 
 
 def test_ac_lec_22_stop_sets_the_stop_flag_and_enqueues_nothing(client, allow, jobs):
-    allow.add(EDIT)
+    allow.add("system.settings.update")  # F-4: the same permission as the existing /backfill
     calls, redis = jobs
     resp = client.post(BACKFILL, json={"action": "stop"})
     assert resp.status_code == 202, resp.text
@@ -205,7 +219,7 @@ def test_ac_lec_22_stop_sets_the_stop_flag_and_enqueues_nothing(client, allow, j
 
 
 def test_ac_lec_22_an_unknown_action_is_422(client, allow, jobs):
-    allow.add(EDIT)
+    allow.add("system.settings.update")  # F-4: the same permission as the existing /backfill
     assert client.post(BACKFILL, json={"action": "restart"}).status_code == 422
 
 
