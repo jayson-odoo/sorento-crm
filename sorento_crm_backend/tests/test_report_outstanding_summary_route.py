@@ -34,6 +34,10 @@ def _rows(rows):
     return [(r["name"], r["qty"], money(r["amount"])) for r in rows]
 
 
+def _group(summary, axis):
+    return next(g["rows"] for g in summary["groups"] if g["axis"] == axis)
+
+
 # ================================================================ pending delivery (the prod turn's kind)
 
 
@@ -45,9 +49,9 @@ def test_pending_delivery_for_a_product_carries_the_summary_with_by_location_and
     assert s["documents"] == 2, s
     assert (s["qty"], money(s["amount"])) == (3, D("300.00")), s
     assert (s["date_first"], s["date_last"]) == ("2026-08-15", "2026-09-10"), s
-    assert _rows(s["by_location"]) == [(w.w2.warehouse_code, 3, D("300.00"))], s
-    assert s["second"] == "customer", s
-    assert _rows(s["by_second"]) == [(w.c1.customer_name, 3, D("300.00"))], s
+    assert [g["axis"] for g in s["groups"]] == ["location", "customer"], s
+    assert _rows(_group(s, "location")) == [(w.w2.warehouse_code, 3, D("300.00"))], s
+    assert _rows(_group(s, "customer")) == [(w.c1.customer_name, 3, D("300.00"))], s
     # The summary is the total's own population.
     assert (body["total"]["qty"], money(body["total"]["amount"])) == (s["qty"], money(s["amount"]))
 
@@ -59,11 +63,11 @@ def test_pending_delivery_for_a_customer_breaks_down_by_product(client, db):
     s = body["summary"]
     assert s["documents"] == 2, s
     assert (s["qty"], money(s["amount"])) == (6, D("600.00")), s
-    assert sorted(_rows(s["by_location"])) == sorted(
+    assert sorted(_rows(_group(s, "location"))) == sorted(
         [(w.w1.warehouse_code, 3, D("300.00")), (w.w2.warehouse_code, 3, D("300.00"))]
     ), s
-    assert s["second"] == "product", s
-    assert sorted(_rows(s["by_second"])) == sorted(
+    assert [g["axis"] for g in s["groups"]] == ["location", "product"], s
+    assert sorted(_rows(_group(s, "product"))) == sorted(
         [(w.pa.product_code, 3, D("300.00")), (w.pc.product_code, 3, D("300.00"))]
     ), s
 
@@ -74,8 +78,8 @@ def test_pending_delivery_naming_product_and_customer_has_by_location_only(clien
         client, _staff(db), basis="pending_delivery", product_ids=[w.pc.id], customer_ids=[w.c1.id], period=None
     )
     s = body["summary"]
-    assert s["second"] is None and s["by_second"] == [], s
-    assert _rows(s["by_location"]) == [(w.w2.warehouse_code, 3, D("300.00"))], s
+    assert [g["axis"] for g in s["groups"]] == ["location"], s
+    assert _rows(_group(s, "location")) == [(w.w2.warehouse_code, 3, D("300.00"))], s
 
 
 def test_a_period_narrows_the_summary_like_the_total(client, db):
@@ -104,9 +108,8 @@ def test_undelivered_orders_for_a_customer_carry_ordered_and_the_open_lines_only
     assert s["documents"] == 2, s
     assert (s["ordered_qty"], s["qty"], money(s["amount"])) == (15, 11, D("1100.00")), s
     assert (s["date_first"], s["date_last"]) == ("2026-08-05", "2026-09-20"), s
-    assert [(r["name"], r["ordered_qty"], r["qty"]) for r in s["by_location"]] == [(wh.warehouse_code, 15, 11)], s
-    assert s["second"] == "product", s
-    assert [(r["name"], r["ordered_qty"], r["qty"]) for r in s["by_second"]] == [
+    assert [(r["name"], r["ordered_qty"], r["qty"]) for r in _group(s, "location")] == [(wh.warehouse_code, 15, 11)], s
+    assert [(r["name"], r["ordered_qty"], r["qty"]) for r in _group(s, "product")] == [
         (p1.product_code, 10, 6), (p2.product_code, 5, 5)
     ], s
 
@@ -126,11 +129,9 @@ def test_a_brand_alone_is_a_filter_not_a_subject(client, db):
     assert body.get("summary") is None, body
 
 
-def test_a_breakdown_carries_no_summary(client, db):
-    w = _pending_world(db)
-    body = _ok(
-        client, _staff(db), basis="pending_delivery", product_ids=[w.pc.id], group_by="customer", top_n=10, period=None
-    )
+def test_a_breakdown_with_no_subject_carries_no_summary(client, db):
+    _pending_world(db)
+    body = _ok(client, _staff(db), basis="pending_delivery", group_by="customer", top_n=10, period=None)
     assert body.get("summary") is None, body
 
 
@@ -152,3 +153,66 @@ def test_pending_delivery_groups_by_delivery_order(client, db):
     )
     assert body["group_by"] == "delivery_order", body
     assert len(body["rows"]) == 2 and sum(r["qty"] for r in body["rows"]) == 3, body["rows"]
+
+
+# ================================================================ owner 29 Oct: pending delivery without the reveal
+
+
+from tests.test_report_unify_outstanding_bases import _ask, _holder  # noqa: E402
+from tests._sales_report_do_seed import _link  # noqa: E402
+
+
+def test_office_staff_without_the_outstanding_reveal_see_pending_delivery_but_not_undelivered_orders(client, db):
+    """Owner 29 Oct (#b6e9): pre-#1922 the DO half needed no reveal and the SO half needed `sales_orders.outstanding`.
+    An office contact with no reveal at all sees every pending delivery; undelivered orders and unpaid stay refused."""
+    w = _pending_world(db)
+    contact = _holder(db)  # office, no reveal
+    body = _ok(client, contact, basis="pending_delivery", product_ids=[w.pc.id], period=None)
+    assert body["total"]["qty"] == 3 and _group(body["summary"], "customer"), body
+    for basis in ("outstanding", "unpaid"):
+        resp = _ask(client, contact, basis=basis, period=None)
+        assert resp.status_code == 403 and resp.json()["code"] == "outstanding_not_enabled", (basis, resp.text)
+
+
+def test_a_linked_contact_without_the_reveal_sees_only_its_own_pending_delivery(client, db):
+    w = _pending_world(db)
+    contact = _holder(db, office=False)
+    _link(db, contact, w.c1)
+    db.commit()
+    body = _ok(client, contact, basis="pending_delivery", period=None)
+    assert body["total"]["qty"] == 6, body  # C1 only (pA 3, pC 2 + 1); C2's 9 is not its own
+    assert _ask(client, contact, basis="pending_delivery", customer_ids=[w.c2.id], period=None).status_code == 403
+
+
+def test_an_unlinked_non_staff_contact_without_the_reveal_is_still_refused_pending_delivery(client, db):
+    """Never every customer's deliveries to a contact the company does not know (V1-DOC-SCOPE's own rule)."""
+    _pending_world(db)
+    contact = _holder(db, office=False)
+    resp = _ask(client, contact, basis="pending_delivery", period=None)
+    assert resp.status_code == 403 and resp.json()["code"] == "outstanding_not_enabled", resp.text
+
+
+# ================================================================ owner 29 Oct Q2: the user's own axes and filters win
+
+
+def test_a_named_axis_replaces_the_default_breakdowns(client, db):
+    """"pC outstanding by salesperson": the summary keeps its totals and breaks down by sales agent only."""
+    w = _pending_world(db)
+    body = _ok(
+        client, _staff(db), basis="pending_delivery", product_ids=[w.pc.id], group_by="sales_agent", top_n=1000,
+        period=None,
+    )
+    s = body["summary"]
+    assert (s["documents"], s["qty"]) == (2, 3), s
+    assert [g["axis"] for g in s["groups"]] == ["sales_agent"], s
+    assert _rows(s["groups"][0]["rows"]) == [(w.a1.sales_agent, 3, D("300.00"))], s
+
+
+def test_a_named_location_filter_drops_by_location(client, db):
+    """"pC outstanding only W2": the location is the user's filter, so By location (one row naming it back) goes."""
+    w = _pending_world(db)
+    body = _ok(
+        client, _staff(db), basis="pending_delivery", product_ids=[w.pc.id], warehouse_codes=[w.w2.warehouse_code],
+        period=None,
+    )
+    assert [g["axis"] for g in body["summary"]["groups"]] == ["customer"], body["summary"]
