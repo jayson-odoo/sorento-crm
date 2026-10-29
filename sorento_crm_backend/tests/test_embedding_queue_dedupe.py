@@ -81,19 +81,17 @@ def test_every_embedded_field_is_a_column_of_its_model():
     """A misspelt field would silently never count as a change."""
     from app.models.certificate import Certificate
     from app.models.marketing import Promotion, PromotionAttachment, PromotionProduct
-    from app.models.order import Customer, OrderLine, Transporter
-    from app.models.procurement import (
-        InboundShipment, InboundShipmentLine, PickingHeader, PickingLine, SPOAllocation,
-    )
+    from app.models.order import Customer, Transporter
+    from app.models.procurement import InboundShipment, PickingHeader, SPOAllocation
     from app.models.product import Product, ProductAttachment
 
     models = {
         "product": Product, "promotion": Promotion, "promotion_product": PromotionProduct,
         "promotion_attachment": PromotionAttachment, "product_attachment": ProductAttachment,
-        "inbound_shipment": InboundShipment, "inbound_shipment_line": InboundShipmentLine,
-        "spo_allocation": SPOAllocation, "picking_header": PickingHeader, "picking_line": PickingLine,
+        "inbound_shipment": InboundShipment,
+        "spo_allocation": SPOAllocation, "picking_header": PickingHeader,
         "certificate": Certificate, "order": Order, "order_status": OrderStatus,
-        "order_line": OrderLine, "customer": Customer, "transporter": Transporter,
+        "customer": Customer, "transporter": Transporter,
     }
     assert set(EMBEDDED_FIELDS) == set(models)
     for source_type, model in models.items():
@@ -251,7 +249,9 @@ def two_sessions():
     conns, sessions = [], []
     for _ in range(2):
         conn = engine.connect()
-        conn.exec_driver_sql(f'SET search_path TO "{name}"')
+        # public after the scratch schema: app listeners (lookup validation) read their own
+        # tables from there, while embedding_queue resolves to the scratch copy.
+        conn.exec_driver_sql(f'SET search_path TO "{name}", public')
         # A broken lock fails the test instead of hanging it.
         conn.exec_driver_sql("SET statement_timeout = '5s'")
         conn.commit()
@@ -266,6 +266,9 @@ def two_sessions():
         for conn in conns:
             conn.exec_driver_sql("RESET search_path")
             conn.exec_driver_sql("RESET statement_timeout")
+            # SET is transactional: without the commit the pool's rollback would undo the
+            # RESET and hand the next test a connection pointed at the dropped schema.
+            conn.commit()
             conn.close()
         admin.exec_driver_sql(f'DROP SCHEMA "{name}" CASCADE')
         admin.close()
@@ -530,7 +533,10 @@ def test_poll_takes_mcp_tool_first_then_oldest_up_to_the_batch(db, monkeypatch):
 def test_poll_pick_reads_the_pending_poll_index(db):
     from app.models.embeddings import EMBEDDING_QUEUE_POLL_PRIORITY
 
+    # Only an index whose leading expression matches the ORDER BY can avoid both; on a tiny
+    # table the planner would otherwise happily sort.
     db.execute(text("SET LOCAL enable_seqscan = off"))
+    db.execute(text("SET LOCAL enable_sort = off"))
     plan = "\n".join(
         r[0]
         for r in db.execute(

@@ -858,7 +858,7 @@ def _quiet_backfill(db: Session, on: bool):
     added = _ORDER_AUDIT_ENTITY not in skip
     skip.add(_ORDER_AUDIT_ENTITY)
     try:
-        with suppress_embedding_events("order", "order_line"):
+        with suppress_embedding_events("order"):
             yield
     finally:
         if added:

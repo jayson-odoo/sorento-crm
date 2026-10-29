@@ -947,6 +947,83 @@ def dedupe_pending_embedding_queue(
     return {"rows_skipped": skipped_total, "batches": batches}
 
 
+def retire_dropped_embedding_types(db: Session, *, batch_size: int = 5000, max_batches: int = 20) -> dict:
+    """Take the source types no longer embedded (DROPPED_SOURCE_TYPES) out of search and queue.
+
+    Deactivates their documents (kept, not deleted: search already requires `is_active`) and
+    skips their pending queue rows. Batched, each batch committed, at most `max_batches` per
+    run. The `is_active` filter is what makes it correct and resumable; the keyset over the
+    unique (source_type, source_id) index only keeps one run from rescanning its own batches
+    (a later run re-walks the documents earlier runs switched off, a bounded cost paid until
+    `done`). `done` is True when a run finished with nothing left; the caller stops then.
+    """
+    from sqlalchemy import select
+
+    from app.services.embedding_change_listener import DROPPED_SOURCE_TYPES, DROPPED_TYPE_ERROR
+
+    deactivated = skipped = batches = 0
+    capped = False
+    for source_type in sorted(DROPPED_SOURCE_TYPES):
+        last = ""
+        while True:
+            if batches >= max_batches:
+                capped = True
+                break
+            rows = (
+                db.query(EmbeddingDocument.id, EmbeddingDocument.source_id)
+                .filter(
+                    EmbeddingDocument.source_type == source_type,
+                    EmbeddingDocument.source_id > last,
+                    EmbeddingDocument.is_active.is_(True),
+                )
+                .order_by(EmbeddingDocument.source_id)
+                .limit(batch_size)
+                .all()
+            )
+            if not rows:
+                break
+            deactivated += (
+                db.query(EmbeddingDocument)
+                .filter(EmbeddingDocument.id.in_([r.id for r in rows]))
+                .update({"is_active": False}, synchronize_session=False)
+            )
+            db.commit()
+            batches += 1
+            last = rows[-1].source_id
+            if len(rows) < batch_size:
+                break
+    while not capped:
+        if batches >= max_batches:
+            capped = True
+            break
+        # SKIP LOCKED: a row the worker is claiming is skipped by the worker itself.
+        pending = (
+            select(EmbeddingQueue.id)
+            .where(
+                EmbeddingQueue.status == "pending",
+                EmbeddingQueue.source_type.in_(sorted(DROPPED_SOURCE_TYPES)),
+            )
+            .limit(batch_size)
+            .with_for_update(skip_locked=True)
+        )
+        n = (
+            db.query(EmbeddingQueue)
+            .filter(EmbeddingQueue.id.in_(pending))
+            .update(
+                {"status": "skipped", "processed_at": datetime.utcnow(), "last_error": DROPPED_TYPE_ERROR},
+                synchronize_session=False,
+            )
+        )
+        db.commit()
+        if not n:
+            break
+        batches += 1
+        skipped += n
+        if n < batch_size:
+            break
+    return {"documents_deactivated": deactivated, "queue_rows_skipped": skipped, "done": not capped}
+
+
 def _get_embedding_worker():
     # Imported lazily to avoid circular imports.
     from app.services.embedding_worker import process_embedding_queue_item

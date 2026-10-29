@@ -235,11 +235,18 @@ def _run_embedding_db_queue_fallback(db, max_jobs_per_run: int) -> dict:
     return {"processed": processed}
 
 
+# Set once retire_dropped_embedding_types reports nothing left. Nothing can create an active
+# document of a dropped type any more, so a process restart costs at most one more scan.
+_DROPPED_TYPES_RETIRED = False
+
+
 def _handler_embedding_queue_prune(db, task):
     """Delete completed/skipped embedding_queue rows past the retention window, in batches.
 
-    Also the retry path for the pending-only indexes: one the deploy could not build in its
-    time budget is rebuilt here, in the daily retry hour only (a catalog read otherwise).
+    Also takes the source types no longer embedded out of search until that is done
+    (EMBED-DROP-LINE-TYPES), and is the retry path for the pending-only indexes: one the
+    deploy could not build in its time budget is rebuilt here, in the daily retry hour only
+    (a catalog read otherwise).
     """
     from app.database import engine
     from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes, missing_indexes
@@ -257,6 +264,13 @@ def _handler_embedding_queue_prune(db, task):
         batch_size=settings.embedding_queue_prune_batch_size,
         max_batches=settings.embedding_queue_prune_max_batches,
     )
+    global _DROPPED_TYPES_RETIRED
+    if not _DROPPED_TYPES_RETIRED:
+        from app.services import embedding_service
+
+        retired = embedding_service.retire_dropped_embedding_types(db)
+        _DROPPED_TYPES_RETIRED = bool(retired.get("done"))
+        result = {**result, "dropped_types": retired}
     return {**result, "indexes": indexes}
 
 

@@ -13,9 +13,9 @@ from sqlalchemy import event, select
 from app.models.certificate import Certificate
 from app.models.embeddings import EmbeddingQueue
 from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment
-from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
+from app.models.procurement import InboundShipment, SPOAllocation, PickingHeader
 from app.models.product import Product, ProductAttachment
-from app.models.order import Order, OrderStatus, OrderLine
+from app.models.order import Order, OrderStatus
 
 
 _REGISTERED = False
@@ -60,7 +60,6 @@ EMBEDDED_FIELDS: dict[str, tuple[str, ...]] = {
         "shipment_number", "shipment_status", "shipment_date", "estimated_arrival_date", "notes",
         "supplier_id", "access_levels", "company_id",
     ),
-    "inbound_shipment_line": ("shipment_id", "product_id", "quantity_shipped", "line_status", "batch_number", "company_id"),
     "spo_allocation": (
         "spo_number", "inbound_shipment_id", "product_id", "allocated_quantity", "receipt_status",
         "warehouse_id", "storage_zone_id", "retired_at", "quantity_received", "company_id",
@@ -68,17 +67,12 @@ EMBEDDED_FIELDS: dict[str, tuple[str, ...]] = {
     "picking_header": (
         "picking_number", "spo_number", "picking_status", "inspection_status", "notes", "picking_type", "company_id",
     ),
-    "picking_line": (
-        "picking_header_id", "product_id", "quantity_expected", "quantity_picked", "picked_condition",
-        "spo_allocation_id", "company_id",
-    ),
     "certificate": ("scheme", "certificate_number", "certifying_body", "issuer", "title", "status", "company_id"),
     "order": (
         "order_number", "debtor_name", "salesman", "order_type", "transporter", "remarks",
         "order_status_id", "is_cancelled", "company_id",
     ),
     "order_status": ("status_code", "status_name", "description", "sequence", "is_final_status"),
-    "order_line": ("order_id", "product_id", "warehouse_id", "quantity", "unit_price", "line_sequence", "company_id"),
     "customer": ("customer_code", "customer_name", "country", "company_id"),
     "transporter": ("code", "name", "company_id"),
 }
@@ -99,6 +93,12 @@ def embedded_fields_changed(target, source_type: str) -> bool:
     state = sa_inspect(target)
     attrs = state.attrs
     return any(name in attrs and attrs[name].history.has_changes() for name in fields)
+
+
+# No longer embedded (EMBED-DROP-LINE-TYPES): no reader uses them and their text is UUIDs and
+# quantities. A queued row of one is skipped and its document deactivated.
+DROPPED_SOURCE_TYPES = frozenset({"inbound_shipment_line", "order_line", "picking_line"})
+DROPPED_TYPE_ERROR = "source type no longer embedded"
 
 
 # last_error on a pending row retired because a newer row of the same source covers it.
@@ -382,17 +382,14 @@ def register_embedding_change_listeners() -> None:
     _attach_listeners(Promotion, "promotion")
     _attach_listeners(PromotionProduct, "promotion_product")
     _attach_listeners(InboundShipment, "inbound_shipment")
-    _attach_listeners(InboundShipmentLine, "inbound_shipment_line")
     _attach_listeners(SPOAllocation, "spo_allocation")
     _attach_listeners(PickingHeader, "picking_header")
-    _attach_listeners(PickingLine, "picking_line")
     _attach_listeners(ProductAttachment, "product_attachment")
     _attach_listeners(Product, "product")
     _attach_listeners(PromotionAttachment, "promotion_attachment")
     _attach_listeners(Certificate, "certificate")
     _attach_listeners(Order, "order")
     _attach_listeners(OrderStatus, "order_status")
-    _attach_listeners(OrderLine, "order_line")
     # TCK-2026-000026
     from app.models.order import Customer, Transporter
     _attach_listeners(Customer, "customer")
