@@ -1914,7 +1914,9 @@ class FulfilmentBoardService:
             .exists()
         )
         records = (
-            self.db.query(SalesOrderLine, SalesOrder, ProjectSalesOrderLine, Product, User)
+            self.db.query(
+                SalesOrderLine, SalesOrder, ProjectSalesOrderLine, Product, User, Warehouse
+            )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(
                 ProjectSalesOrderLine,
@@ -1922,6 +1924,8 @@ class FulfilmentBoardService:
             )
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(User, User.id == SalesOrderLine.cancelled_by_id)
+            # PLAN-SO-LOCATION: the List view's Location column reads these rows too.
+            .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status.in_(["open", "closed"]),
@@ -1945,7 +1949,7 @@ class FulfilmentBoardService:
             {str(order.customer_id) for _cl, order, *_r in records if order.customer_id}
         )
         rows: List[_Row] = []
-        for core_line, order, project_line, product, user in records:
+        for core_line, order, project_line, product, user, warehouse in records:
             customer_id = str(order.customer_id) if order.customer_id else None
             autocount = by_cancel_doc.get(str(core_line.id))
             rows.append(
@@ -1967,6 +1971,8 @@ class FulfilmentBoardService:
                     qty_delivered=delivered_qty_of(core_line),
                     required_date=core_line.required_date,
                     warehouse_id=str(core_line.warehouse_id) if core_line.warehouse_id else None,
+                    location=warehouse.warehouse_code if warehouse else None,
+                    location_name=warehouse.warehouse_name if warehouse else None,
                     bucket_key=NO_DATE_BUCKET,
                     cancelled=True,
                     # Always set: the screen reads a set `cancelled_at` as committed, never

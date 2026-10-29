@@ -90,3 +90,15 @@ Filters menu next to Status. No new component, no mock needed for A beyond this 
    payload is the complete set, not a server page. Recommend the new column sorts the same way;
    moving the whole board to server sorting is a separate lane.
 5. Grid view: leave as is (cells already show location pills)? Recommend leave.
+
+## Build notes
+
+- Review round 1 (NOT READY, 1 blocker) fixed: cancelled lines (`_crm_cancelled_rows`) now carry
+  the location too (B1, test `test_c8b_a_cancelled_line_still_names_its_location`); the Saved
+  empty state counts the Location filter (S1); the board owns the Location filter so it survives
+  a Grid/List switch (S3); a picked code stays an option (N1); "No location" truncates with a
+  title (browser pass note 1).
+- Known gap, not widened here (S2): "Save all suggested (N)" in the List view acts on every line
+  the kind cards leave, ignoring the List's Status and Location filters. The Status filter already
+  had this gap before this lane. Fix both together in their own lane if the owner wants it.
+- Browser pass (seeded cloud sandbox, made-up data): `evidence/so-location/EVIDENCE.md`.

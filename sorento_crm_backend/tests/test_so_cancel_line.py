@@ -719,6 +719,24 @@ def test_c8_board_contribution_reads_cancelled_with_who_when_why(api):
     assert str(world.eling) not in str(row["cancelled_by"])  # a name, never the id
 
 
+def test_c8b_a_cancelled_line_still_names_its_location(api):
+    """PLAN-SO-LOCATION (review B1): the List view's Location column reads cancelled rows
+    too, so a cancelled line at a warehouse must not read as "No location"."""
+    client, world = api
+    w = _cb_world(world)
+    core_a, mirror_a, product_a = w["a"]
+    _confirm_all(client, w["order"], **_cancel_body(mirror_a))
+
+    board = _board(client, w["core_so"])
+
+    row = next(
+        c for c in board["contributions"] if c["item_code"] == product_a.product_code
+    )
+    assert row["cancelled"] is True
+    assert row["fulfilment_location"] == world.own_wh.warehouse_code
+    assert row["fulfilment_location_name"] == world.own_wh.warehouse_name
+
+
 # ---------------------------------------------------------------- AC-C10 / C11 ingest
 
 from .test_ingest_documents import (  # noqa: E402

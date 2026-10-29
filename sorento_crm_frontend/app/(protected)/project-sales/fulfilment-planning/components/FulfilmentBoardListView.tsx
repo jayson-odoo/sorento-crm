@@ -179,6 +179,8 @@ export interface FulfilmentBoardListViewProps {
   search?: { value: string; onChange: (next: string) => void; placeholder: string };
   /** The Status filter's state, when the board owns it (shared with the grid view). */
   status?: { value: string[]; onChange: (next: string[]) => void };
+  /** The Location filter (PLAN-SO-LOCATION), controlled by the board when handed in, else local. */
+  location?: { value: string[]; onChange: (next: string[]) => void };
   /**
    * The Saved | All toggle (owner hand test, 1 Oct 2026), drawn after the search box. Saved = the
    * lines Confirm sends, All = every line. Omitted, the list
@@ -211,6 +213,7 @@ export function FulfilmentBoardListView({
   attachmentsByLine = {},
   search,
   status,
+  location,
   scope,
 }: FulfilmentBoardListViewProps) {
   /**
@@ -245,8 +248,13 @@ export function FulfilmentBoardListView({
   const setStatusFilter = status?.onChange ?? setLocalStatusFilter;
   // PLAN-SO-LOCATION: the SO line's own location, several at once. List view only - the grid
   // already names each cell's locations in its pill strip.
-  const [locationFilter, setLocationFilter] = React.useState<string[]>([]);
-  const locationOptions = React.useMemo(() => locationFilterOptions(contributions), [contributions]);
+  const [localLocationFilter, setLocalLocationFilter] = React.useState<string[]>([]);
+  const locationFilter = location?.value ?? localLocationFilter;
+  const setLocationFilter = location?.onChange ?? setLocalLocationFilter;
+  const locationOptions = React.useMemo(
+    () => locationFilterOptions(contributions, locationFilter),
+    [contributions, locationFilter],
+  );
   const filteredContributions = React.useMemo(
     () =>
       contributions.filter(
@@ -685,7 +693,11 @@ export function FulfilmentBoardListView({
               {code}
             </span>
           ) : (
-            <span className="text-destructive" data-testid={`board-list-location-${key}`}>
+            <span
+              className="block truncate text-destructive"
+              title="No location"
+              data-testid={`board-list-location-${key}`}
+            >
               No location
             </span>
           );
@@ -1030,7 +1042,7 @@ export function FulfilmentBoardListView({
       listingKey="projects.projects.view::project-fulfilment-board-list-v2"
       emptyTitle={
         scope?.value === 'saved'
-          ? statusFilter.length > 0
+          ? statusFilter.length > 0 || locationFilter.length > 0
             ? 'No saved decisions match the filter'
             : 'Nothing to confirm yet'
           : 'Nothing is outstanding on this board'
@@ -1116,6 +1128,7 @@ export function FulfilmentBoardListView({
                   onChange={setLocationFilter}
                   options={locationOptions}
                   placeholder="Location"
+                  aria-label="Location"
                   size="sm"
                 />
               </div>
@@ -1205,12 +1218,16 @@ export function FulfilmentBoardListView({
 /** The Location filter's value for a line AutoCount gave no location. */
 const NO_LOCATION = '__no_location__';
 
-/** One option per location the board's lines name, code order, then No location if any. */
+/**
+ * One option per location the board's lines name, code order, then No location if any. A code
+ * already picked stays an option after a refresh drops its last line, so it can be unpicked.
+ */
 function locationFilterOptions(
   contributions: BoardContribution[],
+  picked: string[],
 ): { value: string; label: string }[] {
-  const codes = new Set<string>();
-  let missing = false;
+  const codes = new Set<string>(picked.filter((value) => value !== NO_LOCATION));
+  let missing = picked.includes(NO_LOCATION);
   for (const contribution of contributions) {
     if (contribution.fulfilment_location) codes.add(contribution.fulfilment_location);
     else missing = true;

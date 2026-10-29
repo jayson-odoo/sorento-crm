@@ -79,11 +79,7 @@ function rowOf(soNumber: string): HTMLElement {
 
 /** The filter's own Location trigger, not the column header of the same name. */
 async function locationFilterTrigger(): Promise<HTMLElement> {
-  return waitFor(() => {
-    const trigger = screen.getAllByText('Location').find((el) => !el.closest('th'));
-    if (!trigger) throw new Error('no Location filter yet');
-    return trigger;
-  });
+  return screen.findByRole('combobox', { name: 'Location' });
 }
 
 const threeLines = [
@@ -194,5 +190,43 @@ describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', (
 
     await waitFor(() => expect(screen.queryByText('SO000002')).not.toBeInTheDocument());
     expect(screen.getByText('SO000004')).toBeInTheDocument();
+  });
+
+  it('takes the Location filter from the board when handed in, so it outlives a view switch', async () => {
+    const onChange = vi.fn();
+    render(
+      <FulfilmentBoardListView
+        contributions={threeLines}
+        draft={{}}
+        onDecide={vi.fn()}
+        onDecideMany={vi.fn(async () => ({ saved: 0, failed: 0 }))}
+        onDecideBatch={vi.fn(async () => ({ savedKeys: [], failed: [] }))}
+        location={{ value: ['DC1-BB'], onChange }}
+      />,
+    );
+    await screen.findByText('SO000003');
+    expect(screen.queryByText('SO000001')).not.toBeInTheDocument();
+    expect(screen.queryByText('SO000002')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^Filters/ }));
+    await userEvent.click(await locationFilterTrigger());
+    await userEvent.click(await screen.findByRole('option', { name: /^BRW-BB/ }));
+    expect(onChange).toHaveBeenCalledWith(['DC1-BB', 'BRW-BB']);
+  });
+
+  it('keeps a picked location as an option after its last line leaves the board', async () => {
+    render(
+      <FulfilmentBoardListView
+        contributions={threeLines}
+        draft={{}}
+        onDecide={vi.fn()}
+        onDecideMany={vi.fn(async () => ({ saved: 0, failed: 0 }))}
+        onDecideBatch={vi.fn(async () => ({ savedKeys: [], failed: [] }))}
+        location={{ value: ['MWH-BB'], onChange: vi.fn() }}
+      />,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /^Filters/ }));
+    await userEvent.click(await locationFilterTrigger());
+    expect(await screen.findByRole('option', { name: /^MWH-BB/ })).toBeInTheDocument();
   });
 });

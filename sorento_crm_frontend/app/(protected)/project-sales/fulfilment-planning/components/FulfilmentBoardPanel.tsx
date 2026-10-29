@@ -434,6 +434,8 @@ export function FulfilmentBoardPanel({
   const [kindFilter, setKindFilter] = React.useState<SupplyKind | null>(null);
   /** The Status filter, shared by the list's Filters control and the grid's filter strip. */
   const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
+  /** The List view's Location filter (PLAN-SO-LOCATION), held here so it outlives a view switch. */
+  const [locationFilter, setLocationFilter] = React.useState<string[]>([]);
   /** Saved | All (owner hand test, 1 Oct 2026): All by default, kept across a Confirm press. */
   const [scope, setScope] = React.useState<BoardScope>(() =>
     searchParams.get('scope') === 'saved' ? 'saved' : 'all',
@@ -466,6 +468,7 @@ export function FulfilmentBoardPanel({
       setView('list');
       setKindFilter(null);
       setStatusFilter([]);
+      setLocationFilter([]);
       // A left-out line is one Confirm will not post, so it is not under Saved; All is what
       // guarantees the link reaches it.
       setScope('all');
@@ -3441,6 +3444,7 @@ export function FulfilmentBoardPanel({
                 // its own toolbar (`search` below), the grid in its filter strip.
                 externalSearch={productSearch}
                 status={{ value: statusFilter, onChange: setStatusFilter }}
+                location={{ value: locationFilter, onChange: setLocationFilter }}
                 scope={{
                   value: scope,
                   onChange: setScope,
