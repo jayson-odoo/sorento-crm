@@ -560,8 +560,7 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To order (was To confirm) is 
     openFilters();
     const select = (await screen.findByLabelText('Any')) as HTMLSelectElement;
     const labels = [...select.options].map((option) => option.textContent);
-    expect(labels.slice(0, 3)).toEqual(['Any', 'To order (1)', 'Done (1)']);
-    expect(labels.slice(-2)).toEqual(['Rejected (0)', 'All']);
+    expect(labels).toEqual(['Any', 'To order (1)', 'Done (1)', 'Rejected (0)', 'All']);
     expect(labels.join('|')).not.toMatch(/To confirm|Confirmed/);
   });
 });

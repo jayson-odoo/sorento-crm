@@ -75,7 +75,6 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       'Product',
       // OI-SPLIT-VIEW (UAC B1): the "Split" chip column sits right after Product.
       'Split',
-      'Confirmed',
       'SO Qty',
       'Requested',
       // OI-RESERVE-PILL-QTY round 2 (owner, 21 Oct 2026): the reserve figures beside the
@@ -749,88 +748,18 @@ describe('AC-ND-7 (owner ruling 26 Sep, G1): no Was / now on the line row', () =
 });
 
 /**
- * PR #1266 fix round W1 (owner, 26 Sep 2026: "i just realized after we click confirm, at
- * the line level can't really see it is confirmed, can we have an icon here to show it is
- * confirmed?"). A new `confirmation` column sits between Product and SO Qty.
+ * OI-AUTO-CONFIRM review round 1 (lead ruling, mock v2): the Confirmed column is gone from
+ * the Lines tab; the status pill and its hover carry who confirmed.
  */
-describe('W1 line confirmation column', () => {
-  function confirmationCell(lineRow: OrderInquiryWorklistRow) {
+describe('OI-AUTO-CONFIRM: no Confirmed column on the Lines tab', () => {
+  it('has no confirmation column and So Qty follows Split directly', () => {
     const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
-    const column = result.current.find(
-      (c) => (c as { id?: string }).id === 'confirmation',
-    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
-    expect(column).toBeDefined();
-    return column!.cell({ row: { original: lineRow } });
-  }
-
-  it('W1: a fully confirmed line shows the check with Confirmed by <name> on <date>', () => {
-    const [lineRow] = toLineRows(
-      foldInquiryLines([
-        linesRow({
-          id: 'a',
-          core_line_id: 'cl-w1',
-          ack_state: 'acknowledged',
-          acknowledged_by_name: 'Aisyah',
-          acknowledged_at: '2026-09-26T11:20:00Z',
-        }),
-      ]),
+    const ids = result.current.map(
+      (column) => (column as { id?: string; accessorKey?: string }).id ?? (column as { accessorKey?: string }).accessorKey,
     );
-    render(<>{confirmationCell(lineRow)}</>);
-    const expectedLabel = `Confirmed by Aisyah on ${formatDateInMalaysia('2026-09-26T11:20:00Z')}`;
-    const mark = screen.getByTestId('line-confirmed-mark');
-    expect(mark).toHaveAttribute('aria-label', expectedLabel);
-    expect(mark).toHaveAttribute('title', expectedLabel);
-    expect(screen.queryByTestId('line-partly-confirmed-mark')).not.toBeInTheDocument();
-    // Review N5: the worklist's confirmed mark, not just any icon.
-    const icon = mark.querySelector('svg');
-    expect(icon).toHaveClass('lucide-circle-check');
-    expect(icon).toHaveClass('text-emerald-600');
-  });
-
-  it('W1: a partly confirmed line shows the half-state mark reading n of m', () => {
-    const [lineRow] = toLineRows(
-      foldInquiryLines([
-        linesRow({ id: 'a', core_line_id: 'cl-w2', ack_state: 'acknowledged' }),
-        linesRow({ id: 'b', core_line_id: 'cl-w2', ack_state: 'awaiting' }),
-      ]),
-    );
-    render(<>{confirmationCell(lineRow)}</>);
-    const mark = screen.getByTestId('line-partly-confirmed-mark');
-    expect(mark).toHaveAttribute('aria-label', '1 of 2 rows confirmed');
-    expect(mark).toHaveAttribute('title', '1 of 2 rows confirmed');
-    const icon = mark.querySelector('svg');
-    expect(icon).toHaveClass('lucide-circle-dashed');
-    expect(icon).toHaveClass('text-muted-foreground');
-    expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
-  });
-
-  it('W1: a line with nothing to confirm shows no mark', () => {
-    const [lineRow] = toLineRows(
-      foldInquiryLines([linesRow({ id: 'a', core_line_id: 'cl-w3', ack_state: 'awaiting' })]),
-    );
-    render(<>{confirmationCell(lineRow)}</>);
-    expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('line-partly-confirmed-mark')).not.toBeInTheDocument();
-  });
-
-  it('W1: the column sits between Product and SO Qty and does not sort', () => {
-    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
-    const ids = result.current.map((column) => (column as { id?: string; accessorKey?: string }).id ?? (column as { accessorKey?: string }).accessorKey);
-    const productIndex = ids.indexOf('item_code');
-    const confirmationIndex = ids.indexOf('confirmation');
-    // OI-SPLIT-VIEW (UAC B1): the Split column sits between Product and Confirmed.
-    expect(ids[productIndex + 1]).toBe('split');
-    const soQtyIndex = ids.indexOf('so_qty');
-    expect(productIndex).toBeGreaterThanOrEqual(0);
-    expect(confirmationIndex).toBe(productIndex + 2);
-    expect(soQtyIndex).toBe(confirmationIndex + 1);
-    const confirmationColumn = result.current.find(
-      (c) => (c as { id?: string }).id === 'confirmation',
-    ) as { enableSorting?: boolean; size?: number; meta?: { draggable?: boolean } } | undefined;
-    expect(confirmationColumn?.enableSorting).toBe(false);
-    // Review N4: a blank header carries no lone drag grip.
-    expect(confirmationColumn?.meta?.draggable).toBe(false);
-    expect(confirmationColumn?.size ?? 0).toBeLessThanOrEqual(48);
+    expect(ids).not.toContain('confirmation');
+    expect(ids.indexOf('so_qty')).toBe(ids.indexOf('split') + 1);
+    expect(result.current.map((c) => headerTitleOf(c))).not.toContain('Confirmed');
   });
 });
 
@@ -1004,7 +933,9 @@ describe('AC-AC-10b: the Lines tab PO cell prints a reserve link as "Reserved @ 
   it('reads "Reserved @ BRW 3", not a dash, and is not a PO link', () => {
     const row = linesRow({
       id: 'row-reserve',
-      links: [{ id: 'r1', kind: 'reserve', document: 'Reserved @ BRW', qty: '3' }],
+      links: [],
+      reserve_label: 'Reserved @ BRW',
+      reserved_qty: '3',
     } as never);
 
     renderWithClient(<>{poCell(row)}</>);
@@ -1043,6 +974,7 @@ describe('OI-AUTO-CONFIRM (approved mock panels 2 and 3): the State column reads
             state: 'partly_linked',
             ack_state: 'awaiting',
             links: [{ id: 'l', kind: 'po', document: 'PO-1', qty: '2' }],
+            open_qty: 8,
           } as never),
         )}
       </>,
@@ -1119,14 +1051,49 @@ describe('OI-AUTO-CONFIRM (approved mock panels 2 and 3): the State column reads
     const row = linesRow({
       id: 'po-and-reserve',
       qty: '8',
-      links: [
-        { id: 'p1', kind: 'po', document: '202607-S0105', po_id: 'po-1', qty: '5' },
-        { id: 'r1', kind: 'reserve', document: 'Reserved @ BRW', qty: '3' },
-      ],
+      links: [{ id: 'p1', kind: 'po', document: '202607-S0105', po_id: 'po-1', qty: '5' }],
+      reserve_label: 'Reserved @ BRW',
+      reserved_qty: '3',
     } as never);
     const [lineRow] = toLineRows(foldInquiryLines([row]));
     renderWithClient(<>{column.cell({ row: { original: lineRow } })}</>);
     expect(screen.getByText('202607-S0105')).toBeInTheDocument();
     expect(screen.getByText('Reserved @ BRW 3')).toBeInTheDocument();
+  });
+});
+
+describe('OI-AUTO-CONFIRM review round 1: the status pill keeps its case and is not clipped', () => {
+  function stateColumn() {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    return result.current.find((c) => (c as { id?: string }).id === 'state') as {
+      size?: number;
+      cell: (context: unknown) => React.ReactNode;
+    };
+  }
+  function pillFor(overrides: Record<string, unknown>) {
+    const [lineRow] = toLineRows(
+      foldInquiryLines([linesRow({ core_line_id: 'cl-case', state: 'raised', ...overrides } as never)]),
+    );
+    render(<>{stateColumn().cell({ row: { original: lineRow } })}</>);
+  }
+
+  it('"To order \u00b7 220 left" has no capitalize or uppercase transform', () => {
+    pillFor({ id: 'c1', qty: '300', open_qty: 220, ack_state: 'awaiting', state: 'partly_linked', links: [{ id: 'l', kind: 'po', document: 'PO-1', qty: '80' }] });
+    const pill = screen.getByText('To order \u00b7 220 left');
+    expect(pill.className).not.toMatch(/capitalize|uppercase/);
+  });
+
+  it('"Done \u00b7 manual" and "To order \u00b7 manual" keep their case', () => {
+    pillFor({ id: 'c2', state: 'placed', ack_state: 'acknowledged', ack_override: 'confirmed' });
+    expect(screen.getByText('Done \u00b7 manual').className).not.toMatch(/capitalize|uppercase/);
+  });
+
+  it('"To order \u00b7 manual" keeps its case', () => {
+    pillFor({ id: 'c3', ack_state: 'awaiting', ack_override: 'unconfirmed' });
+    expect(screen.getByText('To order \u00b7 manual').className).not.toMatch(/capitalize|uppercase/);
+  });
+
+  it('the State column is wide enough for "To order \u00b7 220 left" (at least 170)', () => {
+    expect(stateColumn().size ?? 0).toBeGreaterThanOrEqual(170);
   });
 });

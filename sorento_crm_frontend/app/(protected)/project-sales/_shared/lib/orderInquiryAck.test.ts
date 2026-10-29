@@ -51,18 +51,18 @@ describe('ACK_ANY / ACK_FILTER_OPTIONS (PLAN-oi-confirm-per-so, AC-CF-13: G4/G5 
     expect(ACK_ANY).toBe('all');
   });
 
-  it('offers To order, Done, Changed, Rejected, All (AC-AC-18)', () => {
+  it('offers To order, Done, Rejected, All and no Changed (review round 1)', () => {
     expect(ACK_FILTER_OPTIONS.map((option) => option.value)).toEqual([
       'to_confirm',
       'acknowledged',
-      'changed',
       'rejected',
       'all',
     ]);
     const labels = ACK_FILTER_OPTIONS.map((option) => option.label);
     expect(labels[0]).toBe('To order');
     expect(labels[1]).toBe('Done');
-    expect(labels.slice(3)).toEqual(['Rejected', 'All']);
+    expect(labels.slice(2)).toEqual(['Rejected', 'All']);
+    expect(labels).not.toContain('Changed');
     expect(labels).not.toContain('To confirm');
     expect(labels).not.toContain('Confirmed');
   });
@@ -225,21 +225,36 @@ describe('bundledHostChangeLines (PLAN-oi-bundled-row-host-change.md)', () => {
   });
 });
 
-describe('ackStatusText (AC-AC-5, 15, 16, 17b)', () => {
+describe('ackStatusText (AC-AC-5, 15, 16, 17b; review round 1: open_qty from the row)', () => {
   const link = (kind: 'po' | 'spo' | 'reserve', qty: string) => ({ kind, qty }) as never;
 
-  it('says how much is left on a part-covered row that is still to order', () => {
+  it('reads the N left off the row open_qty, not a sum of links', () => {
     expect(
       ackStatusText({
         ack_state: 'awaiting',
         qty: '29',
-        links: [link('po', '15'), link('spo', '4'), link('reserve', '2')],
+        open_qty: 8,
+        links: [link('po', '15'), link('spo', '4')],
       } as never),
     ).toBe('To order \u00b7 8 left');
+    // dead link / derived SPO / bundled qty: links would sum to 5 left, the backend says 12
+    expect(
+      ackStatusText({
+        ack_state: 'awaiting',
+        qty: '29',
+        open_qty: 12,
+        links: [link('po', '15'), link('spo', '4'), link('reserve', '2')],
+      } as never),
+    ).toBe('To order \u00b7 12 left');
   });
 
-  it('says To order with no links, Done when done, Rejected when refused', () => {
+  it('says To order alone when open_qty equals qty or nothing is linked', () => {
+    expect(ackStatusText({ ack_state: 'awaiting', qty: '10', open_qty: 10, links: [link('po', '3')] } as never)).toBe('To order');
+    expect(ackStatusText({ ack_state: 'awaiting', qty: '10', open_qty: 10, links: [] } as never)).toBe('To order');
     expect(ackStatusText({ ack_state: 'awaiting', qty: '10', links: [] } as never)).toBe('To order');
+  });
+
+  it('says Done when done, Rejected when refused', () => {
     expect(ackStatusText({ ack_state: 'acknowledged', qty: '10', links: [] } as never)).toBe('Done');
     expect(ackStatusText({ ack_state: 'rejected', qty: '10', links: [] } as never)).toBe('Rejected');
   });
