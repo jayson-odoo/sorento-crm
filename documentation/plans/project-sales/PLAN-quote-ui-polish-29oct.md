@@ -1,6 +1,6 @@
 # PLAN: quotation series default, product picker code only, projects list no underline (QUOTE-UI-POLISH)
 
-Status: Build (code + red/kill proof done; PR, review, browser pass next). Small fix track (3 frontend tweaks, no migration, no auth/RBAC, no new ingest; expected diff well
+Status: PR #1965 open, reviewer READY (round 2), browser pass PASS; waiting on CI label + owner hand test. Small fix track (3 frontend tweaks, no migration, no auth/RBAC, no new ingest; expected diff well
 under 300 lines). UAC: `quote-ui-polish-29oct-acceptance-criteria.md` (same folder).
 
 Owner, 29 Oct ~10:00 (verbatim): "for the series, if it is only 1 option then we should default, why in quotation,
