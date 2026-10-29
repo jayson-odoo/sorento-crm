@@ -12,6 +12,7 @@ from ._project_register_v2_support import (  # noqa: F401
     approve_as_manager,
     approved_project,
     as_user,
+    seed_lead,
     submit_new,
     title,
     v2,
@@ -97,3 +98,29 @@ def test_pp4_submit_only_owner_cannot_reassign_an_approved_project(v2):
     assert res.status_code == 403, res.text
     v2.db.expire_all()
     assert v2.db.get(Project, pid).owner_user_id == v2.sub_a
+
+
+def _lead_of(w, pid: str):
+    from app.models.projects import Project
+
+    w.db.expire_all()
+    return w.db.get(Project, pid).lead_id
+
+
+def test_pp4_submit_only_owner_can_link_their_own_lead_on_an_approved_project(v2):
+    pid = _approved_own(v2)
+    lead = seed_lead(v2, v2.sub_a)
+    v2.db.commit()
+    res = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"lead_id": lead.id})
+    assert res.status_code == 200, res.text
+    assert _lead_of(v2, pid) == lead.id
+
+
+def test_pp4_submit_only_owner_cannot_link_another_users_lead_on_an_approved_project(v2):
+    pid = _approved_own(v2)
+    before = _lead_of(v2, pid)
+    foreign = seed_lead(v2, v2.sub_b)
+    v2.db.commit()
+    res = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"lead_id": foreign.id})
+    assert res.status_code == 404, res.text
+    assert _lead_of(v2, pid) == before
