@@ -16,7 +16,7 @@ Plan: `PLAN-item-class-29oct.md`. Owner answers 29 Oct: Q1 (a), Q2 (a), Q3 as pr
 
 ## Reference data, list, form
 - **AC-3** Reference Data > Item Classes: DataGrid list (code, name, product count, status, search),
-  modal create/edit, detail page, deferred hard delete. Duplicate code (any case) is a 409.
+  modal create, detail page with in-place edit (the Brands pattern), deferred hard delete. Duplicate code (any case) is a 409.
   Delete clears the product link and is refused (409) while a contact is limited to the class.
   Gated by `master_data.item_classes.{view,add,edit,delete}`; every role holding the matching
   `master_data.brands.*` slug is granted it by the migration.

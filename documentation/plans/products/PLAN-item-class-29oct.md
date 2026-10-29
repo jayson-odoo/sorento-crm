@@ -1,9 +1,9 @@
 # PLAN: Item Class from AutoCount (ITEM-CLASS)
 
-Status: Build. Owner answered Q1-Q4 (29 Oct). SS slice green (foundryx-shared-service branch
-claude/item-class-sync-rbac-4sehj5); CRM backend green; FE in progress; Lavish mock of the contact
-Brands card posted. Track: full (migration + RBAC/access control change). UAC:
-`item-class-acceptance-criteria.md`.
+Status: Review done (reviewer READY, security re-review no C/H/M findings, cloud browser
+pass 5/5). Hand test and the shared-service leg pending (SS branch
+claude/item-class-sync-rbac-4sehj5 in foundryx-shared-service). Track: full (migration +
+RBAC/access control change). UAC: `item-class-acceptance-criteria.md`.
 
 ## 1. Journey
 
