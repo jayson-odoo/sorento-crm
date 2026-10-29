@@ -156,6 +156,25 @@ def test_class_limit_on_one_brand_leaves_the_other_brand_whole(db, cw) -> None:
     assert _visible(db, cw) == {"mocha", "serene"}
 
 
+def test_class_pick_on_one_brand_does_not_open_that_class_on_another_brand(db, cw) -> None:
+    """Classes are per company, not per brand: SERENE can also sit on a MOCHA product. A contact
+    allowed SORENTO narrowed to SERENE must not see MOCHA's SERENE product (SQL and guard twin)."""
+    p_mocha_serene = branded_product(db, unique_code("MSR", alpha=True), cw.w.mocha)
+    p_mocha_serene.item_class_id = cw.serene.id
+    db.commit()
+    c = cw.contact(
+        db, [cw.w.sorento.id, cw.w.mocha.id], {str(cw.w.sorento.id): [str(cw.serene.id)],
+                                               str(cw.w.mocha.id): [str(cw.diy.id)]}
+    )
+    scope = _svc().contact_brand_scope(db, c.id)
+    _stamp(db, scope)
+    codes = [*cw.codes.values(), p_mocha_serene.product_code]
+    rows = db.query(Product.product_code).filter(Product.product_code.in_(codes)).all()
+    assert {r[0] for r in rows} == {cw.codes["serene"]}
+    assert p_mocha_serene.product_code in _svc().out_of_scope_product_codes(db, scope, codes)
+    assert str(p_mocha_serene.id) in _svc().out_of_scope_product_ids(db, scope, [p_mocha_serene.id])
+
+
 def test_empty_class_list_means_every_class(db, cw) -> None:
     c = cw.contact(db, [cw.w.sorento.id], {str(cw.w.sorento.id): []})
     _stamp(db, _svc().contact_brand_scope(db, c.id))
