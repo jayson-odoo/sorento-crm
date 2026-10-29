@@ -40,6 +40,8 @@ class AgentContext:
     #: starts a new conversation.
     tool_names: tuple[str, ...] = ()
     brand_scope: frozenset[str] | None = None
+    #: The argument-level slugs (`tools.ARG_PERMISSIONS`) the user holds, sorted; also hashed.
+    arg_permissions: tuple[str, ...] = ()
 
 
 def build_context(db, contact_respond_id: str) -> AgentContext:
@@ -104,7 +106,12 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         stock_allowed=getattr(contact, "chatbot_stock_allowed", True) is not False,
         brand_scope=None if brand_scope is None else frozenset(str(b) for b in brand_scope),
     )
-    return dataclasses.replace(ctx, tool_names=tuple(t.name for t in permitted_tools(db, ctx)))
+    from app.services.agent.tools import ARG_PERMISSIONS, _permitted
+
+    held = sorted({slug for slug in ARG_PERMISSIONS.values() if _permitted(db, user_id, slug)})
+    return dataclasses.replace(
+        ctx, tool_names=tuple(t.name for t in permitted_tools(db, ctx)), arg_permissions=tuple(held)
+    )
 
 
 def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
@@ -118,8 +125,13 @@ def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
 
 
 def grants_hash(ctx: AgentContext) -> str:
-    """Stable digest of the contact's grants, the tools open to the user and the brand scope;
-    a change in any of them starts a new conversation."""
+    """Stable digest of the contact's grants, the tools open to the user, the brand scope and the
+    argument-level slugs the user holds; a change in any of them starts a new conversation."""
     scope = "none" if ctx.brand_scope is None else ",".join(sorted(ctx.brand_scope))
-    parts = [",".join(sorted(ctx.grants)), ",".join(sorted(ctx.tool_names)), scope]
+    parts = [
+        ",".join(sorted(ctx.grants)),
+        ",".join(sorted(ctx.tool_names)),
+        scope,
+        ",".join(sorted(ctx.arg_permissions)),
+    ]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()

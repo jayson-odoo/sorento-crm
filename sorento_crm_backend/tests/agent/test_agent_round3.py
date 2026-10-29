@@ -615,3 +615,23 @@ def test_losing_a_user_permission_starts_a_new_conversation(db, contact, held):
     run(db, contact, second, text_="second question")
     contents = [m["content"] for m in second.seen[0]["messages"] if isinstance(m.get("content"), str)]
     assert "first question" not in contents
+
+
+def test_grants_hash_covers_the_argument_level_permissions():
+    import dataclasses
+
+    from app.services.agent.access import grants_hash
+
+    base = _ctx({"a"})
+    held = dataclasses.replace(base, arg_permissions=("finance.billing_documents.view",))
+    assert grants_hash(held) != grants_hash(base)
+
+
+def test_build_context_carries_the_held_argument_permissions(db, held):
+    from app.services.agent.access import build_context
+
+    held.update({"order_management.orders.view", "finance.billing_documents.view"})
+    contact = seed_contact(db)
+    seed_user(db, contact_pk=contact["pk"])
+    ctx = build_context(db, contact["respond_id"])
+    assert ctx.arg_permissions == ("finance.billing_documents.view",)
