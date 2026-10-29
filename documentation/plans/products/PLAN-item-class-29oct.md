@@ -1,7 +1,9 @@
 # PLAN: Item Class from AutoCount (ITEM-CLASS)
 
-Status: Plan, behaviour card posted as crew-ask on PR #1972; no code until answered. Track: full
-(migration + RBAC/access control change).
+Status: Build. Owner answered Q1-Q4 (29 Oct). SS slice green (foundryx-shared-service branch
+claude/item-class-sync-rbac-4sehj5); CRM backend green; FE in progress; Lavish mock of the contact
+Brands card posted. Track: full (migration + RBAC/access control change). UAC:
+`item-class-acceptance-criteria.md`.
 
 ## 1. Journey
 
@@ -57,6 +59,24 @@ brand, applied everywhere brand scoping applies.
 - **D6 Empty class.** "" in AutoCount = no class on the product = visible to contacts with no
   class restriction on that brand, hidden from contacts restricted to a class list.
 
-## 4. Open questions (crew-ask)
+- **D7 Scope encoding.** The scope stays a frozenset of strings: a whole brand is its id, a
+  class-narrowed brand is one `<brand_id>/<item_class_id>` token per class. Every carrier (session
+  stamp, RQ export args, turn ctx) already passes the set through untouched, so only
+  `contact_brand_scope.py` reads tokens (`_split_scope`); the 8 `brand_predicate` call sites pass
+  `Product.item_class_id` as a 4th column.
+- **D8 Writers.** Only the contact card writes `brand_class_ids`. The tag-apply, setup engine,
+  access-copy and access-sheet writers touch `brand_ids` only; the reader ignores class lists for
+  brands outside `brand_ids`, so they cannot widen access.
+- **D9 Delete guard.** Deleting a class a contact is limited to is a 409 (it would leave that brand
+  narrowed to nothing while the card reads as "every class").
 
-See PR #1972 card.
+## 4. Answers (owner, 29 Oct)
+
+Q1 (a) own table. Q2 (a) per brand. Q3 a brand with no class list shows its products with no
+class; a brand limited to some classes hides them. Q4 (a) inside the Brands card, Lavish mock
+first. db2 has no ItemBrand: class limits only take effect where a brand exists (AC-11).
+
+## 5. Tests
+
+SS: `service_backend/tests/test_autocount_item_class.py` (29). CRM: `tests/test_ingest_item_class.py`,
+`tests/test_item_class_scope.py`, `tests/test_item_class_api.py`.
