@@ -81,7 +81,9 @@ const CLOSED_LISTS_OPTIONS: { value: ChatbotClosedListsMode; label: string }[] =
 ];
 
 // Equal to the backend bounds (app/api/v1/user_management/settings.py), so a figure that
-// passes here is never refused by the server.
+// passes here is never refused by the server. Above ~7k the 20 s per-call timeout, not this
+// figure, ends a flash-lite answer (gpt-5.4-mini is slower); see PARSER_MAX_TOKENS in
+// app/services/chatbot/head/parser.py.
 const PARSER_MAX_TOKENS_RULES = { min: 1024, max: 32768, integer: true };
 
 export default function ChatbotSettingsPage() {

@@ -37,6 +37,13 @@ Measured on origin/main 6011ba76ff:
   so the engine writes a `was_answered = false` row. Message text unchanged (existing tests
   match on it).
 - Not changed: the customer-facing reply wording (owner decision; see report).
+- Not changed: `llm_call.ATTEMPT_TIMEOUT_SECONDS` (20 s) / `CALL_DEADLINE_SECONDS` (35 s) (crew
+  ruling 29 Oct, option a). Measured on turn 5ad8f394: 11,516 ms for 4,081 answer tokens on
+  gemini-3.5-flash-lite (~355 tok/s), so ~5.5k tokens takes ~15.5 s and the 20 s attempt timeout
+  makes ~7k output tokens the practical ceiling there; gpt-5.4-mini is slower. A setting above
+  ~7k raises nothing on flash-lite: the call times out first (customer reads the "busy" reply).
+  Recorded in code comments and the PR, not on screen (CLAUDE.md: no feature explanations in the
+  UI); the Outline guide is the place for it when guide-writer next runs.
 - UI (owner ruling 29 Oct, option b): a "Parser max output tokens" number field in the Switches
   card of Settings > Chatbot (shared `NumberInput`, `numberFieldError` on save with the API's
   bounds), through the settings API (schema + GET dict + null-reset defaults dict).

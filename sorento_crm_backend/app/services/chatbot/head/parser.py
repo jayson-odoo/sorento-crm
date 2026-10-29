@@ -46,6 +46,9 @@ from app.services.llm_provider import ResponseTruncated
 # (PARSER-MAX-TOKENS, prod turn 5ad8f394, 29 Oct 2026: a 63-code stock check needs ~90 output
 # tokens a line and stopped on MAX_TOKENS at 2048). Output is billed as used, so room a turn does
 # not use costs nothing. Gemini 3.x adds its thinking budget and `GEMINI_3_ANSWER_HEADROOM` on top.
+# The practical ceiling is time, not this number: turn 5ad8f394 took 11,516 ms for 4,081 answer tokens
+# on gemini-3.5-flash-lite (~355 tok/s), so `llm_call.ATTEMPT_TIMEOUT_SECONDS` (20 s) stops an answer
+# near ~7k tokens there before the cap does; gpt-5.4-mini is slower, so its ceiling is lower.
 PARSER_MAX_TOKENS = 8192
 #: The stored budget is held to this range (`max_output_tokens_setting`); the settings API refuses
 #: a value outside it (`app/api/v1/user_management/settings.py`).
