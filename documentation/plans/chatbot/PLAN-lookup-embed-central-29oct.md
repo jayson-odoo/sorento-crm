@@ -667,3 +667,10 @@ Each item: red test first (tester), then fix (coder), kill-proof. R = reviewer, 
   document that always fails reaches 3 across Starts, counts as failed, and no longer blocks the guard.
 - H-3 (nits): the settings PUT's failure-count reset runs inside the logged try (a DB error there never turns a saved
   setting into a 500); a backfill job that cannot claim the running flag exits without embedding (no double run).
+- H-4 (browser pass 1280): the Settings tab's Record search row reads `records_search_model` from the overview (shown
+  while it differs from the setting's model, with progress); the save toast says when a records backfill was started.
+- H-5 (browser pass 1280): the header's record-coverage label no longer truncates at 1280 (short label, full model in
+  the title).
+- H-6 (browser pass: product_spec 0 documents on the copy): `product_spec` documents are created for every active
+  product with non-empty `rendered_text` that has none; the records backfill creates them before embedding, so the
+  owner's spec rule (S1) holds for existing products, not only for specs edited after deploy.
