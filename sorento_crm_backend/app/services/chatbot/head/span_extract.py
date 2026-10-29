@@ -159,8 +159,9 @@ def extract(config: SpanConfig, message: str) -> SpanAnswer | None:
         "prompt_tokens": int(getattr(result, "prompt_tokens", 0) or 0),
         "completion_tokens": int(getattr(result, "completion_tokens", 0) or 0),
         "total_tokens": int(getattr(result, "total_tokens", 0) or 0),
-        # NULL when the provider reported none (CU-2); `ChatResult` carries 0 for that.
-        "cached_tokens": int(getattr(result, "cached_tokens", 0) or 0) or None,
+        # A recorded 0 when the provider reported none, as the parser stores it: NULL reads as cache-unknown and
+        # leaves the call (and the turn's cost) unpriced (`analytics_connector.prices.cost_sql`).
+        "cached_tokens": int(getattr(result, "cached_tokens", 0) or 0),
     }
     try:
         spans: list[Span] | None = _read(getattr(result, "content", None))

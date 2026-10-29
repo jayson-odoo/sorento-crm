@@ -653,6 +653,7 @@ def load_rows(
     spec word values, file types and the sales channels. `group_categories` (EEM-CATEGORY-PICK) reads the class
     vocabulary to set each category row's `group`; off, it is never read."""
     from app.models.product import ProductCategory
+    from app.services import chatbot_prompt_vars as pv
     from app.services.chatbot import turn_runtime
     from app.services.reports.ask import SALES_CHANNELS
 
@@ -690,7 +691,12 @@ def load_rows(
         out.extend(_salesperson_rows(db))
     if include_customers:
         out.extend(_customer_rows(db, customer_ids))
-    out.extend(LookupRow("sales_channel", ch, ch, (ch,)) for ch in SALES_CHANNELS)
+    # The channel values are code's; the owner's `sales_channel_alias` set only adds words for them ("retail" = dealer).
+    channel_words = pv._alias_words(db, "sales_channel_alias")
+    out.extend(
+        LookupRow("sales_channel", ch, ch, tuple(dict.fromkeys(t for t in (ch, *channel_words.get(ch, ())) if _fold(t))))
+        for ch in SALES_CHANNELS
+    )
     return out
 
 
