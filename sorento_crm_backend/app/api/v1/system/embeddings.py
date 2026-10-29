@@ -1,5 +1,8 @@
 """Embedding operations and observability endpoints."""
-from fastapi import APIRouter, Depends, Query
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -93,3 +96,95 @@ def backfill_embeddings(
         dry_run=dry_run,
         triggered_by=current_user.get("id"),
     )
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# LOOKUP-EMBED-CENTRAL: the Embeddings screen's record side (the lookup-word side lives on the chatbot doorway).
+# ---------------------------------------------------------------------------------------------------------------
+RECORDS_BACKFILL_STOP_KEY = "lec:records_backfill:stop"
+STOP_FLAG_SECONDS = 3600
+
+
+@router.get("/overview", dependencies=[Depends(require_permission("master_data.lookup_sets.view"))])
+def embeddings_overview(db: Session = Depends(get_db)):
+    from sqlalchemy import func, text
+
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+    from app.models.user import SystemSetting
+    from app.services import embedding_backfill_service as backfill
+    from app.services.embedding_settings import RECORD_KEEP_SET, records_search_model, resolve_embedder
+
+    provider, model = resolve_embedder(db)
+    row = db.query(SystemSetting.embedding_backfill_rpm).first()
+    rpm = (row[0] if row else None) or backfill.DEFAULT_BACKFILL_RPM
+
+    total = db.execute(
+        text(
+            "SELECT COALESCE(SUM(array_length(string_to_array(body_text, E'\\n'), 1)), 0) "
+            "FROM embedding_documents WHERE source_type = 'lookup_word' AND is_active"
+        )
+    ).scalar()
+    with_vector = (
+        db.query(func.count(EmbeddingChunk.id))
+        .filter(
+            EmbeddingChunk.source_type == "lookup_word",
+            EmbeddingChunk.model_name == model,
+            EmbeddingChunk.is_current.is_(True),
+        )
+        .scalar()
+    )
+    documents = dict(
+        db.query(EmbeddingDocument.source_type, func.count(EmbeddingDocument.id))
+        .filter(EmbeddingDocument.is_active.is_(True), EmbeddingDocument.source_type.in_(sorted(RECORD_KEEP_SET)))
+        .group_by(EmbeddingDocument.source_type)
+        .all()
+    )
+    chunks: dict[str, dict[str, int]] = {}
+    for source_type, model_name, n in (
+        db.query(EmbeddingChunk.source_type, EmbeddingChunk.model_name, func.count(EmbeddingChunk.id))
+        .filter(EmbeddingChunk.is_current.is_(True), EmbeddingChunk.source_type.in_(sorted(RECORD_KEEP_SET)))
+        .group_by(EmbeddingChunk.source_type, EmbeddingChunk.model_name)
+        .all()
+    ):
+        chunks.setdefault(source_type, {})[model_name] = int(n)
+    remaining = backfill._count_remaining(db, model)
+    return {
+        "setting": {"provider": provider, "model": model, "backfill_rpm": int(rpm)},
+        "records_search_model": records_search_model(db),
+        "lookup": {"texts_total": int(total or 0), "texts_with_vector": int(with_vector or 0)},
+        "records": [
+            {"source_type": s, "documents": int(documents.get(s, 0)), "chunks_by_model": chunks.get(s, {})}
+            for s in sorted(RECORD_KEEP_SET)
+        ],
+        "guard": {
+            "target_model": model,
+            "ready": remaining == 0,
+            "remaining": remaining,
+            "failed": len(backfill.failed_documents(db, model)),
+        },
+    }
+
+
+class RecordsBackfillBody(BaseModel):
+    action: Literal["start", "stop"]
+
+
+@router.post(
+    "/records-backfill",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_permission("master_data.lookup_sets.edit"))],
+)
+def records_backfill(body: RecordsBackfillBody):
+    # Looked up at call time: the queue and its Redis connection are patched in tests and never bound here.
+    from app.services import queue_service
+    from app.tasks.embedding_backfill import run_records_backfill
+
+    if body.action == "stop":
+        queue_service.redis_conn.set(RECORDS_BACKFILL_STOP_KEY, "1", ex=STOP_FLAG_SECONDS)
+        return {"job_id": None}
+    try:
+        queue_service.redis_conn.delete(RECORDS_BACKFILL_STOP_KEY)
+    except Exception:  # noqa: BLE001 - a stale flag only stops the run early; the job also clears it
+        pass
+    job = queue_service.enqueue_job(run_records_backfill, queue_name="imports")
+    return {"job_id": getattr(job, "id", None)}

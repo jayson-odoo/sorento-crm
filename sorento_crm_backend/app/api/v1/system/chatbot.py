@@ -1013,3 +1013,43 @@ def judge_topic_audit_row(
         products_verdict=body.products_verdict,
         reviewer_id=analytics_user["id"],
     )
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# LOOKUP-EMBED-CENTRAL: the lookup words behind the Embeddings screen (record side: system/embeddings.py).
+# ---------------------------------------------------------------------------------------------------------------
+class LookupTryBody(BaseModel):
+    phrase: str
+
+
+@router.get("/lookup-words", dependencies=[Depends(require_permission("master_data.lookup_sets.view"))])
+def lookup_words(list: str = Query(...), db: Session = Depends(get_db)):
+    from app.services.chatbot.head import lookup_words_view
+
+    if list not in lookup_words_view.LIST_NAMES:
+        raise HTTPException(status_code=422, detail="Unknown lookup list")
+    return lookup_words_view.words_of_list(db, list)
+
+
+@router.post("/lookup-words/try", dependencies=[Depends(require_permission("master_data.lookup_sets.view"))])
+def lookup_words_try(body: LookupTryBody, db: Session = Depends(get_db)):
+    from app.services.chatbot.head import lookup_words_view
+
+    phrase = (body.phrase or "").strip()
+    if not phrase:
+        raise HTTPException(status_code=422, detail="phrase is required")
+    return lookup_words_view.try_phrase(db, phrase)
+
+
+@router.post(
+    "/lookup-words/embed-missing",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_permission("master_data.lookup_sets.edit"))],
+)
+def lookup_words_embed_missing():
+    # Looked up at call time: tests patch the queue.
+    from app.services import queue_service
+    from app.tasks.chat_turns import embed_missing_lookup_words
+
+    job = queue_service.enqueue_job(embed_missing_lookup_words, queue_name="imports")
+    return {"job_id": getattr(job, "id", None)}

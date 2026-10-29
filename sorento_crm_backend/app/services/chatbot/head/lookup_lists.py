@@ -110,6 +110,9 @@ class LookupRow:
     #: DIMENSION-ANY: a number line offered for a dimension no product holds at that value is kept only beside a
     #: Category row whose products carry the key (these are those rows' keys); None is always kept.
     scope: frozenset[str] | None = None
+    #: LOOKUP-EMBED-CENTRAL: where each text came from, parallel to `texts` (`label`, `code`, `class`, `alias_column`,
+    #: `alias_set`, `description`); None for a row built outside the loaders.
+    homes: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -472,6 +475,16 @@ def render(
     return lines
 
 
+def _tagged(*parts: tuple[str, Any], fold: bool = True) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(texts, homes) from (home, texts) parts: a text keeps the home it first appears under; empty texts drop."""
+    texts: dict[str, str] = {}
+    for home, items in parts:
+        for t in items:
+            if t and (_fold(str(t)) if fold else str(t).strip()) and str(t) not in texts:
+                texts[str(t)] = home
+    return tuple(texts), tuple(texts.values())
+
+
 def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[LookupRow]:
     """One row per value the registry knows, each line ending in the registry's own `(key: value)` so the
     parser fills `spec_key` / `spec_value` from it: an enum value (`<label> <value>`), a yes/no key
@@ -484,8 +497,9 @@ def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[Look
         merged_synonyms,
     )
 
-    def texts_of(*parts) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(str(t) for p in parts for t in p if t and _fold(str(t))))
+    def row_of(list_key: str, label: str, own: list, synonym_words: list) -> LookupRow:
+        texts, homes = _tagged(("label", own), ("alias_column", synonym_words))
+        return LookupRow("spec", list_key, label, texts, homes=homes)
 
     out: list[LookupRow] = []
     for row in active_registry(db):
@@ -498,20 +512,14 @@ def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[Look
             for value in merged_allowed_values(row):
                 display = display_spec_value(value, labels)
                 out.append(
-                    LookupRow("spec", f"{key}={value}", f"{row.label} {display} ({key}: {value})",
-                              texts_of([str(value), display], synonyms.get(value) or []))
+                    row_of(f"{key}={value}", f"{row.label} {display} ({key}: {value})",
+                           [str(value), display], synonyms.get(value) or [])
                 )
         elif kind == "boolean":
-            out.append(
-                LookupRow("spec", f"{key}=true", f"{row.label} yes ({key}: true)",
-                          texts_of(synonyms.get("true") or []))
-            )
+            out.append(row_of(f"{key}=true", f"{row.label} yes ({key}: true)", [], synonyms.get("true") or []))
         elif kind == "numeric":
             for value in (v for v in synonyms if v != "_self"):
-                out.append(
-                    LookupRow("spec", f"{key}={value}", f"{row.label} {value} ({key}: {value})",
-                              texts_of(synonyms.get(value) or []))
-                )
+                out.append(row_of(f"{key}={value}", f"{row.label} {value} ({key}: {value})", [], synonyms.get(value) or []))
     return out
 
 
@@ -523,13 +531,15 @@ def _file_type_rows(db: "Session") -> list[LookupRow]:
     out: list[LookupRow] = []
     for row in [*pv._file_type_rows(db), *pv._cert_kind_rows(db)]:
         name = str(row.get("type_name") or pv._item(row))
-        texts = (name, pv._item(row), *pv._type_words(row, aliases))
-        out.append(
-            LookupRow(
-                "file_type", pv._item(row) or name, name,
-                tuple(dict.fromkeys(t for t in texts if t and _fold(t))),
-            )
+        keys = {str(row.get(k) or "").strip().casefold() for k in ("code", "type_name")} - {""}
+        alias_words = {w.casefold() for k in keys for w in aliases.get(k, [])}
+        words = pv._type_words(row, aliases)
+        texts, homes = _tagged(
+            ("label", [name]), ("code", [pv._item(row)]),
+            ("alias_set", [w for w in words if w.casefold() in alias_words]),
+            ("description", words),
         )
+        out.append(LookupRow("file_type", pv._item(row) or name, name, texts, homes=homes))
     return out
 
 
@@ -546,11 +556,8 @@ def _brand_rows(db: "Session", brands: list[dict] | None = None) -> list[LookupR
         if not name or name in seen or not line:
             continue
         seen.add(name)
-        texts = [name, b.get("brand_code"), *(b.get("aliases") or [])]
-        out.append(
-            LookupRow("brand", str(b.get("id") or name), line.removeprefix("Known brands: "),
-                      tuple(dict.fromkeys(str(t) for t in texts if t and _fold(str(t)))))
-        )
+        texts, homes = _tagged(("label", [name]), ("code", [b.get("brand_code")]), ("alias_column", b.get("aliases") or []))
+        out.append(LookupRow("brand", str(b.get("id") or name), line.removeprefix("Known brands: "), texts, homes=homes))
     return out
 
 
@@ -558,7 +565,8 @@ def _promotion_kind_rows(db: "Session") -> list[LookupRow]:
     from app.services.chatbot import turn_runtime
 
     return [
-        LookupRow("promotion_kind", r["type_code"], f"{r['type_code']} ({r['type_name']})", (r["type_name"], r["type_code"]))
+        LookupRow("promotion_kind", r["type_code"], f"{r['type_code']} ({r['type_name']})", (r["type_name"], r["type_code"]),
+                  homes=("label", "code"))
         for r in turn_runtime.promotion_kind_rows(db)
         if r.get("type_code") and r.get("type_name")
     ]
@@ -573,7 +581,8 @@ def _location_rows(db: "Session") -> list[LookupRow]:
         code = str(w.warehouse_code or "").strip()
         name = str(w.warehouse_name or "").strip()
         if code:
-            out.append(LookupRow("location", str(w.id), f"{name} ({code})" if name else code, tuple(t for t in (name, code) if t)))
+            texts, homes = _tagged(("label", [name]), ("code", [code]))
+            out.append(LookupRow("location", str(w.id), f"{name} ({code})" if name else code, texts, homes=homes))
     return out
 
 
@@ -595,9 +604,9 @@ def _salesperson_rows(db: "Session") -> list[LookupRow]:
     for a in query.order_by(SalesAgent.sales_agent).all():
         code = str(a.sales_agent or "").strip()
         aliases = [x.strip() for x in str(a.aliases or "").split(",")]
-        texts = [code, a.person_label, *aliases]
+        texts, homes = _tagged(("label", [code, a.person_label]), ("alias_column", aliases))
         if code:
-            out.append(LookupRow("salesperson", str(a.id), code, tuple(dict.fromkeys(str(t) for t in texts if t and _fold(str(t))))))
+            out.append(LookupRow("salesperson", str(a.id), code, texts, homes=homes))
     return out
 
 
@@ -610,7 +619,7 @@ def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[Looku
     if only_ids is not None:
         query = query.filter(Customer.id.in_(list(only_ids)))
     return [
-        LookupRow("customer", str(cid), name.strip(), (name.strip(),))
+        LookupRow("customer", str(cid), name.strip(), (name.strip(),), homes=("label",))
         for cid, name in query.order_by(Customer.customer_code).all()
         if name and name.strip() and _fold(name)
     ]
@@ -641,12 +650,15 @@ def load_rows(
 
     vocab = ClassVocabulary(db) if group_categories and any(not (c.class_label or "").strip() for c in cats) else None
     for c in cats:
-        texts = tuple(dict.fromkeys(str(t) for t in [c.category_name, c.category_code, c.class_label, *(c.search_synonyms or [])] if t and str(t).strip()))
+        texts, homes = _tagged(
+            ("label", [c.category_name]), ("code", [c.category_code]), ("class", [c.class_label]),
+            ("alias_column", c.search_synonyms or []), fold=False,
+        )
         group = (
             category_class(db, code=c.category_code, name=c.category_name, class_label=c.class_label, vocab=vocab)
             if group_categories else None
         )
-        out.append(LookupRow("category", str(c.id), c.category_name, texts, group))
+        out.append(LookupRow("category", str(c.id), c.category_name, texts, group, homes=homes))
         seen_labels.add(_fold(c.category_name))
     # Class labels and product types, as the parser's old `Product types:` line named them.
     # A class-label row's texts are the label plus the search synonyms of the categories of that class.
@@ -659,8 +671,8 @@ def load_rows(
         key = _fold(name)
         if key and key not in seen_labels:
             seen_labels.add(key)
-            texts = tuple(dict.fromkeys([name, *class_words.get(key, [])]))
-            out.append(LookupRow("category", "type:" + key, name, texts, name if group_categories else None))
+            texts, homes = _tagged(("class", [name]), ("alias_column", class_words.get(key, [])), fold=False)
+            out.append(LookupRow("category", "type:" + key, name, texts, name if group_categories else None, homes=homes))
     out.extend(_spec_rows(db, hidden_spec_keys))
     out.extend(_file_type_rows(db))
     out.extend(_brand_rows(db, brands))
@@ -672,10 +684,9 @@ def load_rows(
         out.extend(_customer_rows(db, customer_ids))
     # The channel values are code's; the owner's `sales_channel_alias` set only adds words for them ("retail" = dealer).
     channel_words = pv._alias_words(db, "sales_channel_alias")
-    out.extend(
-        LookupRow("sales_channel", ch, ch, tuple(dict.fromkeys(t for t in (ch, *channel_words.get(ch, ())) if _fold(t))))
-        for ch in SALES_CHANNELS
-    )
+    for ch in SALES_CHANNELS:
+        texts, homes = _tagged(("label", [ch]), ("alias_set", channel_words.get(ch, ())))
+        out.append(LookupRow("sales_channel", ch, ch, texts, homes=homes))
     return out
 
 

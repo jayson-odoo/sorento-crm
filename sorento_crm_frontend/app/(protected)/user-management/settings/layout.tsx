@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Database,
   Bell,
   Bot,
   Eye,
@@ -326,6 +327,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         title: 'Chatbot',
         icon: Bot,
         path: '/user-management/settings/chatbot',
+      },
+      embeddings: {
+        title: 'Embeddings',
+        icon: Database,
+        path: '/user-management/settings/embeddings',
       },
       'chatbot-media': {
         title: 'Chatbot Media',

@@ -54,6 +54,8 @@ class LookupOptionResponse(BaseModel):
     keywords: List[LookupKeywordOut]
     created_at: datetime
     updated_at: Optional[datetime]
+    #: Alias sets only: the value names nothing among the set's targets any more. None for other sets.
+    orphaned: Optional[bool] = None
     model_config = ConfigDict(from_attributes=True)
 
 

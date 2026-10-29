@@ -9,6 +9,19 @@ from app.database import SessionLocal
 logger = logging.getLogger(__name__)
 
 
+RECORDS_BACKFILL_STOP_KEY = "lec:records_backfill:stop"
+
+
+def _stop_requested() -> bool:
+    """The Stop button's flag (Redis); a Redis failure never stops or breaks the run."""
+    try:
+        from app.services import queue_service
+
+        return bool(queue_service.redis_conn.get(RECORDS_BACKFILL_STOP_KEY))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def run_records_backfill(model: str | None = None) -> dict:
     from app.models.embeddings import EmbeddingDocument  # noqa: F401  (mapper registration)
     from app.services.embedding_backfill_service import apply_search_model_guard, backfill_records
@@ -18,7 +31,7 @@ def run_records_backfill(model: str | None = None) -> dict:
     try:
         if model is None:
             _provider, model = resolve_embedder(db)
-        result = backfill_records(db, model)
+        result = backfill_records(db, model, should_stop=_stop_requested)
         flipped = apply_search_model_guard(db, model)
         logger.info(
             "records backfill %s: embedded=%s failed=%s remaining=%s flipped=%s",
