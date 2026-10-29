@@ -39,7 +39,11 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
 
 ## C. Lead screens wording
 
-- **LGR-C1** Leads list column, lead page tab and fact, and the lead edit dialog say "Customer", not "Buyer".
+- **LGR-C1** No visible "buyer" word remains on the lead screens: Leads list column, lead page tab and fact, the empty
+  state ("No customer yet" / "Set the customer"), the related-lists titles and empty text ("<name> - other leads",
+  "No other leads on this customer", "<name> - projects", fallback "This customer"), and the lead edit dialog (title
+  "Who told us, and the customer", picker label "Customer"). Internal ids (tab id `buyer`, listing key
+  `...::buyer-other-leads`) stay so saved links and column preferences keep working.
 - **LGR-C2** The lead edit dialog's Customer picker uses the same server search as LGR-A3, and is not clearable once
   the lead has a customer.
 - **LGR-C3** The lead edit dialog has no Firm picker, and saving it leaves an old lead's `informant_party_id` as it
