@@ -674,3 +674,16 @@ Each item: red test first (tester), then fix (coder), kill-proof. R = reviewer, 
 - H-6 (browser pass: product_spec 0 documents on the copy): `product_spec` documents are created for every active
   product with non-empty `rendered_text` that has none; the records backfill creates them before embedding, so the
   owner's spec rule (S1) holds for existing products, not only for specs edited after deploy.
+
+## Review fix round 4 (final reviewer NOT READY at 83d601b284, 29 Oct)
+
+- J-1 (blocker): `ensure_product_spec_documents` commits the new product_spec documents before the first embed request
+  (`embedding_backfill_service.py` ~:560); a first batch that fails with a per-document 400 while documents are pending
+  keeps the documents, embeds the good ones, and counts 1 failure on the bad one (no crash).
+- J-2: the settings PUT clears the records-backfill stop flag before it enqueues a backfill (as `/records-backfill`
+  start does); the comment at `system/embeddings.py` ~:198 is corrected.
+- J-3 (FE): the Settings tab updates its resolved embedder after each successful save, so the "records backfill
+  started" toast shows exactly when the save changed provider or model (including a first save of a never-saved setting).
+- J-4 (nits): docstring at `embedding_backfill_service.py` ~:447 (no "or Start"), the ai_assistant comment and trace span
+  name the question the ranking uses, the always-true ternary at `settings/embeddings/page.tsx` ~:118, the duplicate
+  `hashlib` import.
