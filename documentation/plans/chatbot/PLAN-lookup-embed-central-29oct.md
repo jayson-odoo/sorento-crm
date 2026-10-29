@@ -493,3 +493,25 @@ plus `tests/test_schema_uuid_id_principle.py` and `tests/test_list_pagination_li
 - Filtered reads to a source not in `HOT_FILTERED_SOURCES` run `SET LOCAL hnsw.iterative_scan = relaxed_order`.
 - `fuzzy_resolver`: a vector hit is added only at similarity >= `VECTOR_FLOOR_BY_MODEL[model]`
   (`{"text-embedding-3-small": 0.55, "gemini-embedding-001": 0.70}`, the lookup floors of the same models).
+
+### Slice 3 contract (dual write, backfill job, guard)
+
+- `app/services/embedding_settings.py`: `write_models(db) -> list[str]` = the setting's model (via `resolve_embedder`)
+  plus `records_search_model(db)` when it differs, setting's model first.
+- Worker: a keep-set queue item is embedded once per model in `write_models(db)`; the per-model skip check and
+  supersede stay per model; a model whose embed raises does not block the other model's chunks.
+- `app/services/embedding_backfill_service.py`: `backfill_records(db, model, *, rpm=None, batch_size=100, sleep=time.sleep,
+  should_stop=None) -> BackfillResult(embedded: int, failed: int, remaining: int, complete: bool)`. Picks active
+  keep-set documents with no current chunk of `model` whose failure count for `model` is < 3, embeds their chunk texts
+  in requests of <= `batch_size` texts via `embed_texts`, sleeping `60 / rpm` seconds between requests (`rpm` default =
+  `system_settings.embedding_backfill_rpm`, 20). A request that raises adds 1 to each of its documents' failure count,
+  kept in `embedding_documents.metadata_json["embed_failures"][model]`; at 3 the document counts as failed. A rerun skips
+  documents already done. `should_stop()` is checked between requests.
+- `apply_search_model_guard(db, model) -> bool`: True and acts only when every active keep-set document has a current
+  chunk of `model` or is failed for it; then it runs `embedding_indexes.index_ddl(model)` (autocommit, CONCURRENTLY) and
+  sets `system_settings.embedding_records_search_model = model`. Otherwise False and nothing changes.
+  `failed_documents(db, model)` lists the failed ones (source_type, source_id, failures).
+- `app/tasks/embedding_backfill.py`: RQ task `run_records_backfill(model=None)` on the `imports` queue (worker): model
+  defaults to the setting's; runs `backfill_records` then `apply_search_model_guard`.
+- Settings PUT that changes provider or model enqueues `run_records_backfill` once (no change, no job).
+- Switching back is the same flow: only documents without a current chunk of the target model are embedded.
