@@ -121,11 +121,24 @@ describe('ProjectSetupClient', () => {
     expect(within(typesHeader).getByRole('button', { name: /^export$/i })).toBeInTheDocument();
 
     const templatesHeader = (
-      await screen.findByRole('heading', { name: 'Templates' })
+      await screen.findByRole('heading', { name: 'To-do list templates' })
     ).closest('[data-slot="card-header"]') as HTMLElement;
     expect(
-      within(templatesHeader).getByRole('button', { name: 'Add template' }),
+      within(templatesHeader).getByRole('button', { name: 'Add to-do list template' }),
     ).toBeInTheDocument();
+  });
+
+  it('names the project template a To-do list template in both grids (owner meeting, 29 Oct)', async () => {
+    listProjectTypes.mockResolvedValue([projectType()]);
+    listProjectTemplates.mockResolvedValue([template({ id: 'tp1', name: 'New build' })]);
+
+    renderClient();
+
+    // The types grid counts them, the templates grid names its column after them.
+    expect((await screen.findAllByText('To-do list templates')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('To-do list template')).toBeInTheDocument();
+    expect(screen.queryByText('Templates')).toBeNull();
+    expect(screen.queryByText('Template')).toBeNull();
   });
 
   it('pins a listing key per list rather than falling back to the pathname', async () => {
@@ -211,7 +224,7 @@ describe('ProjectSetupClient', () => {
 
     // Nothing picked yet, so the checklist panel says what to do.
     expect(
-      await screen.findByText(/Select a template above to edit the checklist/i),
+      await screen.findByText(/Select a to-do list template above to edit the checklist/i),
     ).toBeInTheDocument();
 
     fireEvent.click(await screen.findByText('New build'));
