@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
 import * as portalSalesOpportunity from '../../lib/sales-opportunity-service';
-import { clientService, useSubmissionClient } from '../../lib/submission-client';
+import { clientEmbedded, clientService, useSubmissionClient } from '../../lib/submission-client';
 import {
   BLOCKED_VALUE,
   NO_CUSTOMERS_MESSAGE,
@@ -44,16 +44,15 @@ import {
  */
 export default function SalesOpportunityPortalForm({
   onCreated,
-  embedded = false,
 }: {
-  /** Inside the CRM dialog, whose own title names the action: the card shows no title of its own. */
-  embedded?: boolean;
   /** Called with the new opportunity's id once the server confirms it - the caller (the
    *  `new` page) owns navigating away, so this component stays router-agnostic and testable
    *  without mocking `next/navigation`. */
   onCreated?: (id: string) => void;
 }) {
   const client = useSubmissionClient();
+  // Inside the CRM dialog, whose own title names the action: the card shows no title of its own.
+  const embedded = clientEmbedded(client);
   const fetchCustomerOptions = useCallback(
     (query: string) =>
       fetchCustomerOrProspectOptions(

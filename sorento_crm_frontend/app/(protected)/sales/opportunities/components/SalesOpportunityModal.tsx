@@ -83,7 +83,6 @@ function OwnOpportunityModal({
         <DialogBody>
           <MyRequestClientProvider>
             <SalesOpportunityPortalForm
-              embedded
               onCreated={(id) => {
                 void queryClient.invalidateQueries({ queryKey: SALES_OPPORTUNITIES_KEY });
                 onOpenChange(false);

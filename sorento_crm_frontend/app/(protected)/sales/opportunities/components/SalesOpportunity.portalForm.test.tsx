@@ -5,7 +5,7 @@
  * SalesOpportunityModal (Log opportunity, opened from the list) and SalesOpportunityDetail (view + in-place edit +
  * stage moves). Staff keep today's modal and detail.
  *
- * Markers that tell the PORTAL from the CRM: the create dialog body carries the portal's "Customer or prospect" field; the detail's gear is the portal's own `DetailActionsMenu` labelled "Actions" (the CRM detail uses
+ * Markers that tell the PORTAL from the CRM: the my-requests vs staff call checks (the staff modal has the same "Customer or prospect" label, so the label is no marker); the detail's gear is the portal's own `DetailActionsMenu` labelled "Actions" (the CRM detail uses
  * `DetailActions`, mocked here with data-testid="detail-actions").
  *
  * The SearchableSelect is a native <select> here (same stand-in the portal and CRM opportunity tests use).
