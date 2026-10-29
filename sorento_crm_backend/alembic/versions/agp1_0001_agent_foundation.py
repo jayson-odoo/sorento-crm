@@ -35,7 +35,8 @@ def upgrade() -> None:
         op.execute(
             f"ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS {name} integer NOT NULL DEFAULT {default}"
         )
-    op.execute("CREATE SCHEMA IF NOT EXISTS chatbot")
+    # The `chatbot` schema exists since 472_chatbot_turns; CREATE SCHEMA needs the database
+    # CREATE privilege even with IF NOT EXISTS, which a deploy role may not hold.
     op.execute(
         "CREATE TABLE IF NOT EXISTS chatbot.agent_conversations ("
         "id uuid PRIMARY KEY, "

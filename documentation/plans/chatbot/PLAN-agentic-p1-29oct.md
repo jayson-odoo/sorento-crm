@@ -386,3 +386,58 @@ from the assistant config as other callers resolve it; no key or provider error 
 - Chatbot console (`system-management/chatbot-console`): an "Agent" mode toggle; in agent mode, messages go to
   `agent/turn`, the history loads from `agent/conversation`, a "New conversation" button, each reply shows its
   rounds and tool calls (name + status) and the limit hit. Service + hooks layering, `extractApiError`.
+
+## Round 5 contract (crew eval 30 Oct: FAIL, 0/15 strict; tester and coder both read this)
+
+Eval root causes (crew, at ed4d19b6d2): no tool turned a product code / supplier / brand into an id
+(`crm_lookup_resolve` covers dropdown lists only); a lookup "not found" came back as ok; a code passed as an id
+failed as "The tool failed."; the model read empty or unrelated results as "no records" and made up totals; budget
+hits were reported honestly only 3 of 6 times. Permission violations: 0 of 26 (keep it that way).
+
+1. **`crm_resolve`, a local tool** (in process, not MCP; replaces `crm_lookup_resolve` in `REGISTRY`, so still 10
+   tools). Args `{terms: [str] (1..10), kinds: [product|supplier|brand|customer|category|sales_agent] (optional,
+   default all the user may search)}`. Runs the bot's own resolver seam
+   `lanes/business/services._resolve_entity(db)` (`POST /system/references/resolve` in process) with
+   `{"tokens": terms, "raw_tokens": terms, "allowed_entity_types": <mapped kinds>, "dry_run": true}`.
+   - Kind gates: product `master_data.products.view`; supplier `procurement.suppliers.view` + contact reveal
+     `purchase_orders.supplier`; brand `master_data.brands.view`; customer `order_management.customers.view`;
+     category `master_data.product_categories.view`; sales_agent `master_data.sales_agents.view`. A kind the user
+     or contact may not search is left out and named in the result (`skipped_kinds`).
+   - Scope: `build_context` stamps the contact's COMPANY scope on the session
+     (`company_scope_resolver.resolve_contact_company_scope`, fail closed to an empty set, as `engine.py:1057`
+     does) beside the brand scope. Customer matches pass through the same readable-customer rule today's turn uses
+     (`engine._readable_customers`; move it to a shared helper rather than copy it).
+   - Result per term: `{term, status: "found" | "ambiguous" | "not_found", matches: [{id, kind, code, name}] (at
+     most 5)}`. `found` = one match, or a top match the resolver itself marks unambiguous; `ambiguous` = several;
+     `not_found` = none. The model must ask or say it could not find the term, never "no records".
+2. **Ids come from results.** Dispatch keeps the set of ids seen in this turn's ok results. Any argument named
+   `*_id` / `*_ids` (other than the injected contact_id / space_id) whose values are not in that set is `invalid`:
+   a non-UUID value -> "`<arg>` takes ids from crm_resolve, not codes or names (`<value>`)."; an unknown UUID ->
+   "Unknown id in `<arg>`; get ids from crm_resolve first."
+3. **Typed empty.** An ok render envelope with no rows (`has_result` false, or no items / answers) is
+   `status="empty"` with message "No rows matched these filters." and the applied filters.
+4. **Clear errors.** A route validation error that comes back through MCP (HTTP 4xx detail) is `invalid` with the
+   route's own detail text, URLs and host names stripped, at most 200 characters. Other failures stay "The tool
+   failed."
+5. **The `answer` tool ends every turn.** Schema `{text: str, figures: [{value: str, call_id: str}], not_found:
+   [{what: str, call_id: str}], not_checked: [str]}`. The verifier (code, not a model):
+   - every number in `text` (same extraction as `unsupported_figures`: dates and product codes ignored) must be in
+     `figures`, and each figure's `call_id` must be an ok call of this turn whose result holds that value as a JSON
+     number or numeric string value (keys, UUIDs and dates never count; a sum the model did itself does not count);
+   - each `not_found` must cite a `crm_resolve` term with status `not_found`, or an `empty` call whose id arguments
+     all came from `crm_resolve` `found` matches;
+   - a violation goes back to the model once as the `answer` call's result (`status="invalid"`, the exact list);
+     still violating: unbacked numbers become "(not verified)" and unbacked `not_found` items get the prefix
+     "I could not confirm that nothing exists for: <what>.";
+   - a plain-text reply with no `answer` call counts as an `answer` with nothing declared (so the repair round
+     asks for the tool).
+6. **Budget hits always say what was not checked.** On a limit, the final call offers ONLY the `answer` tool. If
+   `not_checked` comes back empty, the reply gets "I stopped at the <rounds|time|token> limit before finishing, so
+   I did not check: <plain labels of the tools that were refused, failed, timed out or never ran, or 'the rest of
+   your question'>."
+7. **System prompt** (fallback text): resolve every name or code with crm_resolve before any other tool; never pass
+   a code as an id; `not_found` / `ambiguous` mean ask or say so; `empty` is not proof of "no records" unless the
+   ids came from crm_resolve; totals come from a tool that totals (crm_report_ask), never from adding rows
+   yourself; always finish with the answer tool, citing call ids.
+8. Migration: no `CREATE SCHEMA` (472 creates `chatbot`; the statement needs the database CREATE privilege even
+   with IF NOT EXISTS).
