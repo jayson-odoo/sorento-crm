@@ -18,6 +18,7 @@ from app.models.base import company_scope
 from app.models.projects import (
     Project,
     ProjectCollaborator,
+    ProjectLead,
     ProjectPurchaseOrder,
     ProjectQuotation,
     ProjectQuotationDocument,
@@ -404,7 +405,21 @@ def test_a_clash_does_not_name_a_foreign_project_to_a_limited_user(scene):
     foreign = db.get(Project, p["p4"])
     from ._sample_request_seed import make_customer
 
-    body = {"title": foreign.title, "customer_id": make_customer(db, w.company_id).id}
+    customer = make_customer(db, w.company_id)
+    # LEAD-GOVERNS-REGISTER E1: a register call needs a lead of the caller's own.
+    lead = ProjectLead(
+        company_id=w.company_id,
+        lead_code=f"ZZT-L{uuid.uuid4().hex[:12]}",
+        title=f"{MARKER} clash lead {uuid.uuid4().hex}",
+        normalised_title=f"zzt clash lead {uuid.uuid4().hex}",
+        customer_id=customer.id,
+        owner_user_id=w.a,
+        created_by=w.a,
+        outcome="open",
+    )
+    db.add(lead)
+    db.flush()
+    body = {"title": foreign.title, "customer_id": customer.id, "lead_id": lead.id}
     db.commit()
     with acting(db, w.a, LIMITED) as client:
         response = client.post(f"{BASE}/projects/", json=body)

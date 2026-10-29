@@ -119,6 +119,7 @@ function settings(overrides: Partial<ChatbotSettings> = {}): ChatbotSettings {
     chatbot_direct_ingress_contacts: null,
     chatbot_closed_lists_mode: 'block',
     chatbot_composer_enabled: false,
+    chatbot_parser_max_output_tokens: 8192,
     ...overrides,
   };
 }
@@ -265,6 +266,7 @@ describe('ChatbotSettingsPage - Save payload (AC-810)', () => {
       chatbot_direct_ingress_contacts: null,
       chatbot_closed_lists_mode: 'block',
       chatbot_composer_enabled: false,
+      chatbot_parser_max_output_tokens: 8192,
     });
   });
 });
@@ -535,5 +537,49 @@ describe('ChatbotSettingsPage - release switches (closed lists mode, reply compo
 
     const [payload] = mutate.mock.calls[0];
     expect(payload.chatbot_closed_lists_mode).toBe('index');
+  });
+});
+
+// PARSER-MAX-TOKENS: the parser output cap is a number field on the Switches card.
+describe('ChatbotSettingsPage - parser max output tokens', () => {
+  beforeEach(() => {
+    mockMemoryQuery.mockReturnValue({ data: DEFAULT_MEMORY, isLoading: false, isError: false });
+    mockTierOrderQuery.mockReturnValue({ data: DEFAULT_TIER_ORDER, isLoading: false, isError: false });
+  });
+
+  function load(mutate = vi.fn()) {
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({
+      data: settings({ chatbot_parser_max_output_tokens: 16000 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+    return mutate;
+  }
+
+  it('shows the loaded value under its label', () => {
+    load();
+    const input = screen.getByLabelText(/parser max output tokens/i) as HTMLInputElement;
+    expect(input.id).toBe('chatbot-parser-max-output-tokens');
+    expect(input.value).toBe('16000');
+  });
+
+  it('saves a changed value in the payload', () => {
+    const mutate = load();
+    fireEvent.change(screen.getByLabelText(/parser max output tokens/i), {
+      target: { value: '12000' },
+    });
+    fireEvent.click(saveButton());
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0].chatbot_parser_max_output_tokens).toBe(12000);
+  });
+
+  it.each(['500', '40000'])('rejects %s: error under the field and no save', (value) => {
+    const mutate = load();
+    fireEvent.change(screen.getByLabelText(/parser max output tokens/i), { target: { value } });
+    fireEvent.click(saveButton());
+    expect(mutate).not.toHaveBeenCalled();
+    expect(document.getElementById('chatbot-parser-max-output-tokens-error')).not.toBeNull();
   });
 });

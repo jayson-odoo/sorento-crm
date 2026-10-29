@@ -44,11 +44,29 @@ describe('chatbotSettingsService - release switches', () => {
       chatbot_direct_ingress_contacts: null,
       chatbot_closed_lists_mode: 'index' as const,
       chatbot_composer_enabled: true,
+      chatbot_parser_max_output_tokens: 12000,
     };
     await saveChatbotSettings(draft);
     const [, init] = mockApiFetch.mock.calls[0];
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.chatbot_closed_lists_mode).toBe('index');
     expect(body.chatbot_composer_enabled).toBe(true);
+    expect(body.chatbot_parser_max_output_tokens).toBe(12000);
+  });
+});
+
+describe('chatbotSettingsService - parser max output tokens', () => {
+  beforeEach(() => mockApiFetch.mockReset());
+
+  it('reads the number off the settings row', async () => {
+    mockApiFetch.mockResolvedValue(ok({ settings: { chatbot_parser_max_output_tokens: 16000 } }));
+    expect((await getChatbotSettings()).chatbot_parser_max_output_tokens).toBe(16000);
+  });
+
+  it('falls back to 8192 when the row lacks it or holds a non-number', async () => {
+    mockApiFetch.mockResolvedValue(ok({ settings: {} }));
+    expect((await getChatbotSettings()).chatbot_parser_max_output_tokens).toBe(8192);
+    mockApiFetch.mockResolvedValue(ok({ settings: { chatbot_parser_max_output_tokens: 'x' } }));
+    expect((await getChatbotSettings()).chatbot_parser_max_output_tokens).toBe(8192);
   });
 });

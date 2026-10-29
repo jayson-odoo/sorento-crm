@@ -1,22 +1,20 @@
-"""Where the CI jobs run: GitHub-hosted or the self-hosted Mac mini runners.
+"""Where the CI jobs run: GitHub-hosted, or the self-hosted Mac mini runners on request.
 
-Owner, 14 Oct 2026: GitHub Actions minutes are nearly spent, so the test jobs
-may run on self-hosted Linux runners on the Mac mini (label `sorento-mac`),
-and crew juggles between those and GitHub-hosted without a code change:
+CI-HOSTED-RUNNERS (owner, 29 Oct 2026): the repo is public again, so
+GitHub-hosted minutes are free and run in parallel, where the one Mac runner
+queued PR runs for hours. Everything runs on `ubuntu-latest` unless a release
+dispatch asks otherwise:
 
-1. Two repo variables pick the place per job group. `RUNNER_TESTS` (the PR
-   gate, the backend and SCM shards, vitest, type-check): `github` (also
-   unset), `mac` or `auto`. `RUNNER_FAST` (the root and gate jobs: alembic
-   heads, PII guard, Changed areas, ci-full refusal, CI gate): `github` or
-   `mac`. Anything unknown lands on GitHub-hosted.
-2. A `runner` input on workflow_dispatch overrides both for that run:
-   `vars` (follow the variables, the default), `auto`, `mac`, `github`.
-3. `auto` is decided inside `Changed areas` (no extra billed job): the Mac
-   when a `sorento-mac` runner is online and idle, else GitHub-hosted. It
-   reads the runners API with the `RUNNERS_READ_TOKEN` secret (fine-grained
-   PAT, this repo, Administration: read); no secret, or a failed call, means
-   GitHub-hosted, so `auto` can never strand a run.
-4. build-images and build-and-deploy always run on GitHub-hosted: the prod
+1. The repo variables `RUNNER_TESTS` / `RUNNER_FAST` route nothing any more,
+   and a PR run has no inputs, so a PR gate is always GitHub-hosted.
+2. The workflow_dispatch input `runner`: `github` (the default), `auto`,
+   `mac`. `mac` sends the test and fast-gate jobs to the Mac (label
+   `sorento-mac`); `auto` sends the test jobs there when a `sorento-mac`
+   runner is online and idle, else GitHub-hosted, decided inside
+   `Changed areas` from the runners API with the `RUNNERS_READ_TOKEN` secret;
+   no secret, or a failed call, means GitHub-hosted. Anything unknown lands
+   on GitHub-hosted.
+3. build-images and build-and-deploy always run on GitHub-hosted: the prod
    images are amd64 and the Mac runners are arm64.
 
 The picker step is extracted from the workflow and executed with a stub `gh`,
@@ -80,7 +78,7 @@ def _runner(name: str, status: str, busy: bool, labels=("self-hosted", "Linux", 
     return {"name": name, "status": status, "busy": busy, "labels": [{"name": n} for n in labels]}
 
 
-def pick(tmp_path: Path, *, override: str = "", setting: str = "", token: str = "", runners=None, gh_fails=False):
+def pick(tmp_path: Path, *, override: str = "", token: str = "", runners=None, gh_fails=False):
     if shutil.which("jq") is None:
         pytest.skip("jq is not installed (the CI runner has it)")
     bindir = tmp_path / "bin"
@@ -96,7 +94,6 @@ def pick(tmp_path: Path, *, override: str = "", setting: str = "", token: str = 
         "GITHUB_OUTPUT": str(output),
         "REPO": "jayson-odoo/sorento-crm",
         "OVERRIDE": override,
-        "SETTING": setting,
         "GH_TOKEN": token,
         "GH_STUB_FILE": str(payload),
         "GH_STUB_FAIL": "1" if gh_fails else "0",
@@ -114,65 +111,67 @@ def pick(tmp_path: Path, *, override: str = "", setting: str = "", token: str = 
 # --- the picker ------------------------------------------------------------
 
 @pytest.mark.parametrize(
-    "override,setting,expected",
+    "override,expected",
     [
-        ("", "", GH),
-        ("vars", "", GH),
-        ("", "github", GH),
-        ("", "mac", MAC),
-        ("vars", "mac", MAC),
-        ("mac", "github", MAC),
-        ("github", "mac", GH),
-        ("", "something-else", GH),
-        ("", "self-hosted", GH),
+        ("", GH),
+        ("github", GH),
+        ("mac", MAC),
+        ("vars", GH),
+        ("something-else", GH),
+        ("self-hosted", GH),
     ],
 )
-def test_override_beats_the_variable_and_unknown_lands_on_github(tmp_path, override, setting, expected):
-    assert pick(tmp_path, override=override, setting=setting) == expected
+def test_only_an_explicit_mac_override_leaves_github_hosted(tmp_path, override, expected):
+    assert pick(tmp_path, override=override) == expected
+
+
+def test_a_pr_run_stays_on_github_even_with_an_idle_mac(tmp_path):
+    # A pull_request event has no inputs: OVERRIDE is empty whatever the repo variables say.
+    idle = [_runner("mac-1", "online", False)]
+    assert pick(tmp_path, override="", token="t", runners=idle) == GH
 
 
 def test_auto_without_the_token_secret_stays_on_github(tmp_path):
     idle = [_runner("mac-1", "online", False)]
-    assert pick(tmp_path, setting="auto", token="", runners=idle) == GH
     assert pick(tmp_path, override="auto", token="", runners=idle) == GH
 
 
 def test_auto_takes_the_mac_when_a_mac_runner_is_online_and_idle(tmp_path):
     runners = [_runner("mac-1", "online", True), _runner("mac-2", "online", False)]
-    assert pick(tmp_path, setting="auto", token="t", runners=runners) == MAC
+    assert pick(tmp_path, override="auto", token="t", runners=runners) == MAC
 
 
 def test_auto_overflows_to_github_when_every_mac_runner_is_busy(tmp_path):
     runners = [_runner("mac-1", "online", True), _runner("mac-2", "online", True)]
-    assert pick(tmp_path, setting="auto", token="t", runners=runners) == GH
+    assert pick(tmp_path, override="auto", token="t", runners=runners) == GH
 
 
 def test_auto_falls_back_to_github_when_the_mac_is_offline(tmp_path):
     runners = [_runner("mac-1", "offline", False), _runner("mac-2", "offline", False)]
-    assert pick(tmp_path, setting="auto", token="t", runners=runners) == GH
+    assert pick(tmp_path, override="auto", token="t", runners=runners) == GH
 
 
 def test_auto_ignores_idle_runners_without_the_mac_label(tmp_path):
     runners = [_runner("other", "online", False, labels=("self-hosted", "Linux", "X64"))]
-    assert pick(tmp_path, setting="auto", token="t", runners=runners) == GH
+    assert pick(tmp_path, override="auto", token="t", runners=runners) == GH
 
 
 def test_auto_falls_back_to_github_when_the_runners_api_fails(tmp_path):
-    assert pick(tmp_path, setting="auto", token="t", gh_fails=True) == GH
-
-
-def test_the_dispatch_override_beats_auto_in_the_variable(tmp_path):
-    idle = [_runner("mac-1", "online", False)]
-    assert pick(tmp_path, override="github", setting="auto", token="t", runners=idle) == GH
+    assert pick(tmp_path, override="auto", token="t", gh_fails=True) == GH
 
 
 # --- the workflow wiring -----------------------------------------------------
 
-def test_dispatch_has_a_runner_choice_defaulting_to_the_variables():
+def test_dispatch_has_a_runner_choice_defaulting_to_github():
     inputs = _workflow()[True]["workflow_dispatch"]["inputs"]
     runner = inputs["runner"]
-    assert runner["type"] == "choice" and runner["default"] == "vars", runner
-    assert runner["options"] == ["vars", "auto", "mac", "github"], runner
+    assert runner["type"] == "choice" and runner["default"] == "github", runner
+    assert runner["options"] == ["github", "auto", "mac"], runner
+
+
+def test_no_job_reads_a_runner_repo_variable():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "vars.RUNNER_TESTS" not in text and "vars.RUNNER_FAST" not in text
 
 
 def test_the_picker_is_the_first_step_of_changed_areas_and_feeds_its_output():
@@ -182,7 +181,7 @@ def test_the_picker_is_the_first_step_of_changed_areas_and_feeds_its_output():
     assert step["id"] == "runner"
     env = step["env"]
     assert env["OVERRIDE"] == "${{ inputs.runner }}"
-    assert env["SETTING"] == "${{ vars.RUNNER_TESTS }}"
+    assert "SETTING" not in env
     # The token is only this step's, never the job's or the workflow's.
     assert env["GH_TOKEN"] == "${{ secrets.RUNNERS_READ_TOKEN }}"
     assert "RUNNERS_READ_TOKEN" not in json.dumps(changes.get("env", {}))
@@ -197,14 +196,11 @@ def test_test_jobs_run_where_the_picker_says(job):
     assert jobs[job]["runs-on"] == "${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}", job
 
 
-FAST_EXPR = (
-    "${{ (inputs.runner == 'mac' || (inputs.runner != 'github' && vars.RUNNER_FAST == 'mac'))"
-    " && 'sorento-mac' || 'ubuntu-latest' }}"
-)
+FAST_EXPR = "${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}"
 
 
 @pytest.mark.parametrize("job", FAST_JOBS)
-def test_fast_jobs_follow_runner_fast_and_the_dispatch_override(job):
+def test_fast_jobs_leave_github_hosted_only_on_a_mac_dispatch(job):
     assert _jobs()[job]["runs-on"] == FAST_EXPR, job
 
 
