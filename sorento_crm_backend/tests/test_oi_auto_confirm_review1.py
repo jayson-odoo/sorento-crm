@@ -294,6 +294,51 @@ def test_an_open_line_with_a_live_link_is_still_done_the_cancelled_rule_is_not_g
         _assert_done_by_system(_reload(db, row))
 
 
+def _flag_cancelled_line(db, company_id, row):
+    """The AutoCount line-cancel ingest's own call: the row's core line just transitioned."""
+    from app.models.project_so import ProjectSalesOrderLine
+    from app.services.project_order_inquiry_service import flag_rows_for_cancelled_lines
+
+    mirror = db.get(ProjectSalesOrderLine, row.so_line_id)
+    with company_scope(db, frozenset({company_id})):
+        flag_rows_for_cancelled_lines(db, [str(mirror.core_sales_order_line_id)])
+    db.flush()
+
+
+def test_ac_ac_10e_the_cancel_flag_leaves_a_linkless_acknowledged_row_done():
+    with blank_session() as db:
+        company_id, row = _cancelled_line_row(db, ack_state=ACK_ACKNOWLEDGED)
+        _flag_cancelled_line(db, company_id, row)
+        _reload(db, row)
+        assert row.ack_state == ACK_ACKNOWLEDGED, "nothing to order on a cancelled line"
+        assert row.acknowledged_by is None
+
+
+def test_ac_ac_10e_the_cancel_flag_reopens_a_linked_row_and_a_later_auto_confirm_keeps_it():
+    with blank_session() as db:
+        company_id, row = _cancelled_line_row(db, ack_state=ACK_ACKNOWLEDGED, linked=True)
+        _flag_cancelled_line(db, company_id, row)
+        assert _reload(db, row).ack_state == ACK_CHANGED
+        svc = ProjectOrderInquiryService(db)
+        with company_scope(db, frozenset({company_id})):
+            svc.refresh_link_state([row])
+            svc.auto_confirm([row.id])
+        assert _reload(db, row).ack_state == ACK_CHANGED, "a later link write must not finish it"
+
+
+def test_ac_ac_10e_a_manual_confirm_finishes_the_flagged_linked_row():
+    with blank_session() as db:
+        company_id, row = _cancelled_line_row(db, ack_state=ACK_ACKNOWLEDGED, linked=True)
+        _flag_cancelled_line(db, company_id, row)
+        assert _reload(db, row).ack_state == ACK_CHANGED
+        buyer = _new_user(db)
+        svc = ProjectOrderInquiryService(db)
+        with company_scope(db, frozenset({company_id})):
+            svc.acknowledge_rows([row.id], actor_user_id=buyer)
+        assert _reload(db, row).ack_state == ACK_ACKNOWLEDGED
+        assert row.ack_override == "confirmed"
+
+
 # =============================================================================================
 # 5. Companion follows the host's real standing
 # =============================================================================================
