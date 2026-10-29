@@ -70,7 +70,7 @@ const PARTY_EDIT_PERMISSION = 'projects.parties.edit';
  * from the register dialog it replaces (PR #1336 round 2). Two things differ from that
  * dialog:
  *
- * - A third section, "Salesperson and customer", open from the start.
+ * - A third section, "Lead, customer and salesperson", open from the start.
  * - Edit mode starts every section open, never wipes the project's own template on
  *   first render, and excludes the project itself from its own clash check.
  */
@@ -335,7 +335,7 @@ export function ProjectForm(props: ProjectFormProps) {
     if (lead?.customer_id) {
       setCustomerId(lead.customer_id);
       setCustomerOption({ value: lead.customer_id, label: lead.customer_name ?? 'Customer' });
-    } else if (mode === 'create' || lead) {
+    } else if (mode === 'create') {
       setCustomerId('');
       setCustomerOption(null);
     }

@@ -139,7 +139,7 @@ export function LeadWizardDialog({
       notes: notes.trim() || null,
       ...informantBody(informant),
     };
-    const lead = await create.mutateAsync(body);
+    let lead = await create.mutateAsync(body);
 
     // Assignment is its own step server-side: it stamps the clock and notifies the
     // salesperson. A failure here leaves a perfectly good unassigned lead, so it must
@@ -147,6 +147,7 @@ export function LeadWizardDialog({
     if (ownerUserId && !submitOnly) {
       try {
         await assign.mutateAsync({ id: lead.id, ownerUserId });
+        lead = { ...lead, owner_user_id: ownerUserId };
       } catch {
         /* reported by the mutation */
       }
