@@ -662,11 +662,13 @@ def test_review_a_failed_call_records_its_real_elapsed_ms(session_factory, seede
     assert ev["fallback"] is True and ev["ms"] >= 50, ev
 
 
-def test_review_cached_tokens_are_null_when_the_provider_reports_none(session_factory, seeded, stub_access, monkeypatch):
+def test_review_cached_tokens_are_zero_when_the_provider_reports_none(session_factory, seeded, stub_access, monkeypatch):
+    """CHAT-CHANNEL-LOOKUPSET AC-CCL-7: a recorded 0, as the parser stores it (`parser.py` usage), so the span call
+    prices (`analytics_connector.prices.cost_sql` reads a NULL as cache-unknown and blanks the turn's cost)."""
     seed_world(session_factory)
     run(session_factory, stub_access, monkeypatch, text_body=f"{BRAND.lower()} stock", span=spans_json((BRAND, "brand")))
     rows = usage_rows(session_factory)
-    assert len(rows) == 1 and rows[0].cached_tokens is None, [r.cached_tokens for r in rows]
+    assert len(rows) == 1 and rows[0].cached_tokens == 0, [r.cached_tokens for r in rows]
 
 
 # ---------------------------------------------------------------------------------------------- S2 crew audit
