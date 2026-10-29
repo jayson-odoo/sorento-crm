@@ -33,6 +33,7 @@ from tests.test_ingest_autocount_do_grn import (  # noqa: F401 - env is a fixtur
     grn_records,
 )
 
+
 @pytest.fixture
 def orders_embedded(monkeypatch):
     """Embed DOs again for one test, so a plain push queues the DO and its lines."""
