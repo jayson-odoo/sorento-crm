@@ -58,8 +58,10 @@ not cancelled and whose SPO allocation is not retired.
 
 ## Reorder plan (Q4)
 
-- AC-AC-22 The reorder plan keeps counting project demand on `acknowledged`/`changed` rows only,
-  exactly as today; the state is now written by the system. (Consequence, PR body: a done row is
+- AC-AC-22 HELD (crew, 29 Oct: consequence put back to the owner). The plan code path is untouched
+  and isolated: the switch is `PLANNED_ACK_STATES` (`app/services/scm/demand.py:393`) plus the awaiting
+  chip (`app/services/scm/reorder_run_service.py:1265-1290`). As built the plan reads `acknowledged`/
+  `changed`, now written by the system. (Consequence, PR body: a done row is
   covered, so planned project demand falls to the uncovered remainder of `changed` rows; measured
   1,761 rows / 95,499 pcs today on the 28 Oct prod copy.)
 
