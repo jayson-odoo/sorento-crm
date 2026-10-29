@@ -61,7 +61,7 @@ def test_factory_resolves_gemini_and_defaults_to_flash() -> None:
     provider = get_provider("gemini", "k")
 
     assert isinstance(provider, GeminiProvider)
-    assert provider.default_model == "gemini-2.5-flash"
+    assert provider.default_model == "gemini-3.5-flash"
 
 
 # ---- a partial answer is never passed off as a whole one ------------------
