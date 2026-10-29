@@ -227,43 +227,45 @@ export default function SampleRequestForm({
 
   return (
     <div className={shell}>
-      <div className={`flex items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}>
-        {!embedded && (
-          <Button variant="ghost" size="sm" className="shrink-0" onClick={() => router.push(backPath)}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
-        )}
-        {request && (
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="min-w-0 truncate text-sm text-muted-foreground">
-              {request.request_no}
-            </span>
-            {readOnly && (
-              <DetailActionsMenu ariaLabel="Sample request actions">
-                <DropdownMenuItem
-                  onSelect={() => {
-                    void service()
-                      .downloadSampleRequestPdf(request.id, request.request_no)
-                      .catch((e) =>
-                        toast.error(e instanceof Error ? e.message : 'Failed to download the PDF'),
-                      );
-                  }}
-                >
-                  <Download className="size-4" />
-                  <span>Print</span>
-                </DropdownMenuItem>
-                {canCancel && (
-                  <DropdownMenuItem variant="destructive" onSelect={() => void handleCancel()}>
-                    <XCircle className="size-4" />
-                    <span>Cancel request</span>
+      {(!embedded || request) && (
+        <div className={`flex items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}>
+          {!embedded && (
+            <Button variant="ghost" size="sm" className="shrink-0" onClick={() => router.push(backPath)}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+          )}
+          {request && (
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="min-w-0 truncate text-sm text-muted-foreground">
+                {request.request_no}
+              </span>
+              {readOnly && (
+                <DetailActionsMenu ariaLabel="Sample request actions">
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      void service()
+                        .downloadSampleRequestPdf(request.id, request.request_no)
+                        .catch((e) =>
+                          toast.error(e instanceof Error ? e.message : 'Failed to download the PDF'),
+                        );
+                    }}
+                  >
+                    <Download className="size-4" />
+                    <span>Print</span>
                   </DropdownMenuItem>
-                )}
-              </DetailActionsMenu>
-            )}
-          </div>
-        )}
-      </div>
+                  {canCancel && (
+                    <DropdownMenuItem variant="destructive" onSelect={() => void handleCancel()}>
+                      <XCircle className="size-4" />
+                      <span>Cancel request</span>
+                    </DropdownMenuItem>
+                  )}
+                </DetailActionsMenu>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {!request && !embedded && <h1 className="text-lg font-semibold">New Sample Request</h1>}
       {request?.created_at && (

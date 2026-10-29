@@ -44,7 +44,10 @@ import {
  */
 export default function SalesOpportunityPortalForm({
   onCreated,
+  embedded = false,
 }: {
+  /** Inside the CRM dialog, whose own title names the action: the card shows no title of its own. */
+  embedded?: boolean;
   /** Called with the new opportunity's id once the server confirms it - the caller (the
    *  `new` page) owns navigating away, so this component stays router-agnostic and testable
    *  without mocking `next/navigation`. */
@@ -141,9 +144,11 @@ export default function SalesOpportunityPortalForm({
   return (
     <form onSubmit={submit} className="mx-auto flex w-full max-w-lg flex-col gap-4 px-3 py-4">
       <Card>
-        <CardHeader>
-          <CardTitle>Log a sales opportunity</CardTitle>
-        </CardHeader>
+        {!embedded && (
+          <CardHeader>
+            <CardTitle>Log a sales opportunity</CardTitle>
+          </CardHeader>
+        )}
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="customer-or-prospect">Customer or prospect</Label>

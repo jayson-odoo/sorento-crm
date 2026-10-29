@@ -158,8 +158,12 @@ export async function fetchPortalAttachmentBytes(downloadUrl: string): Promise<R
 }
 
 /** `portalFetch` over the CRM session: the portal services' own calls, on their my-requests twins. */
-export const myRequestsFetch = (input: string, init?: RequestInit): Promise<Response> =>
-  apiFetch(toMyRequests(input), init);
+export const myRequestsFetch = async (input: string, init?: RequestInit): Promise<Response> => {
+  if (!input.startsWith(`${PORTAL_BASE}/`) && !input.startsWith(`${BASE}/`)) {
+    throw new Error('Request path is not allowed.');
+  }
+  return apiFetch(toMyRequests(input), init);
+};
 
 /** The staff pages a salesperson's own request lives on (`MY_REQUEST_STAFF_PAGES`). */
 export const myRequestsPaths: SubmissionPaths = {

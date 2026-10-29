@@ -71,7 +71,7 @@ function Shell({
   sourceEntityType,
   sourceEntityId,
   children,
-  extraTabs: tabs = [],
+  extraTabs = [],
 }: FormDetailWithSLATabsProps) {
   return (
     <Tabs defaultValue="details">
@@ -83,7 +83,7 @@ function Shell({
           <FileText />
           <span>Details</span>
         </TabsTrigger>
-        {tabs.map((tab) => (
+        {extraTabs.map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value}>
             {tab.icon}
             <span>{tab.label}</span>
@@ -97,7 +97,7 @@ function Shell({
       <TabsContent value="details" className="m-0">
         {children}
       </TabsContent>
-      {tabs.map((tab) => (
+      {extraTabs.map((tab) => (
         <TabsContent key={tab.value} value={tab.value} className="m-0">
           {tab.content}
         </TabsContent>

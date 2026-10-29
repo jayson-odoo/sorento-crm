@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Download, ExternalLink, Link2, Paperclip, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -58,17 +58,14 @@ export default function StockInquiryAttachmentsSection({
     [attachmentsFromInquiry],
   );
 
-  const downloadUrl = useCallback(
-    (attachmentId: string) => `/api/v1/resource-management/attachments/${attachmentId}/download`,
-    [],
-  );
-
   const previewItems = useMemo<AttachmentPreviewItem[]>(
     () =>
       attachments.map((link) => {
         const name = link.original_filename ?? link.file_name ?? 'Unnamed file';
         const cdn = link.file_url?.startsWith('http') ? link.file_url : undefined;
-        const download = link.attachment_id ? downloadUrl(link.attachment_id) : undefined;
+        const download = link.attachment_id
+          ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
+          : undefined;
         return {
           id: link.id,
           name,
@@ -77,7 +74,7 @@ export default function StockInquiryAttachmentsSection({
           sizeBytes: link.file_size_bytes,
         };
       }),
-    [attachments, downloadUrl],
+    [attachments],
   );
 
   const linkedAttachmentIds = useMemo(
@@ -176,7 +173,7 @@ export default function StockInquiryAttachmentsSection({
                 <a
                   href={
                     link.attachment_id
-                      ? downloadUrl(link.attachment_id)
+                      ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
                       : (link.file_url ?? '#')
                   }
                   download={displayName}
@@ -205,7 +202,7 @@ export default function StockInquiryAttachmentsSection({
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [attachments, unlinkPending, downloadUrl],
+    [attachments, unlinkPending],
   );
 
   return (

@@ -80,7 +80,7 @@ describe('complaint page', () => {
     const root = ComplaintDetailPage({ params: Promise.resolve({ id: 'cp-1' }) }) as React.ReactElement;
     const find = (node: unknown): React.ReactElement | null => {
       if (!React.isValidElement(node)) return null;
-      const el = node as React.ReactElement<{ children?: unknown }>;
+      const el = node as React.ReactElement<{ children?: React.ReactNode }>;
       if (typeof el.type === 'function' && el.type.constructor.name === 'AsyncFunction') return el;
       const kids = React.Children.toArray(el.props.children);
       for (const k of kids) {

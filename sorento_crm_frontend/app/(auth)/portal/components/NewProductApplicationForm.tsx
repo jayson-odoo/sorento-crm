@@ -424,53 +424,55 @@ export default function NewProductApplicationForm({
 
   return (
     <div className={shell}>
-      <div
-        className={`flex items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}
-      >
-        {!embedded && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="shrink-0"
-            onClick={() => router.push(backPath)}
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
-        )}
-        {application && (
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="min-w-0 truncate text-sm text-muted-foreground">
-              {application.application_no}
-            </span>
-            {canRevise && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={saving}
-                onClick={() => setAsking('revise')}
-              >
-                Revise
-              </Button>
-            )}
-            <DetailActionsMenu ariaLabel="Application actions">
-              <DropdownMenuItem onSelect={() => void downloadExcel()}>
-                <Download className="size-4" />
-                <span>Download Excel</span>
-              </DropdownMenuItem>
-              {canCancel && (
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => setAsking('cancel')}
+      {(!embedded || application) && (
+        <div
+          className={`flex items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}
+        >
+          {!embedded && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0"
+              onClick={() => router.push(backPath)}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+          )}
+          {application && (
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="min-w-0 truncate text-sm text-muted-foreground">
+                {application.application_no}
+              </span>
+              {canRevise && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={saving}
+                  onClick={() => setAsking('revise')}
                 >
-                  <XCircle className="size-4" />
-                  <span>Cancel application</span>
-                </DropdownMenuItem>
+                  Revise
+                </Button>
               )}
-            </DetailActionsMenu>
-          </div>
-        )}
-      </div>
+              <DetailActionsMenu ariaLabel="Application actions">
+                <DropdownMenuItem onSelect={() => void downloadExcel()}>
+                  <Download className="size-4" />
+                  <span>Download Excel</span>
+                </DropdownMenuItem>
+                {canCancel && (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => setAsking('cancel')}
+                  >
+                    <XCircle className="size-4" />
+                    <span>Cancel application</span>
+                  </DropdownMenuItem>
+                )}
+              </DetailActionsMenu>
+            </div>
+          )}
+        </div>
+      )}
 
       {!application && !embedded && (
         <h1 className="text-lg font-semibold">New Product Application</h1>

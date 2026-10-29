@@ -15,6 +15,8 @@ const OWN_PRICE_TAG_ACCESS = [PAGE_VIEW, 'dealer_kit.price_tag_requests.view_own
 
 export default function DealerKitLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '';
-  const permission = OWN_PRICE_TAG_PAGE.test(pathname) ? OWN_PRICE_TAG_ACCESS : PAGE_VIEW;
-  return <RequireAccess permission={permission}>{children}</RequireAccess>;
+  if (OWN_PRICE_TAG_PAGE.test(pathname)) {
+    return <RequireAccess anyPermission={[...OWN_PRICE_TAG_ACCESS]}>{children}</RequireAccess>;
+  }
+  return <RequireAccess permission={PAGE_VIEW}>{children}</RequireAccess>;
 }
