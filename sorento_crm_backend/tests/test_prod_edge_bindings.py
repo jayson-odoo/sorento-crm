@@ -28,6 +28,15 @@ if not (REPO / ".git").exists():  # backend image has no .git / other compose fi
 # all-in-one compose's frontend nginx is that stack's edge. Everything else binds loopback.
 PUBLIC_BY_DESIGN = {("sorento_crm/docker-compose.yml", "frontend")}
 
+# (compose file, service, host address) binds on a PRIVATE interface by design. The HA
+# template's Patroni `db` publishes Postgres and the Patroni REST API on the node's WireGuard
+# address so the peer node can replicate and fail over (PLAN-ha-tier1-n8n-box-27oct.md);
+# `<THIS_WG_IP>` is filled per host with that box's wg0 address, never a public one. Only
+# this exact triple passes: any other non-loopback bind in any file still fails.
+PRIVATE_WG_BY_DESIGN = {
+    ("infra/templates/compose.ha.yml", "db", "<THIS_WG_IP>"),
+}
+
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "[::1]"}
 
 
@@ -68,7 +77,9 @@ def test_every_published_port_binds_loopback(compose: Path):
     open_ports = [
         f"{service}: {entry!r}"
         for service, entry in _published(compose)
-        if (rel, service) not in PUBLIC_BY_DESIGN and _host_ip(entry) not in LOOPBACK_HOSTS
+        if (rel, service) not in PUBLIC_BY_DESIGN
+        and _host_ip(entry) not in LOOPBACK_HOSTS
+        and (rel, service, _host_ip(entry)) not in PRIVATE_WG_BY_DESIGN
     ]
     assert not open_ports, (
         f"{rel} publishes on every interface (docker bypasses ufw): {open_ports}. "

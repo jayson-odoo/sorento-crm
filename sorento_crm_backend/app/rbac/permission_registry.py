@@ -219,6 +219,9 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product C
 # siblings and gate nothing (there is no row of its own to add or delete).
 PERMISSION_REGISTRY.extend(_crud("master_data", "chatbot_stock_limits", "Chatbot Stock Limits"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
+# ITEM-CLASS: AutoCount Item Class reference data (migration item_class_0001 grants each slug
+# to every role holding the matching brands slug).
+PERMISSION_REGISTRY.extend(_crud("master_data", "item_classes", "Item Classes"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "countries", "Countries"))

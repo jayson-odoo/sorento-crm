@@ -20,3 +20,9 @@ a9b1b46c2f515c54ec958e12fa0067b5877a8929:sorento_crm_backend/tests/test_runtime_
 9bf3312b9dae5a5666bafcc6d7f81285b0dd58ae:sorento_crm_backend/tests/test_respond_webhook_ingest.py:generic-api-key:198
 9bf3312b9dae5a5666bafcc6d7f81285b0dd58ae:sorento_crm_backend/tests/test_respond_webhook_ingest.py:generic-api-key:227
 dbcc51b9b06fb995636e2f843c86ef2c85490ed3:sorento_crm_backend/tests/test_inbox_queue_replay_tool.py:generic-api-key:62
+# LOOKUP-EMBED-CENTRAL (#1967): embeddingsStubs.ts row `key:` values are made-up UUID-shaped grid row keys in a
+# vitest stub (5b0a2c1e-1111-4222-8333-..., 6c1b3d2f-2222-4333-8444-...), never a credential.
+27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:42
+27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:54
+27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:68
+27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:79
