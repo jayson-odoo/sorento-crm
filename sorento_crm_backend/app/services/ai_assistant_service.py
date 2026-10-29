@@ -1099,7 +1099,7 @@ class AIAssistantChatService:
                 rag_query = f"{standalone_query}\n{query_hint}"
             rag_started = time.perf_counter()
             selected_tools, sources = self._rag_select_tools(
-                standalone_query=rag_query,
+                standalone_query=standalone_query,  # the question only: the entity hint stays out of tool ranking
                 enabled_tools=list(config.enabled_tools or []),
                 top_k=max(1, int(getattr(settings, "ai_assistant_rag_top_k", 3))),
             )
@@ -1442,6 +1442,9 @@ class AIAssistantChatService:
         scored against its capability text, with the portal pin and the intent nudges kept.
         """
         from app.services.tool_keyword_rank import rank_tools
+
+        # The entity hint ("Resolved references: ...") names records, not tools: it never takes part in the ranking.
+        standalone_query = re.split(r"\n\s*Resolved references:", standalone_query or "")[0]
 
         portal_intent = bool(
             re.search(r"intent:\s*(stock_inquiry|complaint|purchase_request|sponsorship_form)\b", (standalone_query or "").lower())

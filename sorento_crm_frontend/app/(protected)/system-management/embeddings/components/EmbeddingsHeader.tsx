@@ -13,10 +13,10 @@ import { num } from '../lib';
 
 export type EmbeddingsMode = 'lookup' | 'records';
 
-function Metric({ label, children }: { label: string; children: React.ReactNode }) {
+function Metric({ label, title, children }: { label: string; title?: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0 space-y-0.5">
-      <div className="text-xs text-muted-foreground truncate">{label}</div>
+      <div className="text-xs text-muted-foreground truncate" title={title}>{label}</div>
       <div className="text-sm font-medium truncate flex items-center gap-2">{children}</div>
     </div>
   );
@@ -73,7 +73,7 @@ export function EmbeddingsHeader({
               {num(overview.lookup.texts_with_vector)} / {num(overview.lookup.texts_total)}
             </Metric>
             {mode === 'lookup' ? (
-              <Metric label={`Record chunks on ${overview.setting.model}`}>
+              <Metric label="Record chunks, new model" title={`Record chunks on ${overview.setting.model}`}>
                 {num(onTarget)} / {num(onSearch)}
               </Metric>
             ) : (

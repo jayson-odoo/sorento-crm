@@ -37,12 +37,14 @@ export default function EmbeddingsSettingsPage() {
   // Prefill waits for the overview to settle: a setting never saved shows the embedder that actually runs.
   // Only known values prefill: a setting never saved with no overview to say what runs stays blank, never a guess.
   const [initial, setInitial] = useState<{ provider: string; model: string }>({ provider: '', model: '' });
+  const [resolved, setResolved] = useState<{ provider: string; model: string }>({ provider: '', model: '' });
   useEffect(() => {
     if (settings.data && !overview.isLoading && !loaded) {
       const p = settings.data.embedding_provider ?? overview.data?.setting.provider ?? '';
       const m = settings.data.embedding_model ?? overview.data?.setting.model ?? '';
       setProvider(p);
       setModel(m);
+      setResolved({ provider: p, model: m });
       setInitial({ provider: settings.data.embedding_provider ?? '', model: settings.data.embedding_model ?? '' });
       setRpm(String(settings.data.embedding_backfill_rpm));
       setLoaded(true);
@@ -61,7 +63,7 @@ export default function EmbeddingsSettingsPage() {
 
   const rpmError = wholeNumberRangeError(rpm, 1, 600);
   const o = overview.isError ? undefined : overview.data; // no overview (403 or failure): the form stands alone
-  const searchModel = settings.data?.embedding_records_search_model ?? null;
+  const searchModel = o?.records_search_model ?? settings.data?.embedding_records_search_model ?? null;
   const targetChunks = o?.records.reduce((s, r) => s + (r.chunks_by_model[o.setting.model] ?? 0), 0) ?? 0;
   const searchChunks = o?.records.reduce((s, r) => s + (r.chunks_by_model[searchModel ?? o.records_search_model] ?? 0), 0) ?? 0;
   const pct = o && searchChunks > 0 ? Math.min(100, Math.round((targetChunks / searchChunks) * 100)) : 0;
@@ -110,7 +112,7 @@ export default function EmbeddingsSettingsPage() {
                 {num(o.lookup.texts_with_vector)} / {num(o.lookup.texts_total)} with a {o.setting.model} vector
               </span>
             </div>
-            {searchModel ? (
+            {searchModel && searchModel !== o.setting.model ? (
               <div className="flex flex-wrap items-baseline gap-x-3">
                 <span className="w-32 text-muted-foreground">Record search</span>
                 <span>
@@ -133,6 +135,7 @@ export default function EmbeddingsSettingsPage() {
               ...(provider && (provider !== initial.provider || initial.provider) ? { embedding_provider: provider } : {}),
               ...(model && (model !== initial.model || initial.model) ? { embedding_model: model } : {}),
               embedding_backfill_rpm: Number(rpm),
+              recordsBackfillStarted: !!model && (provider !== resolved.provider || model !== resolved.model),
             })
           }
           disabled={save.isPending || !!rpmError || (!!provider !== !!model)}

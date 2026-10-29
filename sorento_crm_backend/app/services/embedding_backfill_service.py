@@ -478,6 +478,57 @@ def _document_chunks(doc) -> list[str]:
     )
 
 
+def ensure_product_spec_documents(db: Session) -> int:
+    """A `product_spec` document for every active product that has spec text and none yet (specs derived before the
+    change listener existed were never queued). Built with the worker's own text builder. Returns the documents made."""
+    import hashlib  # noqa: F401
+    from sqlalchemy import text
+
+    from app.models.embeddings import EmbeddingDocument
+    from app.services.embedding_service import EmbeddingReadService
+    from app.services.embedding_worker import _canonical_for_source, _company_id_for_source
+
+    ids = [
+        str(r[0])
+        for r in db.execute(
+            text(
+                "SELECT p.id FROM products p JOIN product_specifications s ON s.product_id = p.id "
+                "WHERE p.is_active AND btrim(COALESCE(s.rendered_text, '')) <> '' "
+                "AND NOT EXISTS (SELECT 1 FROM embedding_documents d "
+                "WHERE d.source_type = 'product_spec' AND d.source_id = p.id::text)"
+            )
+        )
+    ]
+    made = 0
+    for pid in ids:
+        try:
+            source = _canonical_for_source(db, "product_spec", pid)
+        except Exception:  # noqa: BLE001 - a product the builder refuses simply gets no document
+            continue
+        digest = EmbeddingReadService(db).deterministic_hash(
+            {
+                "source_type": "product_spec",
+                "source_id": pid,
+                "title": source.get("title"),
+                "body_text": source.get("body_text"),
+                "metadata": source.get("metadata", {}),
+            }
+        )
+        db.add(
+            EmbeddingDocument(
+                source_type="product_spec", source_id=pid, source_key=source.get("source_key"), title=source.get("title"),
+                body_text=source["body_text"], metadata_json=source.get("metadata", {}),
+                visibility_scope=source.get("visibility_scope"), source_hash=digest,
+                source_updated_at=source.get("source_updated_at"), company_id=_company_id_for_source(db, "product_spec", pid),
+                is_active=True,
+            )
+        )
+        made += 1
+    if made:
+        db.flush()
+    return made
+
+
 def backfill_records(
     db: Session,
     model: str,
@@ -506,6 +557,7 @@ def backfill_records(
         rpm = (row[0] if row else None) or DEFAULT_BACKFILL_RPM
     pause = 60.0 / max(1, int(rpm))
 
+    ensure_product_spec_documents(db)
     embedded = failed = 0
     requests_made = 0
     stopped = False
@@ -530,9 +582,10 @@ def backfill_records(
                 stop_error.append(exc)
                 return
             if split and len(group) > 1:
-                # One bad document spoils a whole batch: try them one at a time before anything is counted.
-                for single in group:
-                    send([single], split=False)
+                # One bad document spoils a whole batch: halve it until the bad ones stand alone, and count only those.
+                mid = len(group) // 2
+                for half in (group[:mid], group[mid:]):
+                    send(half)
                     if stopped:
                         return
                 return

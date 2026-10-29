@@ -17,6 +17,8 @@ export type EmbeddingSettingsInput = {
   embedding_provider?: string;
   embedding_model?: string;
   embedding_backfill_rpm: number;
+  /** Not sent: tells the save toast a records backfill went with this save. */
+  recordsBackfillStarted?: boolean;
 };
 
 const DEFAULT_RPM = 20;

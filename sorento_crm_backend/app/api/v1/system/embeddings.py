@@ -193,12 +193,6 @@ def records_backfill(body: RecordsBackfillBody, db: Session = Depends(get_db)):
     if body.action == "stop":
         queue_service.redis_conn.set(RECORDS_BACKFILL_STOP_KEY, "1", ex=STOP_FLAG_SECONDS)
         return {"job_id": None}
-    from app.services.embedding_backfill_service import clear_failures
-    from app.services.embedding_settings import resolve_embedder
-
-    # A fresh start: documents the last run gave up on get another chance.
-    clear_failures(db, resolve_embedder(db)[1])
-    db.commit()
     try:
         queue_service.redis_conn.delete(RECORDS_BACKFILL_STOP_KEY)
     except Exception:  # noqa: BLE001 - a stale flag only stops the run early; the job also clears it

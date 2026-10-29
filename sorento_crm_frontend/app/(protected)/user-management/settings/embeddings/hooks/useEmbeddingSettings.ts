@@ -17,11 +17,11 @@ export function useSaveEmbeddingSettings() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: EmbeddingSettingsInput) => saveEmbeddingSettings(input),
-    onSuccess: () => {
+    onSuccess: (_data, input) => {
       queryClient.invalidateQueries({ queryKey: EMBEDDING_SETTINGS_KEY });
       queryClient.invalidateQueries({ queryKey: ['system-settings'] });
       queryClient.invalidateQueries({ queryKey: ['embeddings'] });
-      toast.success('Embedding settings saved');
+      toast.success(input.recordsBackfillStarted ? 'Embedding settings saved, records backfill started' : 'Embedding settings saved');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to save settings'),
   });

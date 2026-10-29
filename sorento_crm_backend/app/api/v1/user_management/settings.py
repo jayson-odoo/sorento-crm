@@ -1149,19 +1149,19 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     db.commit()
     db.refresh(settings)
     if embedder_changed:
-        from app.services.embedding_backfill_service import clear_failures
-
-        if settings.embedding_model:
-            clear_failures(db, settings.embedding_model)  # the new model starts without old failure counts
-            db.commit()
         # A new lookup embedder re-embeds the records in the background; the guard flips the search model
-        # only once every document has a vector of the new model.
+        # only once every document has a vector of the new model. None of this may undo the save.
         try:
             from app.services import queue_service
+            from app.services.embedding_backfill_service import clear_failures
             from app.tasks.embedding_backfill import run_records_backfill
 
+            if settings.embedding_model:
+                clear_failures(db, settings.embedding_model)  # the new model starts without old failure counts
+                db.commit()
             queue_service.enqueue_job(run_records_backfill, queue_name="imports")
         except Exception:  # noqa: BLE001 - the save stands; the backfill can be started from the Embeddings screen
+            db.rollback()
             logging.getLogger(__name__).warning("embedding backfill could not be queued after a settings save", exc_info=True)
     if "chatbot_composer_enabled" in update_data:
         from app.modules.chatbot.lane_vocabulary import clear_composer_cache

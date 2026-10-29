@@ -6,6 +6,7 @@ import logging
 import uuid
 
 from app.database import SessionLocal
+from app.models.base import set_company_scope
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +30,26 @@ RUNNING_TTL_SECONDS = 180
 _RELEASE_IF_OURS = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 
 
+_NO_FLAG = ""  # Redis unavailable: the job runs without a flag rather than not at all
+
+
 def _claim_running() -> str | None:
-    """Raise the running flag if nobody else's is up; the token it carries is this job's. None when another job owns it."""
+    """Raise the running flag if nobody else's is up; the token it carries is this job's. None when another job owns
+    it (this one must not run); `_NO_FLAG` when Redis cannot say."""
     try:
         from app.services import queue_service
 
         token = uuid.uuid4().hex
         if queue_service.redis_conn.set(RECORDS_BACKFILL_RUNNING_KEY, token, nx=True, ex=RUNNING_TTL_SECONDS):
             return token
+        return None
     except Exception:  # noqa: BLE001 - no Redis, no flag
-        pass
-    return None
+        return _NO_FLAG
 
 
 def _release_running(token: str | None) -> None:
     """Take the flag down only if this job owns it."""
-    if token is None:
+    if not token:
         return
     try:
         from app.services import queue_service
@@ -56,7 +61,7 @@ def _release_running(token: str | None) -> None:
 
 def _stop_or_refresh(token: str | None):
     def check() -> bool:
-        if token is not None:
+        if token:
             try:
                 from app.services import queue_service
 
@@ -73,9 +78,13 @@ def run_records_backfill(model: str | None = None) -> dict:
     from app.services.embedding_backfill_service import apply_search_model_guard, backfill_records
     from app.services.embedding_settings import resolve_embedder
 
-    db = SessionLocal()
     run_token = _claim_running()
+    if run_token is None:
+        logger.info("records backfill: another job holds the running flag; this one exits")
+        return {"skipped": "another backfill is running"}
+    db = SessionLocal()
     try:
+        set_company_scope(db, None)  # a system job: products of every company
         if model is None:
             _provider, model = resolve_embedder(db)
         result = backfill_records(db, model, should_stop=_stop_or_refresh(run_token))
