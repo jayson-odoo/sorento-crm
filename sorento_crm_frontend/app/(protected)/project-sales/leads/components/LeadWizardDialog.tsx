@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useSession } from 'next-auth/react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,8 +19,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { WizardSteps } from '@/components/common/WizardSteps';
-import { useCustomerSelectQuery } from '@/app/(protected)/order-management/shared/hooks/use-customer-select-query';
+import { useHasPermission } from '@/hooks/usePermissions';
 import {
+  useFetchCustomerOptions,
   useLeadMutations,
   useProjectParties,
 } from '../../_shared/hooks/useProjects';
@@ -28,7 +30,6 @@ import {
   useLeadAcceptanceMutations,
 } from '../../_shared/hooks/useLeadAcceptance';
 import type {
-  LeadNewCustomer,
   ProjectLead,
   ProjectLeadBody,
 } from '../../_shared/types/project.types';
@@ -42,20 +43,19 @@ import {
 import { informantSourceLabel } from './acceptance';
 
 const STEPS = [
+  { id: 'customer', label: 'Customer' },
   { id: 'development', label: 'The development' },
   { id: 'informant', label: 'Who told us' },
-  { id: 'detail', label: 'Lead detail' },
   { id: 'confirm', label: 'Assign and confirm' },
 ] as const;
 
 type StepId = (typeof STEPS)[number]['id'];
 
 /**
- * Create a lead: the development, who told us, the little we know, and who it goes to.
+ * Create a lead: the customer, the development, who told us, and who it goes to.
  *
- * The development comes FIRST because it is the only required decision (AC-A3). A lead
- * anchors on the job, not on a counterparty: on day one nobody knows who will place the
- * order, so the buyer is optional and the informant is a separate thing entirely.
+ * The customer comes FIRST because the project registered from the lead takes it
+ * (LEAD-GOVERNS-REGISTER). It is picked from the server search, never created here.
  *
  * A lead is never clash-checked (AC-O3), so there is no warning panel here. That check
  * happens once, at qualify, where it means something.
@@ -71,48 +71,68 @@ export function LeadWizardDialog({
 }) {
   const { create } = useLeadMutations();
   const { assign } = useLeadAcceptanceMutations();
-  const [step, setStep] = React.useState<StepId>('development');
+  const [step, setStep] = React.useState<StepId>('customer');
+  const canEdit = useHasPermission('projects.projects.edit');
+  const canSubmit = useHasPermission('projects.registrations.submit');
+  // A submit-only salesperson's lead is theirs: the server owns it to them, nothing to assign.
+  const submitOnly = !canEdit && canSubmit;
 
   const [title, setTitle] = React.useState(initialTitle);
   const [developerPartyId, setDeveloperPartyId] = React.useState('');
   const [location, setLocation] = React.useState('');
 
-  const [informant, setInformant] = React.useState<InformantDraft>(EMPTY_INFORMANT);
+  const [informant, setInformant] =
+    React.useState<InformantDraft>(EMPTY_INFORMANT);
 
   const [customerId, setCustomerId] = React.useState('');
-  const [creatingCustomer, setCreatingCustomer] = React.useState(false);
-  const [newCustomer, setNewCustomer] = React.useState<LeadNewCustomer>({
-    customer_name: '',
-  });
+  const [customerNames, setCustomerNames] = React.useState<
+    Record<string, string>
+  >({});
+  const customerName = customerNames[customerId] ?? '';
   const [estimatedValue, setEstimatedValue] = React.useState('');
   const [notes, setNotes] = React.useState('');
 
   const [ownerUserId, setOwnerUserId] = React.useState('');
 
   const developers = useProjectParties({ party_type: 'developer', limit: 200 });
-  const parties = useProjectParties({ limit: 200 });
-
-  // The shared customer-select hook, not a bespoke fetch: one definition of "the
-  // customer list" across the app, per the architecture rules. SearchableSelect
-  // filters it client-side, which is what every other customer picker does.
-  const customers = useCustomerSelectQuery();
+  const searchCustomers = useFetchCustomerOptions();
+  // The picked name is read back from the search results, so Confirm needs no second lookup.
+  const fetchCustomers = React.useCallback(
+    async (query: string) => {
+      const options = await searchCustomers(query);
+      setCustomerNames((previous) => ({
+        ...previous,
+        ...Object.fromEntries(
+          options.map((option) => [option.value, option.label]),
+        ),
+      }));
+      return options;
+    },
+    [searchCustomers],
+  );
   const users = useAssignableUsers();
 
-  const selectedCustomer = (customers.data ?? []).find((row) => row.id === customerId);
-
+  const customerReady = customerId.length > 0;
   const developmentReady = title.trim().length > 0;
   const stepIndex = STEPS.findIndex((candidate) => candidate.id === step);
   // Rough value may stay blank; a typed one that cannot be read stops the walk at its step.
-  const valueError = numberFieldError(estimatedValue, { min: 0, optional: true });
+  const valueError = numberFieldError(estimatedValue, {
+    min: 0,
+    optional: true,
+  });
   // The sentence stays hidden while typing; a refused press shows it, then it follows the box live.
   const [valueErrorShown, setValueErrorShown] = React.useState(false);
-  const canAdvance = step === 'development' ? developmentReady : true;
+  const canAdvance =
+    step === 'customer'
+      ? customerReady
+      : step === 'development'
+        ? developmentReady
+        : true;
 
   async function submit() {
     const body: ProjectLeadBody & LeadInformantBody = {
       title: title.trim(),
-      customer_id: creatingCustomer ? null : customerId || null,
-      new_customer: creatingCustomer ? newCustomer : null,
+      customer_id: customerId,
       developer_party_id: developerPartyId || null,
       estimated_value: estimatedValue.trim() || null,
       location: location.trim() || null,
@@ -124,7 +144,7 @@ export function LeadWizardDialog({
     // Assignment is its own step server-side: it stamps the clock and notifies the
     // salesperson. A failure here leaves a perfectly good unassigned lead, so it must
     // not roll the wizard back (the mutation reports it).
-    if (ownerUserId) {
+    if (ownerUserId && !submitOnly) {
       try {
         await assign.mutateAsync({ id: lead.id, ownerUserId });
       } catch {
@@ -133,10 +153,6 @@ export function LeadWizardDialog({
     }
     onDone(lead);
   }
-
-  const informantParty =
-    (parties.data?.data ?? []).find((party) => party.id === informant.informant_party_id)
-      ?.name ?? null;
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
@@ -157,9 +173,9 @@ export function LeadWizardDialog({
             // React bubbles a portalled submit up the COMPONENT tree, so a caller that ever
             // renders this inside its own form must not receive the wizard's submit.
             event.stopPropagation();
-            if (valueError && (step === 'detail' || step === 'confirm')) {
+            if (valueError && (step === 'development' || step === 'confirm')) {
               setValueErrorShown(true);
-              setStep('detail');
+              setStep('development');
               return;
             }
             if (step === 'confirm') {
@@ -172,6 +188,27 @@ export function LeadWizardDialog({
           <WizardSteps steps={STEPS} currentId={step} className="mb-4" />
 
           <DialogBody className="max-h-[60vh] space-y-4 overflow-y-auto">
+            {step === 'customer' && (
+              <div className="space-y-1.5">
+                <Label htmlFor="lead-customer">
+                  Customer <span className="text-destructive">*</span>
+                </Label>
+                <SearchableSelect
+                  id="lead-customer"
+                  value={customerId}
+                  onChange={setCustomerId}
+                  fetchOptions={fetchCustomers}
+                  selectedOption={
+                    customerId
+                      ? { value: customerId, label: customerName }
+                      : undefined
+                  }
+                  placeholder="Search customers"
+                  emptyMessage="No customers found"
+                />
+              </div>
+            )}
+
             {step === 'development' && (
               <div className="space-y-4">
                 <div className="space-y-1.5">
@@ -211,109 +248,17 @@ export function LeadWizardDialog({
                     placeholder="e.g. Setia Alam, Selangor"
                   />
                 </div>
-              </div>
-            )}
-
-            {step === 'informant' && (
-              <InformantFieldset value={informant} onChange={setInformant} showTitle={false} />
-            )}
-
-            {step === 'detail' && (
-              <div className="space-y-4">
-                <div className="space-y-3">
-                  {creatingCustomer ? (
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="lead-new-customer">
-                          Buyer name <span className="text-destructive">*</span>
-                        </Label>
-                        <Input
-                          id="lead-new-customer"
-                          value={newCustomer.customer_name}
-                          onChange={(event) =>
-                            setNewCustomer((previous) => ({
-                              ...previous,
-                              customer_name: event.target.value,
-                            }))
-                          }
-                          placeholder="Sunway Construction Sdn Bhd"
-                        />
-                      </div>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="lead-new-phone">Phone</Label>
-                          <Input
-                            id="lead-new-phone"
-                            value={newCustomer.phone_number ?? ''}
-                            onChange={(event) =>
-                              setNewCustomer((previous) => ({
-                                ...previous,
-                                phone_number: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="lead-new-email">Email</Label>
-                          <Input
-                            id="lead-new-email"
-                            type="email"
-                            value={newCustomer.email ?? ''}
-                            onChange={(event) =>
-                              setNewCustomer((previous) => ({
-                                ...previous,
-                                email: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCreatingCustomer(false)}
-                      >
-                        Choose an existing buyer
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="lead-customer">Buyer</Label>
-                        <SearchableSelect
-                          id="lead-customer"
-                          value={customerId}
-                          onChange={setCustomerId}
-                          clearable
-                          options={(customers.data ?? []).map((row) => ({
-                            value: row.id,
-                            label: row.customer_name,
-                            description: row.customer_code ?? undefined,
-                          }))}
-                          placeholder="Search buyers"
-                          emptyMessage="No match"
-                          createOption={{
-                            label: (query) => <span>Create &ldquo;{query}&rdquo;</span>,
-                            onCreate: (query) => {
-                              setCustomerId('');
-                              setNewCustomer({ customer_name: query });
-                              setCreatingCustomer(true);
-                            },
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
                 <div className="space-y-1.5">
                   <Label htmlFor="lead-value">Rough value (RM)</Label>
                   <NumberInput
                     id="lead-value"
                     min={0}
                     value={estimatedValue}
-                    error={valueErrorShown && estimatedValue.trim() ? valueError : undefined}
+                    error={
+                      valueErrorShown && estimatedValue.trim()
+                        ? valueError
+                        : undefined
+                    }
                     onChange={(event) => setEstimatedValue(event.target.value)}
                   />
                 </div>
@@ -329,27 +274,38 @@ export function LeadWizardDialog({
               </div>
             )}
 
+            {step === 'informant' && (
+              <InformantFieldset
+                value={informant}
+                onChange={setInformant}
+                showTitle={false}
+              />
+            )}
+
             {step === 'confirm' && (
               <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="lead-owner">Assign to</Label>
-                  <SearchableSelect
-                    id="lead-owner"
-                    value={ownerUserId}
-                    onChange={setOwnerUserId}
-                    clearable
-                    loadError={users.error}
-                    onRetry={() => void users.refetch()}
-                    options={(users.data ?? []).map((user) => ({
-                      value: user.id,
-                      label: user.name || 'Unnamed user',
-                    }))}
-                    placeholder="Select a salesperson"
-                    emptyMessage="No match"
-                  />
-                </div>
+                {!submitOnly && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="lead-owner">Assign to</Label>
+                    <SearchableSelect
+                      id="lead-owner"
+                      value={ownerUserId}
+                      onChange={setOwnerUserId}
+                      clearable
+                      loadError={users.error}
+                      onRetry={() => void users.refetch()}
+                      options={(users.data ?? []).map((user) => ({
+                        value: user.id,
+                        label: user.name || 'Unnamed user',
+                      }))}
+                      placeholder="Select a salesperson"
+                      emptyMessage="No match"
+                    />
+                  </div>
+                )}
 
                 <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+                  <Fact label="Customer" value={customerName || null} />
                   <Fact label="Development" value={title.trim()} />
                   <Fact
                     label="Developer"
@@ -363,28 +319,28 @@ export function LeadWizardDialog({
                   <Fact
                     label="Source"
                     value={
-                      informantSourceLabel(informantBody(informant).informant_source) || null
+                      informantSourceLabel(
+                        informantBody(informant).informant_source,
+                      ) || null
                     }
                   />
-                  <Fact label="Firm" value={informantParty} />
                   <Fact
                     label="Contact"
                     value={informant.informant_contact_name.trim() || null}
                   />
-                  <Fact label="Reference" value={informant.informant_ref.trim() || null} />
                   <Fact
-                    label="Buyer"
-                    value={
-                      creatingCustomer
-                        ? `${newCustomer.customer_name.trim()} (new)`
-                        : (selectedCustomer?.customer_name ?? null)
-                    }
-                    emptyText="Not known yet"
+                    label="Reference"
+                    value={informant.informant_ref.trim() || null}
                   />
                   <Fact
                     label="Rough value"
-                    value={estimatedValue.trim() ? `RM ${estimatedValue.trim()}` : null}
+                    value={
+                      estimatedValue.trim()
+                        ? `RM ${estimatedValue.trim()}`
+                        : null
+                    }
                   />
+                  {submitOnly && <SalespersonFact />}
                 </dl>
               </div>
             )}
@@ -410,7 +366,9 @@ export function LeadWizardDialog({
               {step === 'confirm' ? (
                 <Button
                   type="submit"
-                  disabled={create.isPending || assign.isPending || !developmentReady}
+                  disabled={
+                    create.isPending || assign.isPending || !developmentReady
+                  }
                 >
                   Create lead
                 </Button>
@@ -426,6 +384,11 @@ export function LeadWizardDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function SalespersonFact() {
+  const { data: session } = useSession();
+  return <Fact label="Salesperson" value={session?.user?.name ?? null} />;
 }
 
 function Fact({
