@@ -14,6 +14,9 @@ import numpy as np
 from app.services.chatbot.head import lookup_lists as ll
 
 
+from tests.chatbot._embed_http import patch_openai_embeddings
+
+
 def _embedder(monkeypatch, calls):
     from app.services import llm_provider
 
@@ -24,7 +27,7 @@ def _embedder(monkeypatch, calls):
 
     for store in (ll._cache, ll._matrices, ll._pieces):
         store.clear()
-    monkeypatch.setattr(llm_provider.OpenAIProvider, "_client", lambda self, **kw: types.SimpleNamespace(embeddings=_Emb()))
+    patch_openai_embeddings(monkeypatch, _Emb().create)
     return ll.provider_embedder("sk-zz-v66-pieces")
 
 
