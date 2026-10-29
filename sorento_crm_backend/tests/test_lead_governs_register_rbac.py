@@ -28,6 +28,7 @@ from ._lead_governs_register_support import (
 )
 from ._project_register_v2_support import EDIT, VIEW_OWN, as_user, submit_existing, v2  # noqa: F401
 from ._project_registration_support import active_user
+from ._project_registration_support import project as seed_project
 
 # ------------------------------------------------------------------ H1, H2: reads
 
@@ -478,3 +479,75 @@ def test_e6_a_lead_that_already_has_a_customer_never_changes_on_submit(v2):
     res = submit_existing(v2, v2.sub_a, pid, {"customer_id": v2.customer.id})
     assert res.status_code == 200, res.text
     assert reload_lead(v2, lead.id).customer_id == v2.customer.id
+
+
+# ------------------------------------------------------------------ security re-check (E8 limited, E10, E11)
+
+
+def _linked_to_customerless_lead(w, project_owner, lead_owner):
+    """A project of `project_owner` with its own customer, linked to `lead_owner`'s lead that
+    has no customer. Everything is committed."""
+    from app.models.projects import ProjectSalesProfile
+
+    proj = seed_project(w.db, w.company_id, title("E10"), owner=project_owner)
+    w.db.add(ProjectSalesProfile(project_id=proj.id, customer_id=w.customer.id))
+    lead = lead_row(w, customer_id=None, owner=lead_owner)
+    proj.lead_id = lead.id
+    w.db.commit()
+    return proj, lead
+
+
+def test_e10_a_collaborator_saving_the_title_does_not_fill_someone_elses_lead(v2):
+    from app.models.projects import ProjectCollaborator
+
+    proj, lead = _linked_to_customerless_lead(v2, v2.owner, v2.sales_c)
+    v2.db.add(ProjectCollaborator(project_id=proj.id, user_id=v2.sales_b))
+    v2.db.commit()
+    res = as_user(v2, v2.sales_b).put(f"{STAFF}/{proj.id}", json={"title": title("E10 renamed")})
+    assert res.status_code == 200, res.text
+    assert reload_lead(v2, lead.id).customer_id is None
+
+
+def test_e10_the_lead_owner_saving_the_project_does_fill_the_empty_lead(v2):
+    proj, lead = _linked_to_customerless_lead(v2, v2.sales_c, v2.sales_c)
+    res = as_user(v2, v2.sales_c).put(f"{STAFF}/{proj.id}", json={"title": title("E10 owner")})
+    assert res.status_code == 200, res.text
+    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
+
+
+def test_e10_a_manage_holder_saving_the_project_does_fill_the_empty_lead(v2):
+    proj, lead = _linked_to_customerless_lead(v2, v2.owner, v2.sales_c)
+    res = as_user(v2, v2.manager).put(f"{STAFF}/{proj.id}", json={"title": title("E10 manager")})
+    assert res.status_code == 200, res.text
+    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
+
+
+def test_e11_a_lead_reassigned_after_the_draft_is_a_404_on_submit(v2):
+    lead = _own_lead(v2)
+    pid = _register(v2, v2.sub_a, submit=False, lead_id=lead.id).json()["id"]
+    before = reload_lead(v2, lead.id).outcome
+    row = reload_lead(v2, lead.id)
+    row.owner_user_id = v2.sub_b
+    v2.db.commit()
+    res = submit_existing(v2, v2.sub_a, pid)
+    assert res.status_code == 404, res.text
+    assert res.json()["code"] == "lead_not_found"
+    assert project_of(v2, pid).approval_state == "draft"
+    assert reload_lead(v2, lead.id).outcome == before
+
+
+def test_e8_a_limited_edit_holder_gets_a_409_that_names_no_project(v2):
+    user = active_user(v2.db, "Edit Own W")
+    v2.perms[user] = {VIEW_OWN, EDIT}
+    v2.db.commit()
+    lead = lead_row(v2, customer_id=v2.customer.id, owner=user)
+    first_title = title("LimitedHolds")
+    first = as_user(v2, user).post(LIST, json={"title": first_title, "lead_id": lead.id})
+    assert first.status_code == 201, first.text
+    code = first.json()["project_code"]
+    res = as_user(v2, user).post(LIST, json={"title": title("LimitedSecond"), "lead_id": lead.id})
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "lead_already_linked"
+    assert first_title not in res.text
+    if code:
+        assert code not in res.text
