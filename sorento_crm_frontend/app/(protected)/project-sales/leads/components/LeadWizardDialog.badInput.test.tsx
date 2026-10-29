@@ -28,6 +28,9 @@ vi.mock('../../_shared/services/projectService', () => ({
     pagination: { total: 2, page: 1, limit: 200 },
   })),
   listLeads: vi.fn(),
+  listCustomerOptions: vi.fn(async () => [
+    { value: 'c1', label: 'KEDAI CONTOH SDN. BHD.' },
+  ]),
   getLead: vi.fn(),
   updateLead: vi.fn(),
   changeLeadStatus: vi.fn(),
@@ -56,54 +59,93 @@ vi.mock('@/services/userSelectService', () => ({
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: ({
-    value,
-    onChange,
-    options,
-    placeholder,
+vi.mock('@/components/common/SearchableSelect', () => {
+  type Opt = { value: string; label: string };
+  function AsyncSelect({
     id,
+    onChange,
+    fetchOptions,
+    emptyMessage,
     createOption,
   }: {
-    value: string;
-    onChange: (next: string) => void;
-    options?: { value: string; label: string }[];
-    placeholder?: string;
     id?: string;
+    onChange: (next: string) => void;
+    fetchOptions: (query: string, page: number) => Promise<Opt[]>;
+    emptyMessage?: string;
     createOption?: { label: (q: string) => React.ReactNode; onCreate: (q: string) => void };
-  }) => (
-    <>
-      <select
-        id={id}
-        aria-label={placeholder ?? 'select'}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="">{placeholder ?? ''}</option>
-        {(options ?? []).map((option) => (
-          <option key={option.value} value={option.value}>
+  }) {
+    const [query, setQuery] = React.useState('');
+    const [results, setResults] = React.useState<Opt[] | null>(null);
+    return (
+      <span>
+        <input
+          id={id}
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            void fetchOptions(event.target.value, 0).then(setResults);
+          }}
+        />
+        {(results ?? []).map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => {
+              onChange(option.value);
+              setQuery(option.label);
+              setResults(null);
+            }}
+          >
             {option.label}
-          </option>
+          </button>
         ))}
-      </select>
-      {createOption ? (
-        <button type="button" onClick={() => createOption.onCreate('Gamuda Builders')}>
-          {createOption.label('Gamuda Builders')}
-        </button>
-      ) : null}
-    </>
-  ),
+        {results && results.length === 0 && query ? (
+          <p data-testid="picker-empty">{emptyMessage ?? 'No results found.'}</p>
+        ) : null}
+        {createOption && query ? (
+          <button type="button" onClick={() => createOption.onCreate(query)}>
+            {createOption.label(query)}
+          </button>
+        ) : null}
+      </span>
+    );
+  }
+  return {
+    SearchableSelect: (props: Record<string, unknown>) => {
+      if (props.fetchOptions) return <AsyncSelect {...(props as never)} />;
+      const { value, onChange, options, placeholder, id } = props as {
+        value: string;
+        onChange: (next: string) => void;
+        options?: Opt[];
+        placeholder?: string;
+        id?: string;
+      };
+      return (
+        <select
+          id={id}
+          aria-label={placeholder ?? 'select'}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          <option value="">{placeholder ?? ''}</option>
+          {(options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      );
+    },
+  };
+});
+
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { id: 'u-me', name: 'Sales A' } }, status: 'authenticated' }),
 }));
 
-vi.mock(
-  '@/app/(protected)/order-management/shared/hooks/use-customer-select-query',
-  () => ({
-    useCustomerSelectQuery: () => ({
-      data: [{ id: 'c1', customer_name: 'Sunway Construction', customer_code: 'C-001' }],
-      isLoading: false,
-    }),
-  }),
-);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+}));
 
 import { LeadWizardDialog } from './LeadWizardDialog';
 
@@ -118,6 +160,11 @@ function renderWizard() {
     </QueryClientProvider>,
   );
   return { onDone };
+}
+
+async function pickCustomer() {
+  fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'KEDAI' } });
+  fireEvent.click(await screen.findByRole('button', { name: 'KEDAI CONTOH SDN. BHD.' }));
 }
 
 function next() {
@@ -140,11 +187,11 @@ import { typeBadInput } from '@/test-utils/badInput';
 describe('LeadWizardDialog bad number input (R6)', () => {
   it('Rough value with bad input: the lead is not created and the sentence shows under the box', async () => {
     renderWizard();
-    fireEvent.change(screen.getByLabelText(/What is it/), {
+    await pickCustomer();
+    next();
+    fireEvent.change(await screen.findByLabelText(/What is it/), {
       target: { value: 'Tower behind the showroom' },
     });
-    next();
-    next();
     typeBadInput(await screen.findByLabelText(/Rough value/));
     // Walk to the end; a screen that stops the walk (or sends it back here) is as good.
     for (let i = 0; i < 3; i += 1) {
@@ -166,11 +213,11 @@ describe('LeadWizardDialog bad number input (R6)', () => {
 
   it('S4: no sentence while typing, Next stays enabled, a refused press shows it and stays, a valid value clears it', async () => {
     renderWizard();
-    fireEvent.change(screen.getByLabelText(/What is it/), {
+    await pickCustomer();
+    next();
+    fireEvent.change(await screen.findByLabelText(/What is it/), {
       target: { value: 'Tower behind the showroom' },
     });
-    next();
-    next();
     const box = await screen.findByLabelText(/Rough value/);
     typeBadInput(box);
     // Typing alone says nothing and does not lock the button (owner Q1 / Q4).
