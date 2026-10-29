@@ -236,7 +236,7 @@ class ToolDef:
     name: str                 # MCP tool name
     user_permission: str      # slug the linked user must hold
 
-REGISTRY: dict[str, ToolDef]  # exactly the 9 tools of card section 2, with the slugs in that table
+REGISTRY: dict[str, ToolDef]  # exactly the 10 tools of card section 2, with the slugs in that table
 
 @dataclass
 class ToolResult:
