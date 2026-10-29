@@ -13,12 +13,10 @@ Covers per endpoint: eligible happy path (200 + body shape incl. handled_by_*),
 non-eligible -> 403, unauth -> 401, take-over wrong/null expected -> 409, release
 by non-holder -> 403. Plus the GET serializer's FE-resolver fields.
 
-Runs against an in-memory sqlite bind (CLAUDE.md "sqlite pytest fixtures" gotcha):
-pg ``UUID(as_uuid=False)`` works as-is; JSONB columns swapped to JSON; the
-AgentTeam partial-unique indexes dropped; ``lookup_bindings`` created so a
-globally-registered lookup validator can't fault on inserts during a full-suite
-run. ``UserPermissionService.get_user_role_slugs`` is monkeypatched (the GET
-serializer's ``viewer_is_admin`` reads it, and no role tables are seeded here).
+Runs on the blank Postgres scratch schema (tests/_pg_fixture.py blank_session) and seeds
+every row it uses, so it runs in CI (it sat in tests/ci_excluded.txt from its sqlite era).
+``UserPermissionService.get_user_role_slugs`` is monkeypatched (the GET serializer's
+``viewer_is_admin`` reads it, and no role tables are seeded here).
 
 Run: venv/bin/pytest tests/test_form_handling_lock_routes.py -q
 """
