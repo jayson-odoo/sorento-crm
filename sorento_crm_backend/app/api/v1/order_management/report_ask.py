@@ -418,8 +418,9 @@ def report_ask(
         # Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY, #b6e9): as before #1922, pending delivery needs no reveal; undelivered
         # orders and unpaid invoices do. Only a contact the company knows: office staff (every customer) or a linked
         # contact (its own customers, `enforce_customer_scope` below). An unknown contact stays refused. A live
-        # salesperson never reaches here (its decision is its own book, Q6).
-        decision, granted = "granted", True
+        # salesperson never reaches here (its decision is its own book, Q6). `granted` stays False: the agent axis and
+        # filters stay refused below (`own_book_only`), as pre-#1922 pending delivery had none (security S1).
+        decision = "granted"
     if decision == "not_granted":
         if outstanding_kind:
             raise AppException(403, "Outstanding is not enabled for your account.", code="outstanding_not_enabled")

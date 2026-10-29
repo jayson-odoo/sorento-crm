@@ -191,17 +191,18 @@ def test_an_unknown_contact_without_the_reveal_is_refused_outstanding(console_no
 
 
 def test_a_named_axis_keeps_the_summary_and_the_list_offer(do_only, do_only_world) -> None:
-    """Owner 29 Oct Q2: "by salesperson" replaces the default breakdowns; the route returns the summary with it."""
+    """Owner 29 Oct Q2: "by brand" replaces the default breakdowns; the route returns the summary with it. (An agent axis
+    is the route's to refuse this unrevealed contact, security S1.)"""
     do_only.extra_body = {"summary": {**DO_SUMMARY, "groups": [
-        {"axis": "sales_agent", "label": "Sales agent", "rows": [{"name": "ZZT AGENT", "qty": 40, "amount": 1234.0}]}]}}
+        {"axis": "brand", "label": "Brand", "rows": [{"name": "ZZT BRAND", "qty": 40, "amount": 1234.0}]}]}}
     text, calls = do_only.say(
-        _status("outstanding", _e(PRODUCT, "product"), basis=None, group_by="sales_agent", state_changes=list(KEEP),
+        _status("outstanding", _e(PRODUCT, "product"), basis=None, group_by="brand", state_changes=list(KEEP),
                 **NO_DATES),
-        "Srt5733 outstanding by salesperson",
+        "Srt5733 outstanding by brand",
     )
     args = _only_report_ask(calls)
-    assert args["basis"] == "pending_delivery" and args["group_by"] == "sales_agent", args
-    assert "*_By sales agent_*" in text and text.rstrip().endswith(DO_OFFER), text
+    assert args["basis"] == "pending_delivery" and args["group_by"] == "brand", args
+    assert "*_By brand_*" in text and text.rstrip().endswith(DO_OFFER), text
     do_only.extra_body = {"rows": DO_ROWS, "total_count": 2, "group_label": "Delivery order"}
     text, calls = do_only.say(_pick_one(), "1")
     args = _only_report_ask(calls)
