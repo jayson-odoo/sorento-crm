@@ -657,3 +657,13 @@ Each item: red test first (tester), then fix (coder), kill-proof. R = reviewer, 
   the Settings tab prefills only from known values and sends provider / model only when the user changed them; the
   LookupWordsGrid Row label is plain text; entity_resolver's search seam and project_registration pass their session to
   `embed_search_texts`.
+
+## Review fix round 3 (reviewer NOT READY on round 2, 29 Oct; backend only)
+
+- H-1 (G-1 on the real call path): the assistant's tool pick ranks `standalone_query` only, never the appended
+  "Resolved references: ..." hint (`ai_assistant_service.py:1096-1099`); "stock for SRT-123" and "how many units of
+  SRT-123 do we have" pick `crm_inventory_stock_balance_list` WITH the hint present.
+- H-2 (G-5 vs owner G1 (a)): `embed_failures[model]` is reset only when the setting's model changes, not on Start; a
+  document that always fails reaches 3 across Starts, counts as failed, and no longer blocks the guard.
+- H-3 (nits): the settings PUT's failure-count reset runs inside the logged try (a DB error there never turns a saved
+  setting into a 500); a backfill job that cannot claim the running flag exits without embedding (no double run).
