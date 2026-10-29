@@ -27,10 +27,10 @@ must degrade to a clear message, never take the API down.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import re
-import time
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape, unescape
@@ -288,6 +288,40 @@ def _sender(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
     }
 
 
+async def _download_logo(url: str) -> Optional[bytes]:
+    """The raw bytes of the logo, or None when the answer is not one we will embed."""
+    async with httpx.AsyncClient(
+        timeout=LOGO_FETCH_TIMEOUT_SECONDS, follow_redirects=False
+    ) as client:
+        async with client.stream("GET", url, headers={"Accept-Encoding": "identity"}) as response:
+            if not 200 <= response.status_code < 300:
+                logger.warning("Quotation PDF logo skipped, status %s", response.status_code)
+                return None
+            encoding = (response.headers.get("content-encoding") or "identity").strip().lower()
+            if encoding != "identity":
+                logger.warning("Quotation PDF logo skipped, content encoding %s", encoding)
+                return None
+            content_type = (response.headers.get("content-type") or "").split(";")[0]
+            if not content_type.strip().lower().startswith("image/"):
+                logger.warning("Quotation PDF logo skipped, content type %s", content_type)
+                return None
+            declared = response.headers.get("content-length")
+            if declared and declared.strip().isdigit() and int(declared) > MAX_LOGO_BYTES:
+                logger.warning("Quotation PDF logo skipped, %s bytes declared", declared)
+                return None
+            chunks: List[bytes] = []
+            downloaded = 0
+            # Identity was requested and anything else refused above, so decoding is a no-op
+            # here and these are the bytes on the wire.
+            async for chunk in response.aiter_bytes():
+                downloaded += len(chunk)
+                if downloaded > MAX_LOGO_BYTES:
+                    logger.warning("Quotation PDF logo skipped, body over the cap")
+                    return None
+                chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def fetch_logo_data_uri(url: Optional[str]) -> Optional[str]:
     """The company logo as an inline data URI, or None. Never raises: a logo is decoration.
 
@@ -297,7 +331,8 @@ def fetch_logo_data_uri(url: Optional[str]) -> Optional[str]:
 
     - identity encoding only, and any content-encoded answer is refused, so the 1 MB cap bounds
       real bytes and not a decompression bomb;
-    - a 3 s deadline for the whole download, not just per read, against a slow drip;
+    - a wall-clock limit of LOGO_FETCH_TIMEOUT_SECONDS on the whole fetch, headers included,
+      against a slow drip;
     - the content type is the server's claim, so the bytes are decoded and re-encoded by Pillow
       (`product_image_service._downscale`) and only that output is embedded. An SVG or anything
       else Pillow cannot read is left out.
@@ -309,42 +344,15 @@ def fetch_logo_data_uri(url: Optional[str]) -> Optional[str]:
     except ValueError as exc:  # OutboundUrlRejected and every malformed-url error are ValueErrors
         logger.warning("Quotation PDF logo skipped, url refused: %s", exc)
         return None
-    deadline = time.monotonic() + LOGO_FETCH_TIMEOUT_SECONDS
+    # Callers are sync (the download route and the export task), so asyncio.run is safe here; inside
+    # a running loop it raises and the logo is skipped like any other failure.
+    coro = _download_logo(url)
     try:
-        with httpx.Client(timeout=LOGO_FETCH_TIMEOUT_SECONDS, follow_redirects=False) as client:
-            with client.stream("GET", url, headers={"Accept-Encoding": "identity"}) as response:
-                if not 200 <= response.status_code < 300:
-                    logger.warning("Quotation PDF logo skipped, status %s", response.status_code)
-                    return None
-                encoding = (response.headers.get("content-encoding") or "identity").strip().lower()
-                if encoding != "identity":
-                    logger.warning("Quotation PDF logo skipped, content encoding %s", encoding)
-                    return None
-                content_type = (response.headers.get("content-type") or "").split(";")[0]
-                if not content_type.strip().lower().startswith("image/"):
-                    logger.warning("Quotation PDF logo skipped, content type %s", content_type)
-                    return None
-                declared = response.headers.get("content-length")
-                if declared and declared.strip().isdigit() and int(declared) > MAX_LOGO_BYTES:
-                    logger.warning("Quotation PDF logo skipped, %s bytes declared", declared)
-                    return None
-                chunks: List[bytes] = []
-                downloaded = 0
-                # Identity was requested and anything else refused above, so decoding is a no-op
-                # here and these are the bytes on the wire.
-                for chunk in response.iter_bytes():
-                    downloaded += len(chunk)
-                    if downloaded > MAX_LOGO_BYTES:
-                        logger.warning("Quotation PDF logo skipped, body over the cap")
-                        return None
-                    if time.monotonic() >= deadline:
-                        logger.warning("Quotation PDF logo skipped, download too slow")
-                        return None
-                    chunks.append(chunk)
-    except Exception as exc:  # noqa: BLE001 - any failure leaves the letterhead name only
-        logger.warning("Quotation PDF logo skipped, download failed: %s", exc)
+        data = asyncio.run(asyncio.wait_for(coro, LOGO_FETCH_TIMEOUT_SECONDS))
+    except Exception as exc:  # noqa: BLE001 - incl. TimeoutError: the letterhead keeps the name only
+        coro.close()
+        logger.warning("Quotation PDF logo skipped, download failed: %r", exc)
         return None
-    data = b"".join(chunks)
     if not data:
         return None
     rendered = product_images._downscale(data, "company-logo")

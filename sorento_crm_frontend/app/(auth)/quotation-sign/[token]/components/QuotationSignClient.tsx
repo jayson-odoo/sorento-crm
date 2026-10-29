@@ -293,7 +293,7 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
         {hasTerms && (
           <div
             data-attention={nudged && named && !ticked ? 'true' : undefined}
-            className="flex items-start gap-2 rounded-md border border-transparent p-2 data-[attention=true]:border-amber-500 data-[attention=true]:bg-amber-50 dark:data-[attention=true]:bg-amber-950/30"
+            className="flex items-start gap-2 rounded-md border border-transparent p-2 data-[attention=true]:border-warning data-[attention=true]:bg-warning/10"
           >
             <Checkbox
               id="quotation-sign-terms"
