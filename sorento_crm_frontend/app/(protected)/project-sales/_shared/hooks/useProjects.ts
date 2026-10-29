@@ -730,7 +730,7 @@ export function useProjectTemplateMutations() {
     mutationFn: (body: ProjectTemplateBody) => createProjectTemplate(body),
     onSuccess: () => {
       invalidate();
-      toast.success('Template created');
+      toast.success('To-do list template created');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -740,7 +740,7 @@ export function useProjectTemplateMutations() {
       updateProjectTemplate(id, body),
     onSuccess: () => {
       invalidate();
-      toast.success('Template saved');
+      toast.success('To-do list template saved');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -749,7 +749,7 @@ export function useProjectTemplateMutations() {
     mutationFn: (id: string) => deleteProjectTemplate(id),
     onSuccess: () => {
       invalidate();
-      toast.success('Template deleted');
+      toast.success('To-do list template deleted');
     },
     onError: (error: Error) => toast.error(error.message),
   });

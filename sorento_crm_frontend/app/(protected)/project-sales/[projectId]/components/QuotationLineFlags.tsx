@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, TriangleAlert } from 'lucide-react';
+import { TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useLineVerdict } from '../../_shared/hooks/useProjects';
 import type {
@@ -23,7 +23,7 @@ const FLOOR_LEVEL_LABELS: Record<string, string> = {
  *
  * **Non-standard** is one word for two facts: no product and no set is linked (a fact about the
  * row on screen, read off the LIVE draft), or the linked product or set is outside the series
- * (the server's). A line never shows two pills. **Below floor** is the server's too: while the
+ * (the server's). A line never shows two pills. **Minimum price** is the server's too: while the
  * draft matches the saved row the saved verdicts show, and the moment it diverges the server is
  * asked (debounced, via `useLineVerdict`) with the same functions the save runs.
  *
@@ -82,7 +82,9 @@ export function LineFlags({
       <Badge
         variant="secondary"
         className="gap-1 text-2xs"
-        title={noTarget ? 'Not a catalogue product' : 'Outside the series this scope is quoted from'}
+        title={
+          noTarget ? 'Not a catalogue product' : 'Outside the series this scope is quoted from'
+        }
       >
         <TriangleAlert className="size-3" aria-hidden />
         Non-standard
@@ -106,12 +108,12 @@ export function MinimumPriceFlag({
 
   return (
     <div className="mt-1 space-y-0.5 text-end">
+      {/* No icon and tight padding: the Rate cell is narrow, and "Minimum" must fit on a line. */}
       <Badge
         variant="destructive"
-        className="h-auto gap-1 whitespace-normal rounded-md py-0.5 text-start text-2xs leading-tight"
+        className="h-auto whitespace-normal rounded-md px-1.5 py-0.5 text-start text-2xs leading-tight"
         title={floor.source}
       >
-        <AlertTriangle className="size-3" aria-hidden />
         {floor.value ? `Minimum price ${formatMyr(floor.value)}` : 'Minimum price'}
       </Badge>
       <p className="whitespace-normal break-words text-2xs text-destructive">{floor.source}</p>

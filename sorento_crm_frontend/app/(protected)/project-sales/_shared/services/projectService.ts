@@ -499,7 +499,9 @@ export async function listProjectTemplates(typeId?: string): Promise<ProjectTemp
   if (typeId) sp.set('type_id', typeId);
   const query = sp.toString();
   const response = await apiFetch(`${BASE}/config/templates${query ? `?${query}` : ''}`);
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load templates'));
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load to-do list templates'));
+  }
   const body: ListEnvelope<ProjectTemplate> = await response.json();
   return body.data;
 }

@@ -918,7 +918,8 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     accessorFn: (row) => row.staged.draft.unit_price,
     header: 'Rate (RM)',
     cell: RateCell,
-    size: 80,
+    // Wide enough for the "Minimum price RM x" pill under the price on two lines.
+    size: 112,
     minSize: 76,
     meta: {
       headerTitle: 'Rate (RM)',

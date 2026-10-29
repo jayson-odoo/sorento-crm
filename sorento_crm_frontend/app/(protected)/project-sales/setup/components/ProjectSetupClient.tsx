@@ -251,7 +251,9 @@ function ProjectTypesGrid({
       {
         id: 'template_count',
         accessorFn: (row) => row.template_count ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="To-do list templates" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="To-do list templates" column={column} />
+        ),
         size: 190,
         meta: { headerTitle: 'To-do list templates', skeleton: <Skeleton className="h-4 w-14" /> },
         cell: ({ row }) => {
@@ -406,7 +408,9 @@ function ProjectTemplatesGrid({
       selectedMarkerColumn<ProjectTemplate>(selectedTemplateId),
       {
         accessorKey: 'name',
-        header: ({ column }) => <DataGridColumnHeader title="To-do list template" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="To-do list template" column={column} />
+        ),
         size: 220,
         meta: { headerTitle: 'To-do list template', skeleton: <Skeleton className="h-4 w-32" /> },
         cell: ({ row }) => (
