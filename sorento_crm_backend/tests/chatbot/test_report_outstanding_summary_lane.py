@@ -176,13 +176,18 @@ def test_b6e9_a_do_only_contact_gets_the_delivery_order_summary_with_no_question
     assert text.rstrip().endswith(DO_OFFER), text
 
 
-def test_a_do_only_contact_naming_undelivered_orders_is_refused_that_kind(do_only, do_only_world) -> None:
+def test_a_do_only_contact_naming_undelivered_orders_gets_pending_delivery_with_the_so_line(do_only, do_only_world) -> None:
+    """Eval rpt-030/-038, as before #1922 (D13): a contact that may see pending delivery only, asking undelivered
+    orders, is not refused: the one SO sentence, then the pending delivery answer (the route still refuses SO data)."""
+    do_only.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
     text, calls = do_only.say(
         _status("outstanding", _e(PRODUCT, "product"), basis="outstanding", state_changes=list(KEEP), **NO_DATES),
         "Srt5733 undelivered",
     )
-    assert calls == [], calls
-    assert "Outstanding is not enabled for your account." in text, text
+    args = _only_report_ask(calls)
+    assert args["basis"] == "pending_delivery", args
+    assert text.startswith("Sales order figures are not enabled for your account."), text
+    assert "Delivery orders: 3" in text and "Outstanding is not enabled" not in text, text
 
 
 def test_an_unknown_contact_without_the_reveal_is_refused_outstanding(console_no_grant) -> None:
@@ -315,3 +320,31 @@ def test_b6e9_v70_a_contact_seeing_both_kinds_is_asked_the_kind_never_the_period
     text, calls = bot.say(_v70_b6e9(), "SRT5733 stock and outstanding")
     assert not [c for c in calls if c[0] == "crm_report_ask"], calls
     assert "Which period" not in text and text.rstrip().endswith(KIND_QUESTION), text
+
+
+@pytest.fixture
+def dealer_no_reveal(console_no_grant) -> Routing:
+    """A linked contact (dealer) without the Outstanding reveal: pending delivery only, on its own customer."""
+    from tests.chatbot.test_report_ask_lane import _link_dealer
+
+    console_no_grant.own_customer = _link_dealer(console_no_grant)
+    return Routing(console_no_grant)
+
+
+def test_rpt030_a_dealer_asking_undelivered_orders_gets_its_pending_delivery_with_the_so_line(dealer_no_reveal) -> None:
+    from tests._mc_lookup_seed import product
+
+    db = dealer_no_reveal.console.session_factory()
+    try:
+        product(db, company_id=DEFAULT_COMPANY_ID, code=PRODUCT)
+        db.commit()
+    finally:
+        db.close()
+    dealer_no_reveal.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
+    text, calls = dealer_no_reveal.say(
+        _status("so_outstanding", _e(PRODUCT, "product"), basis=None, state_changes=list(KEEP), **NO_DATES),
+        "Srt5733 sales order outstanding",
+    )
+    args = _only_report_ask(calls)
+    assert args["basis"] == "pending_delivery", args
+    assert text.startswith("Sales order figures are not enabled for your account."), text
