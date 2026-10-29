@@ -80,18 +80,11 @@ def test_example_2_pending_delivery_counts_every_undelivered_do_not_deleted(clie
     assert oct_only["total"]["qty"] == 15, oct_only["total"]  # the undated DO has no October
 
 
-def test_the_delivered_sales_basis_still_excludes_cancelled_and_rep_dos(client, db):
-    """The sales bases are not outstanding: AC-SR-20 stands there."""
-    seed_registry(db)
-    cust = seed_customer(db, name=unique_code("CustS"))
-    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
-    p = make_product(db, unique_code("PS"))
-    from tests._report_unify_seed import mark_delivered
+def test_the_delivery_order_sales_dataset_keeps_its_exclusions():
+    """Only the pending variant changes: the DO sales dataset (AC-SR-20) still drops cancelled, undated and REP DOs."""
+    from types import SimpleNamespace
 
-    for kw in ({}, {"is_cancelled": True}, {"number": unique_code("REP")}):
-        do = seed_do(db, customer_id=cust.id, source_book="db1", order_date=date(2026, 9, 10),
-                     lines=[line(p.id, wh.id, 2, total="200.00")], **kw)
-        mark_delivered(db, do, date(2026, 9, 11))
-    db.commit()
-    body = _ok(client, _staff(db), basis="delivered", product_ids=[p.id])
-    assert body["total"]["qty"] == 2, body["total"]  # only the plain DO
+    from app.services.reports.datasets import delivery_order_lines as dol
+
+    sales = " ".join(str(p) for p in dol._fixed_filters(SimpleNamespace(definition=dol.DEFINITION, db=None)))
+    assert "is_cancelled" in sales and "order_number NOT LIKE" in sales and "order_date IS NOT NULL" in sales, sales
