@@ -1,4 +1,13 @@
-# CARD: PS-REGISTER-CHECK-FIRST v1.1 (29 Oct 2026; v1.1 = crew dev DB counts)
+# CARD: PS-REGISTER-CHECK-FIRST v1.2 (30 Oct 2026)
+
+**Owner answers (30 Oct ~00:30): Q-A (a), Q-B (a), Q-C (a), Q-D (a), Q-E (a).** Mock notes (00:32) drive mock v2:
+the register form becomes a progressive wizard like Create lead (`FE/leads/components/LeadWizardDialog.tsx:189,350-383`):
+step 1 Check with Check as its bottom-right action (Next after a pass, "Register as secondary lead on <code>" on a
+match), step 2 Details holds today's Details + Lead, customer and salesperson sections and is the only place Register
+shows. Added scope: project tabs reordered to Overview, Documents, Quotation, Samples Request, Sponsorship Form, PO,
+SO; the Samples tab removed (`SamplesPanel.tsx` / `SampleDialog.tsx` are used only by that tab; no `?tab=samples`
+link in BE or MCP; tests touching it: `PurchaseOrdersPanel.test.tsx:67,389`, `panels.approvalGate.test.tsx:78,102`,
+`ProjectDetailClient.sampleRequestsTab.test.ts:22`). Tab questions V1-V3 are in mock v2 section C0.
 
 Paths: BE = `sorento_crm_backend/app`, FE = `sorento_crm_frontend/app/(protected)/project-sales`. Code read on
 origin/main ec29a81c3b. People are roles (Sales A, Sales B, Manager); titles are masked.

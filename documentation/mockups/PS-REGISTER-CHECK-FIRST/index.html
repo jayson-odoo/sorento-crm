@@ -42,36 +42,79 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 .fs{border:1px solid var(--border);border-radius:12px;margin-bottom:10px}.fs .fh{padding:10px 16px;font-weight:600;font-size:13.5px;display:flex;justify-content:space-between}.fs .fh i{font-style:normal;color:var(--muted-fg);font-weight:400}.fs .fb{padding:12px 16px;border-top:1px solid var(--border)}
 .pbox{width:375px;border:1px solid var(--input);border-radius:16px;overflow:hidden;background:#fff;padding:12px 16px}.pbox .g2{grid-template-columns:1fr}
 .dg{width:100%;table-layout:fixed}.dg th{font-size:12px;color:var(--muted-fg);font-weight:500}.dg td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pbox{max-width:100%}.pbox .cmain{min-width:0;overflow:hidden}.pbox .ct{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#reuse td code{word-break:break-all}#reuse table{table-layout:fixed}#reuse th:first-child{width:32%}</style></head>
+.pbox{max-width:100%}.pbox .cmain{min-width:0;overflow:hidden}.pbox .ct{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#reuse td code{word-break:break-all}#reuse table{table-layout:fixed}#reuse th:first-child{width:32%}.wst{margin:4px 0 14px}.wrow{display:flex;align-items:center;max-width:240px}.wc{width:24px;height:24px;border-radius:50%;border:1px solid var(--input);display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted-fg);flex:none;background:#fff}.wc.on{border-color:var(--primary);color:var(--primary);font-weight:600}.wc.done{background:var(--primary);border-color:var(--primary);color:#fff}.wl{flex:1;height:1px;background:var(--input);margin:0 6px}.wl.done{background:var(--primary)}.wcap{font-size:12.5px;font-weight:500;margin-top:6px}.wfoot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 0 2px;border-top:1px solid var(--border);margin-top:6px}.wfoot{flex-wrap:wrap}.wfoot .wr{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}.wfoot.col{flex-direction:column;align-items:stretch}.wfoot.col .btn{justify-content:center}</style></head>
 <body><div class="doc">
-<h1>Register: check first</h1><div class="ver">mock v1</div>
-<p class="gcap">PS-REGISTER-CHECK-FIRST. Rules and questions: <code>documentation/plans/projects/CARD-ps-register-check-first-29oct.md</code>. Masked data: roles for people, a placeholder township and developer. Screens follow the card's recommended answers (Q-D: developer in step 1; Q-B: Registered to Spec In).</p>
-<div class="nav"><a href="#a">A. Register wizard</a><a href="#b">B. Secondary lead</a><a href="#c">C. Requirements gate</a><a href="#reuse">Reuses</a></div>
+<h1>Register: check first</h1><div class="ver">mock v2</div>
+<p class="gcap">v2 (owner notes 30 Oct 00:32): the register form is a progressive wizard like Create lead (same step strip, Back on the left, Cancel and the forward action bottom right); Check is step 1's own bottom-right action, and Register exists only on step 2 Details after a passing Check; project tabs reordered, Samples tab removed (C0). Card answers A-E all (a). Masked data: roles for people, placeholder township and developer.</p>
+<div class="nav"><a href="#a">A. Register wizard</a><a href="#b">B. Secondary lead</a><a href="#c0">C0. Project tabs</a><a href="#c">C. Requirements gate</a><a href="#reuse">Reuses</a></div>
 
 <section id="a"><h2>A. Register a project (create only)</h2>
 
-<div class="gcap">A1. Step 1 before the Check. Only the title, developer and AI extract show; Check is the one way forward.</div>
+<div class="gcap">A1. Step 1 Check. Title, developer, AI extract. The only forward action is Check, bottom right. Back is off on step 1 (as in Create lead).</div>
 <div class="mock pg">
 <div class="pagehead"><div class="crumb">Project Sales / Projects</div><div class="t">Register project</div></div>
-<div class="wsteps"><span class="on">1 Check</span><span>2 Details</span></div>
-<div class="fs"><div class="fh">Check for an existing project</div><div class="fb"><div class="g2">
+<div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
 <div class="fld full"><div class="lblrow"><label>Project title <span class="req">*</span></label><span class="btn sm ai">AI extract</span></div><div class="inp">100 units DSTH Taman Contoh</div></div>
-<div class="fld"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
-<div class="fld" style="display:flex;align-items:flex-end"><span class="btn pri">Check</span></div>
+<div class="fld full"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
 </div></div></div>
-<div class="fs dis"><div class="fh">Details <i>after the check</i></div></div>
-<div class="fs dis"><div class="fh">Lead, customer and salesperson <i>after the check</i></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Check</span></span></div>
 </div>
 
-<div class="gcap">A2. No match: step 2 opens below with today's fields. Register (staff) at the bottom.</div>
+<div class="gcap">A2. Check passed, no match: the result shows and the bottom-right action becomes Next.</div>
 <div class="mock pg">
-<div class="wsteps"><span>1 Check</span><span class="on">2 Details</span></div>
-<div class="fs"><div class="fh">Check for an existing project</div><div class="fb"><div class="g2">
+<div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
 <div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">Restroom refurbishment, Sekolah Contoh</div></div>
-<div class="fld"><label>Developer</label><div class="sel ph">Search developers</div></div>
-<div class="fld" style="display:flex;align-items:flex-end"><span class="btn">Check</span></div>
+<div class="fld full"><label>Developer</label><div class="sel ph">Search developers</div></div>
 <div class="fullc"><span class="pill grn">No existing project matches this title.</span></div>
 </div></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Next</span></span></div>
+</div>
+
+<div class="gcap">A3. Check passed, similar only (no row blocks): rows in today's muted style, Next as in A2.</div>
+<div class="mock pg">
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
+<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">DSTH phase 3 Taman Contoh</div></div>
+<div class="fld full"><label>Developer</label><div class="sel">Developer Lain Sdn. Bhd.</div></div>
+<div class="fullc" style="border:1px solid var(--border);border-radius:8px;padding:10px 12px"><div class="ch" style="color:var(--muted-fg)">Similar project:</div>
+<div class="crow"><div class="cmain"><span class="code">PRJ-000002</span>100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH<div class="meta">Developer Contoh Berhad &middot; Sales A &middot; Spec In</div></div></div></div>
+</div></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Next</span></span></div>
+</div>
+
+<div class="gcap">A4. Match: Next never appears; the bottom-right action is the one way on. Editing the title or developer turns it back into Check.</div>
+<div class="mock pg">
+<div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
+<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
+<div class="fld full"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
+<div class="fullc clash"><div class="ch" style="color:var(--destructive)">&#9888; Project already registered:</div>
+<div class="crow"><div class="cmain"><span class="code">PRJ-000002</span>100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH<div class="meta">Developer Contoh Berhad &middot; Sales A &middot; Spec In</div></div></div></div>
+</div></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Register as secondary lead on PRJ-000002</span></span></div>
+</div>
+
+<div class="gcap">A5. That button opens today's dialog, renamed. A salesperson (submit only) sees code and title, never the owner.</div>
+<div class="mock dialogbg"><div class="dialog"><div class="dh">Register as secondary lead on PRJ-000002</div><div class="db">
+<div class="fact"><span>Project</span><div>100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</div></div>
+<div class="fld"><label>How and when did you find this project? <span class="req">*</span></label><div class="ta" style="height:72px">Dealer at Taman Contoh asked for a quote on 27 Oct; the site office named us for the bathrooms.</div></div>
+</div><div class="df"><span class="btn">Cancel</span><span class="btn pri">Register as secondary lead</span></div></div></div>
+
+<div class="gcap">A6. Check failed or timed out: say so; the action stays Check (try again).</div>
+<div class="mock pg">
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
+<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
+<div class="fld full"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
+<div class="fullc"><span class="pill rej">The check did not finish. Try again.</span></div>
+</div></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Check</span></span></div>
+</div>
+
+<div class="gcap">A7. Step 2 Details (after Next): today's Details and Lead, customer and salesperson fields. Register lives only here. Back returns to Check with everything typed kept.</div>
+<div class="mock pg">
+<div class="wst"><div class="wrow"><span class="wc done">&#10003;</span><span class="wl done"></span><span class="wc on">2</span></div><div class="wcap">Details</div></div>
+<div class="codeline"><b style="color:var(--foreground)">Restroom refurbishment, Sekolah Contoh</b><span class="pill grn">Checked</span></div>
 <div class="fs"><div class="fh">Details</div><div class="fb"><div class="g2">
 <div class="fld"><label>Project type</label><div class="sel">Refurbishment</div></div>
 <div class="fld"><label>Location</label><div class="inp">Johor Bahru</div></div>
@@ -85,67 +128,23 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 <div class="fld"><label>Customer</label><div class="ro">KEDAI CONTOH SDN. BHD.</div></div>
 <div class="fld"><label>Salesperson</label><div class="sel">Sales A</div></div>
 </div></div></div>
-<div class="foot"><span class="btn">Cancel</span><span class="btn pri lg">Register project</span></div>
+<div class="wfoot"><span class="btn">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Register project</span></span></div>
 </div>
 
-<div class="gcap">A3. Similar only (no row blocks): rows listed in today's muted style, step 2 opens as in A2.</div>
-<div class="mock pg">
-<div class="fs"><div class="fh">Check for an existing project</div><div class="fb"><div class="g2">
-<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">DSTH phase 3 Taman Contoh</div></div>
-<div class="fld"><label>Developer</label><div class="sel">Developer Lain Sdn. Bhd.</div></div>
-<div class="fld" style="display:flex;align-items:flex-end"><span class="btn">Check</span></div>
-<div class="fullc" style="border:1px solid var(--border);border-radius:8px;padding:10px 12px"><div class="ch" style="color:var(--muted-fg)">Similar project:</div>
-<div class="crow"><div class="cmain"><span class="code">PRJ-000002</span>100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH<div class="meta">Developer Contoh Berhad &middot; Sales A &middot; Spec In</div></div></div></div>
-</div></div></div>
-<div class="fs"><div class="fh">Details <i>&#9662; open, as A2</i></div></div>
-<div class="fs"><div class="fh">Lead, customer and salesperson <i>&#9662; open, as A2</i></div></div>
-</div>
+<div class="gcap">A7b. Same step for a salesperson who submits for approval.</div>
+<div class="mock pg"><div class="wfoot"><span class="btn">Back</span><span class="wr"><span class="btn">Save draft</span><span class="btn pri">Submit for approval</span></span></div></div>
 
-<div class="gcap">A4. Match (a blocking row): the rest stays closed; one button. The title stays editable: changing it clears the result.</div>
-<div class="mock pg">
-<div class="wsteps"><span class="on">1 Check</span><span>2 Details</span></div>
-<div class="fs"><div class="fh">Check for an existing project</div><div class="fb"><div class="g2">
-<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
-<div class="fld"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
-<div class="fld" style="display:flex;align-items:flex-end"><span class="btn">Check</span></div>
-<div class="fullc clash"><div class="ch" style="color:var(--destructive)">&#9888; Project already registered:</div>
-<div class="crow"><div class="cmain"><span class="code">PRJ-000002</span>100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH<div class="meta">Developer Contoh Berhad &middot; Sales A &middot; Spec In</div></div></div></div>
-</div></div></div>
-<div class="foot"><span class="btn">Cancel</span><span class="btn pri lg">Register as secondary lead on PRJ-000002</span></div>
-</div>
-
-<div class="gcap">A5. The button opens today's dialog, renamed. A salesperson (submit only) sees code and title, never the owner.</div>
-<div class="mock dialogbg"><div class="dialog"><div class="dh">Register as secondary lead on PRJ-000002</div><div class="db">
-<div class="fact"><span>Project</span><div>100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</div></div>
-<div class="fld"><label>How and when did you find this project? <span class="req">*</span></label><div class="ta" style="height:72px">Dealer at Taman Contoh asked for a quote on 27 Oct; the site office named us for the bathrooms.</div></div>
-</div><div class="df"><span class="btn">Cancel</span><span class="btn pri">Register as secondary lead</span></div></div></div>
-
-<div class="gcap">A6. Check failed or timed out: say so; step 2 stays closed until a Check finishes.</div>
-<div class="mock pg">
-<div class="fs"><div class="fh">Check for an existing project</div><div class="fb"><div class="g2">
-<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
-<div class="fld"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
-<div class="fld" style="display:flex;align-items:flex-end"><span class="btn pri">Check</span></div>
-<div class="fullc"><span class="pill rej">The check did not finish. Try again.</span></div>
-</div></div></div>
-<div class="fs dis"><div class="fh">Details <i>after the check</i></div></div>
-</div>
-
-<div class="gcap">A7. 375px: A4 for a salesperson.</div>
+<div class="gcap">A8. 375px: A4 for a salesperson. Footer stacks like Create lead on a phone.</div>
 <div class="pbox">
 <div class="t" style="font-size:18px;margin-bottom:8px">Register project</div>
-<div class="wsteps"><span class="on">1 Check</span><span>2 Details</span></div>
-<div class="fs"><div class="fh">Check for an existing project</div><div class="fb"><div class="g2">
-<div class="fld"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
-<div class="fld"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
-<div class="fld"><span class="btn">Check</span></div>
+<div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
+<div class="fld" style="margin-bottom:10px"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
+<div class="fld" style="margin-bottom:10px"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
 <div class="clash"><div class="ch" style="color:var(--destructive)">&#9888; Project already registered:</div>
 <div class="crow"><div class="cmain"><span class="code">PRJ-000002</span><span class="ct">100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</span></div></div></div>
-</div></div></div>
-<div class="foot" style="justify-content:stretch"><span class="btn pri lg" style="width:100%;justify-content:center">Register as secondary lead on PRJ-000002</span></div>
+<div class="wfoot col"><span class="btn pri lg">Register as secondary lead on PRJ-000002</span><span class="btn lg">Cancel</span><span class="btn lg dis">Back</span></div>
 </div>
 </section>
-
 <section id="b"><h2>B. Where management sees secondary leads</h2>
 <div class="gcap">B1. Project page, Access panel: "Interested" becomes "Secondary leads". Reassign and Dismiss unchanged; "Ask to join" unchanged.</div>
 <div class="mock pg">
@@ -161,11 +160,23 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 <div class="mock pg"><div class="crow"><div class="cmain"><b>Sales B registered as secondary lead on PRJ-000002</b><div class="meta">Sales B registered as secondary lead on PRJ-000002: 100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</div></div></div></div>
 </section>
 
+<section id="c0"><h2>C0. Project tabs (owner note 4)</h2>
+<div class="gcap">Today: Overview, Stakeholders, Tasks, Quotations, Sample requests, Samples, Sponsorships, Orders, Activity, Documents.</div>
+<div class="mock pg"><div class="tabs"><span class="on">Overview</span><span>Stakeholders</span><span>Tasks</span><span>Quotations</span><span>Sample requests</span><span style="text-decoration:line-through">Samples</span><span>Sponsorships</span><span>Orders</span><span>Activity</span><span>Documents</span></div></div>
+<div class="gcap">v2: your order first, in your words; Samples gone; Orders split into PO and SO; the three tabs your list did not name keep their place at the end (question V1).</div>
+<div class="mock pg"><div class="tabs" style="flex-wrap:wrap;white-space:normal;row-gap:0"><span class="on">Overview</span><span>Documents</span><span>Quotation</span><span>Samples Request</span><span>Sponsorship Form</span><span>PO</span><span>SO</span><span style="color:var(--muted-fg)">Stakeholders</span><span style="color:var(--muted-fg)">Tasks</span><span style="color:var(--muted-fg)">Activity</span></div>
+<table style="margin-top:8px"><tr><th style="width:22%">Tab</th><th>Shows</th></tr>
+<tr><td>PO</td><td>The project's purchase orders (today's top half of Orders); a PO's schedule and sales orders stay on the PO's own page.</td></tr>
+<tr><td>SO</td><td>Every sales order of the project (question V2; today's Orders shows only the ones without a PO).</td></tr>
+<tr><td>Samples (removed)</td><td>The samples table and its Record a sample dialog are used nowhere else. Old links to it open Samples Request. Stored sample rows are not deleted.</td></tr></table></div>
+<div class="gcap">Open for you (tabs only; recommendation first): V1 Stakeholders, Tasks, Activity: (a) keep them after SO / (b) remove them. V2 SO tab: (a) all the project's sales orders / (b) only those without a PO, as today. V3 labels: (a) your words as written (Quotation, Samples Request, Sponsorship Form, PO, SO) / (b) today's (Quotations, Sample requests, Sponsorships). Rec (a) for all three.</div>
+</section>
+
 <section id="c"><h2>C. Requirements before Spec In</h2>
 <div class="gcap">C1. Project in Registered with no Requirements file. The header's stage button looks the same as today.</div>
 <div class="mock pg">
 <div class="ph2"><div><div class="crumb">Project Sales / Projects / PPF26XXXXX</div><div class="t">Showroom fit-out, Bandar Contoh</div><div class="codeline"><span class="pill blu">Registered</span></div></div><div class="acts"><span class="btn ico">&#9881;</span><span class="btn pri">Spec In</span></div></div>
-<div class="tabs"><span>Overview</span><span class="on">Documents</span><span>Quotations</span><span>Activity</span></div>
+<div class="tabs"><span>Overview</span><span class="on">Documents</span><span>Quotation</span><span>Samples Request</span><span>Sponsorship Form</span><span>PO</span><span>SO</span></div>
 <div class="mo empty" style="border:1px dashed var(--input);border-radius:8px"><b style="color:var(--foreground)">No documents yet</b><small>Requirements and other project files appear here.</small></div>
 </div>
 <div class="gcap">C2. Click "Spec In" with no Requirements file: a small dialog, drop zone preset to Requirements, one button does both.</div>
@@ -187,7 +198,7 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 </section>
 
 <section id="reuse"><h2>Reuses</h2><table><tr><th>Element</th><th>Existing</th></tr>
-<tr><td>Step strip (A1-A7)</td><td><code>sorento_crm_frontend/components/common/WizardSteps.tsx</code></td></tr>
+<tr><td>Step strip (A1-A8)</td><td><code>sorento_crm_frontend/components/common/WizardSteps.tsx</code>, as Create lead uses it (<code>sorento_crm_frontend/app/(protected)/project-sales/leads/components/LeadWizardDialog.tsx:189</code>)</td></tr><tr><td>Footer: Back left, Cancel + forward action right, stacked on a phone</td><td><code>LeadWizardDialog.tsx:350-383</code> (<code>DialogFooter</code> <code>flex-col sm:flex-row sm:justify-between</code>)</td></tr>
 <tr><td>Form sections</td><td><code>sorento_crm_frontend/components/common/FormSection.tsx</code>, open state <code>sorento_crm_frontend/app/(protected)/project-sales/_shared/components/ProjectForm.tsx:192-196</code></td></tr>
 <tr><td>Title, developer, AI extract, Check</td><td><code>ProjectForm.tsx:428-548</code> (Check <code>:454-464</code>, AI extract <code>:465-468</code>)</td></tr>
 <tr><td>Match / similar rows</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/pipeline/components/ClashWarningPanel.tsx:39-59</code></td></tr>
@@ -197,5 +208,5 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 <tr><td>Notification line</td><td><code>sorento_crm_backend/app/services/project_notify_service.py:207-209</code></td></tr>
 <tr><td>Stage button</td><td><code>[projectId]/components/ProjectStatusAction.tsx:122-140</code>, header <code>ProjectDetailClient.tsx:388-392</code></td></tr>
 <tr><td>Upload dialog + drop zone</td><td><code>ProjectDocumentsPanel</code> <code>UploadDialog</code> (<code>FileDropzone</code>, 50 MB), type lookup <code>_shared/services/projectDocumentService.ts:72-90</code></td></tr>
-<tr><td>Dialog shell</td><td><code>sorento_crm_frontend/components/ui/dialog</code></td></tr></table></section>
+<tr><td>Project tabs (C0)</td><td><code>TABS</code> <code>sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectDetailClient.tsx:96-109</code>, legacy tab redirect <code>:114,123-128</code>; Orders body <code>:536-539</code> (<code>PurchaseOrdersPanel</code>, <code>SalesOrdersPanel withoutPurchaseOrder</code>); removed <code>SamplesPanel.tsx</code>, <code>SampleDialog.tsx</code></td></tr><tr><td>Dialog shell</td><td><code>sorento_crm_frontend/components/ui/dialog</code></td></tr></table></section>
 </div></body></html>
