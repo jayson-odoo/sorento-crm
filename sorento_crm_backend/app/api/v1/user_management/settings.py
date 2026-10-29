@@ -216,6 +216,12 @@ class SystemSettingUpdate(BaseModel):
     # (the dialog then falls back to the row's own site pool, R3). Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
     oi_reserve_default_pool_warehouse_id: Optional[str] = None
+    # LOOKUP-EMBED-CENTRAL: the lookup embedder and the backfill rate. Same rule as every block
+    # above - they must appear HERE and in the GET dict, because both are manual. The records-search
+    # model is deliberately NOT a field: only the guard writes it.
+    embedding_provider: Optional[Literal["openai", "gemini"]] = None
+    embedding_model: Optional[str] = Field(None, max_length=128)
+    embedding_backfill_rpm: Optional[int] = Field(None, ge=1, le=600)
 
 
 class ChatbotLane(BaseModel):
@@ -494,6 +500,13 @@ def get_settings(
                     if settings
                     else None
                 ),
+                # LOOKUP-EMBED-CENTRAL: the records-search model is read-only here.
+                "embedding_provider": getattr(settings, "embedding_provider", None) if settings else None,
+                "embedding_model": getattr(settings, "embedding_model", None) if settings else None,
+                "embedding_records_search_model": (
+                    getattr(settings, "embedding_records_search_model", None) if settings else None
+                ),
+                "embedding_backfill_rpm": getattr(settings, "embedding_backfill_rpm", 20) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]

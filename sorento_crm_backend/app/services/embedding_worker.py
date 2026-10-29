@@ -664,16 +664,11 @@ def _embed_text_chunks(chunks: list[str], timeout: float | None = None) -> list[
 
 
 def _post_embeddings(chunks: list[str], timeout: float | None = None) -> list[list[float]]:
-    headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
-    payload = {"model": settings.embedding_model_name, "input": chunks}
-    with httpx.Client(timeout=timeout or 30) as client:
-        response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-    vectors = [item["embedding"] for item in data.get("data", [])]
-    if len(vectors) != len(chunks):
-        raise ValueError("Embedding provider returned mismatched vector count")
-    return vectors
+    from app.services.embedding_client import embed_texts
+
+    return embed_texts(
+        chunks, "openai", settings.embedding_model_name, api_key=settings.openai_api_key, timeout=timeout or 30
+    )
 
 
 def _chunks_for_source(source_type: str, source: dict[str, Any]) -> list[str]:

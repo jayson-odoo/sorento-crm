@@ -31,13 +31,11 @@ def _embed_query(query: str) -> list[float]:
         return _embed_text_chunks([query])[0]
     if not settings.openai_api_key:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Embedding provider not configured")
-    headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
-    payload = {"model": settings.embedding_model_name, "input": query}
-    with httpx.Client(timeout=20) as client:
-        response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-    vector = data.get("data", [{}])[0].get("embedding")
+    from app.services.embedding_client import embed_texts
+
+    vector = embed_texts(
+        [query], "openai", settings.embedding_model_name, api_key=settings.openai_api_key, timeout=20
+    )[0]
     if not vector:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Embedding provider returned empty vector")
     return vector

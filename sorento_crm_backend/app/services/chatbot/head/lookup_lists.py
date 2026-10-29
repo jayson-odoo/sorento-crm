@@ -908,7 +908,7 @@ def _key(text: str, model: str = EMBED_MODEL) -> tuple[str, str]:
     return (model, hashlib.sha1(text.encode()).hexdigest())
 
 
-#: Gemini's batchEmbedContents takes at most 100 texts per request.
+#: Gemini's batch endpoint takes at most 100 texts per request.
 GEMINI_EMBED_CHUNK = 100
 #: The vector size the meaning floors were calibrated on (native is 3072; `GeminiProvider.embed` also sizes down).
 GEMINI_EMBED_DIMENSIONS = 1536
@@ -1116,41 +1116,22 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
     return embed
 
 
-def provider_embedder(api_key: str) -> Embedder:
-    """OpenAI `text-embedding-3-small` (see `_vector_embedder`)."""
-    from app.services.llm_provider import OpenAIProvider
+def provider_embedder(api_key: str, model: str = EMBED_MODEL) -> Embedder:
+    """OpenAI embeddings on `model` (default `text-embedding-3-small`; see `_vector_embedder`)."""
+    from app.services.embedding_client import embed_texts
 
     def request(chunk: list[str]) -> list[Any]:
-        client = OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
-        return [item.embedding for item in client.embeddings.create(model=EMBED_MODEL, input=chunk).data]
+        return embed_texts(chunk, "openai", model, api_key=api_key, timeout=EMBED_TIMEOUT)
 
-    return _vector_embedder(EMBED_MODEL, request, EMBED_CHUNK)
+    return _vector_embedder(model, request, EMBED_CHUNK)
 
 
 def gemini_embedder(api_key: str, model: str) -> Embedder:
-    """Gemini `batchEmbedContents` on `model` (see `_vector_embedder`), one request per batch of texts."""
-    from app.services.llm_provider import GeminiProvider
+    """Gemini batch embeddings on `model` (see `_vector_embedder`), one request per batch of texts."""
+    from app.services.embedding_client import embed_texts
 
     def request(chunk: list[str]) -> list[Any]:
-        body = GeminiProvider(api_key)._request(
-            "POST",
-            f"models/{model}:batchEmbedContents",
-            json_body={
-                "requests": [
-                    {
-                        "model": f"models/{model}",
-                        "content": {"parts": [{"text": t}]},
-                        "outputDimensionality": GEMINI_EMBED_DIMENSIONS,
-                    }
-                    for t in chunk
-                ]
-            },
-            timeout=EMBED_TIMEOUT,
-        )
-        vectors = [e.get("values") or [] for e in body.get("embeddings") or []]
-        if len(vectors) != len(chunk) or not all(vectors):
-            raise RuntimeError("Gemini batchEmbedContents returned the wrong number of vectors.")
-        return vectors
+        return embed_texts(chunk, "gemini", model, api_key=api_key, timeout=EMBED_TIMEOUT)
 
     return _vector_embedder(model, request, GEMINI_EMBED_CHUNK)
 
@@ -1242,18 +1223,18 @@ def usable_embedder(rows: list[LookupRow], embed: Embedder | None) -> Embedder |
 
 def embedder(db: "Session") -> Embedder | None:
     """`EMBED` as the engine uses it: a set value (a callable or None) wins; the default follows the production
-    label of prompt key `chatbot_lookup_embedder`: provider gemini plus a model -> a Gemini embedder with the AI
-    config's Gemini key; otherwise the OpenAI embedder with its key. No key for the chosen provider -> None
-    (spelling only)."""
+    setting `embedding_provider` / `embedding_model` (else the production label of prompt key `chatbot_lookup_embedder`,
+    else OpenAI small): gemini -> a Gemini embedder with the AI config's Gemini key; otherwise the OpenAI embedder with
+    its key. No key for the chosen provider -> None (spelling only)."""
     if EMBED is not USE_PROVIDER:
         return EMBED
-    from app.services import ai_prompt_registry, llm_provider
+    from app.services import embedding_settings, llm_provider
     from app.services.ai_assistant_service import AIAssistantConfigService
 
     config = AIAssistantConfigService(db).get()
-    provider, model = ai_prompt_registry.agent_model(db, EMBEDDER_PROMPT_KEY)
+    provider, model = embedding_settings.resolve_embedder(db)
     if provider == "gemini" and model:
         key = llm_provider.resolve_api_key(config, "gemini")
         return gemini_embedder(key, model) if key else None
     key = llm_provider.resolve_api_key(config, "openai")
-    return provider_embedder(key) if key else None
+    return provider_embedder(key, model) if key else None

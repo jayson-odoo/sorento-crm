@@ -558,8 +558,9 @@ class OpenAIProvider:
         model = "text-embedding-3-small"
 
         def live() -> list[float]:
-            resp = self._client().embeddings.create(model=model, input=text)
-            return list(resp.data[0].embedding)
+            from app.services.embedding_client import embed_texts
+
+            return embed_texts([text], "openai", model, api_key=self.api_key)[0]
 
         return llm_cassette.through(
             kind="embed",
@@ -1758,35 +1759,10 @@ class GeminiProvider:
         )
 
     def embed(self, text: str) -> list[float]:
-        """Embed via ``embedContent``, sized to the pgvector column.
+        """Embed through the one embedding client: 1536 wide and unit length, the size of the pgvector column."""
+        from app.services.embedding_client import embed_texts
 
-        ``outputDimensionality`` is asked for explicitly because the column the
-        pipeline writes into is ``settings.embedding_dimensions`` wide and the
-        model's native size is larger; a mismatch is an insert error, not a
-        quality question.
-        """
-        from app.config import settings
-
-        dimensions = int(settings.embedding_dimensions or 0)
-        request: dict[str, Any] = {
-            "model": f"models/{GEMINI_EMBEDDING_MODEL}",
-            "content": {"parts": [{"text": text}]},
-        }
-        if dimensions and dimensions != GEMINI_EMBEDDING_NATIVE_DIMS:
-            request["outputDimensionality"] = dimensions
-
-        body = self._request(
-            "POST", f"models/{GEMINI_EMBEDDING_MODEL}:embedContent", json_body=request
-        )
-        values = (body.get("embedding") or {}).get("values") or []
-        if not values:
-            raise RuntimeError("Gemini embedContent returned no vector.")
-        vector = [float(v) for v in values]
-        if len(vector) != GEMINI_EMBEDDING_NATIVE_DIMS:
-            magnitude = sum(v * v for v in vector) ** 0.5
-            if magnitude:
-                vector = [v / magnitude for v in vector]
-        return vector
+        return embed_texts([text], "gemini", GEMINI_EMBEDDING_MODEL, api_key=self.api_key)[0]
 
     def test_connection(self) -> tuple[bool, str, int]:
         """List one model: authenticated, free, and no thinking-token trap.

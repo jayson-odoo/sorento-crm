@@ -758,6 +758,13 @@ class SystemSetting(Base):
     chatbot_direct_ingress_mode = Column(
         String(16), nullable=False, server_default="off", default="off"
     )
+    # LOOKUP-EMBED-CENTRAL: the lookup embedder (`services/embedding_settings.resolve_embedder`), the
+    # model the records-search vectors were built with (written by the guard only, never the API) and
+    # the backfill rate in requests per minute.
+    embedding_provider = Column(String(32), nullable=True)
+    embedding_model = Column(String(128), nullable=True)
+    embedding_records_search_model = Column(String(128), nullable=True)
+    embedding_backfill_rpm = Column(Integer, nullable=True, server_default="20", default=20)
     chatbot_direct_ingress_contacts = Column(Text, nullable=True)
     # CLOSED-LISTS-INDEX-MODE: how a CLOSED LISTS parser version sees the closed lists.
     # `block` (today) renders every full list into the system prompt; `index` renders each
