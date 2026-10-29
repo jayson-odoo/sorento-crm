@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Send quotation via WhatsApp (mockup v1)</title>
+<title>Send quotation via WhatsApp (mockup v2)</title>
 <style>
 /* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/set-quote-line */
 :root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--destructive:#dc2626;--success:#15803d;--success-soft:#f0fdf4;--page:#f7f7f8}
@@ -58,6 +58,12 @@ section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:90
 .inp.ph-text{color:#a1a1aa}
 .msg{border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:13px;background:var(--muted);white-space:pre-wrap;word-break:break-word;line-height:1.5}
 .msg a{color:#1d4ed8}
+.msg.ta{background:#fff;min-height:168px;position:relative;box-shadow:inset 0 0 0 1px transparent}
+.msg.ta::after{content:"";position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid #d4d4d8;border-bottom:2px solid #d4d4d8}
+.caret{display:inline-block;width:1px;height:15px;background:var(--foreground);vertical-align:-2px;margin-left:1px}
+.chev{font-size:10px;margin-left:2px;opacity:.85}
+.flow{display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px;margin-top:10px}
+.flow .step{background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px 10px;max-width:420px}
 .foot{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .phone .foot{flex-direction:column-reverse;align-items:stretch}
 .feed{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;max-width:640px}
@@ -74,11 +80,13 @@ code{font:12px ui-monospace,Menlo,monospace;background:var(--muted);padding:1px 
 </head>
 <body>
 <div class="doc">
-<h1>Send quotation via WhatsApp (mockup v1)</h1>
-<p class="intro">Lane QUOTE-SEND-WHATSAPP. Shows the card's recommended answers (Q1 a, Q2 a, Q3 a, Q4 a, Q5 a). Data:
+<h1>Send quotation via WhatsApp (mockup v2)</h1>
+<p class="intro">Lane QUOTE-SEND-WHATSAPP. v2: the owner's answers (Q1 a; Q2 b, signed by the quotation's signatory; Q3 a; Q4 a) plus the Lavish notes of
+30 Oct 00:31: <b>Send to Customer offers Email or WhatsApp</b> (section 4) and <b>the message is editable</b> (sections 2-4).
+The gear item stays. Data:
 quotation PRJQ-2026-0003 from the shared dev copy, names and subject masked (CUSTOMER A, ATTN A, SALES REP A, PROJECT A, SUBJECT A).
 Numbers are masked or fake; the copy holds no mobile numbers at all.</p>
-<div class="nav"><a href="#s1">1 Gear menu</a><a href="#s2">2 Prompt, number found</a><a href="#s3">3 Prompt, no mobile</a><a href="#s4">4 After Send to Customer</a><a href="#s5">5 Activity line</a><a href="#s6">6 Not yet sent</a><a href="#map">Component map</a></div>
+<div class="nav"><a href="#s1">1 Gear menu</a><a href="#s2">2 Prompt, number found</a><a href="#s3">3 Prompt, no mobile</a><a href="#s4">4 Send to Customer: Email or WhatsApp</a><a href="#s5">5 Activity line</a><a href="#s6">6 Not yet sent</a><a href="#map">Component map</a></div>
 
 <svg width="0" height="0" style="position:absolute">
  <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 1 1 0 10h-2M8 12h8"/></symbol>
@@ -137,8 +145,9 @@ Numbers are masked or fake; the copy holds no mobile numbers at all.</p>
 <!-- 2 -->
 <section id="s2">
 <h2><span class="nb">2</span>The prompt, when the recipient field holds a mobile (test data only: none on the copy)</h2>
-<p class="why">Rules 2-5. "To" prefilled from the first mobile, local 012 turned into 60 12; editable, not saved back. The
-message is exactly what WhatsApp opens with. "Open WhatsApp" is a plain link to
+<p class="why">Rules 2-5. "To" prefilled from the first mobile, local 012 turned into 60 12. <b>Message is an editable
+box</b> prefilled with the template, signed by the quotation's signatory; whatever is in it when "Open WhatsApp" is
+pressed is what WhatsApp opens with. Neither edit is saved back to the quotation. "Open WhatsApp" is a plain link to
 <code>https://wa.me/6012xxxxx45?text=Hi%20ATTN%20A%2C%0A%0AHere%20is%20our%20quotation%20...</code> in a new tab.</p>
 <div class="row">
  <div class="desk"><div class="shell" style="min-height:470px">
@@ -146,14 +155,14 @@ message is exactly what WhatsApp opens with. "Open WhatsApp" is a plain link to
   <div class="scrim"><div class="dlg">
    <h3>Send R1 via WhatsApp</h3>
    <div><span class="lbl">To</span><div class="inp">+60 12-xxx xx45</div></div>
-   <div><span class="lbl">Message</span><div class="msg">Hi ATTN A,
+   <div><span class="lbl">Message</span><div class="msg ta">Hi ATTN A,
 
 Here is our quotation PRJQ-2026-0003-R1 for SUBJECT A.
 You can view and accept it here:
 <a>https://crm.example/quotation-sign/Xk2...9Qa</a>
 
 Thank you,
-SALES REP A</div></div>
+SALES REP A<span class="caret"></span></div></div>
    <div class="foot"><span class="btn ghost">Close</span><span class="btn"><svg class="ico"><use href="#i-copy"/></svg>Copy link</span><span class="btn pri"><svg class="ico"><use href="#i-wa"/></svg>Open WhatsApp</span></div>
   </div></div>
  </div><div class="cap">1280 px</div></div>
@@ -161,14 +170,14 @@ SALES REP A</div></div>
   <div class="scrim"><div class="dlg">
    <h3>Send R1 via WhatsApp</h3>
    <div><span class="lbl">To</span><div class="inp">+60 12-xxx xx45</div></div>
-   <div><span class="lbl">Message</span><div class="msg">Hi ATTN A,
+   <div><span class="lbl">Message</span><div class="msg ta">Hi ATTN A,
 
 Here is our quotation PRJQ-2026-0003-R1 for SUBJECT A.
 You can view and accept it here:
 <a>https://crm.example/quotation-sign/Xk2...9Qa</a>
 
 Thank you,
-SALES REP A</div></div>
+SALES REP A<span class="caret"></span></div></div>
    <div class="foot"><span class="btn pri"><svg class="ico"><use href="#i-wa"/></svg>Open WhatsApp</span><span class="btn"><svg class="ico"><use href="#i-copy"/></svg>Copy link</span><span class="btn ghost">Close</span></div>
   </div></div>
  </div><div class="cap">375 px</div></div>
@@ -186,14 +195,14 @@ typed here is used for this send only.</p>
   <div class="scrim"><div class="dlg">
    <h3>Send R1 via WhatsApp</h3>
    <div><span class="lbl">To</span><div class="inp ph-text">Mobile number</div></div>
-   <div><span class="lbl">Message</span><div class="msg">Hi ATTN A,
+   <div><span class="lbl">Message</span><div class="msg ta">Hi ATTN A,
 
 Here is our quotation PRJQ-2026-0003-R1 for SUBJECT A.
 You can view and accept it here:
 <a>https://crm.example/quotation-sign/Xk2...9Qa</a>
 
 Thank you,
-SALES REP A</div></div>
+SALES REP A<span class="caret"></span></div></div>
    <div class="foot"><span class="btn pri"><svg class="ico"><use href="#i-wa"/></svg>Open WhatsApp</span><span class="btn"><svg class="ico"><use href="#i-copy"/></svg>Copy link</span><span class="btn ghost">Close</span></div>
   </div></div>
  </div><div class="cap">375 px</div></div>
@@ -202,31 +211,39 @@ SALES REP A</div></div>
 
 <!-- 4 -->
 <section id="s4">
-<h2><span class="nb">4</span>Right after "Send to Customer R1" succeeds (Q5 a)</h2>
-<p class="why">The header button issues the revision exactly as today; on success the same prompt opens on its own for
-the new revision. Close = nothing else happens (the salesperson may email instead). On failure no prompt.</p>
+<h2><span class="nb">4</span>"Send to Customer R1" opens a choice: Email or WhatsApp</h2>
+<p class="why">Owner note 00:31. Pressing the button no longer sends straight away; it opens a two-item menu. Picking
+either one sends R1 (the same send as today). <b>Email</b> = today's flow: R1 is sent, the usual toast, the salesperson
+mails the PDF from My Downloads. <b>WhatsApp</b> = R1 is sent, then the prompt from sections 2-3 opens for R1. Escape
+or a click outside sends nothing.</p>
 <div class="row">
- <div class="desk"><div class="shell" style="min-height:470px">
+ <div class="desk"><div class="shell">
   <div class="hdr">
    <div><div class="crumb">Project Sales / PROJECT A / Quotations</div>
-    <div class="ttl">PRJQ-2026-0003 <span class="pill">Sent R1</span></div>
-    <div class="meta"><span>To CUSTOMER A</span><span>Attn ATTN A</span></div></div>
-   <div class="btns"><span class="btn"><svg class="ico"><use href="#i-dl"/></svg>PRJQ-2026-0003 (R1)</span><span class="btn icon"><svg class="ico"><use href="#i-gear"/></svg></span></div>
+    <div class="ttl">PRJQ-2026-0003</div>
+    <div class="meta"><span>To CUSTOMER A</span><span>Attn ATTN A</span><span>Signed by SALES REP A</span></div></div>
+   <div class="btns"><span class="btn pri">Send to Customer R1<span class="chev">&#9662;</span></span><span class="btn icon"><svg class="ico"><use href="#i-gear"/></svg></span></div>
   </div>
-  <div class="scrim"><div class="dlg">
-   <h3>Send R1 via WhatsApp</h3>
-   <div><span class="lbl">To</span><div class="inp ph-text">Mobile number</div></div>
-   <div><span class="lbl">Message</span><div class="msg">Hi ATTN A,
-
-Here is our quotation PRJQ-2026-0003-R1 for SUBJECT A.
-You can view and accept it here:
-<a>https://crm.example/quotation-sign/Xk2...9Qa</a>
-
-Thank you,
-SALES REP A</div></div>
-   <div class="foot"><span class="btn ghost">Close</span><span class="btn"><svg class="ico"><use href="#i-copy"/></svg>Copy link</span><span class="btn pri"><svg class="ico"><use href="#i-wa"/></svg>Open WhatsApp</span></div>
-  </div></div>
- </div><div class="cap">1280 px, the moment after pressing "Send to Customer R1"</div></div>
+  <div class="menu" style="width:200px;right:64px">
+   <div class="mi"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>Email</div>
+   <div class="mi new"><svg class="ico"><use href="#i-wa"/></svg>WhatsApp</div>
+  </div>
+  <div class="ghostcard" style="max-width:780px"><span class="ph" style="width:40%"></span><span class="ph" style="width:85%"></span><span class="ph" style="width:70%"></span></div>
+  <div class="flow">
+   <div class="step"><b>Email</b> &rarr; toast "Sent to the customer as PRJQ-2026-0003 (R1)". Nothing else opens.</div>
+   <div class="step"><b>WhatsApp</b> &rarr; same toast, then "Send R1 via WhatsApp" (section 2 or 3) opens.</div>
+  </div>
+ </div><div class="cap">1280 px</div></div>
+ <div class="phone"><div class="shell">
+  <div class="crumb">Project Sales / PROJECT A</div>
+  <div class="ttl">PRJQ-2026-0003</div>
+  <div class="meta"><span>To CUSTOMER A</span></div>
+  <div class="btns" style="margin-top:8px;justify-content:flex-end"><span class="btn pri">Send to Customer R1<span class="chev">&#9662;</span></span><span class="btn icon"><svg class="ico"><use href="#i-gear"/></svg></span></div>
+  <div class="menu" style="width:200px;right:54px">
+   <div class="mi"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>Email</div>
+   <div class="mi new"><svg class="ico"><use href="#i-wa"/></svg>WhatsApp</div>
+  </div>
+ </div><div class="cap">375 px</div></div>
 </div>
 </section>
 
@@ -267,15 +284,15 @@ SALES REP A</div></div>
 <tr><td>"Send via WhatsApp" menu item, disabled hint</td><td>one more <code>RecordAction</code> in <code>app/(protected)/project-sales/[projectId]/quotation-documents/actions.tsx</code> (rendered by <code>components/common/DetailActionsMenu.tsx</code> + <code>RowActionsMenu.tsx</code> via <code>recordActions.tsx</code>); hint text reused from the copy action</td></tr>
 <tr><td>Prompt shell, title, footer buttons</td><td><code>components/ui/dialog.tsx</code> + <code>components/ui/button.tsx</code>, same shape as <code>[documentId]/components/QuotationSignLinkDialog.tsx</code> (new sibling <code>QuotationWhatsAppDialog.tsx</code>)</td></tr>
 <tr><td>"To" field</td><td><code>components/ui/input.tsx</code> (type tel)</td></tr>
-<tr><td>Message box</td><td>read-only text block, muted background (no new primitive)</td></tr>
+<tr><td>Message box (editable)</td><td><code>components/ui/textarea.tsx</code>, prefilled from the template; local state only</td></tr>
 <tr><td>Link minting</td><td><code>useQuotationDocumentMutations().signLink</code> (<code>_shared/hooks/useQuotationDocuments.ts:257</code>), same call as Copy counter-sign link</td></tr>
 <tr><td>Copy link button</td><td><code>hooks/use-copy-to-clipboard</code>, as in QuotationSignLinkDialog</td></tr>
 <tr><td>Open WhatsApp URL</td><td><code>waMeUrl</code> from <code>app/(auth)/portal/lib/portal-paths.ts:108</code>, moved to a shared lib so both use one helper; number cleanup added in front of it</td></tr>
-<tr><td>Auto-open after Send to Customer</td><td><code>mutations.issue</code> success in <code>[documentId]/components/QuotationDocumentClient.tsx:406-417</code></td></tr>
+<tr><td>Send to Customer: Email / WhatsApp menu</td><td><code>components/ui/dropdown-menu.tsx</code> wrapped around the existing button in <code>[documentId]/components/QuotationDocumentClient.tsx:406-417</code>; both items call the existing <code>mutations.issue</code>; WhatsApp opens the prompt on its success</td></tr>
 <tr><td>Activity line</td><td>backend <code>record_project_event</code> (<code>app/services/project_activity_service.py:107</code>), shown by the existing project Activities feed</td></tr>
 </table>
 <p class="note">Not in this lane: any message sent by the system (respond.io), templates, saving a typed number back to
-the quotation or the customer.</p>
+the quotation or the customer, a system-sent email.</p>
 </section>
 </div>
 </body>
