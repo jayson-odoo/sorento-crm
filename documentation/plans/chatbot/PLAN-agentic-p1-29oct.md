@@ -223,3 +223,163 @@ conversation" starts empty; context refusals; tool list filtered by user slug an
 model-supplied contact_id ignored); budget limits and the final no-tool answer; figure check; memory read-back;
 continuation replay (Gemini cassette); endpoint auth and switch rules. Coder makes them green. FE: console Agent
 mode + switch, built against mocks first. Reviewer + security reviewer (permission gating). Crew runs the eval.
+
+## Build contract (Phase 2; tester and coder both read this)
+
+Backend package `sorento_crm_backend/app/services/agent/`. Names below are the contract; tests import them.
+
+### `agent/tools.py`
+
+```python
+@dataclass(frozen=True)
+class ToolDef:
+    name: str                 # MCP tool name
+    user_permission: str      # slug the linked user must hold
+
+REGISTRY: dict[str, ToolDef]  # exactly the 9 tools of card section 2, with the slugs in that table
+
+@dataclass
+class ToolResult:
+    status: str               # "ok" | "denied" | "invalid" | "error" | "timeout"
+    data: Any = None          # the (filtered, size-capped) tool output
+    more: int = 0             # rows not shown because of the size cap
+    message: str = ""         # plain reason for denied / invalid / error / timeout
+
+def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]
+    # OpenAI-style function tools; `catalog` is MCP tools/list ({name: {description, inputSchema}});
+    # contact_id / space_id removed from properties and required.
+
+def dispatch(db, ctx: "AgentContext", name: str, args: Any, *, call, catalog: dict[str, dict],
+             timeout: float) -> ToolResult
+```
+
+`dispatch` rules, in order: name not in `REGISTRY` -> denied; the linked user lacks `user_permission`
+(checked NOW, not at exposure) -> denied; `args` not a dict, or a key not in the tool's `inputSchema.properties`
+-> invalid; model-supplied `contact_id` / `space_id` are discarded and the context's values injected; then
+`call(name, args)` (production: `lanes/business/services._mcp_call(db)`; injected in tests). A raised
+`ToolNotAllowed` -> denied; a timeout -> timeout; any other exception -> error (never raises). An ok result is
+passed through the restricted-field drop with the contact's grants (below), then capped at 12,000 characters of
+JSON: list values are cut by whole items and `more` counts the cut items.
+
+Restricted-field drop: extract the block at `lanes/business/fetch.py:3200-3270` from `output_structurer` into
+`fetch.drop_restricted_fields(envelope: dict, granted: set[str], axis: str | None = None) -> None` (in place), call
+it from `output_structurer` (behaviour unchanged; the existing tests prove it) and from `dispatch`.
+
+### `agent/access.py`
+
+```python
+class AgentRefused(Exception):
+    reason: str   # "contact_not_found" | "switch_off" | "ai_replies_off" | "no_linked_user"
+
+@dataclass(frozen=True)
+class AgentContext:
+    contact_pk: str           # respond_contacts.id
+    contact_respond_id: str   # respond_contacts.respond_io_id (what chatbot.turns.contact_respond_id holds)
+    space_id: str | None      # the contact's workspace id as the MCP tools take it
+    user_id: str
+    user_name: str
+    grants: frozenset[str]    # the contact's field reveals, as today's turn reads them
+
+def build_context(db, contact_respond_id: str) -> AgentContext   # raises AgentRefused
+def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]      # REGISTRY entries the user holds the slug for
+```
+
+Refusal order: no contact row -> contact_not_found; `chatbot_allowed` false -> ai_replies_off;
+`chatbot_agent_enabled` false -> switch_off; no `users` row with `respond_contact_id = contact_pk`, active ->
+no_linked_user. Permission checks use `UserPermissionService(db).check_user_has_permission` (superadmin/admin
+pass, as everywhere). The contact's brand scope is applied to the session for the turn the same way today's turn
+does, so `_mcp_call`'s brand guard sees it.
+
+### `agent/memory.py`
+
+```python
+def current_conversation(db, contact_respond_id: str) -> AgentConversation  # newest row; created if none
+def new_conversation(db, contact_respond_id: str) -> AgentConversation
+def conversation_turns(db, conv) -> list[ChatbotTurn]                      # ingress="agent", oldest first
+def history_messages(db, conv) -> list[dict]
+    # [{"role":"user","content":"Summary of the earlier conversation: ..."}] when conv.summary, then for each
+    # turn after conv.summary_through: {"role":"user","content":text}, {"role":"assistant","content":reply
+    # + "\n[tools: name(args) status; ...]"}
+def maybe_compact(db, conv, *, summarize, threshold_tokens: int, keep_last: int = 6) -> bool
+    # estimate = chars/4 of the verbatim part; above threshold: summarize(old_summary, turns_to_fold) -> str,
+    # store summary, summary_through = created_at of the last folded turn, summary_tokens; True.
+    # summarize raising -> nothing changes, returns False.
+```
+
+Model `AgentConversation` (`app/models/chatbot_agent.py`), table `chatbot.agent_conversations`: `id` uuid pk,
+`contact_respond_id` String(64) not null indexed, `created_at` timestamptz default now, `summary` Text null,
+`summary_through` timestamptz null, `summary_tokens` Integer null. `__audit_skip__` like `ChatbotTurn`.
+
+### `agent/loop.py`
+
+```python
+@dataclass
+class Budgets:
+    max_rounds: int = 8
+    max_seconds: float = 45
+    max_input_tokens: int = 150_000
+    compact_tokens: int = 40_000
+    calls_per_round: int = 4
+
+def budgets_from_settings(db) -> Budgets          # system_settings columns; missing row -> defaults
+
+def unsupported_figures(reply: str, sources: list[str]) -> list[str]
+    # numbers in reply (ints, decimals, thousands separators; ignoring ones inside dates YYYY-MM-DD and the
+    # digits of product codes) that do not appear in any source after normalising separators.
+
+@dataclass
+class AgentTurnResult:
+    turn_id: str
+    conversation_id: str
+    reply_text: str
+    status: str            # "answered" | "limited" | "failed"
+    limit_hit: str | None  # "rounds" | "seconds" | "input_tokens" | None
+    rounds: int
+    usage: dict            # {"prompt_tokens", "completion_tokens", "cached_tokens", "calls"}
+    tool_calls: list[dict] # [{"name", "status", "ms"}]
+
+def run_agent_turn(db, *, contact_respond_id: str, text: str, provider=None, mcp_call=None,
+                   catalog=None, clock=time.monotonic) -> AgentTurnResult
+```
+
+`run_agent_turn`: `build_context` (AgentRefused propagates); budgets; conversation + `maybe_compact`; messages =
+system prompt (prompt key `chatbot_agent`, fallback text in `ai_prompt_registry`) + history + text; loop: each round
+`provider.chat(messages, tools=schemas, reasoning_effort=...)`; with tool calls, at most `calls_per_round` run
+(extra calls get a `denied` "too many calls this round" result), the assistant message is appended with
+`continuation` when the result has one, then one `tool` message per call; budgets checked after every round; on a
+limit, one final `chat` with `tools=None` and an instruction to answer with what it has and name what it could not
+check, `status="limited"`. No tool calls -> figure check against the user text + every ok tool result's JSON: if
+unsupported, one repair round naming them; still unsupported -> those figures are replaced by "(not verified)".
+Provider/model: `ai_prompt_registry.agent_model(db, "chatbot_agent")`, default ("gemini", "gemini-3.5-flash"); key
+from the assistant config as other callers resolve it; no key or provider error before any tool result ->
+`status="failed"`, reply "The agent could not answer: <reason>." Every turn writes one `chatbot.turns` row
+(`ingress="agent"`, `is_test=True`, `status="done"` or `"failed"`, `envelope={"text", "agent_conversation_id"}`,
+`response={"reply_text", "tool_digest": [...], "status", "limit_hit"}`, trace events `agent_round` /
+`agent_tool`), and usage rows (`feature="chatbot_agent"`).
+
+### Routes (`api/v1/system/chatbot.py`, permission `VIEW` like `/console/turn`)
+
+- `POST /api/v1/system/chatbot/agent/turn` body `{contact_respond_id: str, text: str 1..4000}` -> 200
+  `AgentTurnResult` fields. `AgentRefused` -> 409 `{"detail": {"code": "agent_refused", "reason": ...}}`.
+- `GET /api/v1/system/chatbot/agent/conversation?contact_respond_id=` -> `{conversation_id, turns: [{turn_id,
+  text, reply_text, status, created_at}]}`.
+- `POST /api/v1/system/chatbot/agent/conversation/new` body `{contact_respond_id}` -> `{conversation_id}`.
+
+### Settings and switch
+
+- `respond_contacts.chatbot_agent_enabled` Boolean not null default false: `ContactChatbotUpdate` field +
+  partial update (`api/v1/user_management/contacts.py:473,530` pattern) + every contact chatbot GET dict.
+- `system_settings.chatbot_agent_max_rounds` (8, 1..30), `chatbot_agent_max_seconds` (45, 5..300),
+  `chatbot_agent_max_input_tokens` (150000, 10000..2000000), `chatbot_agent_compact_tokens` (40000,
+  5000..500000): settings request model + the GET dict builder + PUT (`api/v1/user_management/settings.py:173,469`
+  pattern of `report_ask_rate_limit`).
+- One migration (revision id <= 32 chars) on the current head: the contact column, the four settings columns,
+  the table.
+
+### Frontend
+
+- Contact Details > Chatbot: one "Agent mode" switch through `contactChatbotService.ts` (existing pattern).
+- Chatbot settings page (`settings/chatbot-media`): the four budget fields.
+- Chatbot console (`system-management/chatbot-console`): an "Agent" mode toggle; in agent mode, messages go to
+  `agent/turn`, the history loads from `agent/conversation`, a "New conversation" button, each reply shows its
+  rounds and tool calls (name + status) and the limit hit. Service + hooks layering, `extractApiError`.
