@@ -1434,7 +1434,7 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     except Exception as exc:  # noqa: BLE001 - provider/transport failure is a failed stage
         # PARSER-MAX-TOKENS: an answer cut short on the cap was billed, so it carries its usage and the
         # engine writes the `was_answered = false` row; any other failure never returned, so it has none.
-        cut_short = exc.result if isinstance(exc, ResponseTruncated) else None
+        cut_short = getattr(exc, "result", None) if isinstance(exc, ResponseTruncated) else None
         failure = ParserError(
             f"parser provider call failed: {exc}",
             usage=_usage(config, cut_short, effort, started) if cut_short is not None else None,

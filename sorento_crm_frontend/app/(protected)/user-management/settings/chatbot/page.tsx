@@ -350,7 +350,11 @@ export default function ChatbotSettingsPage() {
           disabled={saving}
           onClick={() => {
             setChecked(true);
-            if (parserTokensError) return;
+            if (parserTokensError) {
+              // The field sits in the top card and Save at the page foot: take the operator to it.
+              document.getElementById('chatbot-parser-max-output-tokens')?.focus();
+              return;
+            }
             // Re-seed each draft from what came back, not from what was typed: the
             // row the backend returns is what was actually persisted.
             save.mutate(

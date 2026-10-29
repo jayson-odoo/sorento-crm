@@ -390,3 +390,11 @@ def test_null_resets_to_the_default(settings_api):
     resp = api.post(GENERAL, json={"chatbot_parser_max_output_tokens": None})
     assert resp.status_code == 200, resp.text
     assert _stored(settings_api) == 8192
+
+
+def test_a_cut_short_error_survives_a_pickle_round_trip():
+    import pickle
+
+    exc = llm_provider.ResponseTruncated("Gemini stopped early: MAX_TOKENS", llm_provider.ChatResult("", 1, 2, 3))
+    back = pickle.loads(pickle.dumps(exc))
+    assert str(back) == "Gemini stopped early: MAX_TOKENS" and isinstance(back, RuntimeError)

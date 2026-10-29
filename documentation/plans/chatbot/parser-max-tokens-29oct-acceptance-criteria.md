@@ -11,3 +11,7 @@
 - AC-5: a parser call that stops on the output cap still writes its `chatbot_parser` usage
   row, with `was_answered = false` and the tokens the provider billed.
 - AC-6: the customer-facing reply wording is unchanged.
+- AC-7: Settings > Chatbot shows "Parser max output tokens" (default 8,192) in the Switches card;
+  a value outside 1,024-32,768 or not a whole number shows an error under the field and saves
+  nothing; a valid value is saved and read by the next parse. The API refuses an out-of-range
+  value (422) and a `null` resets it to 8,192.

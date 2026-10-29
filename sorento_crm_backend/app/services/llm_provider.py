@@ -52,7 +52,8 @@ class ResponseTruncated(RuntimeError):
     """The model stopped on the output cap. `result` is what the call billed, so a caller can
     record the spend of an answer it cannot use (PARSER-MAX-TOKENS)."""
 
-    def __init__(self, message: str, result: ChatResult) -> None:
+    # `result` defaults to None so the exception survives a pickle / copy round trip (args hold the message only).
+    def __init__(self, message: str, result: Optional[ChatResult] = None) -> None:
         super().__init__(message)
         self.result = result
 
