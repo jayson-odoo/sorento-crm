@@ -502,3 +502,11 @@ def test_the_per_call_timeout_shrinks_with_the_remaining_budget(db, contact):
 
     # budget 45 s: after 20 s used 25 left (capped at 10), after 40 s used 5 left
     assert seen == [10, 5]
+
+
+def test_numbers_the_user_typed_are_exempt_from_the_figure_rule(db, contact):
+    """Round 5: echoing "2026" or "5 units" from the user's own message needs no figure."""
+    provider = ScriptedProvider([answer("Since 2026 you asked about 5 units.")])
+    result = run(db, contact, provider, text="since 2026, I need 5 units")
+    assert result.reply_text == "Since 2026 you asked about 5 units."
+    assert len(provider.seen) == 1
