@@ -244,3 +244,44 @@ def test_an_unlinked_non_staff_contact_gets_no_outstanding_list(console) -> None
     from app.services import contact_customer_scope as scope_mod
 
     assert text.strip() == scope_mod.refusal_line(scope_mod.ContactCustomerScope(linked=(), staff=False)), text
+
+
+# ================================================================ eval send-back (rpt-010, rpt-009): the context product
+
+
+def _stock_ask() -> dict[str, Any]:
+    return _parser_output(
+        domain_hint="inventory", intent_hint="check_stock", order_status=None, entities=[_e(PRODUCT, "product")],
+    )
+
+
+def _carried() -> dict[str, Any]:
+    return dict(_e(PRODUCT, "product"), current_message=False)
+
+
+def test_rpt010_outstanding_after_a_stock_ask_keeps_the_product_and_runs_its_summary(do_only, do_only_world) -> None:
+    """Eval rpt-010 shape: "<code> stock", then "outstanding". As before #1922 the outstanding report runs on the product
+    in context: the product's summary, never the whole company's delivery order list."""
+    do_only.say(_stock_ask(), f"{PRODUCT} stock")
+    do_only.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
+    text, calls = do_only.say(
+        _status("outstanding", _carried(), basis=None, state_changes=list(KEEP), entity_op="reuse", **NO_DATES),
+        "outstanding",
+    )
+    args = _only_report_ask(calls)
+    assert args["basis"] == "pending_delivery" and len(args.get("product_ids") or []) == 1, args
+    assert args.get("group_by") is None, args  # the summary, not the document list
+    assert "Delivery orders: 3" in text, text
+
+
+def test_rpt009_dealer_outstanding_only_after_a_product_ask_keeps_the_product(do_only, do_only_world) -> None:
+    """Eval rpt-009 shape: a product ask, then "dealer outstanding only": the channel narrows the product's figure."""
+    do_only.say(_stock_ask(), f"{PRODUCT} stock")
+    do_only.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
+    _text, calls = do_only.say(
+        _status("outstanding", _carried(), basis=None, sales_channel="dealer", state_changes=list(KEEP),
+                entity_op="reuse", **NO_DATES),
+        "dealer outstanding only",
+    )
+    args = _only_report_ask(calls)
+    assert len(args.get("product_ids") or []) == 1 and args.get("group_by") is None, args
