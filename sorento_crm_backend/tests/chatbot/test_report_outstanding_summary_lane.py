@@ -388,3 +388,13 @@ def test_rpt030_shape_a_dealer_naming_its_customer_and_a_brand_gets_pending_deli
         "ZZT OWN DEALER SDN BHD\nany outstanding mocha item in sales order",
     )
     assert "Outstanding is not enabled" not in text, (calls, text)
+
+
+def test_the_so_line_rides_a_question_asked_before_the_redirected_answer(do_only, do_only_world) -> None:
+    """Review (eval round): a redirected undelivered-orders ask that stops before running (here its only filter, a
+    brand word, binds to nothing) still says the SO sentence above that line."""
+    text, calls = do_only.say(
+        _so_document_ask(_e("ZZTNOBRAND", "brand")), "any outstanding ZZTNOBRAND item in sales order",
+    )
+    assert calls == [] and "I don't know 'ZZTNOBRAND' as a brand." in text, (calls, text)
+    assert text.startswith("Sales order figures are not enabled for your account."), text
