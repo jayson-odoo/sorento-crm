@@ -22,14 +22,19 @@ Status: in progress (small fix track: backend only, one additive column)
    `failed` wins) lands in `delivery_status`; `delivered_ts` / `read_ts` from those entries;
    `respond_ts` = earliest entry (creation), as `_message_timestamp` already does.
    `pending` alone writes nothing (the row stays open).
-2. Non-terminal rows (NULL, `sent`, `delivered`) keep being polled on a backoff schedule
-   anchored on the send time (`respond_ts or sent_at`): attempts due at +1, +3, +8, +23,
-   +83 min, +4 h, +12 h, +24 h. Only a 404 on the last attempt (24 h after the send) writes
-   `not_sent`. `read`, `failed`, `not_sent` are terminal.
+2. Non-terminal rows (NULL, `pending`, `sent`, `delivered`, `not_sent`) keep being polled on
+   a backoff schedule anchored on the send time (`respond_ts or sent_at`): attempts due at
+   +1, +2, +5, +15, +30, +60 min, +4 h, +12 h, +24 h (a late tick skips ahead to the next
+   slot). Crew evidence 29 Oct: respond.io 404s a message until it DISPATCHES it (four bot
+   replies sat in its outbound queue ~25 min). So a 404 inside the first 60 min writes only
+   the reason; from 60 min it writes `not_sent`, which stays upgradable by a later 200 until
+   the 24 h slot. `read` and `failed` are terminal.
 3. `failed` from respond.io writes `delivery_status='failed'` with respond.io's
    `status[].message` as the reason.
-4. Reason: new nullable column `chat_histories.delivery_error` (String 512, additive
-   migration). Written on `failed` and `not_sent`: `HTTP 404: <respond.io error text>`.
+4. Two new nullable columns (additive migration `cdr_0001_chat_delivery_trace`):
+   `delivery_trace` JSONB = respond.io's `status[]` as returned; `delivery_error` String 512
+   = `HTTP 404: <respond.io error text>` or the failed entry's `message`. Cleared on a
+   positive status.
 5. Only outgoing rows are polled for delivery status; incoming rows only when `respond_ts`
    is missing. Rows sent more than 48 h ago are never picked up, so this lane does not
    silently backfill the 48,861 historical NULL rows (a backfill is the owner's call).
