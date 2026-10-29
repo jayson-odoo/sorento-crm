@@ -115,6 +115,23 @@ _UUID_TEXT = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 _IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+\b")
 
 
+_MONTH = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+    r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?"
+)
+_YEAR = r"(?:19|20)\d{2}"
+# Written and numeric dates: "15 Nov 2026", "Nov 15, 2026", "15 November", "Oct 2026",
+# "15/11/2026", "15-11-2026", "15.11.2026"; and a bare year 2000 to 2099.
+_WRITTEN_DATE = re.compile(
+    rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH}(?:,?\s+{_YEAR})?(?![A-Za-z0-9])"
+    rf"|\b{_MONTH}\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s+{_YEAR})?(?![A-Za-z0-9])"
+    rf"|\b{_MONTH}\s+{_YEAR}\b",
+    re.I,
+)
+_NUMERIC_DATE = re.compile(r"(?<![\d.,])\d{1,2}[/.-]\d{1,2}[/.-]\d{4}(?![\d])")
+_BARE_YEAR = re.compile(r"(?<![\d.,])20\d{2}(?!\d|[.,]\d)")
+
+
 def _identifier_blank(m: "re.Match[str]") -> str:
     token = m.group(0)
     return " " * len(token) if re.search(r"[A-Za-z]", token) else token
@@ -122,11 +139,15 @@ def _identifier_blank(m: "re.Match[str]") -> str:
 
 def _mask(text: str) -> str:
     """`text` with UUIDs, dates, identifiers (a hyphenated code with a letter in it) and list
-    markers blanked to spaces of the same length."""
+    markers blanked to spaces of the same length. Dates in every common written form and a bare
+    year 2000 to 2099 are blanked too."""
     blank = lambda m: " " * len(m.group(0))  # noqa: E731
     text = _UUID_TEXT.sub(blank, text)
     text = _DATE.sub(blank, text)
+    text = _NUMERIC_DATE.sub(blank, text)
+    text = _WRITTEN_DATE.sub(blank, text)
     text = _IDENTIFIER.sub(_identifier_blank, text)
+    text = _BARE_YEAR.sub(blank, text)
     return _LIST_MARKER.sub(lambda m: m.group(1) + " " * len(m.group(2)), text)
 
 

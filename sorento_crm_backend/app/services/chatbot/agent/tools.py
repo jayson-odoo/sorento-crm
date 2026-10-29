@@ -334,7 +334,7 @@ _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 _URL = re.compile(r"\bhttps?://\S+", re.I)
 _IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b")
 _HOST = re.compile(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+){2,}\b", re.I)
-_HOST_PORT = re.compile(r"\b[\w.-]+:\d{2,5}\b")
+_HOST_PORT = re.compile(r"\b[\w.-]*[A-Za-z_][\w.-]*:\d{2,5}\b")
 _PATH = re.compile(r"\S*/api/v\d\S*")
 _HTTP_ERR = re.compile(r"returned HTTP (\d{3})\s*:?\s*(.*)", re.S)
 
