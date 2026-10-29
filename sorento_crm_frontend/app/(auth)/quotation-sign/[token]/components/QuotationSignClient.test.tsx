@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationSignPage } from '../../services/quotationSignService';
 
@@ -748,6 +748,8 @@ describe('QuotationSignClient not-ready button (fix round 1)', () => {
     const box = screen.getByRole('checkbox', { name: TICK });
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign and accept' }));
+    // Settle: an async send (mutation) would land after this flush.
+    await act(async () => {});
     expect(acceptQuotation).not.toHaveBeenCalled();
     expect(box).toHaveFocus();
 
@@ -755,7 +757,13 @@ describe('QuotationSignClient not-ready button (fix round 1)', () => {
     fireEvent.click(box);
     expect(box).not.toBeChecked();
     fireEvent.click(screen.getByRole('button', { name: 'Sign and accept' }));
+    await act(async () => {});
     expect(acceptQuotation).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Sign and accept' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    expect(box).toHaveFocus();
   });
 
   it('R4: the not-ready button is aria-disabled and styled as such', async () => {

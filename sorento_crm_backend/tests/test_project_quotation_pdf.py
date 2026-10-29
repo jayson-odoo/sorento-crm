@@ -1300,11 +1300,11 @@ def test_the_letterhead_has_no_logo_when_unset_or_the_fetch_fails(monkeypatch, l
 
 import httpx as _httpx_mod
 
-_REAL_HTTPX_CLIENT = _httpx_mod.Client
+_REAL_HTTPX_CLIENT = _httpx_mod.AsyncClient
 
 
 class _Spy:
-    """Wraps the real httpx.Client onto a MockTransport and records every request."""
+    """Wraps the real httpx.AsyncClient onto a MockTransport and records every request."""
 
     def __init__(self, monkeypatch, qpdf, handler):
         import httpx
@@ -1322,7 +1322,12 @@ class _Spy:
             kwargs["transport"] = httpx.MockTransport(routed)
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(qpdf.httpx, "Client", factory)
+        monkeypatch.setattr(qpdf.httpx, "AsyncClient", factory)
+
+        def no_sync_client(*args, **kwargs):
+            raise RuntimeError("the logo fetch must use httpx.AsyncClient (wall-clock limit)")
+
+        monkeypatch.setattr(qpdf.httpx, "Client", no_sync_client)
         # Allow the https URL itself so only the behaviour under test is in play, no DNS.
         monkeypatch.setattr(qpdf, "assert_safe_outbound_url", lambda url, **kw: url)
 
@@ -1380,7 +1385,7 @@ def test_fetch_logo_refused_by_the_url_guard_is_none_and_makes_no_request(monkey
     calls = []
     monkeypatch.setattr(
         qpdf.httpx,
-        "Client",
+        "AsyncClient",
         lambda *a, **k: calls.append(1)
         or _REAL_HTTPX_CLIENT(
             *a, transport=httpx.MockTransport(lambda r: _png_response()), **k
@@ -1465,7 +1470,7 @@ def test_fetch_logo_with_a_malformed_url_is_none_and_never_raises(monkeypatch, u
 
     calls = []
     monkeypatch.setattr(
-        qpdf.httpx, "Client", lambda *a, **k: calls.append(1) or _REAL_HTTPX_CLIENT(*a, **k)
+        qpdf.httpx, "AsyncClient", lambda *a, **k: calls.append(1) or _REAL_HTTPX_CLIENT(*a, **k)
     )
     assert qpdf.fetch_logo_data_uri(url) is None
     assert calls == []
@@ -1490,12 +1495,15 @@ def test_fetch_logo_streamed_body_over_the_cap_with_no_content_length_is_none(mo
     from app.services import project_quotation_pdf_service as qpdf
 
     big = _big_png()
-    pieces = [big[i : i + 65536] for i in range(0, len(big), 65536)]
     seen = {}
+
+    async def pieces():
+        for i in range(0, len(big), 65536):
+            yield big[i : i + 65536]
 
     def handler(request):
         response = httpx.Response(
-            200, headers={"content-type": "image/png"}, content=iter(pieces)
+            200, headers={"content-type": "image/png"}, content=pieces()
         )
         seen["declared"] = response.headers.get("content-length")
         return response
@@ -1541,29 +1549,64 @@ def test_fetch_logo_with_a_content_encoded_response_is_none_even_when_small(monk
     assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
 
 
-def test_fetch_logo_gives_up_once_the_total_deadline_passes(monkeypatch):
-    """S2: a slow drip under the per-read timeout still ends at 3 s in total."""
+def test_fetch_logo_gives_up_when_the_headers_never_arrive_in_time(monkeypatch):
+    """S2b: a wall-clock limit on the whole fetch, headers included."""
+    import asyncio
+    import time as _time
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    monkeypatch.setattr(qpdf, "LOGO_FETCH_TIMEOUT_SECONDS", 0.2)
+
+    async def slow_headers(request):
+        await asyncio.sleep(1)
+        return _png_response(content=_real_png())
+
+    _Spy(monkeypatch, qpdf, slow_headers)
+    started = _time.monotonic()
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+    assert _time.monotonic() - started < 0.8
+
+
+def test_fetch_logo_gives_up_when_the_body_drips_past_the_limit(monkeypatch):
+    import asyncio
+    import time as _time
+
     import httpx
 
     from app.services import project_quotation_pdf_service as qpdf
 
-    clock = [100.0]
-    monkeypatch.setattr(qpdf.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(qpdf, "LOGO_FETCH_TIMEOUT_SECONDS", 0.2)
+    png = _real_png()
 
-    def slow_body():
-        png = _real_png()
+    async def dripping():
         for index in range(0, len(png), 8):
-            clock[0] += 1.0  # one second per 8-byte chunk
+            await asyncio.sleep(0.15)
             yield png[index : index + 8]
 
     _Spy(
         monkeypatch,
         qpdf,
         lambda r: httpx.Response(
-            200, headers={"content-type": "image/png"}, content=slow_body()
+            200, headers={"content-type": "image/png"}, content=dripping()
         ),
     )
+    started = _time.monotonic()
     assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+    assert _time.monotonic() - started < 0.8
+
+
+def test_fetch_logo_called_inside_a_running_event_loop_is_none_and_does_not_raise(monkeypatch):
+    import asyncio
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    _Spy(monkeypatch, qpdf, lambda r: _png_response(content=_real_png()))
+
+    async def inside_a_loop():
+        return qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png")
+
+    assert asyncio.run(inside_a_loop()) is None
 
 
 @pytest.mark.parametrize("served_as", ["image/svg+xml", "image/png"])
