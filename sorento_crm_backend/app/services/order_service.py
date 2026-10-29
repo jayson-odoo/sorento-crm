@@ -73,6 +73,20 @@ DATE_RELAX_LIMIT = 3
 DELIVERED_STATUS_CODES = ("delivered", "completed")
 
 
+def _excel_serial_to_datetime(value) -> Optional[datetime]:
+    """An Excel date serial (a date cell read without its format) as a datetime, or None
+    when the number is outside Excel's date range (DO-IMPORT-DATE)."""
+    from openpyxl.utils.datetime import from_excel
+
+    if not 1 <= value < 2958466:  # 1900-01-01 .. 9999-12-31
+        return None
+    try:
+        converted = from_excel(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return converted if isinstance(converted, datetime) else None
+
+
 def _delivered_status_ids(db) -> list:
     """Ids of the order statuses that count as delivered (see DELIVERED_STATUS_CODES)."""
     return [
@@ -2663,6 +2677,9 @@ class OrderService:
                 return None
             if isinstance(value, datetime):
                 return value
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                # The FE template upload reads cells with SheetJS: a date cell is a serial.
+                return _excel_serial_to_datetime(value)
             if isinstance(value, str):
                 # Try ISO format first
                 try:
@@ -2739,11 +2756,21 @@ class OrderService:
                         errors.append(f"Row {idx}: Order Number '{mapped_data['order_number']}' already exists")
                         continue
 
-                # DO-IMPORT-DATE: a new DO needs its date, and a sent blank never clears one.
+                # DO-IMPORT-DATE: a new DO needs its date, and a sent blank never clears one
+                # (AutoCount owns the date on its own DOs, so a blank there is moot).
                 if mapped_data.get('order_date') is None and (
-                    not existing_order or 'order_date' in mapped_data
+                    not existing_order
+                    or ('order_date' in mapped_data and not is_autocount_owned(existing_order))
                 ):
-                    errors.append(f"Row {idx}: Order Date is required")
+                    raw_date = next(
+                        (v for k, v in row_data.items()
+                         if column_mapping.get(k, k.lower()) == 'order_date'),
+                        None,
+                    )
+                    if raw_date is None or str(raw_date).strip() == '':
+                        errors.append(f"Row {idx}: Order Date is required")
+                    else:
+                        errors.append(f"Row {idx}: Order Date '{str(raw_date).strip()}' is not a valid date")
                     continue
 
                 sent_keys = [k for k in mapped_data if k != 'order_number']
@@ -2906,6 +2933,11 @@ class OrderService:
                 return ""
             return str(value).strip()
 
+        # DO-IMPORT-DATE: Master's Date is every DO's own date; without the column
+        # every row would be refused one by one, so say it once.
+        if "Date" not in {normalize_header(cell.value) for cell in master_sheet[1]}:
+            raise ValueError("Master sheet has no Date column: every delivery order needs its DO date")
+
         master_rows_list = list(iter_sheet_rows(master_sheet, "Master"))
         tracking_rows_list = list(iter_sheet_rows(tracking_sheet, "Overall Tracking"))
         master_rows = len(master_rows_list)
@@ -2971,6 +3003,8 @@ class OrderService:
                 return value
             if isinstance(value, date):
                 return datetime.combine(value, dt_time.min)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return _excel_serial_to_datetime(value)
             if isinstance(value, str):
                 cleaned = value.strip()
                 for fmt in ["%d/%m/%Y", "%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"]:
@@ -3023,6 +3057,8 @@ class OrderService:
         working_weekdays = calendar_service.get_working_weekdays()
 
         mapped_master_rows = []
+        # Doc number (lower) -> outcome code of a Master row refused for its Date.
+        refused_for_date: dict[str, str] = {}
         min_master_date = None
         max_master_date = None
         touched_orders: list[Order] = []
@@ -3055,7 +3091,11 @@ class OrderService:
                 order_date_value = mapped.get("order_date")
                 # DO-IMPORT-DATE: a DO always carries its date. A blank or unreadable
                 # Date used to become NULL (an undated DO, or a dated one wiped).
-                if order_date_value is None:
+                # AutoCount owns the date on its own DOs, so the sheet's cell is moot there.
+                known = existing_orders.get(order_number.lower())
+                if order_date_value is None and known is not None and is_autocount_owned(known):
+                    mapped.pop("order_date", None)
+                elif order_date_value is None:
                     raw_date = row_data.get("Date")
                     if raw_date is None or str(raw_date).strip() == "":
                         date_code = _oc.MISSING_DOC_DATE
@@ -3067,6 +3107,7 @@ class OrderService:
                             "is not a valid date (use DD/MM/YYYY)"
                         )
                     errors.append({"row": row_idx, "error": date_error, "data": row_data})
+                    refused_for_date[order_number.lower()] = date_code
                     outcome.skip(
                         row=row_idx, code=date_code, message=date_error,
                         value=order_number,
@@ -3232,6 +3273,15 @@ class OrderService:
                     continue
 
                 order = existing_orders.get(order_number.lower())
+                if not order and order_number.lower() in refused_for_date:
+                    message = f"Order '{order_number}' skipped: its Master row has no valid Date"
+                    warnings.append({"row": row_idx, "warning": message, "data": row_data})
+                    outcome.skip(
+                        row=row_idx, code=refused_for_date[order_number.lower()],
+                        message=message, value=order_number,
+                        identity={"sheet": "Overall Tracking", "doc_no": order_number},
+                    )
+                    continue
                 if not order:
                     warnings.append({"row": row_idx, "warning": f"Order '{order_number}' not found in Master sheet", "data": row_data})
                     outcome.skip(

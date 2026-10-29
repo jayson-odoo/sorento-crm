@@ -236,3 +236,99 @@ def test_report_lists_live_undated_dos_only(db):
     assert rows[undated]["line_count"] == 0
     assert rows[undated]["from_autocount"] is False
     assert rows[undated]["order_type"] == "RMA"
+
+
+# --- review round 1 -------------------------------------------------------------------
+
+
+def _sheet(master_header: list, master_rows: list[list], tracking_rows: list[list] = ()) -> bytes:
+    wb = Workbook()
+    wb.remove(wb.active)
+    master = wb.create_sheet("Master")
+    master.append(master_header)
+    for r in master_rows:
+        master.append(r)
+    tracking = wb.create_sheet("Overall Tracking")
+    tracking.append(["Doc Number", "Date"])
+    for r in tracking_rows:
+        tracking.append(r)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _excel_serial(d: date) -> int:
+    return (d - date(1899, 12, 30)).days
+
+
+def test_import_blank_date_on_autocount_do_still_applies_sheet_columns(db):
+    """AutoCount owns order_date on its own DOs, so the sheet's Date cell is irrelevant
+    there: a blank one must not block the columns the sheet does own."""
+    number = unique_code("DO")
+    db.add(Order(order_number=number, order_date=date(2026, 7, 1), doc_key=990001, remarks_cs="old"))
+    db.commit()
+
+    result = OrderService(db).import_excel_tracking(
+        _sheet(["Doc. No.", "Date", "Remarks CS"], [[number, None, "new"]]), USER
+    )
+
+    assert not _row_errors(result), result.get("errors")
+    order = _order(db, number)
+    db.refresh(order)
+    assert order.remarks_cs == "new"
+    assert order.order_date == date(2026, 7, 1)
+
+
+def test_import_reads_an_excel_date_serial(db):
+    number = unique_code("DO")
+    result = OrderService(db).import_excel_tracking(
+        _sheet(["Doc. No.", "Date"], [[number, _excel_serial(date(2026, 10, 29))]]), USER
+    )
+    assert not _row_errors(result), result.get("errors")
+    assert _order(db, number).order_date == date(2026, 10, 29)
+
+
+def test_import_tracking_row_of_refused_master_row_names_the_date(db):
+    number = unique_code("RMA")
+    result = OrderService(db).import_excel_tracking(
+        _sheet(["Doc. No.", "Date"], [[number, None]], [[number, date(2026, 10, 30)]]), USER
+    )
+    warnings = [w.get("warning") for w in result.get("warnings") or [] if isinstance(w, dict)]
+    assert f"Order '{number}' skipped: its Master row has no valid Date" in warnings, warnings
+    assert not any("not found in Master sheet" in (w or "") for w in warnings), warnings
+
+
+def test_import_master_sheet_without_date_column_is_refused_once(db):
+    number = unique_code("DO")
+    with pytest.raises(ValueError, match="Master sheet has no Date column"):
+        OrderService(db).import_excel_tracking(_sheet(["Doc. No.", "Type"], [[number, "DO"]]), USER)
+    assert _order(db, number) is None
+
+
+def test_bulk_import_reads_an_excel_date_serial(db):
+    """The FE template upload reads cells with SheetJS, so a real date arrives as a serial."""
+    number = unique_code("DO")
+    result = OrderService(db).bulk_import_orders(
+        [{"Order Number": number, "Order Date": _excel_serial(date(2026, 10, 29))}], USER
+    )
+    assert result["created"] == 1, result
+    assert _order(db, number).order_date == date(2026, 10, 29)
+
+
+def test_bulk_import_names_an_unreadable_date(db):
+    number = unique_code("DO")
+    result = OrderService(db).bulk_import_orders([{"Order Number": number, "Order Date": "soon"}], USER)
+    assert result["errors"] == ["Row 1: Order Date 'soon' is not a valid date"], result
+
+
+def test_bulk_import_blank_date_on_autocount_do_is_not_refused(db):
+    number = unique_code("DO")
+    db.add(Order(order_number=number, order_date=date(2026, 7, 1), doc_key=990002))
+    db.commit()
+    result = OrderService(db).bulk_import_orders(
+        [{"Order Number": number, "Order Date": "", "Remarks": "x"}], USER
+    )
+    assert result["updated"] == 1, result
+    order = _order(db, number)
+    db.refresh(order)
+    assert order.order_date == date(2026, 7, 1)
