@@ -68,6 +68,7 @@ from app.models.user import SystemSetting
 from app.schemas.canonical_masters import (
     CanonicalBrand,
     CanonicalCustomer,
+    CanonicalItemClass,
     CanonicalProductCategory,
     CanonicalSalesAgent,
     CanonicalUnitOfMeasure,
@@ -351,6 +352,7 @@ _UNSET = object()
 _NOT_NULL_DEFAULTS: dict[str, dict[str, Any]] = {
     "product_categories": {"is_active": True},
     "brands": {"is_active": True},
+    "item_classes": {"is_active": True},
     "units_of_measure": {"is_active": True, "decimal_places": 0},
     "warehouses": {"is_active": True},
     "suppliers": {"is_active": True},
@@ -381,6 +383,12 @@ def _category_columns(payload: Any, db: Session, company_id: str, warnings: list
 
 def _brand_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     columns: dict[str, Any] = {"brand_code": payload.code, "brand_name": payload.name}
+    _present(payload, columns, "description", "is_active")
+    return columns
+
+
+def _item_class_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
+    columns: dict[str, Any] = {"item_class_code": payload.code, "item_class_name": payload.name}
     _present(payload, columns, "description", "is_active")
     return columns
 
@@ -705,6 +713,12 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
     # that placeholder. Default adoption path (D3): code only, no name rung -
     # adopting by name would silently rewrite a hand-made brand_code.
     "brands": EntitySpec("brands", CanonicalBrand, "brand_code", _brand_columns, Brand),
+    # ITEM-CLASS-MASTER (contract 2.11): the brands rule exactly, pushed before brands and
+    # products. Default adoption (`resolve_master_by_code`, case/whitespace insensitive) claims
+    # the code = name rows a product's `item_class_code` back-created.
+    "item_classes": EntitySpec(
+        "item_classes", CanonicalItemClass, "item_class_code", _item_class_columns, ItemClass
+    ),
     "units_of_measure": EntitySpec(
         "units_of_measure", CanonicalUnitOfMeasure, "uom_code", _uom_columns, UnitOfMeasure
     ),
