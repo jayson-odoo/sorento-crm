@@ -16,6 +16,7 @@ from ._project_register_v2_support import (  # noqa: F401  (v2 is a fixture)
     developer,
     project,
     register_body,
+    seed_lead,
     title,
     uid,
     v2,
@@ -53,7 +54,9 @@ def _profile(w, project_id: str):
 
 
 def test_a5_register_without_a_customer_is_422_project_customer_required(v2):
-    res = as_user(v2, v2.owner).post(LIST, json={"title": title()})
+    # A lead with no customer: the customer is then the one thing missing (E3).
+    lead = seed_lead(v2, v2.owner)
+    res = as_user(v2, v2.owner).post(LIST, json={"title": title(), "lead_id": lead.id})
     assert res.status_code == 422, res.text
     assert res.json()["code"] == "project_customer_required"
 
@@ -84,7 +87,8 @@ def test_a5_a_refused_register_writes_no_project(v2):
     from app.models.projects import Project
 
     before = v2.db.query(Project).count()
-    as_user(v2, v2.owner).post(LIST, json={"title": title()})
+    lead = seed_lead(v2, v2.owner)
+    as_user(v2, v2.owner).post(LIST, json={"title": title(), "lead_id": lead.id})
     v2.db.expire_all()
     assert v2.db.query(Project).count() == before
 
@@ -99,7 +103,9 @@ def test_a5_put_without_a_customer_keeps_saving(v2):
 
 
 def test_a6_registering_with_a_lead_still_links_it(v2):
-    lead = as_user(v2, v2.owner).post(LEADS, json={"title": title("Lead")})
+    lead = as_user(v2, v2.owner).post(
+        LEADS, json={"title": title("Lead"), "customer_id": v2.customer.id}
+    )
     assert lead.status_code in (200, 201), lead.text
     lead_id = lead.json()["id"]
     res = as_user(v2, v2.owner).post(LIST, json=register_body(v2, lead_id=lead_id))
