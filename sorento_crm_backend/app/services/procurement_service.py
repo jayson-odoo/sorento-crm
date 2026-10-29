@@ -9219,7 +9219,16 @@ class PurchaseRequestService:
                         PurchaseRequestHeader.approval_status == "",
                     )
                 )
-            elif status_val in ("pending", "approved", "rejected"):
+            elif status_val == "pending":
+                # A row voided while pending before VOID-APPROVE-GUARD still carries
+                # approval_status 'pending'; it is not waiting on anyone.
+                status_clauses.append(
+                    and_(
+                        PurchaseRequestHeader.approval_status == "pending",
+                        PurchaseRequestHeader.status.is_distinct_from("voided"),
+                    )
+                )
+            elif status_val in ("approved", "rejected"):
                 status_clauses.append(PurchaseRequestHeader.approval_status == status_val)
             elif status_val == "resubmitted":
                 # A lifecycle status, not an approval one: what the list pill reads

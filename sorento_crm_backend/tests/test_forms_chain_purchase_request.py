@@ -623,3 +623,38 @@ def test_an_emailed_approval_link_dies_with_the_void(world, action):
     assert len(_sends(w, rid)) == sends_after_void
     row = w.db.query(ApprovalToken).filter(ApprovalToken.token == token).one()
     assert row.used_at is None
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_form_voided_while_pending_before_the_guard_stays_dead(world, kind):
+    """Rows voided before VOID-APPROVE-GUARD still read approval_status 'pending'. The guard
+    reads `status`, so they refuse every decision too, and the pending filter skips them."""
+    from urllib.parse import parse_qs, urlparse
+
+    from app.models.procurement import PurchaseRequestHeader
+
+    w = _setup(world, kind)
+    rid = _submitted(w)
+    s = w.as_user(w.staff)
+    link = s.post(f"{PR_BASE}/{rid}/send-approval-link", json={"approver_email": "boss@zzt.test"})
+    assert link.status_code == 200, link.text
+    token = parse_qs(urlparse(link.json()["approval_url"]).query)["token"][0]
+    row = w.db.query(PurchaseRequestHeader).filter(PurchaseRequestHeader.id == rid).one()
+    row.status, row.approval_status = "voided", "pending"
+    w.db.commit()
+
+    for action in ("approved", "rejected"):
+        res = s.post(f"{PR_BASE}/{rid}/approval-decision",
+                     json={"action": action, "approval_comments": "fine by me"})
+        assert res.status_code == 409, res.text
+        assert "voided" in res.text.lower()
+    submit = w.client.post("/api/v1/public/approval/submit", params={"token": token},
+                           json={"action": "approved", "approved_by": "Boss"})
+    assert submit.status_code == 409, submit.text
+
+    listed = s.get(PR_BASE, params={"approval_status": "pending", "request_type": kind})
+    assert listed.status_code == 200, listed.text
+    assert rid not in [r["id"] for r in listed.json()["data"]]
+    w.db.expire_all()
+    detail = s.get(f"{PR_BASE}/{rid}").json()
+    assert (detail["status"], detail["approval_status"]) == ("voided", "pending")
