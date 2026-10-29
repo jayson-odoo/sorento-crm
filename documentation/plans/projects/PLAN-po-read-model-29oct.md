@@ -1,6 +1,6 @@
 # PLAN: PO document reader model comes from System Settings (PO-READ-MODEL)
 
-Status: in progress (normal track: carries a migration; diff expected under 300 lines)
+Status: in review, PR #1971 (normal track: carries a migration)
 
 ## Problem (prod, 29 Oct 2026)
 
@@ -22,8 +22,11 @@ already works on prod with `gemini-3.5-flash`, picked in System Settings.
   (`DOCUMENT_AI_PROVIDER` / `DOCUMENT_AI_MODEL`) only when the setting is blank. Env default becomes
   `gemini-3.5-flash`.
 - Every `gemini-2.5-*` default in backend code moves to `gemini-3.5-flash`.
-- When every page fails, `extraction_error` carries the first page's reason (short, no secrets), so
-  the "could not be read" panel says why.
+- When every page fails, `extraction_error` carries the first page's reason (short, key-shaped
+  fragments stripped), so the "could not be read" panel says why. The delivery schedule reader's
+  "Nothing could be read" message gets the same reason.
+- A saved model with no saved provider is ignored (the env pair is used whole); the picker disables
+  the model while the provider is blank.
 - A provider "model not found / not available" answer logs one clear line naming the model.
 
 ## UAC
