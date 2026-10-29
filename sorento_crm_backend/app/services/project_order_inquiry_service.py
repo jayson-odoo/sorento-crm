@@ -1135,6 +1135,23 @@ def next_inquiry_no(db: Session, company_id: str, ref_date: Optional[date] = Non
     return _next_inquiry_no(db, company_id, ref_date)
 
 
+def auto_confirm_rows_on_po_lines(db: Session, po_line_ids: Sequence[Any]) -> None:
+    """OI-AUTO-CONFIRM: a PO line was cancelled or reopened, so every row linked to it
+    re-reads its own done-ness (`ProjectOrderInquiryService.auto_confirm`)."""
+    ids = [line_id for line_id in po_line_ids if line_id]
+    if not ids:
+        return
+    row_ids = [
+        row_id
+        for (row_id,) in db.query(OrderInquiryLink.row_id)
+        .filter(OrderInquiryLink.po_line_id.in_(ids))
+        .distinct()
+        .all()
+    ]
+    if row_ids:
+        ProjectOrderInquiryService(db).auto_confirm(row_ids)
+
+
 def flag_rows_for_cancelled_lines(
     db: Session, core_line_ids: Sequence[Any]
 ) -> int:
@@ -8585,12 +8602,9 @@ class ProjectOrderInquiryService:
                 # would otherwise keep printing its documents on the SO detail beside the
                 # revision that replaced it.
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
-                # PLAN-oi-request-cs-reserve.md (AC-RS-12): a reserve link is not a PO or
-                # an SPO document - this reader's whole vocabulary is "which BOOK is this
-                # on" - so it never leaks in here as a `kind="po"` entry with every book
-                # column blank. `reserved_qty` (the worklist serializer) is where it
-                # actually surfaces.
-                OrderInquiryLink.reserve_request_row_id.is_(None),
+                # OI-AUTO-CONFIRM (AC-AC-10b): a reserve link is returned too, as an entry
+                # of kind "reserve" (document "Reserved @ <warehouse>"), so a reserve-only
+                # row shows its cover instead of "-".
                 # LINKAGE-UNIFY U3 (owner ruling Q5): a link on a retired SPO line with
                 # nothing received is LISTED, no longer hidden (R7/AC-E9 lifted for
                 # links): the placement stays, and its `dead_reason` says why it brings
@@ -8639,6 +8653,7 @@ class ProjectOrderInquiryService:
             spo_supply_po_line_id,
         ) in rows:
             is_spo = link.spo_allocation_id is not None
+            is_reserve = link.reserve_request_row_id is not None
             location = warehouse_code or (spo_location_code if is_spo else None)
             tier, _sub = link_location_tier(stock_location, location, pools)
             arrives = spo_expected_date if is_spo else po_expected_date
@@ -8669,7 +8684,7 @@ class ProjectOrderInquiryService:
                 po_chains_by_row.setdefault(link.row_id, []).append(chain)
             entry = {
                     "id": link.id,
-                    "kind": "spo" if is_spo else "po",
+                    "kind": "reserve" if is_reserve else ("spo" if is_spo else "po"),
                     # S3 (`PLAN-oi-cascade-skip-early-arrival.md`): the target itself,
                     # so a reader deciding whether THIS row's own SO claims the line
                     # (`scm.order_link_claim`) can ask without a second query per link.
@@ -9227,300 +9242,10 @@ class ProjectOrderInquiryService:
             [row for row in rows if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED)]
         )
         self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
+        self.auto_confirm([row.id for row in rows])
         return self.serialize_rows(rows)
 
     # ----------------------------------------------------------- the handshake
-
-    def acknowledge_rows(
-        self,
-        row_ids: Sequence[str],
-        *,
-        actor_user_id: str,
-        link_up_to: Optional[date] = None,
-        link_horizon: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Purchasing's own Confirm press: takes these instructions on, and the cascade
-        runs for exactly them.
-
-        `PLAN-scm-oi-handshake.md` section 3 (captain, 27 Aug 2026), reinstated as the
-        page's own primary press by `PLAN-oi-confirm-per-so.md` S1/S2 (owner ruling 17 Sep
-        2026), which retires G4's "born acknowledged, no manual confirm anywhere" reading.
-        Two things happen in one press and they are one decision: the row becomes
-        purchasing's work, and the documents that can cover it are tied to it if they were
-        not already - most of them are, since raising and every other cascade door already
-        run `include_awaiting=True` and never waited for this press (AC-CF-4). What Confirm
-        adds is the handshake itself: the row leaves To confirm, is stamped with who and
-        when, and only a confirmed SO's demand counts for reorder planning (S5).
-
-        The guard stays TOLERANT of a row already acknowledged rather than refusing it: it
-        is left exactly as it is - not re-stamped with a fresh time and name, because that
-        would move the record of who actually confirmed it - and still joins the cascade
-        below, so a repeated press (a double click, two tabs, "Select all N matching"
-        catching a row somebody else just confirmed) is a no-op on the handshake and a real
-        re-run of Link. Only a REJECTED row is refused: taking it back is CS re-deciding the
-        line, not purchasing changing its mind about a row that no longer counts.
-
-        The row's SUPPLY state is refused on too, but only when it is CANCELLED
-        (PLAN-oi-cancelled-line-used-confirm.md, section 3.7, owner ruling 20 Sep 2026):
-        a cancelled row was called off, so taking it on is taking on work nobody is
-        doing. An ACTIONED row is different - it was answered somewhere else, but "seen"
-        is still true of it (C2), and `_linkable_row_clauses` already keeps every
-        non-linkable state, ACTIONED included, out of the cascade below, so confirming
-        one takes the handshake stamp and links nothing.
-
-        `link_up_to` is the LINK HORIZON the cascade half of the press runs under (section
-        11): every named row is TAKEN ON whatever its date, and only the linking stops at
-        the horizon, because the acknowledgement is the buyer reading the instruction and
-        the link is the buyer answering it. `after_horizon` is what the banner reports as
-        "N after <date>".
-        """
-        rows = self._rows_or_404(row_ids)
-        gone = [row for row in rows if row.state == INQUIRY_CANCELLED]
-        if gone:
-            raise AppException(
-                status_code=422,
-                message=(
-                    f"{len(gone)} of those rows are no longer open: a cancelled row "
-                    "is nobody's work to take on."
-                ),
-                code="order_inquiry_row_not_open",
-            )
-        refused = [row for row in rows if row.ack_state == ACK_REJECTED]
-        if refused:
-            raise AppException(
-                status_code=422,
-                message=(
-                    f"{len(refused)} of those rows cannot be acknowledged: a rejected "
-                    "row goes back to CS."
-                ),
-                code="order_inquiry_not_acknowledgeable",
-            )
-        now = datetime.utcnow()
-        transitioned = 0
-        for row in rows:
-            # Already acknowledged: left untouched rather than re-stamped, so a repeated
-            # press cannot move who took the row on or when. Both AWAITING (never
-            # confirmed) and CHANGED (confirmed once, since amended) transition here -
-            # Confirm is the one press that takes either kind of To-confirm row on.
-            if row.ack_state == ACK_ACKNOWLEDGED:
-                continue
-            row.ack_state = ACK_ACKNOWLEDGED
-            row.acknowledged_by = actor_user_id
-            row.acknowledged_at = now
-            transitioned += 1
-        transitioned += self._acknowledge_used_rows_of(
-            rows, actor_user_id=actor_user_id, now=now
-        )
-        # FLUSHED before the cascade: the session runs `autoflush=False` the way the
-        # application's does, so the pass below would read these rows at their OLD
-        # acknowledgement state and link none of them.
-        self.db.flush()
-        placed = self.auto_place_for_products(
-            None,
-            actor_user_id=actor_user_id,
-            trigger="acknowledge",
-            row_ids=[str(row.id) for row in rows],
-            link_up_to=link_up_to,
-            link_horizon=link_horizon,
-        )
-        return {
-            # Rows actually TRANSITIONED (nit, review of PR #471), not every row named:
-            # the guard is tolerant of an already-acknowledged row, and counting it as
-            # "acknowledged" here would tell a caller it did something to a row this
-            # press left untouched.
-            "acknowledged": transitioned,
-            "linked_rows": placed["placed_rows"],
-            "links": placed["allocations"],
-            "after_horizon": placed["after_horizon"],
-            "link_up_to": placed["link_up_to"],
-            "link_horizon": placed["link_horizon"],
-        }
-
-    def _acknowledge_used_rows_of(
-        self, rows: Sequence[OrderInquiryRow], *, actor_user_id: str, now: datetime
-    ) -> int:
-        """G6 (`PLAN-oi-no-double-count-25sep.md`, owner ruling 26 Sep 2026): the OI
-        detail shows ONE row per sales order line and puts a used row in History only, so
-        confirming a line also takes on that line's WAITING used rows - on the SAME header
-        and the SAME sales order line as a confirmed row, never another line or another
-        header (AC-ND-24, AC-ND-25). Without it the header sits Outstanding on a row
-        nobody can see.
-
-        A used row waits while it is not cancelled and its ack is awaiting or changed:
-        the same rule `lines_to_confirm` counts and the Lines tab reads as To confirm
-        (PR #1266 review S2), so a used row redirected before anyone read it (still
-        `awaiting`) is taken on too. A cancelled used row is history and stays as it is.
-        Swept rows are not linked: a used row's goods were released to the pool.
-
-        The (header, line) PAIR is matched in the query itself (review N1): one Confirm
-        can name header A line 1 and header B line 2, and a used row on header A line 2
-        is on neither pair."""
-        lines = {
-            (str(row.order_inquiry_id), str(row.so_line_id))
-            for row in rows
-            if row.so_line_id is not None
-        }
-        if not lines:
-            return 0
-        named = {str(row.id) for row in rows}
-        used = (
-            self.db.query(OrderInquiryRow)
-            .filter(
-                tuple_(OrderInquiryRow.order_inquiry_id, OrderInquiryRow.so_line_id).in_(
-                    list(lines)
-                ),
-                OrderInquiryRow.redirected_to_pool.is_(True),
-                OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)),
-                OrderInquiryRow.state != INQUIRY_CANCELLED,
-            )
-            .all()
-        )
-        swept = 0
-        for row in used:
-            if str(row.id) in named:
-                continue
-            row.ack_state = ACK_ACKNOWLEDGED
-            row.acknowledged_by = actor_user_id
-            row.acknowledged_at = now
-            swept += 1
-        return swept
-
-    def unacknowledge_rows(
-        self, row_ids: Sequence[str], *, actor_user_id: str
-    ) -> Dict[str, Any]:
-        """Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, Slice 3, owner 18
-        Sep 2026) - the reverse of `acknowledge_rows`, for a row purchasing took on by
-        mistake or a re-confirm CS has not actually made yet. It is reversible (Confirm
-        again undoes it), so unlike every write above this refuses NOTHING: a row not
-        currently `acknowledged`/`changed`, or CANCELLED regardless of what its
-        `ack_state` still reads (a superseded row's handshake is history, not something
-        to reopen) - already `awaiting`, `rejected`, or gone from this company's own
-        scope entirely - is counted on `skipped` rather than raised as a 404 or a 422 for
-        the whole batch. `row_ids` only, deliberately no `filter` branch: the Actions
-        menu names exactly what is ticked, never "everything matching a scope" the way
-        "Select all N matching" does for Confirm.
-
-        Company-scoped the same way `acknowledge_rows`'s own `_rows_or_404` is: a bare
-        `db.query(OrderInquiryRow)` naming the model at the TOP level of the statement,
-        so the session's own `company_scope` listener (`with_loader_criteria`) silently
-        excludes another company's row from `rows` below - it never reaches `found_by_id`
-        and so counts as `skipped`, the same as a row_id nobody can find at all.
-
-        Clears `ack_state`/`acknowledged_by`/`acknowledged_at` only. `changed_at` STAYS
-        (owner ruling, review round 1): it is the Was/Now audit trail
-        `_settle_row_in_place` reads and `_handshake_for_raise` carries forward across a
-        carry, not a stamp of Unconfirm's own to clear.
-
-        No cascade: taking a row off purchasing's plate does not touch whatever it was
-        already linked to - only Unlink, by its own press, does that.
-
-        `OrderInquiryRow` carries no `__audit_track__` (review round 1, security item d:
-        verified by `test_oi_unconfirm.py::test_unacknowledge_writes_an_audit_log_entry`,
-        which fails without this), so the generic session-dirty listener never sees this
-        write - one `log_audit` call per BATCH, naming the actor and every row id this
-        call actually moved, the same manual-event pattern `procurement_service.py` and
-        `project_supply_undo_service.py` use for a write outside that listener's reach.
-        Nothing is written when nothing was eligible - an audit entry for zero rows moved
-        would be a log of NOT doing something.
-        """
-        wanted = [str(row_id) for row_id in row_ids if row_id]
-        if not wanted:
-            raise AppException(
-                status_code=422,
-                message="Name at least one row.",
-                code="order_inquiry_no_rows",
-            )
-        rows = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(wanted)).all()
-        found_by_id = {str(row.id): row for row in rows}
-        updated = 0
-        skipped = 0
-        touched_ids: List[str] = []
-        prior_states: List[Dict[str, Any]] = []
-        for row_id in wanted:
-            row = found_by_id.get(row_id)
-            if (
-                row is None
-                or row.state == INQUIRY_CANCELLED
-                or row.ack_state not in (ACK_ACKNOWLEDGED, ACK_CHANGED)
-            ):
-                skipped += 1
-                continue
-            prior_states.append({"id": row_id, "ack_state": row.ack_state})
-            row.ack_state = ACK_AWAITING
-            row.acknowledged_by = None
-            row.acknowledged_at = None
-            touched_ids.append(row_id)
-            updated += 1
-        if touched_ids:
-            from app.audit_context import get_audit_context
-            from app.services.audit_service import log_audit
-
-            # ip_address only - `user_id` stays `actor_user_id`, the route's own
-            # resolved caller, not whatever `get_audit_context` names (review round 2).
-            _, ip_address = get_audit_context()
-            log_audit(
-                self.db,
-                "project_order_inquiry_rows",
-                touched_ids[0],
-                "UPDATE",
-                # The REAL prior ack_state per row (review round 2) - "acknowledged" and
-                # "changed" are different facts to undo, and a flat placeholder erased
-                # that distinction.
-                old_values={"rows": prior_states},
-                new_values={"ack_state": "awaiting", "row_ids": touched_ids},
-                user_id=actor_user_id,
-                # A NULL `company_id` audit row shows in every company's listing
-                # (review round 2) - every touched row is this same company's (the
-                # session's own company-scope listener already excludes any other),
-                # so the first one's is as good as any.
-                company_id=found_by_id[touched_ids[0]].company_id,
-                ip_address=ip_address,
-                description=f"Unconfirm: {len(touched_ids)} row(s) back to To confirm",
-            )
-        return {"updated": updated, "skipped": skipped}
-
-    def acknowledge_eligible_rows(
-        self,
-        row_ids: Sequence[str],
-        *,
-        actor_user_id: str,
-        link_up_to: Optional[date] = None,
-        link_horizon: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Like `acknowledge_rows`, but tolerant of an EMPTY scope (AC-CF-8b, S2
-        `PLAN-oi-confirm-per-so.md`): `OrderInquiryWorklistService.acknowledge_scope`
-        already excludes every rejected, cancelled or already-acknowledged row a `filter`
-        matched before this is ever called, so what reaches here is never refused by
-        `acknowledge_rows`'s own guards - it can only be EMPTY, when a filter matched
-        nothing eligible at all. `acknowledge_rows` itself still refuses an empty list
-        (`_rows_or_404`'s "Name at least one row"), which is right for a caller naming
-        `row_ids` by hand but wrong for "Select all N matching" finding zero: the caller
-        still deserves the horizon this press would have run under, not a 422 for a list
-        it built itself out of rows already excluded.
-        """
-        if not row_ids:
-            placed = self.auto_place_for_products(
-                None,
-                actor_user_id=actor_user_id,
-                trigger="acknowledge",
-                row_ids=[],
-                link_up_to=link_up_to,
-                link_horizon=link_horizon,
-            )
-            return {
-                "acknowledged": 0,
-                "linked_rows": placed["placed_rows"],
-                "links": placed["allocations"],
-                "after_horizon": placed["after_horizon"],
-                "link_up_to": placed["link_up_to"],
-                "link_horizon": placed["link_horizon"],
-            }
-        return self.acknowledge_rows(
-            row_ids,
-            actor_user_id=actor_user_id,
-            link_up_to=link_up_to,
-            link_horizon=link_horizon,
-        )
 
     def reject_row(
         self, row_id: str, *, reason: str, actor_user_id: str
@@ -10044,6 +9769,103 @@ class ProjectOrderInquiryService:
                 to_drop.append(row)
         if to_drop:
             self._drop_suggested_links(to_drop)
+        self.auto_confirm([row.id for row in rows])
+
+    def auto_confirm(self, row_ids: Iterable[str]) -> None:
+        """OI-AUTO-CONFIRM: the ONE writer of `ack_state` between acknowledged and awaiting.
+
+        Nobody presses Confirm any more. A row is DONE when purchasing has nothing left to
+        do on it: its LIVE links (PO line not cancelled, SPO allocation not retired,
+        reserve) cover its qty, or it is `actioned`, or its verb is not a buy verb, or it
+        was redirected to the pool, or it is a companion whose own links plus bundled qty
+        cover it AND whose host is done. DONE -> `acknowledged` (by NULL, at now, stamped
+        once); not done and `acknowledged` -> `awaiting`; `awaiting` / `changed` not done
+        and `rejected` are left alone. Companions bundled to a row in `row_ids` (and the
+        hosts of those) are re-evaluated in the same call.
+        """
+        ids = [row_id for row_id in dict.fromkeys(row_ids) if row_id]
+        if not ids:
+            return
+        self.db.flush()
+        rows: Dict[str, OrderInquiryRow] = {
+            row.id: row
+            for row in self.db.query(OrderInquiryRow)
+            .filter(
+                or_(
+                    OrderInquiryRow.id.in_(ids),
+                    OrderInquiryRow.bundled_with_row_id.in_(ids),
+                )
+            )
+            .all()
+        }
+        host_ids = {
+            row.bundled_with_row_id
+            for row in rows.values()
+            if row.bundled_with_row_id and row.bundled_with_row_id not in rows
+        }
+        if host_ids:
+            for host in self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(host_ids)).all():
+                rows[host.id] = host
+        live = (
+            self.db.query(OrderInquiryLink.row_id, func.sum(OrderInquiryLink.qty))
+            .outerjoin(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+            .outerjoin(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
+            .filter(
+                OrderInquiryLink.row_id.in_(list(rows)),
+                or_(
+                    OrderInquiryLink.po_line_id.is_(None),
+                    func.coalesce(PurchaseOrderLine.line_status, "") != "cancelled",
+                ),
+                or_(
+                    OrderInquiryLink.spo_allocation_id.is_(None),
+                    SPOAllocation.retired_at.is_(None),
+                ),
+            )
+            .group_by(OrderInquiryLink.row_id)
+            .all()
+        )
+        linked = {row_id: _dec(qty) for row_id, qty in live}
+
+        def _own_done(row: OrderInquiryRow) -> bool:
+            return (
+                row.state == INQUIRY_ACTIONED
+                or row.verb not in _LINKABLE_VERBS
+                or bool(row.redirected_to_pool)
+                or linked.get(row.id, _ZERO) >= _dec(row.qty)
+            )
+
+        done: Dict[str, bool] = {}
+        for row in rows.values():
+            if row.ack_state == ACK_REJECTED:
+                done[row.id] = True  # counts as done for anything bundled to it
+            elif not row.bundled_with_row_id or _dec(row.bundled_qty) <= _ZERO:
+                done[row.id] = _own_done(row)
+        for row in rows.values():
+            if row.id in done:
+                continue
+            host_done = done.get(row.bundled_with_row_id)
+            if host_done is None:
+                host = rows.get(row.bundled_with_row_id)
+                host_done = host is not None and _own_done(host)
+            done[row.id] = _own_done(row) or (
+                host_done
+                and linked.get(row.id, _ZERO) + _dec(row.bundled_qty) >= _dec(row.qty)
+            )
+
+        now = datetime.utcnow()
+        for row in rows.values():
+            if row.state == INQUIRY_CANCELLED or row.ack_state == ACK_REJECTED:
+                continue
+            if done[row.id]:
+                if row.ack_state != ACK_ACKNOWLEDGED:
+                    row.ack_state = ACK_ACKNOWLEDGED
+                    row.acknowledged_by = None
+                    row.acknowledged_at = now
+            elif row.ack_state == ACK_ACKNOWLEDGED:
+                row.ack_state = ACK_AWAITING
+                row.acknowledged_by = None
+                row.acknowledged_at = None
+        self.db.flush()
 
     @staticmethod
     def _coverage_state(qty: Decimal, linked: Decimal, bundled: Decimal) -> str:
@@ -10253,6 +10075,7 @@ class ProjectOrderInquiryService:
             row.state = self._coverage_state(_dec(row.qty), linked, bundled)
 
         self.db.flush()
+        self.auto_confirm([row.id for row in rows])
 
     def _companion_rule_supplier_matches(
         self, rule: ProductCompanionRule, host_rows_per_host: Sequence[Sequence[OrderInquiryRow]]

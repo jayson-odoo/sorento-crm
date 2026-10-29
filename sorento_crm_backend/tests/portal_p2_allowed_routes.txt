@@ -158,7 +158,6 @@ POST /leads/{lead_id}/disqualify
 POST /leads/{lead_id}/qualify
 POST /leads/{lead_id}/reopen
 POST /leads/{lead_id}/status
-POST /order-inquiries/acknowledge
 POST /order-inquiries/auto-place
 POST /order-inquiries/export
 POST /order-inquiries/export/pdf
@@ -171,7 +170,6 @@ POST /order-inquiries/reserve-notices/parked/send
 POST /order-inquiries/reserve-requests/parked/preview
 POST /order-inquiries/reserve-requests/parked/send
 POST /order-inquiries/reserve-requests/{request_id}/cancel
-POST /order-inquiries/unacknowledge
 POST /order-inquiries/unplace-all
 POST /order-inquiries/{inquiry_id}/export
 POST /order-inquiries/{inquiry_id}/export/pdf

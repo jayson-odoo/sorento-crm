@@ -777,9 +777,9 @@ ACK_STATES = (ACK_AWAITING, ACK_ACKNOWLEDGED, ACK_CHANGED, ACK_REJECTED)
 #: The two an acknowledgement may be taken on: a row nobody has looked at, and one that
 #: has changed since somebody did.
 ACK_ACKNOWLEDGEABLE = (ACK_AWAITING, ACK_CHANGED)
-#: What a cascade may link. Links are purchasing's word, so an awaiting row gets none
-#: (`ProjectOrderInquiryService.auto_place_for_products`).
-ACK_LINKABLE = (ACK_ACKNOWLEDGED, ACK_CHANGED)
+#: What a cascade may link. Awaiting is "To order" now (OI-AUTO-CONFIRM: nobody presses
+#: Confirm, a row is done when its links cover it), so every state but rejected is linkable.
+ACK_LINKABLE = (ACK_AWAITING, ACK_ACKNOWLEDGED, ACK_CHANGED)
 
 IV_ORDER = "ORDER"
 IV_RESERVE_AND_ORDER = "RESERVE_AND_ORDER"
