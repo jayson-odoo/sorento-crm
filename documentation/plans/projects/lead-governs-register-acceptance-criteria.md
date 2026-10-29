@@ -84,6 +84,8 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
 - **LGR-E4** `PUT` changing `lead_id` to a lead with a customer sets the project's customer to that lead's customer
   (same mismatch 422 as LGR-E2). `PUT` without a lead change leaves the stored customer alone. Old projects without a
   lead still save with no lead.
+  A `PUT` that links a lead with no customer fills that lead's empty customer from the project's customer (fill-only,
+  never overwrites; ruling 29 Oct, same rule as LGR-E3).
 - **LGR-E5** The 409 `lead_already_linked` rule is unchanged.
 - **LGR-E6** Submit-only register/save/submit (`crm_register`, `crm_submit` and the draft save path) accept
   `lead_id`. Submit (new or existing draft) without a lead -> 422 `project_lead_required`; a draft saves without one.
