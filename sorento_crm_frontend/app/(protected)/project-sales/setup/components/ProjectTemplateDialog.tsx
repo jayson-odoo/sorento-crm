@@ -65,11 +65,11 @@ export function ProjectTemplateDialog({
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
           <DialogTitle>
-            {isEdit ? `Edit ${template?.name}` : 'Add a template'}
+            {isEdit ? `Edit ${template?.name}` : 'Add a to-do list template'}
           </DialogTitle>
           <DialogDescription>
-            Templates are the variants within a type: New Build and Refurbishment work
-            differently even though both are hotels.
+            To-do list templates are the variants within a type: New Build and
+            Refurbishment work differently even though both are hotels.
           </DialogDescription>
         </DialogHeader>
 
@@ -137,7 +137,7 @@ export function ProjectTemplateDialog({
               </div>
               {roles.length === 0 ? (
                 <p className="rounded-md border border-dashed border-border px-2.5 py-2 text-xs text-muted-foreground">
-                  With no roles, a stakeholder on this template records with no role at
+                  With no roles, a stakeholder on this to-do list template records with no role at
                   all. Add at least the decision maker.
                 </p>
               ) : (
@@ -174,7 +174,7 @@ export function ProjectTemplateDialog({
                 onChange={(event) => setIsActive(event.target.checked)}
                 className="size-4 rounded border-border"
               />
-              Active. Inactive templates stay on their projects but stop appearing in
+              Active. Inactive to-do list templates stay on their projects but stop appearing in
               pickers
             </label>
           </DialogBody>
@@ -184,7 +184,7 @@ export function ProjectTemplateDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!name.trim() || pending}>
-              {isEdit ? 'Save changes' : 'Add template'}
+              {isEdit ? 'Save changes' : 'Add to-do list template'}
             </Button>
           </DialogFooter>
         </form>

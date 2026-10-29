@@ -137,15 +137,15 @@ def test_the_kind_question_is_stated_to_the_parser_as_a_pick_of_three_that_owes_
     )
     shown = question.of_required_ask(out.slot)
     assert shown["kind"] == "pick_one" and shown["owed"] == ["basis"], shown
-    assert [o["code"] for o in shown["options"]] == ["Undelivered orders", "Pending delivery", "Unpaid invoices"], shown
+    assert [o["code"] for o in shown["options"]] == ["Undelivered orders", "Pending delivery"], shown  # owner 29 Oct: unpaid is not offered
 
 
-def test_the_kind_answered_by_the_parsers_pick_position_runs_unpaid_with_no_dates(bot) -> None:
+def test_the_kind_answered_by_the_parsers_pick_position_runs_that_kind_with_no_dates(bot) -> None:
     text, calls = bot.say(_bare_outstanding(), "outstanding")
     assert calls == [], calls
-    text, calls = bot.say(_answer(3), "the invoices one")
+    text, calls = bot.say(_answer(2), "the delivery one")
     args = _only_report_ask(calls)
-    assert args["basis"] == "unpaid" and "date_from" not in args and "date_to" not in args, args
+    assert args["basis"] == "pending_delivery" and "date_from" not in args and "date_to" not in args, args
 
 
 def test_the_kind_answered_by_a_declared_fill_naming_unpaid_runs_unpaid(bot) -> None:
@@ -386,16 +386,17 @@ def test_a_ranking_still_asks_the_measure(bot) -> None:
     assert calls == [] and "By quantity or by amount?" in text, (text, calls)
 
 
-def test_a_fresh_bare_outstanding_after_a_sales_total_asks_the_kind_and_inherits_no_period(bot) -> None:
-    """(e) Owner Q2 + AC-RU-8c: a NEW outstanding ask (the parser flags no refine) the parser picked no kind for always
-    asks the kind, even with a delivered total held; it uses only a period named in its own message."""
+def test_a_fresh_bare_outstanding_after_a_sales_total_asks_the_kind_and_keeps_the_period_on_screen(bot) -> None:
+    """(e) Owner Q2: a NEW outstanding ask the parser picked no kind for always asks the kind, even with a delivered total
+    held. Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY item 9, as before #1922): the period on screen carries; the #1922
+    "only its own period" rule was a captain decision (Q12), not an owner ruling."""
     text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     assert [n for n, _a in calls] == ["crm_report_ask"], (text, calls)
     text, calls = bot.say(_bare_outstanding(), "outstanding")
     assert calls == [] and "Undelivered orders" in text, (text, calls)
-    text, calls = bot.say(_answer(3), "the invoices one")
+    text, calls = bot.say(_answer(2), "the delivery one")
     args = _only_report_ask(calls)
-    assert args["basis"] == "unpaid" and "date_from" not in args and "date_to" not in args, args
+    assert args["basis"] == "pending_delivery" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
 def test_a_flagged_refine_to_outstanding_never_infers_the_kind_but_keeps_the_period_on_screen(bot) -> None:
@@ -404,18 +405,19 @@ def test_a_flagged_refine_to_outstanding_never_infers_the_kind_but_keeps_the_per
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     text, calls = bot.say(_bare_outstanding(ranking_refine=True), "outstanding")
     assert calls == [] and "Undelivered orders" in text, (text, calls)
-    text, calls = bot.say(_answer(3), "the invoices one")
+    text, calls = bot.say(_answer(2), "the delivery one")
     args = _only_report_ask(calls)
-    assert args["basis"] == "unpaid" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+    assert args["basis"] == "pending_delivery" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
 @pytest.mark.parametrize("status", ["outstanding"])
-def test_a_fresh_outstanding_kind_the_parser_picked_drops_the_carried_period_a_refine_keeps_it(bot, status) -> None:
-    """(e) The parser naming the kind (`basis: outstanding`) is not asked; a fresh ask has all dates, a refine keeps 2026."""
+def test_a_fresh_outstanding_kind_the_parser_picked_keeps_the_carried_period_like_a_refine(bot, status) -> None:
+    """(e) The parser naming the kind (`basis: outstanding`) is not asked. Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY
+    item 9, as before #1922): a fresh ask with no period of its own takes the sales answer's 2026, as a refine does."""
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     text, calls = bot.say(_bare_outstanding(order_status=status, basis="outstanding"), "outstanding")
     args = _only_report_ask(calls)
-    assert args["basis"] == "outstanding" and "date_from" not in args and "date_to" not in args, args
+    assert args["basis"] == "outstanding" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     text, calls = bot.say(_bare_outstanding(order_status=status, basis="outstanding", ranking_refine=True), "by outstanding")
     args = _only_report_ask(calls)
@@ -443,7 +445,8 @@ def test_a_sales_ranking_refine_to_the_outstanding_kind_keeps_the_period_on_scre
 def test_reply_one_under_the_sales_order_list_offer_opens_the_list(bot, shape) -> None:
     """(b) The open offer is answered before any axis check: a parser position 1 opens the list whatever status or
     axis the real parse also carried."""
-    text, calls = bot.say(_status("outstanding", basis="outstanding", **NO_DATES), "undelivered orders")
+    # A subject (the customer): with none the ask is the list itself (owner 29 Oct, item 3), never the offer.
+    text, calls = bot.say(_status("outstanding", _e(CUSTOMER_NAME, "customer"), basis="outstanding", **NO_DATES), "undelivered orders")
     assert "Reply 1 for the sales order list." in text, (text, calls)
     reply = _reply(
         message_type="business_query", domain_hint=None, intent_hint=None, entities=[], reference_positions=[1],
@@ -473,7 +476,8 @@ def test_p1_a_new_outstanding_axis_after_a_delivered_ranking_asks_the_kind_and_r
     text, calls = bot.say(_answer(1), "the first one")
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding" and args["group_by"] == "customer", args
-    assert "date_from" not in args and "date_to" not in args, args  # a switch from a sales basis drops the held period
+    # Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY item 9, as before #1922): a switch from a sales basis keeps the period.
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
 def test_p2_a_by_x_over_an_outstanding_ranking_keeps_the_held_period(bot) -> None:
@@ -486,16 +490,16 @@ def test_p2_a_by_x_over_an_outstanding_ranking_keeps_the_held_period(bot) -> Non
     assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
-def test_held_total_path_does_not_lend_a_sales_total_period_to_an_outstanding_kind(bot) -> None:
-    """The HELD_KEY path (a held sales TOTAL, no ranking): a new outstanding axis the parser named the kind for drops the
-    sales period (kills M7: always use the held period)."""
+def test_held_total_path_lends_a_sales_total_period_to_an_outstanding_kind(bot) -> None:
+    """The HELD_KEY path (a held sales TOTAL, no ranking): a new outstanding axis the parser named the kind for keeps the
+    sales period on screen (owner 29 Oct, REPORT-OUTSTANDING-SUMMARY item 9, as before #1922)."""
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     text, calls = bot.say(
         _bare_outstanding(basis="outstanding", group_by="customer", rank_direction="top", top_n=5, measure="amount", entity_op="reuse"),
         "outstanding by customer",
     )
     args = _only_report_ask(calls)
-    assert args["basis"] == "outstanding" and "date_from" not in args, args
+    assert args["basis"] == "outstanding" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
 def test_held_outstanding_total_keeps_its_period_for_a_new_axis(bot) -> None:
@@ -509,9 +513,9 @@ def test_held_outstanding_total_keeps_its_period_for_a_new_axis(bot) -> None:
     assert args["group_by"] == "customer" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
-def test_held_sales_total_then_an_outstanding_ask_drops_the_period_and_asks_the_kind(bot) -> None:
+def test_held_sales_total_then_an_outstanding_ask_keeps_the_period_and_asks_the_kind(bot) -> None:
     """The counterpart: a sales total for 2026, then an outstanding ask with no kind: the kind is asked and the sales
-    period is not lent to it."""
+    period on screen carries (owner 29 Oct, REPORT-OUTSTANDING-SUMMARY item 9, as before #1922)."""
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     text, calls = bot.say(
         _bare_outstanding(group_by="customer", rank_direction="top", top_n=5, measure="amount", entity_op="reuse"),
@@ -520,7 +524,7 @@ def test_held_sales_total_then_an_outstanding_ask_drops_the_period_and_asks_the_
     assert calls == [] and "Undelivered orders" in text, (text, calls)
     text, calls = bot.say(_answer(1), "the first one")
     args = _only_report_ask(calls)
-    assert args["basis"] == "outstanding" and "date_from" not in args, args
+    assert args["basis"] == "outstanding" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
 def test_a_kind_answer_that_also_binds_a_customer_runs_for_that_customer_never_the_whole_scope(bot) -> None:
@@ -589,18 +593,18 @@ def test_b2c_an_invoiced_parse_binding_a_customer_under_the_kind_question_is_nev
 
 
 def test_b4_a_kind_pick_by_position_that_also_binds_a_customer_runs_for_that_customer_never_the_whole_scope(bot) -> None:
-    """Kind option 3 is Unpaid invoices; a position pick AND a customer bound this turn keeps the customer."""
+    """Kind option 2 is Pending delivery; a position pick AND a customer bound this turn keeps the customer."""
     text, calls = bot.say(_bare_outstanding(), "outstanding")
     low = text.lower()
-    assert low.index("unpaid invoices") > low.index("pending delivery") > low.index("undelivered orders"), text
+    assert low.index("pending delivery") > low.index("undelivered orders") and "unpaid" not in low, text
     reply = _reply(
-        message_type="business_query", domain_hint=None, intent_hint=None, by_words=None, reference_positions=[3],
+        message_type="business_query", domain_hint=None, intent_hint=None, by_words=None, reference_positions=[2],
         entities=[_e(CUSTOMER_NAME, "customer")],
-        open_question_answer={"mode": "pick", "picked": [3], "items": [], "qty_for_all": None},
+        open_question_answer={"mode": "pick", "picked": [2], "items": [], "qty_for_all": None},
     )
-    text, calls = bot.say(reply, "the invoices one for that customer")
+    text, calls = bot.say(reply, "the delivery one for that customer")
     args = _only_report_ask(calls)
-    assert args["basis"] == "unpaid" and args.get("customer_ids") == [bot.ids["customer"]], args
+    assert args["basis"] == "pending_delivery" and args.get("customer_ids") == [bot.ids["customer"]], args
 
 
 # ---------------------------------------------------------------- B5: the kind under the kind question, with a subject
@@ -609,7 +613,7 @@ def test_b4_a_kind_pick_by_position_that_also_binds_a_customer_runs_for_that_cus
 def _kind_with_customer(bot, *, declared=None, positions=(), basis=None):
     text, calls = bot.say(_bare_outstanding(), "outstanding")
     low = text.lower()
-    assert low.index("undelivered orders") < low.index("pending delivery") < low.index("unpaid invoices"), text
+    assert low.index("undelivered orders") < low.index("pending delivery") and "unpaid" not in low, text
     extra = {"basis": basis} if basis else {}
     reply = _reply(
         message_type="business_query", domain_hint=None, intent_hint=None, by_words=None,
@@ -624,13 +628,13 @@ def _pick(*positions: int) -> dict[str, Any]:
 
 
 def test_p1_a_declared_pick_with_a_customer_and_no_positions_runs_that_kind_for_the_customer(bot) -> None:
-    text, calls = _kind_with_customer(bot, declared=_pick(3))
+    text, calls = _kind_with_customer(bot, declared=_pick(1))
     args = _only_report_ask(calls)
-    assert args["basis"] == "unpaid" and args.get("customer_ids") == [bot.ids["customer"]], args
+    assert args["basis"] == "outstanding" and args.get("customer_ids") == [bot.ids["customer"]], args
 
 
 def test_p2_the_declared_pick_wins_over_reference_positions(bot) -> None:
-    text, calls = _kind_with_customer(bot, declared=_pick(2), positions=[3])
+    text, calls = _kind_with_customer(bot, declared=_pick(2), positions=[1])
     args = _only_report_ask(calls)
     assert args["basis"] == "pending_delivery" and args.get("customer_ids") == [bot.ids["customer"]], args
 

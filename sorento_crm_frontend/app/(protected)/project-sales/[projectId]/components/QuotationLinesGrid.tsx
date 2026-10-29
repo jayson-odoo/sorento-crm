@@ -77,7 +77,7 @@ import {
 } from './QuotationLineFileCell';
 import { QuotationStockChip, SetStockChip } from './QuotationStockChip';
 import { SET_OPTION_PREFIX, isSetOption } from '@/app/(protected)/scm/components/productOrSetPicker';
-import { LineFlags } from './QuotationLineFlags';
+import { LineFlags, MinimumPriceFlag } from './QuotationLineFlags';
 
 /** One line of the grid: the staged (or stored) line, and its true position in the scope. */
 interface GridRow {
@@ -525,6 +525,10 @@ function RateCell({ row: tableRow }: CellContext<GridRow, unknown>) {
       {`List ${formatMyr(listPrice)}`}
     </span>
   ) : null;
+  // Under the price it judges (owner meeting, 29 Oct), not in the Product cell.
+  const minimum = (
+    <MinimumPriceFlag quotationId={grid.quotationId} line={staged.line} draft={staged.draft} />
+  );
 
   if (!grid.editing || staged.removed) {
     return (
@@ -533,6 +537,7 @@ function RateCell({ row: tableRow }: CellContext<GridRow, unknown>) {
           {price ? formatMyr(price) : '-'}
         </span>
         {list}
+        {minimum}
       </div>
     );
   }
@@ -554,6 +559,7 @@ function RateCell({ row: tableRow }: CellContext<GridRow, unknown>) {
         }
       />
       {list}
+      {minimum}
     </div>
   );
 }
@@ -912,7 +918,8 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     accessorFn: (row) => row.staged.draft.unit_price,
     header: 'Rate (RM)',
     cell: RateCell,
-    size: 80,
+    // Wide enough for the "Minimum price RM x" pill under the price on two lines.
+    size: 112,
     minSize: 76,
     meta: {
       headerTitle: 'Rate (RM)',

@@ -337,7 +337,7 @@ from tests.chatbot import test_outstanding_lane as outstanding  # noqa: E402
 def test_c_outstanding_customer_pick_then_the_kind_question(session_factory, monkeypatch):
     """AC-PK010, moved by REPORT-UNIFY (Q2): the outstanding chain, customer pick then the kind. The ask names a
     customer word that matches two accounts (the picker), "1" picks one (no domain word: the roster's own ask), which
-    names no kind, so the kind question is asked ("Undelivered orders, pending delivery or unpaid invoices?");
+    names no kind, so the kind question is asked ("Undelivered orders or pending delivery?");
     "pending delivery" answers it and runs the report ask for the picked customer."""
     grants = ["sales_orders.outstanding", "sales_orders.sales_report"]
     outstanding._seed_contact(session_factory, variables={})
@@ -370,7 +370,7 @@ def test_c_outstanding_customer_pick_then_the_kind_question(session_factory, mon
         attributes=grants,
     )
     reply = (result.reply or {}).get("text") or ""
-    assert captured == [] and "Undelivered orders, pending delivery or unpaid invoices?" in reply, (captured, reply)
+    assert captured == [] and "Undelivered orders or pending delivery?" in reply, (captured, reply)
     result, captured = outstanding._run_turn(
         session_factory,
         monkeypatch,
@@ -412,7 +412,7 @@ def test_c_outstanding_customer_pick_then_the_document_question(session_factory,
         attributes=["sales_orders.outstanding"],
     )
     reply = (result.reply or {}).get("text") or ""
-    assert captured == [] and "Undelivered orders, pending delivery or unpaid invoices?" in reply, (captured, reply)
+    assert captured == [] and "Undelivered orders or pending delivery?" in reply, (captured, reply)
     result, captured = outstanding._run_turn(
         session_factory,
         monkeypatch,

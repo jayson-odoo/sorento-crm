@@ -114,6 +114,8 @@ export interface Product {
   // Relations (populated from API)
   category?: ProductCategory;
   brand?: Brand;
+  item_class_id?: string | null;
+  item_class?: ProductItemClassRef | null;
   base_uom?: UnitOfMeasure;
 
   // Map of product field name (e.g. "weight", "dimensions_length") to the
@@ -165,6 +167,13 @@ export interface ProductCategory {
   parent_category?: ProductCategory;
   children?: ProductCategory[];
   product_count?: number;
+}
+
+/** The class a product carries, as the product payloads nest it. */
+export interface ProductItemClassRef {
+  id: string;
+  item_class_code: string;
+  item_class_name: string;
 }
 
 // Brand Interface
@@ -239,6 +248,7 @@ export interface ProductFormData {
   price_tag_description?: string | null;
   category_id: string;
   brand_id?: string | null;
+  item_class_id?: string | null;
   base_uom_id: string;
   barcode?: string | null;
   list_price: number;
@@ -284,6 +294,8 @@ export const CHAT_SEARCH_LABEL: Record<ReturnType<typeof chatSearchState>, strin
 export interface ProductFilters {
   category_id?: string;
   brand_id?: string;
+  /** One item class id, or a comma-separated list. */
+  item_class_id?: string;
   is_active?: boolean;
   price_range?: {
     min?: number;
@@ -427,6 +439,7 @@ export interface ProductListItem {
   product_name: string;
   category_name?: string;
   brand_name?: string;
+  item_class?: ProductItemClassRef | null;
   list_price: number;
   is_active: boolean;
   // Discontinued flag (independent of is_active). Surfaced by ProductResponse.
