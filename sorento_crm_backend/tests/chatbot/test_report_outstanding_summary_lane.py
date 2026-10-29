@@ -285,3 +285,32 @@ def test_rpt009_dealer_outstanding_only_after_a_product_ask_keeps_the_product(do
     )
     args = _only_report_ask(calls)
     assert len(args.get("product_ids") or []) == 1 and args.get("group_by") is None, args
+
+
+# ================================================================ eval send-back: #b6e9 on the prod prompt (v70)
+
+ASKS = [{"domain": "inventory", "intent": "check_stock"}, {"domain": "order", "intent": "check_order"}]
+
+
+def _v70_b6e9() -> dict[str, Any]:
+    """v70's reading of "SRT5733 stock and outstanding": a stock ask and a sales report whose basis word is outstanding
+    (`sales_basis`), the shape the pre-#1922 lane turned into the outstanding report (`sales_basis_ask.as_report_ask`)."""
+    return _status(
+        "sales_report", _e(PRODUCT, "product"), basis=None, sales_basis="outstanding", asks=ASKS,
+        state_changes=list(KEEP), **NO_DATES,
+    )
+
+
+def test_b6e9_v70_a_do_only_contact_gets_stock_then_the_do_summary_with_no_question(do_only, do_only_world) -> None:
+    do_only.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
+    text, calls = do_only.say(_v70_b6e9(), "SRT5733 stock and outstanding")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "pending_delivery" and len(args["product_ids"]) == 1, args
+    assert "date_from" not in args and "Which period" not in text and KIND_QUESTION not in text, text
+    assert "Delivery orders: 3" in text and text.rstrip().endswith(DO_OFFER), text
+
+
+def test_b6e9_v70_a_contact_seeing_both_kinds_is_asked_the_kind_never_the_period(bot, world) -> None:
+    text, calls = bot.say(_v70_b6e9(), "SRT5733 stock and outstanding")
+    assert not [c for c in calls if c[0] == "crm_report_ask"], calls
+    assert "Which period" not in text and text.rstrip().endswith(KIND_QUESTION), text
