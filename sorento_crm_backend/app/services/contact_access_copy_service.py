@@ -51,7 +51,8 @@ from app.models.access import (
 from app.models.company import Company, RespondContactCompany
 from app.models.media import MEDIA_MODALITIES, ContactMediaLimit
 from app.models.price_tag import ContactPortalFormOverride
-from app.models.product import Brand
+from app.models.product import Brand, ItemClass
+from app.services.contact_brand_scope import _class_map_for
 from app.models.resources import AttachmentType
 from app.services import contact_field_reveal_service
 from app.services import audit_service
@@ -84,6 +85,7 @@ REGION_LABELS = {"west": "West Malaysia", "east": "East Malaysia"}
 REMOVED_LOCATION = "removed location"
 REMOVED_COMPANY = "removed company"
 REMOVED_BRAND = "unknown brand"
+REMOVED_CLASS = "unknown class"
 ALL_BRANDS = "All brands"
 BRANDS_FACET = "brands"
 ATTACHMENTS_FACET = "attachment_types"
@@ -217,6 +219,8 @@ class AccessSnapshot:
     companies: list[str] = field(default_factory=list)  # company ids
     segments: list[str] = field(default_factory=list)  # market segment codes
     brands: list[str] = field(default_factory=list)  # brand ids; empty = every brand
+    #: ITEM-CLASS: brand id -> the item class ids it is narrowed to (sorted); absent = every class.
+    brand_classes: dict[str, list[str]] = field(default_factory=dict)
     #: modality -> (is_allowed, monthly_limit, max_clip_seconds); MEDIA_OFF with no row.
     media: dict[str, tuple] = field(default_factory=lambda: {m: MEDIA_OFF for m in MEDIA_MODALITIES})
     attachment_types: list[str] = field(default_factory=list)  # attachment type ids (grants only add)
@@ -237,6 +241,7 @@ class Names:
     companies: dict[str, tuple[str, str]] = field(default_factory=dict)  # id -> (code, name)
     segments: dict[str, str] = field(default_factory=dict)  # code -> name
     brands: dict[str, str] = field(default_factory=dict)  # brand id -> name
+    item_classes: dict[str, str] = field(default_factory=dict)  # item class id -> name
     attachment_types: dict[str, str] = field(default_factory=dict)  # type id -> name
     specs: dict[str, str] = field(default_factory=dict)  # spec key -> label
     agents: dict[str, str] = field(default_factory=dict)  # agent code -> name
@@ -261,9 +266,19 @@ def media_text(modality: str, key: tuple) -> str:
     return "On, " + ", ".join(parts)
 
 
-def brands_text(brands: list[str], names: Names) -> str:
-    """Empty is every brand, so it never reads as "nothing"."""
-    return ", ".join(sorted(names.brands.get(b, REMOVED_BRAND) for b in brands)) or ALL_BRANDS
+def brands_text(brands: list[str], names: Names, classes: Optional[dict[str, list[str]]] = None) -> str:
+    """Empty is every brand, so it never reads as "nothing". A class-narrowed brand reads
+    `SORENTO (SERENE, DIY)` (ITEM-CLASS)."""
+    classes = classes or {}
+
+    def one(b: str) -> str:
+        name = names.brands.get(b, REMOVED_BRAND)
+        listed = classes.get(b)
+        if not listed:
+            return name
+        return f"{name} ({', '.join(sorted(names.item_classes.get(c, REMOVED_CLASS) for c in listed))})"
+
+    return ", ".join(sorted(one(b) for b in brands)) or ALL_BRANDS
 
 
 def portal_forms_text(forms: dict[str, bool]) -> str:
@@ -308,7 +323,15 @@ def brands_to_skip(db: Session, source: AccessSnapshot) -> frozenset[str]:
     if not source.brands:
         return frozenset()
     visible = {str(i) for (i,) in db.query(Brand.id).filter(Brand.id.in_(source.brands)).all()}
-    return frozenset({BRANDS_FACET}) if set(source.brands) - visible else frozenset()
+    if set(source.brands) - visible:
+        return frozenset({BRANDS_FACET})
+    # ITEM-CLASS: the same rule for a class the source narrows a brand to.
+    class_ids = sorted({c for ids in source.brand_classes.values() for c in ids})
+    if class_ids:
+        seen = {str(i) for (i,) in db.query(ItemClass.id).filter(ItemClass.id.in_(class_ids)).all()}
+        if set(class_ids) - seen:
+            return frozenset({BRANDS_FACET})
+    return frozenset()
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -338,6 +361,9 @@ def snapshots(db: Session, contacts: Iterable[RespondContact]) -> dict[str, Acce
             switches={col: bool(getattr(c, col)) for col, _ in SWITCHES},
             regions=[r for r in REGION_ORDER if r in (c.regions or ["west"])],
             brands=sorted(str(b) for b in (c.brand_ids or [])),
+            brand_classes={
+                b: sorted(ids) for b, ids in _class_map_for(c.brand_ids, c.brand_class_ids).items()
+            },
         )
 
     for contact_id, code in db.execute(
@@ -461,6 +487,7 @@ def names_for(db: Session, snaps: Iterable[AccessSnapshot]) -> Names:
     company_ids = {c for s in snaps for c in s.companies}
     segment_codes = {c for s in snaps for c in s.segments}
     brand_ids = {b for s in snaps for b in s.brands}
+    class_ids = {c for s in snaps for ids in s.brand_classes.values() for c in ids}
     names = Names()
     if codes:
         names.types = dict(
@@ -487,6 +514,14 @@ def names_for(db: Session, snaps: Iterable[AccessSnapshot]) -> Names:
         names.brands = {
             str(bid): name
             for bid, name in db.query(Brand.id, Brand.brand_name).filter(Brand.id.in_(sorted(brand_ids)))
+        }
+    if class_ids:
+        # Under the request's company scope, as brand names are.
+        names.item_classes = {
+            str(cid): name
+            for cid, name in db.query(ItemClass.id, ItemClass.item_class_name).filter(
+                ItemClass.id.in_(sorted(class_ids))
+            )
         }
     type_ids = {t for s in snaps for t in s.attachment_types}
     if type_ids:
@@ -665,18 +700,20 @@ def diff(
                 lambda c: c,
             )
         )
-    if BRANDS_FACET not in skip and source.brands != target.brands:
-        if source.brands and target.brands:
+    brands_differ = source.brands != target.brands or source.brand_classes != target.brand_classes
+    if BRANDS_FACET not in skip and brands_differ:
+        if source.brands and target.brands and not (source.brand_classes or target.brand_classes):
             label_of = lambda b: names.brands.get(b, REMOVED_BRAND)  # noqa: E731
             changes.append(_list_change(BRANDS_FACET, target.brands, source.brands, label_of, label_of))
         else:
-            # One side is every brand: a struck-out list would read as narrowing when it widens.
+            # One side is every brand, or a class narrowing is involved: a struck-out list of
+            # brand names would read as narrowing when it widens, or hide the classes.
             changes.append(
                 _change(
                     BRANDS_FACET,
                     FACET_LABELS[BRANDS_FACET],
-                    brands_text(target.brands, names),
-                    brands_text(source.brands, names),
+                    brands_text(target.brands, names, target.brand_classes),
+                    brands_text(source.brands, names, source.brand_classes),
                 )
             )
     for modality, (facet, label) in MEDIA_FACETS.items():
@@ -761,7 +798,9 @@ def summary(source: AccessSnapshot, names: Names, skip: frozenset[str] = frozens
     }
     lines.extend({"label": FACET_LABELS[f], "value": v} for f, v in extra.items() if f not in skip)
     if BRANDS_FACET not in skip:
-        lines.append({"label": FACET_LABELS[BRANDS_FACET], "value": brands_text(source.brands, names)})
+        lines.append(
+            {"label": FACET_LABELS[BRANDS_FACET], "value": brands_text(source.brands, names, source.brand_classes)}
+        )
     lines.extend(
         {"label": label, "value": media_text(modality, source.media[modality])}
         for modality, (_facet, label) in MEDIA_FACETS.items()
@@ -875,6 +914,9 @@ def _write(
     if BRANDS_FACET in changed:
         # Empty means every brand; stored as NULL, as `contact_brand_scope.set_contact_brands` does.
         target.brand_ids = list(source.brands) or None
+        # ITEM-CLASS: the class narrowing travels with the brands, or a copy would widen a
+        # target to every class of a brand the source only holds in part.
+        target.brand_class_ids = {b: list(ids) for b, ids in source.brand_classes.items()} or None
 
     for modality, (facet, _label) in MEDIA_FACETS.items():
         if facet in changed:
