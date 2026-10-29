@@ -458,7 +458,7 @@ def test_two_live_rows_both_stamped_no_notice(api):
     _link(world, row_a, po_a, qty=10, document="ROW-A")
     db.commit()
 
-    assert row_a.ack_state == ACK_AWAITING, "row A is the one nobody has read"
+    assert row_a.ack_state == ACK_ACKNOWLEDGED, "row A: fully linked, so the system made it done"
 
     row_b = OrderInquiryRow(
         id=_uid(), company_id=world.company_id, order_inquiry_id=row_a.order_inquiry_id,
@@ -492,10 +492,12 @@ def test_two_live_rows_both_stamped_no_notice(api):
     # AC-B2-2 (owner ruling, 22 Sep): `changed_at` travels with the ack flip and with
     # nothing else. A row still AWAITING is a row nobody has read, so there is no
     # "changed since I looked" to answer for it.
-    assert row_a.ack_state == ACK_AWAITING
-    assert row_a.changed_at is None, "awaiting: left alone"
-    assert row_b.ack_state == ACK_CHANGED
-    assert row_b.changed_at is not None, "acknowledged: back to To confirm, and stamped"
+    # OI-AUTO-CONFIRM (AC-AC-10): both rows are fully linked, so both are Done by the rule,
+    # and a date move that leaves them covered keeps them Done: nothing stamps `changed_at`
+    # (the old model's "purchasing had read B" mixed handshake no longer exists).
+    for row in (row_a, row_b):
+        assert row.ack_state == ACK_ACKNOWLEDGED
+        assert row.changed_at is None, "still covered: Done stays Done"
 
     assert _notices(db, line.id) == []
 
@@ -647,12 +649,10 @@ def test_actioned_fully_linked_rows_stamped_no_notice_handover_once(api):
         assert row.state == INQUIRY_ACTIONED, document
         assert row.delivery_date == NOW, document
         assert row.previous_delivery_date == WAS_1, document
-        # AC-B2-2 (owner ruling, 22 Sep): both rows of this fixture are still AWAITING on
-        # the handshake - `actioned` is the STATE, a different question from whether
-        # purchasing confirmed the instruction - so neither stamps `changed_at`. The
-        # acknowledged half of the rule is `test_two_live_rows_both_stamped_no_notice`'s
-        # row B, which is `_stamp_date_move`'s own acknowledged case.
-        assert row.ack_state == ACK_AWAITING, document
+        # OI-AUTO-CONFIRM (AC-AC-7): an `actioned` row is Done (`acknowledged`, by the
+        # system), and a date move that leaves it covered keeps it Done, so it stamps no
+        # `changed_at`.
+        assert row.ack_state == ACK_ACKNOWLEDGED, document
         assert row.changed_at is None, document
         assert [
             link.document

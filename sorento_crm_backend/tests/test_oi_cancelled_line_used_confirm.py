@@ -1401,7 +1401,7 @@ def test_settle_flags_an_acknowledged_row_used_changed(api):
     (`_redirect_row_if_received`) sets that row `changed` with `changed_at` when it was
     `acknowledged`."""
     _world_, row, _fixture = _used_row_fixture(api, ack_first=True)
-    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: done at birth
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: a used row is done at birth
     assert row.changed_at is not None
 
 
@@ -1409,7 +1409,7 @@ def test_settle_leaves_an_awaiting_row_used_awaiting(api):
     """AC-CL-12 (control): a row nobody has acknowledged yet stays `awaiting` when it
     becomes used - there is nothing new for purchasing to be told."""
     _world_, row, _fixture = _used_row_fixture(api, ack_first=False)
-    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: done at birth
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: a used row is done at birth
     assert row.changed_at is None
 
 
@@ -1418,7 +1418,7 @@ def test_confirming_a_used_row_moves_no_link_and_draws_no_new_one(api):
     are IDENTICAL before and after, and no new link lands on it even with ample open
     supply for its own product sitting there - a used row is never linkable."""
     world_, row, fixture = _used_row_fixture(api, ack_first=False)
-    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: done at birth  # already "To confirm" today
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: a used row is done at birth
     before_links = sorted(str(l.id) for l in _links_of(world_, row))
 
     _open_po_line(world_, qty=999, product=world_.product)

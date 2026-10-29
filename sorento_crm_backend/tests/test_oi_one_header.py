@@ -1413,9 +1413,14 @@ class TestCarriedLineNeverSettlesOrRedirects:
         fixture = _raise_one_row(api, qty="10")
         row = fixture["row"]
         line = fixture["line"]
+        # OI-AUTO-CONFIRM: a row with no link is only Done by a person's Confirm, so the
+        # handshake that must stand is the manual one.
         row.ack_state = ACK_ACKNOWLEDGED
         row.acknowledged_by = world.buyer
         row.acknowledged_at = datetime.utcnow()
+        row.ack_override = "confirmed"
+        row.ack_override_by = world.buyer
+        row.ack_override_at = datetime.utcnow()
         world.db.flush()
         world.db.commit()
 

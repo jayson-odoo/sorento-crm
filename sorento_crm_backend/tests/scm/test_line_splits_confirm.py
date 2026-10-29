@@ -19,6 +19,7 @@ import pytest
 from app.models.planning_change import PlanningChangeRow  # noqa: F401
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     ACK_CHANGED,
     INQUIRY_CANCELLED,
     INQUIRY_PLACED,
@@ -158,9 +159,10 @@ def test_a_linked_split_is_not_cancelled_on_the_origin_nor_re_ordered_on_the_tar
     live_18 = _live(s, s.line_18, IV_ORDER)
     assert len(live_18) == 1, "no second ORDER row for the 49 on line 18"
     assert _linked(s, live_18[0]) == Decimal("49")
-    # Line 18's own qty also changed (82 -> 121 with 49 in = its own CANCEL 10), so the owner's
-    # 17 Sep 2026 handshake ruling sends the restated acknowledged row back to To confirm.
-    assert live_18[0].ack_state == ACK_CHANGED
+    # Line 18's own qty also changed (82 -> 121 with 49 in = its own CANCEL 10). OI-AUTO-CONFIRM:
+    # it holds 49 of 121 and never held a link at 82, so it is To order (the old seed
+    # forced it `acknowledged` with no link, a state the system no longer produces).
+    assert live_18[0].ack_state == ACK_AWAITING
 
     remarks = [(h.get("line_no"), h["line"]["remark"], h["line"]["qty"]) for h in told]
     delays_49 = [h for h in told if h.get("line_no") == 2 and h["line"]["qty"] == "49"]
@@ -243,7 +245,9 @@ def test_a_move_alone_does_not_ask_purchasing_again(api):
     live_b = _live(s, line_b, IV_ORDER)
     assert len(live_b) == 1
     assert _linked(s, live_b[0]) == Decimal("403"), "B holds A's moved links"
-    assert live_b[0].ack_state == ACK_ACKNOWLEDGED, "nothing left to tell, no re-confirm"
+    # OI-AUTO-CONFIRM: B holds 403 of 595 (it never had a link at 192), so it is To order,
+    # and not `changed`: the move alone flags nothing and tells purchasing nothing.
+    assert live_b[0].ack_state == ACK_AWAITING, "nothing left to tell, no re-confirm"
 
 
 def test_stale_splits_do_not_act_on_a_later_change(api):

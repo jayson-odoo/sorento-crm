@@ -211,13 +211,13 @@ def test_ac_cf_3_change_on_an_acknowledged_row_marks_changed_not_reacknowledged(
     assert Decimal(str(row.previous_qty)) == Decimal("10")
 
 
-def test_ac_cf_1b_borrow_asker_row_is_born_awaiting(api):
+def test_ac_cf_1b_borrow_asker_row_is_done_on_its_po_link(api):
     """AC-CF-1b (review round). `ProjectSupplyService._place_supply_borrows` writes a
     step-3 supply borrow's own asker-side ORDER_BACK row with `supply_decision_id` set
     - board-origin exactly like any other decision-linked row - so S1's rule covers it
-    too: born `ACK_AWAITING`, no acknowledge stamps, even though the cascade may have
-    already linked it to the donor document (AC-CF-4). Built the same way
-    `tests/test_project_supply_borrow_row_ack.py::test_a_supply_borrow_row_is_born_awaiting`
+    too. OI-AUTO-CONFIRM: the cascade links it to the donor document (AC-CF-4), that PO
+    link covers the row (AC-AC-1), so the system makes it `ACK_ACKNOWLEDGED`, by NULL. Built the same way
+    `tests/test_project_supply_borrow_row_ack.py::test_a_supply_borrow_row_is_done_on_its_po_link`
     exercises the method directly, since this file's own fixtures never reach step 3."""
     _client, world = api
     fixture = _raise_one_row(api, qty="10")
@@ -260,7 +260,7 @@ def test_ac_cf_1b_borrow_asker_row_is_born_awaiting(api):
     )
     assert row is not None, "the borrow-asker row was not written at all"
     assert row.supply_decision_id is not None, "board-origin, so S1's rule applies"
-    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: done at birth
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-1: its PO link covers the whole row
     assert row.acknowledged_by is None
     assert row.acknowledged_at is not None
 
