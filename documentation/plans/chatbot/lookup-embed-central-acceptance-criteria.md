@@ -58,7 +58,7 @@ referenced by the tests (`AC-LEC-<n>` in the test name or docstring).
   for the setting's model, and retire documents of rows that no longer exist.
 - AC-LEC-17: a worker loads the setting model's `lookup_word` vectors into the in-process cache at start (one SELECT,
   no provider call); the per-container shared vector file is gone; a turn's miss is still embedded inside the 3 s
-  budget and written back.
+  budget (kept in process; the 10-minute sync persists it; review fix round 1).
 - AC-LEC-18: `PROMPT_SYNONYMS` is deleted; a one-off script lists (dry run) and adds (`--apply`) each of its words
   not already on a row of its class / type to that row's alias home.
 

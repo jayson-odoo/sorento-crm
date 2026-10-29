@@ -600,3 +600,40 @@ FE (vitest on touched components; layering UI -> hooks -> `services/embeddingsSe
 - `master-data-management/lookup-sets`: `services/lookupSetService.ts` `getAliasTargets(setId)`, the option dialog
   uses SearchableSelect over it for an alias set; an orphaned option shows a Badge.
 - No UUIDs in the UI, no explanation text, usable at 375 and 1280 (browser pass on the crew test copy).
+
+## Review fix round 1 (reviewer NOT READY + security-reviewer NEEDS WORK, 29 Oct)
+
+Each item: red test first (tester), then fix (coder), kill-proof. R = reviewer, S = security-reviewer.
+- F-1 (R2, S-H1): `search_current` returns [] for any `source_type` outside `RECORD_KEEP_SET` (incl. `lookup_word`,
+  dropped sources); `/external/rag/search` with `source_type=lookup_word` returns no rows for any principal.
+- F-2 (R1, M1 (a)): tool search no longer depends on mcp_tool vectors: the AI assistant agent route skips tool RAG
+  (keyword ranking only) and `/external/rag/tool-search` returns an empty candidate list (no error) under any search model.
+- F-3 (S-M2): `GET /chatbot/lookup-words?list=customer|salesperson|location` also need `order_management.customers.view`
+  / `master_data.sales_agents.view` / `inventory.warehouses.view` (403 otherwise); `/try` drops candidates of lists the
+  user cannot view.
+- F-4 (R3, S-M3): a failed request counts against its documents only for per-document errors (a 4xx other than
+  401/403/429); auth, rate-limit, 5xx and missing-key errors stop the run without counting. The guard flips only when
+  the target model has current keep-set chunks, failed documents are under 1% of the keep set, and the model is still
+  the setting's model. `POST /records-backfill` needs `system.settings.update` (as the existing `/backfill`).
+- F-5 (R6): entity_resolver tier3 and `_rag_resolve_phrase` reads narrowed to a non-hot subset of sources run
+  `SET LOCAL hnsw.iterative_scan = relaxed_order`.
+- F-6 (R8): settings PUT enqueue failure is logged, the save still returns 200.
+- F-7 (R9): `move_prompt_synonyms.py` matches an existing attachment type by name or code; an entry with no type is
+  listed as unmatched, never created as an option.
+- F-8 (R10): alias targets of `attachment_type_alias` offer both code and name values; an option keyed by either is not
+  orphaned.
+- F-9 (R11): overview counts remaining / failed in SQL (no per-document metadata load); FE shows an error state when
+  the overview fails (no endless skeleton); the Settings tab hides coverage rows on a 403.
+- F-10 (S-L4): alias targets for brands use the caller's company scope (staff: granted companies; API key: its scope).
+- F-11 (S-L5): `/try` phrase `max_length=200` (422 above).
+- F-12 (S-L6): settings PUT validates `embedding_model` against `^[A-Za-z0-9._-]{1,128}$` (422 otherwise).
+- F-13 (nits): Stop shows only while a backfill runs; the Settings tab prefills from the resolved embedder (setting or
+  label fallback), not openai defaults; the guard's index build sets `maintenance_work_mem = '512MB'` for its session and
+  REINDEXes an INVALID index of the model; `rag.py` checks the key of the search model's provider and reports the search
+  model; `embed_search_texts` reuses the caller's session; the LookupWordsGrid Row cell shows the row label; the lookup
+  set API returns `alias_set: bool` and the FE uses it instead of a duplicated key list; tabs change on
+  `onValueChange` (keyboard).
+- Test-only (tester): R4 `tests/test_resolver_tier3_company_scope.py:392-406` assert `f"debtor:{code}" not in`; R7 mark
+  the slice 2 index tests `serial_ddl` (or scratch schema).
+- UAC amendment (R5): AC-LEC-17 "written back" is dropped for the turn path: a turn's misses stay in the in-process
+  cache (no DB on the turn path, plan Performance) and the 10-minute sync persists them.
