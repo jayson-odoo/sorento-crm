@@ -30,6 +30,14 @@ const listLeads = vi.fn();
 const getLeadMetrics = vi.fn();
 const listingKeys: (string | null | undefined)[] = [];
 
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { id: 'u-me', name: 'Sales A' } }, status: 'authenticated' }),
+}));
+
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+}));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/leads',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -148,6 +156,34 @@ vi.mock(
   '@/app/(protected)/order-management/shared/hooks/use-customer-select-query',
   () => ({ useCustomerSelectQuery: () => ({ data: [], isLoading: false }) }),
 );
+
+// Outcome and Source are multi-selects now (FILTER-MULTISELECT PR6); a one-value pick stands in for them here.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+  }) => (
+    <select
+      aria-label={placeholder ?? 'select'}
+      value={value[0] ?? ''}
+      onChange={(event) => onChange(event.target.value ? [event.target.value] : [])}
+    >
+      <option value="">{placeholder ?? ''}</option>
+      {(options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
 
 import { LeadsClient } from './LeadsClient';
 
@@ -337,6 +373,18 @@ describe('LeadsClient', () => {
         expect.objectContaining({ outcome: ['qualified'] }),
       ),
     );
+  });
+
+  it('names the customer column Customer, not Buyer (LEAD-GOVERNS-REGISTER C1)', async () => {
+    listLeads.mockResolvedValue({
+      data: [lead({ project_count: 1 })],
+      pagination: { total: 1, page: 1, limit: 25 },
+    });
+    renderClient();
+    await screen.findByText(/1 project/);
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(headers.some((text) => /Customer/.test(text))).toBe(true);
+    expect(headers.some((text) => /Buyer/.test(text))).toBe(false);
   });
 
   it('shows how many projects a lead produced, because one lead may produce several', async () => {

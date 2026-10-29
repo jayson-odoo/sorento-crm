@@ -98,7 +98,7 @@ def _serialize_status(db: Session, row: Status, *, with_count: bool = False) -> 
 
 
 @router.get("/status-entities", response_model=List[StatusEntityResponse])
-async def list_status_entities_route(
+def list_status_entities_route(
     _user: dict = Depends(require_permission(VIEW)),
 ):
     """Entities registered on the engine. Empty until a module registers one."""
@@ -109,7 +109,7 @@ async def list_status_entities_route(
 
 
 @router.get("/statuses/graph/{entity_type}", response_model=StatusGraphResponse)
-async def get_status_graph(
+def get_status_graph(
     entity_type: str,
     scope_id: Optional[str] = Query(
         default=None,
@@ -131,7 +131,7 @@ async def get_status_graph(
 
 
 @router.post("/statuses/graph/{entity_type}/reapply-dials")
-async def reapply_dials(
+def reapply_dials(
     entity_type: str,
     scope_id: str = Query(description="The forked scope to copy the default dials onto."),
     _user: dict = Depends(require_permission(EDIT)),
@@ -160,7 +160,7 @@ async def reapply_dials(
 
 
 @router.post("/statuses", response_model=StatusResponse, status_code=201)
-async def create_status(
+def create_status(
     payload: StatusCreate,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -177,7 +177,7 @@ async def create_status(
 
 
 @router.patch("/statuses/{status_id}", response_model=StatusResponse)
-async def update_status(
+def update_status(
     status_id: str,
     payload: StatusUpdate,
     _user: dict = Depends(require_permission(EDIT)),
@@ -214,7 +214,7 @@ async def update_status(
 
 
 @router.delete("/statuses/{status_id}", status_code=204)
-async def delete_status(
+def delete_status(
     status_id: str,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -233,7 +233,7 @@ async def delete_status(
 
 
 @router.post("/statuses/{status_id}/migrate-records", response_model=StatusMigrateResponse)
-async def migrate_status_records(
+def migrate_status_records(
     status_id: str,
     payload: StatusMigrateRequest,
     _user: dict = Depends(require_permission(EDIT)),
@@ -253,7 +253,7 @@ async def migrate_status_records(
 
 
 @router.post("/status-transitions", response_model=StatusTransitionResponse, status_code=201)
-async def create_transition(
+def create_transition(
     payload: StatusTransitionCreate,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -278,7 +278,7 @@ async def create_transition(
 
 
 @router.patch("/status-transitions/{transition_id}", response_model=StatusTransitionResponse)
-async def update_transition(
+def update_transition(
     transition_id: str,
     payload: StatusTransitionUpdate,
     _user: dict = Depends(require_permission(EDIT)),
@@ -306,7 +306,7 @@ async def update_transition(
 
 
 @router.delete("/status-transitions/{transition_id}", status_code=204)
-async def delete_transition(
+def delete_transition(
     transition_id: str,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),

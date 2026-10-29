@@ -108,7 +108,6 @@ interface GridContextValue {
   uomError: unknown;
   onUomRetry: () => void;
   brandOptions: SearchableSelectOption[];
-  stockGroup: string | null;
   total: string | null;
   update: (key: string, patch: LineDraft) => void;
   selectProduct: (key: string, option: SearchableSelectOption | null) => void;
@@ -276,23 +275,13 @@ function SetBadge() {
   );
 }
 
-/** A picker option: a set wears the Set badge, a product keeps its name beside the code. */
+/**
+ * A picker option is its code alone, wrapping rather than cut short. In Sorento the product code
+ * IS the name, so a name beside it printed the code twice (owner, 29 Oct: "just show product code
+ * only"). A set's Set badge shows on the picked value, not in the list.
+ */
 function renderLineOption(option: SearchableSelectOption): React.ReactNode {
-  // A set is its code on one line: the Set badge shows on the picked value, not in the list.
-  if (isSetOption(option.value)) {
-    return <span className="block min-w-0 truncate">{option.label}</span>;
-  }
-  return (
-    <span className="flex min-w-0 items-center gap-2">
-      <span className="min-w-0 break-words">{option.label}</span>
-      {isSetOption(option.value) ? <SetBadge /> : null}
-      {option.description ? (
-        <span className="min-w-0 truncate text-xs text-muted-foreground">
-          {option.description}
-        </span>
-      ) : null}
-    </span>
-  );
+  return <span className="block min-w-0 break-words">{option.label}</span>;
 }
 
 /** A set line's stock pill: the parts frozen on the line, else the picked set's own parts. */
@@ -307,7 +296,6 @@ function SetStock({ row, quantity }: { row: GridRow; quantity: string }) {
   return (
     <SetStockChip
       parts={parts.filter((part): part is typeof part & { product_id: string } => Boolean(part.product_id))}
-      group={grid.stockGroup}
       quantity={quantity}
       label={grid.labelOf(row)}
     />
@@ -456,7 +444,6 @@ function QtyCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   ) : productId ? (
     <QuotationStockChip
       productId={productId}
-      group={grid.stockGroup}
       quantity={quantity}
       uom={uom}
       label={label}
@@ -987,8 +974,7 @@ export interface QuotationLinesGridProps {
   uomError: unknown;
   onUomRetry: () => void;
   brandOptions: SearchableSelectOption[];
-  stockGroup: string | null;
-  /** The search and "Stock at" controls, drawn in the grid's own toolbar beside Columns. */
+  /** The search control, drawn in the grid's own toolbar beside Columns. */
   toolbar?: React.ReactNode;
   /** Every edit, addition and reorder, as the whole staged set. Edit mode only. */
   onStage?: (lines: StagedQuotationLine[]) => void;
@@ -1019,7 +1005,6 @@ export function QuotationLinesGrid({
   uomError,
   onUomRetry,
   brandOptions,
-  stockGroup,
   onStage,
   onToggleRemoved,
   toolbar,
@@ -1305,7 +1290,6 @@ export function QuotationLinesGrid({
       uomError,
       onUomRetry,
       brandOptions,
-      stockGroup,
       total,
       update,
       selectProduct,
@@ -1333,7 +1317,6 @@ export function QuotationLinesGrid({
       quotationId,
       resolveProduct,
       selectProduct,
-      stockGroup,
       total,
       uomError,
       uomOptions,

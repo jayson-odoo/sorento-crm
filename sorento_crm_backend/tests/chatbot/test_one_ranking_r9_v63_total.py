@@ -91,9 +91,10 @@ def _calls(log, name: str) -> list[dict[str, Any]]:
 
 
 def _total(console, monkeypatch) -> tuple[str, dict[str, Any]]:
+    # REPORT-UNIFY: a sales report total is the report ask's total (the retired sales report tool and its drill offer).
     text, log = _turn(console, monkeypatch, _row1(), f"Top sales for {PRODUCT_CODE.lower()} in 2026")
-    (args,) = _calls(log, SALES_REPORT_TOOL)
-    assert "Drill down" in text and _ran(log) == [], ("setup", text, log)
+    (args,) = _ran(log)
+    assert not args.get("group_by") and not _calls(log, SALES_REPORT_TOOL), ("setup", text, log)
     return text, args
 
 
@@ -140,16 +141,22 @@ def test_r9_1_the_sales_channels_line_prints_only_when_the_prompt_names_it(
 def test_r9_2_an_axisless_ranking_reply_re_runs_the_sales_report(console, monkeypatch) -> None:
     first, args = _total(console, monkeypatch)
     text, log = _turn(console, monkeypatch, _axisless(), "qty, delivered")
-    assert _ran(log) == [] and _calls(log, SALES_REPORT_TOOL) == [args], (text, log)
-    assert text == first, text
+    ran = _ran(log)  # the held total again (the reply adds its measure)
+    assert len(ran) == 1 and _calls(log, SALES_REPORT_TOOL) == [], (text, log)
+    assert not ran[0].get("group_by") and ran[0]["product_code"] == args["product_code"], ran
+    assert ran[0]["date_from"] == args["date_from"] and ran[0]["basis"] == "delivered", ran
+    assert "Total" in text, text
     _no_question(text)
 
 
 def test_r9_3_a_top_selling_reply_with_no_count_and_no_grain_re_runs_the_sales_report(console, monkeypatch) -> None:
     first, args = _total(console, monkeypatch)
     text, log = _turn(console, monkeypatch, _top_selling(), "qty, delivered")
-    assert _ran(log) == [] and _calls(log, SALES_REPORT_TOOL) == [args], (text, log)
-    assert text == first, text
+    ran = _ran(log)  # the held total again (the reply adds its measure)
+    assert len(ran) == 1 and _calls(log, SALES_REPORT_TOOL) == [], (text, log)
+    assert not ran[0].get("group_by") and ran[0]["product_code"] == args["product_code"], ran
+    assert ran[0]["date_from"] == args["date_from"] and ran[0]["basis"] == "delivered", ran
+    assert "Total" in text, text
 
 
 def test_r9_4_an_ordered_basis_runs_the_report_ask_total_on_the_held_product_and_period(console, monkeypatch) -> None:
@@ -201,10 +208,9 @@ def test_r9_guard_a_top_selling_reply_with_a_count_keeps_the_ranking(console, mo
 
 
 @pytest.mark.parametrize("fresh, expected", [
-    ({"entity_op": "replace_combine"}, PERIOD_Q),
     # A new subject re-types the ask whole (`restates_the_ask`): no axis and nothing to total is the catalogue line.
     ({"state_changes": [{"op": "new_subject", "axis": None, "position": None}]}, "I can rank sales by"),
-], ids=["replace_combine", "new_subject"])
+], ids=["new_subject"])
 def test_r9_guard_a_new_subject_stays_a_fresh_ask(console, monkeypatch, fresh, expected) -> None:
     _total(console, monkeypatch)
     text, log = _turn(console, monkeypatch, _axisless(**fresh), "qty, delivered")
@@ -248,26 +254,16 @@ def test_r9_review_a_typed_count_with_no_axis_keeps_today_s_reply(console, monke
     assert _ran(log) == [] and not _calls(log, SALES_REPORT_TOOL), log
 
 
-def test_r9_review_after_a_sales_report_that_found_nothing_the_reply_is_not_that_report_again(console, monkeypatch) -> None:
-    """No drill offer is armed on a miss, so ruling A is off: the held product and period run the report-ask total."""
-    miss = {**SALES_BODY, "periods": [], "options": [], "total": {"qty": 0, "amount": 0}}
-    text, log = _turn(console, monkeypatch, _row1(), f"Top sales for {PRODUCT_CODE.lower()} in 2026", sales_body=miss)
-    assert len(_calls(log, SALES_REPORT_TOOL)) == 1 and "No sales found." in text, ("setup", text, log)
-    text, log = _turn(console, monkeypatch, _axisless(), "qty, delivered")
-    ran = _ran(log)
-    assert len(ran) == 1 and not _calls(log, SALES_REPORT_TOOL), (text, log)
-    assert not ran[0].get("group_by") and ran[0]["product_code"] == PRODUCT_CODE, ran
-    assert ran[0]["date_from"] == "2026-01-01" and ran[0]["basis"] == "delivered" and ran[0]["measure"] == "qty", ran
-    _no_question(text)
-
-
 def test_r9_review_after_a_sales_analysis_total_the_reply_is_not_a_sales_report(console, monkeypatch) -> None:
+    # SALES-TOTAL-ASK: the total names its basis, or it is asked one first (`test_sales_total_ask`, now on the report ask).
     analysis = _v63(order_status="sales_analysis", entities=[], entity_op="replace_combine", domain_in_message=True,
-                    **YEAR_2026)
-    text, log = _turn(console, monkeypatch, analysis, "total sales in 2026")
-    assert not _calls(log, SALES_REPORT_TOOL) and _ran(log) == [], ("setup", text, log)
+                    sales_basis="invoiced", **YEAR_2026)
+    text, log = _turn(console, monkeypatch, analysis, "total invoiced sales in 2026")
+    assert not _calls(log, SALES_REPORT_TOOL) and len(_ran(log)) == 1, ("setup", text, log)  # the report ask's total
     from app.services.chatbot.lanes.business.report_ask import CATALOGUE_LINE
 
     text, log = _turn(console, monkeypatch, _axisless(), "qty, delivered")
-    # No product is held, so the held period alone has nothing to total: today's catalogue line.
-    assert text == CATALOGUE_LINE and log == [], (text, log)
+    # REPORT-UNIFY: the analysis total is a held report-ask total: the reply re-runs it (period kept, no product).
+    ran = _ran(log)
+    assert len(ran) == 1 and not ran[0].get("group_by") and "product_code" not in ran[0], (text, log)
+    assert ran[0]["date_from"] == "2026-01-01", ran

@@ -178,8 +178,8 @@ export interface Project {
   launch_date?: string | null;
   expected_delivery_from?: string | null;
   expected_delivery_to?: string | null;
-  brands: string[];
-  brand_ids: string[];
+  /** The debtor code of `customer_id` (PROJECT-REGISTER-V2 A5); older projects have none. */
+  customer_code?: string | null;
 
   /**
    * Provenance (AC-O10). All null when the project was registered directly, which the
@@ -250,7 +250,13 @@ export interface ProjectRegisterBody {
   launch_date?: string | null;
   expected_delivery_from?: string | null;
   expected_delivery_to?: string | null;
-  brand_ids?: string[];
+  /** Required on create; edit leaves it optional (PROJECT-REGISTER-V2 A4). */
+  customer_id?: string | null;
+  /**
+   * Only for a user holding `projects.registrations.submit` without edit: false saves a
+   * draft, true submits it for approval (PROJECT-REGISTER-V2 J1).
+   */
+  submit?: boolean;
   /** Which lead this project came from. `null` unlinks (D6); omit to leave alone. */
   lead_id?: string | null;
 }
@@ -266,13 +272,12 @@ export interface ClashCandidate {
   project_id: string;
   project_code: string;
   title: string;
-  outcome: ProjectOutcome;
+  outcome?: ProjectOutcome;
   status_label?: string | null;
   owner_user_id?: string | null;
   owner_name?: string | null;
   developer_name?: string | null;
   estimated_sales_value?: string | null;
-  brands: string[];
   last_activity_at?: string | null;
   similarity: number;
   blocks: boolean;
@@ -343,10 +348,10 @@ export interface ProjectListParams {
   owner_user_id?: string[];
   developer_party_id?: string[];
   type_id?: string[];
-  brand_id?: string[];
   only_critical?: boolean;
   /** Portal registrations by approval state (pending, rejected, approved). */
-  approval_state?: Exclude<ProjectApprovalState, 'draft'>;
+  /** One state, or several comma-joined (OR-ed); sent as repeated params. */
+  approval_state?: string;
   /** Pickers: staff-registered and approved projects only. */
   approved_only?: boolean;
   page?: number;
@@ -528,20 +533,9 @@ export interface ProjectLead {
   updated_at?: string | null;
 }
 
-/** Step 1 of the wizard when the informant has never bought anything. */
-export interface LeadNewCustomer {
-  customer_name: string;
-  customer_code?: string | null;
-  email?: string | null;
-  phone_number?: string | null;
-  registration_number?: string | null;
-  notes?: string | null;
-}
-
 export interface ProjectLeadBody {
   title: string;
   customer_id?: string | null;
-  new_customer?: LeadNewCustomer | null;
   developer_party_id?: string | null;
   source?: LeadSource | null;
   source_detail?: string | null;
@@ -562,7 +556,6 @@ export interface LeadQualifyBody {
   type_id?: string | null;
   template_id?: string | null;
   owner_user_id?: string | null;
-  brand_ids?: string[];
   details?: Record<string, unknown> | null;
 }
 

@@ -21,7 +21,7 @@ router = APIRouter()
 
 
 @router.post("/", response_model=StockInquiryResponse, status_code=status.HTTP_201_CREATED)
-async def create_stock_inquiry_external(
+def create_stock_inquiry_external(
     response: Response,
     inquiry_data: StockInquiryCreate = Body(...),
     current_user: dict = Depends(get_external_api_user),
@@ -44,9 +44,9 @@ async def create_stock_inquiry_external(
                     inquiry_id=str(inquiry.id),
                     agent_code="lead_time_enquiries",
                     team_assignment_code="project_sales",
-                    title="Stock Inquiry updated (edited rejected form)",
-                    intro_plain="Dear Project Sales Team,\n\nA rejected stock inquiry has been edited and submitted for your review.",
-                    intro_html="Dear Project Sales Team,<br /><br />A rejected stock inquiry has been edited and submitted for your review.",
+                    title="Stock inquiry appealed",
+                    intro_plain="Dear Project Sales Team,\n\nA previously rejected stock inquiry has been edited and appealed, and requires your review.",
+                    intro_html="Dear Project Sales Team,<br /><br />A previously rejected stock inquiry has been edited and appealed, and requires your review.",
                     event_type="external_resubmitted",
                     sync_email=False,
                 )

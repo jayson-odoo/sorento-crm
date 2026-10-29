@@ -51,3 +51,8 @@ def project_registration_write(contact_id: str) -> None:
 def project_registration_extract(contact_id: str) -> None:
     """AI extract on the registration form: 10 in ten minutes."""
     hit("projreg:extract", contact_id, EXTRACT_LIMIT, EXTRACT_WINDOW_SECONDS)
+
+
+def project_registration_extract_staff(user_id: str) -> None:
+    """AI extract on the staff register form: 10 in ten minutes per user."""
+    hit("projreg:extract_user", user_id, EXTRACT_LIMIT, EXTRACT_WINDOW_SECONDS)

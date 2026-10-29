@@ -2256,7 +2256,7 @@ Marketing's own work is not part of the form's payload, so it is captured
         db: Session,
         *,
         contact_id: str | None,
-        status: str | None,
+        status: list[str] | str | None,
         search: str | None,
         include_drafts: bool,
     ):
@@ -2267,7 +2267,7 @@ Marketing's own work is not part of the form's payload, so it is captured
         if not include_drafts:
             q = q.filter(PriceTagRequest.portal_draft_at.is_(None))
         if status:
-            q = q.filter(PriceTagRequest.status == status)
+            q = q.filter(PriceTagRequest.status.in_([status] if isinstance(status, str) else status))
         if search:
             like = f"%{search}%"
             q = q.filter(
@@ -2296,7 +2296,7 @@ Marketing's own work is not part of the form's payload, so it is captured
         db: Session,
         *,
         contact_id: str | None = None,
-        status: str | None = None,
+        status: list[str] | str | None = None,
         search: str | None = None,
         include_drafts: bool = True,
         page: int = 1,

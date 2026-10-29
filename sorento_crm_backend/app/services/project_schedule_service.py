@@ -74,6 +74,7 @@ from app.models.projects import (
     ProjectPurchaseOrderLine,
 )
 from app.services.error_handler import AppException
+from app.services.document_extraction import page_failure_reason
 
 logger = logging.getLogger(__name__)
 
@@ -925,7 +926,12 @@ class ProjectScheduleService:
             if not pages:
                 raise AppException(
                     status_code=422,
-                    message="Nothing could be read from this document.",
+                    message=(
+                        "Nothing could be read from this document."
+                        + page_failure_reason(
+                            page.error for page in (result.pages if result else [])
+                        )
+                    )[:500],
                     code="schedule_extraction_empty",
                 )
             summary = self.persist_pages(

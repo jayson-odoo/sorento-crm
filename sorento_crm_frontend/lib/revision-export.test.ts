@@ -59,7 +59,7 @@ describe('revision file marker', () => {
     expect(revisionFileMarker(entry({ kind: 'original', revision_no: 0 }))).toBe('original');
     expect(
       revisionFileMarker(entry({ kind: 'resubmission', version_no: 3, revision_no: 1 })),
-    ).toBe('resubmitted-v3');
+    ).toBe('appealed-v3');
   });
 });
 

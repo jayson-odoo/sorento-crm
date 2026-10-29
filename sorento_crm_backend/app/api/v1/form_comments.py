@@ -45,7 +45,7 @@ def _check_module(kind: str, user_id: str, db: Session) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Module not enabled: {module}")
 
 
-async def read_uploads(files: Optional[list[UploadFile]]) -> list:
+def read_uploads(files: Optional[list[UploadFile]]) -> list:
     """Files as (name, bytes, type). Count and size are checked BEFORE any part is read."""
     named = [f for f in (files or []) if f.filename]
     if len(named) > MAX_FILES:
@@ -53,7 +53,7 @@ async def read_uploads(files: Optional[list[UploadFile]]) -> list:
     for f in named:
         if f.size is not None and f.size > MAX_FILE_BYTES:
             raise handle_unprocessable("File is too large.")
-    return [(f.filename, await f.read(), f.content_type) for f in named]
+    return [(f.filename, f.file.read(), f.content_type) for f in named]
 
 
 def _authorize(kind: str, entity_id: str, current_user: dict, db: Session) -> str:
@@ -79,7 +79,7 @@ def list_form_comments(
 
 
 @router.post("/{kind}/{entity_id}", status_code=status.HTTP_201_CREATED)
-async def add_form_comment(
+def add_form_comment(
     kind: str,
     entity_id: str,
     body: Annotated[str, Form()] = "",
@@ -92,7 +92,7 @@ async def add_form_comment(
     user = db.query(User).filter(User.id == current_user["id"]).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    uploads = await read_uploads(files)
+    uploads = read_uploads(files)
     return FormCommentService(db).add_staff_comment(kind, eid, user, body, uploads, parent_id=parent_id or None)
 
 

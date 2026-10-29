@@ -1579,14 +1579,11 @@ def _confirmed_hold(db, project_line, warehouse, qty):
     return row
 
 
-def test_a_decision_at_a_pool_or_an_unflagged_bin_still_reads_covered(scm_app):
-    """AC-S2-1b / R21: the plan is honoured, as a route (covered, not pinned).
-
-    Both holds name a bin this read cannot see - a SITE POOL and a bin flagged out of
-    fulfilment planning - so the supply event behind them is not in the span. Before this
-    the decision was skipped and the board-covered line printed `short`: 16 pool holds (163
-    units) and ~103 units at unflagged bins on the 30 Aug dev copy. The drill names the bin
-    the HOLD carries, so the source column is a place rather than a blank.
+def test_a_decision_at_a_pool_or_an_unflagged_bin_gives_no_reach(scm_app):
+    """STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026, superseding AC-S2-1b's route reading in
+    the view): both decisions name a bin this read cannot see - a SITE POOL and a bin
+    flagged out of fulfilment planning - and the view reads each line as if it had no
+    decision: short, no source, the month owing all 70. The board still routes them.
     """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
@@ -1616,35 +1613,23 @@ def test_a_decision_at_a_pool_or_an_unflagged_bin_still_reads_covered(scm_app):
         board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
 
     by_so = {line["so_number"]: line for line in cell["demand"]}
-    assert by_so[f"{marker}-SO-POOL"]["status"] == "covered"
-    assert by_so[f"{marker}-SO-POOL"]["assigned_qty"] == 40
-    # R29: one `assigned_from` entry, naming the pool bin the hold pinned.
-    assert by_so[f"{marker}-SO-POOL"]["assigned_from"] == [
-        {
-            "kind": "on_hand", "ref": f"On hand {pool.warehouse_code}",
-            "spo_number": None, "spo_line_number": None, "qty": 40,
-            "lent_from_so_number": None,
-        }
-    ]
-    assert by_so[f"{marker}-SO-HP"]["status"] == "covered"
-    assert by_so[f"{marker}-SO-HP"]["assigned_from"] == [
-        {
-            "kind": "on_hand", "ref": f"On hand {unflagged.warehouse_code}",
-            "spo_number": None, "spo_line_number": None, "qty": 30,
-            "lent_from_so_number": None,
-        }
-    ]
-    # And the month agrees with the drill: 70 routed against 70 owed owes nothing.
+    for so_number, owed in ((f"{marker}-SO-POOL", 40), (f"{marker}-SO-HP", 30)):
+        assert by_so[so_number]["status"] == "short"
+        assert by_so[so_number]["assigned_qty"] == 0
+        assert by_so[so_number]["short_qty"] == owed
+        assert by_so[so_number]["assigned_from"] == []
+    # Covered by names nothing, so the Supply tab lists neither bin.
+    assert cell["supply"] == []
     row = _row_of(board, product.product_code)
-    assert {m["key"]: m["balance"] for m in row["months"]}[month_key(due)] == 0
+    assert {m["key"]: m["balance"] for m in row["months"]}[month_key(due)] == -70
 
 
-def test_a_decision_at_a_bin_in_another_group_and_group_bb_still_reads_it_covered(scm_app):
-    """The third way a hold's bin leaves the span: the READER narrowed it.
+def test_a_decision_at_a_bin_in_another_group_gives_no_reach_under_group_bb(scm_app):
+    """The third way a decision's bin leaves the span: the READER narrowed it.
 
     A BB line's decision names a DC1-IB bin holding 25. Under `group=BB` the IB bin is out
-    of the span entirely - and the plan is still honoured as a route at the line's own
-    date (AC-S2-1b), so the line reads covered, never pinned.
+    of the span, and since STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026) the view reads the
+    line as if undecided: short 25, no source.
     """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
@@ -1666,15 +1651,10 @@ def test_a_decision_at_a_bin_in_another_group_and_group_bb_still_reads_it_covere
             params={"month": month_key(due), "group": "BB"},
         ).json()
 
-    assert cell["demand"][0]["status"] == "covered"
-    assert cell["demand"][0]["assigned_qty"] == 25
-    assert cell["demand"][0]["assigned_from"] == [
-        {
-            "kind": "on_hand", "ref": f"On hand {ib.warehouse_code}",
-            "spo_number": None, "spo_line_number": None, "qty": 25,
-            "lent_from_so_number": None,
-        }
-    ]
+    assert cell["demand"][0]["status"] == "short"
+    assert cell["demand"][0]["assigned_qty"] == 0
+    assert cell["demand"][0]["short_qty"] == 25
+    assert cell["demand"][0]["assigned_from"] == []
 
 
 def test_an_allocation_that_was_never_confirmed_holds_nothing(scm_app):

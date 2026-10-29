@@ -26,7 +26,8 @@ import { Container } from '@/components/common/container';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import { PillOverflow } from '@/components/common/PillOverflow';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useSalesTargets } from '../hooks/useSalesTargets';
@@ -441,13 +442,20 @@ function TargetsGrid({
                     content: (
                       <div className="flex w-64 flex-col gap-1.5">
                         <Label htmlFor="targets-team-filter">Team</Label>
-                        <SearchableSelect
+                        <SearchableMultiSelect
                           id="targets-team-filter"
-                          value={teamFilter}
-                          onChange={onTeamFilter}
+                          value={splitMulti(teamFilter)}
+                          onChange={(v) => onTeamFilter(joinMulti(v))}
                           options={teamOptions}
                           placeholder="All teams"
                           clearable
+                          renderTriggerLabel={(chosen) =>
+                            chosen.length ? (
+                              <span className="block truncate">{multiChipLabel('Team', idFilterLabels(chosen))}</span>
+                            ) : (
+                              <span className="text-muted-foreground">Team: any</span>
+                            )
+                          }
                         />
                       </div>
                     ),

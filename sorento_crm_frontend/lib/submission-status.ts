@@ -23,10 +23,26 @@ export function isAwaitingReview(
 }
 
 /**
- * The verb on a form's send button. A form that was rejected goes back as a
- * resubmission (owner, 27 Oct 2026): every form surfaces a rejected record as
- * `status: 'rejected'` while it is being amended, so this one rule covers them all.
+ * What a person reads for `resubmitted` and for the action that sends a rejected form back
+ * (owner, 28 Oct 2026: "Appealed" / "Appeal" on every form). Display only: the stored value
+ * stays `resubmitted`. Every label map and button names these, never the bare string.
  */
-export function submitVerb(status: string | null | undefined): 'Submit' | 'Resubmit' {
-  return (status ?? '').trim().toLowerCase() === 'rejected' ? 'Resubmit' : 'Submit';
+export const APPEALED_LABEL = 'Appealed';
+export const APPEAL_VERB = 'Appeal';
+
+/**
+ * The verb on a form's send button. A form that was rejected goes back as an appeal:
+ * every form surfaces a rejected record as `status: 'rejected'` while it is being amended,
+ * so this one rule covers them all.
+ */
+export function submitVerb(status: string | null | undefined): 'Submit' | typeof APPEAL_VERB {
+  return (status ?? '').trim().toLowerCase() === 'rejected' ? APPEAL_VERB : 'Submit';
+}
+
+/**
+ * A status line with "resubmitted" read as "appealed", case kept
+ * ("status: rejected → resubmitted" -> "status: rejected → appealed").
+ */
+export function appealWording(text: string): string {
+  return text.replace(/\b(r)esubmitted\b/gi, (_m, r: string) => (r === 'R' ? 'Appealed' : 'appealed'));
 }

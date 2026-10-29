@@ -29,7 +29,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   priceTagStatusLabel,
@@ -45,7 +46,6 @@ import {
 } from '../../services/priceTagRequestService';
 
 const STATUS_OPTIONS = [
-  { value: '__all__', label: 'All statuses' },
   { value: 'new', label: 'New' },
   { value: 'designing', label: 'Designing' },
   { value: 'proof_ready', label: 'Design Ready' },
@@ -66,7 +66,7 @@ export default function PriceTagRequestsList() {
     { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('__all__');
+  const [statusFilter, setStatusFilter] = useState('');
   const [data, setData] = useState<{
     data: PriceTagRequestSummary[];
     pagination: { total: number };
@@ -89,7 +89,7 @@ export default function PriceTagRequestsList() {
       sort: sort?.id,
       dir: sort?.desc ? 'desc' : 'asc',
       query: searchQuery || undefined,
-      status: statusFilter !== '__all__' ? statusFilter : undefined,
+      status: statusFilter || undefined,
     });
     setData(result);
     setLoadError(null);
@@ -146,7 +146,7 @@ export default function PriceTagRequestsList() {
       sorting,
       searchQuery,
     },
-    { status: statusFilter !== '__all__' ? statusFilter : undefined },
+    { status: statusFilter || undefined },
   );
 
   const detailHref = (row: PriceTagRequestSummary) =>
@@ -166,7 +166,7 @@ export default function PriceTagRequestsList() {
     }
   };
 
-  const filtersActiveCount = statusFilter !== '__all__' ? 1 : 0;
+  const filtersActiveCount = statusFilter ? 1 : 0;
 
   const columns = useMemo<ColumnDef<PriceTagRequestSummary>[]>(
     () => [
@@ -430,12 +430,13 @@ export default function PriceTagRequestsList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={setStatusFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
                       options={STATUS_OPTIONS}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
+                      clearable
                     />
                   </div>
                   {filtersActiveCount > 0 && (
@@ -443,7 +444,7 @@ export default function PriceTagRequestsList() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setStatusFilter('__all__')}
+                        onClick={() => setStatusFilter('')}
                       >
                         Clear filters
                       </Button>

@@ -50,7 +50,10 @@ export function lineChangeAnnotation(
     suggestionLines: [],
     lateDays: null,
     shortfallQty: null,
-    productChangedFrom: null,
+    // PRODUCT-CHANGE-TALLY: the old product, read as the board's `annotationOf` does (the
+    // line's own `sku` is already the new one), so the Was/Now table's first row is it.
+    productChangedFrom:
+      change.kind === 'product_changed' ? (change.from?.item_code ?? null) : null,
     movedTransfer: null,
     whereItWent: whereItWentFrom(change.result),
     projectLineId: null,

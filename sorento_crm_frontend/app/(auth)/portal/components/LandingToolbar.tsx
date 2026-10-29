@@ -18,12 +18,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { ListBoardViewToggle } from '@/components/common/ListBoardViewToggle';
 import type { ListBoardViewMode } from '@/hooks/useListBoardViewPreference';
 import {
   activeLandingFilterCount,
+  applyLandingFilters,
   landingFilterOptions,
+  landingFilterValues,
   type LandingDateRange,
   type LandingField,
   type LandingFilters,
@@ -77,14 +79,20 @@ export function LandingToolbar({
             <FilterField
               key={field.key}
               field={field}
-              items={items}
+              // Each list offers what the OTHER filters leave, so a value no row can match is not offered.
+              items={applyLandingFilters(
+                items,
+                fields,
+                Object.fromEntries(Object.entries(filters).filter(([key]) => key !== field.key)),
+              )}
               value={filters[field.key]}
               onChange={(next) => {
                 const copy = { ...filters };
                 if (
                   next === undefined ||
                   next === '' ||
-                  (typeof next === 'object' && !next.from && !next.to)
+                  (Array.isArray(next) && next.length === 0) ||
+                  (typeof next === 'object' && !Array.isArray(next) && !next.from && !next.to)
                 ) {
                   delete copy[field.key];
                 } else {
@@ -214,7 +222,9 @@ function FilterField({
     );
   }
 
-  const options = landingFilterOptions(items, field).map((v) => ({
+  const picked = landingFilterValues(value);
+  const offered = landingFilterOptions(items, field);
+  const options = [...offered, ...picked.filter((v) => !offered.includes(v))].map((v) => ({
     value: v,
     label: v,
   }));
@@ -222,9 +232,9 @@ function FilterField({
   return (
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground">{field.label}</Label>
-      <SearchableSelect
-        value={(value as string | undefined) ?? ''}
-        onChange={(v) => onChange(v || undefined)}
+      <SearchableMultiSelect
+        value={landingFilterValues(value)}
+        onChange={(v) => onChange(v.length ? v : undefined)}
         options={options}
         clearable
         size="sm"

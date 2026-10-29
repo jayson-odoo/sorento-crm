@@ -16,9 +16,9 @@ Three things live here, and none of them is covered there:
    `out_of_scope` to `chatbot_completed_lanes`, i.e. in production, on a real customer.
    The smoke test drives `production_services()` over a blank-schema session with the two
    CRM services stubbed at THEIR boundary (`post_next_assignee`, the SLA service's
-   `create_tracking`), so the wiring - the import paths, the argument names, the
-   `asyncio.run`, and above all `ConversationSLATrackingCreate(**body)` accepting the
-   lane's own body - runs for real.
+   `create_tracking`), so the wiring - the import paths, the argument names, and above
+   all `ConversationSLATrackingCreate(**body)` accepting the lane's own body - runs for
+   real.
 
 3. **The clarify arm end to end.** AC-505 has zero live captures (the arm did not fire once
    in the 33-execution window), so the only way to know `complete_turn` surfaces
@@ -541,7 +541,7 @@ class TestProductionSeams:
 
         seen: dict[str, Any] = {}
 
-        async def fake_post_next_assignee(*, body, current_user, db):
+        def fake_post_next_assignee(*, body, current_user, db):
             seen["next_assignee_body"] = body
             seen["next_assignee_user"] = current_user
             return {

@@ -460,13 +460,14 @@ def test_cost_views_expose_no_secret_columns():
 def test_seeded_prices_are_only_the_sourced_ones():
     from app.services.analytics_connector import prices
 
-    assert set(prices.SEED_PRICES) == {"gpt-5.4-mini"}
+    # gemini-3.5-flash-lite: Google's published price, owner-approved 28 Oct 2026 (GEMINI-EXPLICIT-CACHE).
+    assert set(prices.SEED_PRICES) == {"gpt-5.4-mini", "gemini-3.5-flash-lite"}
     with pg_session() as db:
         # From an empty table (rolled back), so the row read is the one THIS seed wrote.
         db.execute(text("DELETE FROM llm_model_prices"))
         prices.seed_prices(db)
         prices.seed_prices(db)  # idempotent
-        assert db.execute(text("SELECT count(*) FROM llm_model_prices")).scalar() == 1
+        assert db.execute(text("SELECT count(*) FROM llm_model_prices")).scalar() == 2
         got = db.execute(text(
             "SELECT input_usd_per_1m, cached_input_usd_per_1m, output_usd_per_1m FROM llm_model_prices WHERE model = 'gpt-5.4-mini'"
         )).one()

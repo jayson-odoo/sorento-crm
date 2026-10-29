@@ -25,7 +25,7 @@ class BulkDeleteGRNsRequest(BaseModel):
 
 
 @router.get("/", response_model=ListResponse[PickingHeaderResponse])
-async def get_grns(
+def get_grns(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -41,8 +41,8 @@ async def get_grns(
         None,
         description="Legacy: partial product filter on linked picking_lines.",
     ),
-    picking_status: Optional[str] = Query(None),
-    inspection_status: Optional[str] = Query(None),
+    picking_status: Optional[list[str]] = Query(None),
+    inspection_status: Optional[list[str]] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -87,12 +87,15 @@ async def get_grns(
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
         return result
+    except HTTPException:
+        # A deliberate refusal (e.g. too many filter values) keeps its own status.
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
 
 @router.post("/import-listing", status_code=status.HTTP_202_ACCEPTED)
-async def import_grn_listing(
+def import_grn_listing(
     file: UploadFile = File(..., description="Excel file: GRN listing (doc number, transfer from, date)"),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.grn.import")),
@@ -101,7 +104,7 @@ async def import_grn_listing(
     """Queue GRN listing import. Use validate_only=true to test without importing."""
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx, .xls or .xlsm) required")
-    file_data = await file.read()
+    file_data = file.file.read()
     # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
     source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
     from app.services.excel_macro_stripper import maybe_strip
@@ -151,7 +154,7 @@ async def import_grn_listing(
 
 
 @router.post("/import-lines", status_code=status.HTTP_202_ACCEPTED)
-async def import_grn_lines(
+def import_grn_lines(
     file: UploadFile = File(..., description="Excel file: GRN lines (doc no, item code, location, quantity)"),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.grn.import")),
@@ -160,7 +163,7 @@ async def import_grn_lines(
     """Queue GRN lines import. Use validate_only=true to test without importing."""
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx, .xls or .xlsm) required")
-    file_data = await file.read()
+    file_data = file.file.read()
     # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
     source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
     from app.services.excel_macro_stripper import maybe_strip
@@ -238,7 +241,7 @@ def get_grn_summary(
 
 
 @router.get("/{grn_id}", response_model=PickingHeaderResponse)
-async def get_grn(
+def get_grn(
     grn_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -255,7 +258,7 @@ async def get_grn(
 
 
 @router.post("/", response_model=PickingHeaderResponse, status_code=status.HTTP_201_CREATED)
-async def create_grn(
+def create_grn(
     grn_data: PickingHeaderCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -272,7 +275,7 @@ async def create_grn(
 
 
 @router.put("/{grn_id}", response_model=PickingHeaderResponse)
-async def update_grn(
+def update_grn(
     grn_id: str,
     grn_data: PickingHeaderUpdate,
     current_user: dict = Depends(get_current_user),
@@ -290,7 +293,7 @@ async def update_grn(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_grns(
+def bulk_delete_grns(
     body: BulkDeleteGRNsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -306,7 +309,7 @@ async def bulk_delete_grns(
 
 
 @router.delete("/{grn_id}", status_code=status.HTTP_200_OK)
-async def delete_grn(
+def delete_grn(
     grn_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

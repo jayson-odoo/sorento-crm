@@ -59,7 +59,7 @@ def _envelope(data: List[dict], total: Optional[int] = None, page: int = 1, limi
 @router.get(
     "/projects/{project_id}/tasks", response_model=ListResponse[ProjectTaskResponse]
 )
-async def list_project_tasks(
+def list_project_tasks(
     project_id: str,
     task_phase: Optional[str] = Query(
         None, description="pursuit | delivery. Omit for both."
@@ -88,7 +88,7 @@ async def list_project_tasks(
     response_model=ProjectTaskResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_project_task(
+def create_project_task(
     project_id: str,
     payload: ProjectTaskCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -122,7 +122,7 @@ async def create_project_task(
 @router.put(
     "/projects/{project_id}/tasks/{task_id}", response_model=ProjectTaskResponse
 )
-async def update_project_task(
+def update_project_task(
     project_id: str,
     task_id: str,
     payload: ProjectTaskUpdate,
@@ -161,7 +161,7 @@ async def update_project_task(
     "/projects/{project_id}/tasks/{task_id}/status",
     response_model=ProjectTaskResponse,
 )
-async def change_project_task_status(
+def change_project_task_status(
     project_id: str,
     task_id: str,
     payload: ProjectTaskStatusChangeRequest,
@@ -203,7 +203,7 @@ async def change_project_task_status(
 
 
 @router.delete("/projects/{project_id}/tasks/{task_id}")
-async def delete_project_task(
+def delete_project_task(
     project_id: str,
     task_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -233,7 +233,7 @@ async def delete_project_task(
     "/projects/{project_id}/tasks/{task_id}/history",
     response_model=ListResponse[ProjectTaskHistoryEntry],
 )
-async def project_task_history(
+def project_task_history(
     project_id: str,
     task_id: str,
     _user: dict = Depends(require_any_permission(READ)),
@@ -254,7 +254,7 @@ async def project_task_history(
 
 
 @router.get("/my-tasks", response_model=ListResponse[ProjectTaskResponse])
-async def list_my_tasks(
+def list_my_tasks(
     include_unassigned_owned: bool = Query(
         False,
         description=(
@@ -304,7 +304,7 @@ async def list_my_tasks(
     "/config/templates/{template_id}/tasks",
     response_model=ListResponse[ProjectTemplateTaskResponse],
 )
-async def list_template_tasks(
+def list_template_tasks(
     template_id: str,
     include_inactive: bool = Query(True),
     _user: dict = Depends(require_permission(CONFIG_VIEW)),
@@ -326,7 +326,7 @@ async def list_template_tasks(
     response_model=ProjectTemplateTaskResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_template_task(
+def create_template_task(
     template_id: str,
     payload: ProjectTemplateTaskCreate,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -353,7 +353,7 @@ async def create_template_task(
     "/config/templates/{template_id}/tasks/{template_task_id}",
     response_model=ProjectTemplateTaskResponse,
 )
-async def update_template_task(
+def update_template_task(
     template_id: str,
     template_task_id: str,
     payload: ProjectTemplateTaskUpdate,
@@ -378,7 +378,7 @@ async def update_template_task(
 
 
 @router.delete("/config/templates/{template_id}/tasks/{template_task_id}")
-async def delete_template_task(
+def delete_template_task(
     template_id: str,
     template_task_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),

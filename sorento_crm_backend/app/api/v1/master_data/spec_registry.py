@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_text, multi_values
 from app.database import get_db
 from app.dependencies import (
     require_any_permission_with_api_key,
@@ -159,7 +160,7 @@ def _serialise(row, owners: Optional[dict] = None) -> dict:
 
 @router.get("")
 @router.get("/")
-async def get_spec_registry(
+def get_spec_registry(
     request: Request,
     response: Response,
     current_user: dict = Depends(
@@ -345,7 +346,7 @@ class PolicyUpdate(BaseModel):
 
 
 @router.get("/policy")
-async def get_search_policy(
+def get_search_policy(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
     db: Session = Depends(get_db),
 ):
@@ -370,7 +371,7 @@ async def get_search_policy(
 
 
 @router.patch("/policy/{policy_key}")
-async def update_search_policy(
+def update_search_policy(
     policy_key: str,
     payload: PolicyUpdate,
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
@@ -408,7 +409,7 @@ def _validate_rules(
 
 
 @router.get("/coverage")
-async def get_spec_coverage(
+def get_spec_coverage(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
     db: Session = Depends(get_db),
 ):
@@ -452,7 +453,7 @@ async def get_spec_coverage(
 
 
 @router.get("/applicable-keys")
-async def applicable_keys(
+def applicable_keys(
     code: str,
     # `products.view`, for the same reason `GET /spec-registry` runs on it 300 lines
     # above: this is asked BY THE PRODUCT PAGE, on behalf of somebody editing a
@@ -482,7 +483,7 @@ async def applicable_keys(
 
 
 @router.get("/similar")
-async def similar_spec_key(
+def similar_spec_key(
     label: str,
     current_user: dict = Depends(
         require_any_permission_with_api_key(
@@ -504,7 +505,7 @@ async def similar_spec_key(
 
 
 @router.get("/keys-for-product")
-async def keys_for_product(
+def keys_for_product(
     code: str,
     # Relaxed from `master_data.spec_registry.view` alone, which is granted to zero
     # roles (M1), to EITHER grant. Same precedent and reasoning as `GET /spec-registry`
@@ -558,7 +559,7 @@ async def keys_for_product(
 
 
 @router.get("/catalogue-status")
-async def get_catalogue_status(
+def get_catalogue_status(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
     db: Session = Depends(get_db),
 ):
@@ -567,7 +568,7 @@ async def get_catalogue_status(
 
 
 @router.post("/reread-catalogue")
-async def reread_catalogue(
+def reread_catalogue(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
     db: Session = Depends(get_db),
 ):
@@ -581,14 +582,14 @@ async def reread_catalogue(
 
 
 @router.get("/{spec_key}/products")
-async def products_carrying_spec(
+def products_carrying_spec(
     spec_key: str,
-    value: Optional[str] = None,
+    value: Optional[list[str]] = Query(None),
     q: Optional[str] = None,
-    class_label: Optional[str] = Query(
-        None, description="Narrows to one product class (`class`), e.g. \"Kitchen Sink\"."
+    class_label: Optional[list[str]] = Query(
+        None, description="Narrows to these product classes (`class`), e.g. \"Kitchen Sink\"; several = any of them."
     ),
-    source_filter: Optional[str] = Query(
+    source_filter: Optional[list[str]] = Query(
         None,
         alias="source",
         description="Narrows to one provenance source, e.g. \"derived\" or \"human\".",
@@ -641,8 +642,7 @@ async def products_carrying_spec(
         .filter(ProductSpecifications.values.has_key(spec_key))  # noqa: W601
         .filter(Product.is_active.is_(True))
     )
-    if value is not None:
-        base = base.filter(stored_value == value)
+    values = multi_text(value)
     if q and q.strip():
         # Searched in the database rather than in the page, because the list is
         # paginated: filtering the hundred rows on screen would report "no matches" for
@@ -656,6 +656,11 @@ async def products_carrying_spec(
                 ProductSpecifications.provenance[spec_key]["evidence"].astext.ilike(needle),
             )
         )
+    # The Value options follow the search box but are counted BEFORE the value filter, so picking one
+    # leaves the others on offer.
+    base_all_values = base
+    if values:
+        base = base.filter(stored_value.in_(values))
 
     # Counted over `base` before `class_label`/`source` narrow it further, so the
     # dropdown options describe everything there is to pick, not just what is already
@@ -664,7 +669,7 @@ async def products_carrying_spec(
     tallies = {
         "by_value": [
             {"value": v, "count": n}
-            for v, n in base.with_entities(stored_value, func.count()).group_by(stored_value)
+            for v, n in base_all_values.with_entities(stored_value, func.count()).group_by(stored_value)
             .order_by(func.count().desc()).limit(30).all()
         ],
         "by_class": [
@@ -679,10 +684,11 @@ async def products_carrying_spec(
         ],
     }
 
-    if class_label is not None:
-        base = base.filter(stored_class == class_label)
-    if source_filter is not None:
-        base = base.filter(stored_source == source_filter)
+    class_labels, sources = multi_text(class_label), multi_values(source_filter)
+    if class_labels:
+        base = base.filter(stored_class.in_(class_labels))
+    if sources:
+        base = base.filter(stored_source.in_(sources))
 
     total = base.count()
     rows = (
@@ -840,7 +846,7 @@ def try_spec_key(
 
 
 @router.post("/{spec_key}/preview")
-async def preview_spec_key(
+def preview_spec_key(
     spec_key: str,
     payload: SpecPreviewRequest = Body(...),
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
@@ -872,7 +878,7 @@ async def preview_spec_key(
 
 
 @router.get("/{spec_key}/preview/{job_id}")
-async def get_spec_key_preview(
+def get_spec_key_preview(
     spec_key: str,
     job_id: str,
     # `edit`, matching the POST that started the job (UAC AC-B.2) - a preview is
@@ -891,7 +897,7 @@ async def get_spec_key_preview(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_spec_key(
+def create_spec_key(
     payload: SpecKeyCreate,
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.add")),
     db: Session = Depends(get_db),
@@ -1399,7 +1405,7 @@ def add_spec_value(
 
 
 @router.delete("/{spec_key}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_spec_key(
+def delete_spec_key(
     spec_key: str,
     current_user: dict = Depends(
         require_permission_with_api_key("master_data.spec_registry.delete")

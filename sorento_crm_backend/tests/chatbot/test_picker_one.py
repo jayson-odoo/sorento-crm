@@ -390,6 +390,9 @@ class TestAskPointStampsATypedNamesRoster:
     def test_an_outstanding_typed_names_roster_is_neither_probed_nor_stamped(
         self, session_factory, monkeypatch
     ) -> None:
-        reply, probes = _typed_names_turn(session_factory, monkeypatch, order_status="outstanding")
+        reply, probes = _typed_names_turn(
+            session_factory, monkeypatch, order_status="outstanding",
+            attributes=["sales_orders.outstanding", "sales_orders.sales_report"],
+        )
         assert reply == "Which one do you mean?\n1. hanlim trading\n2. hanlim hardware"
         assert probes == []

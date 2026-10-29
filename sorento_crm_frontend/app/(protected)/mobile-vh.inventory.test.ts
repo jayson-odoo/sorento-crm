@@ -73,7 +73,7 @@ const FRACTIONAL_VH_FOLLOWUP = 'fractional vh, follow-up #567';
 /** The widened-pattern sweep (this round): every file it newly caught, none
  *  of which had an entry here before. One shared reason - see the header. */
 const FRACTIONAL_VH_FILES = [
-  'app/(auth)/portal/components/AIExtractDialog.tsx',
+  'components/common/ai-extract/AIExtractDialog.tsx',
   'app/(auth)/portal/components/AttachmentDropzone.tsx',
   'app/(auth)/portal/components/PortalLanding.tsx',
   'app/(auth)/portal/ticket-draft/[token]/page.tsx',

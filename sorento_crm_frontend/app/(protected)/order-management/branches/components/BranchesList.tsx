@@ -20,6 +20,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { formatDateTimeSafe } from '@/lib/helpers';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
@@ -208,9 +210,9 @@ export default function BranchesList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Book</Label>
-                    <SearchableSelect
-                      value={book}
-                      onChange={setBook}
+                    <SearchableMultiSelect
+                      value={splitMulti(book)}
+                      onChange={(v) => setBook(joinMulti(v))}
                       options={(books ?? []).map((b) => ({ value: b, label: b }))}
                       placeholder="All books"
                       clearable

@@ -3,18 +3,13 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-# Two lines on purpose: tests/test_uuid_path_sweep.py asserts the
-# `validate_uuid_path` import verbatim, so folding UUID_PATTERN into it would
-# make this router read as unguarded to that sweep.
-from app.services.uuid_path_param import UUID_PATTERN
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
-    get_current_user,
     get_current_user_or_api_key,
     require_permission,
     require_permission_with_api_key,
 )
-from app.services import brochure_image_service
+from app.services import brochure_image_service, product_link_audit
 from app.services.product_service import ProductAttachmentService
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.product import (
@@ -29,8 +24,13 @@ from app.schemas.product import (
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.utils.multi_value import multi_uuids
 
 router = APIRouter()
+
+# Linking, re-linking and unlinking a product's file all need the edit slug: the link decides
+# what a dealer is shown (access_levels, is_primary). The n8n intake has its own routes and auth.
+_EDIT = "master_data.product_attachments.edit"
 
 
 # --- Brochure images (S7.0) -------------------------------------------------
@@ -48,15 +48,13 @@ router = APIRouter()
 
 
 @router.get("/brochure-images", response_model=BrochureImageList)
-async def list_brochure_images(
-    promotion_id: Optional[str] = Query(
+def list_brochure_images(
+    promotion_id: Optional[list[str]] = Query(
         None,
-        # Validated here rather than in the service: compared against a UUID
-        # column raw, a malformed value reached psycopg as a DataError - an
-        # unhandled 500 that also left the session in a failed transaction.
-        # Every other id on this router is validated too.
-        pattern=UUID_PATTERN,
-        description="Narrow to the products in one promotion, so a whole flyer is one sitting.",
+        # Validated in the route (`multi_uuids`) rather than in the service: compared against
+        # a UUID column raw, a malformed value reached psycopg as a DataError - an unhandled
+        # 500 that also left the session in a failed transaction.
+        description="Narrow to the products in these promotions (several = any of them), so a whole flyer is one sitting.",
     ),
     only_unset: bool = Query(True, description="Hide products whose image is already chosen."),
     query: Optional[str] = Query(None, description="Matches product code or name."),
@@ -70,7 +68,7 @@ async def list_brochure_images(
     """Products and the images somebody could choose between."""
     result = brochure_image_service.list_brochure_images(
         db,
-        promotion_id=promotion_id,
+        promotion_id=multi_uuids(promotion_id, "Promotion"),
         only_unset=only_unset,
         query=query,
         page=page,
@@ -83,7 +81,7 @@ async def list_brochure_images(
 
 
 @router.post("/brochure-images/adopt-single", response_model=BrochureImageAdopted)
-async def adopt_single_candidate_images(
+def adopt_single_candidate_images(
     payload: BrochureImageAdoptSingle,
     current_user: dict = Depends(require_permission("master_data.product_attachments.edit")),
     db: Session = Depends(get_db),
@@ -107,7 +105,7 @@ async def adopt_single_candidate_images(
 
 
 @router.put("/brochure-images/{product_id}", response_model=BrochureImageChoice)
-async def set_brochure_image(
+def set_brochure_image(
     product_id: str,
     payload: BrochureImageSet,
     current_user: dict = Depends(require_permission("master_data.product_attachments.edit")),
@@ -131,7 +129,7 @@ async def set_brochure_image(
 
 
 @router.delete("/brochure-images/{product_id}", response_model=BrochureImageChoice)
-async def clear_brochure_image(
+def clear_brochure_image(
     product_id: str,
     current_user: dict = Depends(require_permission("master_data.product_attachments.edit")),
     db: Session = Depends(get_db),
@@ -148,7 +146,7 @@ async def clear_brochure_image(
 
 
 @router.get("/", response_model=ListResponse[ProductAttachmentResponse])
-async def get_product_attachments(
+def get_product_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),
@@ -221,7 +219,7 @@ async def get_product_attachments(
 
 
 @router.get("/{product_attachment_id}", response_model=ProductAttachmentResponse)
-async def get_product_attachment(
+def get_product_attachment(
     product_attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -239,16 +237,27 @@ async def get_product_attachment(
 
 
 @router.post("/", response_model=ProductAttachmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_product_attachment(
+def create_product_attachment(
     product_attachment_data: ProductAttachmentCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission(_EDIT)),
     db: Session = Depends(get_db)
 ):
     """Create a new product attachment relationship."""
     try:
         service = ProductAttachmentService(db)
         created_by = str(current_user.get("id", "")) if current_user else None
+        product_id = str(product_attachment_data.product_id)
+        attachment_id = str(product_attachment_data.attachment_id)
+        was_linked = product_link_audit.link_exists(db, product_id, attachment_id)
         product_attachment = service.create_product_attachment(product_attachment_data, created_by=created_by)
+        if not was_linked and product_attachment is not None:
+            product_link_audit.log_product_file_link(
+                db, product_link_audit.LINK,
+                product_id=product_id, attachment_id=attachment_id,
+                entity_type="product_attachments", entity_id=str(product_attachment.id),
+                user_id=created_by,
+            )
+            db.commit()
         # Fan the attachment's field-linkage template (set at upload time) into
         # per-row attachment_field_links rows. Best-effort; never fail the link.
         try:
@@ -284,10 +293,10 @@ async def create_product_attachment(
 
 
 @router.put("/{product_attachment_id}", response_model=ProductAttachmentResponse)
-async def update_product_attachment(
+def update_product_attachment(
     product_attachment_id: str,
     product_attachment_data: ProductAttachmentUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission(_EDIT)),
     db: Session = Depends(get_db)
 ):
     """Update a product attachment relationship."""
@@ -303,15 +312,23 @@ async def update_product_attachment(
 
 
 @router.delete("/{product_attachment_id}", status_code=status.HTTP_200_OK)
-async def delete_product_attachment(
+def delete_product_attachment(
     product_attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission(_EDIT)),
     db: Session = Depends(get_db)
 ):
     """Delete a product attachment relationship."""
     try:
         validate_uuid_path(product_attachment_id, resource="Product Attachment")
         service = ProductAttachmentService(db)
+        link = service.get_product_attachment(product_attachment_id)
+        # Flushed before the delete and committed by it, so a refused delete leaves no row.
+        product_link_audit.log_product_file_link(
+            db, product_link_audit.UNLINK,
+            product_id=str(link.product_id), attachment_id=str(link.attachment_id),
+            entity_type="product_attachments", entity_id=str(link.id),
+            user_id=str(current_user.get("id") or "") or None,
+        )
         service.delete_product_attachment(product_attachment_id)
         return {"message": "Product attachment deleted successfully"}
     except HTTPException:
@@ -321,7 +338,7 @@ async def delete_product_attachment(
 
 
 @router.get("/product/{product_id}")
-async def get_product_attachments_by_product(
+def get_product_attachments_by_product(
     product_id: str,
     user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
     current_user: dict = Depends(get_current_user_or_api_key),

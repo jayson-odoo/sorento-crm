@@ -19,7 +19,6 @@ from app.models.projects import (
     APPROVAL_RESUBMITTED,
     OUTCOME_OPEN,
     Project,
-    ProjectBrand,
     ProjectCollaborator,
     ProjectParty,
     ProjectPurchaseOrder,
@@ -41,6 +40,7 @@ from app.services.project_clash_service import (
     find_clashes,
     normalise_project_title,
 )
+from app.services.submission_status import APPEALED_LABEL
 
 NUMBERING_DOC_TYPE = "project"
 
@@ -52,12 +52,12 @@ APPROVE_REGISTRATIONS_PERMISSION = "projects.registrations.approve"
 
 
 REJECTED_LABEL = "Rejected"
-RESUBMITTED_LABEL = "Resubmitted"
+RESUBMITTED_LABEL = APPEALED_LABEL
 
 
 def project_label(project) -> str:
     """The project's code; while it has none, "Rejected" for a refused registration,
-    "Resubmitted" for one sent back after a rejection, and "Awaiting approval" for any other."""
+    "Appealed" for one sent back after a rejection, and "Awaiting approval" for any other."""
     code = (getattr(project, "project_code", None) or "").strip()
     if code:
         return code
@@ -105,11 +105,9 @@ _NOT_APPROVED_MESSAGES = {
 def check_company_refs(
     db: Session, company_id: str, payload: Dict[str, Any], *, code: str = "project_ref_invalid"
 ) -> None:
-    """Every party, type, template and brand id a caller sends must belong to the project's
+    """Every party, type and template id a caller sends must belong to the project's
     company (security S10 / N1): the pickers are company scoped, the API must not trust that."""
     from uuid import UUID
-
-    from app.models.product import Brand
 
     def is_uuid(value: Any) -> bool:
         try:
@@ -132,20 +130,24 @@ def check_company_refs(
             .first()
         ):
             raise refuse
+    customer_id = payload.get("customer_id")
+    if customer_id:
+        from app.models.order import Customer
+
+        if not (
+            is_uuid(customer_id)
+            and db.query(Customer.id)
+            .filter(Customer.id == str(customer_id), Customer.company_id == company_id)
+            .first()
+        ):
+            raise AppException(
+                status_code=422, message="Pick the customer from this company.", code=code
+            )
     for key, model in (("type_id", ProjectType), ("template_id", ProjectTemplate)):
         value = payload.get(key)
         if value and not (
             is_uuid(value)
             and db.query(model.id).filter(model.id == str(value), model.company_id == company_id).first()
-        ):
-            raise refuse
-    brand_ids = {str(b) for b in (payload.get("brand_ids") or [])}
-    if brand_ids:
-        if not all(is_uuid(b) for b in brand_ids) or (
-            db.query(func.count(Brand.id))
-            .filter(Brand.id.in_(brand_ids), Brand.company_id == company_id)
-            .scalar()
-            != len(brand_ids)
         ):
             raise refuse
 
@@ -176,6 +178,7 @@ def _changed_refs(db: Session, project: Project, payload: Dict[str, Any]) -> Dic
         "template_id": project.template_id,
     }
     profile = db.query(ProjectSalesProfile).filter(ProjectSalesProfile.project_id == project.id).first()
+    stored["customer_id"] = getattr(profile, "customer_id", None)
     stored["architect_party_id"] = getattr(profile, "architect_party_id", None)
     stored["main_contractor_party_id"] = getattr(profile, "main_contractor_party_id", None)
     out: Dict[str, Any] = {
@@ -183,14 +186,6 @@ def _changed_refs(db: Session, project: Project, payload: Dict[str, Any]) -> Dic
         for key in stored
         if key in payload and str(payload[key] or "") != str(stored[key] or "")
     }
-    if payload.get("brand_ids"):
-        current = {
-            str(row[0])
-            for row in db.query(ProjectBrand.brand_id).filter(ProjectBrand.project_id == project.id).all()
-        }
-        added = [b for b in payload["brand_ids"] if str(b) not in current]
-        if added:
-            out["brand_ids"] = added
     return out
 
 
@@ -258,7 +253,6 @@ def register_project(
     type_id: Optional[str] = None,
     template_id: Optional[str] = None,
     details: Optional[dict] = None,
-    brand_ids: Optional[List[str]] = None,
     owner_user_id: Optional[str] = None,
     surface_threshold: Optional[float] = None,
     block_threshold: Optional[float] = None,
@@ -319,9 +313,7 @@ def register_project(
         owner_user_id=owner_user_id or actor_user_id,
         created_by=actor_user_id,
     )
-    start_project(
-        db, project, actor_user_id=actor_user_id, details=details, brand_ids=brand_ids
-    )
+    start_project(db, project, actor_user_id=actor_user_id, details=details)
     return project
 
 
@@ -350,7 +342,6 @@ def start_project(
     *,
     actor_user_id: str,
     details: Optional[dict] = None,
-    brand_ids: Optional[List[str]] = None,
 ) -> Project:
     """Give ``project`` its code, its first funnel rung, its details and its template
     checklist. A staff registration runs it on a new row; Approve runs it on the portal
@@ -373,8 +364,8 @@ def start_project(
     except AppException:
         project.status_id = None
 
-    if details or brand_ids is not None:
-        apply_sales_details(db, project, details or {}, brand_ids=brand_ids)
+    if details:
+        apply_sales_details(db, project, details)
 
     # The template's checklist lands with the project (AC-N1), so a new registration
     # already knows its next action instead of being an empty shell someone has to
@@ -394,6 +385,7 @@ def start_project(
 
 
 MANAGE_PERMISSION = "projects.projects.manage"
+EDIT_PERMISSION = "projects.projects.edit"
 CUSTOMERS_VIEW_PERMISSION = "order_management.customers.view"
 
 TAKEOVER_JOIN = "join"
@@ -612,6 +604,24 @@ def decide_takeover_request(
             project.owner_user_id = request.requester_user_id
             if previous_owner and previous_owner != request.requester_user_id:
                 _add_collaborator(db, project.id, previous_owner, decider_user_id)
+            names = resolve_user_names(db, [previous_owner, request.requester_user_id])
+            from_name = names.get(str(previous_owner)) or "nobody"
+            to_name = names.get(str(request.requester_user_id)) or "a colleague"
+            from app.services import project_activity_service as activity
+
+            activity.record_project_event(
+                db,
+                project=project,
+                template="owner_reassigned",
+                payload={
+                    "from_user_id": str(previous_owner) if previous_owner else None,
+                    "to_user_id": str(request.requester_user_id),
+                    "from_name": from_name,
+                    "to_name": to_name,
+                },
+                actor_id=decider_user_id,
+                body_text=f"Reassigned from {from_name} to {to_name}",
+            )
 
     db.flush()
     return request
@@ -640,26 +650,6 @@ def _party_name_map(db: Session, party_ids) -> Dict[str, str]:
         p.id: p.name
         for p in db.query(ProjectParty).filter(ProjectParty.id.in_(ids)).all()
     }
-
-
-def _brands_for(db: Session, project_ids) -> Dict[str, List[tuple]]:
-    """``{project_id: [(brand_id, brand_name), ...]}`` in one query, not N."""
-    ids = [pid for pid in set(project_ids) if pid]
-    if not ids:
-        return {}
-    from app.models.product import Brand
-
-    rows = (
-        db.query(ProjectBrand.project_id, Brand.id, Brand.brand_name)
-        .join(Brand, Brand.id == ProjectBrand.brand_id)
-        .filter(ProjectBrand.project_id.in_(ids))
-        .order_by(Brand.brand_name)
-        .all()
-    )
-    out: Dict[str, List[tuple]] = {}
-    for project_id, brand_id, brand_name in rows:
-        out.setdefault(project_id, []).append((brand_id, brand_name))
-    return out
 
 
 def _days_since(moment: Optional[datetime]) -> Optional[int]:
@@ -694,7 +684,6 @@ def serialize_projects(
     party_names = _party_name_map(
         db, [p.developer_party_id for p in projects]
     )
-    brands = _brands_for(db, [p.id for p in projects])
 
     profiles = {
         row.project_id: row
@@ -752,11 +741,17 @@ def serialize_projects(
             for row in db.query(ProjectLead).filter(ProjectLead.id.in_(lead_ids)).all()
         }
 
-    # The customer is the lead's buyer (owner, 13 Oct): the Overview shows it and the
-    # quotation header defaults its name, phone and Attn from it. Bulk like the rest.
-    customers = _customers_for(
-        db, [lead.customer_id for lead in leads.values() if lead.customer_id]
-    )
+    # The customer is the one picked on the register form (sales_profile.customer_id);
+    # where none was, the linked lead's buyer. The Overview shows it and the quotation
+    # header defaults its name, phone and Attn from it (owner, 13 Oct). Bulk like the rest.
+    def _effective_customer_id(project_row):
+        pr = profiles.get(project_row.id)
+        if pr and pr.customer_id:
+            return pr.customer_id
+        lead = leads.get(project_row.lead_id) if project_row.lead_id else None
+        return getattr(lead, "customer_id", None)
+
+    customers = _customers_for(db, [_effective_customer_id(p) for p in projects])
     # The phone and the main contact are the customer master's, which sits behind its own
     # grant; a project reader without it sees the buyer's name only (security review, 13 Oct).
     can_see_customer_contact = CUSTOMERS_VIEW_PERMISSION in permissions
@@ -799,7 +794,6 @@ def serialize_projects(
     for project in projects:
         status = statuses.get(project.status_id) if project.status_id else None
         profile = profiles.get(project.id)
-        project_brands = brands.get(project.id, [])
         out.append(
             {
                 "id": project.id,
@@ -836,9 +830,7 @@ def serialize_projects(
                     else None
                 ),
                 **_customer_fields(
-                    customers.get(leads[project.lead_id].customer_id)
-                    if project.lead_id in leads
-                    else None,
+                    customers.get(_effective_customer_id(project)),
                     with_contact=can_see_customer_contact,
                 ),
                 "status_id": project.status_id,
@@ -881,8 +873,6 @@ def serialize_projects(
                 "expected_delivery_to": (
                     profile.expected_delivery_to if profile else None
                 ),
-                "brands": [name for _bid, name in project_brands],
-                "brand_ids": [bid for bid, _name in project_brands],
                 "last_meaningful_activity_at": project.last_meaningful_activity_at,
                 "days_since_last_activity": _days_since(
                     project.last_meaningful_activity_at
@@ -933,6 +923,14 @@ def serialize_projects(
                 "updated_at": project.updated_at,
             }
         )
+    if "projects.registrations.submit" in permissions and "projects.projects.edit" not in permissions:
+        # A submit-only user edits only their own draft or rejected registration (J3b).
+        for row, project in zip(out, projects):
+            row["can_edit"] = bool(
+                actor_user_id
+                and project.owner_user_id == actor_user_id
+                and project.approval_state in (APPROVAL_DRAFT, APPROVAL_REJECTED)
+            )
     return out
 
 
@@ -966,16 +964,27 @@ def serialize_project(
     )[0]
 
 
-def get_project_or_404(db: Session, project_id: str) -> Project:
+def _draft_visible_to(viewer_user_id: Optional[str]):
+    """Not a draft, or a draft its owner is looking at (PROJECT-REGISTER-V2 J3)."""
+    not_draft = or_(Project.approval_state.is_(None), Project.approval_state != APPROVAL_DRAFT)
+    if not viewer_user_id:
+        return not_draft
+    return or_(
+        not_draft,
+        (Project.approval_state == APPROVAL_DRAFT) & (Project.owner_user_id == str(viewer_user_id)),
+    )
+
+
+def get_project_or_404(
+    db: Session, project_id: str, viewer_user_id: Optional[str] = None
+) -> Project:
     """The project for a STAFF route. A contact's unsent portal draft is nobody else's
     business (security N2), so every staff route reads it as not found; the portal reaches
-    its own drafts through `project_registration_service._own`, never through here."""
+    its own drafts through `project_registration_service._own`, never through here. A
+    salesperson's own draft (owner = ``viewer_user_id``) is the one draft a staff route shows."""
     project = (
         db.query(Project)
-        .filter(
-            Project.id == project_id,
-            or_(Project.approval_state.is_(None), Project.approval_state != APPROVAL_DRAFT),
-        )
+        .filter(Project.id == project_id, _draft_visible_to(viewer_user_id))
         .first()
     )
     if project is None:
@@ -1047,11 +1056,11 @@ def list_projects(
     developer_party_ids: Optional[List[str]] = None,
     project_ids: Optional[List[str]] = None,
     type_ids: Optional[List[str]] = None,
-    brand_ids: Optional[List[str]] = None,
     only_critical: bool = False,
     approval_states: Optional[List[str]] = None,
     approved_only: bool = False,
     visible_to=None,
+    viewer_user_id: Optional[str] = None,
     page: int = 1,
     limit: int = 50,
     sort: str = "created_at",
@@ -1067,12 +1076,11 @@ def list_projects(
     listing never exposes.
 
     Pending and rejected portal registrations are listed (R6), a contact's unsent
-    draft never is, whatever the filter. ``approved_only`` is the pickers' filter:
+    draft never is, whatever the filter (a salesperson's own draft is listed to its owner). ``approved_only`` is the pickers' filter:
     staff and approved projects only.
     """
     query = db.query(Project).filter(
-        Project.company_id == company_id,
-        or_(Project.approval_state.is_(None), Project.approval_state != APPROVAL_DRAFT),
+        Project.company_id == company_id, _draft_visible_to(viewer_user_id)
     )
     if visible_to is not None:
         from app.services import own_scope
@@ -1103,14 +1111,6 @@ def list_projects(
         query = query.filter(Project.id.in_(project_ids))
     if type_ids:
         query = query.filter(Project.type_id.in_(type_ids))
-    if brand_ids:
-        query = query.filter(
-            Project.id.in_(
-                db.query(ProjectBrand.project_id).filter(
-                    ProjectBrand.brand_id.in_(brand_ids)
-                )
-            )
-        )
     if only_critical:
         query = query.filter(Project.is_critical.is_(True))
 
@@ -1154,6 +1154,7 @@ def _profile_for(db: Session, project_id: str) -> ProjectSalesProfile:
 
 
 _PROFILE_FIELDS = (
+    "customer_id",
     "registered_company_name",
     "location",
     "address",
@@ -1177,21 +1178,10 @@ _PROJECT_FIELDS = (
 )
 
 
-def _set_brands(db: Session, project_id: str, brand_ids: List[str]) -> None:
-    db.query(ProjectBrand).filter(ProjectBrand.project_id == project_id).delete(
-        synchronize_session=False
-    )
-    for brand_id in dict.fromkeys(brand_ids or []):
-        db.add(ProjectBrand(project_id=project_id, brand_id=brand_id))
-    db.flush()
-
-
 def apply_sales_details(
     db: Session,
     project: Project,
     payload: Dict[str, Any],
-    *,
-    brand_ids: Optional[List[str]] = None,
 ) -> None:
     """Write the Sorento-specific half plus the shared optional fields.
 
@@ -1210,8 +1200,6 @@ def apply_sales_details(
         if key in payload:
             setattr(project, key, payload[key])
 
-    if brand_ids is not None:
-        _set_brands(db, project.id, brand_ids)
     db.flush()
 
 
@@ -1284,9 +1272,30 @@ def update_project(
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
 
-    apply_sales_details(
-        db, project, payload, brand_ids=payload.get("brand_ids")
-    )
+    own_leads_only = "projects.registrations.submit" in permissions and EDIT_PERMISSION not in permissions
+    target_lead = payload["lead_id"] if "lead_id" in payload else project.lead_id
+    if target_lead:
+        # The lead governs the customer (LEAD-GOVERNS-REGISTER E4, E9). The right to link it is
+        # decided first, so a refused lead answers the same whatever customer came with it.
+        from app.services import project_lead_service as leads
+
+        changing = target_lead != project.lead_id
+        lead = leads.lead_for_registration(
+            db,
+            target_lead,
+            actor_user_id=actor_user_id,
+            own_leads_only=own_leads_only and changing,
+            permissions=permissions if changing else None,
+        )
+        if lead.customer_id:
+            # A null customer counts as absent: the lead's customer is never cleared (LGR-E9).
+            if "customer_id" in payload and not payload["customer_id"] and not changing:
+                payload = {k: v for k, v in payload.items() if k != "customer_id"}
+            elif changing or payload.get("customer_id"):
+                picked = leads.customer_from_lead(lead, payload.get("customer_id"))
+                if changing:
+                    payload = {**payload, "customer_id": picked}
+    apply_sales_details(db, project, payload)
 
     # Present-and-null is an unlink; absent leaves the link alone (#1339).
     if "lead_id" in payload:
@@ -1298,7 +1307,11 @@ def update_project(
             payload["lead_id"],
             actor_user_id=actor_user_id,
             permissions=permissions,
+            own_leads_only=own_leads_only,
         )
+    from app.services.project_lead_service import fill_lead_customer
+
+    fill_lead_customer(db, project, actor_user_id=actor_user_id, permissions=permissions)
     return project
 
 
@@ -1325,6 +1338,7 @@ def _customers_for(db: Session, customer_ids: List[str]) -> Dict[str, Dict[str, 
         out[row.id] = {
             "customer_id": row.id,
             "customer_name": row.customer_name,
+            "customer_code": row.customer_code,
             # The office line first, then the mobile, then the main contact's own number.
             "customer_phone": row.phone_number
             or row.mobile_number
@@ -1344,6 +1358,7 @@ def _customer_fields(
     return {
         "customer_id": None,
         "customer_name": None,
+        "customer_code": None,
         "customer_phone": None,
         "customer_attn": None,
     }
@@ -1508,7 +1523,6 @@ def serialize_clash_candidates(db: Session, candidates) -> List[Dict[str, Any]]:
                 "owner_name": row.get("owner_name"),
                 "developer_name": row.get("developer_name"),
                 "estimated_sales_value": row.get("estimated_sales_value"),
-                "brands": row.get("brands", []),
                 "last_activity_at": row.get("last_meaningful_activity_at"),
                 "similarity": candidate.similarity,
                 "blocks": candidate.blocks,

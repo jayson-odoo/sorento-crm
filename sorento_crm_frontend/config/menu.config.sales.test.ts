@@ -105,6 +105,7 @@ describe('filterMenuByModule - Sales group', () => {
       'Yearly comparison',
       'Sales by debtor type',
       'Top selling items',
+      'Sales & outstanding',
       'Set-apart customers',
     ]);
   });

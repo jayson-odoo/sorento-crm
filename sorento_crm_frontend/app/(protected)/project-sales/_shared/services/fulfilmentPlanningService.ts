@@ -495,6 +495,22 @@ export async function getPlanningBoard(
 
 
 /**
+ * The quotation line's stock over the locations the signed-in user's contact may see
+ * (QUOTE-STOCK-AGENT-LOC). Null: the user may see no stock, and the line shows nothing.
+ */
+export async function getQuotationLineStock(
+  productId: string,
+): Promise<StockDetail | null> {
+  const search = new URLSearchParams({ product_id: productId });
+  const response = await apiFetch(
+    `${BASE}/quotation-line-stock?${search.toString()}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the stock'));
+  return response.json();
+}
+
+/**
  * What a location row of the cell's stock table is made of (AutoCount's "Stock Status with
  * Detail"), expanded under that row - or what a whole ownership GROUP is made of, under its
  * subtotal row.

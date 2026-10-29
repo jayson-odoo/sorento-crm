@@ -1,5 +1,6 @@
 'use client';
 
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
@@ -25,7 +26,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import {
   isSearchInFlight,
   useDebouncedSearch,
@@ -46,10 +48,9 @@ import {
 const BASE_PATH = '/procurement-management/new-product-applications';
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: '__all__', label: 'All statuses' },
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
-  { value: 'resubmitted', label: 'Resubmitted' },
+  { value: 'resubmitted', label: APPEALED_LABEL },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'completed', label: 'Completed' },
@@ -83,16 +84,16 @@ export default function NewProductApplicationsList() {
     isSettling: searchSettling,
     reset: resetSearch,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState('__all__');
-  const [applicantFilter, setApplicantFilter] = useState('__all__');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [applicantFilter, setApplicantFilter] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
-    setStatusFilter(state.filters.status ?? '__all__');
-    setApplicantFilter(state.filters.applicant_id ?? '__all__');
+    setStatusFilter(state.filters.status ?? '');
+    setApplicantFilter(state.filters.applicant_id ?? '');
   });
 
   const { data: applicants = [] } = useQuery({
@@ -101,9 +102,8 @@ export default function NewProductApplicationsList() {
     staleTime: 5 * 60_000,
   });
 
-  const status = statusFilter !== '__all__' ? statusFilter : undefined;
-  const applicantId =
-    applicantFilter !== '__all__' ? applicantFilter : undefined;
+  const status = statusFilter || undefined;
+  const applicantId = applicantFilter || undefined;
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } =
     useNewProductApplicationsQuery({
       pageIndex: pagination.pageIndex,
@@ -290,8 +290,8 @@ export default function NewProductApplicationsList() {
   });
 
   const filtersActiveCount =
-    (statusFilter !== '__all__' ? 1 : 0) +
-    (applicantFilter !== '__all__' ? 1 : 0);
+    (statusFilter ? 1 : 0) +
+    (applicantFilter ? 1 : 0);
 
   return (
     <DataGrid
@@ -336,29 +336,35 @@ export default function NewProductApplicationsList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={setStatusFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
                       placeholder="Status"
                       triggerClassName="mt-1 w-full"
                       options={STATUS_OPTIONS}
+                      clearable
                     />
                   </div>
                   <div>
                     <Label>Applicant</Label>
-                    <SearchableSelect
-                      value={applicantFilter}
-                      onChange={setApplicantFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(applicantFilter)}
+                      onChange={(v) => setApplicantFilter(joinMulti(v))}
                       placeholder="Applicant"
                       triggerClassName="mt-1 w-full"
-                      options={[
-                        { value: '__all__', label: 'All applicants' },
-                        ...applicants.map((u) => ({
-                          value: u.id,
-                          label: u.name?.trim() || 'Unnamed user',
-                          searchText: u.name ?? '',
-                        })),
-                      ]}
+                      options={applicants.map((u) => ({
+                        value: u.id,
+                        label: u.name?.trim() || 'Unnamed user',
+                        searchText: u.name ?? '',
+                      }))}
+                      clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">{multiChipLabel('Applicant', idFilterLabels(chosen))}</span>
+                        ) : (
+                          <span className="text-muted-foreground">Applicant: any</span>
+                        )
+                      }
                     />
                   </div>
                   {filtersActiveCount > 0 && (
@@ -367,8 +373,8 @@ export default function NewProductApplicationsList() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setStatusFilter('__all__');
-                          setApplicantFilter('__all__');
+                          setStatusFilter('');
+                          setApplicantFilter('');
                         }}
                       >
                         Clear filters

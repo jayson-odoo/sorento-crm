@@ -24,7 +24,8 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { usePartyMutations, useProjectParties } from '../../_shared/hooks/useProjects';
 import type { ProjectParty } from '../../_shared/types/project.types';
 import { PartyFormDialog } from './PartyFormDialog';
@@ -308,9 +309,9 @@ export function PartiesClient() {
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <Label className="text-xs text-muted-foreground">Type</Label>
-                      <SearchableSelect
-                        value={typeFilter}
-                        onChange={setTypeFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(typeFilter)}
+                        onChange={(value) => setTypeFilter(joinMulti(value))}
                         clearable
                         options={PARTY_TYPE_OPTIONS.map((option) => ({
                           value: option.value,

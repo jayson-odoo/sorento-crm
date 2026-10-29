@@ -1416,14 +1416,20 @@ def list_targets(
     *,
     on: Optional[date] = None,
     subject: str = "team",
-    sales_team_id: Optional[str] = None,
+    sales_team_id: Optional[list[str] | str] = None,
     query: Optional[str] = None,
 ) -> dict:
     """The Targets page and the team page (16.3): one row per target period containing `on`,
-    plus a "No target" row per active agent or active team with none."""
+    plus a "No target" row per active agent or active team with none.
+
+    `sales_team_id` is one team or several (OR-ed); `none` (agents in no team) is a pseudo-value
+    that ORs with real teams."""
     on = on or _today()
     company_id = acting_company_id(db)
-    if sales_team_id == "none" and subject != "agent":
+    team_filter = [sales_team_id] if isinstance(sales_team_id, str) else list(sales_team_id or [])
+    no_team = "none" in team_filter
+    real_teams = [t for t in team_filter if t != "none"]
+    if no_team and subject != "agent":
         raise _unprocessable("No team filters agents only.", "INVALID_FILTER")
 
     covering = _covering_on(db, on)
@@ -1446,18 +1452,24 @@ def list_targets(
     rows: List[dict] = []
     left_on: Dict[str, Optional[date]] = {}
     if subject == "agent":
-        if sales_team_id == "none":
-            subjects = {a.id: a for a in active_agents if a.id not in team_of_agent}
-        elif sales_team_id:
-            # The agents the team page shows for the team on `on` (16.3, "Leaving agent").
-            team = team_service.get_team_or_404(db, sales_team_id)
-            members = team_service.team_detail(db, team, on=on)["members"]
-            subjects = _agents_by_id(db, company_id, [m["sales_agent_id"] for m in members])
-            left_on = {m["sales_agent_id"]: m["valid_to"] if m["left"] else None for m in members}
+        if team_filter:
+            subjects = (
+                {a.id: a for a in active_agents if a.id not in team_of_agent} if no_team else {}
+            )
+            for team_id in real_teams:
+                # The agents the team page shows for the team on `on` (16.3, "Leaving agent").
+                team = team_service.get_team_or_404(db, team_id)
+                members = team_service.team_detail(db, team, on=on)["members"]
+                subjects.update(
+                    _agents_by_id(db, company_id, [m["sales_agent_id"] for m in members])
+                )
+                left_on.update(
+                    {m["sales_agent_id"]: m["valid_to"] if m["left"] else None for m in members}
+                )
         else:
             subjects = {a.id: a for a in active_agents}
         pairs = pairs_q.all()
-        if sales_team_id:
+        if team_filter:
             pairs = [(t, p) for t, p in pairs if t.sales_agent_id in subjects]
         subjects.update(_agents_by_id(db, company_id, {t.sales_agent_id for t, _ in pairs} - set(subjects)))
         labels = {agent_id: agent_label(agent) for agent_id, agent in subjects.items()}
@@ -1465,12 +1477,12 @@ def list_targets(
         no_target_ids = [
             agent_id
             for agent_id, agent in subjects.items()
-            if agent_id not in with_target and (agent.is_active or sales_team_id)
+            if agent_id not in with_target and (agent.is_active or team_filter)
         ]
     else:
         teams_q = db.query(SalesTeam)
-        if sales_team_id:
-            teams_q = teams_q.filter(SalesTeam.id == sales_team_id)
+        if real_teams:
+            teams_q = teams_q.filter(SalesTeam.id.in_(real_teams))
         teams = {t.id: t for t in teams_q.all()}
         pairs = [(t, p) for t, p in pairs_q.all() if t.sales_team_id in teams]
         labels = {team_id: team.name for team_id, team in teams.items()}
@@ -1567,7 +1579,7 @@ def list_all_targets(
     db: Session,
     *,
     subject: str = "team",
-    sales_team_id: Optional[str] = None,
+    sales_team_id: Optional[list[str] | str] = None,
     query: Optional[str] = None,
 ) -> dict:
     """Targets > Teams and Targets > Agents (the owner's hand test of 27 Sep, "it should show a
@@ -1577,19 +1589,23 @@ def list_all_targets(
     today, or `none` for agents in no team today."""
     on = _today()
     company_id = acting_company_id(db)
-    if sales_team_id == "none" and subject != "agent":
+    team_filter = [sales_team_id] if isinstance(sales_team_id, str) else list(sales_team_id or [])
+    no_team = "none" in team_filter
+    real_teams = [t for t in team_filter if t != "none"]
+    if no_team and subject != "agent":
         raise _unprocessable("No team filters agents only.", "INVALID_FILTER")
     team_of_agent: Dict[str, SalesTeam] = {m.sales_agent_id: t for m, t in _covering_on(db, on)}
 
     targets_q = db.query(SalesTarget).filter(SalesTarget.subject_kind == subject)
-    if subject == "team" and sales_team_id:
-        targets_q = targets_q.filter(SalesTarget.sales_team_id == sales_team_id)
+    if subject == "team" and real_teams:
+        targets_q = targets_q.filter(SalesTarget.sales_team_id.in_(real_teams))
     targets = targets_q.all()
-    if subject == "agent" and sales_team_id == "none":
-        targets = [t for t in targets if t.sales_agent_id not in team_of_agent]
-    elif subject == "agent" and sales_team_id:
+    if subject == "agent" and team_filter:
         targets = [
-            t for t in targets if getattr(team_of_agent.get(t.sales_agent_id), "id", None) == sales_team_id
+            t
+            for t in targets
+            if (no_team and t.sales_agent_id not in team_of_agent)
+            or getattr(team_of_agent.get(t.sales_agent_id), "id", None) in real_teams
         ]
 
     accounts: Dict[str, List[Customer]] = {}

@@ -58,11 +58,12 @@ DUE = date(2026, 11, 20)
 
 def _swap_fixture(
     api, *, linked: bool = False, acknowledged: bool = False, mirror_stale: bool = False,
-    row_code: str | None = None, placed_unlinked: bool = False,
+    row_code: str | None = None, placed_unlinked: bool = False, new_qty: str = "10",
 ):
     """One line of product A confirmed as a Buy of 10 (one ORDER row), then AutoCount
     swaps the line to product B on the same DtlKey and the ESB raises one
-    `product_changed` row. The mirror already names B (S1)."""
+    `product_changed` row. The mirror already names B (S1). `new_qty`: the quantity the
+    same edit leaves on the line."""
     client, world = api
     db = world.db
     old_product = world.product
@@ -95,6 +96,8 @@ def _swap_fixture(
     db.commit()
 
     core.product_id = new_product.id
+    core.qty_ordered = Decimal(new_qty)
+    line.qty = Decimal(new_qty)
     if not mirror_stale:
         line.product_id = new_product.id
     db.commit()
@@ -104,7 +107,7 @@ def _swap_fixture(
         before=Line(doc_number=core_so.so_number, item_code=old_product.product_code,
                     location="ZZT", qty=10.0, required_date=DUE, row_ref=str(core.id)),
         after=Line(doc_number=core_so.so_number, item_code=new_product.product_code,
-                   location="ZZT", qty=10.0, required_date=DUE, row_ref=str(core.id)),
+                   location="ZZT", qty=float(new_qty), required_date=DUE, row_ref=str(core.id)),
     )
     batch = _build(world, [change], core_so, [str(core.id)])
     assert batch is not None, "a held line's product swap raises a batch"

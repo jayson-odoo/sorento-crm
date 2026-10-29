@@ -12,7 +12,7 @@ from app.dependencies import (
     require_permission_with_api_key,
 )
 
-from app.services.marketing_service import PromotionService, PromotionProductService
+from app.services.marketing_service import PromotionService, PromotionProductService, validated_attachment_states
 from app.services.query_normalizer import strip_domain_stopwords
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.marketing import (
@@ -29,6 +29,7 @@ from app.schemas.marketing import (
     PromotionServingListResponse,
 )
 from app.services.error_handler import handle_internal_error
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -54,7 +55,7 @@ class BulkUpdateAccessLevelsRequest(BaseModel):
 
 
 @router.get("/", response_model=PromotionServingListResponse[PromotionListItemResponse])
-async def get_promotions(
+def get_promotions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -95,7 +96,7 @@ async def get_promotions(
             "UUIDs. Never falls back to inactive rows. csv / JSON list / repeated."
         ),
     ),
-    user_type: Optional[str] = Query(None, description="Filter by a single access level code (FE listing)."),
+    user_type: Optional[list[str]] = Query(None, description="Filter by access level code(s) (FE listing); several = any of them."),
     access_levels: Optional[list[str]] = Query(
         None,
         description=(
@@ -134,9 +135,8 @@ async def get_promotions(
             "passed explicitly."
         ),
     ),
-    attachment_state: Optional[str] = Query(
+    attachment_state: Optional[list[str]] = Query(
         None,
-        pattern="^(unlinked|linked_to_trashed|unlinked_or_trashed)$",
         description=(
             "Cleanup filter. `unlinked`: promotion has no attachment linkages. "
             "`linked_to_trashed`: linked to at least one soft-deleted (trashed) "
@@ -179,6 +179,8 @@ async def get_promotions(
     free-text `query`, or `entities`). Without any, returns an empty page so
     callers cannot accidentally enumerate the whole catalog.
     """
+    user_types = multi_values(user_type)
+    attachment_states = validated_attachment_states(attachment_state)
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
@@ -206,7 +208,7 @@ async def get_promotions(
             or parsed_product_ids
             or (query and query.strip())
             or norm_entities
-            or attachment_state
+            or attachment_states
             or (expiry_notify_batch_id and expiry_notify_batch_id.strip())
         )
         # API-key / MCP callers without a narrowing filter are answering open
@@ -223,7 +225,7 @@ async def get_promotions(
         result = service.list_promotions(
             page=page,
             limit=limit,
-            user_type=user_type,
+            user_type=user_types,
             contact_access_codes=contact_codes,
             query=query,
             status=status,
@@ -236,7 +238,7 @@ async def get_promotions(
             entities=norm_entities,
             promotion_ids=parsed_promotion_ids,
             product_ids=parsed_product_ids,
-            attachment_state=attachment_state,
+            attachment_state=attachment_states,
             expiry_notify_batch_id=(expiry_notify_batch_id or None),
             serving_policy=serving_policy,
             scope_terms=scope_terms,
@@ -260,7 +262,7 @@ async def get_promotions(
 
 
 @router.get("/{promotion_id}", response_model=PromotionResponse)
-async def get_promotion(
+def get_promotion(
     promotion_id: str,
     user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
     access_levels: Optional[list[str]] = Query(
@@ -333,7 +335,7 @@ async def get_promotion(
 
 
 @router.post("/", response_model=PromotionResponse, status_code=status.HTTP_201_CREATED)
-async def create_promotion(
+def create_promotion(
     promotion_data: PromotionCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -350,7 +352,7 @@ async def create_promotion(
 
 
 @router.put("/{promotion_id}", response_model=PromotionResponse)
-async def update_promotion(
+def update_promotion(
     promotion_id: str,
     promotion_data: PromotionUpdate,
     current_user: dict = Depends(get_current_user),
@@ -369,7 +371,7 @@ async def update_promotion(
 
 
 @router.post("/export/pdf", status_code=status.HTTP_202_ACCEPTED)
-async def export_promotions_pdf(
+def export_promotions_pdf(
     body: CompilePromotionsPdfRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -441,7 +443,7 @@ async def export_promotions_pdf(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_promotions(
+def bulk_delete_promotions(
     body: BulkDeletePromotionsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -457,7 +459,7 @@ async def bulk_delete_promotions(
 
 
 @router.patch("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_update_access_levels(
+def bulk_update_access_levels(
     body: BulkUpdateAccessLevelsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -473,7 +475,7 @@ async def bulk_update_access_levels(
 
 
 @router.delete("/{promotion_id}", status_code=status.HTTP_200_OK)
-async def delete_promotion(
+def delete_promotion(
     promotion_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -495,7 +497,7 @@ nested_promotion_groups_router = APIRouter()
 
 
 @nested_promotion_groups_router.post("/", response_model=PromotionGroupResponse, status_code=status.HTTP_201_CREATED)
-async def create_promotion_group_nested(
+def create_promotion_group_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
     body: PromotionGroupCreate = Body(...),
     current_user: dict = Depends(get_current_user),
@@ -513,7 +515,7 @@ async def create_promotion_group_nested(
 
 
 @nested_promotion_groups_router.put("/{group_id}", response_model=PromotionGroupResponse)
-async def update_promotion_group_nested(
+def update_promotion_group_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
     group_id: str = Path(..., description="Promotion group ID"),
     body: PromotionGroupUpdate = Body(...),
@@ -532,7 +534,7 @@ async def update_promotion_group_nested(
 
 
 @nested_promotion_groups_router.delete("/{group_id}", status_code=status.HTTP_200_OK)
-async def delete_promotion_group_nested(
+def delete_promotion_group_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
     group_id: str = Path(..., description="Promotion group ID"),
     current_user: dict = Depends(get_current_user),
@@ -552,7 +554,7 @@ async def delete_promotion_group_nested(
 nested_promotion_products_router = APIRouter()
 
 @nested_promotion_products_router.get("/", response_model=list[PromotionProductResponse])
-async def get_promotion_products_nested(
+def get_promotion_products_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
     page: int = Query(1, ge=1),
     limit: int = Query(1000, ge=1, le=5000, description="Max promotion product lines per page."),
@@ -611,7 +613,7 @@ async def get_promotion_products_nested(
         raise handle_internal_error(str(e))
 
 @nested_promotion_products_router.post("/", response_model=PromotionProductResponse, status_code=status.HTTP_201_CREATED)
-async def create_promotion_product_nested(
+def create_promotion_product_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
     body: dict = Body(...),
     current_user: dict = Depends(get_current_user),
@@ -645,7 +647,7 @@ async def create_promotion_product_nested(
         raise handle_internal_error(str(e))
 
 @nested_promotion_products_router.put("/{line_id}", response_model=PromotionProductResponse)
-async def update_promotion_product_nested(
+def update_promotion_product_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
     line_id: str = Path(..., description="Promotion product line id (promotion_products.id)"),
     body: dict = Body(...),
@@ -677,7 +679,7 @@ async def update_promotion_product_nested(
         raise handle_internal_error(str(e))
 
 @nested_promotion_products_router.delete("/{line_id}", status_code=status.HTTP_200_OK)
-async def delete_promotion_product_nested(
+def delete_promotion_product_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
     line_id: str = Path(..., description="Promotion product line id (promotion_products.id)"),
     current_user: dict = Depends(get_current_user),

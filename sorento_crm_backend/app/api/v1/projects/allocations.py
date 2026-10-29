@@ -51,7 +51,7 @@ EDIT = "projects.projects.edit"
     "/sales-orders/{pso_id}/allocations",
     response_model=ListResponse[SalesOrderLineAllocationRow],
 )
-async def list_sales_order_allocations(
+def list_sales_order_allocations(
     pso_id: str,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -79,7 +79,7 @@ async def list_sales_order_allocations(
     "/sales-order-lines/{line_id}/allocation-candidates",
     response_model=AllocationCandidateList,
 )
-async def list_allocation_candidates(
+def list_allocation_candidates(
     line_id: str,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -95,7 +95,7 @@ async def list_allocation_candidates(
 
 
 @router.get("/allocation-claims", response_model=ListResponse[AllocationClaimRow])
-async def list_allocation_claims(
+def list_allocation_claims(
     direction: str = Query(
         "incoming",
         description=(

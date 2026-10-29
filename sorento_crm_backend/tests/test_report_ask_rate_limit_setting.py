@@ -11,7 +11,6 @@ Postgres only; every row is seeded here and rolled back (CI's database has none)
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 import pytest
@@ -135,7 +134,7 @@ def test_both_round_trip_through_the_update_and_the_get_builders(db):
     _update_general_settings_impl(
         SystemSettingUpdate(report_ask_rate_limit=4, report_ask_rate_window_minutes=30), db
     )
-    payload = asyncio.run(get_settings(current_user={"id": "zzt"}, db=db))
+    payload = get_settings(current_user={"id": "zzt"}, db=db)
 
     assert payload["settings"]["report_ask_rate_limit"] == 4
     assert payload["settings"]["report_ask_rate_window_minutes"] == 30

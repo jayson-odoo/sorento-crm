@@ -156,6 +156,13 @@ SALES_REPORT_BODY: dict[str, Any] = {
     ],
 }
 
+#: REPORT-UNIFY (Q1): a sales total is `crm_report_ask`; its route body for a total (`filters` set per call).
+REPORT_ASK_BODY: dict[str, Any] = {
+    "status": "ok", "message": None, "basis": "delivered", "basis_label": "delivered sales", "measure": "amount",
+    "sort": "desc", "group_by": None, "group_label": None, "date_from": None, "date_to": None, "filters": [],
+    "rows": [], "more": 0, "total_count": 0, "total": {"qty": 10, "amount": 100.0},
+}
+
 #: `crm_sales_analysis`'s route body (`test_sales_analysis_lane.ROUTE_HIT`'s shape, no file).
 SALES_ANALYSIS_BODY: dict[str, Any] = {
     "status": "ready", "report": "Sales", "company": "Sorento", "channel": "Dealer",
@@ -194,6 +201,23 @@ def _echoing_mcp(response: Any = None):
             }
             if args.get("group_by"):
                 body["group_by"] = args["group_by"]
+            return present(name, json.dumps(body))
+        if name == "crm_report_ask":
+            channel = args.get("channel")
+            body = {
+                **REPORT_ASK_BODY,
+                "date_from": args.get("date_from"), "date_to": args.get("date_to"),
+                "group_by": args.get("group_by"), "group_label": (args.get("group_by") or "").title() or None,
+                "filters": [
+                    *([{"key": "customer", "label": "Customer", "values": ["ZZ Demo Trading Sdn Bhd"]}]
+                      if args.get("customer_ids") else []),
+                    *([{"key": "product", "label": "Product", "values": [args["product_code"]]}]
+                      if args.get("product_code") else []),
+                    *([{"key": "channel", "label": "Channel",
+                        "values": ["Project team" if channel == "project" else "Dealer"]}]
+                      if channel in ("dealer", "project") else []),
+                ],
+            }
             return present(name, json.dumps(body))
         if name == "crm_sales_analysis":
             return present(name, json.dumps(SALES_ANALYSIS_BODY))
@@ -281,7 +305,7 @@ def _step_5_qf() -> dict[str, Any]:
     """"srt102-rg dealer sales may 2026", as the parser emitted it live."""
     return _parser_output(
         domain_hint="order", intent_hint="check_order", order_status="sales_analysis",
-        sales_channel="dealer", entities=[_product_entity()], entity_op="replace_combine",
+        sales_channel="dealer", entities=[_product_entity()], entity_op="replace_combine", basis="delivered",
         domain_in_message=True, date_mode="month",
         date_filter_start="2026-05-01", date_filter_end="2026-05-31",
     )
@@ -292,7 +316,7 @@ def _step_6_qf(**overrides: Any) -> dict[str, Any]:
     old path, the same as `null`)."""
     base = dict(
         domain_hint="order", intent_hint="check_order", order_status="sales_report",
-        sales_channel=None, entities=[_product_entity()], entity_op="replace_combine",
+        sales_channel=None, entities=[_product_entity()], entity_op="replace_combine", basis="delivered",
         domain_in_message=True, date_mode="year",
         date_filter_start="2026-01-01", date_filter_end="2026-12-31",
     )
@@ -301,7 +325,7 @@ def _step_6_qf(**overrides: Any) -> dict[str, Any]:
 
 
 def _report_calls(captured: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
-    return [args for name, args in captured if name == "crm_sales_report"]
+    return [args for name, args in captured if name == "crm_report_ask"]
 
 
 def _reply(result: Any) -> str:
@@ -343,7 +367,7 @@ class TestTheLiveSequenceThroughTheEngine:
     def test_r2_step_6_runs_the_sales_report_over_every_channel(self, chat):
         _result5, captured5 = chat(_step_5_qf(), "srt102-rg dealer sales may 2026", "ZZT-nadc-r2-step-5")
         # Round 2: a sales_analysis parse naming a product this message runs the sales report.
-        assert [name for name, _ in captured5] == ["crm_sales_report"], captured5
+        assert [name for name, _ in captured5] == ["crm_report_ask"], captured5
         args5 = captured5[0][1]
         assert args5.get("product_code") == "SRT102-RG", args5
         assert args5.get("channel") == "dealer", args5
@@ -354,7 +378,8 @@ class TestTheLiveSequenceThroughTheEngine:
 
         result6, captured6 = chat(_step_6_qf(), "srt102-rg sales 2026", "ZZT-nadc-r2-step-6")
         event = chat.apply_event(result6)
-        assert event.get("decision") == {"kind": "new_ask", "why": "domain_in_message"}, (
+        # REPORT-UNIFY: the sales report parse is the sales ranking now, so it names its own ask.
+        assert event.get("decision") == {"kind": "new_ask", "why": "names_its_own_ranking"}, (
             "setup: step 6 is read as it was live", event.get("decision"), event.get("rules_fired"),
         )
         calls = _report_calls(captured6)
@@ -365,9 +390,9 @@ class TestTheLiveSequenceThroughTheEngine:
             f"a new ask that names no channel must count every channel, not the held 'dealer': {args}"
         )
         reply = _reply(result6)
-        assert "*Channel:* all" in reply, reply
-        assert "*Channel:* Retail" not in reply, reply
-        assert (chat.session().get("focus") or {}).get("sales_channel") is None, chat.session().get("focus")
+        assert "Channel:" not in reply, reply  # no channel filter, so the header names none
+        # REPORT-UNIFY: a sales report is a ranking now; it keeps its channel in its own held frame, never on the
+        # focus (`apply._focus_rules`), so what the focus holds is not the channel the ask ran for.
 
 
 # --------------------------------------------------------------------------- #
@@ -380,9 +405,10 @@ class TestAFollowUpKeepsTheChannel:
         _result1, captured1 = chat(
             _parser_output(
                 domain_hint="order", intent_hint="check_order", order_status="sales_report",
-                sales_channel="dealer", domain_in_message=True, entity_op="replace_combine",
+                sales_channel="dealer", domain_in_message=True, entity_op="replace_combine", basis="delivered",
                 entities=[{"raw": "zz demo", "hint": "customer", "canonical_code": None,
                            "current_message": True, "confident": True}],
+                date_filter_start="2026-05-01", date_filter_end="2026-05-31",
             ),
             "dealer sales report for zz demo", "ZZT-nadc-r3-ask-1",
             resolve_services=_ambiguous_customer_services(),
@@ -425,7 +451,7 @@ class TestANewAskNamingItsOwnChannel:
         calls = _report_calls(captured)
         assert calls, captured
         assert calls[0].get("channel") == "project", calls[0]
-        assert "*Channel:* Project" in _reply(result), _reply(result)
+        assert "Channel: Project team" in _reply(result), _reply(result)
 
 
 # --------------------------------------------------------------------------- #
@@ -462,13 +488,13 @@ class TestAPeriodOnlyRefineKeepsTheChannel:
         assert _report_calls(captured1), captured1
         assert _report_calls(captured1)[0].get("channel") == "dealer", captured1
         result2, captured2 = chat(
-            _parser_output(message_type="business_query", **_june_verdict()),
+            # REPORT-UNIFY: the held report is a ranking frame now, refined by the parser's own `ranking_refine`.
+            _parser_output(message_type="business_query", ranking_refine=True, **_june_verdict()),
             "and for june", "ZZT-nadc-r5-june-1",
         )
         event = chat.apply_event(result2)
-        # Measured today: under the report's open drill offer, `decide()` files a period-only
-        # turn as the offer's REFINE (`_answer_outstanding`'s `outstanding_refined` arm).
-        assert event.get("decision") == {"kind": "refine", "why": "narrows_the_open_question"}, (
+        # REPORT-UNIFY: a total arms no drill offer any more, so `decide()` files a period-only turn as a CARRY.
+        assert event.get("decision") == {"kind": "carry", "why": "nothing_answered"}, (
             event.get("decision"), event.get("rules_fired"),
         )
         assert RULE not in (event.get("rules_fired") or []), event.get("rules_fired")

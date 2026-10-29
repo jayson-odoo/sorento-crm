@@ -96,6 +96,36 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     </select>
   ),
 }));
+// Region is a multi-select now (FILTER-MULTISELECT PR4): the same native stand-in, a multiple <select>.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    id,
+    value,
+    onChange,
+    options,
+    placeholder,
+  }: {
+    id?: string;
+    value: string[];
+    onChange: (v: string[]) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+  }) => (
+    <select
+      multiple
+      id={id}
+      aria-label={placeholder ?? id}
+      value={value}
+      onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}
+    >
+      {(options ?? []).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
 vi.mock('@/hooks/usePermissions', () => ({ useHasAnyPermission: () => true }));
 vi.mock('@/hooks/useTenantModules', () => ({
   useTenantModules: () => ({ enabledModuleKeys: new Set(['procurement', 'scm']), isLoading: false }),
@@ -146,7 +176,11 @@ beforeEach(() => {
 
 describe('PackingListsList - the Region filter (AC-RPL-5, review round 1)', () => {
   function pickRegion(code: string) {
-    fireEvent.change(screen.getByLabelText('All regions'), { target: { value: code } });
+    const select = screen.getByLabelText('All regions') as HTMLSelectElement;
+    Array.from(select.options).forEach((o) => {
+      o.selected = o.value === code;
+    });
+    fireEvent.change(select);
   }
 
   it('sends region to the list service once the filter is set', () => {

@@ -17,6 +17,14 @@ class ReportAskFilter(BaseModel):
     values: List[str]
 
 
+class ReportAskNotApplied(BaseModel):
+    # REPORT-UNIFY: a filter the caller named that did not narrow the figures, and why
+    # (unknown_spec | hidden | unit | invalid_value | per_document).
+    filter: str
+    value: str
+    reason: str
+
+
 class ReportAskRow(BaseModel):
     rank: int
     name: str
@@ -51,7 +59,7 @@ class ReportAskTotal(BaseModel):
 
 
 class ReportAskResponse(BaseModel):
-    status: str  # ok | refused | busy
+    status: str  # ok | refused | busy | no_products
     message: Optional[str] = None
     basis: str
     basis_label: str
@@ -59,9 +67,11 @@ class ReportAskResponse(BaseModel):
     sort: str = "desc"
     group_by: Optional[str] = None
     group_label: Optional[str] = None
-    date_from: str
-    date_to: str
+    # None = every date (an outstanding basis asked with no period).
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
     filters: List[ReportAskFilter] = []
+    not_applied: List[ReportAskNotApplied] = []
     rows: List[ReportAskRow] = []
     more: int = 0
     total_count: int = 0

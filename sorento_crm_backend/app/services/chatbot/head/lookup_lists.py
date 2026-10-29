@@ -12,10 +12,13 @@ offered (their exact path runs after the parser).
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import logging
+import os
 import random
 import re
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -127,6 +130,9 @@ class LookupRow:
     texts: tuple[str, ...]
     #: EEM-CATEGORY-PICK: a category row's class (`product_class_signal.category_class`); a "type:" row is its own.
     group: str | None = None
+    #: DIMENSION-ANY: a number line offered for a dimension no product holds at that value is kept only beside a
+    #: Category row whose products carry the key (these are those rows' keys); None is always kept.
+    scope: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -428,9 +434,45 @@ def _grouped_category_lines(hits: list[Hit]) -> list[str]:
     return [f"- {head}: {', '.join(items)}" if items else f"- {head}" for head, items, _m in groups.values()]
 
 
-def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False) -> list[str]:
+#: REPORT-UNIFY slice 3: the lists whose rows the report ask binds by id; their lines carry it when `row_ids`.
+ID_LISTS = frozenset({"brand", "salesperson", "category"})
+
+
+def cap_hits(name: str, hits: list[Hit]) -> list[Hit]:
+    """`TOP_K` for the list. The salesperson list is the one place an exact match is never cut (REPORT-UNIFY slice 3,
+    AC-RU-22): every PERSON the message names exactly (spelling 1.0: a span, an alias, a code) stays, however many
+    there are, and only the looser rows fill what is left of the cap. The accounts of one person (a code stem, "WT I"
+    to "WT III") count as one person, so a long ledger list still stops at the cap."""
+    cap = TOP_K.get(name, 10)
+    if name != "salesperson":
+        return hits[:cap]
+    from app.services.chatbot.lanes.business.services import _code_stem
+
+    people: set[str] = set()
+    exempt: list[Hit] = []
+    for h in hits:
+        stem = _code_stem(h.row.label)
+        if h.spelling >= 1.0 and stem not in people:
+            people.add(stem)
+            exempt.append(h)
+    room = max(0, cap - len(exempt))
+    kept: list[Hit] = []
+    for h in hits:
+        if any(h is e for e in exempt):
+            kept.append(h)
+        elif room > 0:
+            kept.append(h)
+            room -= 1
+    return kept
+
+
+def render(
+    hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False,
+    row_ids: bool = False,
+) -> list[str]:
     """One block per list with hits: the header, then `- <label>` once per label (a category block one line per
-    class when `group_categories`)."""
+    class when `group_categories`). `row_ids` (a prompt that asks for it) ends the line of a brand, salesperson or
+    category row with `[id: <row id>]`, so the parser can answer with the id."""
     lines: list[str] = []
     for name in order:
         if group_categories and name == "category":
@@ -440,13 +482,16 @@ def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *
                 lines.extend(grouped)
             continue
         labels: list[str] = []
+        printed: list[str] = []
         for h in hits.get(name) or []:
             label = _one_line(h.row.label)
             if label and label not in labels:
                 labels.append(label)
+                with_id = row_ids and name in ID_LISTS and h.row.key and not str(h.row.key).startswith("type:")
+                printed.append(f"{label} [id: {h.row.key}]" if with_id else label)
         if labels:
             lines.append(header(name))
-            lines.extend(f"- {label}" for label in labels)
+            lines.extend(f"- {text}" for text in printed)
     return lines
 
 
@@ -608,6 +653,7 @@ def load_rows(
     spec word values, file types and the sales channels. `group_categories` (EEM-CATEGORY-PICK) reads the class
     vocabulary to set each category row's `group`; off, it is never read."""
     from app.models.product import ProductCategory
+    from app.services import chatbot_prompt_vars as pv
     from app.services.chatbot import turn_runtime
     from app.services.reports.ask import SALES_CHANNELS
 
@@ -645,7 +691,12 @@ def load_rows(
         out.extend(_salesperson_rows(db))
     if include_customers:
         out.extend(_customer_rows(db, customer_ids))
-    out.extend(LookupRow("sales_channel", ch, ch, (ch,)) for ch in SALES_CHANNELS)
+    # The channel values are code's; the owner's `sales_channel_alias` set only adds words for them ("retail" = dealer).
+    channel_words = pv._alias_words(db, "sales_channel_alias")
+    out.extend(
+        LookupRow("sales_channel", ch, ch, tuple(dict.fromkeys(t for t in (ch, *channel_words.get(ch, ())) if _fold(t))))
+        for ch in SALES_CHANNELS
+    )
     return out
 
 
@@ -654,10 +705,6 @@ def load_rows(
 #: A length in the message: not glued to a letter or digit before it (a code), a unit after it.
 _LENGTH_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
 _SIZE_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
-#: Any quantity a numeric spec key stores: lengths, litres, horsepower, ounces.
-_QUANTITY_RE = re.compile(
-    r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(litres?|liters?|ounces?|mm|cm|hp|oz|l|m)(?![a-z0-9])"
-)
 _TO_MM = {"mm": 1.0, "cm": 10.0, "m": 1000.0}
 #: A unit word (as said or as the registry stores it) -> (unit class, factor to the class's base unit).
 _UNITS = {
@@ -682,15 +729,64 @@ def normalise_number(text: str) -> str | None:
     return f"{_mm(one.group(1), one.group(2))}mm" if one else None
 
 
+def _unit_words(rows: list[Any]) -> dict[str, tuple[str, float]]:
+    """`_UNITS` plus every alias the registry lists for a numeric key (`unit_aliases`, DIMENSION-ANY): "inch" ->
+    ("len", 25.4) off a mm key's `{"inch": 25.4}`. Unit words beyond the shipped ones are data, never code."""
+    units = dict(_UNITS)
+    for row in rows:
+        base = _UNITS.get((row.unit or "").strip().lower())
+        if base is None:
+            continue
+        for alias, factor in (getattr(row, "unit_aliases", None) or {}).items():
+            word = str(alias).strip().casefold()
+            if word and isinstance(factor, (int, float)) and not isinstance(factor, bool) and factor > 0:
+                units.setdefault(word, (base[0], base[1] * float(factor)))
+    return units
+
+
+def _quantity_re(words: Any) -> re.Pattern[str]:
+    """A quantity in the message: a number not glued to a letter or digit before it (a code), one of these unit
+    words after it, the longest first."""
+    alternatives = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
+    return re.compile(rf"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*({alternatives})(?![a-z0-9])")
+
+
+def _plain(value: float) -> str:
+    """A number as a person writes it: no exponent, no trailing zeros ("1000000", "152.4")."""
+    return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
+#: DIMENSION-ANY: the bracket key of the line that offers a length with no dimension named; the parser emits it as
+#: spec_key and grounding reads it as every dimension (`head/bare_size.py`).
+SIZE_KEY = "size"
+
+
 def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset()) -> list[Hit]:
-    """Every numeric spec key whose stored values hold a quantity the message says (mm / cm / m, litres, hp,
-    oz), in the key's own unit, the line ending in the bare number the parser reads ("trap length 200mm
-    (trap_length: 200)"). At most `MAX_NUMBER_ASKS` distinct quantities per message. No meaning score;
-    nothing is offered for a number no key holds. A code that merely contains digits is never a quantity."""
+    """Every numeric spec key whose stored values hold a quantity the message says (mm / cm / m, litres, hp, oz,
+    and the registry's own unit aliases), in the key's own unit, the line ending in the bare number the parser
+    reads ("trap length 200mm (trap_length: 200)"). At most `MAX_NUMBER_ASKS` distinct quantities per message. No
+    meaning score. A code that merely contains digits is never a quantity.
+
+    DIMENSION-ANY (owner, 28 Oct 2026): a length leads with "Size 150mm, any dimension (size: 150)", the line a
+    size said with no dimension named is emitted from, then the keys that hold it, then every other dimension's own
+    line, so a NAMED dimension is always nameable (a miss is said back as named, and a named dimension nothing holds
+    falls back to any dimension). Any other quantity no key holds offers nothing."""
+    from sqlalchemy import case, func
+
+    from app.models.product import Product, chat_searchable_products
+    from app.models.product_spec import ProductSpecifications
+    from app.services.product_spec_registry import active_registry
+    from app.services.product_spec_search import dimension_keys, membership_clause
+
+    rows = [
+        row for row in active_registry(db)
+        if (row.data_type or "").lower() == "numeric" and row.spec_key not in hidden_spec_keys
+    ]
+    units = _unit_words(rows)
     folded = str(message or "").casefold()
     asks: list[tuple[str, float, str]] = []  # (unit class, value in its base unit, piece)
-    for m in _QUANTITY_RE.finditer(folded):
-        cls, factor = _UNITS[m.group(2)]
+    for m in _quantity_re(units).finditer(folded):
+        cls, factor = units[m.group(2)]
         ask = (cls, round(float(m.group(1)) * factor, 6), m.group(0))
         if not any(a[:2] == ask[:2] for a in asks):
             asks.append(ask)
@@ -698,23 +794,17 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
             break
     if not asks:
         return []
-    from sqlalchemy import case, func
-
-    from app.models.product import Product, chat_searchable_products
-    from app.models.product_spec import ProductSpecifications
-    from app.services.product_spec_registry import active_registry
-    from app.services.product_spec_search import membership_clause
-
+    dims = set(dimension_keys(rows))
     wanted: list[tuple[Any, str, float, str]] = []  # (registry row, shown, value in the key's unit, piece)
-    for row in active_registry(db):
+    for row in rows:
         unit = (row.unit or "").strip()
-        if (row.data_type or "").lower() != "numeric" or unit.lower() not in _UNITS or row.spec_key in hidden_spec_keys:
+        if unit.lower() not in _UNITS:
             continue
         cls, factor = _UNITS[unit.lower()]
         for ask_cls, base, piece in asks:
             if ask_cls == cls:
                 value = round(base / factor, 6)
-                wanted.append((row, f"{value:g}{unit}", value, piece))
+                wanted.append((row, f"{_plain(value)}{unit}", value, piece))
     if not wanted:
         return []
     columns = [
@@ -728,12 +818,71 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
         .filter(chat_searchable_products())
         .one()
     )
-    out: list[Hit] = []
-    for (row, shown, value, piece), held in zip(wanted, counts):
-        if int(held) > 0:
-            label = f"{row.label} {shown} ({row.spec_key}: {value:g})"
-            out.append(Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,)), _fold(piece), 1.0, 0.0))
-    return sorted(out, key=lambda h: h.row.label)
+    held = {(row.spec_key, shown) for (row, shown, _v, _p), n in zip(wanted, counts) if int(n) > 0}
+    scopes = _carried_by(db, sorted({row.spec_key for row, shown, _v, _p in wanted if row.spec_key in dims and (row.spec_key, shown) not in held}))
+    sizes: dict[str, Hit] = {}
+    holding: list[Hit] = []
+    named: list[Hit] = []
+    for row, shown, value, piece in wanted:
+        is_dim = row.spec_key in dims
+        if is_dim and shown not in sizes:
+            label = f"Size {shown}, any dimension ({SIZE_KEY}: {_plain(value)})"
+            sizes[shown] = Hit(LookupRow("spec", f"{SIZE_KEY}={shown}", label, (label,)), _fold(piece), 1.0, 0.0)
+        if (row.spec_key, shown) in held or is_dim:
+            label = f"{row.label} {shown} ({row.spec_key}: {_plain(value)})"
+            holds = (row.spec_key, shown) in held
+            scope = None if holds else scopes.get(row.spec_key, frozenset())
+            hit = Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,), scope=scope), _fold(piece), 1.0, 0.0)
+            (holding if holds else named).append(hit)
+    by_label = lambda h: h.row.label  # noqa: E731
+    return [*sizes.values(), *sorted(holding, key=by_label), *sorted(named, key=by_label)]
+
+
+def _carried_by(db: "Session", keys: list[str]) -> dict[str, frozenset[str]]:
+    """Per spec key, the Category row keys (`load_rows`: a category's id, "type:<class or product type>") whose
+    chat-searchable products carry the key at all. One grouped query."""
+    if not keys:
+        return {}
+    from sqlalchemy import func
+
+    from app.models.product import Product, chat_searchable_products
+    from app.models.product_spec import ProductSpecifications
+
+    values = ProductSpecifications.values
+    kinds = (values["class"]["value"].astext, values["product_type"]["value"].astext)
+    rows = (
+        db.query(Product.category_id, *kinds, *[func.bool_or(values.has_key(k)) for k in keys])
+        .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+        .filter(chat_searchable_products())
+        .group_by(Product.category_id, *kinds)
+        .all()
+    )
+    from app.services.product_spec_registry import active_registry, display_spec_value
+
+    # A "type:" row is named by the product type's display label (`turn_runtime.product_type_names`), which can
+    # differ in words from the stored value: both are folded.
+    type_row = next((r for r in active_registry(db) if r.spec_key == "product_type"), None)
+    type_labels = dict(getattr(type_row, "value_labels", None) or {})
+    out: dict[str, set[str]] = {k: set() for k in keys}
+    for category_id, klass, product_type, *carries in rows:
+        shown = display_spec_value(product_type, type_labels) if product_type else None
+        names = {str(category_id)} | {"type:" + _fold(n) for n in (klass, product_type, shown) if n}
+        for key, carried in zip(keys, carries):
+            if carried:
+                out[key] |= names
+    return {k: frozenset(v) for k, v in out.items()}
+
+
+def with_numbers(numbers: list[Hit], spec: list[Hit], categories: list[Hit] | None = None) -> list[Hit]:
+    """The Spec block: the number lines first, then the word lines at their own cap (a length's dimension lines
+    never push a word the message also said out of the block).
+
+    DIMENSION-ANY (crew gate round 2, dealer "hose 2m" shown 10 dimension lines): a dimension no product holds at
+    the asked value is offered only when a Category row of this block carries it (hoses carry a hose length, not a
+    trap outlet length); with no Category row, every dimension stays nameable."""
+    named = {h.row.key for h in categories or []}
+    kept = [h for h in numbers if h.row.scope is None or not named or h.row.scope & named]
+    return [*kept, *spec[: TOP_K["spec"]]]
 
 
 def brand_words(db: "Session", brands: list[dict] | None = None) -> frozenset[str]:
@@ -778,6 +927,72 @@ _sleep = time.sleep
 _jitter = random.random
 
 
+def _shared_path(model: str) -> str | None:
+    """The shared vector file of `model`, or None when sharing is off (`CHATBOT_LOOKUP_VECTOR_DIR` = off/0/false/no).
+    The directory defaults to the system temp dir, which every worker of a container sees."""
+    base = os.environ.get("CHATBOT_LOOKUP_VECTOR_DIR") or tempfile.gettempdir()
+    if base.strip().lower() in ("off", "0", "false", "no"):
+        return None
+    return os.path.join(base, "lookup-vectors-" + re.sub(r"[^A-Za-z0-9._-]", "_", model) + ".npz")
+
+
+def _lock_shared(path: str) -> int | None:
+    """Take the exclusive lock beside the shared file (blocking); None, with a warning, when it cannot be had."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd = os.open(path[: -len(".npz")] + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        logger.warning("lookup shared vectors: no lock file, warming without the shared file", exc_info=True)
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    except OSError:
+        os.close(fd)
+        logger.warning("lookup shared vectors: lock failed, warming without the shared file", exc_info=True)
+        return None
+    return fd
+
+
+def _read_shared(path: str) -> dict[str, Any]:
+    """sha1 -> unit float32 vector from the shared file; empty when it is absent or unusable (warned)."""
+    import numpy as np
+
+    if not os.path.exists(path):
+        return {}
+    try:
+        with np.load(path, allow_pickle=False) as f:
+            keys, vectors = f["keys"], f["vectors"]
+        if vectors.ndim != 2 or vectors.dtype != np.float32 or len(keys) != len(vectors):
+            raise ValueError("unexpected shape")
+        return {str(k): vectors[i] for i, k in enumerate(keys)}
+    except Exception:  # noqa: BLE001 - a bad file is rebuilt by this warm
+        logger.warning("lookup shared vectors: %s unreadable, re-embedding", path, exc_info=True)
+        return {}
+
+
+def _write_shared(path: str, vectors: dict[str, Any]) -> None:
+    """Write the shared file atomically (temp file in the same directory, then rename); never raises."""
+    import numpy as np
+
+    if not vectors:
+        return
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".part-", suffix=".npz", dir=os.path.dirname(path))
+        with os.fdopen(fd, "wb") as out:
+            np.savez(out, keys=np.array(list(vectors)), vectors=np.stack(list(vectors.values())).astype(np.float32))
+        os.replace(tmp, path)
+        tmp = None
+    except Exception:  # noqa: BLE001 - the warm stands without the file
+        logger.warning("lookup shared vectors: could not write %s", path, exc_info=True)
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chunk_size: int) -> Embedder:
     """A row-vector embedder over `request` (texts -> raw vectors): vectors cached per process by (model, sha1 of
     text) as unit float32, the uncached texts of a call sent in chunks inside one `EMBED_TIMEOUT` budget. `matrix`
@@ -806,25 +1021,65 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
         with _store_lock:
             return [_cache[_key(t, model)] for t in texts]
 
-    def fill(texts: list[str]) -> None:
+    def fill(texts: list[str]) -> int:
         """The background warm-up: every uncached text in chunks, each chunk under its own timeout, no
         total deadline; chunks are kept as they complete. A rate-limited chunk is waited out (`WARM_RETRY_WAITS`),
-        then the error is re-raised; a large warm is back-to-back requests and trips the per-minute limit."""
-        with _store_lock:
-            todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
-        for i in range(0, len(todo), chunk_size):
-            chunk = todo[i : i + chunk_size]
-            for wait in (*WARM_RETRY_WAITS, None):
-                try:
-                    raw = request(chunk)
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    from app.services.chatbot import llm_call
+        then the error is re-raised; a large warm is back-to-back requests and trips the per-minute limit.
+        The workers of a container share their vectors through a per-model file (`_shared_path`) under an
+        exclusive file lock held for the whole warm, so one worker embeds and the rest load. Returns how many
+        texts came from that file."""
+        lock_fd = None
+        path = _shared_path(model)
+        if path is not None:
+            lock_fd = _lock_shared(path)
+        loaded = embedded = 0
+        file_vectors: dict[str, Any] = {}
+        try:
+            with _store_lock:
+                missing = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
+                if len(_cache) + len(missing) > _CACHE_CAP:  # the cap `embed` keeps, so the store stays bounded
+                    _cache.clear()
+                    _matrices.clear()
+            if lock_fd is not None:
+                file_vectors = _read_shared(path)
+                with _store_lock:
+                    held = next((v for k, v in _cache.items() if k[0] == model), None)
+                    width = next((v.shape[-1] for v in file_vectors.values()), None)
+                    if held is not None and width is not None and held.shape[-1] != width:
+                        logger.warning("lookup shared vectors: file width %d differs from the cache, ignoring it", width)
+                        file_vectors = {}
+                    for t in dict.fromkeys(texts):
+                        sha = _key(t, model)[1]
+                        if _key(t, model) not in _cache and sha in file_vectors:
+                            _cache[_key(t, model)] = file_vectors[sha]
+                            loaded += 1
+            with _store_lock:
+                todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
+            for i in range(0, len(todo), chunk_size):
+                chunk = todo[i : i + chunk_size]
+                for wait in (*WARM_RETRY_WAITS, None):
+                    try:
+                        raw = request(chunk)
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        from app.services.chatbot import llm_call
 
-                    if wait is None or not llm_call.is_rate_limited(exc) or llm_call._quota_exhausted(exc):
-                        raise
-                    _sleep(wait * (1 + 0.5 * _jitter()))
-            store(chunk, raw)
+                        if wait is None or not llm_call.is_rate_limited(exc) or llm_call._quota_exhausted(exc):
+                            raise
+                        _sleep(wait * (1 + 0.5 * _jitter()))
+                store(chunk, raw)
+                embedded += len(chunk)
+        finally:
+            if lock_fd is not None:
+                try:
+                    with _store_lock:
+                        asked = {_key(t, model)[1]: _cache[_key(t, model)] for t in texts if _key(t, model) in _cache}
+                    merged = {**file_vectors, **asked}
+                    if embedded or not all(sha in file_vectors for sha in asked):  # else the file already says it
+                        _write_shared(path, merged if len(merged) <= _CACHE_CAP else asked)
+                finally:
+                    os.close(lock_fd)  # closing the descriptor releases the flock
+        return loaded
 
     def matrix(texts: list[str]):
         import numpy as np
@@ -968,10 +1223,11 @@ def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
     def run() -> None:
         started = time.monotonic()
         try:
-            getattr(embed, "fill", embed)(texts)
+            from_file = getattr(embed, "fill", embed)(texts)
             logger.info(
-                "lookup lists warm: %d texts cached on %s in %.1f s",
+                "lookup lists warm: %d texts cached on %s in %.1f s (%d from the shared file)",
                 len(texts), getattr(embed, "model", "?"), time.monotonic() - started,
+                from_file if isinstance(from_file, int) else 0,
             )
         except Exception:  # noqa: BLE001 - advisory
             logger.warning("lookup lists warm failed", exc_info=True)

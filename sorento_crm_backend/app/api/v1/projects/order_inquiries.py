@@ -69,6 +69,7 @@ from app.schemas.project_order_inquiry import (
     UnplaceAllResult,
     UploadJobScope,
     WORKLIST_FILTER_MAX_LENGTH,
+    WORKLIST_STATES,
     WORKLIST_QUERY_MAX_LENGTH,
 )
 from app.models.inventory import Warehouse
@@ -81,7 +82,7 @@ from app.schemas.decision_trail import DecisionTrailResponse
 from app.services import project_service as projects
 from app.services.decision_trail_service import DecisionTrailService
 from app.services.download_service import DownloadService
-from app.services.error_handler import AppException, handle_internal_error
+from app.services.error_handler import AppException, handle_internal_error, handle_unprocessable
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
 from app.services.order_inquiry_reserve_service import OrderInquiryReserveService, as_utc
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
@@ -90,6 +91,7 @@ from app.services.scm.summary_order_service import compact_ddmmyyyy
 from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import UUID_PATTERN, validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.multi_value import multi_choices, multi_text, multi_values
 
 logger = logging.getLogger(__name__)
 
@@ -162,37 +164,45 @@ def _validate_worklist_filter_uuids(filters: dict) -> None:
     (`AcknowledgeFilter`), so a bad id is refused the same way through either door
     rather than only the one that happens to call `validate_uuid_path` directly.
     """
-    project_id = filters.get("project_id")
-    if project_id:
-        validate_uuid_path(project_id, resource="Project")
-    supplier_id = filters.get("supplier_id")
-    if supplier_id:
-        validate_uuid_path(supplier_id, resource="Supplier")
+    # FILTER-MULTISELECT PR6: each of these carries one id or several (a list, or comma-joined),
+    # and every id is checked, so one bad id in a list is still a refusal and never a 500.
+    for value in multi_values(filters.get("project_id")) or []:
+        validate_uuid_path(value, resource="Project")
+    for value in multi_values(filters.get("supplier_id")) or []:
+        validate_uuid_path(value, resource="Supplier")
     # `agent` is `sales_agents.id`, validated the same way - a malformed value is a
     # caller error, not a filter that silently matches nothing.
-    agent = filters.get("agent")
-    if agent:
-        validate_uuid_path(agent, resource="Sales agent")
+    for value in multi_values(filters.get("agent")) or []:
+        validate_uuid_path(value, resource="Sales agent")
     # S3 (`PLAN-oi-header-list-detail.md`): the OI detail page's own scope.
     inquiry_id = filters.get("inquiry_id")
     if inquiry_id:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
 
 
+def _location_values(raw) -> Optional[list[str]]:
+    """The Location filter's values (free text, read whole), each held to the cap the single value had."""
+    values = multi_text(raw)
+    for value in values or []:
+        if len(value) > WORKLIST_FILTER_MAX_LENGTH:
+            raise handle_unprocessable("location: value is too long")
+    return values
+
+
 def _worklist_filters(
     query: Optional[str],
     delivery_month: Optional[str],
     raised_date: Optional[str],
-    state: Optional[str],
-    project_id: Optional[str],
-    supplier_id: Optional[str],
-    raised_by: Optional[str] = None,
+    state: Optional[str | list[str]],
+    project_id: Optional[str | list[str]],
+    supplier_id: Optional[str | list[str]],
+    raised_by: Optional[str | list[str]] = None,
     linked: Optional[str] = None,
     kind: Optional[str] = None,
     ack: Optional[str] = None,
     # S1, R-K (`PLAN-scm-oi-worklist-excel-parity.md`).
-    location: Optional[str] = None,
-    agent: Optional[str] = None,
+    location: Optional[str | list[str]] = None,
+    agent: Optional[str | list[str]] = None,
     so_month: Optional[str] = None,
     po_number: Optional[str] = None,
     spo_number: Optional[str] = None,
@@ -205,7 +215,7 @@ def _worklist_filters(
     # S5 (`PLAN-oi-project-label-from-so.md` section 5): the Project filter's own text,
     # exact match on the SAME `_PROJECT_TITLE` the column and `_projects()` facet read -
     # separate from `project_id`, which stays UUID-validated for any existing deep link.
-    project: Optional[str] = None,
+    project: Optional[str | list[str]] = None,
     # S3 (`PLAN-oi-header-list-detail.md`): the OI detail page's own Lines tab.
     inquiry_id: Optional[str] = None,
     # OI-BULK-RESERVE v4: the Lines page's Reserve facet, one request row's own status.
@@ -213,21 +223,23 @@ def _worklist_filters(
     # LINKAGE-UNIFY U3 (Q5): the "Dead document" filter.
     dead_document: Optional[str] = None,
 ) -> dict:
+    # FILTER-MULTISELECT PR6: the dropdown filters take several values, OR-ed within the filter. Ids and
+    # codes ride comma-joined (or repeated); `project` is free text and is read whole, never split.
     filters = {
         "query": query,
         "delivery_month": delivery_month,
         "raised_date": raised_date,
-        "state": state,
-        "project_id": project_id,
-        "project": project,
-        "supplier_id": supplier_id,
+        "state": multi_choices(state, WORKLIST_STATES, "state"),
+        "project_id": multi_values(project_id),
+        "project": multi_text(project),
+        "supplier_id": multi_values(supplier_id),
         # `users.id` is a plain string, not a UUID column - it is never validated as one.
-        "raised_by": raised_by,
+        "raised_by": multi_values(raised_by),
         "linked": linked,
         "kind": kind,
         "ack": ack,
-        "location": location,
-        "agent": agent,
+        "location": _location_values(location),
+        "agent": multi_values(agent),
         "so_month": so_month,
         "po_number": po_number,
         "spo_number": spo_number,
@@ -284,9 +296,9 @@ def list_order_inquiry_worklist(
     ),
     # A closed set for the same reason `sort` is: a filter nothing can equal reads on
     # screen as "no work to do" when the truth is "that is not a state".
-    state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
-    project_id: Optional[str] = Query(None),
-    project: Optional[str] = Query(
+    state: Optional[list[str]] = Query(None),
+    project_id: Optional[list[str]] = Query(None),
+    project: Optional[list[str]] = Query(
         None,
         description=(
             "The Project column's own text, exact match - a registered project's title "
@@ -296,8 +308,8 @@ def list_order_inquiry_worklist(
             "facet offer an option the filter itself refused."
         ),
     ),
-    supplier_id: Optional[str] = Query(None),
-    raised_by: Optional[str] = Query(
+    supplier_id: Optional[list[str]] = Query(None),
+    raised_by: Optional[list[str]] = Query(
         None,
         description=(
             "The person who raised the rows, by id, off the summary's own list. Matches a "
@@ -344,13 +356,12 @@ def list_order_inquiry_worklist(
     ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    location: Optional[str] = Query(
+    location: Optional[list[str]] = Query(
         None,
-        max_length=_MAX_FILTER_LENGTH,
-        description="The row's Location column, equality (S1, R-K).",
+        description="The row's Location column, equality (S1, R-K); several are OR-ed.",
     ),
-    agent: Optional[str] = Query(
-        None, description="The row's Agent column, equality, by `sales_agents.id`."
+    agent: Optional[list[str]] = Query(
+        None, description="The row's Agent column, equality, by `sales_agents.id`; several are OR-ed."
     ),
     so_month: Optional[str] = Query(
         None, description="`YYYY-MM` on the SO date, not the delivery date."
@@ -476,11 +487,11 @@ def order_inquiry_worklist_summary(
     query: Optional[str] = Query(None, max_length=_MAX_QUERY_LENGTH),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
-    project_id: Optional[str] = Query(None),
-    project: Optional[str] = Query(None),
-    supplier_id: Optional[str] = Query(None),
-    raised_by: Optional[str] = Query(None),
+    state: Optional[list[str]] = Query(None),
+    project_id: Optional[list[str]] = Query(None),
+    project: Optional[list[str]] = Query(None),
+    supplier_id: Optional[list[str]] = Query(None),
+    raised_by: Optional[list[str]] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     kind: Optional[Literal["spo", "po", "buy"]] = Query(
         None,
@@ -499,8 +510,8 @@ def order_inquiry_worklist_summary(
             "`state` and `linked`, and a closed set for the same reason both of those are."
         ),
     ),
-    location: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
-    agent: Optional[str] = Query(None),
+    location: Optional[list[str]] = Query(None),
+    agent: Optional[list[str]] = Query(None),
     so_month: Optional[str] = Query(None),
     po_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
     spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
@@ -546,16 +557,16 @@ def export_order_inquiry_worklist(
     query: Optional[str] = Query(None, max_length=_MAX_QUERY_LENGTH),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
-    project_id: Optional[str] = Query(None),
-    project: Optional[str] = Query(None),
-    supplier_id: Optional[str] = Query(None),
-    raised_by: Optional[str] = Query(None),
+    state: Optional[list[str]] = Query(None),
+    project_id: Optional[list[str]] = Query(None),
+    project: Optional[list[str]] = Query(None),
+    supplier_id: Optional[list[str]] = Query(None),
+    raised_by: Optional[list[str]] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
     ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(None),
-    location: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
-    agent: Optional[str] = Query(None),
+    location: Optional[list[str]] = Query(None),
+    agent: Optional[list[str]] = Query(None),
     so_month: Optional[str] = Query(None),
     po_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
     spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
@@ -797,16 +808,16 @@ def order_inquiry_worklist_matrix(
     query: Optional[str] = Query(None, max_length=_MAX_QUERY_LENGTH),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
-    project_id: Optional[str] = Query(None),
-    project: Optional[str] = Query(None),
-    supplier_id: Optional[str] = Query(None),
-    raised_by: Optional[str] = Query(None),
+    state: Optional[list[str]] = Query(None),
+    project_id: Optional[list[str]] = Query(None),
+    project: Optional[list[str]] = Query(None),
+    supplier_id: Optional[list[str]] = Query(None),
+    raised_by: Optional[list[str]] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
     ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(None),
-    location: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
-    agent: Optional[str] = Query(None),
+    location: Optional[list[str]] = Query(None),
+    agent: Optional[list[str]] = Query(None),
     so_month: Optional[str] = Query(None),
     po_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
     spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
@@ -858,7 +869,7 @@ def order_inquiry_worklist_matrix(
 
 
 @router.post("/order-inquiries/acknowledge", response_model=AcknowledgeResult)
-async def acknowledge_order_inquiry_rows(
+def acknowledge_order_inquiry_rows(
     payload: AcknowledgeRowsRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
@@ -916,7 +927,7 @@ async def acknowledge_order_inquiry_rows(
 
 
 @router.post("/order-inquiries/unacknowledge", response_model=UnacknowledgeResult)
-async def unacknowledge_order_inquiry_rows(
+def unacknowledge_order_inquiry_rows(
     payload: UnacknowledgeRowsRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
@@ -954,7 +965,7 @@ async def unacknowledge_order_inquiry_rows(
 
 
 @router.post("/order-inquiries/reject", response_model=RejectRowsResult)
-async def reject_order_inquiry_rows(
+def reject_order_inquiry_rows(
     payload: RejectRowsRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
@@ -985,7 +996,7 @@ async def reject_order_inquiry_rows(
 
 
 @router.post("/order-inquiries/{row_id}/reject", response_model=OrderInquiryRowOut)
-async def reject_order_inquiry_row(
+def reject_order_inquiry_row(
     row_id: str,
     payload: RejectRowRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
@@ -1009,7 +1020,7 @@ async def reject_order_inquiry_row(
 
 
 @router.post("/order-inquiries/link-now", response_model=AutoPlaceResult)
-async def link_acknowledged_order_inquiry_rows(
+def link_acknowledged_order_inquiry_rows(
     payload: LinkNowRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
@@ -1109,7 +1120,7 @@ def get_order_inquiry_spo_detail(
     "/projects/{project_id}/order-inquiry-rows",
     response_model=ListResponse[OrderInquiryRowOut],
 )
-async def list_order_inquiry_rows(
+def list_order_inquiry_rows(
     project_id: str,
     query: Optional[str] = Query(None, description="Item code, SPO ref, location or SO number"),
     verb: Optional[List[str]] = Query(None),
@@ -1130,8 +1141,8 @@ async def list_order_inquiry_rows(
         rows, total = service.list_rows(
             project_id,
             query=query,
-            verb=verb,
-            state=state,
+            verb=multi_values(verb),
+            state=multi_values(state),
             pso_id=sales_order_id,
             page=page,
             limit=limit,
@@ -1150,7 +1161,7 @@ async def list_order_inquiry_rows(
 @router.get(
     "/projects/{project_id}/order-inquiry-summary", response_model=OrderInquirySummary
 )
-async def order_inquiry_summary(
+def order_inquiry_summary(
     project_id: str,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -1164,7 +1175,7 @@ async def order_inquiry_summary(
 
 
 @router.get("/projects/{project_id}/order-inquiry-export")
-async def export_order_inquiry(
+def export_order_inquiry(
     project_id: str,
     query: Optional[str] = Query(None),
     verb: Optional[List[str]] = Query(None),
@@ -1183,7 +1194,7 @@ async def export_order_inquiry(
         validate_uuid_path(project_id, resource="Project")
         projects.get_project_or_404(db, project_id)
         filename, body = ProjectOrderInquiryService(db).export_xlsx(
-            project_id, query=query, verb=verb, state=state, pso_id=sales_order_id
+            project_id, query=query, verb=multi_values(verb), state=multi_values(state), pso_id=sales_order_id
         )
         return Response(
             content=body,
@@ -1197,7 +1208,7 @@ async def export_order_inquiry(
 
 
 @router.get("/sales-orders/{pso_id}/order-inquiry", response_model=OrderInquiryDetail)
-async def get_sales_order_inquiry(
+def get_sales_order_inquiry(
     pso_id: str,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -1297,7 +1308,7 @@ def _serialize_reserve_request(
     response_model=OrderInquiryReserveRequestOut,
     status_code=201,
 )
-async def create_order_inquiry_reserve_request(
+def create_order_inquiry_reserve_request(
     inquiry_id: str,
     payload: CreateReserveRequestIn,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
@@ -1335,7 +1346,7 @@ async def create_order_inquiry_reserve_request(
     "/order-inquiries/reserve-requests/{request_id}/cancel",
     response_model=OrderInquiryReserveRequestOut,
 )
-async def cancel_order_inquiry_reserve_request(
+def cancel_order_inquiry_reserve_request(
     request_id: str,
     current_user: dict = Depends(require_any_permission([ACKNOWLEDGE, RESERVE])),
     db: Session = Depends(get_db),
@@ -1369,7 +1380,7 @@ async def cancel_order_inquiry_reserve_request(
     "/order-inquiries/{inquiry_id}/reserve-commit",
     response_model=List[OrderInquiryReserveRequestOut],
 )
-async def commit_order_inquiry_reserve(
+def commit_order_inquiry_reserve(
     inquiry_id: str,
     payload: CommitReserveRequestIn,
     current_user: dict = Depends(require_permission(RESERVE)),
@@ -1603,7 +1614,7 @@ def sales_order_line_decision_trail(
     "/order-inquiries/{inquiry_id}/reserve-requests",
     response_model=List[OrderInquiryReserveRequestOut],
 )
-async def list_order_inquiry_reserve_requests(
+def list_order_inquiry_reserve_requests(
     inquiry_id: str,
     current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
     db: Session = Depends(get_db),
@@ -1630,7 +1641,7 @@ async def list_order_inquiry_reserve_requests(
 
 
 @router.post("/order-inquiry-rows/mark", response_model=List[OrderInquiryRowOut])
-async def mark_order_inquiry_rows(
+def mark_order_inquiry_rows(
     payload: MarkInquiryRowsRequest,
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
@@ -1653,7 +1664,7 @@ async def mark_order_inquiry_rows(
     "/order-inquiry-rows/{row_id}/po-candidates",
     response_model=OrderInquiryPoCandidatesResponse,
 )
-async def order_inquiry_po_candidates(
+def order_inquiry_po_candidates(
     row_id: str,
     _user: dict = Depends(require_permission_with_api_key(ACTION)),
     db: Session = Depends(get_db),
@@ -1678,7 +1689,7 @@ async def order_inquiry_po_candidates(
 @router.post(
     "/order-inquiry-rows/{row_id}/place-on-po", response_model=OrderInquiryRowOut
 )
-async def place_order_inquiry_row_on_po(
+def place_order_inquiry_row_on_po(
     row_id: str,
     payload: PlaceOnPoRequest,
     current_user: dict = Depends(require_permission(ACTION)),
@@ -1739,7 +1750,7 @@ async def place_order_inquiry_row_on_po(
 
 
 @router.post("/order-inquiries/auto-place", response_model=AutoPlaceResult)
-async def auto_place_order_inquiries(
+def auto_place_order_inquiries(
     payload: AutoPlaceRequest,
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
@@ -1795,7 +1806,7 @@ async def auto_place_order_inquiries(
 @router.post(
     "/order-inquiry-rows/{row_id}/unplace", response_model=OrderInquiryRowOut
 )
-async def unplace_order_inquiry_row(
+def unplace_order_inquiry_row(
     row_id: str,
     payload: UnlinkRequest = UnlinkRequest(),
     current_user: dict = Depends(require_permission(ACTION)),
@@ -1825,10 +1836,10 @@ def order_inquiry_unplace_all_preview(
     query: Optional[str] = Query(None),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    project_id: Optional[str] = Query(None),
-    project: Optional[str] = Query(None),
-    supplier_id: Optional[str] = Query(None),
-    raised_by: Optional[str] = Query(None),
+    project_id: Optional[list[str]] = Query(None),
+    project: Optional[list[str]] = Query(None),
+    supplier_id: Optional[list[str]] = Query(None),
+    raised_by: Optional[list[str]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(ACTION)),
     db: Session = Depends(get_db),
 ):
@@ -1861,7 +1872,7 @@ def order_inquiry_unplace_all_preview(
 
 
 @router.post("/order-inquiries/unplace-all", response_model=UnplaceAllResult)
-async def unplace_order_inquiry_rows_in_scope(
+def unplace_order_inquiry_rows_in_scope(
     payload: UnplaceAllRequest,
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
@@ -1873,10 +1884,9 @@ async def unplace_order_inquiry_rows_in_scope(
     earliest-first. Same scope as the preview above, and the same three exclusions:
     `state`, `linked` and `kind` never narrow it."""
     try:
-        if payload.project_id:
-            validate_uuid_path(payload.project_id, resource="Project")
-        if payload.supplier_id:
-            validate_uuid_path(payload.supplier_id, resource="Supplier")
+        _validate_worklist_filter_uuids(
+            {"project_id": payload.project_id, "supplier_id": payload.supplier_id}
+        )
         unplaced = OrderInquiryWorklistService(db).unplace_all(
             actor_user_id=current_user["id"],
             query=payload.query,
@@ -1938,18 +1948,18 @@ def list_order_inquiry_headers(
             "code / location of any of the header's own non-cancelled lines."
         ),
     ),
-    raised_by: Optional[str] = Query(
-        None, max_length=200, description="By `users.id`, exact."
+    raised_by: Optional[list[str]] = Query(
+        None, description="By `users.id`, exact; several are OR-ed."
     ),
-    agent: Optional[str] = Query(
-        None, max_length=200, description="By the agent's own name, exact."
+    agent: Optional[list[str]] = Query(
+        None, description="By the agent's own name, exact; several are OR-ed."
     ),
     # B2 (reviewer): free TEXT on the Project column's own value (`_PROJECT_TITLE`),
     # never `project_id` - 0 of 738 headers on the prod copy carry a
     # `ProjectSalesOrder.project_id` (an adopted AutoCount order has no registered
     # `Project` row), so a uuid-pattern filter never matched anything. Same shape
     # `order_inquiry_worklist_service.py`'s own `project` filter already uses.
-    project: Optional[str] = Query(None, max_length=200, description="Exact match on the Project column's text."),
+    project: Optional[list[str]] = Query(None, description="Exact match on the Project column's text; several are OR-ed."),
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(
         None, description="OIs with a reserve request row in this status (AC-SN-30)."
     ),
@@ -1961,6 +1971,11 @@ def list_order_inquiry_headers(
     db: Session = Depends(get_db),
 ):
     """One row per order inquiry - Documents view, default (AC-LS-01..07)."""
+    # The 200-character cap each of these had as a single value, now held per value.
+    for label, raw in (("raised_by", raised_by), ("agent", agent), ("project", project)):
+        for value in (multi_text(raw) or []):
+            if len(value) > 200:
+                raise handle_unprocessable(f"{label}: value is too long")
     try:
         result = OrderInquiryHeaderService(db).list(
             state=state,

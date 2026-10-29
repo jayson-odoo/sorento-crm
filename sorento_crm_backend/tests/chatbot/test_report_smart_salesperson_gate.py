@@ -5,7 +5,7 @@ The engine refused every sales figure ask without `sales_orders.sales_report` be
 ran, so a live salesperson (ACTIVE CRM user with the salesperson role and an agent link with
 customers) never reached the route that narrows them to their own book. The ranking kinds
 (`sales_ranking`, and a `sales_analysis` by group that by_capability turns into the ranking) go
-through to the report-ask tool; `top_selling` and `sales_report` stay refused. Everyone else
+through to the report-ask tool; `top_selling` stays refused. Owner 28 Oct 08:40: a `sales_report` total passes too, like a ranking. Everyone else
 without the grant stays refused. Fake names only (CONTACT A, SALESPERSON B).
 """
 from __future__ import annotations
@@ -105,33 +105,46 @@ REFUSED_KINDS = [
                                  rank_direction="top", top_n=5, basis="ordered")),
     ("item paling laku", dict(order_status="top_selling", group_by=None, rank_by="qty", rank_group="item",
                               rank_direction="top", top_n=5, basis="delivered")),
-    ("sales report this month", dict(order_status="sales_report", group_by=None, measure=None, basis=None)),
-    ("my sales report", dict(order_status="sales_report", group_by=None, measure=None, basis=None, self_reference=True)),
-    ("laporan jualan bulan ini", dict(order_status="sales_report", group_by=None, measure=None, basis=None)),
-    ("销售报告 这个月", dict(order_status="sales_report", group_by=None, measure=None, basis=None)),
 ]
 
 
 @pytest.mark.parametrize("body, shape", REFUSED_KINDS)
-def test_a_salesperson_without_the_grant_is_still_refused_the_top_selling_and_sales_report_kinds(
+def test_a_salesperson_without_the_grant_and_no_link_gets_the_item_ranking_over_all(
     console_no_grant, monkeypatch, body, shape
 ) -> None:
-    from app.services.chatbot.trace import TurnTrace
-
-    events: list[tuple[str, dict[str, Any]]] = []
-    real_add = TurnTrace.add
-
-    def spy(self: Any, kind: str, payload: dict[str, Any]) -> None:
-        events.append((kind, dict(payload)))
-        return real_add(self, kind, payload)
-
-    monkeypatch.setattr(TurnTrace, "add", spy)
+    """Owner 28 Oct 10:15: REPORT-SMART R1 retires for a contact with no linked customer; the item ranking runs over
+    ALL (no `mine`)."""
     _make_salesperson(console_no_grant)
-    qf = _rank(domain_hint="order", intent_hint="check_order", **{"measure": None, **shape})
+    qf = _rank(domain_hint="order", intent_hint="check_order", **{"measure": "amount", **shape})
     text, log = _say_all(console_no_grant, monkeypatch, qf, body)
-    assert any(k == "domain_grant" and p.get("skipped") == "not_granted" for k, p in events), events
-    assert text.strip(), text  # the refusal is localised, so only the tool calls are pinned
-    assert not [n for n in _names(log) if n in (TOOL, "crm_top_selling_report", "crm_sales_report")], _names(log)
+    ran = [a for n, a in log if n == TOOL]
+    assert len(ran) == 1 and "crm_top_selling_report" not in _names(log), (text, log)
+    assert not ran[0].get("mine"), ran
+
+
+TOTALS = [
+    ("sales report this month", dict(order_status="sales_report", group_by=None, measure=None, basis="delivered")),
+    ("laporan jualan bulan ini", dict(order_status="sales_report", group_by=None, measure=None, basis="delivered")),
+    ("销售报告 这个月", dict(order_status="sales_report", group_by=None, measure=None, basis="delivered")),
+]
+
+
+@pytest.mark.parametrize("body, shape", TOTALS)
+def test_a_salesperson_without_the_grant_and_no_linked_customer_gets_the_total_over_all(console_no_grant, body, shape) -> None:
+    """Owner 28 Oct 08:40: no linked customer sees ALL figures, so the total runs, never narrowed (no `mine`)."""
+    _make_salesperson(console_no_grant)
+    qf = _ask(**shape)
+    text, calls = console_no_grant.say(qf, body)
+    assert len(calls) == 1, (text, calls)
+    assert not calls[0].get("mine"), calls
+
+
+def test_my_total_for_a_salesperson_without_the_grant_is_still_the_own_book(console_no_grant) -> None:
+    """The 23 Oct "my ..." own-book ruling stands: only a "my" ask is narrowed."""
+    _make_salesperson(console_no_grant)
+    qf = _ask(order_status="sales_report", group_by=None, measure=None, basis="delivered", self_reference=True)
+    text, calls = console_no_grant.say(qf, "my sales report")
+    assert len(calls) == 1 and calls[0].get("mine") is True, (text, calls)
 
 
 @pytest.mark.parametrize("who", ["no_links", "agent_link_only"])
@@ -148,3 +161,23 @@ def test_near_miss_a_staff_contact_with_the_grant_runs_as_today(console) -> None
     _staff(console)
     text, calls = console.say(_rank(_e("Sorento", "brand")), "top 3 salesman for Sorento brand last month")
     assert len(calls) == 1 and not calls[0].get("mine"), (text, calls)
+
+
+def _yearly_qf():
+    return _rank(domain_hint="order", intent_hint="check_order",
+                 **{"order_status": "sales_analysis", "group_by": "year", "measure": None, "basis": None})
+
+
+def test_an_ungranted_salesperson_asking_the_yearly_comparison_is_asked_the_basis_like_any_total(console_no_grant, monkeypatch) -> None:
+    """The Yearly comparison is the report ask grouped by year (crew 28 Oct), so it passes the early gate like any total
+    for a salesperson with no linked customer (owner 28 Oct 08:40) and asks the one basis question."""
+    _make_salesperson(console_no_grant)
+    text, log = _say_all(console_no_grant, monkeypatch, _yearly_qf(), "sales by year")
+    assert text.strip() == "Invoiced, delivered, ordered or outstanding?", text
+    assert not [n for n in _names(log) if n in (TOOL, "crm_sales_analysis", "crm_sales_report")], _names(log)
+
+
+def test_a_contact_that_is_not_a_salesperson_and_holds_no_reveal_is_refused_the_yearly_comparison(console_no_grant, monkeypatch) -> None:
+    text, log = _say_all(console_no_grant, monkeypatch, _yearly_qf(), "sales by year")
+    assert text.strip() == DENIAL, text
+    assert not [n for n in _names(log) if n in (TOOL, "crm_sales_analysis", "crm_sales_report")], _names(log)

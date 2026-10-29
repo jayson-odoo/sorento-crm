@@ -482,12 +482,13 @@ describe('the overview, read as sections', () => {
 });
 
 describe('state and mukim on the overview (PROJECT-REG-PORTAL D12)', () => {
-  it('shows State and Mukim as facts of the development', () => {
+  it('shows State and Area (owner, 29 Oct: Mukim is called Area) as facts of the development', () => {
     projectFixture = project({ state: 'Johor', mukim: 'Tebrau' } as Partial<Project>);
     renderDetail();
     expect(screen.getByText('State')).toBeInTheDocument();
     expect(screen.getByText('Johor')).toBeInTheDocument();
-    expect(screen.getByText('Mukim')).toBeInTheDocument();
+    expect(screen.getByText('Area')).toBeInTheDocument();
+    expect(screen.queryByText('Mukim')).toBeNull();
     expect(screen.getByText('Tebrau')).toBeInTheDocument();
   });
 });
@@ -614,6 +615,217 @@ describe('owner hand-test, 13 Oct', () => {
     openOverflow();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Re-specify' }));
     expect(changeStatus).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe('the prod-shaped ladder (PROJECT-STAGES-SAMPLE)', () => {
+  const RUNGS: [string, string, string, number, boolean?][] = [
+    ['s-reg', 'registered', 'Registered', 1],
+    ['s-spec', 'specified', 'Spec In', 2],
+    ['s-sample', 'sample_submission', 'Sample Submission', 4],
+    ['s-neg', 'final_negotiation', 'Final Negotiation', 5],
+    ['s-spon', 'sponsorship_form', 'Sponsorship Form', 6],
+    ['s-po', 'po_received', 'PO Received', 7, true],
+    ['s-lost', 'lost', 'Lost', 8, true],
+    ['s-dorm', 'dormant', 'Dormant', 9, true],
+  ];
+  const EDGES: [string, string, string][] = [
+    ['s-reg', 's-spec', 'Spec In'],
+    ['s-reg', 's-lost', 'Mark lost'],
+    ['s-reg', 's-dorm', 'Mark dormant'],
+    ['s-reg', 's-po', 'PO received'],
+    ['s-spec', 's-dorm', 'Mark dormant'],
+    ['s-spec', 's-po', 'PO received'],
+    ['s-spec', 's-reg', 'Back to registered'],
+    ['s-spec', 's-lost', 'Mark lost'],
+    ['s-spec', 's-sample', 'Sample submitted'],
+    ['s-sample', 's-dorm', 'Mark dormant'],
+    ['s-sample', 's-lost', 'Mark lost'],
+    ['s-sample', 's-po', 'PO received'],
+    ['s-sample', 's-neg', 'Final negotiation'],
+    ['s-sample', 's-spec', 'Back to Spec In'],
+    ['s-neg', 's-spon', 'Sponsorship'],
+    ['s-neg', 's-po', 'PO received'],
+    ['s-neg', 's-sample', 'Back to sample submission'],
+    ['s-neg', 's-lost', 'Mark lost'],
+    ['s-neg', 's-dorm', 'Mark dormant'],
+    ['s-spon', 's-po', 'PO received'],
+    ['s-spon', 's-neg', 'Back to final negotiation'],
+    ['s-spon', 's-lost', 'Mark lost'],
+    ['s-spon', 's-dorm', 'Mark dormant'],
+  ];
+
+  function stand(at: string) {
+    const row = RUNGS.find((r) => r[0] === at)!;
+    graphFixture = graph({
+      statuses: RUNGS.map(([id, key, label, order, terminal]) =>
+        status(id, key, label, order, { is_terminal: Boolean(terminal) }),
+      ),
+      transitions: EDGES.map(([from, to, label], i) => transition(`t-${i}`, from, to, label, 0)),
+    });
+    projectFixture = project({ status_id: row[0], status_key: row[1], status_label: row[2] });
+  }
+
+  function succeed() {
+    changeStatus.mockImplementation(
+      (_vars: unknown, options?: { onSuccess?: () => void }) => options?.onSuccess?.(),
+    );
+  }
+
+  function header() {
+    return within(screen.getByTestId('project-header-actions'));
+  }
+
+  async function gearItems() {
+    openOverflow();
+    await screen.findByRole('menuitem', { name: /Edit project/ });
+    return screen.getAllByRole('menuitem').map((el) => (el.textContent || '').trim());
+  }
+
+  it('AC-PS-10: Spec In offers Sample submitted, the rest in the gear', async () => {
+    stand('s-spec');
+    renderDetail();
+    expect(header().getAllByRole('button')[1]).toHaveTextContent('Sample submitted');
+    const items = await gearItems();
+    for (const name of ['PO received', 'Back to registered', 'Mark lost', 'Mark dormant']) {
+      expect(items).toContain(name);
+    }
+  });
+
+  it('AC-PS-11: Sample Submission offers Final negotiation', async () => {
+    stand('s-sample');
+    renderDetail();
+    expect(header().getAllByRole('button')[1]).toHaveTextContent('Final negotiation');
+    const items = await gearItems();
+    for (const name of ['PO received', 'Back to Spec In', 'Mark lost', 'Mark dormant']) {
+      expect(items).toContain(name);
+    }
+  });
+
+  it('AC-PS-12: Final Negotiation offers Sponsorship', async () => {
+    stand('s-neg');
+    renderDetail();
+    expect(header().getAllByRole('button')[1]).toHaveTextContent('Sponsorship');
+    const items = await gearItems();
+    for (const name of ['PO received', 'Back to sample submission', 'Mark lost', 'Mark dormant']) {
+      expect(items).toContain(name);
+    }
+  });
+
+  it('AC-PS-13: Sponsorship Form offers PO received', async () => {
+    stand('s-spon');
+    renderDetail();
+    expect(header().getAllByRole('button')[1]).toHaveTextContent('PO received');
+    const items = await gearItems();
+    for (const name of ['Back to final negotiation', 'Mark lost', 'Mark dormant']) {
+      expect(items).toContain(name);
+    }
+  });
+
+  it('AC-PS-20: Sample submitted moves, then opens a new sample request for this project', () => {
+    stand('s-spec');
+    succeed();
+    renderDetail();
+    fireEvent.click(header().getByRole('button', { name: 'Sample submitted' }));
+    expect(changeStatus).toHaveBeenCalledWith(
+      { projectId: 'p1', toStatusId: 's-sample' },
+      expect.anything(),
+    );
+    expect(push).toHaveBeenCalledWith('/project-sales/sample-requests/new?project_id=p1');
+  });
+
+  it('AC-PS-21: Sponsorship moves, then opens a new sponsorship form for this project', () => {
+    stand('s-neg');
+    succeed();
+    renderDetail();
+    fireEvent.click(header().getByRole('button', { name: 'Sponsorship' }));
+    expect(changeStatus).toHaveBeenCalledWith(
+      { projectId: 'p1', toStatusId: 's-spon' },
+      expect.anything(),
+    );
+    expect(push).toHaveBeenCalledWith(
+      '/procurement-management/sponsorship-forms/new?project_id=p1',
+    );
+  });
+
+  it('AC-PS-22: Spec In from Registered still opens the new quotation page', () => {
+    stand('s-reg');
+    succeed();
+    renderDetail();
+    fireEvent.click(header().getByRole('button', { name: 'Spec In' }));
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/new');
+  });
+
+  it('AC-PS-23: Final negotiation (forward into a rung with no form) opens nothing', () => {
+    stand('s-sample');
+    succeed();
+    renderDetail();
+    fireEvent.click(header().getByRole('button', { name: 'Final negotiation' }));
+    expect(changeStatus).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['s-sample', 'Back to Spec In'],
+    ['s-neg', 'Back to sample submission'],
+    ['s-spon', 'Back to final negotiation'],
+    ['s-spec', 'Back to registered'],
+  ])('AC-PS-23: %s gear "%s" moves and opens nothing', async (at, name) => {
+    stand(at);
+    succeed();
+    renderDetail();
+    openOverflow();
+    fireEvent.click(await screen.findByRole('menuitem', { name }));
+    expect(changeStatus).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('AC-PS-23: PO received from Sponsorship Form opens nothing', () => {
+    stand('s-spon');
+    succeed();
+    renderDetail();
+    fireEvent.click(header().getByRole('button', { name: 'PO received' }));
+    expect(changeStatus).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('AC-PS-24: a refused move opens no form', () => {
+    stand('s-spec');
+    changeStatus.mockImplementation(
+      (_vars: unknown, options?: { onError?: (e: Error) => void }) =>
+        options?.onError?.(new Error('refused')),
+    );
+    renderDetail();
+    fireEvent.click(header().getByRole('button', { name: 'Sample submitted' }));
+    expect(changeStatus).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('AC-PS-28: a forward rung keyed like an Object.prototype member moves and opens nothing', () => {
+    graphFixture = graph({
+      statuses: [
+        status('s-spec', 'specified', 'Spec In', 2),
+        status('s-proto', 'toString', 'Prototype Rung', 3),
+        status('s-po', 'po_received', 'PO Received', 7, { is_terminal: true }),
+      ],
+      transitions: [
+        transition('t-0', 's-spec', 's-proto', 'Advance proto', 0),
+        transition('t-1', 's-spec', 's-po', 'PO received', 0),
+      ],
+    });
+    projectFixture = project({
+      status_id: 's-spec',
+      status_key: 'specified',
+      status_label: 'Spec In',
+    });
+    succeed();
+    renderDetail();
+    fireEvent.click(header().getByRole('button', { name: 'Advance proto' }));
+    expect(changeStatus).toHaveBeenCalledWith(
+      { projectId: 'p1', toStatusId: 's-proto' },
+      expect.anything(),
+    );
     expect(push).not.toHaveBeenCalled();
   });
 });

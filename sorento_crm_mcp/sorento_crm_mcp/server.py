@@ -35,8 +35,9 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
     "crm_low_stock_report": ("contact_id", "space_id"),
     # The sales analysis is per contact too: their company, their key, their chat.
     "crm_sales_analysis": ("contact_id", "space_id"),
-    # The report ask needs the contact pair and a period (422 period_required otherwise).
-    "crm_report_ask": ("contact_id", "space_id", "date_from", "date_to"),
+    # The report ask needs the contact pair. The period is the route's to enforce per basis (`period_required` for the
+    # sales bases, every date for the outstanding kinds), so it is not a required argument here.
+    "crm_report_ask": ("contact_id", "space_id"),
     # SALES-TARGET-CHAT slice 2: the salesperson's own customers are per contact.
     "crm_sales_opportunity_customer_options": ("contact_id", "space_id"),
 }
@@ -1385,7 +1386,7 @@ def _strip_row_company_ids(tool_name: str, data: Any) -> Any:
 # renderer), plus browser-only fields it cannot act on. `id` deliberately SURVIVES: both
 # crm_project_detail and crm_project_quotations_list take it, and the two-call pattern is how
 # a project answer gets any depth. Every dropped key has a human-readable twin that stays
-# (developer_name, type_name, owner_name, status_label, brands), so nothing becomes
+# (developer_name, type_name, owner_name, status_label), so nothing becomes
 # unanswerable -- it becomes answerable in words.
 _PROJECT_SLIM_TOOLS = ("crm_projects_list", "crm_project_detail")
 _PROJECT_DROP_KEYS = frozenset(

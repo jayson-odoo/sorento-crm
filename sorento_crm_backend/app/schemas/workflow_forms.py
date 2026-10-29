@@ -36,6 +36,8 @@ class WorkflowPublishedDefinitionOut(BaseModel):
     id: str
     code: str
     name: str
+    # Just `{"states": [{code, label}]}`: what the submissions list's State filter offers.
+    published_schema: Optional[Dict[str, Any]] = None
 
 
 class WorkflowFormDefinitionOut(BaseModel):

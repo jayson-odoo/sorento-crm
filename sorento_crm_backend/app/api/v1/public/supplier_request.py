@@ -26,7 +26,7 @@ router = APIRouter()
 
 
 @router.get("/{token}")
-async def read_supplier_request(token: str, db: Session = Depends(get_db)):
+def read_supplier_request(token: str, db: Session = Depends(get_db)):
     """What we asked this supplier to pack, as it was asked (AC-C6)."""
     try:
         return svc.public_request_page(db, token)
@@ -35,7 +35,7 @@ async def read_supplier_request(token: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{token}/document/{kind}")
-async def read_supplier_request_document(
+def read_supplier_request_document(
     token: str,
     kind: str = Path(..., pattern="^(pdf|xlsx)$"),
     db: Session = Depends(get_db),

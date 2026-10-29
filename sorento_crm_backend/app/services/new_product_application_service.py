@@ -58,7 +58,7 @@ CANCELLED = "cancelled"
 STATUS_LABELS = {
     DRAFT: "Draft",
     SUBMITTED: "Submitted",
-    RESUBMITTED: "Resubmitted",
+    RESUBMITTED: submission_status.APPEALED_LABEL,
     APPROVED: "Approved",
     REJECTED: "Rejected",
     COMPLETED: "Completed",
@@ -773,7 +773,7 @@ def list_for(
     statuses: Optional[List[str]] = None,
     q: Optional[str] = None,
     stock_inquiry_id: Optional[str] = None,
-    applicant_id: Optional[str] = None,
+    applicant_id: Optional[list[str] | str] = None,
     page: int = 1,
     limit: int = 25,
     sort: Optional[str] = None,
@@ -787,7 +787,9 @@ def list_for(
             return {"items": [], "total": 0, "page": page, "limit": limit}
         query = query.filter(NewProductApplication.stock_inquiry_id == stock_inquiry_id)
     if applicant_id:
-        query = query.filter(NewProductApplication.applicant_id == applicant_id)
+        query = query.filter(
+            NewProductApplication.applicant_id.in_([applicant_id] if isinstance(applicant_id, str) else applicant_id)
+        )
     text = (q or "").strip()
     if text:
         like = f"%{text}%"
@@ -1039,7 +1041,7 @@ def _holders(db: Session, slug: str, company_id: str, exclude: Iterable[Any] = (
 
 _EVENTS = {
     "submitted": ("waits for your approval", "approvers"),
-    "resubmitted": ("was resubmitted and waits for your approval", "approvers"),
+    "resubmitted": ("was appealed and waits for your approval", "approvers"),
     "withdrawn": ("was taken back for changes", "approvers"),
     "approved": ("is approved: codes to open", "purchasing"),
     "rejected": ("was rejected", "applicant"),

@@ -149,6 +149,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         moduleKey: 'sales',
       },
       {
+        title: 'Sales & outstanding',
+        path: '/sales/sales-and-outstanding',
+        // Invoiced needs the reports slug, unpaid the finance one, the other four the orders slug: any opens the screen.
+        permissionsAny: ['sales.reports.view', 'order_management.orders.view', 'finance.billing_documents.view'],
+        moduleKey: 'sales',
+      },
+      {
         title: 'Set-apart customers',
         path: '/sales/set-apart-customers',
         permission: 'sales.reports.view',
@@ -484,6 +491,12 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/inventory-management/stock-status',
         // The API's own gate (`app/api/v1/inventory/stock_status.py`): the panel shows SO
         // customers and PO suppliers, which `inventory.stock.view` alone never granted.
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
+      },
+      {
+        title: 'Stock position',
+        path: '/inventory-management/stock-position',
+        // Same gate as Stock status (`app/api/v1/inventory/stock_position.py` reuses its slugs).
         permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
       },
       {
@@ -2029,6 +2042,12 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/inventory-management/stock-status',
         // The API's own gate (`app/api/v1/inventory/stock_status.py`): the panel shows SO
         // customers and PO suppliers, which `inventory.stock.view` alone never granted.
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
+      },
+      {
+        title: 'Stock position',
+        path: '/inventory-management/stock-position',
+        // Same gate as Stock status (`app/api/v1/inventory/stock_position.py` reuses its slugs).
         permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
       },
       {

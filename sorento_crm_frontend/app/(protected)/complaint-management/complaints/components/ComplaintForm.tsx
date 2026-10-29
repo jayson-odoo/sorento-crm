@@ -905,6 +905,7 @@ export default function ComplaintForm({
                     paginated
                     pageSize={25}
                     clearable
+                    truncateTriggerLabel
                     selectedOption={
                       field.value && complaint?.project_code
                         ? {

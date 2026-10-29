@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Body, File
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+from app.utils.multi_value import multi_uuids
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.procurement_service import SPOAllocationService
@@ -32,7 +33,7 @@ router = APIRouter()
 #: same reason `/documents` is - Starlette matches routes in registration order and
 #: `/{allocation_id}` accepts any single path segment, "last-receipt" included.
 @router.get("/last-receipt")
-async def get_spo_last_receipt(
+def get_spo_last_receipt(
     product_ids: Optional[list[str]] = Query(
         None, description="Filter by canonical product UUIDs (csv / JSON / repeated)."
     ),
@@ -121,7 +122,7 @@ async def get_spo_last_receipt(
 
 
 @router.get("/grouped-by-shipment", response_model=ListResponse[ShipmentAllocationSummaryGroup])
-async def get_spo_allocations_grouped_by_shipment(
+def get_spo_allocations_grouped_by_shipment(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -152,7 +153,7 @@ async def get_spo_allocations_grouped_by_shipment(
 
 
 @router.get("/grouped-by-spo-number", response_model=ListResponse[SPOWithAllocationsGroup])
-async def get_spo_allocations_grouped_by_spo_number(
+def get_spo_allocations_grouped_by_spo_number(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -196,7 +197,7 @@ async def get_spo_allocations_grouped_by_spo_number(
 
 
 @router.get("/documents", response_model=ListResponse[SPODocumentRow])
-async def get_spo_documents(
+def get_spo_documents(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(
@@ -207,8 +208,8 @@ async def get_spo_documents(
         ),
     ),
     state: str = Query("outstanding"),
-    product_id: Optional[str] = Query(None),
-    warehouse_id: Optional[str] = Query(None),
+    product_id: Optional[list[str]] = Query(None),
+    warehouse_id: Optional[list[str]] = Query(None),
     overdue_only: bool = Query(False),
     sort: Optional[str] = Query("spo_number"),
     dir: Optional[str] = Query("desc"),
@@ -219,14 +220,16 @@ async def get_spo_documents(
     newest first by default, the fifth reader of `spo_supply.open_incoming_clauses()`.
     `query` also matches the raw, unlinked `spo_allocations.container_number` (PLAN-
     spo-list-container-number.md AC-4)."""
+    product_ids = multi_uuids(product_id, "Product")
+    warehouse_ids = multi_uuids(warehouse_id, "Warehouse")
     try:
         service = SPOAllocationService(db)
         result = service.list_documents(
             page=page,
             limit=limit,
             state=state,
-            product_id=product_id,
-            warehouse_id=warehouse_id,
+            product_id=product_ids,
+            warehouse_id=warehouse_ids,
             overdue_only=overdue_only,
             query=query,
             sort_field=sort or "spo_number",
@@ -241,7 +244,7 @@ async def get_spo_documents(
 
 
 @router.get("/documents/{spo_number:path}", response_model=SPODocument)
-async def get_spo_document(
+def get_spo_document(
     spo_number: str,
     current_user: dict = Depends(require_permission("procurement.spo_allocations.view")),
     db: Session = Depends(get_db),
@@ -267,7 +270,7 @@ async def get_spo_document(
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
-async def import_spo_allocations(
+def import_spo_allocations(
     files: List[UploadFile] = File(..., description="One or more Excel files (.xlsx). Filename = SPO number."),
     validate_only: bool = Query(False, description="If true, validate all uploaded files and return aggregated errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.spo_allocations.import")),
@@ -301,7 +304,7 @@ async def import_spo_allocations(
         all_valid = True
         multi = len(files) > 1
         for upload in files:
-            file_data = await upload.read()
+            file_data = upload.file.read()
             file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")
             result = validate_spo_import(
                 file_data, cleaned_name, company_scope=get_company_scope(db)
@@ -327,7 +330,7 @@ async def import_spo_allocations(
     job_service = JobService(db)
     from app.services.import_source_store import store_import_source_file
     for upload in files:
-        file_data = await upload.read()
+        file_data = upload.file.read()
         # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
         source_bytes, source_name, source_ctype = file_data, upload.filename, upload.content_type
         file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")
@@ -358,7 +361,7 @@ async def import_spo_allocations(
 
 
 @router.get("/", response_model=ListResponse[SPOAllocationResponse])
-async def get_spo_allocations(
+def get_spo_allocations(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -389,7 +392,7 @@ async def get_spo_allocations(
 
 
 @router.get("/{allocation_id}", response_model=SPOAllocationResponse)
-async def get_spo_allocation(
+def get_spo_allocation(
     allocation_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -436,7 +439,7 @@ async def get_spo_allocation(
 
 
 @router.post("/", response_model=SPOAllocationResponse, status_code=status.HTTP_201_CREATED)
-async def create_spo_allocation(
+def create_spo_allocation(
     allocation_data: SPOAllocationCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -453,7 +456,7 @@ async def create_spo_allocation(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_spo_allocations(
+def bulk_delete_spo_allocations(
     body: BulkDeleteSPOAllocationsRequest = Body(...),
     current_user: dict = Depends(require_permission("procurement.spo_allocations.delete")),
     db: Session = Depends(get_db)
@@ -469,7 +472,7 @@ async def bulk_delete_spo_allocations(
 
 
 @router.put("/{allocation_id}", response_model=SPOAllocationResponse)
-async def update_spo_allocation(
+def update_spo_allocation(
     allocation_id: str,
     allocation_data: SPOAllocationUpdate,
     current_user: dict = Depends(get_current_user),
@@ -487,7 +490,7 @@ async def update_spo_allocation(
 
 
 @router.delete("/{allocation_id}", status_code=status.HTTP_200_OK)
-async def delete_spo_allocation(
+def delete_spo_allocation(
     allocation_id: str,
     current_user: dict = Depends(require_permission("procurement.spo_allocations.delete")),
     db: Session = Depends(get_db)

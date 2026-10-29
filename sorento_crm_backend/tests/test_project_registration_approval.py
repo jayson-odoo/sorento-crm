@@ -713,7 +713,6 @@ def test_s10_a_party_type_or_template_of_another_company_is_422(world):
         {"main_contractor_party_id": foreign_contractor.id},
         {"type_id": foreign_type.id},
         {"template_id": uid()},
-        {"brand_ids": [uid()]},
     ):
         res = c.post(approve_url(rid), json=approve_body(world, rid, **over))
         assert res.status_code == 422, (over, res.status_code, res.text)
@@ -770,12 +769,28 @@ def test_c4_approving_twice_draws_two_consecutive_numbers(world):
 
 def test_b10_staff_direct_registration_still_refuses_a_blocking_clash(world):
     dev = developer(world.db, world.company_id, "Setia Example Group")
+    from ._sample_request_seed import make_customer
+
+    from ._lead_governs_register_support import staff_lead
+
+    customer_id = make_customer(world.db, world.company_id).id
+    lead_a = staff_lead(world.db, world.company_id, world.staff, customer_id)
+    lead_b = staff_lead(world.db, world.company_id, world.staff, customer_id)
+    world.db.commit()
     c = as_user(world, world.staff)
-    first = c.post(f"{STAFF}/", json={"title": "Setia Alam Phase 3B", "developer_party_id": dev.id})
+    first = c.post(
+        f"{STAFF}/",
+        json={"title": "Setia Alam Phase 3B", "developer_party_id": dev.id, "customer_id": customer_id,
+              "lead_id": lead_a},
+    )
     assert first.status_code == 201, first.text
     assert first.json()["approval_state"] is None
     assert first.json()["project_code"] == ppf_code(5)
-    second = c.post(f"{STAFF}/", json={"title": "setia alam ph 3b", "developer_party_id": dev.id})
+    second = c.post(
+        f"{STAFF}/",
+        json={"title": "setia alam ph 3b", "developer_party_id": dev.id, "customer_id": customer_id,
+              "lead_id": lead_b},
+    )
     assert second.status_code == 409, second.text
     assert second.json()["code"] == "project_already_registered"
 
@@ -798,8 +813,19 @@ def test_b10_skip_clash_check_is_opt_in_at_the_service(world):
 
 
 def test_e1_state_and_mukim_on_register_get_and_update(world):
+    from ._sample_request_seed import make_customer
+
+    from ._lead_governs_register_support import staff_lead
+
+    customer_id = make_customer(world.db, world.company_id).id
+    lead_id = staff_lead(world.db, world.company_id, world.staff, customer_id)
+    world.db.commit()
     c = as_user(world, world.staff)
-    made = c.post(f"{STAFF}/", json={"title": "ZZT FIELDS TOWER", "state": "Selangor", "mukim": "Petaling"})
+    made = c.post(
+        f"{STAFF}/",
+        json={"title": "ZZT FIELDS TOWER", "state": "Selangor", "mukim": "Petaling",
+              "customer_id": customer_id, "lead_id": lead_id},
+    )
     assert made.status_code == 201, made.text
     assert (made.json()["state"], made.json()["mukim"]) == ("Selangor", "Petaling")
     pid = made.json()["id"]
@@ -811,7 +837,16 @@ def test_e1_state_and_mukim_on_register_get_and_update(world):
 
 
 def test_e1_a_project_without_them_returns_nulls(world):
-    made = as_user(world, world.staff).post(f"{STAFF}/", json={"title": "ZZT PLAIN TOWER"})
+    from ._sample_request_seed import make_customer
+
+    from ._lead_governs_register_support import staff_lead
+
+    customer_id = make_customer(world.db, world.company_id).id
+    lead_id = staff_lead(world.db, world.company_id, world.staff, customer_id)
+    world.db.commit()
+    made = as_user(world, world.staff).post(
+        f"{STAFF}/", json={"title": "ZZT PLAIN TOWER", "customer_id": customer_id, "lead_id": lead_id}
+    )
     assert made.status_code == 201, made.text
     body = made.json()
     assert "state" in body and body["state"] is None

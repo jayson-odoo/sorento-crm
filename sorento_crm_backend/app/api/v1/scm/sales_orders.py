@@ -26,6 +26,7 @@ from app.schemas.scm_orders import (
 )
 from app.services.document_relations import RELATED_SORT_PATTERN
 from app.services.scm.sales_order_service import SalesOrderService
+from app.utils.multi_value import multi_uuids, multi_values
 
 router = APIRouter()
 
@@ -80,9 +81,9 @@ def list_sales_orders(
     sort: Optional[str] = Query(None),
     dir: str = Query("desc"),
     query: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    priority: Optional[str] = Query(None),
-    source: Optional[str] = Query(
+    status: Optional[list[str]] = Query(None),
+    priority: Optional[list[str]] = Query(None),
+    source: Optional[list[str]] = Query(
         None,
         description=(
             "Where the order came from: autocount | inquiry | upload | history | manual. "
@@ -91,7 +92,7 @@ def list_sales_orders(
     ),
     date_from: Optional[date] = Query(None, description="Earliest order date, inclusive."),
     date_to: Optional[date] = Query(None, description="Latest order date, inclusive."),
-    customer_code: Optional[str] = Query(
+    customer_code: Optional[list[str]] = Query(
         None,
         description="Keep only this customer's orders. By code, which several legal entities "
                     "can share, so it means all of them.",
@@ -99,10 +100,10 @@ def list_sales_orders(
     outstanding: bool = Query(
         False, description="Keep only orders with quantity still owed. Off narrows nothing."
     ),
-    sales_agent_id: Optional[str] = Query(
-        None, description="Keep only this sales agent's orders."
+    sales_agent_id: Optional[list[str]] = Query(
+        None, description="Keep only these sales agents' orders."
     ),
-    demand_class: Optional[str] = Query(
+    demand_class: Optional[list[str]] = Query(
         None,
         description="Keep only this planning class: project | retail | unclassified "
                     "(demand_class IS NULL). Omit for all.",
@@ -132,10 +133,11 @@ def list_sales_orders(
     """
     svc = SalesOrderService(db)
     out = svc.list(
-        page, limit, sort, dir, query, status, priority, source,
-        date_from=date_from, date_to=date_to, customer_code=customer_code,
-        outstanding=outstanding, sales_agent_id=sales_agent_id,
-        demand_class=demand_class, transferable=transferable, doc_type=doc_type,
+        page, limit, sort, dir, query, multi_values(status), multi_values(priority),
+        multi_values(source),
+        date_from=date_from, date_to=date_to, customer_code=multi_values(customer_code),
+        outstanding=outstanding, sales_agent_id=multi_uuids(sales_agent_id, "Sales agent"),
+        demand_class=multi_values(demand_class), transferable=transferable, doc_type=doc_type,
     )
     out["data"] = svc.with_planning_state(
         svc.with_planning_changes(

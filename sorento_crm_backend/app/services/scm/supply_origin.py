@@ -6,9 +6,10 @@ Buy and buys overseas anyway, so hard-wiring the skip broke the handoff. While t
 off this resolver answers `None` for every id and runs no origin SQL at all; on, it answers
 `local` iff the product's supplier's country matches `HOME_COUNTRY_CODE` - a local Buy raises
 no Order Inquiry on confirm (`project_order_inquiry_service.refresh_for_decision`). The
-supplier is the primary `product_suppliers` link, else the newest-PO supplier (same tiebreak
-`summary_order_service._last_po_supplier_map` (S15) uses: `purchase_orders.issue_date DESC
-NULLS LAST, created_at DESC`) - the primary link wins when both exist (decision 3 / AC-2.13),
+supplier is the primary `product_suppliers` link, else the newest-PO supplier
+(`purchase_orders.issue_date DESC NULLS LAST, created_at DESC`: the low stock report's order
+before 27 Oct; that report now reads `scm/last_po_supplier.py`, and moving this one onto it is a
+named follow-up of STOCK-POSITION-REPORT) - the primary link wins when both exist (decision 3 / AC-2.13),
 because it is what a buyer states on purpose and a PO history entry can be a one-off. No
 supplier, or a supplier with no country, is `overseas`.
 

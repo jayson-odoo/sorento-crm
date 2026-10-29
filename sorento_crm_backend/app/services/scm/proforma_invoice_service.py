@@ -28,6 +28,7 @@ from typing import Any, Optional
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 
+from app.utils.multi_value import multi_values
 from app.models.company import Company
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product
@@ -3082,13 +3083,15 @@ def get_or_404(db: Session, invoice_id: str) -> ProformaInvoice:
 def list_for_supplier(
     db: Session,
     *,
-    supplier_id: Optional[str] = None,
-    placement: Optional[str] = None,
+    supplier_id: Optional[list[str] | str] = None,
+    placement: Optional[list[str] | str] = None,
     query: Optional[str] = None,
     limit: int = 25,
     offset: int = 0,
 ) -> dict:
-    """Invoices we have read, newest first. `supplier_id` narrows it to one supplier.
+    """Invoices we have read, newest first. `supplier_id` narrows it to one supplier, or several
+    (OR-ed); `placement` likewise takes several states (OR-ed).
+
 
     `query` is the list screen's search box: PI number, supplier (name or code), container
     number or bill of lading, case-insensitively. One box over the four identifiers a person
@@ -3105,17 +3108,19 @@ def list_for_supplier(
     among equal keys, so without the tiebreaker a caller walking offset=0 then offset=25 can
     be handed one invoice twice and never shown another.
     """
-    if supplier_id and not _is_uuid(supplier_id):
+    supplier_ids_picked = multi_values(supplier_id) or []
+    if any(not _is_uuid(v) for v in supplier_ids_picked):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
 
-    if placement and placement not in _PLACEMENTS:
+    placements_picked = multi_values(placement) or []
+    if any(v not in _PLACEMENTS for v in placements_picked):
         raise AppException(
             422, "That is not a packing-list state.", detail="placement"
         )
 
     q = db.query(ProformaInvoice)
-    if supplier_id:
-        q = q.filter(ProformaInvoice.supplier_id == str(supplier_id))
+    if supplier_ids_picked:
+        q = q.filter(ProformaInvoice.supplier_id.in_([str(v) for v in supplier_ids_picked]))
 
     needle = (query or "").strip()
     if needle:
@@ -3144,7 +3149,7 @@ def list_for_supplier(
             | ProformaInvoice.supplier_id.in_(db.query(supplier_ids.c.id))
         )
 
-    if placement:
+    if placements_picked:
         # Filtered in Python rather than in SQL, deliberately: "split" is the comparison of
         # what is placed against what CAN be placed, and what can be placed excludes lines
         # with no catalogue product - a predicate that would take three correlated
@@ -3156,7 +3161,7 @@ def list_for_supplier(
         states = _quantities(db, [str(r.id) for r in candidates])
         matching = [
             r for r in candidates
-            if states.get(str(r.id), {}).get("placement") == placement
+            if states.get(str(r.id), {}).get("placement") in placements_picked
         ]
         total = len(matching)
         rows = matching[max(offset, 0): max(offset, 0) + limit]

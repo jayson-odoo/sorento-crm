@@ -174,15 +174,16 @@ def test_r2_5_guard_a_fresh_top_5_salesman_is_unchanged(console) -> None:
     assert len(calls) == 1 and calls[0]["group_by"] == "sales_agent" and calls[0]["top_n"] == 5, (text, calls)
 
 
-def test_r2_5_guard_total_sales_this_month_still_uses_the_sales_report_tool(console, monkeypatch) -> None:
+def test_r2_5_guard_total_sales_this_month_is_the_report_ask_not_the_sales_report_tool(console, monkeypatch) -> None:
     from tests.chatbot.test_report_ask_lane import SEP
 
+    # REPORT-UNIFY (Q1): a sales total is `crm_report_ask` too (no axis, both measures, the basis named).
     text, log = _say_all(
         console, monkeypatch,
         _parser_output(domain_hint="order", intent_hint="check_order", order_status="sales_report", group_by=None,
-                       top_n=None, measure=None, basis=None, entities=[], domain_in_message=True, **SEP),
+                       top_n=None, measure=None, basis="delivered", entities=[], domain_in_message=True, **SEP),
         "total sales this month")
-    assert "crm_sales_report" in _names(log) and TOOL not in _names(log), (text, log)
+    assert TOOL in _names(log) and "crm_sales_report" not in _names(log), (text, log)
 
 
 # ---------------------------------------------------------------- review: a bare top-selling ask and an unusable frame

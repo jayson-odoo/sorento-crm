@@ -17,7 +17,7 @@ DEFAULT_LIMIT = 100
 
 
 @router.get("/select")
-async def get_products_select(
+def get_products_select(
     query: Optional[str] = Query(None),
     category_id: Optional[str] = Query(None),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=200),

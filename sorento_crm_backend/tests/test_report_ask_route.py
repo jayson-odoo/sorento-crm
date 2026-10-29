@@ -93,9 +93,18 @@ def _rows(body):
     return [(r["name"], r["qty"], money(r["amount"])) for r in body["rows"]]
 
 
+def _both_reveals(db, contact):
+    """The Sales report AND the Outstanding reveal (owner Q6: the outstanding kinds need the second)."""
+    from app.services.contact_field_reveal_service import set_granted_keys
+
+    set_granted_keys(db, contact.id, ["sales_orders.sales_report", "sales_orders.outstanding"], actor_id=None)
+    db.flush()
+
+
 def _full(db):
     """A grant holder with no customer link: the FULL audience."""
     contact = _contact(db)
+    _both_reveals(db, contact)
     db.commit()
     return contact
 
@@ -105,6 +114,7 @@ def _staff(db):
     (REPORT-SMART-L R1: an unlinked non-staff contact is refused those, `test_one_ranking_r1.py`)."""
     contact = _contact(db)
     _access(db, contact, "Sorento Office")
+    _both_reveals(db, contact)
     db.commit()
     return contact
 
@@ -486,6 +496,7 @@ def test_ac_re_12_an_unknown_contact_is_refused(client, db):
 
 def _dealer(db, w):
     contact = _contact(db)
+    _both_reveals(db, contact)
     _link(db, contact, w.cust)
     db.commit()
     return contact
@@ -1348,3 +1359,46 @@ def test_a_ranking_over_more_than_5000_groups_is_not_truncated(client, db):
     assert money(body["total"]["amount"]) == D("500.00") + D(BULK_PRODUCTS), body["total"]
     assert body["total"]["qty"] == 5 + BULK_PRODUCTS, body["total"]
     assert top["product_code"] == "ZZZ-TOP"
+
+
+# ================================================================ owner 28 Oct 09:30: the open sales orders behind an undelivered figure
+
+
+def test_outstanding_group_by_sales_order_lists_the_open_orders_and_sums_to_the_figure(client, db):
+    _outstanding_world(db)
+    whole = _ok(client, _full(db), basis="outstanding")
+    body = _ok(client, _full(db), group_by="sales_order", top_n=50, basis="outstanding")
+    assert body["group_label"] == "Sales order", body
+    assert body["total_count"] == 4, body["rows"]  # O1 (two SOs), O7 and O8 are open with a quantity owed
+    assert all("-SO-" in r["name"] for r in body["rows"]), body["rows"]
+    assert sum(r["qty"] for r in body["rows"]) == whole["total"]["qty"] == 32, body
+    assert sum(money(r["amount"]) for r in body["rows"]) == money(whole["total"]["amount"]) == D("860.00"), body
+
+
+@pytest.mark.parametrize("basis", ["delivered", "ordered"])
+def test_group_by_sales_order_is_refused_on_the_other_order_bases(client, db, basis):
+    _outstanding_world(db)
+    resp = client.get(ROUTE, params={**PERIOD, "basis": basis, "group_by": "sales_order", "top_n": 5,
+                                     **_as_contact(_full(db))}, headers=KEY)
+    assert resp.status_code == 422 and resp.json()["code"] == "unknown_group_by", resp.text
+
+
+def test_group_by_year_rows_sum_to_the_total_across_a_two_year_period(client, db):
+    """Crew (28 Oct): the Yearly comparison is the report ask grouped by year, on the ask's own line date."""
+    cust = seed_customer(db, name=unique_code("Cust"))
+    prod = _prod(db, "ZZTYR-1")
+    seed_so_line(db, cust=cust, prod=prod, qty=3, total="300.00", order_date=date(2025, 6, 10))
+    seed_so_line(db, cust=cust, prod=prod, qty=2, total="200.00", order_date=date(2025, 11, 2))
+    seed_so_line(db, cust=cust, prod=prod, qty=5, total="500.00", order_date=date(2026, 3, 5))
+    db.commit()
+    window = {"date_from": "2025-01-01", "date_to": "2026-12-31"}
+    contact = _full(db)
+    whole = client.get(ROUTE, params={**window, "basis": "delivered", **_as_contact(contact)}, headers=KEY).json()
+    body = client.get(
+        ROUTE, params={**window, "basis": "delivered", "group_by": "year", "top_n": 10, **_as_contact(contact)}, headers=KEY
+    ).json()
+    assert {r["name"]: (r["qty"], money(r["amount"])) for r in body["rows"]} == {
+        "2025": (5, D("500.00")), "2026": (5, D("500.00")),
+    }, body["rows"]
+    assert sum(r["qty"] for r in body["rows"]) == whole["total"]["qty"], (body, whole)
+    assert body["group_label"] == "Year", body

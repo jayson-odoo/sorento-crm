@@ -482,8 +482,9 @@ def typed_so_numbers_verdict(verdict: dict[str, Any], text: str) -> tuple[dict[s
 
 #: The report statuses the parser carries off the conversation onto a message that typed
 #: none of them (cloud pass on PR #1435, live parser).
+#: REPORT-UNIFY: `sales_ranking` is the report ask a carried `sales_report` / outstanding status became at the engine seam.
 _CARRIED_REPORT_STATUSES = frozenset(
-    {"outstanding", "so_outstanding", "do_outstanding", "outstanding_both", "sales_report"}
+    {"outstanding", "so_outstanding", "do_outstanding", "outstanding_both", "sales_report", "sales_ranking"}
 )
 _UPPER_DOC_RE = re.compile(r"(?<![0-9A-Za-z])(?:SO|DO)s?(?![0-9A-Za-z])")
 
@@ -524,6 +525,7 @@ def carried_status_verdict(
     cleared = {
         "status": None if status in _CARRIED_REPORT_STATUSES else status,
         "order_status": None if order_status in _CARRIED_REPORT_STATUSES else order_status,
+        **({"capability_from": None, "report_breakdown": None} if carried else {}),
     }
     # PROMPT-DYNAMIC R7: a carried `sales_report` was what made the verdict `sales`
     # (`turn_runtime._report_status_means_order_domain`); with it gone the ask is `order`.

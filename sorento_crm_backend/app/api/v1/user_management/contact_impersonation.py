@@ -107,7 +107,7 @@ def _serialize(
 
 
 @router.post("/start", response_model=ContactImpersonationSessionResponse)
-async def start_contact_impersonation(
+def start_contact_impersonation(
     body: StartContactImpersonationRequest,
     request: Request,
     real_user: dict = Depends(get_real_user),
@@ -197,7 +197,7 @@ async def start_contact_impersonation(
 
 
 @router.post("/stop")
-async def stop_contact_impersonation(
+def stop_contact_impersonation(
     request: Request,
     real_user: dict = Depends(get_real_user),
     db: Session = Depends(get_db),
@@ -240,7 +240,7 @@ async def stop_contact_impersonation(
 
 
 @router.get("/current", response_model=Optional[ContactImpersonationSessionResponse])
-async def current_contact_impersonation(
+def current_contact_impersonation(
     request: Request,
     real_user: dict = Depends(get_real_user),
     db: Session = Depends(get_db),

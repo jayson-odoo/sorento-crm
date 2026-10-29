@@ -63,9 +63,10 @@ READ_ONLY_POST_TOOLS = (
 # phrasing it was written for and then answers empty. Each row names the condition for
 # putting it back.
 UNCALLABLE_READS = {
-    # R4b (AC-OR4): every ranking runs on `crm_report_ask`; the route, MCP tool and analytics
-    # connector keep the tool for other callers. Back in when a chatbot path needs it again.
-    "crm_top_selling_report": "retired from the chatbot; rankings run on crm_report_ask",
+    # REPORT-UNIFY (Q1): every sales total, breakdown and outstanding ask runs on `crm_report_ask`; the routes and
+    # MCP tools stay for other callers. (`crm_top_selling_report` left the catalogue with them.)
+    "crm_sales_report": "retired from the chatbot; sales totals run on crm_report_ask",
+    "crm_outstanding_report": "retired from the chatbot; outstanding asks run on crm_report_ask",
     # 8 Sep 2026 (turns 87694182 / 0b10a4c0 / 11932963): `metric` is a required query
     # param and the fetch lane never maps one from the parser. Back in when it does.
     "crm_order_analytics": "requires `metric`; the lane never sends it",

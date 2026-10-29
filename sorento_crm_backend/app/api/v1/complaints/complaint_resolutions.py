@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[ComplaintResolutionResponse])
-async def get_complaint_resolutions(
+def get_complaint_resolutions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -37,7 +37,7 @@ async def get_complaint_resolutions(
 
 
 @router.get("/select", response_model=List[ComplaintResolutionSimple])
-async def get_complaint_resolutions_select(
+def get_complaint_resolutions_select(
     query: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission_with_api_key("master_data.complaint_resolutions.view")),
     db: Session = Depends(get_db),
@@ -55,7 +55,7 @@ async def get_complaint_resolutions_select(
 
 
 @router.get("/{resolution_id}", response_model=ComplaintResolutionResponse)
-async def get_complaint_resolution(
+def get_complaint_resolution(
     resolution_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.complaint_resolutions.view")),
     db: Session = Depends(get_db),
@@ -71,7 +71,7 @@ async def get_complaint_resolution(
 
 
 @router.post("/", response_model=ComplaintResolutionResponse, status_code=status.HTTP_201_CREATED)
-async def create_complaint_resolution(
+def create_complaint_resolution(
     payload: ComplaintResolutionCreate,
     current_user: dict = Depends(require_permission("master_data.complaint_resolutions.add")),
     db: Session = Depends(get_db),
@@ -86,7 +86,7 @@ async def create_complaint_resolution(
 
 
 @router.put("/{resolution_id}", response_model=ComplaintResolutionResponse)
-async def update_complaint_resolution(
+def update_complaint_resolution(
     resolution_id: str,
     payload: ComplaintResolutionUpdate,
     current_user: dict = Depends(require_permission("master_data.complaint_resolutions.edit")),
@@ -103,7 +103,7 @@ async def update_complaint_resolution(
 
 
 @router.delete("/{resolution_id}", status_code=status.HTTP_200_OK)
-async def delete_complaint_resolution(
+def delete_complaint_resolution(
     resolution_id: str,
     current_user: dict = Depends(require_permission("master_data.complaint_resolutions.delete")),
     db: Session = Depends(get_db),

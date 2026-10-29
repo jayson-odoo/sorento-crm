@@ -771,7 +771,7 @@ def _pin_lone_photo(db: Session, product_id: str) -> None:
 
 def attach(db: Session, reading: CataloguePhotoReading, user_id: Optional[str]) -> dict:
     from app.schemas.product import ProductAttachmentCreate
-    from app.services import brochure_image_service
+    from app.services import brochure_image_service, product_link_audit
     from app.services.contact_access_type_service import ContactAccessTypeService
     from app.services.product_service import ProductAttachmentService
 
@@ -806,9 +806,17 @@ def attach(db: Session, reading: CataloguePhotoReading, user_id: Optional[str]) 
                 )
             was_primary = bool(removed_link and removed_link.is_primary)
             if removed_link is not None:
+                # A replace unlinks a person's earlier photo: it goes on the product's trail.
+                product_link_audit.log_product_file_link(
+                    db, product_link_audit.UNLINK,
+                    product_id=product_id, attachment_id=str(removed_link.attachment_id),
+                    entity_type="product_attachments", entity_id=str(removed_link.id),
+                    user_id=user_id,
+                )
                 links.delete_product_attachment(str(removed_link.id))
             _pin_lone_photo(db, product_id)
-            links.create_product_attachment(
+            was_linked = product_link_audit.link_exists(db, product_id, str(row.attachment_id))
+            created = links.create_product_attachment(
                 ProductAttachmentCreate(
                     product_id=product_id,
                     attachment_id=str(row.attachment_id),
@@ -817,6 +825,13 @@ def attach(db: Session, reading: CataloguePhotoReading, user_id: Optional[str]) 
                 ),
                 created_by=user_id,
             )
+            if not was_linked and created is not None:
+                product_link_audit.log_product_file_link(
+                    db, product_link_audit.LINK,
+                    product_id=product_id, attachment_id=str(row.attachment_id),
+                    entity_type="product_attachments", entity_id=str(created.id),
+                    user_id=user_id,
+                )
             if was_primary:
                 # The replaced photo was the product's chosen one: the new photo takes over.
                 brochure_image_service.set_brochure_image(db, product_id, str(row.attachment_id))
