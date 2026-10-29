@@ -1,6 +1,6 @@
 # PLAN: OI rows auto-confirm, OI auto-complete, no manual Confirm (OI-AUTO-CONFIRM)
 
-Status: Build - owner answered the card 29 Oct ~22:45; mock v1 filed for approval (UI slice waits on it). Track: full (size L:
+Status: Build - card answered 29 Oct ~22:45, Q4 = b ~23:20, mock v1 notes in (overrides kept); mock v2 next; slice 1 BE in progress (draft PR #1986). Track: full (size L:
 changes reorder-plan demand, retires a purchasing press, possible migration/backfill).
 
 ## Owner ruling (29 Oct 2026, ~21:55)
@@ -60,8 +60,13 @@ already turns that chain into links (`order_inquiry_links.claim_id`), so the rul
   reserve, cascade), `derive_bundles` (companion), `mark_rows`, the raise path after its cascade, and the
   CS amendment (settle-in-place) path. A host whose done-ness flips re-evaluates its companions in the
   same call.
-- Presses removed: `acknowledge` / `unacknowledge` routes and service entry points
-  (`order_inquiries.py:871`, `:929`), FE buttons/menu items. `link-now` widens to awaiting rows.
+- Presses KEPT as manual overrides (owner, mock v1 notes): `acknowledge` / `unacknowledge`
+  (`order_inquiries.py:871`, `:929`) also write an override (kind confirmed / unconfirmed, by, at:
+  three nullable columns on `order_inquiry_rows`, additive migration). `auto_confirm` leaves a
+  manually confirmed row alone, and a manually unconfirmed row alone until a link newer than the
+  override arrives; a CS amendment or a reject clears the override. `link-now` takes awaiting rows.
+- Reorder plan (Q4 = b): `PLANNED_ACK_STATES` (`scm/demand.py:393`) becomes the To order states
+  (`awaiting`, `changed`); the awaiting chip and the SO picker's awaiting count go.
 - Backfill: one alembic data migration running the same predicate in SQL (idempotent), checked on a dev
   copy against the card's counts. Held SQL for crew's dev DB (it is an UPDATE).
 - FE: labels To order / Done, "N left" on partial rows, reserve chip in the PO column, header Lines
@@ -69,8 +74,9 @@ already turns that chain into links (`order_inquiry_links.claim_id`), so the rul
 
 ## Slices
 
-1. BE auto-confirm writer + hooks + removed routes + link-now widening (tests first).
-2. Backfill data migration (tests first, dev-copy check).
+1. BE auto-confirm writer + hooks + link-now widening + reserve entry in the links reader (tests first).
+2. Manual override columns + press semantics, reorder plan To order states (Q4 b), backfill data
+   migration (tests first, dev-copy check).
 3. FE after mock approval (vitest first).
 4. Review + security review (RBAC: two routes under the acknowledge grant are removed) + browser pass.
 

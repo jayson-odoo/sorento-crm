@@ -1,14 +1,15 @@
 # UAC: OI rows auto-confirm, OI auto-complete (OI-AUTO-CONFIRM)
 
 Status: owner answered the behaviour card 29 Oct 2026 (~22:45): Q1 b, Q2 SPO counts (it hangs off
-a PO), Q3 a, Q4 the reorder plan keeps reading confirmed rows, Q5 yes. Plan:
+a PO), Q3 a, Q5 yes; Q4 = b (~23:20); mock v1 notes (23:18): Confirm / Unconfirm stay as manual
+overrides, documents list drops its Lines column. Override behaviour: crew-note on PR #1986. Plan:
 `PLAN-oi-auto-confirm-29oct.md`.
 
 Terms: a row is DONE (stored as `ack_state = acknowledged`, shown "Done") when purchasing has
 nothing left to do on it. A live row is any row not cancelled. A LIVE link is one whose PO line is
 not cancelled and whose SPO allocation is not retired.
 
-## Row done (written by the system, never by a press)
+## Row done (written by the system unless a person overrides, see Manual override)
 
 - AC-AC-1 A row whose full qty is covered by live PO-line links is done.
 - AC-AC-2 A row whose full qty is covered by live SPO-allocation links is done.
@@ -37,33 +38,39 @@ not cancelled and whose SPO allocation is not retired.
 ## OI header
 
 - AC-AC-11 An OI is Completed when every live line is done (or rejected); otherwise Outstanding.
-- AC-AC-12 The documents list Lines column reads "N to order / total" on an Outstanding OI; the
-  Outstanding empty state reads "Nothing to order".
+- AC-AC-12 The documents list has no Lines column (owner, mock v1 note); the Outstanding empty
+  state reads "Nothing to order".
 - AC-AC-13 Outstanding returns exactly the OIs with a live line not done; Completed returns the rest;
   the counts match the Lines tab of each OI.
 - AC-AC-14 An OI reopens when a row loses its link, and completes again when it is relinked, with no
   press.
 
-## Presses removed
+## Manual override (owner, mock v1 notes 23:18: keep Confirm / Unconfirm for manual overriding)
 
-- AC-AC-15 The OI Lines list has no Confirm (N) button and no Unconfirm (N) menu item.
-- AC-AC-16 The OI detail has no Confirm button and no Unconfirm menu item.
-- AC-AC-17 POST /order-inquiries/acknowledge and /unacknowledge are removed (404).
-- AC-AC-18 Row labels: "To confirm" reads "To order", "Confirmed" reads "Done"; the Lines list
-  quick chip and Status filter use the new words.
+- AC-AC-15 Confirm (OI detail, Lines list Confirm (N), Select all N matching) stays. A manually
+  confirmed row is Done even with no link, and stays Done whatever its links do, until Unconfirm.
+- AC-AC-16 Unconfirm (OI detail menu, Lines list Unconfirm (N)) stays. A manually unconfirmed row is
+  To order even if covered, and stays To order until Confirm, or until a link made AFTER the
+  Unconfirm arrives; then the automatic rule decides again.
+- AC-AC-17 A CS amendment (qty / date / item, today's `changed`) clears any manual override; the
+  automatic rule decides again.
+- AC-AC-17a Rejecting a row clears its override; a rejected row cannot be confirmed (today's guard).
+- AC-AC-17b A manual decision is stored with kind (confirmed / unconfirmed), by and at, and the row
+  status reads "Done · manual" / "To order · manual" with who and when on hover.
+- AC-AC-17c Rows confirmed by a press before this ships are NOT manual: the backfill re-derives them.
+- AC-AC-18 Row labels: "To confirm" reads "To order", "Confirmed" reads "Done" (owner may still pick
+  "Confirmed"); the Lines list quick chip and Status filter use the new words.
 - AC-AC-19 Reject stays, with its reason and its email, unchanged.
 - AC-AC-20 "Link now" links awaiting rows as well as acknowledged ones.
 - AC-AC-21 The fulfilment board Confirm / Apply AutoCount change(s) and the planning sheet
   Confirm Project SO are unchanged and still send the purchasing email + Excel + in-app task.
 
-## Reorder plan (Q4)
+## Reorder plan (Q4 = b, owner 29 Oct ~23:20)
 
-- AC-AC-22 HELD (crew, 29 Oct: consequence put back to the owner). The plan code path is untouched
-  and isolated: the switch is `PLANNED_ACK_STATES` (`app/services/scm/demand.py:393`) plus the awaiting
-  chip (`app/services/scm/reorder_run_service.py:1265-1290`). As built the plan reads `acknowledged`/
-  `changed`, now written by the system. (Consequence, PR body: a done row is
-  covered, so planned project demand falls to the uncovered remainder of `changed` rows; measured
-  1,761 rows / 95,499 pcs today on the 28 Oct prod copy.)
+- AC-AC-22 The reorder plan counts every live, not-rejected project buy row that is To order
+  (`awaiting` / `changed`) for its uncovered qty, whatever a person pressed before; a Done row
+  (automatic or manual) adds nothing. The plan page's "N awaiting acknowledgement" chip and the SO
+  picker's awaiting count go (nothing waits on a press any more).
 
 ## Data
 

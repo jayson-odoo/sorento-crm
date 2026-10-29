@@ -766,6 +766,174 @@ class OrderInquiryWorklistSummary(BaseModel):
     link_up_to_default: Optional[date] = None
 
 
+class AcknowledgeFilter(BaseModel):
+    """The SAME shape `GET /order-inquiries` filters on, minus paging and sort (AC-CF-8,
+    S2 `PLAN-oi-confirm-per-so.md`, `oi-confirm-per-so-contract.md`): "Select all N
+    matching" resolves against exactly the scope the worklist itself is filtered to,
+    never a client-rebuilt copy of it. Every field is optional; an absent one means "not
+    filtered on that axis", exactly as the list reads it. `query`/`location`/
+    `po_number`/`spo_number` carry the SAME length caps the list route's own `Query(...,
+    max_length=...)` declarations do, and `state` the same closed set - a bad `ack`/
+    `linked`/`kind` (open strings here, same as the list route's own free-standing
+    validation) is still refused by `OrderInquiryWorklistService._base`, which is where
+    the list route's own values are validated too; the length/state checks below just
+    move that refusal to the schema, before any SQL, for the fields the list route
+    itself pins at the route layer rather than in `_base`.
+
+    `project_id`/`supplier_id`/`agent` are pattern-pinned the same way the list route's
+    own `axis_key` query param is (`pattern=UUID_PATTERN`, AC-CF-8d): a JSON body field
+    is a request the caller composed, not a path segment, so a malformed one reads as
+    422 (bad input) here rather than the 404 ("missing resource") `validate_uuid_path`
+    answers for a path param - the route ALSO runs the shared UUID guard those routes
+    use (`_validate_worklist_filter_uuids`), so a value that somehow slipped past this
+    pattern is still refused before it reaches SQL.
+
+    `project` (S5, `PLAN-oi-project-label-from-so.md` section 5) is text, exact match on
+    the Project column, never a uuid - separate from `project_id`, which stays as it is.
+    A bulk action that ignored it would act on rows outside the worklist's own scope. No
+    length bound: `projects.title` is TEXT with none.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: Optional[str] = Field(None, max_length=WORKLIST_QUERY_MAX_LENGTH)
+    delivery_month: Optional[str] = None
+    raised_date: Optional[str] = None
+    state: Optional[str] = None
+    project_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
+    #: Free-text titles: one string, or several (never split on a comma).
+    project: Optional[str | List[str]] = None
+    supplier_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
+    raised_by: Optional[str] = None
+    linked: Optional[str] = None
+    kind: Optional[str] = None
+    ack: Optional[str] = None
+    #: Free text: one location, or a list of them (each read whole). An older body may hold one string.
+    location: Optional[str | List[str]] = None
+    agent: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
+    so_month: Optional[str] = None
+    po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    spo_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    delivery_from: Optional[str] = None
+    delivery_to: Optional[str] = None
+    axis: Optional[str] = None
+    axis_key: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    #: The OI detail page's own whole-header Confirm (S3, `PLAN-oi-header-list-detail.
+    #: md`): "Select all N matching" narrowed to one header, so pressing Confirm with
+    #: nothing ticked means exactly that OI and nothing else.
+    inquiry_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
+    reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
+
+    @field_validator("state")
+    @classmethod
+    def _states_are_known(cls, value: Optional[str]) -> Optional[str]:
+        return _check_worklist_states(value)
+
+    @field_validator("location")
+    @classmethod
+    def _each_location_is_capped(cls, value):
+        return _cap_each(value, "location")
+
+
+class AcknowledgeRowsRequest(BaseModel):
+    """Purchasing takes on one row, a batch of them, or every row a `filter` matches
+    (AC-H2, AC-CF-8 `PLAN-oi-confirm-per-so.md` S2).
+
+    Exactly one of `row_ids` / `filter` is named - both, or neither, is refused
+    (AC-CF-8c). What an acknowledgement means is fixed either way: the rows become
+    purchasing's work and the cascade runs for exactly them.
+
+    `extra="forbid"` (fix round, consistency with `AutoPlaceRequest`): an unknown key
+    used to be silently dropped rather than refused.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Capped at 500 (security review round 1) - the same guard rail a hand-typed batch
+    #: id list gets everywhere else on this route module, so a caller cannot force one
+    #: request to walk an unbounded id list.
+    row_ids: Optional[List[str]] = Field(None, min_length=1, max_length=500)
+    #: "Select all N matching" (S2): resolved server-side against the SAME filters the
+    #: worklist's own list/summary read, so the scope is never a stale or hand-rebuilt
+    #: copy of what the buyer is looking at.
+    filter: Optional[AcknowledgeFilter] = None
+    #: The LINK HORIZON (`PLAN-scm-oi-handshake.md` section 11): rows due AFTER this date
+    #: are still TAKEN ON, but they are left Not linked, so a 2030 order stops eating a
+    #: purchase order a nearer one needed. Omitted means the reorder plan's own horizon,
+    #: unless `link_horizon` says otherwise.
+    link_up_to: Optional[date] = None
+    #: WHICH horizon this call means (S1, code review 27 Aug 2026). `"none"` is an explicit
+    #: NO horizon - the buyer emptied the date box, which is a different instruction from
+    #: naming none and used to travel as the same silence; `"plan"` is the reorder plan's
+    #: own; `"date"` requires `link_up_to`. OMITTED is inferred - the date when one is
+    #: given, the plan when it is not - so every existing caller means what it always did.
+    link_horizon: Optional[Literal["date", "plan", "none"]] = None
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self) -> "AcknowledgeRowsRequest":
+        if bool(self.row_ids) == bool(self.filter):
+            raise ValueError(
+                "Name row_ids or filter - never both, and never neither (AC-CF-8c)."
+            )
+        return self
+
+
+class AcknowledgeResult(BaseModel):
+    """What one press did, in the numbers the banner reports: how many rows were taken on,
+    how much of them found a document at that moment, and how many were left for a later
+    horizon."""
+
+    acknowledged: int = 0
+    #: Rows the cascade linked, and how many placements it made across them. `0` is an
+    #: ordinary answer: there may be nothing open to link to yet.
+    linked_rows: int = 0
+    links: int = 0
+    #: Rows still owed but due after `link_up_to`, left Not linked on purpose (AC-LH1). The
+    #: banner's second half: "1 linked, 1 after 31 Dec 2026".
+    after_horizon: int = 0
+    #: The horizon the press actually ran under - the caller's own date, or the plan's when
+    #: they named none. Stated back so a zero is never a figure measured against a date
+    #: nobody can see.
+    link_up_to: Optional[date] = None
+    #: WHETHER a horizon was in force, so a null `link_up_to` is never read two ways: `"none"`
+    #: is "nothing was held back for a date", `"date"` names the one above (S1).
+    link_horizon: Literal["date", "none"] = "none"
+    #: Rows the `filter` matched but left untouched - rejected, already acknowledged, or
+    #: cancelled (AC-CF-8, S2 `PLAN-oi-confirm-per-so.md`). Always 0 on a `row_ids` press,
+    #: which still refuses such a row outright rather than quietly skipping it.
+    skipped: int = 0
+
+
+class UnacknowledgeRowsRequest(BaseModel):
+    """Purchasing takes a row back off its own plate
+    (PLAN-oi-worklist-split-customer-project.md, Slice 3, owner 18 Sep 2026) - the
+    reverse of Confirm, for a row taken on by mistake or a reconfirm that has not
+    actually happened yet.
+
+    `row_ids` only - no `filter` branch: Unconfirm always names exactly what the buyer
+    ticked, never "everything matching a scope" the way "Select all N matching" does for
+    Confirm.
+    """
+
+    #: At least one, capped at 500 (security review round 1) - the Actions menu names
+    #: exactly what is ticked, so an unbounded list here could only be a hand-built
+    #: request, never the UI's own.
+    row_ids: List[str] = Field(..., min_length=1, max_length=500)
+
+
+class UnacknowledgeResult(BaseModel):
+    """What one Unconfirm press did. No cascade runs, so there is nothing here like
+    `AcknowledgeResult`'s linking figures - just how many rows actually moved and how
+    many the press left alone."""
+
+    #: Rows that were `acknowledged`/`changed` and are now back to `awaiting`.
+    updated: int = 0
+    #: Rows named that were already `awaiting`, `rejected`, cancelled, or outside this
+    #: company's scope - never an error, always just left untouched (S1).
+    skipped: int = 0
+
+
 class RejectRowRequest(BaseModel):
     """Purchasing refuses a row, with a reason CS will read on the board cell.
 
