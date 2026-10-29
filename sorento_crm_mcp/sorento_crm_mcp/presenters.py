@@ -3395,6 +3395,8 @@ _REPORT_ASK_PLURALS = {
     "channel": "channels",
     "month": "months",
     "year": "years",
+    "sales_order": "sales orders",
+    "delivery_order": "delivery orders",
 }
 
 

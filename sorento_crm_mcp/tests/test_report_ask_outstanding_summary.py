@@ -121,3 +121,11 @@ def test_no_summary_keeps_the_one_total():
     assert _report_ask(body) == "\n".join(
         ["Pending delivery", "Product: SRT5733-WH", "Period: all dates", "Total 40 pcs, RM 1,234.00"]
     )
+
+
+def test_the_delivery_order_list_reads_plural():
+    body = _body("pending_delivery", "pending delivery", PRODUCT, None)
+    body.update(group_by="delivery_order", group_label="Delivery order", total_count=2, rows=[
+        {"rank": 1, "name": "DO-1", "qty": 30, "amount": 900.0}, {"rank": 2, "name": "DO-2", "qty": 10, "amount": 334.0},
+    ])
+    assert _report_ask(body).startswith("Top 2 delivery orders by pending delivery\n"), _report_ask(body)

@@ -474,7 +474,7 @@ def without_pick_axis(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
     ranking = _dict(_dict(getattr(pending, "payload", None)).get("filters")).get("ranking")
     if (
         getattr(pending, "kind", None) == "top_selling_pick"
-        and _dict(ranking).get("group_by") == SO_LIST
+        and _dict(ranking).get("group_by") in LIST_PICKS.values()
         and (picked or jsc.array(verdict.get("reference_positions")))
     ):
         # The open "Reply 1 for the sales order list" offer is answered before any axis or status check: a position
@@ -1450,13 +1450,19 @@ def _detail_outcome(db: Any, frame: dict[str, Any], detail: dict[str, Any]) -> r
 
 #: Owner 28 Oct 09:30 (AC-RU-17a): the pick an undelivered-orders total arms ("Reply 1 for the sales order list.").
 SO_LIST = "sales_order_list"
+#: REPORT-OUTSTANDING-SUMMARY: the pick a pending-delivery summary arms ("Reply 1 for the delivery order list.").
+DO_LIST = "delivery_order_list"
+#: Outstanding kind -> the pick its list offer arms, and the pick -> the document grouping it runs.
+LIST_PICKS = {"outstanding": SO_LIST, "pending_delivery": DO_LIST}
+_LIST_GROUP = {SO_LIST: "sales_order", DO_LIST: "delivery_order"}
 
 
-def so_list_outcome(db: Any, frame: dict[str, Any]) -> rf.Outcome:
-    """The open sales orders behind an undelivered-orders total: the SAME held ask (basis, filters, company, period)
-    grouped by the outstanding definition's `sales_order` dimension, so the list is the figure's own population."""
+def so_list_outcome(db: Any, frame: dict[str, Any], pick: str = SO_LIST) -> rf.Outcome:
+    """The documents behind an outstanding total: the SAME held ask (basis, filters, company, period) grouped by the
+    definition's document dimension (`sales_order` for undelivered orders, `delivery_order` for pending delivery), so
+    the list is the figure's own population."""
     args = {k: v for k, v in frame.items() if k not in _FRAME_ONLY}
-    args["group_by"] = "sales_order"
+    args["group_by"] = _LIST_GROUP[pick]
     args.setdefault("measure", "amount")  # the list prints both figures; the order is by RM
     given = {**_given_choices(args), **_given_top_n(args, BREAKDOWN_TOP_N)}
     period = period_from(frame.get("date_from"), frame.get("date_to"))
@@ -1508,11 +1514,11 @@ def _settle(
         return _detail_outcome(db, shown_frame, ranking_detail), None
     if (
         isinstance(ranking_detail, dict)
-        and ranking_detail.get("group_by") == SO_LIST
-        and shown_frame.get("basis") == "outstanding"
+        and ranking_detail.get("group_by") in LIST_PICKS.values()
+        and LIST_PICKS.get(shown_frame.get("basis")) == ranking_detail.get("group_by")
         and not shown_frame.get("group_by")
     ):
-        return so_list_outcome(db, shown_frame), None
+        return so_list_outcome(db, shown_frame, ranking_detail["group_by"]), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME and slot.get("asking") == "scope":
         return _scope_answer(db, parse_output, slot), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME:

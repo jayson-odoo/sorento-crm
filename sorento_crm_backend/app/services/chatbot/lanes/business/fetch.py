@@ -2903,6 +2903,13 @@ _ROW_PICK_OFFERS = (
 
 #: An undelivered-orders total's own offer (owner 28 Oct 09:30; `presenters._ASK_SO_LIST_OFFER`), dropped the same way.
 _SO_LIST_OFFER = "Reply 1 for the sales order list."
+#: REPORT-OUTSTANDING-SUMMARY: a pending-delivery summary's own offer (`presenters._ASK_DO_LIST_OFFER`).
+_DO_LIST_OFFER = "Reply 1 for the delivery order list."
+#: The list each outstanding kind's offer opens: the offer's words, and the label its one pick is held under.
+_LIST_OFFERS = {
+    "outstanding": (_SO_LIST_OFFER, "Sales order list", "sales_order"),
+    "pending_delivery": (_DO_LIST_OFFER, "Delivery order list", "delivery_order"),
+}
 
 
 #: The filter word the route's `not_applied` names each route param by.
@@ -2942,7 +2949,7 @@ def _with_not_applied(text: str, words: list[str]) -> str:
 def _without_row_offers(text: str) -> str:
     for offer in _ROW_PICK_OFFERS:
         text = text.replace("\n\n" + offer, "")
-    return text.replace("\n\n" + _SO_LIST_OFFER, "")
+    return text.replace("\n\n" + _SO_LIST_OFFER, "").replace("\n\n" + _DO_LIST_OFFER, "")
 
 
 def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2985,15 +2992,18 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                     ],
                     "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
                 }
-        if not frame.get("group_by") and frame.get("basis") == "outstanding" and _SO_LIST_OFFER in text:
+        offer = _LIST_OFFERS.get(frame.get("basis")) if not frame.get("group_by") else None
+        if offer is not None and offer[0] in text:
             # Owner 28 Oct 09:30 (AC-RU-17a): an undelivered-orders total offers the open sales orders behind it; "1"
-            # re-runs THIS frame grouped by sales order (`report_ask.settle`, `so_list_outcome`).
-            from app.services.chatbot.lanes.business.report_ask import SO_LIST
+            # re-runs THIS frame grouped by sales order (`report_ask.settle`, `so_list_outcome`). REPORT-OUTSTANDING-
+            # SUMMARY: a pending-delivery summary offers its delivery orders the same way.
+            from app.services.chatbot.lanes.business.report_ask import LIST_PICKS
 
+            code = LIST_PICKS[frame["basis"]]
             pick = {
                 "kind": "top_selling_pick",
-                "last_result_set": [{"idx": 1, "label": "Sales order list", "code": SO_LIST, "entity_type": "sales_order", "keys": []}],
-                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": SO_LIST}},
+                "last_result_set": [{"idx": 1, "label": offer[1], "code": code, "entity_type": offer[2], "keys": []}],
+                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": code}},
             }
     question = _sole_subject_question(envelope, args)
     if question:
