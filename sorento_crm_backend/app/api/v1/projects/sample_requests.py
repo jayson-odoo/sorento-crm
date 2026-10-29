@@ -106,6 +106,18 @@ def search_products(
     return svc.search_products(db, q)
 
 
+@router.get("/projects/{project_id}/sample-requests/quotation-prefill")
+def quotation_prefill(
+    project_id: str,
+    document_id: Optional[str] = Query(None),
+    user: dict = Depends(require_permission(CREATE)),
+    db: Session = Depends(get_db),
+):
+    """The rows a new request on this project starts with (SAMPLE-FROM-QUOTE)."""
+    _assert_own_project(db, user, project_id)
+    return svc.quotation_prefill(db, project_id, document_id)
+
+
 @router.get("/sample-requests")
 def list_requests(
     status_filter: Optional[list[str]] = Query(None, alias="status"),

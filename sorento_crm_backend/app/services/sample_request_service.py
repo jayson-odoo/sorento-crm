@@ -334,6 +334,39 @@ def validate_submit(db: Session, req: SampleRequest) -> None:
     if req.board_mounting and not _clean(req.board_label):
         raise _incomplete("board_label", "Enter the board label.")
 
+def _source_invalid() -> AppException:
+    return AppException(
+        status_code=422,
+        message="That quotation is not one of this project's.",
+        code="SAMPLE_REQUEST_QUOTATION_INVALID",
+        details={"field": "quotation_document_id"},
+    )
+
+
+def _check_source(db: Session, req: SampleRequest) -> None:
+    """The recorded source quotation (SFQ-13) must be the request's own project's, and its issue
+    that document's. Checked on the FINAL header, so moving a request to another project without
+    clearing the source is refused rather than leaving it pointing at a stranger's quotation."""
+    from app.models.projects import ProjectQuotationDocument, ProjectQuotationIssue
+
+    doc_id, issue_id = req.quotation_document_id, req.quotation_issue_id
+    if not doc_id and not issue_id:
+        return
+    if not doc_id or not _is_uuid(doc_id) or (issue_id and not _is_uuid(issue_id)):
+        raise _source_invalid()
+    doc = db.query(ProjectQuotationDocument.project_id).filter(
+        ProjectQuotationDocument.id == doc_id
+    ).first()
+    if doc is None or not req.project_id or str(doc.project_id) != str(req.project_id):
+        raise _source_invalid()
+    if issue_id and (
+        db.query(ProjectQuotationIssue.id)
+        .filter(ProjectQuotationIssue.id == issue_id, ProjectQuotationIssue.document_id == doc_id)
+        .first()
+        is None
+    ):
+        raise _source_invalid()
+
 
 # ------------------------------------------------------------------ writes
 
@@ -351,9 +384,16 @@ def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
     for field in HEADER_TEXT:
         if field in data:
             setattr(req, field, _clean(data[field]))
-    for field in ("customer_id", "project_id", "delivery_mode"):
+    for field in (
+        "customer_id",
+        "project_id",
+        "delivery_mode",
+        "quotation_document_id",
+        "quotation_issue_id",
+    ):
         if field in data:
             setattr(req, field, data[field] or None)
+    _check_source(db, req)
     for field in HEADER_NOT_NULL:
         if data.get(field) is not None:
             setattr(req, field, data[field])
@@ -587,6 +627,177 @@ def search_products(db: Session, q: str, limit: int = 20) -> List[Dict[str, Any]
     ]
 
 
+
+# ------------------------------------------------------------------ quotation pre-fill
+
+
+def quotation_label(document_no: str, issue_no: Optional[int]) -> str:
+    """How a source quotation reads to a person: `<document no> (R2)` or `(not issued)`."""
+    return f"{document_no} (R{issue_no})" if issue_no else f"{document_no} (not issued)"
+
+
+def quotation_prefill(
+    db: Session, project_id: Optional[str], document_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """The rows a new sample request starts with (SAMPLE-FROM-QUOTE, SFQ-1..9).
+
+    One quotation document: the one asked for, else the most recently issued, else the newest.
+    An issued document gives the lines of the version each scope had IN its latest issue (what
+    the customer holds, not the working copy); a never-issued one gives each scope's current
+    version. A set line gives its frozen parts. Each product once, in quotation order; a line
+    with no product, or an inactive one, is reported in `skipped` instead. No prices.
+    """
+    from app.models.projects import (
+        ProjectQuotation,
+        ProjectQuotationDocument,
+        ProjectQuotationIssue,
+        ProjectQuotationIssueScope,
+        ProjectQuotationLine,
+        ProjectQuotationVersion,
+    )
+
+    _check_refs(db, {"project_id": project_id})
+    result: Dict[str, Any] = {
+        "documents": [],
+        "document_id": None,
+        "issue_id": None,
+        "lines": [],
+        "skipped": [],
+    }
+    if not project_id:
+        return result
+
+    docs = (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.project_id == project_id)
+        .all()
+    )
+    latest: Dict[str, Any] = {}
+    if docs:
+        for issue in (
+            db.query(ProjectQuotationIssue)
+            .filter(ProjectQuotationIssue.document_id.in_([d.id for d in docs]))
+            .order_by(ProjectQuotationIssue.issue_no)
+            .all()
+        ):
+            latest[str(issue.document_id)] = issue
+    issued = sorted(
+        (d for d in docs if str(d.id) in latest),
+        key=lambda d: latest[str(d.id)].issued_at,
+        reverse=True,
+    )
+    drafts = sorted(
+        (d for d in docs if str(d.id) not in latest), key=lambda d: d.created_at, reverse=True
+    )
+    ordered = issued + drafts
+    result["documents"] = [
+        {
+            "id": d.id,
+            "document_no": d.document_no,
+            "issue_id": latest[str(d.id)].id if str(d.id) in latest else None,
+            "issue_no": latest[str(d.id)].issue_no if str(d.id) in latest else None,
+            "label": quotation_label(
+                d.document_no, latest[str(d.id)].issue_no if str(d.id) in latest else None
+            ),
+        }
+        for d in ordered
+    ]
+    if document_id:
+        chosen = next((d for d in ordered if str(d.id) == str(document_id)), None)
+        if chosen is None:
+            raise _source_invalid()
+    elif ordered:
+        chosen = ordered[0]
+    else:
+        return result
+    issue = latest.get(str(chosen.id))
+    result["document_id"] = chosen.id
+    result["issue_id"] = issue.id if issue else None
+
+    if issue is not None:
+        version_ids = [
+            v
+            for (v,) in db.query(ProjectQuotationIssueScope.version_id)
+            .join(ProjectQuotation, ProjectQuotation.id == ProjectQuotationIssueScope.quotation_id)
+            .filter(ProjectQuotationIssueScope.issue_id == issue.id)
+            .order_by(ProjectQuotation.sort_order, ProjectQuotation.created_at)
+            .all()
+        ]
+    else:
+        current = (
+            db.query(
+                ProjectQuotationVersion.quotation_id,
+                func.max(ProjectQuotationVersion.version_no).label("no"),
+            )
+            .group_by(ProjectQuotationVersion.quotation_id)
+            .subquery()
+        )
+        version_ids = [
+            v
+            for (v,) in db.query(ProjectQuotationVersion.id)
+            .join(ProjectQuotation, ProjectQuotation.id == ProjectQuotationVersion.quotation_id)
+            .join(
+                current,
+                (current.c.quotation_id == ProjectQuotationVersion.quotation_id)
+                & (current.c.no == ProjectQuotationVersion.version_no),
+            )
+            .filter(ProjectQuotation.document_id == chosen.id)
+            .order_by(ProjectQuotation.sort_order, ProjectQuotation.created_at)
+            .all()
+        ]
+    if not version_ids:
+        return result
+
+    position = {str(v): i for i, v in enumerate(version_ids)}
+    quote_lines = sorted(
+        db.query(ProjectQuotationLine)
+        .filter(ProjectQuotationLine.version_id.in_(version_ids))
+        .all(),
+        key=lambda l: (position[str(l.version_id)], l.sort_order, l.created_at),
+    )
+    # (product id or None, what a person would recognise the line by)
+    wanted: List[tuple] = []
+    for line in quote_lines:
+        if line.product_id:
+            wanted.append((str(line.product_id), line.product_code_snapshot))
+        elif line.set_parts_snapshot:
+            for part in line.set_parts_snapshot:
+                wanted.append((part.get("product_id"), part.get("product_code")))
+        else:
+            text = line.description_snapshot or line.product_code_snapshot or ""
+            wanted.append((None, " ".join(text.split())))
+
+    ids = {pid for pid, _ in wanted if pid and _is_uuid(pid)}
+    products = {
+        str(p.id): (p, brand_name)
+        for p, brand_name in db.query(Product, Brand.brand_name)
+        .outerjoin(Brand, Brand.id == Product.brand_id)
+        .filter(Product.id.in_(ids or [None]))
+        .all()
+    }
+    seen: set = set()
+    for pid, described in wanted:
+        found = products.get(str(pid)) if pid else None
+        if found is None:
+            result["skipped"].append({"reason": "no_product", "description": described or ""})
+            continue
+        if pid in seen:
+            continue
+        seen.add(pid)
+        product, brand_name = found
+        if not product.is_active:
+            result["skipped"].append({"reason": "inactive", "description": product.product_code})
+            continue
+        result["lines"].append(
+            {
+                "product_id": product.id,
+                "product_code": product.product_code,
+                "product_name": product.product_name,
+                "brand_name": brand_name,
+            }
+        )
+    return result
+
 LIST_SORTS = {
     "request_no": SampleRequest.request_no,
     "request_date": SampleRequest.request_date,
@@ -739,6 +950,28 @@ def serialize_rows(db: Session, reqs: List[SampleRequest]) -> List[Dict[str, Any
     return out
 
 
+def _source_ref(db: Session, req: SampleRequest) -> Optional[str]:
+    from app.models.projects import ProjectQuotationDocument, ProjectQuotationIssue
+
+    if not req.quotation_document_id:
+        return None
+    doc_no = (
+        db.query(ProjectQuotationDocument.document_no)
+        .filter(ProjectQuotationDocument.id == req.quotation_document_id)
+        .scalar()
+    )
+    if doc_no is None:
+        return None
+    issue_no = (
+        db.query(ProjectQuotationIssue.issue_no)
+        .filter(ProjectQuotationIssue.id == req.quotation_issue_id)
+        .scalar()
+        if req.quotation_issue_id
+        else None
+    )
+    return quotation_label(doc_no, issue_no)
+
+
 def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
     ctx = _names(db, [req])
     project = ctx["projects"].get(req.project_id) if req.project_id else None
@@ -773,6 +1006,9 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
             "customer_id": req.customer_id,
             "project_title": req.project_title,
             "project_code": project.project_code if project else None,
+            "quotation_document_id": req.quotation_document_id,
+            "quotation_issue_id": req.quotation_issue_id,
+            "quotation_ref": _source_ref(db, req),
             "scope_note": req.scope_note,
             "ship_to_address": req.ship_to_address,
             "site_contact_name": req.site_contact_name,

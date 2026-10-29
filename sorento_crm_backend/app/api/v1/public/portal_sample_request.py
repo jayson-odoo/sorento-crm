@@ -63,6 +63,23 @@ def portal_search_products(
         return svc.search_products(db, q)
 
 
+@router.get("/sample-request/quotation-prefill")
+def portal_quotation_prefill(
+    project_id: str = Query(...),
+    document_id: Optional[str] = Query(None),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The rows a new request on one of the contact's own projects starts with (SFQ-11)."""
+    from app.services.sponsorship_link_service import contact_company_ids
+
+    _assert_visible(db, token.contact_id)
+    contact = PortalService(db).get_contact(token)
+    svc.assert_portal_project_allowed(db, contact=contact, project_id=project_id)
+    with company_scope(db, frozenset(contact_company_ids(db, contact=contact))):
+        return svc.quotation_prefill(db, project_id, document_id)
+
+
 @router.get("/sample-request/customers")
 def portal_search_customers(
     q: str = Query(""),
