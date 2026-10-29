@@ -1,0 +1,99 @@
+"""The permission layer of the agent (AGENTIC-P1 card section 3).
+
+`AgentContext` is built server-side per turn and is immutable; nothing in it comes from the
+model. A tool is exposed only when the linked user holds its slug, and `tools.dispatch`
+checks the same again at call time.
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+from app.services.agent.tools import REGISTRY, ToolDef
+
+logger = logging.getLogger(__name__)
+
+
+class AgentRefused(Exception):
+    """The agent may not run for this contact. `reason` is one of contact_not_found,
+    ai_replies_off, switch_off, no_linked_user."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class AgentContext:
+    contact_pk: str
+    contact_respond_id: str
+    space_id: str | None
+    user_id: str
+    user_name: str
+    grants: frozenset[str]
+
+
+def build_context(db, contact_respond_id: str) -> AgentContext:
+    from app.models.access import RespondContact
+    from app.models.base import company_scope, set_brand_scope
+    from app.models.user import User, UserStatus
+    from app.services.chatbot.head.access import default_space_id
+    from app.services.contact_brand_scope import NO_BRAND_ID, contact_brand_scope
+    from app.services.contact_field_reveal_service import granted_keys
+
+    # Company scope off for the lookup, as the brand scope resolver does: a contact row must
+    # not read as missing because of the caller's scope.
+    with company_scope(db, None):
+        contact = (
+            db.query(RespondContact)
+            .filter(RespondContact.respond_io_id == contact_respond_id)
+            .order_by(RespondContact.created_at, RespondContact.id)
+            .first()
+        )
+        if contact is None:
+            raise AgentRefused("contact_not_found")
+        if not contact.chatbot_allowed:
+            raise AgentRefused("ai_replies_off")
+        if not contact.chatbot_agent_enabled:
+            raise AgentRefused("switch_off")
+        user = (
+            db.query(User)
+            .filter(User.respond_contact_id == contact.id, User.status == UserStatus.ACTIVE.value)
+            .order_by(User.created_at, User.id)
+            .first()
+        )
+        if user is None:
+            raise AgentRefused("no_linked_user")
+        pk = str(contact.id)
+        user_id = str(user.id)
+        user_name = user.name or ""
+
+    space_id = default_space_id(db)
+    try:
+        grants = frozenset(str(k) for k in granted_keys(db, pk))
+    except Exception:  # noqa: BLE001 - fail closed: no grant means no restricted field
+        logger.warning("agent: field-reveal lookup failed for %s", contact_respond_id, exc_info=True)
+        grants = frozenset()
+    # Today's turn stamps the contact's brand scope on the session; `_mcp_call` guards on it.
+    try:
+        brand_scope = contact_brand_scope(db, contact_respond_id, space_id)
+    except Exception:  # noqa: BLE001 - fail closed: a scope no brand matches
+        logger.warning("agent: brand scope lookup failed for %s", contact_respond_id, exc_info=True)
+        brand_scope = frozenset({NO_BRAND_ID})
+    set_brand_scope(db, brand_scope)
+
+    return AgentContext(
+        contact_pk=pk,
+        contact_respond_id=str(contact.respond_io_id),
+        space_id=space_id,
+        user_id=user_id,
+        user_name=user_name,
+        grants=grants,
+    )
+
+
+def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
+    """REGISTRY entries whose slug the linked user holds, in registry order."""
+    from app.services.agent.tools import _permitted
+
+    return [t for t in REGISTRY.values() if _permitted(db, ctx.user_id, t.user_permission)]
