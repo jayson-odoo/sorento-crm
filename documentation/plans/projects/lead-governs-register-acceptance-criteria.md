@@ -86,8 +86,9 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
 - **LGR-E4** `PUT` changing `lead_id` to a lead with a customer sets the project's customer to that lead's customer
   (same mismatch 422 as LGR-E2). `PUT` without a lead change leaves the stored customer alone. Old projects without a
   lead still save with no lead.
-  A `PUT` that links a lead with no customer fills that lead's empty customer from the project's customer (fill-only,
-  never overwrites; ruling 29 Oct, same rule as LGR-E3).
+  Whenever the project's customer is set while it is linked to a lead with no customer (a `PUT` that links such a lead,
+  or a later customer pick on the draft PUT, the submit payload or an edit holder's PUT), that lead's empty customer is
+  filled from it (fill-only, never overwrites; rulings 29 Oct, same rule as LGR-E3; who may trigger it: LGR-E10).
 - **LGR-E5** The 409 `lead_already_linked` rule is unchanged.
 - **LGR-E6** Submit-only register/save/submit (`crm_register`, `crm_submit` and the draft save path) accept
   `lead_id`. Submit (new or existing draft) without a lead -> 422 `project_lead_required`; a draft saves without one.
@@ -100,6 +101,7 @@ Card: `CARD-lead-governs-register-29oct.md`. Plan: `PLAN-lead-governs-register-2
   holder) the 409 `lead_already_linked` message names no other project (no code, no title).
 - **LGR-E9** (security L5) A `PUT` or submit that sends a `customer_id` different from the customer of the project's
   current lead (when that lead has one) -> 422 `project_customer_not_lead_customer`, even without a lead change.
+  A `customer_id: null` there counts as absent (reviewer re-check): the stored customer stays.
 - **LGR-E10** (security re-check 1) The fill of an empty lead customer (E3/E4/E6) happens only when the caller may edit
   that lead (owner or manage; a submit-only caller: their own lead). A collaborator or approver who saves the project
   leaves somebody else's lead untouched.
@@ -134,5 +136,6 @@ Register form's Lead picker and Create lead.
 
 ## G. Existing data
 
-- **LGR-G1** No migration. No existing lead, project or customer row is rewritten by this change (only LGR-E3's
-  fill of an empty lead customer, at the moment someone registers with that lead).
+- **LGR-G1** No migration. No existing lead, project or customer row is rewritten by this change, except the
+  fill of an EMPTY lead customer (LGR-E3, E4, E6) by someone who may edit that lead (LGR-E10), when a customer is set on
+  a project linked to it.
