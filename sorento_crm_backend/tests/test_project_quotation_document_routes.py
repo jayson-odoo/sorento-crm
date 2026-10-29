@@ -1112,3 +1112,23 @@ def test_the_document_tells_the_client_whether_it_has_been_signed(api):
         if row["id"] == document["id"]
     )
     assert listed["is_signed"] is True
+
+
+@pytest.mark.parametrize("kind", ["pdf", "xlsx"])
+def test_the_pending_download_is_named_from_document_no_and_issue_no(api, monkeypatch, kind):
+    """AC2.6: same Quotation No. as the sign page, also for an old `(R1)` stored text."""
+    from app.models.projects import ProjectQuotationIssue
+    from app.services import queue_service
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: None)
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+    row = db.get(ProjectQuotationIssue, issue["id"])
+    row.our_ref_text = f"{document['document_no']} (R{row.issue_no})"
+    db.commit()
+
+    response = client.post(f"{root}/{document['id']}/issues/{issue['id']}/export/{kind}")
+
+    assert response.status_code in (200, 201, 202), response.text
+    expected = f"quotation-{document['document_no']}-R{row.issue_no}.{kind}".replace("/", "-")
+    assert response.json()["filename"] == expected

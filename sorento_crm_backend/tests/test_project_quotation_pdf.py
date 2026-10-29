@@ -1335,13 +1335,26 @@ def _png_response(content=b"\x89PNG-zzt", ctype="image/png", status=200, headers
     )
 
 
-def test_fetch_logo_returns_a_data_uri_for_a_small_image(monkeypatch):
+def _real_png(size=(40, 30)) -> bytes:
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", size, (200, 30, 30)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_fetch_logo_returns_a_reencoded_jpeg_data_uri_for_a_small_png(monkeypatch):
+    """S3: the bytes are re-encoded through Pillow, never passed through as served."""
+    from PIL import Image
+
     from app.services import project_quotation_pdf_service as qpdf
 
-    spy = _Spy(monkeypatch, qpdf, lambda r: _png_response(ctype="image/png; charset=binary"))
+    spy = _Spy(monkeypatch, qpdf, lambda r: _png_response(content=_real_png()))
     result = qpdf.fetch_logo_data_uri("https://cdn.example.com/logo.png")
 
-    assert result == "data:image/png;base64," + base64.b64encode(b"\x89PNG-zzt").decode()
+    assert result is not None and result.startswith("data:image/jpeg;base64,")
+    decoded = base64.b64decode(result.split(",", 1)[1])
+    assert Image.open(BytesIO(decoded)).format == "JPEG"
     assert spy.client_kwargs.get("follow_redirects") is False
     assert spy.client_kwargs.get("timeout") == 3
 
@@ -1415,9 +1428,6 @@ def test_fetch_logo_over_one_megabyte_is_none_by_header_or_by_streamed_body(monk
     _Spy(monkeypatch, qpdf, lambda r: _png_response(content=b"x" * (1_048_576 + 1)))
     assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
 
-    _Spy(monkeypatch, qpdf, lambda r: _png_response(content=b"x" * 1_048_576))
-    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is not None
-
 
 def test_fetch_logo_never_raises_on_a_transport_error(monkeypatch):
     import httpx
@@ -1429,3 +1439,123 @@ def test_fetch_logo_never_raises_on_a_transport_error(monkeypatch):
 
     _Spy(monkeypatch, qpdf, boom)
     assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+
+# ------------------------------------------------ fix round 1: hardening of the fetch
+
+
+@pytest.mark.parametrize("url", ["https://cdn..example.com/logo.png", "https://[abc/x.png"])
+def test_fetch_logo_with_a_malformed_url_is_none_and_never_raises(monkeypatch, url):
+    """B1: the guard or the client choking on a bad url must not escape."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    calls = []
+    monkeypatch.setattr(
+        qpdf.httpx, "Client", lambda *a, **k: calls.append(1) or _REAL_HTTPX_CLIENT(*a, **k)
+    )
+    assert qpdf.fetch_logo_data_uri(url) is None
+    assert calls == []
+
+
+@pytest.mark.parametrize("url", ["https://cdn..example.com/logo.png", "https://[abc/x.png"])
+def test_the_pdf_still_builds_when_the_company_logo_url_is_malformed(url):
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        _document, issue = _one_line_issue(db, logo_url=url)
+        html = qpdf.build_issue_html(db, issue)
+
+        assert "letterhead-logo" not in html
+        assert "250.00" in html
+
+
+def test_fetch_logo_streamed_body_over_the_cap_with_no_content_length_is_none(monkeypatch):
+    """B3: a chunked response declares no length, so only the running total can stop it."""
+    import httpx
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    chunk = b"x" * 65536
+    seen = {}
+
+    def handler(request):
+        response = httpx.Response(
+            200, headers={"content-type": "image/png"}, content=iter([chunk] * 17)
+        )
+        seen["declared"] = response.headers.get("content-length")
+        return response
+
+    _Spy(monkeypatch, qpdf, handler)
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+    assert seen["declared"] is None
+
+
+def test_fetch_logo_asks_for_identity_encoding(monkeypatch):
+    """S1: no compressed answer is ever requested."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    spy = _Spy(monkeypatch, qpdf, lambda r: _png_response(content=_real_png()))
+    qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png")
+
+    assert spy.requests and spy.requests[0].headers.get("accept-encoding") == "identity"
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "br"])
+def test_fetch_logo_with_a_content_encoded_response_is_none_even_when_small(monkeypatch, encoding):
+    """S1: a decompression bomb is refused before a byte is inflated."""
+    import gzip
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    body = gzip.compress(_real_png()) if encoding == "gzip" else b"zzt-br"
+    _Spy(
+        monkeypatch,
+        qpdf,
+        lambda r: _png_response(content=body, headers={"content-encoding": encoding}),
+    )
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+    import gzip as _gz
+
+    bomb = _gz.compress(b"\0" * (2 * 1_048_576))
+    _Spy(
+        monkeypatch,
+        qpdf,
+        lambda r: _png_response(content=bomb, headers={"content-encoding": "gzip"}),
+    )
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+
+def test_fetch_logo_gives_up_once_the_total_deadline_passes(monkeypatch):
+    """S2: a slow drip under the per-read timeout still ends at 3 s in total."""
+    import httpx
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    clock = [100.0]
+    monkeypatch.setattr(qpdf.time, "monotonic", lambda: clock[0])
+
+    def slow_body():
+        png = _real_png()
+        for index in range(0, len(png), 8):
+            clock[0] += 1.0  # one second per 8-byte chunk
+            yield png[index : index + 8]
+
+    _Spy(
+        monkeypatch,
+        qpdf,
+        lambda r: httpx.Response(
+            200, headers={"content-type": "image/png"}, content=slow_body()
+        ),
+    )
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+
+@pytest.mark.parametrize("served_as", ["image/svg+xml", "image/png"])
+def test_fetch_logo_refuses_svg_whatever_it_is_served_as(monkeypatch, served_as):
+    """S3: content-type is the server's claim; only what Pillow can decode is embedded."""
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>1</script></svg>'
+    from app.services import project_quotation_pdf_service as qpdf
+
+    _Spy(monkeypatch, qpdf, lambda r: _png_response(content=svg, ctype=served_as))
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.svg") is None

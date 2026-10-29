@@ -534,6 +534,8 @@ describe('QuotationSignClient letterhead', () => {
 
     const logo = await screen.findByRole('img', { name: 'Sorento Sdn Bhd logo' });
     expect(logo).toHaveAttribute('src', 'https://cdn.example.com/logo.png');
+    // SN: the logo host must not learn which quotation link the reader is on.
+    expect(logo).toHaveAttribute('referrerpolicy', 'no-referrer');
   });
 
   it('shows no logo image when the company has none', async () => {
@@ -721,5 +723,83 @@ describe('QuotationSignClient terms tick', () => {
 
     await screen.findByText('Accepted');
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('QuotationSignClient not-ready button (fix round 1)', () => {
+  const TICK = 'I have read and agree to the Terms and conditions.';
+  const NAME_HINT = 'Type your name and tick the terms box to accept.';
+  const TICK_HINT = 'Tick to agree to the terms before you accept.';
+  const withTerms = () => page({ terms: '<p>CLAUSE A</p>', attn_name: null });
+
+  async function named() {
+    getQuotationSignPage.mockResolvedValue(withTerms());
+    renderPage();
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Your name' }), {
+      target: { value: 'CONTACT B' },
+    });
+  }
+
+  it('B2: a pad with content still cannot send without the tick, now or after unticking', async () => {
+    await named();
+    // Type tab: the pad now HAS content, so only the tick gate can stop the send.
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Type' }), { button: 0 });
+    const box = screen.getByRole('checkbox', { name: TICK });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign and accept' }));
+    expect(acceptQuotation).not.toHaveBeenCalled();
+    expect(box).toHaveFocus();
+
+    fireEvent.click(box);
+    fireEvent.click(box);
+    expect(box).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign and accept' }));
+    expect(acceptQuotation).not.toHaveBeenCalled();
+  });
+
+  it('R4: the not-ready button is aria-disabled and styled as such', async () => {
+    await named();
+    const button = screen.getByRole('button', { name: 'Sign and accept' });
+
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button.className).toContain('aria-disabled:opacity-60');
+  });
+
+  it('R5: tapping with a name and no tick marks the tick row, and ticking clears it', async () => {
+    await named();
+    const row = screen.getByText(TICK).parentElement as HTMLElement;
+    expect(row).toContainElement(screen.getByRole('checkbox', { name: TICK }));
+    expect(row).not.toHaveAttribute('data-attention', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign and accept' }));
+    expect(row).toHaveAttribute('data-attention', 'true');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: TICK }));
+    expect(row).not.toHaveAttribute('data-attention', 'true');
+  });
+
+  it('R5: the hint carries an icon', async () => {
+    await named();
+    const hint = screen.getByText(TICK_HINT);
+    expect(hint.querySelector('svg')).not.toBeNull();
+  });
+
+  it('R6: the hint is a polite live region that describes the not-ready button', async () => {
+    await named();
+    const hint = screen.getByText(TICK_HINT);
+    expect(hint.getAttribute('id')).toBeTruthy();
+    expect(hint).toHaveAttribute('aria-live', 'polite');
+
+    const button = screen.getByRole('button', { name: 'Sign and accept' });
+    expect(button).toHaveAccessibleDescription(TICK_HINT);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: TICK }));
+    expect(button).toHaveAccessibleDescription('Draw your signature to accept.');
+
+    // Ready: type tab gives the pad content, and no description is left behind.
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Type' }), { button: 0 });
+    expect(screen.getByRole('button', { name: 'Sign and accept' })).toHaveAccessibleDescription('');
+    expect(screen.queryByText(NAME_HINT)).not.toBeInTheDocument();
   });
 });
