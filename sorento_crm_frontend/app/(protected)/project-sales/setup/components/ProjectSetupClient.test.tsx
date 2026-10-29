@@ -176,9 +176,9 @@ describe('ProjectSetupClient', () => {
 
     expect(await screen.findByText('No project type selected')).toBeInTheDocument();
     expect(
-      screen.getByText('Select a project type to see its templates.'),
+      screen.getByText('Select a project type to see its to-do list templates.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add template' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add to-do list template' })).toBeDisabled();
   });
 
   it('renders a row per type and lands on the first one, which loads its templates', async () => {
@@ -194,7 +194,7 @@ describe('ProjectSetupClient', () => {
     expect(screen.getByText('Hotel')).toBeInTheDocument();
     expect(screen.getByText('Delivery from launch')).toBeInTheDocument();
     expect(screen.getByText('Stated per project')).toBeInTheDocument();
-    expect(screen.getAllByText('2 templates')).toHaveLength(2);
+    expect(screen.getAllByText('2 to-do list templates')).toHaveLength(2);
 
     // Landing on the first type is what makes the templates list non-empty.
     await waitFor(() => expect(listProjectTemplates).toHaveBeenCalledWith('t1'));
