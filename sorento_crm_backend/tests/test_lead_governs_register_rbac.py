@@ -551,3 +551,11 @@ def test_e8_a_limited_edit_holder_gets_a_409_that_names_no_project(v2):
     assert first_title not in res.text
     if code:
         assert code not in res.text
+
+
+def test_e9_a_null_customer_id_never_clears_the_customer_on_a_submit_only_draft(v2):
+    lead = _own_lead(v2)
+    pid = _register(v2, v2.sub_a, submit=False, lead_id=lead.id, customer_id=v2.customer.id).json()["id"]
+    res = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"customer_id": None})
+    assert res.status_code == 200, res.text
+    assert profile_of(v2, pid).customer_id == v2.customer.id

@@ -251,3 +251,12 @@ def test_e4_a_later_customer_pick_without_a_lead_change_fills_the_empty_lead(v2)
     assert res.status_code == 200, res.text
     assert profile_of(v2, old.id).customer_id == v2.customer.id
     assert reload_lead(v2, lead.id).customer_id == v2.customer.id
+
+
+def test_e9_a_null_customer_id_never_clears_the_leads_customer_on_put(v2):
+    lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
+    pid = _register(v2, title=title("NullKeep"), lead_id=lead.id).json()["id"]
+    assert profile_of(v2, pid).customer_id == v2.customer.id
+    res = as_user(v2, v2.owner).put(f"{STAFF}/{pid}", json={"customer_id": None})
+    assert res.status_code == 200, res.text
+    assert profile_of(v2, pid).customer_id == v2.customer.id
