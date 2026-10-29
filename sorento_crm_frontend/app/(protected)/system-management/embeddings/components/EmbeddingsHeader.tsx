@@ -16,8 +16,8 @@ export type EmbeddingsMode = 'lookup' | 'records';
 function Metric({ label, title, children }: { label: string; title?: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0 space-y-0.5">
-      <div className="text-xs text-muted-foreground truncate" title={title}>{label}</div>
-      <div className="text-sm font-medium truncate flex items-center gap-2">{children}</div>
+      <div className="text-xs text-muted-foreground break-words" title={title}>{label}</div>
+      <div className="text-sm font-medium break-words flex flex-wrap items-center gap-x-2 gap-y-1">{children}</div>
     </div>
   );
 }
@@ -80,7 +80,7 @@ export function EmbeddingsHeader({
               <Metric label="Records left to embed">{num(overview.guard.remaining)}</Metric>
             )}
             <Metric label="Record search reads">
-              {overview.records_search_model}
+              <span className="break-words">{overview.records_search_model}</span>
               {overview.records_search_model !== overview.setting.model ? (
                 <Badge variant="warning" size="sm">
                   {overview.guard.ready ? 'Ready to switch' : `${overview.setting.model} in progress`}

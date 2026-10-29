@@ -195,7 +195,7 @@ def records_backfill(body: RecordsBackfillBody, db: Session = Depends(get_db)):
         return {"job_id": None}
     try:
         queue_service.redis_conn.delete(RECORDS_BACKFILL_STOP_KEY)
-    except Exception:  # noqa: BLE001 - a stale flag only stops the run early; the job also clears it
+    except Exception:  # noqa: BLE001 - a stale flag only stops the next run early; it is cleared when a settings model change or a new run starts
         pass
     job = queue_service.enqueue_job(run_records_backfill, queue_name="imports")
     return {"job_id": getattr(job, "id", None)}

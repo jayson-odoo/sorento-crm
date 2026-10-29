@@ -66,7 +66,7 @@ export function LookupWordsGrid({
       {
         id: 'row',
         header: 'Row',
-        size: 200,
+        size: 180,
         meta: { headerTitle: 'Row' },
         cell: ({ row }) => (
           <span className="block truncate font-medium" title={row.original.label}>
@@ -77,7 +77,7 @@ export function LookupWordsGrid({
       {
         id: 'source',
         header: 'Source',
-        size: 160,
+        size: 140,
         meta: { headerTitle: 'Source' },
         cell: ({ row }) => (
           <span className="block truncate text-muted-foreground" title={row.original.source}>
@@ -88,14 +88,14 @@ export function LookupWordsGrid({
       {
         id: 'words',
         header: 'Words matched on',
-        size: 560,
+        size: 500,
         meta: { headerTitle: 'Words matched on' },
         cell: ({ row }) => <WordGroups words={row.original.words} />,
       },
       {
         id: 'vectors',
         header: 'Vectors',
-        size: 100,
+        size: 140,
         meta: { headerTitle: 'Vectors' },
         cell: ({ row }) => {
           const have = row.original.words.filter((w) => w.has_vector).length;
