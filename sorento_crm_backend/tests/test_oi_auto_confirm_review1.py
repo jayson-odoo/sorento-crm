@@ -99,10 +99,15 @@ def _reserve_scene(worklist_api):
 
     def _line_row(qty, day, tag, **fields):
         line = _line_on_authored_order(db, company_id, seeded, qty=qty, day=day)
-        return _row(
+        row = _row(
             db, company_id, inquiry, so_line_id=line.id, item_code=f"{WL_MARKER}-{tag}",
             qty=qty, delivery_date=date(2026, 4, day), **fields,
         )
+        if fields.get("po_line_id"):
+            # the document names the SO line's product (the live-link product read)
+            db.get(PurchaseOrderLine, fields["po_line_id"]).product_id = line.product_id
+            db.flush()
+        return row
 
     po_line = _purchase_order(db, company_id)["line"]
     reserved_row = _line_row("139", 6, "R1BASE", po_line_id=po_line.id)
@@ -211,6 +216,8 @@ def test_open_qty_is_floored_at_zero_on_an_over_covered_row(worklist_api):
         db, company_id, inquiry, so_line_id=line.id, item_code=f"{WL_MARKER}-R1OVER", qty="10",
         delivery_date=date(2026, 4, 10), po_line_id=po_line.id,
     )
+    po_line.product_id = line.product_id
+    db.flush()
     db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).one().qty = Decimal("14")
     db.commit()
 

@@ -43,6 +43,7 @@ def test_an_item_swap_back_to_a_covering_document_is_done_again(api):
     svc = ProjectOrderInquiryService(db)
 
     row.item_code = fx["old"].product_code
+    fx["line"].product_id = fx["old"].id
     db.flush()
     svc.auto_confirm([row.id])
     db.refresh(row)
