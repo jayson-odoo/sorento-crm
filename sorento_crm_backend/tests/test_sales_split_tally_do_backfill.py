@@ -134,3 +134,26 @@ def test_r14_counts_the_january_lines_whose_do_landed_and_reaches_an_so(db):
     row = db.execute(text(statement)).mappings().one()
 
     assert dict(row) == {"lines": 2, "do_found": 1, "reaches_so": 1}
+
+
+def test_r15_counts_autocount_and_crm_made_dos_per_gap_month(db):
+    """Owner SQL R15 as written: one AutoCount DO landed through the ingest (January 2026), one
+    CRM-made DO with a delivery date (March 2026), one outside the gap (August 2026)."""
+    from tests.test_sales_split_tally_owner_sql import _blocks, _statements
+
+    prod, wh, order, do_no, _ = _setup(db, "retail")
+    _ingest(db, _do_record(do_no, order.so_number, prod.product_code, wh.warehouse_code))
+    db.add(Order(order_number=unique_code("DO"), company_id=DEFAULT_COMPANY_ID,
+                 order_date=date(2026, 3, 5), actual_delivery_date=date(2026, 3, 6)))
+    db.add(Order(order_number=unique_code("DO"), company_id=DEFAULT_COMPANY_ID,
+                 order_date=date(2026, 8, 5)))
+    db.flush()
+    db.execute(text("UPDATE companies SET code = 'SRT' WHERE id = :id"), {"id": DEFAULT_COMPANY_ID})
+
+    (block,) = _blocks("R15.")
+    (statement,) = _statements(block, {})
+    rows = {r["do_month"]: dict(r) for r in db.execute(text(statement)).mappings()}
+
+    assert set(rows) == {date(2026, 1, 1), date(2026, 3, 1)}
+    assert (rows[date(2026, 1, 1)]["autocount_dos"], rows[date(2026, 1, 1)]["crm_made"]) == (1, 0)
+    assert rows[date(2026, 3, 1)]["crm_made"] == 1 and rows[date(2026, 3, 1)]["crm_made_with_date"] == 1
