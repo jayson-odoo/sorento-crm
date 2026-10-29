@@ -136,8 +136,8 @@ export function ProjectSetupClient() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              Select a template above to edit the checklist every new project of that
-              template copies in.
+              Select a to-do list template above to edit the checklist every new project
+              of that to-do list template copies in.
             </p>
           </CardContent>
         </Card>
@@ -161,7 +161,7 @@ export function ProjectSetupClient() {
         title="Confirm delete"
         description={
           deletingType
-            ? `Delete the project type "${deletingType.name}"? This action cannot be undone. A type still used by a template or a project cannot be deleted, so deactivate it instead.`
+            ? `Delete the project type "${deletingType.name}"? This action cannot be undone. A type still used by a to-do list template or a project cannot be deleted, so deactivate it instead.`
             : ''
         }
         onDelete={async () => {
@@ -181,7 +181,7 @@ export function ProjectSetupClient() {
         title="Confirm delete"
         description={
           deletingTemplate
-            ? `Delete the template "${deletingTemplate.name}"? This action cannot be undone, and its checklist goes with it. A template already used by a project cannot be deleted, so deactivate it instead.`
+            ? `Delete the to-do list template "${deletingTemplate.name}"? This action cannot be undone, and its checklist goes with it. A to-do list template already used by a project cannot be deleted, so deactivate it instead.`
             : ''
         }
         onDelete={async () => {
@@ -189,7 +189,7 @@ export function ProjectSetupClient() {
           await templateMutations.remove.mutateAsync(deletingTemplate.id);
         }}
         onSuccess={() => setDeletingTemplate(null)}
-        successMessage="Template deleted"
+        successMessage="To-do list template deleted"
       />
     </div>
   );
@@ -251,14 +251,16 @@ function ProjectTypesGrid({
       {
         id: 'template_count',
         accessorFn: (row) => row.template_count ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="Templates" column={column} />,
-        size: 130,
-        meta: { headerTitle: 'Templates', skeleton: <Skeleton className="h-4 w-14" /> },
+        header: ({ column }) => (
+          <DataGridColumnHeader title="To-do list templates" column={column} />
+        ),
+        size: 190,
+        meta: { headerTitle: 'To-do list templates', skeleton: <Skeleton className="h-4 w-14" /> },
         cell: ({ row }) => {
           const count = row.original.template_count ?? 0;
           return (
             <span className="tabular-nums">
-              {count} template{count === 1 ? '' : 's'}
+              {count} to-do list template{count === 1 ? '' : 's'}
             </span>
           );
         },
@@ -406,9 +408,11 @@ function ProjectTemplatesGrid({
       selectedMarkerColumn<ProjectTemplate>(selectedTemplateId),
       {
         accessorKey: 'name',
-        header: ({ column }) => <DataGridColumnHeader title="Template" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="To-do list template" column={column} />
+        ),
         size: 220,
-        meta: { headerTitle: 'Template', skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'To-do list template', skeleton: <Skeleton className="h-4 w-32" /> },
         cell: ({ row }) => (
           <span className="block truncate font-medium" title={row.original.name}>
             {row.original.name}
@@ -503,12 +507,12 @@ function ProjectTemplatesGrid({
             <span className="block text-sm font-semibold text-foreground">
               No project type selected
             </span>
-            Select a project type to see its templates.
+            Select a project type to see its to-do list templates.
           </span>
         ) : (
           <span className="block max-w-md">
             <span className="block text-sm font-semibold text-foreground">
-              This type has no templates
+              This type has no to-do list templates
             </span>
             Without one, a project of this type has no roles to pick from and no
             checklist to start with.
@@ -519,10 +523,10 @@ function ProjectTemplatesGrid({
     >
       <Card>
         <CardHeader className="block pt-5">
-          <CardTitle className="text-sm">Templates</CardTitle>
+          <CardTitle className="text-sm">To-do list templates</CardTitle>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            A template decides the stakeholder roles offered and the checklist a new
-            project copies in.
+            A to-do list template decides the stakeholder roles offered and the
+            checklist a new project copies in.
           </p>
           <DataGridListToolbar
             table={table}
@@ -532,7 +536,7 @@ function ProjectTemplatesGrid({
             primaryAction={
               <Button type="button" size="sm" disabled={!hasType} onClick={onAdd}>
                 <Plus className="size-4" aria-hidden />
-                Add template
+                Add to-do list template
               </Button>
             }
           />

@@ -122,7 +122,7 @@ def test_r1_4_a_top_selling_verdict_reaching_the_old_dispatch_is_sent_to_the_rep
     """A live session mid-ranking never passed `by_capability`: drive the verdict straight to the lane dispatch."""
     from app.services.chatbot.lanes.business import report_ask
 
-    monkeypatch.setattr(report_ask, "by_capability", lambda verdict: verdict)
+    monkeypatch.setattr(report_ask, "by_capability", lambda verdict, **_: verdict)
     text, log = _say_all(
         console, monkeypatch, _top_selling(top_n=10, measure="qty", basis="delivered", rank_by="quantity"),
         "top 10 selling items this year by qty delivered")
@@ -322,7 +322,7 @@ def test_r1_review_2b_a_top_selling_verdict_that_skips_by_capability_still_reach
     """A live session never passed `by_capability`: the verdict reaches the domain-grant check as top_selling."""
     from app.services.chatbot.lanes.business import report_ask
 
-    monkeypatch.setattr(report_ask, "by_capability", lambda verdict: verdict)
+    monkeypatch.setattr(report_ask, "by_capability", lambda verdict, **_: verdict)
     _make_salesperson(console_no_grant)
     text, log = _say_all(
         console_no_grant, monkeypatch, _top_selling(self_reference=True, **FULL_ITEMS), "my top selling items this year")

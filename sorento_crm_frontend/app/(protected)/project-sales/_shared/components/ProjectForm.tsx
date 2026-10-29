@@ -524,7 +524,7 @@ export function ProjectForm(props: ProjectFormProps) {
 
           {typeId && (
             <div className="space-y-1.5">
-              <Label htmlFor="project-template">Template</Label>
+              <Label htmlFor="project-template">To-do list template</Label>
               <SearchableSelect
                 id="project-template"
                 value={templateId}
@@ -539,8 +539,8 @@ export function ProjectForm(props: ProjectFormProps) {
                     ? 'Has its own stage flow'
                     : undefined,
                 }))}
-                placeholder="Select a template"
-                emptyMessage="No templates for this type"
+                placeholder="Select a to-do list template"
+                emptyMessage="No to-do list templates for this type"
               />
             </div>
           )}

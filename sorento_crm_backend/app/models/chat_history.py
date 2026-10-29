@@ -49,13 +49,19 @@ class ChatHistory(Base):
     # SLA measurement read `respond_ts` so the two timestamps share one clock - 
     # mixing Respond's clock with ours would bake skew into the p99.
     respond_ts = Column(DateTime(timezone=False), nullable=True)
-    # sent | delivered | read | failed | not_sent. Displayed and alerted on
+    # pending | sent | delivered | read | failed | not_sent. Displayed and alerted on
     # separately, but NOT part of the p99: delivery is owned by the recipient's
     # handset, so an offline user must not be able to breach our SLA.
     delivery_status = Column(String(32), nullable=True)
     delivered_ts = Column(DateTime(timezone=False), nullable=True)
     read_ts = Column(DateTime(timezone=False), nullable=True)
     resolve_attempts = Column(Integer, nullable=True, server_default="0")
+    # Respond's own `status[]` timeline as GET /v2/contact/{id}/message/{id} returned it
+    # ({value, timestamp(ms), message?} per step), and why a row is failed / not_sent
+    # (`HTTP 404: <Respond's text>` or the failed entry's message). Written by
+    # app/services/chat_message_resolver.py only.
+    delivery_trace = Column(JSONB, nullable=True)
+    delivery_error = Column(String(512), nullable=True)
     # n8n $execution.id, stamped on both saves of one turn. NULL = proactive send,
     # which is excluded from the SLA denominator rather than paired by guesswork.
     turn_id = Column(String(64), nullable=True)

@@ -81,7 +81,7 @@ def test_dataset_catalog_dimensions_and_measures():
     measures = {c.key for c in DATASET.columns if c.tag == "measure"}
     assert dims == {
         "customer", "product", "brand", "category", "sales_agent", "location", "channel",
-        "day", "week", "month", "delivery_order", "all",
+        "day", "week", "month", "year", "delivery_order", "all",
     }, dims
     assert measures == {"amount", "qty"}, measures
 

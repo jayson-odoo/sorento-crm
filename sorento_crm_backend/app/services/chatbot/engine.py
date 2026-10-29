@@ -5736,7 +5736,9 @@ def _run_stages_body(  # noqa: PLR0915
     # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
     verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
     # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
-    verdict = _report_ask.by_capability(verdict)
+    verdict = _report_ask.by_capability(
+        verdict, answering=_report_ask.offers_outstanding_basis(state_in.focus.required_ask)
+    )
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
         verdict, grounding_notes = grounding.ground(
@@ -6381,7 +6383,7 @@ def _run_stages_body(  # noqa: PLR0915
                 order_status=jsc.js_string(parsed_output.get("order_status") or "").strip(),
                 parse_output=parsed_output,
             )
-            sales_report_grant_refused = _decision != "salesperson_book"
+            sales_report_grant_refused = _decision not in ("salesperson_book", "pending_delivery_open")
             if not sales_report_grant_refused:
                 turn_trace.add(
                     "domain_grant",

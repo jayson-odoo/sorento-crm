@@ -164,6 +164,12 @@ describe('QualifyLeadDialog', () => {
     expect(screen.queryByText(/stakeholder roles/)).not.toBeInTheDocument();
   });
 
+  it('labels the project template field To-do list template (owner meeting, 29 Oct)', async () => {
+    renderDialog();
+    expect(await screen.findByText('To-do list template')).toBeInTheDocument();
+    expect(screen.queryByText('Template')).toBeNull();
+  });
+
   it('checks for clashes using the lead title it was opened with', async () => {
     renderDialog();
 

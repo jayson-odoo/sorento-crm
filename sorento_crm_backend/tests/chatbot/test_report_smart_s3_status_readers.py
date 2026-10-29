@@ -128,7 +128,7 @@ def test_s3_4_near_miss_status_outstanding_with_no_order_status_is_as_today(rec)
     text, calls = _run_when(rec, status="outstanding")
     assert _focus_status(rec) == "outstanding", rec.session_vars.get("focus")
     # REPORT-UNIFY: a bare outstanding with a subject asks the kind (undelivered orders, pending delivery, unpaid invoices)
-    assert "Undelivered orders, pending delivery or unpaid invoices?" in text and calls == [], (text, calls)
+    assert "Undelivered orders or pending delivery?" in text and calls == [], (text, calls)
 
 
 def test_s3_4_near_miss_status_delivered_is_as_today(rec) -> None:
