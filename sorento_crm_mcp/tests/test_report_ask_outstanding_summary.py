@@ -38,9 +38,12 @@ def test_the_prod_turn_shape_pending_delivery_for_a_product():
         ],
     })
     assert _report_ask(body) == "\n".join([
-        "Pending delivery",
         "Product: SRT5733-WH",
-        "Period: all dates",
+        "Customer: all",
+        "Location: all",
+        "Order date: all",
+        "",
+        "*Delivery order outstanding*",
         "Delivery orders: 3",
         "DO qty: 40",
         "Delivered: 0",
@@ -70,9 +73,12 @@ def test_undelivered_orders_for_a_customer_print_ordered_transferred_and_by_prod
         ],
     }, total=(120, 9800.0))
     assert _report_ask(body) == "\n".join([
-        "Undelivered orders",
+        "Product: all",
         "Customer: Customer A",
-        "Period: all dates",
+        "Location: all",
+        "Order date: all",
+        "",
+        "*Sales order outstanding*",
         "Sales orders: 4",
         "Ordered: 300",
         "Transferred to DO: 180",
@@ -119,15 +125,17 @@ def test_nothing_outstanding_says_so_with_no_offer():
         "groups": [],
     }, total=(0, 0.0))
     assert _report_ask(body) == "\n".join([
-        "Pending delivery", "Product: SRT5733-WH", "Period: all dates", "No outstanding delivery order.",
+        "Product: SRT5733-WH", "Customer: all", "Location: all", "Order date: all", "",
+        "*Delivery order outstanding*", "No outstanding delivery order.",
     ])
 
 
 def test_no_summary_keeps_the_one_total():
     body = _body("pending_delivery", "pending delivery", PRODUCT, None)
-    assert _report_ask(body) == "\n".join(
-        ["Pending delivery", "Product: SRT5733-WH", "Period: all dates", "Total 40 pcs, RM 1,234.00"]
-    )
+    assert _report_ask(body) == "\n".join([
+        "Product: SRT5733-WH", "Customer: all", "Location: all", "Order date: all", "", "*Delivery order outstanding*",
+        "Total 40 pcs, RM 1,234.00",
+    ])
 
 
 def test_the_delivery_order_list_reads_plural():
@@ -158,3 +166,30 @@ def test_the_summary_prints_when_the_ask_also_named_an_axis():
     text = _report_ask(body)
     assert "Delivery orders: 2" in text and "*_By sales agent_*" in text, text
     assert "1. AG1" not in text and text.rstrip().endswith("Reply 1 for the delivery order list."), text
+
+
+def test_the_header_names_location_brand_period_and_extra_filters_as_before_1922():
+    """Item 5 (owner 29 Oct): Product / Customer / Location / Order date ("all" when unset), then Brand when one was named;
+    a filter the old report had no line for (a spec, a channel) follows, and so does "Not applied"."""
+    filters = PRODUCT + [
+        {"key": "location", "label": "Location", "values": ["BRW-BB"]},
+        {"key": "brand", "label": "Brand", "values": ["SORENTO"]},
+        {"key": "channel", "label": "Channel", "values": ["Dealer"]},
+    ]
+    body = _body("pending_delivery", "pending delivery", filters, {
+        "documents": 1, "qty": 2, "amount": 200.0, "date_first": "2026-09-10", "date_last": "2026-09-10", "groups": [],
+    }, total=(2, 200.0))
+    body.update(date_from="2026-09-01", date_to="2026-09-30")
+    text = _report_ask(body)
+    assert text.startswith("\n".join([
+        "Product: SRT5733-WH", "Customer: all", "Location: BRW-BB", "Order date: 01/09/2026 to 30/09/2026",
+        "Brand: SORENTO", "Channel: Dealer", "", "*Delivery order outstanding*",
+    ])), text
+
+
+def test_an_outstanding_total_with_no_subject_also_carries_the_header():
+    body = _body("pending_delivery", "pending delivery", [], None)
+    assert _report_ask(body) == "\n".join([
+        "Product: all", "Customer: all", "Location: all", "Order date: all", "", "*Delivery order outstanding*",
+        "Total 40 pcs, RM 1,234.00",
+    ])
