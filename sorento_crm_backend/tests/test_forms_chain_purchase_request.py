@@ -537,8 +537,8 @@ def test_void_stops_the_sla_tells_the_contact_and_locks_the_form(world, kind):
 @pytest.mark.parametrize("kind", KINDS)
 def test_a_voided_form_pending_approval_cannot_be_approved(world, kind):
     """Void is terminal and irreversible (PLAN-form-void D3/D6). A form voided while it waits
-    for approval keeps approval_status 'pending', and decide_approval only checks that
-    column (procurement_service.py decide_approval), so the approve must still be refused."""
+    for approval used to keep approval_status 'pending', and decide_approval checked only
+    that column, so the void was approved back to life (VOID-APPROVE-GUARD)."""
     w = _setup(world, kind)
     rid = _submitted(w)
     _to_pending_approval(w, rid)
@@ -549,3 +549,77 @@ def test_a_voided_form_pending_approval_cannot_be_approved(world, kind):
     detail = s.get(f"{PR_BASE}/{rid}").json()
     assert detail["status"] == "voided", f"voided form came back as {detail['status']!r}"
     assert res.status_code == 409, res.text
+    assert detail["approval_status"] == "voided", "the pending approval is closed with the void"
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_voided_form_pending_approval_cannot_be_rejected_or_resent(world, kind):
+    """VOID-APPROVE-GUARD: the reject half of the decision and every way back into
+    pending approval are refused on a voided form, and the void sends nothing more."""
+    w = _setup(world, kind)
+    rid = _submitted(w)
+    _to_pending_approval(w, rid)
+    s = w.as_user(w.staff)
+    assert s.post(f"{PR_BASE}/{rid}/void", json={"void_reason": "duplicate of another"}).status_code == 200
+    sends_after_void = len(_sends(w, rid))
+
+    reject = s.post(f"{PR_BASE}/{rid}/approval-decision",
+                    json={"action": "rejected", "approval_comments": "no budget"})
+    assert reject.status_code == 409, reject.text
+    assert "voided" in reject.text.lower()
+    assert s.post(f"{PR_BASE}/{rid}/set-pending-approval").status_code == 409
+    link = s.post(f"{PR_BASE}/{rid}/send-approval-link", json={"approver_email": "boss@zzt.test"})
+    assert link.status_code == 409, link.text
+
+    detail = s.get(f"{PR_BASE}/{rid}").json()
+    assert (detail["status"], detail["approval_status"]) == ("voided", "voided")
+    assert len(_sends(w, rid)) == sends_after_void
+    assert trackers(w.db, kind, rid, open_only=True) == []
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_voided_submitted_form_cannot_be_rejected_before_approval(world, kind):
+    w = _setup(world, kind)
+    rid = _submitted(w)
+    s = w.as_user(w.staff)
+    assert s.post(f"{PR_BASE}/{rid}/void", json={"void_reason": "duplicate of another"}).status_code == 200
+    res = s.post(f"{PR_BASE}/{rid}/reject-submitted", json={"rejection_reason": "incomplete"})
+    assert res.status_code == 409, res.text
+    detail = s.get(f"{PR_BASE}/{rid}").json()
+    assert detail["status"] == "voided"
+    assert detail["approval_status"] in (None, "", "draft"), "void before approval leaves no approval"
+
+
+@pytest.mark.parametrize("action", ["approved", "rejected"])
+def test_an_emailed_approval_link_dies_with_the_void(world, action):
+    """The public link (no login) reaches the same decision: once the form is voided the
+    link's page and its submit both refuse, and the link is not consumed."""
+    from urllib.parse import parse_qs, urlparse
+
+    from app.models.procurement import ApprovalToken
+
+    w = _setup(world, "purchase_request")
+    rid = _submitted(w)
+    s = w.as_user(w.staff)
+    link = s.post(f"{PR_BASE}/{rid}/send-approval-link", json={"approver_email": "boss@zzt.test"})
+    assert link.status_code == 200, link.text
+    token = parse_qs(urlparse(link.json()["approval_url"]).query)["token"][0]
+    assert w.client.get("/api/v1/public/approval/summary", params={"token": token}).status_code == 200
+
+    assert s.post(f"{PR_BASE}/{rid}/void", json={"void_reason": "duplicate of another"}).status_code == 200
+    sends_after_void = len(_sends(w, rid))
+
+    page = w.client.get("/api/v1/public/approval/summary", params={"token": token})
+    assert page.status_code == 409, page.text
+    submit = w.client.post("/api/v1/public/approval/submit", params={"token": token},
+                           json={"action": action, "approved_by": "Boss",
+                                 "approval_comments": "fine by me"})
+    assert submit.status_code == 409, submit.text
+    assert "voided" in submit.text.lower()
+
+    w.db.expire_all()
+    detail = s.get(f"{PR_BASE}/{rid}").json()
+    assert (detail["status"], detail["approval_status"]) == ("voided", "voided")
+    assert len(_sends(w, rid)) == sends_after_void
+    row = w.db.query(ApprovalToken).filter(ApprovalToken.token == token).one()
+    assert row.used_at is None
