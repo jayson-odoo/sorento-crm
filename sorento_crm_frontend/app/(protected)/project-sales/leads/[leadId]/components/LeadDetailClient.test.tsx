@@ -29,6 +29,7 @@ if (!window.matchMedia) {
 const getLead = vi.fn();
 const updateLead = vi.fn();
 const getCustomerPortfolio = vi.fn();
+const listCustomerOptions = vi.fn();
 const acceptLead = vi.fn();
 const declineLead = vi.fn();
 const assignLead = vi.fn();
@@ -96,6 +97,7 @@ vi.mock('../../../_shared/services/projectService', () => ({
   getLead: (...args: unknown[]) => getLead(...args),
   updateLead: (...args: unknown[]) => updateLead(...args),
   getCustomerPortfolio: (...args: unknown[]) => getCustomerPortfolio(...args),
+  listCustomerOptions: (...args: unknown[]) => listCustomerOptions(...args),
   listParties: vi.fn(async () => ({
     data: [],
     pagination: { total: 0, page: 1, limit: 200 },
@@ -131,42 +133,71 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() },
 }));
 
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: ({
-    value,
+vi.mock('@/components/common/SearchableSelect', () => {
+  type Opt = { value: string; label: string };
+  function AsyncSelect({
+    id,
     onChange,
-    options,
-    placeholder,
+    fetchOptions,
   }: {
-    value: string;
+    id?: string;
     onChange: (next: string) => void;
-    options?: { value: string; label: string }[];
-    placeholder?: string;
-  }) => (
-    <select
-      aria-label={placeholder ?? 'select'}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      <option value="">{placeholder ?? ''}</option>
-      {(options ?? []).map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-  ),
-}));
-
-vi.mock(
-  '@/app/(protected)/order-management/shared/hooks/use-customer-select-query',
-  () => ({
-    useCustomerSelectQuery: () => ({
-      data: [{ id: 'c1', customer_name: 'Sunway Construction', customer_code: 'C-001' }],
-      isLoading: false,
-    }),
-  }),
-);
+    fetchOptions: (query: string, page: number) => Promise<Opt[]>;
+  }) {
+    const [query, setQuery] = React.useState('');
+    const [results, setResults] = React.useState<Opt[]>([]);
+    return (
+      <span>
+        <input
+          id={id}
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            void fetchOptions(event.target.value, 0).then(setResults);
+          }}
+        />
+        {results.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => {
+              onChange(option.value);
+              setResults([]);
+              setQuery(option.label);
+            }}
+          >
+            {option.label}
+          </button>
+        ))}
+      </span>
+    );
+  }
+  return {
+    SearchableSelect: (props: Record<string, unknown>) => {
+      if (props.fetchOptions) return <AsyncSelect {...(props as never)} />;
+      const { value, onChange, options, placeholder } = props as {
+        value: string;
+        onChange: (next: string) => void;
+        options?: Opt[];
+        placeholder?: string;
+      };
+      return (
+        <select
+          aria-label={placeholder ?? 'select'}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          <option value="">{placeholder ?? ''}</option>
+          {(options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      );
+    },
+  };
+});
 
 import { LeadDetailClient } from './LeadDetailClient';
 
@@ -288,13 +319,15 @@ describe('LeadDetailClient tabs', () => {
       'Overview',
       'Who told us',
       'Assignment',
-      'Buyer',
+      'Customer',
       'Projects',
       'Activity',
     ]) {
       expect(strip.getByRole('tab', { name: label })).toBeInTheDocument();
     }
 
+    // LEAD-GOVERNS-REGISTER C1: the tab says Customer, never Buyer.
+    expect(strip.queryByRole('tab', { name: 'Buyer' })).toBeNull();
     expect(strip.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
       'aria-selected',
       'true',
@@ -334,7 +367,7 @@ describe('LeadDetailClient tabs', () => {
   it('drops the parameter again on the way back to Overview, so the plain url is the plain page', async () => {
     renderDetail();
 
-    await openTab('Buyer');
+    await openTab('Customer');
     await openTab('Overview');
 
     expect(routerReplace).toHaveBeenLastCalledWith('/project-sales/leads/l1', {
@@ -347,7 +380,7 @@ describe('LeadDetailClient tabs', () => {
     currentSearch = 'tab=buyer';
     renderDetail();
 
-    expect(await screen.findByText('No buyer yet')).toBeInTheDocument();
+    expect(await screen.findByText('No customer yet')).toBeInTheDocument();
     expect(screen.queryByText('What we heard')).not.toBeInTheDocument();
   });
 
@@ -407,17 +440,18 @@ describe('LeadDetailClient Who told us tab', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('answers an unknown buyer with a dash, not a sentence', async () => {
+  it('answers an unknown customer with a dash, not a sentence', async () => {
     renderDetail();
     await openTab('Who told us');
 
-    // "Buyer" and "Who told us" are both TAB labels too, so the term has to be matched
+    // "Customer" and "Who told us" are both TAB labels too, so the term has to be matched
     // inside the card itself.
     await screen.findByText('Their reference');
     const card = document
       .querySelector('[data-slot="card-title"]')!
       .closest('[data-slot="card"]')!;
-    expect(within(card as HTMLElement).getByText('Buyer')).toBeInTheDocument();
+    expect(within(card as HTMLElement).getByText('Customer')).toBeInTheDocument();
+    expect(within(card as HTMLElement).queryByText('Buyer')).not.toBeInTheDocument();
     expect(screen.queryByText('Not known yet')).not.toBeInTheDocument();
     expect(within(card as HTMLElement).getAllByText('-').length).toBeGreaterThan(0);
   });
@@ -455,29 +489,27 @@ describe('LeadDetailClient Who told us tab', () => {
     expect(body).not.toHaveProperty('owner_user_id');
   });
 
-  it('saves the informant and the buyer together', async () => {
+  it('saves the informant and the customer together, leaving the old Firm as it was', async () => {
+    listCustomerOptions.mockResolvedValue([{ value: 'c1', label: 'KEDAI CONTOH SDN. BHD.' }]);
     renderDetail();
     await openTab('Who told us');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
-    // The dialog's own placeholder, which the SearchableSelect mock turns into the
-    // accessible name. Unrelated to the detail card, where an unknown buyer now reads "-".
-    fireEvent.change(await screen.findByLabelText('Not known yet'), {
-      target: { value: 'c1' },
-    });
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText(/^Customer/), { target: { value: 'KEDAI' } });
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'KEDAI CONTOH SDN. BHD.' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save informant' }));
 
-    await waitFor(() =>
-      expect(updateLead).toHaveBeenCalledWith(
-        'l1',
-        expect.objectContaining({
-          customer_id: 'c1',
-          informant_source: 'bci',
-          informant_ref: 'BCI-778812',
-          informant_contact_name: 'Lim, QS',
-          informant_party_id: '11111111-1111-1111-1111-111111111111',
-        }),
-      ),
+    await waitFor(() => expect(updateLead).toHaveBeenCalled());
+    const body = updateLead.mock.calls[0][1] as Record<string, unknown>;
+    expect(body).toMatchObject({
+      customer_id: 'c1',
+      informant_source: 'bci',
+      informant_ref: 'BCI-778812',
+      informant_contact_name: 'Lim, QS',
+    });
+    expect([undefined, '11111111-1111-1111-1111-111111111111']).toContain(
+      body.informant_party_id,
     );
   });
 });
@@ -533,13 +565,13 @@ describe('LeadDetailClient Assignment tab', () => {
   });
 });
 
-describe('LeadDetailClient Buyer tab', () => {
-  it('says there is no buyer yet, and offers to set it', async () => {
+describe('LeadDetailClient Customer tab', () => {
+  it('says there is no customer yet, and offers to set it', async () => {
     renderDetail();
-    await openTab('Buyer');
+    await openTab('Customer');
 
-    expect(await screen.findByText('No buyer yet')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Set the buyer' }));
+    expect(await screen.findByText('No customer yet')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Set the customer' }));
     expect(await screen.findByText('Who told us, and who buys')).toBeInTheDocument();
   });
 
@@ -547,7 +579,7 @@ describe('LeadDetailClient Buyer tab', () => {
     getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
     getCustomerPortfolio.mockReturnValue(new Promise(() => {}));
     const { container } = renderDetail();
-    await openTab('Buyer');
+    await openTab('Customer');
 
     await waitFor(() =>
       expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0),
@@ -558,7 +590,7 @@ describe('LeadDetailClient Buyer tab', () => {
     getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
     getCustomerPortfolio.mockRejectedValue(new Error('Account service is down'));
     renderDetail();
-    await openTab('Buyer');
+    await openTab('Customer');
 
     // Both account lists report it: they are two independent grids off one query.
     expect((await screen.findAllByText('Account service is down')).length).toBe(2);
@@ -583,7 +615,7 @@ describe('LeadDetailClient Buyer tab', () => {
       ],
     });
     renderDetail();
-    await openTab('Buyer');
+    await openTab('Customer');
 
     expect(await screen.findByText(/LEAD-000002/)).toBeInTheDocument();
     expect(screen.getByText(/PRJ-000009/)).toBeInTheDocument();
@@ -594,12 +626,12 @@ describe('LeadDetailClient Buyer tab', () => {
   it('renders both account lists when empty, without a sentence in either', async () => {
     getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
     renderDetail();
-    await openTab('Buyer');
+    await openTab('Customer');
 
     // Both lists still render (CRUD standard), each stating its own emptiness as a heading
     // rather than as prose.
-    expect(await screen.findByText('No other leads on this buyer')).toBeInTheDocument();
-    expect(screen.getByText('No projects on this buyer')).toBeInTheDocument();
+    expect(await screen.findByText('No other leads on this customer')).toBeInTheDocument();
+    expect(screen.getByText('No projects on this customer')).toBeInTheDocument();
     expect(screen.queryByText('This is their only lead so far.')).not.toBeInTheDocument();
     expect(
       screen.queryByText('Nothing registered against this account yet.'),

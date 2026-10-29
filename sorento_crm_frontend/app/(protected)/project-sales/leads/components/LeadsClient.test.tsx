@@ -367,6 +367,18 @@ describe('LeadsClient', () => {
     );
   });
 
+  it('names the customer column Customer, not Buyer (LEAD-GOVERNS-REGISTER C1)', async () => {
+    listLeads.mockResolvedValue({
+      data: [lead({ project_count: 1 })],
+      pagination: { total: 1, page: 1, limit: 25 },
+    });
+    renderClient();
+    await screen.findByText(/1 project/);
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(headers.some((text) => /Customer/.test(text))).toBe(true);
+    expect(headers.some((text) => /Buyer/.test(text))).toBe(false);
+  });
+
   it('shows how many projects a lead produced, because one lead may produce several', async () => {
     listLeads.mockResolvedValue({
       data: [lead({ project_count: 3, outcome: 'qualified' })],
