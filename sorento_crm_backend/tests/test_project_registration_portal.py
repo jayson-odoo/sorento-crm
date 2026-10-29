@@ -390,6 +390,16 @@ def test_a13_form_schema_lists_the_fields_minus_customer_id():
     assert {spec.name for spec in schema} == FIELD_KEYS - {"customer_id"}
 
 
+def test_mukim_is_labelled_area_on_the_extract_review():
+    """QUOTE-UI-POLISH (owner, 29 Oct: "rename our Mukim to Area"): the label the AI extract
+    review shows. The field name stays `mukim`; only what the user reads changes."""
+    from app.services.ai_extract.form_schema_registry import FORM_SCHEMAS
+
+    labels = {spec.name: spec.label for spec in FORM_SCHEMAS["portal.project_registration"]}
+    assert labels["mukim"] == "Area"
+    assert "Mukim" not in labels.values()
+
+
 def test_a13_ai_extract_is_refused_without_the_grant(world):
     png = (
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
