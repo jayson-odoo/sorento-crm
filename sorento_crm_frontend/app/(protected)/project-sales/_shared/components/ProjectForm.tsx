@@ -87,11 +87,11 @@ export function ProjectForm(props: ProjectFormProps) {
   const canCreateParty = useHasPermission(PARTY_EDIT_PERMISSION);
   // A salesperson with the submit slug but no edit rights saves a draft or submits for
   // approval instead of registering (PROJECT-REGISTER-V2 J1).
-  // A staff or approved project being edited follows the general rule (Save changes).
+  // The user: holds submit but not edit, on every project (no Lead field, J3c).
+  const submitOnlyUser = !canEditProjects && canSubmitRegistration;
+  // The flow: a staff or approved project being edited follows the general rule (Save changes).
   const submitOnly =
-    !canEditProjects &&
-    canSubmitRegistration &&
-    !(mode === 'edit' && project && isProjectApproved(project));
+    submitOnlyUser && !(mode === 'edit' && project && isProjectApproved(project));
 
   const register = useRegisterProject();
   const update = useUpdateProject(project?.id ?? '');
@@ -699,7 +699,7 @@ export function ProjectForm(props: ProjectFormProps) {
             </div>
           </div>
 
-          {!submitOnly && (
+          {!submitOnlyUser && (
             <div className="space-y-1.5">
               <Label htmlFor="project-lead">Lead (optional)</Label>
               <SearchableSelect
