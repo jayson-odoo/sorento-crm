@@ -62,7 +62,7 @@ from app.models.base import company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import ProductSupplier, Supplier
-from app.models.product import Brand, ItemType, Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, ItemClass, ItemType, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.models.user import SystemSetting
 from app.schemas.canonical_masters import (
@@ -616,6 +616,20 @@ def _product_columns(
         if created:
             warnings.append("item_type_created")
         columns["item_type_id"] = item_type_id
+
+    # ITEM-CLASS: AutoCount ItemClass, back-created like item type. Unlike item type a blank
+    # value CLEARS the link (crew ruling 29 Oct, security M1): the class narrows contact access,
+    # so a class AutoCount cleared must not linger. Absent = untouched.
+    if "item_class_code" in payload.model_fields_set:
+        if payload.item_class_code and payload.item_class_code.strip():
+            item_class_id, created = product_rules.ensure_reference(
+                db, ItemClass, payload.item_class_code, company_id, cache=ref_cache
+            )
+            if created:
+                warnings.append("item_class_created")
+            columns["item_class_id"] = item_class_id
+        else:
+            columns["item_class_id"] = None
 
     if "list_price" in payload.model_fields_set:
         columns["list_price"] = payload.list_price
