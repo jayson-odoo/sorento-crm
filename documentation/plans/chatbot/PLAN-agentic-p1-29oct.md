@@ -2,7 +2,7 @@
 
 Status: PR #1982 open. Crew eval 1 (ed4d19b6d2) FAILED 0/15 strict; fix rounds 5-5d built red-first (real resolver,
 id provenance, typed empty/invalid, answer-tool verifier, honest limits); security reviewer SECURE on round 5, reviewer
-confirmed round 5c and round 5d fixes the last date blocker; round 5e adds crm_products_find (security SECURE). Crew eval re-run pending. Full lane (migration: contact
+confirmed round 5c and round 5d fixes the last date blocker; round 5e adds crm_products_find (security SECURE). Crew re-run on af5018ceb7: 20/30; rounds 6 + 6b fix the remaining causes (reviewer READY, security SECURE). Third eval run pending. Full lane (migration: contact
 switch, budget settings, `chatbot.agent_conversations`; new endpoints; permission layer). Lane AGENTIC-P1, branch
 `claude/agentic-crm-chatbot-p1-fhvvb0`.
 
