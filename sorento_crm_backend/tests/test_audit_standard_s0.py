@@ -790,7 +790,7 @@ class TestReviewRound1:
         looks_secret = re.compile(r"password|passwd|secret|token|cipher|credential|private|webhook|otp|p256|^auth$")
         harmless = re.compile(
             r"(prompt|completion|total)_tokens$|tokens_(in|out)$|^total_tokens_(in|out)$|"
-            r"_token_id$|_expires_at$|^extraction_tokens_(in|out)$"
+            r"_token_id$|_expires_at$|^extraction_tokens_(in|out)$|max_output_tokens$"
         )
         missed = []
         for mapper in Base.registry.mappers:
