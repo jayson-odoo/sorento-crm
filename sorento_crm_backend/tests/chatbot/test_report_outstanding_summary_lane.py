@@ -156,7 +156,10 @@ def do_only_world(do_only) -> None:
 def test_b6e9_a_do_only_contact_gets_the_delivery_order_summary_with_no_question(do_only, do_only_world) -> None:
     """Prod turn #b6e9 pin: "Srt5733 ... outstanding" from a contact that may see pending delivery only runs it straight
     away (no kind question) and prints the DO summary: by location, by customer, the delivery order list offer."""
-    do_only.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
+    do_only.extra_body = {
+        "summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0},
+        "filters": [{"key": "product", "label": "Product", "values": [PRODUCT]}],  # the route's own echo
+    }
     text, calls = do_only.say(
         _status("outstanding", _e(PRODUCT, "product"), basis=None, state_changes=list(KEEP), **NO_DATES),
         "Srt5733 outstanding",
@@ -165,7 +168,9 @@ def test_b6e9_a_do_only_contact_gets_the_delivery_order_summary_with_no_question
     assert args["basis"] == "pending_delivery" and args["product_code"] == PRODUCT, args
     assert KIND_QUESTION not in text, text
     lines = text.split("\n")
-    assert lines[0] == "Pending delivery", text
+    assert lines[:6] == [  # item 5: the pre-#1922 header and block title
+        f"Product: {PRODUCT}", "Customer: all", "Location: all", "Order date: all", "", "*Delivery order outstanding*",
+    ], text
     for wanted in ("Delivery orders: 3", "*_By location_*", "ZZT-WH-A: 30 (O/S: 30)", "*_By customer_*"):
         assert wanted in lines, (wanted, text)
     assert text.rstrip().endswith(DO_OFFER), text

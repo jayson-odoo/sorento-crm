@@ -3519,6 +3519,29 @@ _ASK_BLANK = "(blank)"
 _ASK_SUMMARY_NOUNS = {"customer": "customer", "product": "product", "sales_agent": "sales agent"}
 
 
+#: The pre-#1922 block title of each outstanding kind (`_outstanding_so_block` / `_outstanding_do_block`).
+_ASK_OUTSTANDING_BLOCKS = {"outstanding": "*Sales order outstanding*", "pending_delivery": "*Delivery order outstanding*"}
+#: The filters the pre-#1922 header names in its own four lines (`_outstanding_header_lines`), and Brand after them.
+_ASK_HEADER_KEYS = ("product", "customer", "location", "brand")
+
+
+def _ask_outstanding_header(body: dict, facts: list[str]) -> list[str]:
+    """Item 5 (owner 29 Oct): `_outstanding_header_lines`' own lines over the report ask's echo: Product, Customer,
+    Location and Order date, "all" when not given, then Brand when one was named. Every other fact the ask printed (a
+    filter the old report had none of, "Not applied", a book line) follows; the "Period:" line is the Order date line."""
+    values = {f.get("key"): ", ".join(str(v) for v in f.get("values") or []) for f in body.get("filters") or []}
+    labels = {f"{f.get('label')}: {values.get(f.get('key'))}" for f in body.get("filters") or [] if f.get("key") in _ASK_HEADER_KEYS}
+    lines = [
+        f"Product: {values.get('product') or 'all'}",
+        f"Customer: {values.get('customer') or 'all'}",
+        f"Location: {values.get('location') or 'all'}",
+        f"Order date: {_outstanding_date_range(body.get('date_from'), body.get('date_to'))}",
+    ]
+    if values.get("brand"):
+        lines.append(f"Brand: {values['brand']}")
+    return lines + [f for f in facts if f not in labels and not f.startswith("Period:")]
+
+
 def _ask_summary(basis: Any, summary: dict) -> list[str]:
     """REPORT-OUTSTANDING-SUMMARY: the pre-#1922 outstanding summary's lines (`_outstanding_so_block` /
     `_outstanding_do_block`, same words and the same `name: total (O/S: outstanding)` groups), from the report ask's
@@ -3596,11 +3619,20 @@ def _report_ask(body: dict) -> str:
     figures = _ask_figures(body.get("total") or {}, measure) + _ask_before(body.get("total") or {}, measure)
     basis = body.get("basis_label")
     group_by = body.get("group_by")
+    outstanding_kind = body.get("basis") in _ASK_OUTSTANDING_BLOCKS
+    if outstanding_kind:
+        # REPORT-OUTSTANDING-SUMMARY item 5 (owner 29 Oct): the pre-#1922 header in place of the filter facts and period.
+        facts = _ask_outstanding_header(body, facts)
     if isinstance(body.get("summary"), dict):
-        # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or customer prints the summary, its
-        # breakdowns the route's (the defaults, or the axis the user named).
-        head = "Undelivered orders" if body.get("basis") == "outstanding" else str(basis or "").capitalize()
-        return "\n".join([head, *facts, *_ask_summary(body.get("basis"), body["summary"])])
+        # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or customer prints the summary in the pre-#1922
+        # frame (header, a blank line, the block), its breakdowns the route's (the defaults, or the axis the user named).
+        return "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], *_ask_summary(body["basis"], body["summary"])])
+    if not group_by and outstanding_kind:
+        text = "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], f"Total {figures}"])
+        if body.get("basis") == "outstanding" and not body.get("compare_to"):
+            # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure.
+            text += "\n\n" + _ASK_SO_LIST_OFFER
+        return text
     if not group_by:
         # An outstanding kind is not a sale: "Undelivered orders", "Pending delivery", "Unpaid invoices" (the kinds'
         # own words); every sales basis reads "Sales by <basis>".
