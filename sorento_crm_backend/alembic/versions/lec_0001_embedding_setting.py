@@ -7,7 +7,7 @@ provider / model only where they are still NULL, and sets the records-search mod
 four columns.
 
 Revision ID: lec_0001_embedding_setting
-Revises: chan_alias_0001_sales_channel
+Revises: pmt_0001_parser_max_tokens
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "lec_0001_embedding_setting"
-down_revision = "chan_alias_0001_sales_channel"
+down_revision = "pmt_0001_parser_max_tokens"
 branch_labels = None
 depends_on = None
 
