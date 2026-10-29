@@ -1224,9 +1224,7 @@ def flag_rows_for_cancelled_lines(
         db.flush()
         # Ruling (c): a flagged row with no live link is done (acknowledged by NULL); one
         # with a live link stays `changed` until a manual Confirm. ONE batched call.
-        service = ProjectOrderInquiryService(db)
-        cover = service._live_cover([row.id for row in rows])
-        service.auto_confirm([row.id for row in rows if not cover.get(row.id, (0, None, 0))[2]])
+        ProjectOrderInquiryService(db).auto_confirm([row.id for row in rows])
     logger.info(
         "flag_rows_for_cancelled_lines: %d core line id(s), %d row(s) flagged",
         len(ids),
@@ -9879,6 +9877,16 @@ class ProjectOrderInquiryService:
         self._drop_suggested_links([row])
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
+        # AC-AC-10a: a rejected host no longer carries its companions; recompute them and
+        # let the rule decide the row and everyone bundled to it.
+        companion_ids = [
+            cid
+            for (cid,) in self.db.query(OrderInquiryRow.id).filter(
+                OrderInquiryRow.bundled_with_row_id == row.id
+            )
+        ]
+        self.derive_bundles(row.order_inquiry_id)
+        self.auto_confirm([row.id, *companion_ids])
 
     def _uncover_rejected_lines(
         self, rows: Sequence[OrderInquiryRow], *, actor_user_id: str
@@ -10202,7 +10210,10 @@ class ProjectOrderInquiryService:
         if not rederive or not (was_read or had_override):
             return
         if batch is not None:
-            batch.append((row, prior_changed_at, was_read, had_override))
+            # One entry per row: a second call for the same source keeps the FIRST call's
+            # prior stamp, so a covered row still gets its old `changed_at` back.
+            if all(entry[0] is not row for entry in batch):
+                batch.append((row, prior_changed_at, was_read, had_override))
             return
         self._settle_amended([(row, prior_changed_at, was_read, had_override)])
 

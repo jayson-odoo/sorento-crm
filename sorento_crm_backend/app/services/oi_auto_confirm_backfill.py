@@ -61,7 +61,8 @@ def live_cover_stmt(row_ids=None):
     po_lines = PurchaseOrderLine.__table__
     spo_allocations = SPOAllocation.__table__
     products = Product.__table__
-    row_product = (
+    mirrors = ProjectSalesOrderLine.__table__
+    code_product = (
         sa.select(products.c.id)
         .where(
             products.c.product_code == rows_t.c.item_code,
@@ -69,6 +70,14 @@ def live_cover_stmt(row_ids=None):
         )
         .limit(1)
         .scalar_subquery()
+    )
+    # The SAME reading `_resolve_product_id` gives the link writers: the reconciled line's
+    # product first, the item code only as the fallback.
+    row_product = sa.func.coalesce(
+        sa.select(mirrors.c.product_id)
+        .where(mirrors.c.id == rows_t.c.so_line_id)
+        .scalar_subquery(),
+        code_product,
     )
     stmt = (
         sa.select(
@@ -142,11 +151,12 @@ def compute_done(
             return True
         if row.ack_override == "unconfirmed":
             return False
+        if row.id in cancelled_line and row.verb in BUY_VERBS and not row.redirected_to_pool:
+            # AC-AC-10e: nothing left to buy on a cancelled line, unless a live document
+            # still holds it. Ahead of the actioned / pool shortcuts for a buy row.
+            return live_links.get(row.id, 0) == 0
         if row.state == INQUIRY_ACTIONED or row.verb not in BUY_VERBS or row.redirected_to_pool:
             return True
-        if row.id in cancelled_line:
-            # Nothing left to buy on a cancelled line, unless a live document still holds it.
-            return live_links.get(row.id, 0) == 0
         return linked.get(row.id, _ZERO) >= _dec(row.qty)
 
     done: Dict[str, bool] = {}

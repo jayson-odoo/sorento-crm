@@ -246,9 +246,9 @@ export function reserveTextOfRows(
 ): string | null {
   const labelled = rows.filter((row) => row.reserve_label && Number(row.reserved_qty ?? 0) > 0);
   if (labelled.length === 0) return null;
-  const total = labelled.reduce((sum, row) => sum + Number(row.reserved_qty ?? 0), 0);
-  const labels = [...new Set(labelled.map((row) => row.reserve_label as string))];
-  return `${labels.join(', ')} ${total}`;
+  return labelled
+    .map((row) => `${row.reserve_label as string} ${Number(row.reserved_qty ?? 0)}`)
+    .join(', ');
 }
 
 export function ReserveText({ text }: { text: string }) {
