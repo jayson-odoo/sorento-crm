@@ -1470,6 +1470,12 @@ def test_ac_cl_18_whole_journey_upload_ack_cancel_read_confirm_read_repush():
             w.db.refresh(row)
             assert row.ack_state == ACK_ACKNOWLEDGED
 
+            # ruling (c): only a row holding a live PO/SPO link is reopened by the cancel
+            allocation = _spo_allocation(w.db, row.company_id, w.product, qty=30)
+            _link(w.db, row.company_id, row.id, "30", spo_allocation_id=allocation.id,
+                  document=allocation.spo_number)
+            w.db.commit()
+
             SalesOrderService(w.db).update(order.id, SalesOrderUpdate(lines=[]), user_id=None)
             w.db.expire_all()
 
