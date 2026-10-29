@@ -78,6 +78,7 @@ _READS: Dict[str, Dict[Tuple[str, str], str]] = {
     "complaint": {
         ("GET", ""): "list",
         ("GET", "/{complaint_id}"): "row",
+        ("GET", "/{complaint_id}/fulfilment-orders"): "row",
     },
 }
 

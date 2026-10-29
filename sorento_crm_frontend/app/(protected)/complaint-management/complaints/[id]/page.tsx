@@ -23,7 +23,7 @@ export default function ComplaintDetailPage({
       <PageHeader
         title="Complaint"
         actions={
-          <BackToList
+          <BackToList hideForLimited="complaint"
             listPath="/complaint-management/complaints"
             label="Back to complaints"
           />

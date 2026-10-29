@@ -80,6 +80,7 @@ import { recordActionItems } from '@/components/common/recordActions';
 import { useComplaintActions } from '../actions';
 import ComplaintNotifiableFieldDialog from './ComplaintNotifiableFieldDialog';
 import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
+import ComplaintFulfilmentOrdersReadOnly from './ComplaintFulfilmentOrdersReadOnly';
 import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
 import { complaintsPagerQuery } from '../hooks/useComplaints';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
@@ -106,7 +107,14 @@ const statusLabel = complaintStatusLabel;
  */
 export default function ComplaintDetail(props: ComplaintDetailProps) {
   const { limited } = useRequestScope('complaint');
-  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} />;
+  if (limited) {
+    return (
+      <div className="space-y-6">
+        <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} />
+        <ComplaintFulfilmentOrdersReadOnly complaintId={props.complaintId} />
+      </div>
+    );
+  }
   return <StaffComplaintDetail {...props} />;
 }
 

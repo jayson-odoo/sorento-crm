@@ -447,18 +447,20 @@ export function DataGridListToolbar<TData extends object>({
         variant="outline"
         size="sm"
         className="gap-1.5"
+        aria-label="Export"
+        title="Export"
         onClick={isListQueryExport ? () => setExportOpen(true) : openExport}
       >
         <Download className="size-4" />
-        Export
+        <span className="hidden sm:inline">Export</span>
       </Button>
     ) : (
       <Tooltip>
         <TooltipTrigger asChild>
           <span tabIndex={0}>
-            <Button variant="outline" size="sm" className="gap-1.5" disabled>
+            <Button variant="outline" size="sm" className="gap-1.5" aria-label="Export" title="Export" disabled>
               <Download className="size-4" />
-              Export
+              <span className="hidden sm:inline">Export</span>
             </Button>
           </span>
         </TooltipTrigger>
@@ -531,15 +533,15 @@ export function DataGridListToolbar<TData extends object>({
               */}
               <div
                 data-slot="data-grid-list-toolbar-search"
-                className="flex min-w-0 flex-wrap items-center gap-2 [&>*]:min-w-0 [&>*]:flex-wrap"
+                className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-none [&>*]:min-w-0 [&>*]:flex-wrap"
               >
                 {searchSlot}
               </div>
               {filters ? (
                 filters.kind === 'listQuery' ? (
-                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setFilterOpen(true)}>
+                  <Button variant="outline" size="sm" className="gap-1.5" aria-label="Filters" title="Filters" onClick={() => setFilterOpen(true)}>
                     <Filter className="size-4" />
-                    Filters
+                    <span className="hidden sm:inline">Filters</span>
                     {filters.advancedFilter ? (
                       <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">On</Badge>
                     ) : null}
@@ -547,9 +549,9 @@ export function DataGridListToolbar<TData extends object>({
                 ) : (
                   <DropdownMenu modal={filters.modal ?? true}>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="gap-1.5">
+                      <Button variant="outline" size="sm" className="gap-1.5" aria-label="Filters" title="Filters">
                         <Filter className="size-4" />
-                        Filters
+                        <span className="hidden sm:inline">Filters</span>
                         {filters.active ? (
                           <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
                             {filters.activeCount ?? 'On'}
@@ -567,9 +569,9 @@ export function DataGridListToolbar<TData extends object>({
                 <DataGridColumnVisibility
                   table={table}
                   trigger={
-                    <Button variant="outline" size="sm" className="gap-1.5">
+                    <Button variant="outline" size="sm" className="gap-1.5" aria-label="Columns" title="Columns">
                       <Columns3 className="size-4" />
-                      Columns
+                      <span className="hidden sm:inline">Columns</span>
                     </Button>
                   }
                 />

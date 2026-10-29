@@ -139,12 +139,12 @@ export default function ComplaintsList() {
     data: rootCauseOptions = [],
     error: rootCauseError,
     refetch: refetchRootCauses,
-  } = useComplaintRootCausesSelect();
+  } = useComplaintRootCausesSelect(undefined, { enabled: !limited });
   const {
     data: resolutionOptions = [],
     error: resolutionError,
     refetch: refetchResolutions,
-  } = useComplaintResolutionsSelect();
+  } = useComplaintResolutionsSelect(undefined, { enabled: !limited });
 
   const filtersActiveCount =
     (assignedToFilter ? 1 : 0) +

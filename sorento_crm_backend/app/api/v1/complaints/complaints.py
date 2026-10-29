@@ -567,7 +567,7 @@ router.include_router(
 @router.get("/{complaint_id}/fulfilment-orders")
 def get_complaint_fulfilment_orders(
     complaint_id: str,
-    current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.view")),
+    current_user: dict = Depends(require_any_permission_with_api_key(_VIEW_OR_VIEW_OWN)),
     db: Session = Depends(get_db),
 ):
     """Replacement / fulfilment Delivery Orders linked to this complaint (newest

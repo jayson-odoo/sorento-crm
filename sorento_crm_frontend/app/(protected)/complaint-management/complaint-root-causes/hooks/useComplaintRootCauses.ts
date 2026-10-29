@@ -41,10 +41,11 @@ export function useComplaintRootCause(id: string | null) {
   });
 }
 
-export function useComplaintRootCausesSelect(query?: string) {
+export function useComplaintRootCausesSelect(query?: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['complaint-root-causes-select', query ?? ''],
     queryFn: () => getComplaintRootCausesSelect(query),
+    enabled: options?.enabled ?? true,
     staleTime: 1000 * 60 * 5,
   });
 }
