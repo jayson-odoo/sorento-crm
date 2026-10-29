@@ -521,9 +521,10 @@ def _build_tracking_workbook(master_rows: list[list]) -> bytes:
     if default is not None:
         wb.remove(default)
     ms = wb.create_sheet("Master")
-    ms.append(["Doc. No.", "Remarks CS"])
-    for r in master_rows:
-        ms.append(r)
+    ms.append(["Doc. No.", "Date", "Remarks CS"])
+    for doc_no, remarks_cs in master_rows:
+        # A Master row with no Date is refused (DO-IMPORT-DATE).
+        ms.append([doc_no, "01/07/2026", remarks_cs])
     ts = wb.create_sheet("Overall Tracking")
     ts.append(["Doc Number"])  # header only - delivery already set in DB
     buf = BytesIO()

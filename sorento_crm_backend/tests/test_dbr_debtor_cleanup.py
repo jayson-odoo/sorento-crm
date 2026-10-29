@@ -76,7 +76,7 @@ def _do(db, *, debtor_name, customer_id=None, debtor_code=None, **extra) -> Orde
 class TestCreateSync:
     def test_ac1_blank_code_create_makes_no_customer(self, db):
         order = OrderService(db).create_order(
-            OrderCreate(order_number=_num("C"), debtor_name="SAMPLE", debtor_code=None), created_by=None
+            OrderCreate(order_date="2026-07-01", order_number=_num("C"), debtor_name="SAMPLE", debtor_code=None), created_by=None
         )
         assert order.debtor_name == "SAMPLE"
         assert order.customer_id is None
@@ -84,7 +84,7 @@ class TestCreateSync:
 
     def test_ac1_whitespace_code_create_makes_no_customer(self, db):
         order = OrderService(db).create_order(
-            OrderCreate(order_number=_num("W"), debtor_name="SAMPLE", debtor_code="  "), created_by=None
+            OrderCreate(order_date="2026-07-01", order_number=_num("W"), debtor_name="SAMPLE", debtor_code="  "), created_by=None
         )
         assert order.customer_id is None
         assert _customers(db) == 0
@@ -102,7 +102,7 @@ class TestCreateSync:
 
     def test_ac3_non_blank_code_still_creates_by_code(self, db):
         order = OrderService(db).create_order(
-            OrderCreate(order_number=_num("N"), debtor_name="ACME SDN BHD", debtor_code="300-A001"),
+            OrderCreate(order_date="2026-07-01", order_number=_num("N"), debtor_name="ACME SDN BHD", debtor_code="300-A001"),
             created_by=None,
         )
         cust = db.get(Customer, order.customer_id)

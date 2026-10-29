@@ -140,10 +140,13 @@ class OrderBase(BaseModel):
 
 
 class OrderCreate(OrderBase):
-    pass
+    # DO-IMPORT-DATE: a DO always carries its date. OrderBase keeps it optional so
+    # OrderResponse still reads the legacy undated rows.
+    order_date: datetime
 
 
 class OrderUpdate(BaseModel):
+    # Omit to keep the stored date; an explicit null is refused (DO-IMPORT-DATE).
     order_date: Optional[datetime] = None
     estimated_delivery_date: Optional[datetime] = None
     actual_delivery_date: Optional[datetime] = None
@@ -176,6 +179,14 @@ class OrderUpdate(BaseModel):
     tax_amount: Optional[Decimal] = None
     total_amount: Optional[Decimal] = None
     remarks: Optional[str] = None
+
+    @field_validator("order_date")
+    @classmethod
+    def _order_date_not_cleared(cls, v):
+        # Runs only when the field is sent (defaults are not validated).
+        if v is None:
+            raise ValueError("DO date is required and cannot be cleared")
+        return v
 
 
 class OrderStatusSimple(BaseModel):

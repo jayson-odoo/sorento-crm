@@ -2738,7 +2738,14 @@ class OrderService:
                     if duplicate:
                         errors.append(f"Row {idx}: Order Number '{mapped_data['order_number']}' already exists")
                         continue
-                
+
+                # DO-IMPORT-DATE: a new DO needs its date, and a sent blank never clears one.
+                if mapped_data.get('order_date') is None and (
+                    not existing_order or 'order_date' in mapped_data
+                ):
+                    errors.append(f"Row {idx}: Order Date is required")
+                    continue
+
                 sent_keys = [k for k in mapped_data if k != 'order_number']
                 # Calculate total if not provided
                 if 'total_amount' not in mapped_data or not mapped_data['total_amount']:
@@ -3046,6 +3053,26 @@ class OrderService:
                     continue
                 mapped["order_number"] = order_number
                 order_date_value = mapped.get("order_date")
+                # DO-IMPORT-DATE: a DO always carries its date. A blank or unreadable
+                # Date used to become NULL (an undated DO, or a dated one wiped).
+                if order_date_value is None:
+                    raw_date = row_data.get("Date")
+                    if raw_date is None or str(raw_date).strip() == "":
+                        date_code = _oc.MISSING_DOC_DATE
+                        date_error = f"{order_number}: Date is required"
+                    else:
+                        date_code = _oc.INVALID_DOC_DATE
+                        date_error = (
+                            f"{order_number}: Date '{str(raw_date).strip()}' "
+                            "is not a valid date (use DD/MM/YYYY)"
+                        )
+                    errors.append({"row": row_idx, "error": date_error, "data": row_data})
+                    outcome.skip(
+                        row=row_idx, code=date_code, message=date_error,
+                        value=order_number,
+                        identity={"sheet": "Master", "doc_no": order_number},
+                    )
+                    continue
                 if isinstance(order_date_value, (datetime, date)):
                     date_value = order_date_value.date() if isinstance(order_date_value, datetime) else order_date_value
                     min_master_date = date_value if min_master_date is None else min(min_master_date, date_value)

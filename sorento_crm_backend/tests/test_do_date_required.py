@@ -70,7 +70,7 @@ def test_import_refuses_master_row_with_blank_date(db):
     )
 
     errors = _row_errors(result)
-    assert errors.get(3) == "Date is required", result.get("errors")
+    assert errors.get(3) == f"{blank}: Date is required", result.get("errors")
     assert _order(db, blank) is None, "an undated Master row must not create a DO"
     assert _order(db, good).order_date == date(2026, 8, 28)
     assert oc.MISSING_DOC_DATE in _skipped_codes(outcome)
@@ -84,7 +84,7 @@ def test_import_refuses_master_row_with_unparseable_date(db):
     )
 
     error = _row_errors(result).get(2)
-    assert error is not None and "not a date" in error and "Date" in error, result.get("errors")
+    assert error == f"{bad}: Date 'not a date' is not a valid date (use DD/MM/YYYY)", result.get("errors")
     assert _order(db, bad) is None
     assert oc.INVALID_DOC_DATE in _skipped_codes(outcome)
 
@@ -107,7 +107,9 @@ def test_import_validate_only_reports_undated_row(db):
     result = OrderService(db).import_excel_tracking(
         _workbook([[bad, None, "RMA"]]), USER, validate_only=True
     )
-    assert _row_errors(result).get(2) == "Date is required", result.get("errors")
+    # The preview lists bare messages, so the doc number rides in the text.
+    assert result["valid"] is False
+    assert result["errors"] == [f"{bad}: Date is required"]
 
 
 # --- API schemas ----------------------------------------------------------------------
