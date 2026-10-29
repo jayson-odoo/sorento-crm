@@ -122,6 +122,8 @@ INGEST_PERMISSIONS = {
     # autocount-brands-ingest (contract 2.3), D5: ingest takes .edit, not .add,
     # same as every sibling master.
     "brands": "master_data.brands.edit",
+    # ITEM-CLASS-MASTER (contract 2.11): the brands rule.
+    "item_classes": "master_data.item_classes.edit",
     # Documents (group A3). Pushing an order through the ESB is the same act as
     # editing one on the SCM screen, so it is the same slug.
     "sales_orders": "scm.sales_orders.edit",
@@ -159,6 +161,7 @@ READ_PERMISSIONS = {
     "products": "master_data.products.view",
     "sales_agents": "master_data.sales_agents.view",
     "brands": "master_data.brands.view",
+    "item_classes": "master_data.item_classes.view",
     "sales_orders": "scm.sales_orders.view",
     "purchase_orders": "scm.purchase_orders.view",
     "shipping_orders": "scm.shipping_orders.view",
@@ -191,6 +194,7 @@ DELETE_PERMISSIONS = {
     "products": "master_data.products.delete",
     "sales_agents": "master_data.sales_agents.delete",
     "brands": "master_data.brands.delete",
+    "item_classes": "master_data.item_classes.delete",
     "sales_orders": "scm.sales_orders.delete",
     "purchase_orders": "scm.purchase_orders.delete",
     "shipping_orders": "scm.shipping_orders.delete",
@@ -334,7 +338,10 @@ SUPPORTED_ENTITIES = (
 # and `billing_documents.outstanding` / `due_date`, sets a stored open document the push omits
 # to 0, never creates. `documents_unknown` joins `warnings`. Read door yes, deletions door no.
 # Additive.
-CONTRACT_VERSION = "2.10"
+# "2.11" (ITEM-CLASS-MASTER): `item_classes` joins ENTITY_SPECS as a master (AutoCount
+# ItemClass), the brands shape with its own INGEST/READ/DELETE slugs; its deletions only ever
+# deactivate. Additive: an ESB on 2.10 never sees `item_classes` in `entities`.
+CONTRACT_VERSION = "2.11"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:

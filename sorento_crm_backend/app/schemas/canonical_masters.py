@@ -92,6 +92,18 @@ class CanonicalBrand(_Canonical):
     is_active: Optional[bool] = None
 
 
+class CanonicalItemClass(_Canonical):
+    """AutoCount ItemClass (ITEM-CLASS-MASTER, contract 2.11), the brands master exactly.
+    Syncs BEFORE brands and products, so a product's `item_class_code` links a real master row
+    instead of back-creating the code = name placeholder. Caps are the `item_classes` column
+    widths (`app/models/product.py`)."""
+
+    code: str = Field(..., min_length=1, max_length=50)
+    name: str = Field(..., min_length=1, max_length=150)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class CanonicalUnitOfMeasure(_Canonical):
     """Likewise for products.base_uom_id."""
 

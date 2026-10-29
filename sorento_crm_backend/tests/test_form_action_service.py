@@ -750,7 +750,7 @@ def test_capture_columns_exist_on_the_model_they_snapshot():
             "approval_signature_ref", "approval_comments",
             "requested_approval_by_user_id")),
         "pr.finalize": (PurchaseRequestHeader, ("status",)),
-        "pr.void": (PurchaseRequestHeader, ("status", "voided_by", "voided_at", "void_reason")),
+        "pr.void": (PurchaseRequestHeader, ("status", "approval_status", "voided_by", "voided_at", "void_reason")),
         "si.project_sales_approve": (StockInquiry, (
             "status", "rejection_reason", "rejected_at", "rejected_by", "rejected_from")),
         "si.purchasing_respond": (StockInquiry, ("status", "last_responded_by", "last_responded_at")),
