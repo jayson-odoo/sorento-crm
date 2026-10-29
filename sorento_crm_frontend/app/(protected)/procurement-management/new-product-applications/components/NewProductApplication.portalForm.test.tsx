@@ -37,7 +37,6 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 vi.mock('@/hooks/useEffectiveUserId', () => ({ useEffectiveUserId: () => 'u-owner' }));
-vi.mock('@/hooks/useDeferredAction', () => ({ useDeferredAction: () => ({ countdown: null, isBlocked: false, start: vi.fn() }) }));
 vi.mock('@/hooks/useDeferredRowAction', () => ({
   useDeferredRowAction: () => ({ run: vi.fn(), targetId: null, isPending: false, countdown: null }),
 }));
