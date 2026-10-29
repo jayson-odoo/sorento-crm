@@ -57,7 +57,8 @@ import {
   RaisedCell,
   SupplierCell,
 } from '../../components/orderInquiryWorklistColumns';
-import { ackOverrideHint, ackStatusText } from '../../../_shared/lib/orderInquiryAck';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { ackOverrideHint, ackStateOf, ackStatusText } from '../../../_shared/lib/orderInquiryAck';
 import { DocumentStatePills, WorklistPill } from '../../components/orderInquiryDocumentPills';
 import type {
   OrderInquiryLineSplit,
@@ -122,6 +123,11 @@ export interface StagedReserveEntry {
  * every row of the sales order line at once, so one SPO line two rows sit on (one via its
  * PO, one directly) is one chip whose receipts add up, and a withdrawn line is one more
  * chip behind "+N" - never lost to a de-dup by document number. */
+function ackPalette(row: Parameters<typeof ackStateOf>[0]): string {
+  const state = ackStateOf(row);
+  return state === 'acknowledged' ? 'approved' : state === 'rejected' ? 'voided' : 'pending';
+}
+
 function lineDocumentsOf(line: OrderInquiryLine, kind: 'po' | 'spo'): DocumentEntry[] {
   return documentChipsOf(
     line.liveRows.flatMap((row) => (row.links ?? []).map((link) => ({ row, link }))),
@@ -129,20 +135,26 @@ function lineDocumentsOf(line: OrderInquiryLine, kind: 'po' | 'spo'): DocumentEn
   );
 }
 
+/** The PO cell: the line's purchase documents and, beside them, a reserve ("Reserved @ BRW 3"). */
 function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' | 'spo' }) {
+  const reserve =
+    kind === 'po' ? reserveTextOf(line.liveRows.flatMap((row) => row.links ?? [])) : null;
+  if (!reserve) return <LinePurchaseDocumentsCell line={line} kind={kind} />;
+  if (lineDocumentsOf(line, kind).length === 0) return <ReserveText text={reserve} />;
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <LinePurchaseDocumentsCell line={line} kind={kind} />
+      <ReserveText text={reserve} />
+    </div>
+  );
+}
+
+function LinePurchaseDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' | 'spo' }) {
   // Round 5: the popover opens from "+N" or from the narrow-cell receipt chip, so it is
   // positioned against the whole cell rather than one trigger.
   const [open, setOpen] = React.useState(false);
   const chips = lineDocumentsOf(line, kind);
-  if (chips.length === 0) {
-    const reserve =
-      kind === 'po' ? reserveTextOf(line.liveRows.flatMap((row) => row.links ?? [])) : null;
-    return reserve ? (
-      <ReserveText text={reserve} />
-    ) : (
-      <span className="text-muted-foreground">-</span>
-    );
-  }
+  if (chips.length === 0) return <span className="text-muted-foreground">-</span>;
   const [first, ...rest] = chips;
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -877,19 +889,17 @@ export function useOrderInquiryHeaderLinesColumns({
                 reservedQty={primary.reserved_qty}
                 requestedQty={primary.requested_qty}
               />
+            ) : ['raised', 'partly_linked', 'placed', 'to_confirm'].includes(line.state) ? (
+              // OI-AUTO-CONFIRM (approved mock): a live line reads its status, not the supply pill.
+              <span
+                className={`${STATUS_PILL_BASE} ${statusPillClass(ackPalette(primary))}`}
+                title={ackOverrideHint(primary) ?? undefined}
+              >
+                {ackStatusText(primary)}
+              </span>
             ) : (
               <OrderInquiryLineStatePill state={line.state} />
             );
-          // OI-AUTO-CONFIRM: a person's Confirm / Unconfirm shows as a "manual" tag, who and
-          // when on hover.
-          const manualTag = primary.ack_override ? (
-            <span
-              className="shrink-0 text-xs text-muted-foreground"
-              title={ackOverrideHint(primary) ?? undefined}
-            >
-              {ackStatusText(primary)}
-            </span>
-          ) : null;
           // AC-ND-13 (owner ruling 26 Sep, G3): ONE History icon on every line - rows,
           // decisions and reserve history behind one dialog - never gated on a core line
           // or on `canReserve`.
@@ -921,7 +931,6 @@ export function useOrderInquiryHeaderLinesColumns({
             return (
               <div className="flex min-w-0 items-center gap-1">
                 <span className="shrink-0">{pill}</span>
-{manualTag}
                 {history}
                 {coreLineId ? (
                   <SoLineAttachmentsButton
@@ -937,7 +946,6 @@ export function useOrderInquiryHeaderLinesColumns({
           return (
             <div className="flex min-w-0 items-center gap-1">
               <span className="shrink-0">{pill}</span>
-{manualTag}
               {history}
               {coreLineId ? (
                 <SoLineAttachmentsButton

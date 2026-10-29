@@ -1594,7 +1594,7 @@ export function OrderInquiriesClient({
         />
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs text-muted-foreground">Confirmed</Label>
+        <Label className="text-xs text-muted-foreground">{ACK_LABELS.acknowledged}</Label>
         <SearchableSelect
           value={ackFilter}
           onChange={setAckFilter}
@@ -1980,7 +1980,7 @@ export function OrderInquiriesClient({
               disabled={confirmCount === 0 || acknowledge.isPending}
               title={
                 confirmCount === 0
-                  ? 'Tick rows still to confirm, or Select all matching.'
+                  ? 'Tick rows to mark Done, or Select all matching.'
                   : undefined
               }
               onClick={() => setConfirmingOpen(true)}

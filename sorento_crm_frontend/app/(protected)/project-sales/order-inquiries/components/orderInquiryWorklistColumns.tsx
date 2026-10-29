@@ -385,14 +385,24 @@ function LinkSuggestionDialog({
  * The dialog mounts only once opened, so a page of a hundred rows does not carry two
  * hundred dialogs - the same pattern the info icon used.
  */
+/** The PO cell: the row's purchase documents and, beside them, a reserve ("Reserved @ BRW 3"). */
 function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
+  const reserve = kind === 'po' ? reserveTextOf(row.links) : null;
+  if (!reserve) return <PurchaseDocumentsCell row={row} kind={kind} />;
+  if (documentsOf(row, kind).length === 0) return <ReserveText text={reserve} />;
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <PurchaseDocumentsCell row={row} kind={kind} />
+      <ReserveText text={reserve} />
+    </div>
+  );
+}
+
+function PurchaseDocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
   const [open, setOpen] = React.useState(false);
   const [suggestionOpen, setSuggestionOpen] = React.useState(false);
   const numbers = documentsOf(row, kind);
-  if (numbers.length === 0) {
-    const reserve = kind === 'po' ? reserveTextOf(row.links) : null;
-    return reserve ? <ReserveText text={reserve} /> : <Muted>-</Muted>;
-  }
+  if (numbers.length === 0) return <Muted>-</Muted>;
   const [first, ...rest] = numbers;
   const what = row.item_code ?? row.so_number ?? 'this row';
   // The PO trigger keeps the id the info icon carried, so AC-A5's lightbox contract holds
