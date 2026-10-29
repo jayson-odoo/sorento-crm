@@ -24,7 +24,7 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._pg_fixture import blank_session, unique_code
 from tests._sales_unified_seed import agent, so
 
-JUN = date(2026, 1, 15)
+JAN = date(2026, 1, 15)
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def db():
         yield s
 
 
-def _order(db, agent_row, *, demand_class, order_type=None, when=JUN):
+def _order(db, agent_row, *, demand_class, order_type=None, when=JAN):
     header, _ = so(db, demand_class=demand_class)
     header.sales_agent_id = agent_row.id if agent_row is not None else None
     header.order_date = when
@@ -103,3 +103,14 @@ def test_the_script_runs_the_bulk_rederive_with_keep_unset(db, monkeypatch):
     monkeypatch.setattr(app.database, "SessionLocal", lambda: db)
     assert script.main([]) == 0
     assert seen.get("keep_unset") is True and seen.get("apply") is False
+
+
+def test_the_screens_rederive_preview_reports_what_the_script_would_write(db):
+    """`GET /sales-agents/classes/rederive-preview` previews the bulk script, so it too leaves
+    out the orders the rule gives no class."""
+    from app.api.v1.master_data.sales_agents import rederive_preview
+
+    _, agents = _seed(db)
+    rows = [r for r in rederive_preview(current_user={}, db=db)["data"]
+            if r["agent"] in {a.sales_agent for a in agents}]
+    assert sorted((r["before"], r["after"]) for r in rows) == [("retail", "other"), ("retail", "project")]
