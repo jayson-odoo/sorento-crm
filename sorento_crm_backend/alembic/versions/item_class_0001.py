@@ -2,7 +2,7 @@
 and the `master_data.item_classes.*` slugs granted like brands.
 
 Revision ID: item_class_0001
-Revises: idea_capture_fields_0001
+Revises: merge_30oct_cdr_idea
 Create Date: 2026-10-29
 
 AutoCount `Item.ItemClass` (SERENE, DIY; blank on most items) kept on products as reference data,
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "item_class_0001"
-down_revision = "idea_capture_fields_0001"
+down_revision = "merge_30oct_cdr_idea"
 branch_labels = None
 depends_on = None
 
