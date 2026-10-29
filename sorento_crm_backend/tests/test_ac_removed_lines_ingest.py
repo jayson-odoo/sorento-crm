@@ -227,7 +227,10 @@ def test_ac_rl_01_02_03_a_placed_row_with_one_link_goes_raised(env, monkeypatch)
     assert after["state"] == INQUIRY_RAISED, after  # AC-RL-02
     assert after["inquiry_state"] == INQUIRY_RAISED, after  # AC-RL-02 header refreshed
     assert after["po_ref"] is None and after["po_line_id"] is None, after
-    assert after["ack_state"] == before["ack_state"] == ACK_ACKNOWLEDGED  # AC-RL-03
+    # AC-RL-03 + OI-AUTO-CONFIRM AC-AC-9: the release flags nothing (note / changed_at below),
+    # but the row lost its only link, so the system takes it back to To order.
+    assert before["ack_state"] == ACK_ACKNOWLEDGED
+    assert after["ack_state"] == ACK_AWAITING
     assert after["note"] == before["note"] == "ZZT earlier note"  # AC-RL-03 no "Unlinked from"
     assert after["changed_at"] == before["changed_at"]
     quiet.assert_nothing_queued()  # AC-RL-03
@@ -249,7 +252,7 @@ def test_ac_rl_01_02_03_the_546_case_a_fully_received_removed_line_still_release
     after = _row_snapshot(env, row_id, inquiry_id)
     assert after["link_lines"] == [], after
     assert after["state"] == INQUIRY_RAISED, after
-    assert after["ack_state"] == ACK_ACKNOWLEDGED
+    assert after["ack_state"] == ACK_AWAITING  # AC-AC-9: no longer covered, nobody pressed
     assert after["note"] == "ZZT earlier note"
     quiet.assert_nothing_queued()
     line = _po_line_row(env, w.line_a)
@@ -276,7 +279,7 @@ def test_ac_rl_01_02_03_a_row_with_two_links_keeps_the_other_and_goes_partly_lin
     assert after["link_ids"] == {link_ids[1]}, after
     assert after["state"] == INQUIRY_PARTLY_LINKED, after
     assert after["inquiry_state"] == INQUIRY_RAISED, after
-    assert after["ack_state"] == ACK_ACKNOWLEDGED
+    assert after["ack_state"] == ACK_AWAITING  # AC-AC-9: no longer covered, nobody pressed
     assert after["note"] == "ZZT earlier note"
     quiet.assert_nothing_queued()
 

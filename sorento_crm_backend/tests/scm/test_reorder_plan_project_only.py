@@ -51,7 +51,7 @@ from datetime import date
 from sqlalchemy import text
 
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
-from app.models.project_so import ACK_ACKNOWLEDGED, OrderInquiryLink
+from app.models.project_so import ACK_AWAITING, OrderInquiryLink
 from app.models.scm import ReorderRun
 from app.services.scm import reorder_engine as eng
 from app.services.scm import reorder_run_service as svc
@@ -255,7 +255,7 @@ def test_ac_po_3_project_run_with_order_row_and_below_level_buys_exactly_the_ord
     u = _seed_pool_below_level(db)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["child_wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
 
     created = svc.create_run(
@@ -285,7 +285,7 @@ def test_ac_po_4_dealer_run_with_same_seed_sizes_the_retail_top_up_not_20(scm_ap
     u = _seed_pool_below_level(db)
     _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["child_wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
 
     created = svc.create_run(
@@ -318,7 +318,7 @@ def test_ac_po_5_project_run_scoped_to_other_orders_emits_nothing_for_this_produ
     u = _seed_pool_below_level(db)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["child_wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     other_so_number = _code("OTHER-SO")
 
@@ -344,7 +344,7 @@ def test_ac_po_6_project_run_emits_nothing_for_a_fully_linked_order_row(scm_app)
     u = _seed_pool_below_level(db)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["child_wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     row = so["rows"][0]
     supplier = Supplier(id=_u(), company_id=SORENTO_COMPANY_ID, supplier_code=_code("SUP"),
@@ -382,7 +382,7 @@ def test_ac_po_7_moq_rounds_the_project_need_alone(scm_app):
     u = _seed_pool_below_level(db, moq=50, mult=50)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["child_wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
 
     created = svc.create_run(
@@ -421,7 +421,7 @@ def test_ac_po_8_pooled_sibling_on_hand_does_not_reduce_the_project_buy(scm_app)
 
     so = _project_so_with_lines(db, lines=[
         {"product_id": pid, "warehouse_id": child_wid, "qty": 10,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
 
     created = svc.create_run(
@@ -455,7 +455,7 @@ def test_ac_po_9_header_counts_equal_the_sum_of_the_lines_emitted(scm_app):
     a = _seed_single_below_level(db)
     so = _project_so_with_lines(db, lines=[
         {"product_id": a["pid"], "warehouse_id": a["wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     b = _seed_pool_below_level(db)
 
@@ -507,7 +507,7 @@ def test_ac_po_3_reorder_level_basis_project_run_buys_exactly_the_order_qty(scm_
     _use_reorder_level_policy(db)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
 
     created = svc.create_run(
@@ -627,7 +627,7 @@ def test_ac_po_12_project_run_buys_the_row_in_full_even_when_on_hand_covers_it(s
     u = _seed_single_covered_by_stock(db)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
 
     project_run = svc.create_run(
@@ -679,7 +679,7 @@ def test_ac_po_12b_project_run_reduces_the_confirmed_buy_by_a_confirmed_reserve_
     u = _seed_single_covered_by_stock(db)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=15, source_type="own")
 
@@ -716,7 +716,7 @@ def test_ac_po_12b_project_run_reduces_the_confirmed_buy_by_a_confirmed_borrow_a
     u = _seed_single_covered_by_stock(db)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=15)
 

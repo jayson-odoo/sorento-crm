@@ -954,9 +954,9 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
 # proves the importer's ordinary birth state.
 
 
-def test_ordinary_sheet_row_is_still_born_acknowledged():
-    """AC-CL-8 (control): a row onto an OPEN line is still born acknowledged, exactly
-    as the importer's own G4 migration behaviour."""
+def test_ordinary_sheet_row_is_born_to_order():
+    """AC-CL-8 (control), amended by OI-AUTO-CONFIRM: a row onto an OPEN line with no
+    link is To order (awaiting) - Done is now earned by cover, not granted at birth."""
     with mig_world() as w:
         order = w.order()
         w.line(order, qty_ordered="50")
@@ -969,7 +969,7 @@ def test_ordinary_sheet_row_is_still_born_acknowledged():
 
         assert result["rows_raised"] == 1, result
         row = w.one_row()
-        assert row.ack_state == ACK_ACKNOWLEDGED
+        assert row.ack_state == ACK_AWAITING
 
 
 def test_used_row_from_sheet_rebuild_is_born_awaiting():
@@ -1458,11 +1458,9 @@ def test_ac_cl_18_whole_journey_upload_ack_cancel_read_confirm_read_repush():
         assert result["rows_raised"] == 1, result
         w.db.commit()
         row = w.one_row()
-        # The sheet importer's own birth state (AC-CL-8's control): already
-        # acknowledged, a migration of instructions purchasing has been working from.
-        # "Acknowledge" still runs here as the journey's own step - tolerant of an
-        # already-acknowledged row, a genuine no-op (AC-H2's own guard).
-        assert row.ack_state == ACK_ACKNOWLEDGED
+        # OI-AUTO-CONFIRM: an uncovered sheet row is born To order; the journey's
+        # "acknowledge" step is purchasing's manual Confirm.
+        assert row.ack_state == ACK_AWAITING
 
         buyer_id = _user(w.db, f"{MARKER} journey buyer")
         client, originals = _client(w.db, buyer_id, [VIEW, ACKNOWLEDGE])

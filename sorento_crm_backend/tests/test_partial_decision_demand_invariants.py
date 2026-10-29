@@ -207,7 +207,7 @@ def test_the_undecided_lines_of_a_partly_confirmed_order_are_still_demand():
         assert aside["lines"] == 1
 
 
-def test_the_reorder_engine_plans_a_confirmed_row_but_excludes_awaiting_and_rejected():
+def test_the_reorder_engine_plans_a_to_order_row_but_excludes_done_and_rejected():
     """`PLAN-oi-confirm-per-so.md` S1 RESTORES this test's own original premise, which
     G4 (`PLAN-scm-reorder-oi-feedback-1sep.md` S1) had retired: a confirm's row is born
     `awaiting` again and the plan gates on purchasing's own Confirm press
@@ -251,8 +251,8 @@ def test_the_reorder_engine_plans_a_confirmed_row_but_excludes_awaiting_and_reje
         assert row_ids, "the confirmation must have raised the Buy as an inquiry row"
 
         awaiting = _planning_row(db, world)
-        assert Decimal(str(awaiting["project_committed"])) == Decimal("0"), (
-            "born awaiting again (S1) - nothing to buy against until purchasing confirms it"
+        assert Decimal(str(awaiting["project_committed"])) == Decimal("50"), (
+            "OI-AUTO-CONFIRM Q4 = b: a To order (awaiting) row is what the plan buys against"
         )
         assert _committed(db, world)["project_committed"] == Decimal("50"), (
             "the VIEW still counts it - it is owed to the customer either way"
@@ -264,12 +264,13 @@ def test_the_reorder_engine_plans_a_confirmed_row_but_excludes_awaiting_and_reje
             )
         db.commit()
 
-        acknowledged = _planning_row(db, world)
-        assert Decimal(str(acknowledged["project_committed"])) == Decimal("50"), (
-            "purchasing's own Confirm press is what makes it demand"
-        )
-        assert Decimal(str(acknowledged["project_confirmed_committed"])) == Decimal("50")
-        assert Decimal(str(acknowledged["committed"])) == Decimal("50")
+        with company_scope(db, frozenset({world.company_id})):
+            done_rows = reorder_run_service._planning_rows(
+                db, [str(world.warehouse.id)], product_ids=[str(world.product.id)]
+            )
+        assert all(
+            Decimal(str(r["project_committed"])) == Decimal("0") for r in done_rows
+        ), "a Done row (purchasing's Confirm) adds nothing to the plan"
 
         with company_scope(db, frozenset({world.company_id})):
             ProjectOrderInquiryService(db).reject_row(

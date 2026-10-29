@@ -643,24 +643,23 @@ def test_ac_cf_12_summary_to_confirm_counts_a_freshly_raised_row(api):
 # ---------------------------------------------------------------------------
 
 
-def test_ac_cf_14_demand_excludes_awaiting_includes_confirmed_and_changed(api):
-    """AC-CF-14. `demand.horizon_committed_select_sql()`'s `PLANNED_ACK_STATES =
-    ("acknowledged", "changed")` already excludes anything else - the SQL predicate is
-    right today. What is wrong is the BORN state: a fresh raise is `acknowledged`
-    already (G4), so it is already inside the plan's demand the instant CS confirms,
-    the opposite of what this test pins. Red on the first assertion."""
+def test_ac_cf_14_demand_counts_to_order_rows_and_not_done_ones(api):
+    """AC-CF-14 as amended by OI-AUTO-CONFIRM Q4 = b (AC-AC-22). `PLANNED_ACK_STATES =
+    ("awaiting", "changed")`: the plan counts a To order row for its uncovered qty, and a
+    Done row (here a manual Confirm with no link) adds nothing. A CS amendment clears the
+    manual decision, so the changed row counts again."""
     _client, world = api
     fixture = _raise_one_row(api, qty="10")
     row = fixture["row"]
 
-    assert _project_committed(world, planned=True) == Decimal("0"), (
-        "a freshly raised row must not be planning demand until purchasing confirms it"
+    assert _project_committed(world, planned=True) == Decimal("10"), (
+        "a freshly raised row is To order, so the plan counts it"
     )
 
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
     world.db.commit()
-    assert _project_committed(world, planned=True) == Decimal("10")
+    assert _project_committed(world, planned=True) == Decimal("0"), "Done adds nothing"
 
     _settle(world, fixture, qty="15")
     assert _project_committed(world, planned=True) == Decimal("15"), (
