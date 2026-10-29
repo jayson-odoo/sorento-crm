@@ -1353,6 +1353,12 @@ def _fresh_args(
         # R8: the products the held sales report total ran on are carried, not typed (the plan's own rows, the
         # same ones `crm_sales_report` read its prefix off); the engine marks it, never the parser.
         kinds = kinds | {"product"}
+    if parse_output.get("capability_from") == "outstanding" and not kinds & {
+        "product", "customer", "brand", "category", "product_type", "specification", "spec"
+    } and not jsc.array(parse_output.get("report_ask_spec")):
+        # Eval send-back (rpt-010, rpt-009), as before #1922: an outstanding ask that names no product or customer of
+        # its own runs on the product in context ("<code> stock", then "outstanding"), never the whole company's list.
+        kinds = kinds | {"product"}
     customer_ids = _gate_ids(entities, "customer") if "customer" in kinds else []
     if parse_output.get("self_reference") is True and not customer_ids:
         # "my ...": the engine's scope rows, a linked contact's own accounts, whether a dealer or office staff. A
