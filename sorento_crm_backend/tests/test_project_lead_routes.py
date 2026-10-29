@@ -147,8 +147,11 @@ def test_recording_and_reading_a_lead_round_trips_through_http(api):
     assert fetched.json()["title"] == "Tower behind the showroom"
 
 
-def test_the_wizard_can_create_its_customer_in_the_same_request(api):
-    client, _db, _company_id, _user_id = api
+def test_the_wizard_can_no_longer_create_its_customer_in_the_lead_request(api):
+    """LEAD-GOVERNS-REGISTER B2 replaces "the wizard creates its customer in the same
+    request": the customer must already exist, and `new_customer` is refused."""
+    client, db, _company_id, _user_id = api
+    before = db.query(Customer).count()
 
     response = client.post(
         BASE,
@@ -158,23 +161,19 @@ def test_the_wizard_can_create_its_customer_in_the_same_request(api):
         },
     )
 
-    assert response.status_code == 201, response.text
-    assert response.json()["customer_name"] == f"{MARKER} Veritas Architects"
+    assert response.status_code == 422, response.text
+    assert db.query(Customer).count() == before
 
 
-def test_a_lead_with_neither_customer_nor_new_customer_is_accepted(api):
-    """AC-A1: the buyer is optional now, so the route must not invent one.
-
-    This asserted a 422 under AC-O1. The premise changed: whoever mentioned the job is
-    the informant, and the buyer is whoever eventually places the order, who is usually
-    unknown at this point.
-    """
+def test_a_lead_without_a_customer_is_refused(api):
+    """LEAD-GOVERNS-REGISTER B1 replaces AC-A1 ("the buyer is optional"): a lead carries
+    the customer the project will take over, so the route refuses one without it."""
     client, _db, _company_id, _user_id = api
 
     response = client.post(BASE, json={"title": "Somebody heard something"})
 
-    assert response.status_code == 201, response.text
-    assert response.json()["customer_id"] is None
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "lead_customer_required"
 
 
 def test_qualifying_returns_the_serialised_project(api):
