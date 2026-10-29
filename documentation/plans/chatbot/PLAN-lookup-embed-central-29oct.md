@@ -699,3 +699,27 @@ Each item: red test first (tester), then fix (coder), kill-proof. R = reviewer, 
   each stat keeps its full text visible or in a title.
 - K-3: the LookupWordsGrid Vectors column has an explicit size wide enough for "n / m" so it does not clip at 1280.
 - K-4: the stale "the job also clears it" comment in `app/api/v1/system/embeddings.py` (~:198) is corrected.
+
+## Review fix round 6 (crew release review of d6c6971e7f, 30 Oct; backend + migrations)
+
+Release #7 does not wait; this lane goes in the next release. Plus the CI fix: gitleaks flagged made-up UUID row
+keys in `embeddingsStubs.ts` (27afd5ad2d), fingerprints added to `.gitleaksignore` (b1b94f5ffc).
+
+- R6-1 (online index build): `lec_0002_embedding_indexes` builds its 3 partial HNSW indexes with
+  `app/utils/online_index.ensure_indexes_online` (owner rule 27 Oct, `documentation/runbooks/memory-and-deploy-guards.md`
+  section 9): CONCURRENTLY outside the transaction, the repo's migration limits, fail-soft (a timeout logs a WARNING and
+  the revision succeeds), an INVALID leftover is dropped and rebuilt, all builds under the shared advisory lock and
+  one 180 s budget. Measured: the keep-set index took 131 s at the default maintenance_work_mem and 34 s at 512MB on
+  the dev copy, so the migration sets `maintenance_work_mem = '512MB'` for the builds (the same value
+  `apply_search_model_guard` already uses) and resets it. The (table, name, columns) tuples come from
+  `app/services/embedding_indexes.py` (one predicate source, still reused by `search_current` and `index_ddl`), and
+  `scripts/ensure_goods_chain_indexes.py` (run by `start.sh` on every backend start) retries them, so a build the
+  deploy budget did not reach is finished on the next start.
+- R6-2 (synonyms travel with the deploy): the 11 former PROMPT_SYNONYMS entries move into data through a new
+  idempotent data migration `lec_0004_prompt_synonyms` (raw SQL, no ORM): category words appended to
+  `product_categories.search_synonyms` of every active category of that class (class label or own name, case aside;
+  `water tap` also matches class `tap`), file type words added as `lookup_option_keywords` of the type's option in the
+  `attachment_type_alias` set (set and option created when missing; a type that does not exist is skipped). A word
+  already present (case aside) is skipped, so a rerun adds nothing; append only. Downgrade is a no-op (it cannot tell
+  a moved word from one an admin typed). `scripts/move_prompt_synonyms.py` is removed: one copy of the word list. The
+  10-minute `lookup_words_sync` task embeds the new words after deploy.
