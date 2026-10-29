@@ -106,6 +106,9 @@ KIND_SLUGS: dict[str, str] = {
 KIND_CONTACT_GRANTS: dict[str, str] = {"supplier": "purchase_orders.supplier"}
 #: Resolver entity types that stand for one of our kinds.
 _KIND_OF_ENTITY: dict[str, str] = {**{k: k for k in KIND_SLUGS}, "product_set": "product"}
+#: Kinds with no probe in the entity resolver. They are read from the bot's own closed lists
+#: (`head/lookup_lists` rows scored by `head/list_resolver`): our kind -> the list's name.
+LIST_KINDS: dict[str, str] = {"brand": "brand", "category": "category", "sales_agent": "salesperson"}
 MAX_TERMS = 10
 MAX_MATCHES = 5
 MAX_DETAIL_CHARS = 200
@@ -405,6 +408,49 @@ def _is_empty(data: Any, render: bool) -> bool:
     return data.get("empty") is True or (isinstance(data.get("data"), list) and not data["data"])
 
 
+def _sees_salespeople(db: Any, ctx: Any) -> bool:
+    """The Salesperson list is the contact's only when the sales ranking lets it ask by agent
+    (the rule today's lookup block uses)."""
+    from app.services import contact_asker
+
+    try:
+        granted = "sales_orders.sales_report" in ctx.grants
+        return contact_asker.may_ask_sales_ranking(db, str(ctx.contact_pk), granted=granted)[0] != "not_granted"
+    except Exception:  # noqa: BLE001 - fail closed
+        logger.warning("agent: salesperson visibility check failed", exc_info=True)
+        return False
+
+
+def _list_matches(db: Any, ctx: Any, terms: list[str], kinds: list[str]) -> dict[str, list[dict]]:
+    """Brand, category and sales agent matches per term: the contact's visible rows of those
+    closed lists (company scope from the session, brand scope from the context), each term
+    scored the way the bot scores a span (exact, spelling, partial; no embedder)."""
+    from app.services.chatbot.head import list_resolver, lookup_lists
+
+    names = {LIST_KINDS[k]: k for k in kinds}
+    rows = [
+        r for r in lookup_lists.load_rows(db, include_salespeople="sales_agent" in kinds)
+        if r.list_name in names and not str(r.key).startswith("type:")
+    ]
+    if ctx.brand_scope is not None:
+        rows = [r for r in rows if r.list_name != "brand" or str(r.key) in ctx.brand_scope]
+    out: dict[str, list[dict]] = {t: [] for t in terms}
+    if not rows:
+        return out
+    resolutions = list_resolver.resolve([list_resolver.Span(t) for t in terms], rows, embed=None)
+    for term, res in zip(terms, resolutions):
+        if res.status not in ("resolved", "ambiguous"):
+            continue
+        for cand in res.candidates:
+            row = cand.row
+            homes = row.homes or ()
+            texts = row.texts or ()
+            label = next((t for t, h in zip(texts, homes) if h == "label"), None) or row.label
+            code = next((t for t, h in zip(texts, homes) if h == "code"), None)
+            out[term].append({"id": str(row.key), "kind": names[row.list_name], "code": code, "name": label})
+    return out
+
+
 def _resolve(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
     """`crm_resolve`: the bot's own resolver, in process, under the contact's scope."""
     from app.models.base import get_company_scope
@@ -426,35 +472,47 @@ def _resolve(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
     terms = [t.strip() for t in terms]
 
     allowed, skipped = searchable_kinds(db, ctx, requested)
+    if "sales_agent" in allowed and not _sees_salespeople(db, ctx):
+        allowed.remove("sales_agent")
+        skipped.append("sales_agent")
     if not allowed:
         return ToolResult(
             "denied",
             data={"skipped_kinds": skipped},
             message=f"None of the requested kinds may be searched: {', '.join(skipped)}.",
         )
-    body = {"tokens": terms, "raw_tokens": terms, "allowed_entity_types": allowed, "dry_run": True}
-    try:
-        raw = business_services._resolve_entity(db)(body)
-    except Exception:  # noqa: BLE001
-        logger.warning("agent: crm_resolve failed", exc_info=True)
-        return ToolResult("error", message=FIXED_ERROR)
-
+    entity_kinds = [k for k in allowed if k not in LIST_KINDS]
+    list_kinds = [k for k in allowed if k in LIST_KINDS]
     by_token: dict[str, dict] = {}
-    resolutions = [r for r in (raw or {}).get("resolutions") or [] if isinstance(r, dict)]
-    for index, term in enumerate(terms):
-        match = next((r for r in resolutions if r.get("token") == term), None)
-        by_token[term] = match if match is not None else (resolutions[index] if index < len(resolutions) else {})
+    if entity_kinds:
+        body = {"tokens": terms, "raw_tokens": terms, "allowed_entity_types": entity_kinds, "dry_run": True}
+        try:
+            raw = business_services._resolve_entity(db)(body)
+        except Exception:  # noqa: BLE001
+            logger.warning("agent: crm_resolve failed", exc_info=True)
+            return ToolResult("error", message=FIXED_ERROR)
+        resolutions = [r for r in (raw or {}).get("resolutions") or [] if isinstance(r, dict)]
+        for index, term in enumerate(terms):
+            match = next((r for r in resolutions if r.get("token") == term), None)
+            by_token[term] = match if match is not None else (resolutions[index] if index < len(resolutions) else {})
+    listed: dict[str, list[dict]] = {t: [] for t in terms}
+    if list_kinds:
+        try:
+            listed = _list_matches(db, ctx, terms, list_kinds)
+        except Exception:  # noqa: BLE001
+            logger.warning("agent: crm_resolve list lookup failed", exc_info=True)
+            return ToolResult("error", message=FIXED_ERROR)
 
     scope = get_company_scope(db) if db is not None else None
     has_company_scope = isinstance(scope, (set, frozenset)) and bool(scope)
     results = []
     for term in terms:
-        res = by_token[term]
+        res = by_token.get(term, {})
         matches = []
         for m in res.get("matches") or []:
             kind = _KIND_OF_ENTITY.get(str(m.get("entity_type") or ""))
             ident = m.get("uuid")
-            if kind not in allowed or not ident:
+            if kind not in entity_kinds or not ident:
                 continue
             display = m.get("display") if isinstance(m.get("display"), dict) else {}
             matches.append(
@@ -470,9 +528,10 @@ def _resolve(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
             readable = {str(r.get("uuid")) for r in kept if isinstance(r, dict)}
             matches = [m for m in matches if m["kind"] != "customer" or m["id"] in readable]
         trusted = res.get("resolved") is True and res.get("ambiguous") is False and len(matches) == before
+        matches = matches + listed.get(term, [])
         if not matches:
             status = "not_found"
-        elif len(matches) == 1 or trusted:
+        elif len(matches) == 1 or (trusted and len(listed.get(term, [])) == 0):
             status, matches = "found", matches[:1] if trusted else matches
         else:
             status = "ambiguous"

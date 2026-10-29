@@ -172,15 +172,15 @@ def test_registry_has_crm_resolve_and_no_longer_crm_lookup_resolve():
 
 
 def test_found_ambiguous_and_not_found_per_term_and_the_body_sent(held, resolver):
-    held.update({KIND_SLUGS["product"], KIND_SLUGS["brand"]})
+    held.update({KIND_SLUGS["product"]})
     resolver.table = {
         "SRTWT7445": [hit("product", "SRTWT7445", UUID_A, "Water closet")],
-        "KOHLER": [hit("brand", "KOHLER", UUID_A), hit("product", "KOHLER-1", UUID_B)],
+        "KOHLER": [hit("product", "KOHLER", UUID_A), hit("product", "KOHLER-1", UUID_B)],
         "ZZTNOPE": [],
     }
     terms = ["SRTWT7445", "KOHLER", "ZZTNOPE"]
 
-    out = _dispatch(RESOLVE, {"terms": terms, "kinds": ["product", "brand"]}, Rec())
+    out = _dispatch(RESOLVE, {"terms": terms, "kinds": ["product"]}, Rec())
 
     by_term = _results(out)
     assert by_term["SRTWT7445"]["status"] == "found"
@@ -196,7 +196,8 @@ def test_found_ambiguous_and_not_found_per_term_and_the_body_sent(held, resolver
     body = resolver.bodies[0]
     assert body["tokens"] == terms
     assert body["raw_tokens"] == terms
-    assert set(body["allowed_entity_types"]) == {"product", "brand"}
+    # Round 5b: brand, category and sales_agent are read from the bot's closed lists, not sent here.
+    assert set(body["allowed_entity_types"]) == {"product"}
     assert body["dry_run"] is True
 
 
@@ -232,13 +233,13 @@ def test_terms_must_be_one_to_ten(held, resolver, terms):
 
 
 def test_kinds_the_user_lacks_the_slug_for_are_not_searched_and_are_listed(held, resolver):
-    held.update({KIND_SLUGS["product"], KIND_SLUGS["brand"]})  # not suppliers, not customers
+    held.update({KIND_SLUGS["product"], KIND_SLUGS["customer"]})  # not suppliers
     out = _dispatch(
-        RESOLVE, {"terms": ["X"], "kinds": ["product", "supplier", "brand", "customer"]}, Rec()
+        RESOLVE, {"terms": ["X"], "kinds": ["product", "supplier", "customer"]}, Rec()
     )
     assert out.status == "ok"
-    assert set(resolver.bodies[0]["allowed_entity_types"]) == {"product", "brand"}
-    assert sorted(out.data["skipped_kinds"]) == ["customer", "supplier"]
+    assert set(resolver.bodies[0]["allowed_entity_types"]) == {"product", "customer"}
+    assert out.data["skipped_kinds"] == ["supplier"]
 
 
 def test_supplier_needs_the_contacts_reveal_as_well_as_the_slug(held, resolver):
@@ -262,9 +263,9 @@ def test_when_no_kind_may_be_searched_the_resolver_is_not_called(held, resolver)
 
 
 def test_default_kinds_are_all_the_user_may_search(held, resolver):
-    held.update({KIND_SLUGS["product"], KIND_SLUGS["category"]})
+    held.update({KIND_SLUGS["product"], KIND_SLUGS["customer"]})
     _dispatch(RESOLVE, {"terms": ["X"]}, Rec())
-    assert set(resolver.bodies[0]["allowed_entity_types"]) == {"product", "category"}
+    assert set(resolver.bodies[0]["allowed_entity_types"]) == {"product", "customer"}
 
 
 def test_the_slug_is_checked_at_dispatch_time(held, resolver):
