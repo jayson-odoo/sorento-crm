@@ -66,6 +66,12 @@ class ReportAskSummaryRow(BaseModel):
     ordered_qty: Optional[int] = None
 
 
+class ReportAskSummaryGroup(BaseModel):
+    axis: str  # a report ask dimension: location, customer, product, sales_agent ...
+    label: str
+    rows: List[ReportAskSummaryRow] = []
+
+
 class ReportAskSummary(BaseModel):
     """REPORT-OUTSTANDING-SUMMARY: the pre-#1922 outstanding summary (`reports.ask.outstanding_summary`)."""
 
@@ -75,9 +81,7 @@ class ReportAskSummary(BaseModel):
     ordered_qty: Optional[int] = None
     date_first: Optional[str] = None
     date_last: Optional[str] = None
-    by_location: List[ReportAskSummaryRow] = []
-    second: Optional[str] = None  # customer | product | None (both named)
-    by_second: List[ReportAskSummaryRow] = []
+    groups: List[ReportAskSummaryGroup] = []
 
 
 class ReportAskResponse(BaseModel):

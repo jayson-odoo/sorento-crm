@@ -209,9 +209,10 @@ def _response(data: dict) -> JSONResponse:
     _drop_unset(content["total"], compared)
     for row in content["rows"]:
         _drop_unset(row, compared)
-    for row in (content.get("summary") or {}).get("by_location", []) + (content.get("summary") or {}).get("by_second", []):
-        if row.get("ordered_qty") is None:
-            row.pop("ordered_qty")
+    for group in (content.get("summary") or {}).get("groups", []):
+        for row in group["rows"]:
+            if row.get("ordered_qty") is None:
+                row.pop("ordered_qty")
     return JSONResponse(content=content)
 
 
@@ -413,6 +414,12 @@ def report_ask(
     # customers below (`enforce_customer_scope`). Only a "my ..." ask is narrowed to a salesperson's own book.
     # The one rule the chatbot seams share (`contact_asker.may_ask_sales_ranking`).
     decision, book = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=granted)
+    if decision == "not_granted" and basis_norm == "pending_delivery" and resolved and contact_asker.pending_delivery_open(db, str(resolved)):
+        # Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY, #b6e9): as before #1922, pending delivery needs no reveal; undelivered
+        # orders and unpaid invoices do. Only a contact the company knows: office staff (every customer) or a linked
+        # contact (its own customers, `enforce_customer_scope` below). An unknown contact stays refused. A live
+        # salesperson never reaches here (its decision is its own book, Q6).
+        decision, granted = "granted", True
     if decision == "not_granted":
         if outstanding_kind:
             raise AppException(403, "Outstanding is not enabled for your account.", code="outstanding_not_enabled")
@@ -626,22 +633,25 @@ def report_ask(
     product_subject = bool(code or named_products)
     customer_subject = bool(named_customers) or scoped is not None
     if (
-        basis_norm in ask.SUMMARY_BASES and group_norm is None and compare_norm is None
+        basis_norm in ask.SUMMARY_BASES and compare_norm is None and not spec_group
         and (product_subject or customer_subject) and data.get("status") == "ok"
     ):
-        # REPORT-OUTSTANDING-SUMMARY (behaviour card 29 Oct): an outstanding kind naming a product or a customer gets
-        # the pre-#1922 summary (R13: a product is broken down by customer, a customer by product, both by neither).
-        # A dealer keeps to its own keys (no location, no customer axis).
-        second = "customer" if product_subject and not customer_subject else (
-            "product" if customer_subject and not product_subject else None
-        )
-        if scoped is not None and second not in (None, *ask.DEALER_KEYS):
-            second = None
+        # REPORT-OUTSTANDING-SUMMARY (owner 29 Oct): an outstanding kind naming a product or a customer gets the
+        # pre-#1922 summary. Default breakdowns: by location (unless a location was named), then by customer for a
+        # product, by product for a customer, neither when both were named (R13). An axis the user named replaces the
+        # defaults. A dealer keeps to its own keys.
+        if group_norm is not None:
+            axes = [group_norm]
+        else:
+            axes = [] if codes else ["location"]
+            if product_subject != customer_subject:
+                axes.append("customer" if product_subject else "product")
+        if scoped is not None:
+            axes = [a for a in axes if a in ask.DEALER_KEYS]
         data = {
             **data,
             "summary": ask.outstanding_summary(
-                db, basis=basis_norm, second=second, by_location=scoped is None,
-                date_from=date_from, date_to=date_to,
+                db, basis=basis_norm, axes=axes, date_from=date_from, date_to=date_to,
                 filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
             ),
         }

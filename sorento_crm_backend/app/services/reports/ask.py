@@ -394,13 +394,12 @@ SUMMARY_BASES: dict[str, dict[str, Any]] = {
 
 
 def outstanding_summary(
-    db: Session, *, basis: str, second: Optional[str], by_location: bool, date_from: date, date_to: date,
-    **run: Any,
+    db: Session, *, basis: str, axes: list[str], date_from: date, date_to: date, **run: Any,
 ) -> dict[str, Any]:
-    """The pre-#1922 outstanding summary, on this engine: the document count, the totals, the document date range,
-    By location and By customer / By product (`second`; None when the ask named both). Every figure is `run_ask` over
-    the SAME definition and filters as the total, so the summary cannot disagree with it. `run` is the total's own
-    `run_ask` keywords, less the grouping."""
+    """The pre-#1922 outstanding summary, on this engine: the document count, the totals, the document date range and
+    one breakdown per axis in `axes` (by default location, then customer or product; the user's own axis instead when
+    one was named, owner 29 Oct). Every figure is `run_ask` over the SAME definition and filters as the total, so the
+    summary cannot disagree with it. `run` is the total's own `run_ask` keywords, less the grouping."""
     shape = SUMMARY_BASES[basis]
     also = shape["also"]
     run = {**run, "basis": basis, "measure": "qty", "sort": "desc"}
@@ -410,21 +409,19 @@ def outstanding_summary(
 
     total = run_ask(db, group_by=None, date_from=date_from, date_to=date_to, also=also, **run)
     days = sorted(r["name"] for r in grouped(shape["day"])["rows"])
-
-    def rows(group_by: str) -> list[dict[str, Any]]:
-        return [
+    groups = []
+    for axis in axes:
+        rows = [
             {"name": r["name"], "qty": r["qty"], "amount": r["amount"], **{k: r.get(k, 0) for k in also}}
-            for r in grouped(group_by)["rows"]
+            for r in grouped(axis)["rows"]
         ]
-
+        groups.append({"axis": axis, "label": GROUP_LABELS.get(axis, axis), "rows": rows})
     return {
         "documents": grouped(shape["documents"])["total_count"],
         **{k: v for k, v in total["total"].items() if k in ("qty", "amount", *also)},
         "date_first": days[0] if days else None,
         "date_last": days[-1] if days else None,
-        "by_location": rows("location") if by_location else [],
-        "second": second,
-        "by_second": rows(second) if second else [],
+        "groups": groups,
     }
 
 
