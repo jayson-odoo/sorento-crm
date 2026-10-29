@@ -1,7 +1,7 @@
 # PLAN: Item Class from AutoCount (ITEM-CLASS)
 
 Status: Review done (reviewer READY, security re-review no C/H/M findings, cloud browser
-pass 5/5). Hand test and the shared-service leg pending (SS branch
+pass 5/5). Hand test and the end-to-end run through the shared service pending (SS branch
 claude/item-class-sync-rbac-4sehj5 in foundryx-shared-service). Track: full (migration +
 RBAC/access control change). UAC: `item-class-acceptance-criteria.md`.
 
@@ -44,7 +44,10 @@ brand, applied everywhere brand scoping applies.
   absent leaves the link untouched, "" clears it (crew ruling 29 Oct, security M1); unknown
   value back-created, warning `item_class_created`.
 - **D3 Shared service.** hapi `ItemClass` -> canonical `item_class_code` next to where
-  `ItemType` -> `item_type_code` is mapped (SS PR).
+  `ItemType` -> `item_type_code` is mapped (SS PR). Unlike ItemType, a blank ItemClass is
+  always sent as `""` (security M1), so the first sync after deploy re-sends every product row
+  once: about 12k db1 rows and every db2 row, through the normal `/external/ingest/products`
+  path in batches of at most 1000 (`app/api/v1/external/ingest.py` `MAX_BATCH`).
 - **D4 UI.** Reference Data > Item Classes (list + modal create/edit + detail, copy of Brands);
   product list column (server sort) + multi-select filter; product form field (View = Edit).
 - **D5 Contact access: class nested under brand.** New column

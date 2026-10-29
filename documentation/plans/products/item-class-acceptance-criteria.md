@@ -4,8 +4,9 @@ Plan: `PLAN-item-class-29oct.md`. Owner answers 29 Oct: Q1 (a), Q2 (a), Q3 as pr
 
 ## Sync (shared service + CRM ingest)
 - **AC-1** The shared service maps AutoCount `ItemClass` to `item_class_code` on every product row,
-  right after `item_type_code`, on the push payload and the pull snapshot; blank or absent
-  ItemClass is omitted, never `null`. Existing product tasks get the row (module Alembic 0034,
+  right after `item_type_code`, on the push payload and the pull snapshot; a blank or absent
+  ItemClass is sent as `""` (crew ruling 29 Oct, security M1), never `null`, so a class cleared
+  in AutoCount clears in the CRM. Existing product tasks get the row (module Alembic 0034,
   `update_tenant` from below 0.20.0, an empty task keeps its first-save preset seed).
 - **AC-2** A CRM product push with an unknown `item_class_code` back-creates one item class
   (code = name = value), links the product and warns `item_class_created`; the same code in any
