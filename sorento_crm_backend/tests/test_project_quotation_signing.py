@@ -491,3 +491,157 @@ def test_the_issue_history_reports_the_counter_signature_the_customer_left():
         assert signature["image_data_uri"] == A_SIGNATURE
         assert signature["mode"] == "type"
         assert signature["ip_address"] == "203.0.113.9"
+
+
+# ------------------------------------------- QUOTE-SIGN-PAGE: payload + terms tick
+
+
+def _public_client(db):
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.main import app
+
+    app.dependency_overrides[get_db] = lambda: db
+    return TestClient(app), app
+
+
+def _issued_with_token(db, *, terms=None):
+    _project_row, document, owner, _scopes = _setup(db)
+    document.terms_html = terms
+    db.flush()
+    _sign_draft(db, document, owner)
+    record = qdocs.issue(db, document=document, actor_user_id=owner)
+    token = qdocs.issue_sign_link(db, record=record)
+    db.commit()
+    return document, record, token
+
+
+def _accept_body(**extra):
+    return {
+        "signer_name": "CONTACT B",
+        "mode": "draw",
+        "image_data_uri": A_SIGNATURE,
+        **extra,
+    }
+
+
+def test_sign_page_our_ref_is_built_from_document_no_and_issue_no_not_the_stored_text():
+    """AC2.3: an issue stored with the old text still shows <document_no>-R<issue_no>."""
+    with blank_session() as db:
+        _project_row, document, owner, _scopes = _setup(db)
+        _sign_draft(db, document, owner)
+        record = qdocs.issue(db, document=document, actor_user_id=owner)
+        record.our_ref_text = f"{document.document_no} (R{record.issue_no})"
+        db.flush()
+
+        page = qdocs.serialize_sign_page(db, record)
+
+        assert page["our_ref"] == f"{document.document_no}-R{record.issue_no}"
+        assert page["issue_no"] == record.issue_no
+
+
+def test_sign_page_carries_sender_logo_url_and_signatory_phone_over_the_wire():
+    """AC1.1 + AC5.2. Over HTTP because response_model silently drops undeclared fields."""
+    with blank_session() as db:
+        _project_row, document, owner, _scopes = _setup(db)
+        document.signatory_name = "SALES REP A"
+        document.signatory_phone = "+60100000001"
+        db.execute(
+            text("update companies set logo_url = :u where id = :i"),
+            {"u": "https://cdn.example.com/logo.png", "i": str(document.company_id)},
+        )
+        db.flush()
+        _sign_draft(db, document, owner)
+        record = qdocs.issue(db, document=document, actor_user_id=owner)
+        token = qdocs.issue_sign_link(db, record=record)
+        db.commit()
+
+        client, app = _public_client(db)
+        try:
+            body = client.get(f"/api/v1/public/quotation-sign/{token}").json()
+        finally:
+            app.dependency_overrides.clear()
+
+        assert body["sender_logo_url"] == "https://cdn.example.com/logo.png"
+        assert body["signatory_phone"] == "+60100000001"
+        assert body["our_ref"] == f"{document.document_no}-R1"
+
+
+def test_sign_page_sender_logo_url_is_null_when_the_company_has_none():
+    with blank_session() as db:
+        _project_row, document, owner, _scopes = _setup(db)
+        db.execute(
+            text("update companies set logo_url = null where id = :i"),
+            {"i": str(document.company_id)},
+        )
+        db.flush()
+        _sign_draft(db, document, owner)
+        record = qdocs.issue(db, document=document, actor_user_id=owner)
+
+        page = qdocs.serialize_sign_page(db, record)
+
+        assert "sender_logo_url" in page
+        assert page["sender_logo_url"] is None
+
+
+@pytest.mark.parametrize("extra", [{}, {"terms_accepted": False}])
+def test_accept_without_the_terms_tick_is_422_when_the_issue_has_terms(extra):
+    """AC4.3: no signature recorded, accepted_at stays null."""
+    with blank_session() as db:
+        _document, record, token = _issued_with_token(db, terms="<p>CLAUSE A</p>")
+
+        client, app = _public_client(db)
+        try:
+            response = client.post(
+                f"/api/v1/public/quotation-sign/{token}/accept", json=_accept_body(**extra)
+            )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 422, response.text
+        db.expire_all()
+        assert db.get(ProjectQuotationIssue, record.id).accepted_at is None
+        assert (
+            db.query(QuotationSignature)
+            .filter(QuotationSignature.owner_kind == "customer")
+            .count()
+            == 0
+        )
+
+
+def test_accept_with_the_terms_tick_succeeds_when_the_issue_has_terms():
+    with blank_session() as db:
+        _document, record, token = _issued_with_token(db, terms="<p>CLAUSE A</p>")
+
+        client, app = _public_client(db)
+        try:
+            response = client.post(
+                f"/api/v1/public/quotation-sign/{token}/accept",
+                json=_accept_body(terms_accepted=True),
+            )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200, response.text
+        assert response.json()["is_accepted"] is True
+        db.expire_all()
+        assert db.get(ProjectQuotationIssue, record.id).accepted_at is not None
+
+
+@pytest.mark.parametrize("terms", [None, ""])
+def test_accept_does_not_require_the_tick_when_the_issue_has_no_terms(terms):
+    """AC4.4."""
+    with blank_session() as db:
+        _document, _record, token = _issued_with_token(db, terms=terms)
+
+        client, app = _public_client(db)
+        try:
+            response = client.post(
+                f"/api/v1/public/quotation-sign/{token}/accept", json=_accept_body()
+            )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200, response.text
+        assert response.json()["is_accepted"] is True

@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationSignPage } from '../../services/quotationSignService';
 
@@ -25,6 +25,7 @@ beforeAll(() => {
 
 const getQuotationSignPage = vi.fn();
 const requestQuotationChanges = vi.fn();
+const acceptQuotation = vi.fn();
 
 vi.mock('../../services/quotationSignService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/quotationSignService')>();
@@ -32,6 +33,7 @@ vi.mock('../../services/quotationSignService', async (importOriginal) => {
     ...actual,
     getQuotationSignPage: (...args: unknown[]) => getQuotationSignPage(...args),
     requestQuotationChanges: (...args: unknown[]) => requestQuotationChanges(...args),
+    acceptQuotation: (...args: unknown[]) => acceptQuotation(...args),
   };
 });
 
@@ -40,8 +42,10 @@ import { QuotationSignError } from '../../services/quotationSignService';
 
 function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
   return {
-    our_ref: 'SRT/Q/2026/0141 (R2)',
-    issue_no: 2,
+    our_ref: 'PRJQ-2026-0003-R1',
+    issue_no: 1,
+    sender_logo_url: null,
+    signatory_phone: null,
     doc_date: '2026-02-26',
     subject_title: 'CADANGAN MEMBINA PANGSAPURI RUMAH IDAM',
     sender_name: 'Sorento Sdn Bhd',
@@ -483,5 +487,239 @@ describe('QuotationSignClient dead link', () => {
       await screen.findByText('This quotation could not be loaded', {}, { timeout: 4000 }),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+});
+
+
+/**
+ * QUOTE-SIGN-PAGE (29 Oct): logo, one number, one card of sections, the terms tick.
+ */
+function scopeOf(label: string, total: string, descriptions: string[]) {
+  return {
+    scope_label: label,
+    scope_total: total,
+    lines: descriptions.map((description, index) => ({
+      item_label: String(index + 1),
+      description,
+      technical_spec: null,
+      brand: null,
+      product_code: null,
+      quantity: '1',
+      unit_price: '100.00',
+      complete_set: null,
+      band_label: null,
+      is_rate_only: false,
+      amount: '100.00',
+    })),
+  };
+}
+
+describe('QuotationSignClient letterhead', () => {
+  it('shows one Quotation No. row with the payload ref, and keeps the Revision row', async () => {
+    getQuotationSignPage.mockResolvedValue(page());
+    renderPage();
+
+    expect(await screen.findByText('Quotation No.')).toBeInTheDocument();
+    expect(screen.getByText('PRJQ-2026-0003-R1')).toBeInTheDocument();
+    expect(screen.queryByText('Our Ref')).not.toBeInTheDocument();
+    expect(screen.getByText('Revision')).toBeInTheDocument();
+    expect(screen.getByText('R1')).toBeInTheDocument();
+  });
+
+  it('shows the company logo left of the name when the payload carries one', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({ sender_logo_url: 'https://cdn.example.com/logo.png' }),
+    );
+    renderPage();
+
+    const logo = await screen.findByRole('img', { name: 'Sorento Sdn Bhd logo' });
+    expect(logo).toHaveAttribute('src', 'https://cdn.example.com/logo.png');
+  });
+
+  it('shows no logo image when the company has none', async () => {
+    getQuotationSignPage.mockResolvedValue(page({ sender_logo_url: null }));
+    renderPage();
+
+    await screen.findByText('Quotation No.');
+    expect(screen.queryByRole('img', { name: /logo/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the sales contact as name and phone, name only, or not at all', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({ signatory_name: 'SALES REP A', signatory_phone: '+60100000001' }),
+    );
+    const first = renderPage();
+    expect(await screen.findByText('Sales contact')).toBeInTheDocument();
+    expect(screen.getByText('SALES REP A, +60100000001')).toBeInTheDocument();
+    first.unmount();
+
+    getQuotationSignPage.mockResolvedValue(
+      page({ signatory_name: 'SALES REP A', signatory_phone: null }),
+    );
+    const second = renderPage();
+    expect(await screen.findByText('Sales contact')).toBeInTheDocument();
+    expect(screen.getByText('SALES REP A')).toBeInTheDocument();
+    second.unmount();
+
+    getQuotationSignPage.mockResolvedValue(page({ signatory_name: null, signatory_phone: null }));
+    renderPage();
+    await screen.findByText('Quotation No.');
+    expect(screen.queryByText('Sales contact')).not.toBeInTheDocument();
+  });
+});
+
+describe('QuotationSignClient one card of sections', () => {
+  const two = page({
+    scopes: [
+      scopeOf('Townhouse', '200.00', ['Water closet A', 'Basin A']),
+      scopeOf('Guard House', '100.00', ['Mixer B']),
+    ],
+    grand_total: '300.00',
+  });
+
+  it('puts the title, every section row and the total in exactly one card', async () => {
+    getQuotationSignPage.mockResolvedValue(two);
+    const { container } = renderPage();
+
+    await screen.findByText('Total amount');
+    const cards = Array.from(container.querySelectorAll('[data-slot="card"]')).filter((card) =>
+      within(card as HTMLElement).queryByText('Total amount'),
+    ) as HTMLElement[];
+    expect(cards).toHaveLength(1);
+    const card = within(cards[0]);
+    expect(card.getByText('Quotation')).toBeInTheDocument();
+    expect(card.getByText('Townhouse')).toBeInTheDocument();
+    expect(card.getByText('Guard House')).toBeInTheDocument();
+    expect(card.getByText('RM 300.00')).toBeInTheDocument();
+  });
+
+  it('shows each section row with its item count and total', async () => {
+    getQuotationSignPage.mockResolvedValue(two);
+    renderPage();
+
+    expect(await screen.findByText('2 items')).toBeInTheDocument();
+    expect(screen.getByText('1 item')).toBeInTheDocument();
+    expect(screen.getByText('RM 200.00')).toBeInTheDocument();
+    expect(screen.getByText('RM 100.00')).toBeInTheDocument();
+  });
+
+  it('opens a lone section on load', async () => {
+    getQuotationSignPage.mockResolvedValue(page());
+    renderPage();
+
+    expect(await screen.findByText('Water closet')).toBeInTheDocument();
+  });
+
+  it('starts two sections closed, and a click opens then closes one', async () => {
+    getQuotationSignPage.mockResolvedValue(two);
+    renderPage();
+
+    await screen.findByText('Townhouse');
+    expect(screen.queryByText('Water closet A')).not.toBeInTheDocument();
+    expect(screen.queryByText('Mixer B')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Townhouse'));
+    expect(screen.getByText('Water closet A')).toBeInTheDocument();
+    expect(screen.getByText('Basin A')).toBeInTheDocument();
+    expect(screen.queryByText('Mixer B')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Townhouse'));
+    expect(screen.queryByText('Water closet A')).not.toBeInTheDocument();
+  });
+});
+
+describe('QuotationSignClient terms tick', () => {
+  const TICK = 'I have read and agree to the Terms and conditions.';
+  const withTerms = (overrides: Partial<QuotationSignPage> = {}) =>
+    page({ terms: '<p>CLAUSE A</p>', attn_name: null, ...overrides });
+
+  it('offers an unticked box when the issue has terms', async () => {
+    getQuotationSignPage.mockResolvedValue(withTerms());
+    renderPage();
+
+    const box = await screen.findByRole('checkbox', { name: TICK });
+    expect(box).not.toBeChecked();
+  });
+
+  it('names the next missing step in the hint beside Sign and accept', async () => {
+    getQuotationSignPage.mockResolvedValue(withTerms());
+    renderPage();
+
+    const name = await screen.findByRole('textbox', { name: 'Your name' });
+    expect(screen.getByText('Type your name and tick the terms box to accept.')).toBeInTheDocument();
+
+    fireEvent.change(name, { target: { value: 'CONTACT B' } });
+    expect(screen.getByText('Tick to agree to the terms before you accept.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: TICK }));
+    expect(screen.getByText('Draw your signature to accept.')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Tick to agree to the terms before you accept.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows no checkbox and skips the tick step when the issue has no terms', async () => {
+    getQuotationSignPage.mockResolvedValue(page({ terms: null, attn_name: null }));
+    renderPage();
+
+    await screen.findByRole('textbox', { name: 'Your name' });
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.getByText('Type your name to accept.')).toBeInTheDocument();
+  });
+
+  it('sends nothing and focuses the tick when a named customer taps the not-ready button', async () => {
+    getQuotationSignPage.mockResolvedValue(withTerms());
+    renderPage();
+
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Your name' }), {
+      target: { value: 'CONTACT B' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign and accept' }));
+
+    expect(screen.getByRole('checkbox', { name: TICK })).toHaveFocus();
+    expect(acceptQuotation).not.toHaveBeenCalled();
+  });
+
+  it('focuses the name field when the not-ready button is tapped with no name', async () => {
+    getQuotationSignPage.mockResolvedValue(withTerms());
+    renderPage();
+
+    const name = await screen.findByRole('textbox', { name: 'Your name' });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign and accept' }));
+
+    expect(name).toHaveFocus();
+    expect(acceptQuotation).not.toHaveBeenCalled();
+  });
+
+  it('sends terms_accepted: true with the signature once name and tick are in', async () => {
+    HTMLCanvasElement.prototype.toDataURL = vi.fn(() => 'data:image/png;base64,TYPED');
+    getQuotationSignPage.mockResolvedValue(withTerms());
+    acceptQuotation.mockResolvedValue(
+      withTerms({ is_accepted: true, accepted_at: '2026-08-04T02:15:00' }),
+    );
+    renderPage();
+
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Your name' }), {
+      target: { value: 'CONTACT B' },
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: TICK }));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Type' }), { button: 0 });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign and accept' }));
+
+    await waitFor(() => expect(acceptQuotation).toHaveBeenCalledTimes(1));
+    expect(acceptQuotation).toHaveBeenCalledWith(
+      'tok-123',
+      expect.objectContaining({ signer_name: 'CONTACT B', terms_accepted: true }),
+    );
+  });
+
+  it('shows no checkbox once accepted', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      withTerms({ is_accepted: true, accepted_at: '2026-08-04T02:15:00' }),
+    );
+    renderPage();
+
+    await screen.findByText('Accepted');
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 });
