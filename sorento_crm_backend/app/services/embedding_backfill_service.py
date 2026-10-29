@@ -1,6 +1,8 @@
 """Backfill helpers to emit embedding rebuild events from existing records."""
 from __future__ import annotations
 
+import hashlib
+import logging
 from dataclasses import dataclass
 from typing import Literal
 
@@ -15,8 +17,11 @@ from app.models.list_query_metadata import ListQueryResource
 from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
 from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
 from app.models.projects import Project
+from app.models.embeddings import EmbeddingDocument
 from app.services.embedding_service import DEBTOR_SEED_ID_MAX, EmbeddingEventService, debtor_seed_id
 from app.services.mcp_tool_capability_service import build_capability_documents
+
+logger = logging.getLogger(__name__)
 
 BackfillSource = Literal[
     "product",
@@ -347,3 +352,213 @@ class EmbeddingBackfillService:
                 for r in rows
             ]
         raise ValueError(f"Unsupported source: {source}")
+
+
+# --------------------------------------------------------------------------- #
+# LOOKUP-EMBED-CENTRAL: capped, resumable backfill of one embedding model, and the search-model guard
+# --------------------------------------------------------------------------- #
+MAX_EMBED_FAILURES = 3
+DEFAULT_BACKFILL_RPM = 20
+
+
+@dataclass
+class BackfillResult:
+    embedded: int
+    failed: int
+    remaining: int
+    complete: bool
+
+
+def _failures(doc_metadata, model: str) -> int:
+    try:
+        return int(((doc_metadata or {}).get("embed_failures") or {}).get(model) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _missing_documents(db: Session, model: str):
+    """Active keep-set documents with no current chunk of `model` (failed ones included)."""
+    from sqlalchemy import exists
+
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+    from app.services.embedding_settings import RECORD_KEEP_SET
+
+    has_chunk = exists().where(
+        EmbeddingChunk.document_id == EmbeddingDocument.id,
+        EmbeddingChunk.model_name == model,
+        EmbeddingChunk.is_current.is_(True),
+    )
+    return db.query(EmbeddingDocument).filter(
+        EmbeddingDocument.is_active.is_(True),
+        EmbeddingDocument.source_type.in_(sorted(RECORD_KEEP_SET)),
+        ~has_chunk,
+    )
+
+
+def _count_remaining(db: Session, model: str) -> int:
+    from app.models.embeddings import EmbeddingDocument
+
+    rows = _missing_documents(db, model).with_entities(EmbeddingDocument.metadata_json).all()
+    return sum(1 for (meta,) in rows if _failures(meta, model) < MAX_EMBED_FAILURES)
+
+
+def failed_documents(db: Session, model: str) -> list[tuple[str, str, int]]:
+    """(source_type, source_id, failures) of keep-set documents given up on for `model`."""
+    from app.models.embeddings import EmbeddingDocument
+
+    rows = _missing_documents(db, model).with_entities(
+        EmbeddingDocument.source_type, EmbeddingDocument.source_id, EmbeddingDocument.metadata_json
+    ).all()
+    return [(t, i, _failures(m, model)) for t, i, m in rows if _failures(m, model) >= MAX_EMBED_FAILURES]
+
+
+def _document_chunks(doc) -> list[str]:
+    from app.services.embedding_worker import _chunks_for_source
+
+    metadata = doc.metadata_json or {}
+    title = doc.title
+    if doc.source_type == "certificate" and not metadata.get("identity_text"):
+        title = None  # no identity text: the worker would fall back to the body, so do the same
+    return _chunks_for_source(
+        doc.source_type, {"title": title, "body_text": doc.body_text, "source_key": doc.source_key, "metadata": metadata}
+    )
+
+
+def backfill_records(
+    db: Session,
+    model: str,
+    *,
+    rpm: int | None = None,
+    batch_size: int = 100,
+    sleep=None,
+    should_stop=None,
+) -> BackfillResult:
+    """Embed every active keep-set document that has no current chunk of `model`.
+
+    Requests carry at most `batch_size` texts and are spaced `60 / rpm` seconds apart. A request that raises adds one
+    to each of its documents' failure count for `model` (`metadata["embed_failures"][model]`); at
+    `MAX_EMBED_FAILURES` the document is given up on. A rerun only touches documents still missing.
+    """
+    import time
+
+    from app.config import settings
+    from app.models.embeddings import EmbeddingChunk
+    from app.models.user import SystemSetting
+    from app.services.embedding_settings import embed_for_model, provider_for_model
+
+    sleep = sleep or time.sleep
+    if rpm is None:
+        row = db.query(SystemSetting.embedding_backfill_rpm).first()
+        rpm = (row[0] if row else None) or DEFAULT_BACKFILL_RPM
+    pause = 60.0 / max(1, int(rpm))
+
+    embedded = failed = 0
+    requests_made = 0
+    stopped = False
+
+    def send(group) -> None:
+        nonlocal embedded, failed, requests_made, stopped
+        if should_stop is not None and should_stop():
+            stopped = True
+            return
+        if requests_made:
+            sleep(pause)
+        requests_made += 1
+        texts = [t for _doc, chunks in group for t in chunks]
+        try:
+            vectors = embed_for_model(db, texts, model)
+        except Exception as exc:  # noqa: BLE001 - counted per document, never fatal to the run
+            logger.warning("records backfill request failed (%s): %s", model, exc)
+            db.rollback()
+            for doc, _chunks in group:
+                meta = dict(doc.metadata_json or {})
+                counts = dict(meta.get("embed_failures") or {})
+                counts[model] = _failures(meta, model) + 1
+                meta["embed_failures"] = counts
+                doc.metadata_json = meta
+            failed += len(group)
+            db.commit()
+            return
+        at = 0
+        for doc, chunks in group:
+            for idx, chunk_text in enumerate(chunks):
+                db.add(
+                    EmbeddingChunk(
+                        document_id=doc.id,
+                        source_type=doc.source_type,
+                        source_id=doc.source_id,
+                        chunk_index=idx,
+                        chunk_text=chunk_text,
+                        chunk_hash=hashlib.sha256(chunk_text.encode("utf-8")).hexdigest(),
+                        embedding=vectors[at + idx],
+                        model_name=model,
+                        model_version=settings.embedding_model_version,
+                        embedding_provider=provider_for_model(model),
+                        source_hash=doc.source_hash,
+                        metadata_json=doc.metadata_json or {},
+                        company_id=doc.company_id,
+                        is_current=True,
+                    )
+                )
+            at += len(chunks)
+            embedded += 1
+        db.commit()
+
+    # Documents are read once, in id order, so a document whose request fails is not retried in the same run.
+    last_id = "00000000-0000-0000-0000-000000000000"
+    group: list = []
+    size = 0
+    while not stopped:
+        page = (
+            _missing_documents(db, model)
+            .filter(EmbeddingDocument.id > last_id)
+            .order_by(EmbeddingDocument.id)
+            .limit(max(batch_size, 1) * 5)
+            .all()
+        )
+        if not page:
+            break
+        last_id = page[-1].id
+        for doc in page:
+            if _failures(doc.metadata_json, model) >= MAX_EMBED_FAILURES:
+                continue
+            chunks = _document_chunks(doc)
+            if not chunks:
+                continue
+            if group and size + len(chunks) > batch_size:
+                send(group)
+                group, size = [], 0
+                if stopped:
+                    break
+            group.append((doc, chunks))
+            size += len(chunks)
+        if stopped:
+            break
+    if group and not stopped:
+        send(group)
+    remaining = _count_remaining(db, model)
+    return BackfillResult(embedded=embedded, failed=failed, remaining=remaining, complete=remaining == 0)
+
+
+def apply_search_model_guard(db: Session, model: str) -> bool:
+    """Make `model` the records-search model once every active keep-set document has a current chunk of it
+    (or is given up on). Builds the model's indexes first (CONCURRENTLY, outside any transaction). True when it
+    flipped; False and nothing changed otherwise."""
+    from sqlalchemy import text
+
+    from app.models.user import SystemSetting
+    from app.services import embedding_indexes
+
+    if _count_remaining(db, model):
+        return False
+    statements = embedding_indexes.index_ddl(model)
+    if statements:
+        db.commit()  # no transaction may be open on this session's connection while another builds the index
+        from app.database import engine
+
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            for ddl in statements:
+                conn.execute(text(ddl))
+    db.query(SystemSetting).update({"embedding_records_search_model": model})
+    db.commit()
+    return True

@@ -1102,8 +1102,13 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         if column in update_data and update_data[column] is None:
             update_data[column] = False
 
+    embedder_before = (settings.embedding_provider, settings.embedding_model)
     for key, value in update_data.items():
         setattr(settings, key, value)
+    embedder_changed = (
+        any(k in update_data for k in ("embedding_provider", "embedding_model"))
+        and (settings.embedding_provider, settings.embedding_model) != embedder_before
+    )
 
     if cost_price_verification_changed:
         from app.services.audit_service import log_audit
@@ -1123,6 +1128,13 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 
     db.commit()
     db.refresh(settings)
+    if embedder_changed:
+        # A new lookup embedder re-embeds the records in the background; the guard flips the search model
+        # only once every document has a vector of the new model.
+        from app.services import queue_service
+        from app.tasks.embedding_backfill import run_records_backfill
+
+        queue_service.enqueue_job(run_records_backfill, queue_name="imports")
     if "chatbot_composer_enabled" in update_data:
         from app.modules.chatbot.lane_vocabulary import clear_composer_cache
 

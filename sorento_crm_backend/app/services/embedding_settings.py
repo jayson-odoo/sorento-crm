@@ -55,3 +55,26 @@ def embed_search_texts(texts: list[str], model: str, *, timeout: float | None = 
         with SessionLocal() as s:
             api_key = llm_provider.resolve_api_key(AIAssistantConfigService(s).get(), "gemini")
     return embedding_client.embed_texts(texts, provider, model, api_key=api_key, timeout=timeout)
+
+
+def write_models(db: Session) -> list[str]:
+    """The models a keep-set source is embedded with: the setting's model, plus the records-search model while
+    the two differ (dual write until the guard flips the search model). The setting's model comes first."""
+    _provider, model = resolve_embedder(db)
+    search = records_search_model(db)
+    return [model] if search == model else [model, search]
+
+
+def embed_for_model(db: Session, texts: list[str], model: str, *, timeout: float | None = None) -> list[list[float]]:
+    """Embed `texts` with `model` through the one embedding client, keys resolved the way the callers always did
+    (OpenAI: the settings key; Gemini: the AI assistant config's key, else the environment key)."""
+    from app.services import embedding_client
+
+    provider = provider_for_model(model)
+    api_key = None
+    if provider == "gemini":
+        from app.services import llm_provider
+        from app.services.ai_assistant_service import AIAssistantConfigService
+
+        api_key = llm_provider.resolve_api_key(AIAssistantConfigService(db).get(), "gemini")
+    return embedding_client.embed_texts(texts, provider, model, api_key=api_key, timeout=timeout)
