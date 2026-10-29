@@ -1,4 +1,4 @@
-# CARD: PS-REGISTER-CHECK-FIRST v1 (29 Oct 2026)
+# CARD: PS-REGISTER-CHECK-FIRST v1.1 (29 Oct 2026; v1.1 = crew dev DB counts)
 
 Paths: BE = `sorento_crm_backend/app`, FE = `sorento_crm_frontend/app/(protected)/project-sales`. Code read on
 origin/main ec29a81c3b. People are roles (Sales A, Sales B, Manager); titles are masked.
@@ -78,24 +78,24 @@ Requirements document
 14. Existing projects already past Registered are not touched; nothing is backfilled. Moves back, Lost, Dormant and
     PO received are not gated (Q-B).
 
-## Real examples (dev copy, masked)
+## Real examples (crew dev DB, aggregates only)
 
-The lane cannot run SQL on the crew dev DB (a prod restore; the old dev copy `sorento_cagent_stack` is gone, `psql -l`
-29 Oct). Examples 1-4 are from the dev-copy reads in the #1957 and #1961 cards (28 Oct); fresh numbers:
-`documentation/plans/projects/ps-register-check-first-dev-examples.sql` (read-only, for crew), UNVERIFIED until run.
+Crew ran `documentation/plans/projects/ps-register-check-first-dev-examples.sql` read-only on the crew dev DB
+(29 Oct). Rows stay local; only counts are quoted here. 11 projects: 9 staff-registered, 1 approved portal
+registration, 1 pending.
 
-1. **Match**: Sales B types "100 units DSTH <township>" with the same developer as PRJ-000002 (owned by Sales A,
-   approved, open). Step 1 Check finds PRJ-000002 blocking; the form collapses to "Register as secondary lead on
-   PRJ-000002"; Sales A's manager sees Sales B under "Secondary leads" on PRJ-000002 and can Reassign.
-2. **No match**: PRJ-000003 (a school restroom refurbishment, pasted from a form): AI extract fills the title, Check
-   finds nothing, step 2 opens with the extracted parties.
-3. **Blank developer**: PRJ-000001 has no developer, so a new title close to it is checked against every developer
-   (rule 1 and Q-D).
-4. **Past Registered, no requirements**: PRJ-000002 / PRJ-000003 / PRJ-000004 sat in Spec In on 28 Oct (#1961 card):
-   untouched (rule 14). A project registered on the crew copy this week (e.g. PPF2610005 from the #1966 hand test;
-   its stage UNVERIFIED) sits in Registered: its next Spec In move asks for the requirements file.
-5. **Interests**: the dev copy had 0 takeover requests and 0 collaborators on 28 Oct (#1957 card), so the hand test
-   files one (example 1). Query 3 counts the crew DB's.
+1. **Requirements gate, who it hits**: 5 projects sit in Registered and all 5 have 0 documents of any kind. Under
+   Q-B (a) each one asks for a Requirements file on its next Spec In move; nothing else changes for them.
+2. **Past Registered, untouched**: 3 in Spec In and 2 in PO Received, also with 0 documents. Rule 14: no backfill,
+   no block on their next moves.
+3. **No Requirements kind yet**: 22 attachment types exist, `project_document` among them; no requirements row, and
+   the code `project_requirements` is free (10 legacy types have no code, so the lookup must go by code).
+4. **Secondary leads**: one request in total, a dispute (today's "Register interest") that was rejected; no project
+   has two. "Competing secondary leads" therefore does not exist in dev data: the hand test files two (Sales B and
+   Sales C on the same project) to show the Access panel list.
+5. **Match / similar**: no pair of titles in the same company reaches even 0.4 similarity, so no live project would
+   block or show "Similar" today. The hand test registers a near-copy of an existing Registered project's title with
+   the same developer to reach the block (>= 0.70) and a looser one for "Similar" (0.55-0.70).
 
 ## Edge cases
 
