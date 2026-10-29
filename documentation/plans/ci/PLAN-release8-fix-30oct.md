@@ -1,6 +1,6 @@
 # PLAN: RELEASE8-FIX (release #8 full suite red: 4 DO backfill embedding tests)
 
-Status: in progress (small fix track: tests only, no migration, no auth change)
+Status: PR open, waiting CI (small fix track: tests only, no migration, no auth change)
 
 ## Symptom
 
@@ -37,6 +37,14 @@ Prod needs nothing: DO and DO line embeddings stop by design; existing 3-small r
 - One new test pins today's behaviour with the real keep set: a plain DO push queues no embedding event
   for the DO or its lines.
 - Module docstrings say why.
+
+## Also red in release #8 (same run, not in the brief)
+
+- Shard 5 (job 123669204078): `tests/test_company_scope.py::test_every_company_id_table_is_registered`
+  expected 172 owned tables, found 173. `item_classes` (`app/models/product.py:189`, #1972 ITEM-CLASS) is
+  CompanyScopedMixin by design, exactly as `item_types`. Count -> 173 with its line in the running tally.
+- Vitest 2 (job 123669203545): `components/ui/data-grid.nested.inventory.test.ts` census pin
+  `ProductsList.tsx:1115` -> `:1185` (BarcodeImportDialog; #1972 added 70 lines above it).
 
 ## Proof
 
