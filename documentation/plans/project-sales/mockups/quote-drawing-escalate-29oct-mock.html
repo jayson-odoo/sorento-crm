@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drawing Escalate Mock</title>
+<!-- QUOTE-DRAWING-ESCALATE mock (29 Oct). Static: the Drawing cell of the quotation lines grid
+     in each state. Masked data only. Plan: ../PLAN-quote-drawing-escalate-29oct.md -->
+<style>
+  :root {
+    --bg: #ffffff; --fg: #0f172a; --muted: #64748b; --border: #e2e8f0; --soft: #f8fafc;
+    --primary: #1d4ed8; --primary-soft: #eff6ff;
+    --amber: #b45309; --amber-soft: #fffbeb; --amber-border: #fcd34d;
+    --red: #b91c1c; --red-soft: #fef2f2; --red-border: #fca5a5;
+    --green: #047857;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1120; --fg: #e2e8f0; --muted: #94a3b8; --border: #1e293b; --soft: #111827;
+      --primary: #60a5fa; --primary-soft: #172554;
+      --amber: #fbbf24; --amber-soft: #2a1d05; --amber-border: #92400e;
+      --red: #f87171; --red-soft: #2a0f0f; --red-border: #7f1d1d;
+      --green: #34d399;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 32px 0 8px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; max-width: 70ch; }
+  .wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table.grid { border-collapse: collapse; width: 100%; min-width: 560px; }
+  table.grid th, table.grid td { border-bottom: 1px solid var(--border); padding: 6px 8px;
+    vertical-align: top; text-align: left; font-size: 13px; }
+  table.grid th { background: var(--soft); font-weight: 600; font-size: 12px; color: var(--muted); }
+  td.drawing, th.drawing { width: 56px; min-width: 56px; max-width: 56px; padding: 6px 4px; }
+  .state { font-size: 11px; color: var(--muted); }
+  .thumb { display: block; width: 100%; aspect-ratio: 1; border: 1px solid var(--border);
+    border-radius: 4px; background: repeating-linear-gradient(45deg, var(--soft), var(--soft) 4px, var(--bg) 4px, var(--bg) 8px); }
+  .t2 { font-size: 10px; line-height: 1.2; display: block; }
+  .muted { color: var(--muted); }
+  /* Escalate: a dashed, outlined small button, same family as the "Choose" picker trigger */
+  .esc { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 100%; aspect-ratio: 1; border: 1px dashed var(--primary); border-radius: 4px;
+    background: var(--primary-soft); color: var(--primary); font: inherit; font-size: 10px;
+    line-height: 1.2; cursor: pointer; gap: 2px; padding: 2px; }
+  .esc svg, .flag svg { width: 14px; height: 14px; }
+  .esc[aria-busy="true"] { opacity: .6; cursor: progress; }
+  .flag { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 100%; aspect-ratio: 1; border: 1px solid var(--border); border-radius: 4px;
+    font-size: 10px; line-height: 1.2; text-align: center; gap: 2px; padding: 2px; color: var(--muted); }
+  .flag.risk { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+  .flag.late { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
+  table.map { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.map th, table.map td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+  table.map th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; max-width: 75ch; }
+  .toast { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; background: var(--bg); box-shadow: 0 2px 8px rgba(0,0,0,.08); font-size: 13px; }
+  .bell { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; max-width: 360px; font-size: 13px; }
+  .bell b { display: block; }
+  @media (max-width: 480px) { body { padding: 16px; } }
+</style>
+</head>
+<body>
+<h1>Drawing cell: escalate a missing drawing</h1>
+<p class="lead">Quotation lines grid, Drawing column (56px wide, unchanged). One row per state.
+Hover text is shown under each row label. Product codes are masked.</p>
+
+<div class="wrap">
+<table class="grid">
+  <thead><tr><th>State</th><th class="drawing">Drawing</th><th>Product</th><th>What the cell does</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>1. Drawing on file<br><span class="state">today, unchanged</span></td>
+      <td class="drawing"><span class="thumb" title="TS-0001.png"></span></td>
+      <td>PRD-AAA-01</td>
+      <td>Thumbnail opens the viewer. No escalate.</td>
+    </tr>
+    <tr>
+      <td>2. No drawing, read-only user<br><span class="state">no projects.projects.edit</span></td>
+      <td class="drawing"><span class="t2 muted">no drawing</span></td>
+      <td>PRD-BBB-02</td>
+      <td>Same as today.</td>
+    </tr>
+    <tr>
+      <td>3. No drawing, can edit<br><span class="state">hover: "Ask marketing for a drawing of PRD-CCC-03"</span></td>
+      <td class="drawing">
+        <button class="esc" aria-label="Escalate missing drawing for PRD-CCC-03">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+          Escalate
+        </button>
+      </td>
+      <td>PRD-CCC-03</td>
+      <td>One click, no dialog. Files the request (or joins the open one) and flips to state 5.</td>
+    </tr>
+    <tr>
+      <td>4. Escalating<br><span class="state">request in flight</span></td>
+      <td class="drawing">
+        <button class="esc" aria-busy="true" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" stroke-dasharray="14 40"/></svg>
+          Escalate
+        </button>
+      </td>
+      <td>PRD-CCC-03</td>
+      <td>Disabled until the server answers. Error: toast with the server's message, cell back to state 3.</td>
+    </tr>
+    <tr>
+      <td>5. Escalated, on time<br><span class="state">hover: "Escalated 29 Oct 2026, 4:12 PM by 2 people. Due 30 Oct, 4:12 PM."</span></td>
+      <td class="drawing">
+        <span class="flag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+          Escalated<br>29 Oct
+        </span>
+      </td>
+      <td>PRD-CCC-03</td>
+      <td>Same on every line and quotation with this product. Not clickable.</td>
+    </tr>
+    <tr>
+      <td>6. Escalated, under 4h left<br><span class="state">amber, the SLA chips' at-risk rule</span></td>
+      <td class="drawing"><span class="flag risk">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+          Escalated<br>28 Oct</span></td>
+      <td>PRD-DDD-04</td>
+      <td>Colour follows the resolution deadline (<code>AT_RISK_MS</code>).</td>
+    </tr>
+    <tr>
+      <td>7. Escalated, overdue</td>
+      <td class="drawing"><span class="flag late">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+          Escalated<br>27 Oct</span></td>
+      <td>PRD-EEE-05</td>
+      <td>Red. The form-SLA overdue scan has already moved it up a tier on its own.</td>
+    </tr>
+    <tr>
+      <td>8. Drawing added<br><span class="state">request closed itself</span></td>
+      <td class="drawing"><span class="thumb" title="TS-0005.png"></span></td>
+      <td>PRD-EEE-05</td>
+      <td>Back to state 1 on the next read of the quotation (draft versions only).</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Feedback</h2>
+<div class="toast">Escalated: marketing will add a drawing for PRD-CCC-03</div>
+<p class="note">After a click in state 3. When the product already had an open request:
+"Already escalated: you will be told when the drawing is added".</p>
+<div class="bell" style="margin-top:12px"><b>Drawing added for PRD-EEE-05</b><span class="muted">Opens the quotation you escalated it from.</span></div>
+<p class="note">In-app notification to every requester when the request closes itself. Nothing on WhatsApp or email.</p>
+
+<h2>Element to component map</h2>
+<table class="map">
+  <thead><tr><th>Element</th><th>Component / source</th><th>Change</th></tr></thead>
+  <tbody>
+    <tr><td>Drawing cell, all states</td><td><code>app/(protected)/project-sales/[projectId]/components/QuotationLineFileCell.tsx</code> (read-only branch, :144-150)</td><td>The "no drawing" branch renders a new <code>DrawingEscalation</code> piece instead of plain text when the user can edit.</td></tr>
+    <tr><td>Column (56px)</td><td><code>QuotationLinesGrid.tsx</code> :841-853 (<code>DrawingCell</code> :250)</td><td>None; passes <code>canEdit</code> through.</td></tr>
+    <tr><td>Escalate button (dashed)</td><td>Same styling as the cell's own "Choose" trigger, <code>QuotationLineFileCell.tsx</code> :170-178</td><td>New small component in the same folder, no new shared variant.</td></tr>
+    <tr><td>Escalated colour rule</td><td><code>AT_RISK_MS</code> + chip colours, <code>sla-management/conversation-sla-tracking/components/TicketSlaChips.tsx</code> :18, :51-57</td><td>Export <code>chipClass</code> and reuse it; no copy.</td></tr>
+    <tr><td>Hover dates</td><td><code>formatDateTimeInMalaysia</code>, <code>lib/helpers</code></td><td>Reuse.</td></tr>
+    <tr><td>Icon</td><td><code>lucide-react</code> <code>Flag</code></td><td>Reuse.</td></tr>
+    <tr><td>Toast + error text</td><td><code>extractApiError</code> (<code>lib/api-client</code>), the project's mutation-hook pattern</td><td>New <code>useEscalateDrawing</code> mutation, invalidates the quotation lines query.</td></tr>
+    <tr><td>Data</td><td><code>line.technical_drawing</code> from <code>project_quotation_service.py</code> :1519</td><td>Cell gains <code>escalation: {opened_at, due_at_resolution, requester_count} | null</code>.</td></tr>
+    <tr><td>Bell notification</td><td><code>NotificationService</code> (BE), existing bell</td><td>Reuse.</td></tr>
+  </tbody>
+</table>
+</body>
+</html>

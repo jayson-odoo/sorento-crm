@@ -149,8 +149,8 @@ Escalate answers plainly instead of failing silently.
 
 ## Mock
 
-Filed separately after the card (cell states: no drawing / escalate / escalated), with the
-element-to-component map.
+`mockups/quote-drawing-escalate-29oct-mock.html`: the eight cell states and the element-to-component
+map.
 
 ## Tests (red first, after approval)
 
