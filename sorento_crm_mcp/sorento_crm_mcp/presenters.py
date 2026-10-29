@@ -3521,6 +3521,8 @@ _ASK_SUMMARY_NOUNS = {"customer": "customer", "product": "product", "sales_agent
 
 #: The pre-#1922 block title of each outstanding kind (`_outstanding_so_block` / `_outstanding_do_block`).
 _ASK_OUTSTANDING_BLOCKS = {"outstanding": "*Sales order outstanding*", "pending_delivery": "*Delivery order outstanding*"}
+#: What an outstanding kind with nothing in it says (`_outstanding_report`'s own empty blocks).
+_ASK_OUTSTANDING_EMPTY = {"outstanding": "No open sales order.", "pending_delivery": "No outstanding delivery order."}
 #: The filters the pre-#1922 header names in its own four lines (`_outstanding_header_lines`), and Brand after them.
 _ASK_HEADER_KEYS = ("product", "customer", "location", "brand")
 
@@ -3551,7 +3553,7 @@ def _ask_summary(basis: Any, summary: dict) -> list[str]:
     route group, in the route's order; By location prints whole, any other group is capped as the old second group."""
     so = basis == "outstanding"
     if not summary.get("documents"):
-        return ["No open sales order." if so else "No outstanding delivery order."]
+        return [_ASK_OUTSTANDING_EMPTY[basis]]
     qty = summary.get("qty") or 0
     outstanding = f"Outstanding: {_ask_pcs(qty)}, {_ask_rm(summary.get('amount'))}"
     days = _outstanding_date_range(summary.get("date_first"), summary.get("date_last"))
@@ -3623,6 +3625,12 @@ def _report_ask(body: dict) -> str:
     if outstanding_kind:
         # REPORT-OUTSTANDING-SUMMARY item 5 (owner 29 Oct): the pre-#1922 header in place of the filter facts and period.
         facts = _ask_outstanding_header(body, facts)
+    if outstanding_kind and isinstance(body.get("documents"), list):
+        # Item 7 (owner 29 Oct): the SO / DO list as before #1922: the header, then one numbered block per document with
+        # every field (`_outstanding_detail`, the old list's own renderer).
+        scope = "so" if body["basis"] == "outstanding" else "do"
+        listed = _outstanding_detail({f"{scope}_rows": body["documents"]}, scope)
+        return "\n".join(facts) + "\n\n" + (listed or _ASK_OUTSTANDING_EMPTY[body["basis"]])
     if isinstance(body.get("summary"), dict):
         # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or customer prints the summary in the pre-#1922
         # frame (header, a blank line, the block), its breakdowns the route's (the defaults, or the axis the user named).

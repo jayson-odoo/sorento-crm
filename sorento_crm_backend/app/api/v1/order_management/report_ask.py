@@ -191,7 +191,7 @@ def _echo(
 
 #: REPORT-SMART-1021: keys a sales body carries only when counted or compared, so a body
 #: that is neither stays what every caller already reads.
-_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate", "summary")
+_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate", "summary", "documents")
 
 
 def _drop_unset(part: dict, compared: bool) -> dict:
@@ -661,6 +661,12 @@ def report_ask(
                 filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
             ),
         }
+    if basis_norm in ask.DOCUMENT_LISTS and group_norm == ask.DOCUMENT_LISTS[basis_norm]["column"] and data.get("status") == "ok":
+        # REPORT-OUTSTANDING-SUMMARY item 7 (owner 29 Oct): the document list as before #1922, every row.
+        data = {**data, "documents": ask.document_rows(
+            db, basis=basis_norm, filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
+            date_from=date_from, date_to=date_to,
+        )}
     if compare_norm is not None and data.get("status") == "ok":
         # REPORT-SMART-1021: the earlier window, every row (matched by name), one call.
         earlier_from, earlier_to = ask.compare_window(compare_norm, date_from, date_to)

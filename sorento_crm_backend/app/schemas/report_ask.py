@@ -6,7 +6,7 @@ not name (LESSONS-LEARNT.md).
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -110,6 +110,9 @@ class ReportAskResponse(BaseModel):
     sales_agent_fill_rate: Optional[float] = None
     # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or a customer; absent otherwise.
     summary: Optional[ReportAskSummary] = None
+    # REPORT-OUTSTANDING-SUMMARY item 7: an SO / DO list's documents, as the pre-#1922 `so_rows` / `do_rows` (one row per
+    # document: number, customer_name, product_code, location, the quantities and the date); absent otherwise.
+    documents: Optional[List[Dict[str, Any]]] = None
 
 
 class ReportAskChatRow(BaseModel):

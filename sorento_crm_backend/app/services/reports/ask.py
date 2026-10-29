@@ -271,6 +271,34 @@ def _empty(status: str = "ok", message: Optional[str] = None) -> dict[str, Any]:
     }
 
 
+def _params(
+    db: Session, entry: dict[str, Any], filters: dict[str, list[str]], warehouse_codes: list[str], policy: Any,
+    date_from: date, date_to: date,
+) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
+    """The engine params of a sales ask, or the body to answer with instead (a filter resolving to nothing is zero rows,
+    a refused location the refusal)."""
+    params: dict[str, Any] = {
+        "date_basis": "order_date",
+        "period": {"kind": "custom", "from": date_from.isoformat(), "to": date_to.isoformat()},
+    }
+    for word, values in filters.items():
+        if not values:
+            return params, _empty()
+        if word == "channel":
+            values = [_CHANNEL_CLASS[v] for v in values]
+        params[word] = list(values)
+
+    if "location" in entry["filters"]:  # a document-level basis has no location to cap
+        location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
+        if refusal is not None:
+            return params, _empty("refused", refusal)
+        if nothing:
+            return params, _empty()
+        if location_ids is not None:
+            params["location"] = location_ids
+    return params, None
+
+
 def run_ask(
     db: Session,
     *,
@@ -303,26 +331,9 @@ def run_ask(
         )
     entry = CATALOGUE["sales"][basis]
     definition = entry["definition"]
-
-    params: dict[str, Any] = {
-        "date_basis": "order_date",
-        "period": {"kind": "custom", "from": date_from.isoformat(), "to": date_to.isoformat()},
-    }
-    for word, values in filters.items():
-        if not values:
-            return _empty()
-        if word == "channel":
-            values = [_CHANNEL_CLASS[v] for v in values]
-        params[word] = list(values)
-
-    if "location" in entry["filters"]:  # a document-level basis has no location to cap
-        location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
-        if refusal is not None:
-            return _empty("refused", refusal)
-        if nothing:
-            return _empty()
-        if location_ids is not None:
-            params["location"] = location_ids
+    params, stop = _params(db, entry, filters, warehouse_codes, policy, date_from, date_to)
+    if stop is not None:
+        return stop
 
     # The engine refuses rows == cols, so the one-total shape groups by month and reads the
     # grand total only.
@@ -386,6 +397,63 @@ def run_ask(
 
 
 # ----------------------------------------------------------------------- summary (REPORT-OUTSTANDING-SUMMARY)
+
+#: REPORT-OUTSTANDING-SUMMARY item 7: each document list's line columns and its row's keys, as the pre-#1922
+#: outstanding report's `so_rows` / `do_rows` named them.
+DOCUMENT_LISTS: dict[str, dict[str, Any]] = {
+    "outstanding": {"number": "so_number", "column": "sales_order", "day": "order_day", "date": "order_date"},
+    "pending_delivery": {"number": "do_number", "column": "delivery_order", "day": "day", "date": "do_date"},
+}
+
+
+def document_rows(
+    db: Session, *, basis: str, filters: dict[str, list[str]], warehouse_codes: list[str], policy: Any,
+    company_grants: Any, date_from: date, date_to: date,
+) -> list[dict[str, Any]]:
+    """Item 7 (owner 29 Oct, as before #1922): every outstanding document behind the figure, one row each, its lines
+    rolled up (products and locations joined), latest first and undated last (owner R23, 13 Sep). The SAME definition,
+    filters and predicates as `run_ask` (the engine's own line statement), so the list is the figure's population."""
+    from app.services.reports import engine
+
+    shape, entry = DOCUMENT_LISTS[basis], CATALOGUE["sales"][basis]
+    params, stop = _params(db, entry, filters, warehouse_codes, policy, date_from, date_to)
+    if stop is not None:
+        return []
+    ctx = engine.resolve(db, entry["definition"], params, company_grants=frozenset(str(c) for c in company_grants or ()))
+    keys = [shape["column"], "customer", "product", "location", shape["day"], "qty", *SUMMARY_BASES[basis]["also"]]
+    columns = [ctx.dataset.column(k) for k in keys]
+    docs: dict[str, dict[str, Any]] = {}
+    for row in db.execute(engine._detail_statement(ctx, columns)).mappings():
+        open_qty = Decimal(row["qty"] or 0)
+        if open_qty <= 0:
+            continue  # nothing still owed on this line (pre-#1922: ordered minus delivered above 0)
+        doc = docs.setdefault(row[shape["column"]], {
+            "number": row[shape["column"]], "customer": row["customer"], "products": set(), "locations": set(),
+            "qty": Decimal(0), "ordered": Decimal(0), "day": row[shape["day"]],
+        })
+        doc["qty"] += open_qty
+        doc["ordered"] += Decimal(row.get("ordered_qty") or 0)
+        if row["product"]:
+            doc["products"].add(row["product"])
+        if row["location"]:
+            doc["locations"].add(row["location"])
+    out = []
+    for doc in docs.values():
+        qty = _qty(doc["qty"])
+        common = {
+            shape["number"]: doc["number"], "customer_name": doc["customer"],
+            "product_code": ", ".join(sorted(doc["products"])) or None,
+            "location": ", ".join(sorted(doc["locations"])) or None, shape["date"]: doc["day"],
+        }
+        if basis == "outstanding":
+            ordered = _qty(doc["ordered"])
+            out.append({**common, "ordered_qty": ordered, "transferred_qty": ordered - qty, "outstanding_qty": qty})
+        else:
+            out.append({**common, "do_qty": qty, "delivered_qty": 0, "pending_qty": qty})
+    out.sort(key=lambda r: (r[shape["date"]] or "", r[shape["number"]] or ""), reverse=True)
+    out.sort(key=lambda r: r[shape["date"]] is None)
+    return out
+
 
 #: The outstanding kinds that carry a summary (`report-outstanding-summary-behaviour-card.md`), and for each the
 #: grouping that counts its documents, the one that dates them, and the extra measures its lines print.
