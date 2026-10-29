@@ -85,7 +85,7 @@ export interface SignaturePadProps {
    */
   onNotReadyAttempt?: () => void;
   /** Opt-in. Rendered beside the commit button; told whether anything is drawn or typed yet. */
-  renderFooterHint?: (state: { hasContent: boolean }) => React.ReactNode;
+  renderFooterHint?: (state: { hasContent: boolean; hintId: string }) => React.ReactNode;
   /** Set false to skip the geolocation prompt entirely (e.g. an internal desk signature). */
   requestGeolocation?: boolean;
   className?: string;
@@ -547,11 +547,16 @@ export function SignaturePad({
       <CardFooter
         className={cn('justify-end gap-2.5 py-3', renderFooterHint && 'flex-wrap sm:flex-nowrap')}
       >
-        {renderFooterHint?.({ hasContent })}
+        {renderFooterHint?.({ hasContent, hintId: `${fieldId}-hint` })}
         <Button
           type="button"
           disabled={onNotReadyAttempt ? undefined : disabled || !hasContent}
           aria-disabled={onNotReadyAttempt && (disabled || !hasContent) ? true : undefined}
+          aria-describedby={
+            onNotReadyAttempt && renderFooterHint && (disabled || !hasContent)
+              ? `${fieldId}-hint`
+              : undefined
+          }
           onClick={onNotReadyAttempt && (disabled || !hasContent) ? onNotReadyAttempt : commit}
         >
           {commitLabel}

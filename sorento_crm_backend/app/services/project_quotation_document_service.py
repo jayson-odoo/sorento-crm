@@ -113,6 +113,15 @@ def _item_number(line: ProjectQuotationLine, position: int) -> str:
     return item_number(line, position)
 
 
+def quotation_no(document_no: Optional[str], issue_no: int) -> str:
+    """The "Quotation No." every surface prints: `<document_no>-R<issue_no>`.
+
+    Built, never read back from `our_ref_text`, so an issue stored with the old `(R1)` text still
+    shows the same number on the sign page, the PDF, the workbook and the download name.
+    """
+    return f"{document_no}-R{issue_no}"
+
+
 # ------------------------------------------------------------------ create
 
 
@@ -551,7 +560,7 @@ def issue(
         company_id=document.company_id,
         document_id=document.id,
         issue_no=issue_no,
-        our_ref_text=f"{document.document_no}-R{issue_no}",
+        our_ref_text=quotation_no(document.document_no, issue_no),
         issued_at=datetime.utcnow(),
         issued_by=actor_user_id,
         cover_letter_rendered=document.cover_letter_html,
@@ -698,7 +707,7 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         "project_id": str(document.project_id),
         "document_no": document.document_no,
         "our_ref": (
-            f"{document.document_no}-R{latest.issue_no}"
+            quotation_no(document.document_no, latest.issue_no)
             if latest is not None
             else document.document_no
         ),
@@ -1385,7 +1394,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
 
     return {
         "our_ref": (
-            f"{document.document_no}-R{record.issue_no}"
+            quotation_no(document.document_no, record.issue_no)
             if document is not None
             else record.our_ref_text
         ),

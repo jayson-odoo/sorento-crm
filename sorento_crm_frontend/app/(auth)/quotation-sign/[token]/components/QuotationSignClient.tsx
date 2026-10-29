@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { CheckCircle2, Link2Off, MessageSquareText } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Info, Link2Off, MessageSquareText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -48,6 +48,7 @@ function Letterhead({ page }: { page: QuotationSignPage }) {
             <img
               src={page.sender_logo_url}
               alt={`${page.sender_name ?? 'Company'} logo`}
+              referrerPolicy="no-referrer"
               className="h-12 w-auto max-w-[120px] shrink-0 object-contain"
             />
           )}
@@ -290,7 +291,10 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
         </div>
 
         {hasTerms && (
-          <div className="flex items-start gap-2">
+          <div
+            data-attention={nudged && named && !ticked ? 'true' : undefined}
+            className="flex items-start gap-2 rounded-md border border-transparent p-2 data-[attention=true]:border-amber-500 data-[attention=true]:bg-amber-50 dark:data-[attention=true]:bg-amber-950/30"
+          >
             <Checkbox
               id="quotation-sign-terms"
               ref={tickRef}
@@ -313,18 +317,23 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
             // button, so gating it here is the only way to keep the two in the right order.
             disabled={!named || !termsOk || accept.isPending}
             onNotReadyAttempt={showMissingStep}
-            renderFooterHint={({ hasContent }) => {
+            renderFooterHint={({ hasContent, hintId }) => {
               const hint = hintFor(hasContent);
-              return hint ? (
+              if (!hint) return null;
+              const HintIcon = nudged ? AlertCircle : Info;
+              return (
                 <p
+                  id={hintId}
+                  aria-live="polite"
                   className={cn(
-                    'min-w-0 flex-1 text-sm',
+                    'order-last flex min-w-0 basis-full items-start gap-1.5 text-sm sm:order-none sm:basis-0 sm:flex-1',
                     nudged ? 'font-medium text-warning' : 'text-muted-foreground',
                   )}
                 >
+                  <HintIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
                   {hint}
                 </p>
-              ) : null;
+              );
             }}
             onChange={(value) => {
               if (!value) return;

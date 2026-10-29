@@ -30,6 +30,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
+import time
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape, unescape
@@ -52,6 +53,7 @@ from app.services import geo_places
 from app.services import product_image_service as product_images
 from app.services.complaint_pdf_service import PDFRenderingUnavailable
 from app.services.error_handler import AppException
+from app.services.project_quotation_document_service import quotation_no
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
 
 logger = logging.getLogger(__name__)
@@ -291,24 +293,35 @@ def fetch_logo_data_uri(url: Optional[str]) -> Optional[str]:
 
     The url is the company's own setting, so it passes the outbound guard before a socket opens.
     Redirects are NOT followed: the guard only vets the first hop, so a redirect to an internal
-    address would walk around it. Streamed with a hard cap, by header and by running total.
+    address would walk around it. Hardened the way an untrusted download should be:
+
+    - identity encoding only, and any content-encoded answer is refused, so the 1 MB cap bounds
+      real bytes and not a decompression bomb;
+    - a 3 s deadline for the whole download, not just per read, against a slow drip;
+    - the content type is the server's claim, so the bytes are decoded and re-encoded by Pillow
+      (`product_image_service._downscale`) and only that output is embedded. An SVG or anything
+      else Pillow cannot read is left out.
     """
     if not url:
         return None
     try:
         assert_safe_outbound_url(url, label="The logo url")
-    except OutboundUrlRejected as exc:
+    except ValueError as exc:  # OutboundUrlRejected and every malformed-url error are ValueErrors
         logger.warning("Quotation PDF logo skipped, url refused: %s", exc)
         return None
+    deadline = time.monotonic() + LOGO_FETCH_TIMEOUT_SECONDS
     try:
         with httpx.Client(timeout=LOGO_FETCH_TIMEOUT_SECONDS, follow_redirects=False) as client:
-            with client.stream("GET", url) as response:
+            with client.stream("GET", url, headers={"Accept-Encoding": "identity"}) as response:
                 if not 200 <= response.status_code < 300:
                     logger.warning("Quotation PDF logo skipped, status %s", response.status_code)
                     return None
+                encoding = (response.headers.get("content-encoding") or "identity").strip().lower()
+                if encoding != "identity":
+                    logger.warning("Quotation PDF logo skipped, content encoding %s", encoding)
+                    return None
                 content_type = (response.headers.get("content-type") or "").split(";")[0]
-                content_type = content_type.strip().lower()
-                if not content_type.startswith("image/"):
+                if not content_type.strip().lower().startswith("image/"):
                     logger.warning("Quotation PDF logo skipped, content type %s", content_type)
                     return None
                 declared = response.headers.get("content-length")
@@ -317,10 +330,15 @@ def fetch_logo_data_uri(url: Optional[str]) -> Optional[str]:
                     return None
                 chunks: List[bytes] = []
                 downloaded = 0
+                # Identity was requested and anything else refused above, so decoding is a no-op
+                # here and these are the bytes on the wire.
                 for chunk in response.iter_bytes():
                     downloaded += len(chunk)
                     if downloaded > MAX_LOGO_BYTES:
                         logger.warning("Quotation PDF logo skipped, body over the cap")
+                        return None
+                    if time.monotonic() >= deadline:
+                        logger.warning("Quotation PDF logo skipped, download too slow")
                         return None
                     chunks.append(chunk)
     except Exception as exc:  # noqa: BLE001 - any failure leaves the letterhead name only
@@ -329,7 +347,10 @@ def fetch_logo_data_uri(url: Optional[str]) -> Optional[str]:
     data = b"".join(chunks)
     if not data:
         return None
-    return f"data:{content_type};base64,{base64.b64encode(data).decode()}"
+    rendered = product_images._downscale(data, "company-logo")
+    if rendered is None:
+        return None
+    return f"data:{rendered.mime_type};base64,{base64.b64encode(rendered.data).decode()}"
 
 
 def _lines_of(raw: Optional[str]) -> List[str]:
@@ -370,7 +391,7 @@ def _header_html(
         sender_bits.append(f'<div>Tel: {_cell(sender["phone"])}</div>')
 
     refs = [
-        ("Quotation No.", _cell(f"{document.document_no}-R{issue.issue_no}")),
+        ("Quotation No.", _cell(quotation_no(document.document_no, issue.issue_no))),
         ("Your Ref", _cell(document.your_ref)),
     ]
     refs.append(("Date", _date(document.doc_date or issue.issued_at)))
@@ -716,7 +737,7 @@ def build_filename(issue: ProjectQuotationIssue) -> str:
             .filter(ProjectQuotationDocument.id == issue.document_id)
             .scalar()
         )
-    ref = f"{document_no}-R{issue.issue_no}" if document_no else f"R{issue.issue_no}"
+    ref = quotation_no(document_no, issue.issue_no) if document_no else f"R{issue.issue_no}"
     safe = re.sub(r"[^A-Za-z0-9]+", "-", ref).strip("-") or "quotation"
     return f"quotation-{safe}.pdf"
 
