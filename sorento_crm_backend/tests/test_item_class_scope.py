@@ -202,6 +202,9 @@ def test_other_company_products_still_pass(db, cw) -> None:
     db.commit()
     c = cw.contact(db, [cw.w.sorento.id], {str(cw.w.sorento.id): [str(cw.serene.id)]})
     scope = _svc().contact_brand_scope(db, c.id)
+    from app.models.base import set_company_scope
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, str(other.id)}))
     pred = _svc().brand_predicate(scope, Product.brand_id, Product.company_id, Product.item_class_id)
     codes = {
         r[0]
