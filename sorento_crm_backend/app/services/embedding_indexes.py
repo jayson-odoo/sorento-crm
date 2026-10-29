@@ -34,16 +34,34 @@ def index_names(model: str) -> dict[str, str]:
     return names
 
 
-def index_ddl(model: str) -> list[str]:
+def online_indexes(model: str) -> tuple[tuple[str, str, str], ...]:
+    """(table, name, columns) per index, the shape `app/utils/online_index.py` builds; `index_ddl` renders the same."""
     names = index_names(model)
     base = base_predicate(model)
     out = [
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {names['keep']} ON embedding_chunks "
-        f"USING hnsw (embedding vector_cosine_ops) WHERE {base} AND source_type IN ({keep_set_sql()})"
+        (
+            "embedding_chunks",
+            names["keep"],
+            f"USING hnsw (embedding vector_cosine_ops) WHERE {base} AND source_type IN ({keep_set_sql()})",
+        )
     ]
     for source in HOT_FILTERED_SOURCES:
         out.append(
-            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {names[source]} ON embedding_chunks "
-            f"USING hnsw (embedding vector_cosine_ops) WHERE {base} AND source_type = {_quote(source)}"
+            (
+                "embedding_chunks",
+                names[source],
+                f"USING hnsw (embedding vector_cosine_ops) WHERE {base} AND source_type = {_quote(source)}",
+            )
         )
-    return out
+    return tuple(out)
+
+
+def index_ddl(model: str) -> list[str]:
+    return [
+        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {table} {columns}"
+        for table, name, columns in online_indexes(model)
+    ]
+
+
+# The set `lec_0002_embedding_indexes` and `scripts/ensure_goods_chain_indexes.py` build.
+MIGRATION_INDEXES = online_indexes("text-embedding-3-small")
