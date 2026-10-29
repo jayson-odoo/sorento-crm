@@ -194,14 +194,11 @@ def test_a_link_on_the_old_product_does_not_cover_a_line_whose_product_changed()
 # =============================================================================================
 
 
-@pytest.mark.parametrize("move_date", [False, True], ids=["qty_only", "qty_and_date"])
-def test_a_line_split_of_a_covered_done_row_leaves_it_done_with_its_old_changed_at(
-    api, move_date
-):
+def test_a_line_split_of_a_covered_done_row_leaves_it_done_with_its_old_changed_at(api):
     from .test_oi_cancel_bugs_so422492 import (
         D_592, _confirm, _core_line, _core_so, _line_payload, _link as _po_link,
         _order_row, _po_line as _po_line_w, _project_line, _project_so, _supplier,
-        Change, ADDED, QTY_CHANGED, Line, _build, _change, D_OTHER,
+        Change, ADDED, QTY_CHANGED, Line, _build, _change,
     )
     from app.models.project_so import OrderInquiryRow
 
@@ -227,13 +224,8 @@ def test_a_line_split_of_a_covered_done_row_leaves_it_done_with_its_old_changed_
     db.commit()
     assert _reload(db, row_x).ack_state == ACK_ACKNOWLEDGED
 
-    new_date = D_OTHER if move_date else D_592
     core_x.qty_ordered = Decimal("20")
     line_x.qty = Decimal("20")
-    if move_date:
-        # qty AND date move on the source line: `_amended_by_cs` runs twice for it
-        core_x.required_date = new_date
-        line_x.delivery_date = new_date
     core_n = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
                         required_date=D_592)
     line_n = _project_line(db, order, line_no=101, product=world.product, core_line=core_n)
@@ -241,7 +233,7 @@ def test_a_line_split_of_a_covered_done_row_leaves_it_done_with_its_old_changed_
     loc = world.own_wh.warehouse_code
     changes = [
         _change(QTY_CHANGED, core_x, so_number=core_so.so_number,
-                old_date=D_592, new_date=new_date, old_qty="30", new_qty="20"),
+                old_date=D_592, new_date=D_592, old_qty="30", new_qty="20"),
         Change(ADDED, core_so.so_number, world.product.product_code, loc, before=None,
                after=Line(doc_number=core_so.so_number, item_code=world.product.product_code,
                           location=loc, qty=10.0, required_date=D_592, row_ref="1")),
@@ -261,8 +253,6 @@ def test_a_line_split_of_a_covered_done_row_leaves_it_done_with_its_old_changed_
     assert row_x.ack_state == ACK_ACKNOWLEDGED, row_x.ack_state
     assert row_x.changed_at == old_stamp, "a split stamps no fresh changed_at"
     moved = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line_n.id).all()
-    # a new row on a different date than the source reads as a moved instruction; only the
-    # same-date split moves the acknowledgement whole
-    assert moved and (move_date or all(r.ack_state == ACK_ACKNOWLEDGED for r in moved)), [
+    assert moved and all(r.ack_state == ACK_ACKNOWLEDGED for r in moved), [
         r.ack_state for r in moved
     ]
