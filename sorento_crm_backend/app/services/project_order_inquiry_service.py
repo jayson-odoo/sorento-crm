@@ -1222,6 +1222,11 @@ def flag_rows_for_cancelled_lines(
         row.ack_override_at = None
     if rows:
         db.flush()
+        # Ruling (c): a flagged row with no live link is done (acknowledged by NULL); one
+        # with a live link stays `changed` until a manual Confirm. ONE batched call.
+        service = ProjectOrderInquiryService(db)
+        cover = service._live_cover([row.id for row in rows])
+        service.auto_confirm([row.id for row in rows if not cover.get(row.id, (0, None, 0))[2]])
     logger.info(
         "flag_rows_for_cancelled_lines: %d core line id(s), %d row(s) flagged",
         len(ids),
