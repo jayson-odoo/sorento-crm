@@ -9,6 +9,14 @@ company a product whose brand is not in the list, or has no brand at all, is out
 (CONTACT-BRAND-SCOPE Q1). `brand_predicate` is the one place the rule is spelled. Core code:
 it never imports the chatbot package (tests/chatbot/test_import_boundary.py).
 
+ITEM-CLASS (PLAN-item-class-29oct.md D5, owner answers 29 Oct): `respond_contacts.brand_class_ids`
+`{brand_id: [item_class_id, ...]}` narrows a brand in `brand_ids` to those classes; a brand with
+no list keeps every class AND its products with no class, a brand with a list hides its products
+with no class. The scope stays a frozenset of strings so every carrier (the session stamp, RQ
+job args, turn ctx) passes it through untouched: a whole brand is its id, a class-narrowed brand
+is one `<brand_id>/<item_class_id>` token per class (never the bare id). Only this module reads
+the tokens (`_split_scope`).
+
 `contact_id` is the INTERNAL `respond_contacts.id`; a Respond.io id resolves through
 `field_access.resolve_contact_with_null_workspace_fallback` first (as
 `contact_customer_scope.py` does).
@@ -30,6 +38,53 @@ from app.models.base import _BRAND_SCOPE_KEY
 #: reads as out of scope (an empty scope would mean "every brand").
 NO_BRAND_ID = "00000000-0000-0000-0000-000000000000"
 
+#: Separates the brand and the class in a class-narrowed scope token.
+_CLASS_SEP = "/"
+
+
+def _is_uuid(value) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
+def _split_scope(scope: Iterable[str]) -> tuple[frozenset[str], dict[str, frozenset[str]]]:
+    """`(whole brand ids, {brand id: class ids})` out of a scope's tokens."""
+    whole: set[str] = set()
+    classes: dict[str, set[str]] = {}
+    for token in scope:
+        brand_id, sep, class_id = str(token).partition(_CLASS_SEP)
+        if sep:
+            classes.setdefault(brand_id, set()).add(class_id)
+        else:
+            whole.add(brand_id)
+    return frozenset(whole), {b: frozenset(c) for b, c in classes.items()}
+
+
+def scope_brand_ids(scope: Iterable[str]) -> frozenset[str]:
+    """Every brand a scope names, whole or narrowed to some classes."""
+    whole, classes = _split_scope(scope)
+    return whole | frozenset(classes)
+
+
+def _scope_tokens(brand_ids, brand_class_ids) -> frozenset[str]:
+    """The scope for a contact row: a brand id per whole brand, a token per allowed class of a
+    class-narrowed brand. Class lists for brands outside `brand_ids` are ignored (a class only
+    narrows a brand already allowed); a non-uuid class entry is dropped, so a list holding only
+    junk narrows the brand to nothing (fail closed)."""
+    by_brand = brand_class_ids if isinstance(brand_class_ids, dict) else {}
+    tokens: set[str] = set()
+    for b in brand_ids:
+        listed = by_brand.get(str(b)) or []
+        if not listed:
+            tokens.add(str(b))
+            continue
+        valid = [str(c) for c in listed if _is_uuid(c)] or [NO_BRAND_ID]
+        tokens.update(f"{b}{_CLASS_SEP}{c}" for c in valid)
+    return frozenset(tokens)
+
 
 def contact_brand_scope(db: Session, contact_id: str, space_id: Optional[str] = None) -> Optional[frozenset[str]]:
     """The contact's accessible brand ids, or None when it is unscoped."""
@@ -44,11 +99,15 @@ def contact_brand_scope(db: Session, contact_id: str, space_id: Optional[str] = 
     # API-key request's scope, and a hidden row must not read as "unscoped" by accident.
     with company_scope(db, None):
         resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=key, space_id=space_id) or key
-        row = db.query(RespondContact.brand_ids).filter(RespondContact.id == str(resolved)).first()
+        row = (
+            db.query(RespondContact.brand_ids, RespondContact.brand_class_ids)
+            .filter(RespondContact.id == str(resolved))
+            .first()
+        )
     ids = row[0] if row else None
     if not ids:
         return None
-    return frozenset(str(i) for i in ids)
+    return _scope_tokens(ids, row[1])
 
 
 def scoped_brand_companies_select(scope: frozenset[str]):
@@ -62,22 +121,31 @@ def scoped_brand_companies_select(scope: frozenset[str]):
     from app.models.product import Brand
 
     brands = Brand.__table__
-    return select(brands.c.company_id).where(brands.c.id.in_(sorted(scope))).correlate(None)
+    return select(brands.c.company_id).where(brands.c.id.in_(sorted(scope_brand_ids(scope)))).correlate(None)
 
 
-def brand_predicate(scope: frozenset[str], brand_col, company_col):
-    """The per-company rule for a product row given its brand and company columns (ORM
-    attributes or Core columns alike).
+def brand_predicate(scope: frozenset[str], brand_col, company_col, class_col=None):
+    """The per-company rule for a product row given its brand, company and item class columns
+    (ORM attributes or Core columns alike).
 
-    `brand IN scope OR (EXISTS restricted AND company NOT IN restricted)`, with `restricted` =
-    `scoped_brand_companies_select(scope)`. A NULL brand never matches the IN (Q1), so inside a
-    restricted company it is out. The EXISTS keeps a scope nothing carries (`NO_BRAND_ID`, or a
+    `brand IN whole brands OR (brand = b AND class IN b's classes) ... OR (EXISTS restricted AND
+    company NOT IN restricted)`, with `restricted` = `scoped_brand_companies_select(scope)`. A
+    NULL brand never matches (Q1), nor does a NULL class inside a class-narrowed brand (ITEM-CLASS
+    Q3), so inside a restricted company both are out. Without `class_col` a class-narrowed brand
+    matches nothing (fail closed). The EXISTS keeps a scope nothing carries (`NO_BRAND_ID`, or a
     list of only deleted brand ids) fail-closed: it restricts no company, so nothing passes."""
     from sqlalchemy import and_, exists, or_
 
+    whole, classes = _split_scope(scope)
     restricted = scoped_brand_companies_select(scope)
+    allowed = [brand_col.in_(sorted(whole))] if whole else []
+    if class_col is not None:
+        allowed += [
+            and_(brand_col == brand_id, class_col.in_(sorted(class_ids)))
+            for brand_id, class_ids in sorted(classes.items())
+        ]
     return or_(
-        brand_col.in_(sorted(scope)),
+        *allowed,
         and_(exists(restricted), company_col.notin_(restricted)),
     )
 
@@ -92,10 +160,16 @@ def scoped_brand_companies(db: Session, scope: frozenset[str]) -> frozenset[str]
     return frozenset(str(cid) for (cid,) in rows if cid)
 
 
-def _product_out_of_scope(scope: frozenset[str], restricted: frozenset[str], brand_id, company_id) -> bool:
+def _product_out_of_scope(
+    scope: frozenset[str], restricted: frozenset[str], brand_id, company_id, class_id=None
+) -> bool:
     """`brand_predicate` evaluated in Python for one product row (the guard helpers)."""
-    if brand_id is not None and str(brand_id) in scope:
-        return False
+    if brand_id is not None:
+        whole, classes = _split_scope(scope)
+        if str(brand_id) in whole:
+            return False
+        if class_id is not None and str(class_id) in classes.get(str(brand_id), ()):
+            return False
     return not restricted or str(company_id) in restricted
 
 
@@ -145,14 +219,14 @@ def out_of_scope_product_codes(db: Session, scope: frozenset[str], codes: Iterab
     restricted = scoped_brand_companies(db, scope)
     with _brand_scope_off(db):
         rows = (
-            db.query(Product.product_code, Product.brand_id, Product.company_id)
+            db.query(Product.product_code, Product.brand_id, Product.company_id, Product.item_class_id)
             .filter(func.lower(Product.product_code).in_(lowered))
             .all()
         )
     verdicts: dict[str, bool] = {}
-    for code, brand_id, company_id in rows:
+    for code, brand_id, company_id, class_id in rows:
         key = code.lower()
-        out = _product_out_of_scope(scope, restricted, brand_id, company_id)
+        out = _product_out_of_scope(scope, restricted, brand_id, company_id, class_id)
         verdicts[key] = verdicts.get(key, True) and out
     bad = {key for key, out in verdicts.items() if out}
     return {c for c in wanted if c.lower() in bad}
@@ -172,11 +246,15 @@ def out_of_scope_product_ids(db: Session, scope: frozenset[str], ids: Iterable[s
         return set()
     restricted = scoped_brand_companies(db, scope)
     with _brand_scope_off(db):
-        rows = db.query(Product.id, Product.brand_id, Product.company_id).filter(Product.id.in_(wanted)).all()
+        rows = (
+            db.query(Product.id, Product.brand_id, Product.company_id, Product.item_class_id)
+            .filter(Product.id.in_(wanted))
+            .all()
+        )
     return {
         str(pid)
-        for pid, brand_id, company_id in rows
-        if _product_out_of_scope(scope, restricted, brand_id, company_id)
+        for pid, brand_id, company_id, class_id in rows
+        if _product_out_of_scope(scope, restricted, brand_id, company_id, class_id)
     }
 
 
@@ -196,7 +274,9 @@ def product_in_scope_clauses(db: Session, product_id_col) -> list:
     if not scope:
         return []
     products = Product.__table__
-    in_scope = select(products.c.id).where(brand_predicate(scope, products.c.brand_id, products.c.company_id))
+    in_scope = select(products.c.id).where(
+        brand_predicate(scope, products.c.brand_id, products.c.company_id, products.c.item_class_id)
+    )
     return [product_id_col.in_(in_scope)]
 
 
@@ -238,25 +318,59 @@ def brand_refs_by_contact(db: Session, contact_ids: Iterable[str]) -> dict[str, 
     return out
 
 
+def _class_map_for(brand_ids, brand_class_ids) -> dict[str, list[str]]:
+    """The stored class lists that still narrow a brand in `brand_ids` (non-empty only)."""
+    stored = brand_class_ids if isinstance(brand_class_ids, dict) else {}
+    out: dict[str, list[str]] = {}
+    for b in brand_ids or []:
+        listed = [str(c) for c in (stored.get(str(b)) or [])]
+        if listed:
+            out[str(b)] = listed
+    return out
+
+
 def get_contact_brands(db: Session, contact_id: str) -> dict:
-    """`{brand_ids, brands}` for the settings card; 404 for an unknown contact."""
+    """`{brand_ids, brands, brand_class_ids, item_classes}` for the settings card; 404 for an
+    unknown contact. `item_classes` names the classes the card shows (name asc); a stale id is
+    left out of it, as a stale brand is."""
     from app.models.access import RespondContact
     from app.models.base import company_scope
+    from app.models.product import ItemClass
     from app.services.error_handler import handle_not_found
 
     with company_scope(db, None):
-        row = db.query(RespondContact.brand_ids).filter(RespondContact.id == str(contact_id)).first()
+        row = (
+            db.query(RespondContact.brand_ids, RespondContact.brand_class_ids)
+            .filter(RespondContact.id == str(contact_id))
+            .first()
+        )
     if row is None:
         raise handle_not_found("Respond Contact", contact_id)
+    class_map = _class_map_for(row[0], row[1])
+    wanted = sorted({c for ids in class_map.values() for c in ids if _is_uuid(c)})
+    names = (
+        db.query(ItemClass.id, ItemClass.item_class_name).filter(ItemClass.id.in_(wanted)).all() if wanted else []
+    )
     return {
         "brand_ids": [str(b) for b in (row[0] or [])],
         "brands": brand_refs_by_contact(db, [contact_id]).get(str(contact_id), []),
+        "brand_class_ids": class_map,
+        "item_classes": sorted(
+            ({"id": str(i), "item_class_name": n} for i, n in names), key=lambda r: r["item_class_name"].casefold()
+        ),
     }
 
 
-def set_contact_brands(db: Session, contact_id: str, brand_ids: Iterable[str]) -> dict:
-    """Replace the contact's accessible brands. `[]` stores NULL (every brand); a brand id that
-    does not exist is a 422 and nothing changes."""
+def set_contact_brands(
+    db: Session,
+    contact_id: str,
+    brand_ids: Iterable[str],
+    brand_class_ids: Optional[dict] = None,
+) -> dict:
+    """Replace the contact's accessible brands and, per brand, its classes. `[]` stores NULL
+    (every brand); a brand with no class list keeps every class. Class lists for brands not in
+    `brand_ids` are dropped. A brand or class id that does not exist is a 422 and nothing
+    changes."""
     from app.models.access import RespondContact
     from app.models.base import company_scope
     from app.models.product import Brand
@@ -282,7 +396,28 @@ def set_contact_brands(db: Session, contact_id: str, brand_ids: Iterable[str]) -
             missing = [b for b in wanted if b not in known]
             if missing:
                 raise AppException(422, "Unknown brand", detail=", ".join(missing), code="UNKNOWN_BRAND")
+        class_map = {
+            b: list(dict.fromkeys(str(c) for c in ((brand_class_ids or {}).get(b) or []) if c))
+            for b in wanted
+        }
+        class_map = {b: ids for b, ids in class_map.items() if ids}
+        wanted_classes = sorted({c for ids in class_map.values() for c in ids})
+        if wanted_classes:
+            if not all(_is_uuid(c) for c in wanted_classes):
+                raise AppException(422, "Unknown item class", code="UNKNOWN_ITEM_CLASS")
+            from app.models.product import ItemClass
+
+            with company_scope(db, prev_scope):
+                known_classes = {
+                    str(i) for (i,) in db.query(ItemClass.id).filter(ItemClass.id.in_(wanted_classes)).all()
+                }
+            missing = [c for c in wanted_classes if c not in known_classes]
+            if missing:
+                raise AppException(
+                    422, "Unknown item class", detail=", ".join(missing), code="UNKNOWN_ITEM_CLASS"
+                )
         contact.brand_ids = wanted or None
+        contact.brand_class_ids = class_map or None
         db.commit()
     return get_contact_brands(db, contact_id)
 
@@ -310,13 +445,13 @@ def in_scope_product_codes(db: Session, codes: Iterable[str]) -> Optional[set[st
     # so only the products this contact can see take part.
     with _brand_scope_off(db):
         rows = (
-            db.query(Product.product_code, Product.brand_id, Product.company_id)
+            db.query(Product.product_code, Product.brand_id, Product.company_id, Product.item_class_id)
             .filter(Product.product_code.in_(wanted))
             .all()
         )
     verdicts: dict[str, bool] = {}
-    for code, brand_id, company_id in rows:
-        passes = not _product_out_of_scope(scope, restricted, brand_id, company_id)
+    for code, brand_id, company_id, class_id in rows:
+        passes = not _product_out_of_scope(scope, restricted, brand_id, company_id, class_id)
         verdicts[str(code)] = verdicts.get(str(code), True) and passes
     return {code for code, passes in verdicts.items() if passes}
 
@@ -344,7 +479,9 @@ def complaint_in_scope_clauses(db: Session) -> list:
         visible = [products.c.company_id.in_(sorted(companies))]
     else:
         visible = [false()]  # UNSET / empty: fail closed, as the company hook does
-    passing_ids = select(products.c.id).where(brand_predicate(scope, products.c.brand_id, products.c.company_id))
+    passing_ids = select(products.c.id).where(
+        brand_predicate(scope, products.c.brand_id, products.c.company_id, products.c.item_class_id)
+    )
     passing_codes = select(products.c.product_code).where(products.c.id.in_(passing_ids), *visible)
     failing_codes = select(products.c.product_code).where(products.c.id.notin_(passing_ids), *visible)
     in_scope_codes = passing_codes.where(products.c.product_code.notin_(failing_codes))

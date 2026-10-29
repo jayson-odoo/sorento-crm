@@ -577,6 +577,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'master_data.brands.view',
           },
           {
+            title: 'Item Classes',
+            path: '/master-data-management/item-classes',
+            permission: 'master_data.item_classes.view',
+          },
+          {
             title: 'Units of Measure',
             path: '/master-data-management/units-of-measure',
             permission: 'master_data.units_of_measure.view',
@@ -1930,6 +1935,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       title: 'Brands',
       path: '/master-data-management/brands',
       permission: 'master_data.brands.view',
+    },
+    {
+      title: 'Item Classes',
+      path: '/master-data-management/item-classes',
+      permission: 'master_data.item_classes.view',
     },
     {
       title: 'Units of Measure',
