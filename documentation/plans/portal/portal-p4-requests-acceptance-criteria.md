@@ -98,7 +98,8 @@ PROJECT-REGISTER-V2 (no `projects.projects.edit`). Keep today's behaviour on app
   resubmitted, rejected: own draft or rejected editable, pending or resubmitted not). On a staff project
   (`approval_state` null) or an approved one, the general rule decides (owner, approved collaborator, manager):
   detail `can_edit`, PUT, the gear with Edit project, and the edit form's Save changes (not Save draft / Submit).
-- PRJ-2 Unchanged: J3c (no Lead field for a submit-only user, on any project); owner reassignment needs
+- PRJ-2 Unchanged: the Lead field follows #1966 LEAD-GOVERNS-REGISTER (shown; a submit-only user links only their
+  own lead; required on create / unapproved registration, not on an approved / staff edit); owner reassignment needs
   `projects.projects.manage`; a stranger is refused.
 - PRJ-3 Unchanged (a54716498): `POST /projects/{id}/status` stays `projects.projects.edit` only, no button is hidden,
   no grant is added here; the owner grants salespeople stage moves through roles. Until then a salesperson's stage
