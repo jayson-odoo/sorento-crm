@@ -16,7 +16,7 @@ from sqlalchemy import text
 
 from app.models.base import set_company_scope
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.services import embedding_worker
+from app.services import embedding_settings
 from app.services import entity_resolver as er
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
 
@@ -68,7 +68,8 @@ def calls(monkeypatch):
         seen.append(list(chunks))
         return [_vector_for(c) for c in chunks]
 
-    monkeypatch.setattr(embedding_worker, "_embed_text_chunks", fake_embed)
+    monkeypatch.setattr(er, "_SEARCH_SEAMS", {})  # the seam captures the stub when first built
+    monkeypatch.setattr(embedding_settings, "embed_search_texts", lambda texts, model, **kw: fake_embed(texts))
     return seen
 
 
@@ -115,7 +116,8 @@ def test_a_failed_batch_falls_back_to_one_call_per_token(db, monkeypatch):
             raise RuntimeError("provider refused the batch")
         return [[0.0] * 1536]
 
-    monkeypatch.setattr(embedding_worker, "_embed_text_chunks", flaky)
+    monkeypatch.setattr(er, "_SEARCH_SEAMS", {})  # the seam captures the stub when first built
+    monkeypatch.setattr(embedding_settings, "embed_search_texts", lambda texts, model, **kw: flaky(texts))
     rows = _resolve(db, ["SRTWC286", *MISSING])
 
     assert [r.token for r in rows.resolutions] == ["SRTWC286", *MISSING]

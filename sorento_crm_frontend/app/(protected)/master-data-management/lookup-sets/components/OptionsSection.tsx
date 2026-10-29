@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useOptions } from '../hooks/useLookupSets';
@@ -10,7 +11,7 @@ import OptionFormDialog from './OptionFormDialog';
 import type { LookupOption } from '../types/lookup.types';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
-export default function OptionsSection({ setId }: { setId: string }) {
+export default function OptionsSection({ setId, setKey, aliasSet }: { setId: string; setKey?: string; aliasSet?: boolean }) {
   const { data: options, isLoading } = useOptions(setId);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<LookupOption | null>(null);
@@ -52,7 +53,10 @@ export default function OptionsSection({ setId }: { setId: string }) {
                 <tbody>
                   {options!.map((o) => (
                     <tr key={o.id} className="border-b">
-                      <td className="px-3 py-2 font-mono">{o.value}</td>
+                      <td className="px-3 py-2 font-mono">
+                        <span className="truncate" title={o.value}>{o.value}</span>
+                        {o.orphaned ? <Badge variant="warning" size="sm" className="ms-2 shrink-0">Orphaned</Badge> : null}
+                      </td>
                       <td className="px-3 py-2">{o.label}</td>
                       <td className="px-3 py-2">{o.sort_order}</td>
                       <td className="px-3 py-2">{o.is_active ? 'Yes' : 'No'}</td>
@@ -80,7 +84,7 @@ export default function OptionsSection({ setId }: { setId: string }) {
             </ScrollArea>
           )}
       </CardContent>
-      <OptionFormDialog open={formOpen} onOpenChange={setFormOpen} setId={setId} editing={editing} />
+      <OptionFormDialog open={formOpen} onOpenChange={setFormOpen} setId={setId} setKey={setKey} aliasSet={aliasSet} editing={editing} />
     </Card>
   );
 }

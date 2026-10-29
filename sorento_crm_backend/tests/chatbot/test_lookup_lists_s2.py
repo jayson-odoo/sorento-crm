@@ -1,10 +1,10 @@
 """CHAT-SLIM-INDEX S2, red tests: spec words, spec numbers, file types, prompt translations as data.
 
 Contract: PLAN-chat-lookup-lists-25oct.md, "S2 code contract". Covers AC-6, AC-7, AC-8 and AC-4
-("tandas" / "马桶" now through PROMPT_SYNONYMS with NO embedder). Postgres only (blank schema
+("tandas" / "马桶" with NO embedder, as category `search_synonyms` data). Postgres only (blank schema
 fixture), own seed chain, stub embedder, fake names (ZZ prefix).
 Assumed beyond the contract: `number_hits(message, db)` takes a session; `load_rows(db)` returns the
-spec and file_type rows too, with PROMPT_SYNONYMS merged into the row texts.
+spec and file_type rows too. The v63 translation words live as data now (LOOKUP-EMBED-CENTRAL: PROMPT_SYNONYMS is gone).
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import pytest
 
 import app.main  # noqa: F401  isort:skip
 from app.models.base import set_company_scope
+from app.models.lookup import LookupOption, LookupOptionKeyword, LookupSet
 from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
 from app.services.chatbot.head import lookup_lists as ll
 from app.services.company_scope import DEFAULT_COMPANY_ID
@@ -38,10 +39,17 @@ def seed_world(session_factory) -> None:
     ])
     db.commit()
     w = World(session_factory)
-    w.category("Water Closet")
-    w.type("Photo", code="photo")
-    w.type("Drawing", code="drawing")
+    # The former prompt dictionary words, seeded where they live now: a category's search_synonyms, a file
+    # type's description words, and the attachment_type_alias lookup set's keywords.
+    w.category("Water Closet").search_synonyms = ["Water Closet", "tandas", "mangkuk tandas", "马桶"]
+    w.type("Photo", code="photo").description = "gambar, foto, image"
+    w.type("Drawing", code="drawing").description = "lukisan, cad"
     w.type("Certificate", cert=True, code="certificate")
+    alias_set = LookupSet(id=str(uuid.uuid4()), set_key="attachment_type_alias", name="ZZ aliases", is_active=True)
+    alias_opt = LookupOption(id=str(uuid.uuid4()), set_id=alias_set.id, value="certificate", label="Certificate", is_active=True)
+    w.db.add_all([alias_set, alias_opt])
+    w.db.flush()
+    w.db.add(LookupOptionKeyword(id=str(uuid.uuid4()), option_id=alias_opt.id, keyword="sijil"))
     p = w.product("ZZS2P1")
     w.db.add(ProductSpecifications(id=str(uuid.uuid4()), product_id=p.id, values={
         "zz_finish": {"value": "gunmetal"}, "zz_trap_len": {"value": 200}, "zz_width": {"value": 200}, "zz_depth": {"value": 350},
@@ -84,21 +92,6 @@ def test_s2_constants_and_headers():
     assert ll.HEADER_NOUN["spec"] == "Spec" and ll.HEADER_NOUN["file_type"] == "File type"
     assert ll.TOP_K["spec"] == 10 and ll.TOP_K["file_type"] == 5
     assert ll.header("spec") == HDR_SPEC and ll.header("file_type") == HDR_FILE
-
-
-def test_prompt_synonyms_hold_the_v63_translations_as_data():
-    ps = ll.PROMPT_SYNONYMS
-
-    def texts(list_name: str, label: str) -> set[str]:
-        rows = {k.casefold(): v for k, v in ps[list_name].items()}
-        return {t.casefold() for t in rows[label]}
-
-    assert {"tandas", "mangkuk tandas", "马桶"} <= texts("category", "water closet")
-    assert {"paip air", "水龙头"} <= texts("category", "water tap")
-    assert {"sinki dapur", "厨房水槽"} <= texts("category", "kitchen sink")
-    assert {"gambar", "foto"} <= texts("file_type", "photo")
-    assert "lukisan" in texts("file_type", "drawing")
-    assert any("sijil" in {t.casefold() for t in v} for v in ps["file_type"].values())
 
 
 def _hit(list_name: str, label: str) -> ll.Hit:
