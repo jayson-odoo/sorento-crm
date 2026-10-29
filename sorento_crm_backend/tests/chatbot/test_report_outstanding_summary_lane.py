@@ -213,3 +213,34 @@ def test_a_named_axis_keeps_the_summary_and_the_list_offer(do_only, do_only_worl
     text, calls = do_only.say(_pick_one(), "1")
     args = _only_report_ask(calls)
     assert args["group_by"] == "delivery_order", args
+
+
+# ================================================================ item 3 (owner 29 Oct): no subject = the document list
+
+
+def test_an_outstanding_ask_with_no_subject_is_the_delivery_order_list(bot) -> None:
+    """Pre-#1922 a subject-less outstanding ask was the outstanding document list, not a company figure."""
+    text, calls = bot.say(_status("outstanding", basis=None, state_changes=list(KEEP), **NO_DATES), "any outstanding?")
+    assert calls == [] and KIND_QUESTION in text, (text, calls)
+    bot.extra_body = {"rows": DO_ROWS, "total_count": 2, "group_label": "Delivery order"}
+    text, calls = bot.say(_kind_answer("pending_delivery"), "pending delivery")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "pending_delivery" and args["group_by"] == "delivery_order", args
+    assert "date_from" not in args, args
+
+
+def test_an_outstanding_ask_naming_its_kind_and_no_subject_is_the_sales_order_list(bot) -> None:
+    """No product, customer or brand: the list, with no question."""
+    text, calls = bot.say(_status("outstanding", basis="outstanding", state_changes=list(KEEP), **NO_DATES), "undelivered")
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "sales_order", args
+
+
+def test_an_unlinked_non_staff_contact_gets_no_outstanding_list(console) -> None:
+    """V1-DOC-SCOPE, as before #1922: a contact that owns no customer and is not staff is told so; nothing runs."""
+    bot_ = Routing(console)  # holds both reveals, but no office access type and no linked customer
+    text, calls = bot_.say(_status("outstanding", basis="pending_delivery", state_changes=list(KEEP), **NO_DATES), "outstanding")
+    assert calls == [], (text, calls)
+    from app.services import contact_customer_scope as scope_mod
+
+    assert text.strip() == scope_mod.refusal_line(scope_mod.ContactCustomerScope(linked=(), staff=False)), text
