@@ -2,7 +2,7 @@
 
 Postgres only (blank_session); every row is seeded here. No network: httpx.Client.send is stubbed and records the
 texts of every embeddings request. Vectors are tiny and padded to 1536.
-Run: SORENTO_ENV_FILE=.env.ci-tests PGGSSENCMODE=disable no_proxy='*' venv/bin/pytest tests/test_lookup_embed_central_slice4.py -q -n 2
+Run: SORENTO_ENV_FILE=.env.ci-tests PGGSSENCMODE=disable no_proxy='*' venv/bin/pytest tests/chatbot/test_lookup_embed_central_slice4.py -q -n 2
 
 Script contract assumed (same as scripts/add_zh_category_synonyms.py): module `scripts/move_prompt_synonyms.py`
 with `plan(db)` and `run(db, *, apply=False) -> {"plan": [...], "added": int}`; the caller commits.
@@ -28,7 +28,7 @@ from app.services.company_scope import set_company_scope
 from tests._pg_fixture import TEST_PREFIX, blank_session
 
 M3S = "text-embedding-3-small"
-BACKEND = pathlib.Path(__file__).resolve().parents[1]
+BACKEND = pathlib.Path(__file__).resolve().parents[2]
 
 
 def pad(*head: float) -> list[float]:
@@ -113,7 +113,7 @@ def _chunks(db, doc, *, current=True):
 
 
 def _sync(db, **kw):
-    from app.services import lookup_word_store
+    from app.services.chatbot.head import lookup_word_store
 
     return lookup_word_store.sync_lookup_words(db, **kw)
 
@@ -126,7 +126,7 @@ def _row_texts(db, list_name, key):
 
 # ================================================================== AC-LEC-15
 def test_ac_lec_15_the_source_constant():
-    from app.services import lookup_word_store
+    from app.services.chatbot.head import lookup_word_store
 
     assert lookup_word_store.LOOKUP_SOURCE == "lookup_word"
 
@@ -231,7 +231,7 @@ def test_ac_lec_16_a_new_category_is_picked_up(db, transport):
 
 # ================================================================== AC-LEC-17
 def test_ac_lec_17_load_lookup_vectors_fills_the_cache_with_one_select_and_no_embed(db, transport):
-    from app.services import lookup_word_store
+    from app.services.chatbot.head import lookup_word_store
 
     _setting(db)
     cat = _category(db, "ZZT4 Cached", synonyms=["zzt4 cached word"])
@@ -268,7 +268,7 @@ def test_ac_lec_17_the_shared_vector_file_is_gone():
 
 
 def test_ac_lec_17_write_back_turns_a_fresh_vector_into_chunks_of_every_active_document_with_the_text(db):
-    from app.services import lookup_word_store
+    from app.services.chatbot.head import lookup_word_store
 
     _setting(db)
     a = _category(db, "ZZT4 Wb A", synonyms=["zzt4 turn word"])
@@ -355,13 +355,12 @@ def test_scheduler_registers_a_lookup_words_sync_handler():
 
 def test_embed_missing_lookup_words_task_runs_the_sync(db, monkeypatch):
     import app.database as database
-    from app.services import lookup_word_store
-    from app.tasks import embedding_backfill
+    from app.services.chatbot.head import lookup_word_store
+    from app.tasks import chat_turns
 
     calls: list = []
     monkeypatch.setattr(lookup_word_store, "sync_lookup_words", lambda session, **kw: calls.append(kw))
     monkeypatch.setattr(database, "SessionLocal", lambda: db)
-    monkeypatch.setattr(embedding_backfill, "SessionLocal", lambda: db, raising=False)
     monkeypatch.setattr(db, "close", lambda: None)
-    embedding_backfill.embed_missing_lookup_words()
+    chat_turns.embed_missing_lookup_words()
     assert len(calls) == 1

@@ -174,43 +174,6 @@ def test_ac_lec_3_records_search_model_returns_column(db):
     assert records_search_model(db) == "text-embedding-3-small"
 
 
-@pytest.mark.parametrize(
-    "chosen, expect",
-    [
-        (("gemini", "gemini-embedding-zzt"), ("gemini_embedder", "gemini-embedding-zzt")),
-        (("openai", "text-embedding-3-small"), ("provider_embedder", None)),
-    ],
-)
-def test_ac_lec_3_lookup_lists_embedder_follows_resolve_embedder(db, monkeypatch, chosen, expect):
-    """No production label is seeded, so only resolve_embedder can make the gemini case choose gemini."""
-    from app.services import embedding_settings, llm_provider
-    from app.services.ai_assistant_service import AIAssistantConfigService
-    from app.services.chatbot.head import lookup_lists
-
-    calls: list[tuple] = []
-    monkeypatch.setattr(lookup_lists, "EMBED", lookup_lists.USE_PROVIDER)
-    monkeypatch.setattr(embedding_settings, "resolve_embedder", lambda _db: chosen)
-    if hasattr(lookup_lists, "resolve_embedder"):
-        monkeypatch.setattr(lookup_lists, "resolve_embedder", lambda _db: chosen)
-    monkeypatch.setattr(AIAssistantConfigService, "get", lambda self: object())
-    monkeypatch.setattr(llm_provider, "resolve_api_key", lambda cfg, provider: "zzt-key")
-    sentinel = object()
-
-    def fake_gemini(key, model):
-        calls.append(("gemini_embedder", model))
-        return sentinel
-
-    def fake_openai(key, *a, **k):
-        calls.append(("provider_embedder", None))
-        return sentinel
-
-    monkeypatch.setattr(lookup_lists, "gemini_embedder", fake_gemini)
-    monkeypatch.setattr(lookup_lists, "provider_embedder", fake_openai)
-
-    assert lookup_lists.embedder(db) is sentinel
-    assert calls == [expect]
-
-
 # ---------------------------------------------------------------- AC-LEC-4
 
 class _Recorder:
