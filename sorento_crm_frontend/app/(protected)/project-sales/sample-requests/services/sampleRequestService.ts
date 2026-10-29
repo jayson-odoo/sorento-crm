@@ -7,6 +7,7 @@ import {
   type SampleRequestDetail,
   type SampleRequestPage,
   type SampleRequestProductHit,
+  type SampleRequestQuotationPrefill,
   type SampleRequestStatus,
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
@@ -133,6 +134,18 @@ export async function downloadSampleRequestPdf(id: string, requestNo: string): P
 export async function searchSampleRequestProducts(q: string): Promise<SampleRequestProductHit[]> {
   const res = await apiFetch(`${BASE}/sample-requests/products?q=${encodeURIComponent(q)}`);
   return read<SampleRequestProductHit[]>(res, 'Failed to search products');
+}
+
+/** The rows a new request on the project starts with: its quotation's products (SAMPLE-FROM-QUOTE). */
+export async function getSampleRequestQuotationPrefill(
+  projectId: string,
+  documentId?: string,
+): Promise<SampleRequestQuotationPrefill> {
+  const qs = documentId ? `?document_id=${encodeURIComponent(documentId)}` : '';
+  const res = await apiFetch(
+    `${BASE}/projects/${encodeURIComponent(projectId)}/sample-requests/quotation-prefill${qs}`,
+  );
+  return read<SampleRequestQuotationPrefill>(res, 'Failed to load the quotation');
 }
 
 /** Whether the System Settings switch is on; read from the open app-config projection. */

@@ -10,6 +10,7 @@ import {
   SampleRequestError,
   type SampleRequestDetail,
   type SampleRequestProductHit,
+  type SampleRequestQuotationPrefill,
   type SampleRequestRow,
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
@@ -62,6 +63,19 @@ export async function searchSampleRequestProducts(
     `/api/v1/public/portal/sample-request/products?q=${encodeURIComponent(q)}`,
   );
   return unwrapNamingField<SampleRequestProductHit[]>(res, 'Failed to search products');
+}
+
+/** The rows a new request on one of the contact's projects starts with (SAMPLE-FROM-QUOTE). */
+export async function getSampleRequestQuotationPrefill(
+  projectId: string,
+  documentId?: string,
+): Promise<SampleRequestQuotationPrefill> {
+  const usp = new URLSearchParams({ project_id: projectId });
+  if (documentId) usp.set('document_id', documentId);
+  const res = await portalFetch(
+    `/api/v1/public/portal/sample-request/quotation-prefill?${usp.toString()}`,
+  );
+  return unwrapNamingField<SampleRequestQuotationPrefill>(res, 'Failed to load the quotation');
 }
 
 export async function listSampleRequests(q?: string): Promise<SampleRequestRow[]> {

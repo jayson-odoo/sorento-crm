@@ -8,6 +8,7 @@ import {
   type SampleRequestDetail,
   type SampleRequestGoodsFrom,
   type SampleRequestLoanUnit,
+  type SampleRequestQuotationPrefill,
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
 import { codeWithName } from '@/lib/product-display';
@@ -34,6 +35,11 @@ export interface FormState {
   project_id: string;
   project_label: string;
   project_title: string;
+  /** The quotation the rows were pre-filled from (SAMPLE-FROM-QUOTE); '' when none. */
+  quotation_document_id: string;
+  quotation_issue_id: string;
+  /** The rows exactly as the pre-fill wrote them, to tell untouched pre-fill from a person's edits. */
+  prefill_signature: string;
   scope_note: string;
   lines: DraftLine[];
   board_mounting: boolean;
@@ -60,6 +66,9 @@ export const EMPTY_FORM: FormState = {
   project_id: '',
   project_label: '',
   project_title: '',
+  quotation_document_id: '',
+  quotation_issue_id: '',
+  prefill_signature: '',
   scope_note: '',
   lines: [],
   board_mounting: false,
@@ -102,6 +111,9 @@ export function stateFromDetail(d: SampleRequestDetail): FormState {
     project_id: d.project_id ?? '',
     project_label: d.project_id ? [d.project_code, d.project_name].filter(Boolean).join(' - ') : '',
     project_title: d.project_id ? '' : (d.project_title ?? ''),
+    quotation_document_id: d.quotation_document_id ?? '',
+    quotation_issue_id: d.quotation_issue_id ?? '',
+    prefill_signature: '',
     scope_note: d.scope_note ?? '',
     lines: (d.lines ?? []).map((l) => ({
       key: nextKey(),
@@ -128,6 +140,80 @@ export function stateFromDetail(d: SampleRequestDetail): FormState {
   };
 }
 
+/**
+ * What happens to a quotation line that names no product (owner Q3, pending 30 Oct):
+ * 'note' leaves it out and counts it under the table; 'row' adds an empty-product row carrying
+ * its description as the remark, for the person to pick a product or delete.
+ */
+export type QuoteFreeTextMode = 'note' | 'row';
+export const QUOTE_FREE_TEXT_LINES: QuoteFreeTextMode = 'note';
+
+const REMARK_MAX = 255;
+
+const signature = (lines: DraftLine[]) =>
+  JSON.stringify(lines.map((l) => [l.product_id, l.qty, l.remark]));
+
+/**
+ * True while the rows are still the pre-fill's own (or blank), so a project or quotation change
+ * may replace them; any delete, add or edit makes them the person's.
+ */
+export function linesUntouched(s: FormState): boolean {
+  if (s.lines.every((l) => !l.product_id && !l.remark.trim())) return true;
+  return Boolean(s.prefill_signature) && s.prefill_signature === signature(s.lines);
+}
+
+/** The rows and source a new request takes from its project's quotation (SFQ-20, SFQ-25). */
+export function prefillFromQuotation(
+  prefill: SampleRequestQuotationPrefill,
+  mode: QuoteFreeTextMode = QUOTE_FREE_TEXT_LINES,
+): Pick<FormState, 'lines' | 'quotation_document_id' | 'quotation_issue_id' | 'prefill_signature'> {
+  const lines: DraftLine[] = prefill.lines.map((l) => ({
+    key: nextKey(),
+    product_id: l.product_id,
+    label: codeWithName(l.product_code, l.product_name),
+    qty: '1',
+    remark: '',
+  }));
+  if (mode === 'row') {
+    for (const skip of prefill.skipped) {
+      if (skip.reason === 'no_product') {
+        lines.push({ ...blankLine(), remark: skip.description.slice(0, REMARK_MAX) });
+      }
+    }
+  }
+  if (lines.length === 0) {
+    return {
+      lines: [blankLine()],
+      quotation_document_id: '',
+      quotation_issue_id: '',
+      prefill_signature: '',
+    };
+  }
+  return {
+    lines,
+    quotation_document_id: prefill.document_id ?? '',
+    quotation_issue_id: prefill.issue_id ?? '',
+    prefill_signature: signature(lines),
+  };
+}
+
+/** One line under the table naming the quotation lines that did not become rows, or null. */
+export function prefillNote(
+  prefill: SampleRequestQuotationPrefill,
+  mode: QuoteFreeTextMode = QUOTE_FREE_TEXT_LINES,
+): string | null {
+  const noProduct =
+    mode === 'note' ? prefill.skipped.filter((s) => s.reason === 'no_product').length : 0;
+  const inactive = prefill.skipped.filter((s) => s.reason === 'inactive').length;
+  const total = noProduct + inactive;
+  if (total === 0) return null;
+  const why = [
+    noProduct ? `${noProduct} ${noProduct === 1 ? 'has' : 'have'} no product` : '',
+    inactive ? `${inactive} ${inactive === 1 ? 'product is' : 'products are'} inactive` : '',
+  ].filter(Boolean);
+  return `${total} quotation ${total === 1 ? 'line was' : 'lines were'} not added: ${why.join(', ')}.`;
+}
+
 /** One tick is that value; neither or both is either. */
 export function goodsFromTicks(demo: boolean, fresh: boolean): SampleRequestGoodsFrom {
   if (demo && !fresh) return 'demo';
@@ -141,6 +227,8 @@ export function payloadFromState(s: FormState): SampleRequestWrite {
     customer_name: s.customer_id ? null : clean(s.customer_name),
     project_id: s.project_id || null,
     project_title: s.project_id ? null : clean(s.project_title),
+    quotation_document_id: s.quotation_document_id || null,
+    quotation_issue_id: s.quotation_issue_id || null,
     scope_note: clean(s.scope_note),
     delivery_date: s.delivery_date || null,
     delivery_mode: s.delivery_mode || null,
