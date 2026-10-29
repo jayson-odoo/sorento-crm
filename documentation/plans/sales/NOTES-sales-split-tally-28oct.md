@@ -85,6 +85,15 @@ past invoice that names them. Options, after R12 dates the gap:
 
 After the DOs land: R10 again (expected only reasons 1, 5 and any genuine 4), then the tally.
 
+Proven on seeded data (`sorento_crm_backend/tests/test_sales_split_tally_do_backfill.py`): a
+January invoice naming a DO reads No sales order; the DO ingest the pull's apply runs
+(`autocount_pull_tasks.py:868-901` -> `AutocountDocIngestService`, `FromDocNo` kept at
+`autocount_doc_ingest_service.py:1165`) lands the DO; the same invoice then reads its SO's block
+(retail -> Dealer, project -> Project team). A CRM-made DO with the same number is adopted (one
+row, `doc_key` set, its new line names the SO) and traces too. Kill test: removing the DO-number
+hop from `_traced_sales_order_ids` fails all three. The pull's preview sheet leaves `FromDocNo`
+out (`autocount_pull_service.map_delivery_order_rows`), but the apply never reads that sheet.
+
 ## 3. How AutoCount builds the blocks
 
 Measured on the owner's per-agent figures (query 3b, every agent, to the cent):
