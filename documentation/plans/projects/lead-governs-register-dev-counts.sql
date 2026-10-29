@@ -30,4 +30,12 @@ GROUP BY l.lead_code HAVING count(*) > 1;
 -- 5. Customers the lead wizard created (select_or_create_customer, source = 'project_lead').
 SELECT count(*) AS customers_created_by_lead_wizard FROM customers WHERE source = 'project_lead';
 
+-- 6. Leads that name a Firm (informant_party_id, the "Who told us" step), by the party's type.
+SELECT count(*) FILTER (WHERE l.informant_party_id IS NOT NULL) AS leads_with_firm,
+       count(*) AS leads
+FROM projects.leads l;
+SELECT pp.party_type, count(*) AS leads
+FROM projects.leads l JOIN projects.parties pp ON pp.id = l.informant_party_id
+GROUP BY pp.party_type ORDER BY 2 DESC;
+
 ROLLBACK;
