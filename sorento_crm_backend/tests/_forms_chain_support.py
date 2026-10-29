@@ -32,8 +32,6 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 import pytest
-from sqlalchemy.orm import Session
-
 from ._pg_fixture import blank_session, unique_code
 
 SORENTO = "00000000-0000-0000-0000-000000000001"
@@ -272,6 +270,20 @@ def form_action(db, action_id: str):
 # ------------------------------------------------------------------ the world
 
 
+class _Unclosable:
+    """The test session handed to a worker body: its commits are this session's commits
+    (so they share the request writes' savepoint semantics), and its close() is a no-op."""
+
+    def __init__(self, db):
+        self._db = db
+
+    def close(self):
+        pass
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
 class World(SimpleNamespace):
     """db, client, the acting principal (`as_user` / `as_contact`), the recorded sends and
     jobs, and the respond_io drain."""
@@ -295,9 +307,7 @@ class World(SimpleNamespace):
         for job in pending:
             job["ran"] = True
             original = database.SessionLocal
-            database.SessionLocal = lambda: Session(  # type: ignore[assignment]
-                bind=self.db.connection(), join_transaction_mode="create_savepoint"
-            )
+            database.SessionLocal = lambda: _Unclosable(self.db)  # type: ignore[assignment]
             try:
                 job["fn"](*job["args"], **job["kwargs"])
             except Exception as exc:  # noqa: BLE001 - see docstring

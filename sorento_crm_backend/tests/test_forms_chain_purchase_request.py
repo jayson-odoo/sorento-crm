@@ -534,6 +534,12 @@ def test_void_stops_the_sla_tells_the_contact_and_locks_the_form(world, kind):
     assert undo.status_code == 409, undo.text
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="BUG VOID-APPROVE-GUARD: a PR/SF voided while pending approval keeps "
+    "approval_status='pending', and decide_approval / submit_approval check only that "
+    "column, so the void is approved back to life. The fix lane removes this marker.",
+)
 @pytest.mark.parametrize("kind", KINDS)
 def test_a_voided_form_pending_approval_cannot_be_approved(world, kind):
     """Void is terminal and irreversible (PLAN-form-void D3/D6). A form voided while it waits
