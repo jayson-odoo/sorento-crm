@@ -1,43 +1,30 @@
-# Browser evidence: PLAN-SO-LOCATION
+# Browser evidence: PLAN-SO-LOCATION (head 59590013, owner answers applied)
 
-Run 2026-10-29, agent-browser 0.27.0 headless, dev server (HMR) on :3000, backend on :8000,
-local `sorento_ci` Postgres seeded with made-up data (3 SOs, 4 products, warehouses BRW-BB
-"Brickfields Warehouse", DC1-BB "Distribution Centre One", WH3-BB with no name, one line with no
-warehouse). Signed in as a seeded superadmin, then sidebar clicks: Supply Chain > Project Demand >
-Fulfilment Planning, tick all 3 orders, "Plan together" (the List view is the board that opens).
+Run 2026-10-29 by the captain, agent-browser 0.27.0 headless, `npm run dev` on :3000, backend
+on :8000, local `sorento_ci` Postgres seeded with made-up data (3 SOs, 6 lines at BRW-BB,
+DC1-BB, WH3-BB and one line with no warehouse). Signed in as a seeded superadmin. Navigated by
+sidebar: Supply Chain > Project Demand > Fulfilment Planning, select all 3 orders, Plan together.
 
 | AC | Result | Evidence |
 | --- | --- | --- |
-| AC-1 Location directly after Product | PASS | Header order read from the DOM: Line, Sales order, Agent, Customer, Product, Location, OI, ... (01) |
-| AC-2 own warehouse code on every row | PASS | Buy-suggested rows (Buy 34 in the tiles) still show BRW-BB / DC1-BB / WH3-BB (01) |
-| AC-3 tooltip `CODE · name`, code alone if no name | PASS | `title` attr read from DOM: `BRW-BB · Brickfields Warehouse`, `DC1-BB · Distribution Centre One`, `WH3-BB` (native title, so no pixel screenshot of it) |
-| AC-4 "No location" in red | PASS, with a cosmetic note | Red text on SO900003 line 1 (01, 07). Note 1 below |
-| AC-5 header sorts | PASS | Asc: No location, BRW, BRW, DC1, DC1, WH3 (02). Desc reverses it (03). Blank sorts first ascending |
-| AC-6 multi-select Location filter, "No location" option, chip | PASS, with a note | Options: BRW-BB, DC1-BB, WH3-BB, No location (05). Picking BRW-BB + No location keeps 3 of 6 lines and shows chip `Location: BRW-BB, No location` (06, 07). Chip x clears it back to 6 rows. Note 2 below |
-| AC-7 payload `fulfilment_location_name` | PASS (indirect) | Tooltips above can only come from that field; null case renders "No location". Payload JSON not inspected directly |
-| AC-8 grid unchanged | PASS | Grid still shows per-cell pills (`BRW-BB 10`, `DC1-BB 5`, `No location 12` + "1 needs a location"), and only the Status filter (08, 09) |
-| 1280px usable, no page h-scroll | PASS | documentElement.scrollWidth 1280 = innerWidth 1280 |
-| 375px usable, no page h-scroll | PASS | documentElement.scrollWidth 360 (scrollbar) < innerWidth 375. The table scrolls inside its own scroller; Location reachable (11); filters popover shows Status and Location (12) |
+| AC-1 Location directly after Product | PASS | DOM header order: Line, Sales order, Agent, Customer, Product, Location, OI, ... (01) |
+| AC-1 hide/show from Columns menu | PASS | Unticked: header list has no Location (02). Ticked again: back after Product |
+| AC-1 drag to reorder | PASS | Dragged the Location header onto Customer: order became ..., Agent, Location, Customer, ... (03) |
+| AC-2 code on every row, Buy rows included | PASS | Cells: BRW-BB, DC1-BB, DC1-BB, WH3-BB, No location, BRW-BB (01) |
+| AC-3 code only | PASS | Every cell's text and `title` are the bare code. Board JSON (`/api/v1/project-sales/fulfilment-planning/board`, 200) has no `fulfilment_location_name`; `fulfilment_location` values BRW-BB, DC1-BB, WH3-BB, null |
+| AC-4 "No location" in red | PASS | Computed colour is the destructive red; full text shows, no clipping (01) |
+| AC-5 sorts | PASS, see note 1 | DOM click on the header button: asc No location, BRW, BRW, DC1, DC1, WH3; desc reverses it (04, 05) |
+| AC-6 multi-select filter + chip | PASS | Options BRW-BB, DC1-BB, WH3-BB, No location (06). BRW-BB + No location keeps 3 of 6 lines, chip `Location: BRW-BB, No location` (07). The chip's clear brings back all 6 |
+| Filter survives Grid/List switch | PASS | After Grid and back to List, still 3 filtered rows |
+| AC-7 cancelled line names its location | N/A here | No cancelled line in the seed; covered by `test_c8b_a_cancelled_line_still_names_its_location` |
+| AC-8 grid unchanged | PASS | Per-cell pills (`BRW-BB 10 DC1-BB 5`, `WH3-BB 8`, `No location 12`); grid filter strip has Status only (08) |
+| 1280 / 375 no page h-scroll | PASS | 1280: as the first run. 375: scrollWidth 360 < innerWidth 375; table scrolls in its own scroller (09, 10) |
 
-Screens: 01 list 1280, 02/03 sorted asc/desc, 04 filters popover, 05 Location open,
-06 two picked, 07 filtered with chip, 08 grid 1280, 09 grid 375, 10 list 375,
-11 list 375 scrolled to Location, 12 filters 375.
+## Notes
 
-## Anything off
-
-1. "No location" is clipped to "No locat..." at the Location column's default 100px width, at both 1280
-   and 375 (01, 07, 11). The code cells have `truncate`; the red span has neither `truncate` nor a
-   `title`, so the cell clips it. The red label has no tooltip, which is consistent with AC-3 but
-   means the full phrase is only readable by widening the column. Consider `size: 110+` or a
-   `title="No location"`.
-2. The two filters stack vertically (Status above Location) inside the popover rather than sitting
-   side by side. Same at 1280 and 375. Probably fine ("beside" read loosely); flagging in case
-   it was meant literally.
-3. Console: only the existing Radix `DialogContent` missing-Description warning. No page errors.
-
-## Environment notes (for whoever reruns this)
-
-- The `.test` TLD fails the backend email validator, so the seed user is `verify@example.com`.
-- The empty DB has no installed modules, so the sidebar hides the module groups until
-  `install_modules(db, "__default__", all_keys, None)` runs. The seed script does this.
-- `sorento_crm_frontend/.env.local` was written (gitignored, not committed).
+1. In this session agent-browser's synthetic mouse click on a header did not change the sort,
+   for Location AND for Required date alike, while a DOM `click()` on the same button sorted
+   both. Not specific to this column. The first run of this pass (pre-answer head) sorted with
+   agent-browser clicks. The owner's hand test sorts with a real mouse.
+2. Moving Location back after Product by drag did not land; that only touches the seeded
+   user's saved column order in the sandbox DB.
