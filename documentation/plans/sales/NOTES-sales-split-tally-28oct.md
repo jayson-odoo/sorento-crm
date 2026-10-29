@@ -1,7 +1,7 @@
 # NOTES: Sales split tally (Dealer / Project team / Set apart vs AutoCount)
 
 Status: Plan; rule ruled (owner 28 Oct ~09:30: the SO's order type decides). Root cause measured:
-the DO feed gap (2b). Waiting on R11 (incident check), R12, R13 and the owner's call on the DO feed. crew-lane: SALES-SPLIT-TALLY.
+the DO feed gap (2b). R11: the incident apply did not land. Waiting on R12, R13 and the owner's call on the DO feed. crew-lane: SALES-SPLIT-TALLY.
 Track: small fix (expected diff well under 300 lines, no migration, no RBAC change). Follows
 `PLAN-sales-unified-27oct.md` (#1916, live in prod 745be3f35b). Read-only owner SQL:
 `evidence/sales-split-tally-owner-sql-28oct.md`. No agent code or per-agent figure is committed
@@ -62,7 +62,28 @@ still matters for the Related tabs (DOC-RELATIONS) and is fixed as its own step.
   Dealer; project 21 agents 8,229,111.30 = Project team 6,084,471.57 + the five left-out agents
   2,144,639.73 (unfilled in that run); no agent 120.32.
 - **R10**: 5,760 documents untraced (reason 3); the 14 traced gaps are all reason 6 (SO class
-  stale, DATA), none GENUINE.
+  stale, DATA), none GENUINE. Reason 6 also fires when a document traces to a `retail` SO AND an
+  SO with no stored class (the class count ignores NULLs, so the block reads Dealer); the
+  re-derive fills that class.
+- **Incident 29 Oct** (R9 apply run with `<OTHER n>` unfilled): R11 D1 shows the class rows as
+  before the run (the two agents without a row still have none; the four with one `retail` row
+  keep it, written 27 Oct 19:38). The apply did NOT land; no correction needed.
+
+### 2c. Repair (the DO feed gap)
+
+No CRM code change: the trace reads DO numbers at report time, so DOs that land now trace every
+past invoice that names them. Options, after R12 dates the gap:
+
+1. **Backfill with the existing DO pull**, month by month from July 2025 (`POST
+   /api/v1/autocount/pulls`, entity `delivery_orders`, scope `fromDay` / `toDay`; at most 10,000
+   DOs a snapshot, `autocount_pull_service.py:57`, `:701`): preview, then apply. A CRM-made DO with
+   the same number is adopted, not duplicated (`autocount_doc_ingest_service.py`, Q8 a).
+2. **Restore the shared-service DO push** for new DOs (outside this repo), so the gap does not
+   reopen.
+3. Optional, shared service: send `from_line_ref` on invoice lines so `sales_order_line_id` is
+   filled at push time. Not needed for the sales figure.
+
+After the DOs land: R10 again (expected only reasons 1, 5 and any genuine 4), then the tally.
 
 ## 3. How AutoCount builds the blocks
 
