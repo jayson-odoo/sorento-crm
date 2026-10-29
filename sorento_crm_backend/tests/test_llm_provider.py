@@ -1673,7 +1673,7 @@ def test_gemini_rebuilds_a_turn_whose_continuation_belongs_to_another_provider()
         "role": "assistant",
         "content": "",
         "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "stock_balance", "arguments": "{}"}}],
-        "continuation": {"provider": "anthropic", "content": [{"type": "thinking", "thinking": "", "signature": "s"}]},
+        "continuation": {"provider": "anthropic", "parts": [{"functionCall": {"name": "y", "args": {}}, "thoughtSignature": "s"}]},
     }
     assert _convert_messages_to_gemini([message]) == [
         {"role": "model", "parts": [{"functionCall": {"name": "stock_balance", "args": {}}}]}
@@ -1728,7 +1728,7 @@ def test_claude_4_6_takes_no_effort_as_low_effort_without_thinking(monkeypatch):
 
 @pytest.mark.parametrize(
     "model",
-    ["claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-opus-4-20250514", "claude-3-7-sonnet-20250219"],
+    ["claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219"],
 )
 def test_older_claude_takes_an_effort_as_a_thinking_budget(monkeypatch, model):
     budgets = []
@@ -1811,8 +1811,27 @@ def test_anthropic_rebuilds_a_turn_whose_continuation_belongs_to_another_provide
         "role": "assistant",
         "content": "",
         "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "stock_balance", "arguments": "{}"}}],
-        "continuation": {"provider": "gemini", "parts": [{"functionCall": {"name": "x", "args": {}}, "thoughtSignature": "s"}]},
+        "continuation": {"provider": "gemini", "content": [{"type": "thinking", "thinking": "", "signature": "s"}]},
     }
     assert _convert_messages_to_anthropic([message]) == [
         {"role": "assistant", "content": [{"type": "tool_use", "id": "c1", "name": "stock_balance", "input": {}}]}
     ]
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-4-6", "claude-haiku-4-5"])
+def test_anthropic_thinking_room_stays_under_the_sdk_non_streaming_ceiling(monkeypatch, model):
+    """The SDK refuses a non-streaming call over 21,333 tokens before it is sent (no caller timeout)."""
+    kwargs, _ = _anthropic_call(monkeypatch, model=model, temperature=0.0, max_tokens=8192, reasoning_effort="high")
+    assert kwargs["max_tokens"] == 21_333
+    if kwargs["thinking"]["type"] == "enabled":
+        assert kwargs["thinking"]["budget_tokens"] == 21_333 - 8192
+
+
+def test_older_claude_refuses_an_effort_with_no_room_left_to_think(monkeypatch):
+    stub = _StubAnthropicClient()
+    monkeypatch.setattr(AnthropicProvider, "_client", lambda self, **_k: stub)
+    with pytest.raises(ValueError):
+        AnthropicProvider("k").chat(
+            [{"role": "user", "content": "hi"}], model="claude-haiku-4-5", max_tokens=20_800, reasoning_effort="low"
+        )
+    assert stub.last_kwargs is None
