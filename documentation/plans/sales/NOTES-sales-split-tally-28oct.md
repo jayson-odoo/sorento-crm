@@ -1,7 +1,8 @@
 # NOTES: Sales split tally (Dealer / Project team / Set apart vs AutoCount)
 
 Status: Plan; rule ruled (owner 28 Oct ~09:30: the SO's order type decides). Root cause measured:
-the DO feed gap (2b). R11: the incident apply did not land. Waiting on R12, R13 and the owner's call on the DO feed. crew-lane: SALES-SPLIT-TALLY.
+the DO feed gap (2b), dated by R12: Sep 2025 to Jul 2026 (2d). R11: the incident apply did not land.
+Waiting on the owner's call on the DO backfill and the held R9 apply. crew-lane: SALES-SPLIT-TALLY.
 Track: small fix (expected diff well under 300 lines, no migration, no RBAC change). Follows
 `PLAN-sales-unified-27oct.md` (#1916, live in prod 745be3f35b). Read-only owner SQL:
 `evidence/sales-split-tally-owner-sql-28oct.md`. No agent code or per-agent figure is committed
@@ -93,6 +94,18 @@ January invoice naming a DO reads No sales order; the DO ingest the pull's apply
 row, `doc_key` set, its new line names the SO) and traces too. Kill test: removing the DO-number
 hop from `_traced_sales_order_ids` fails all three. The pull's preview sheet leaves `FromDocNo`
 out (`autocount_pull_service.map_delivery_order_rows`), but the apply never reads that sheet.
+
+### 2d. The gap, dated (R12, R13; crew, prod backup of 28 Oct 19:00)
+
+- AutoCount DOs in SRT: Jul 2024 to Aug 2025 (written 24 Oct by the DO-HISTORY shared-service
+  backfill) and Aug 2026 onwards (the live push since 17 Aug 2026). **Missing: Sep 2025 to Jul
+  2026, 11 months**, which holds every January 2026 DO. The history backfill stopped after Aug 2025.
+- Set apart: the HANLIM group is three debtors, 300-H030, 300-H118, 300-H119, January 2026
+  122,232.99 = AutoCount SET APART to the cent, one agent.
+- Repair: resume the shared service's DocDate DO backfill for Sep 2025 to Jul 2026 (the DO-HISTORY
+  path, quiet: one IMPORT audit row per batch, no embedding work). Fallback: the CRM DO pull, one
+  month at a time (about 4,000 to 6,000 DOs a month, under the 10,000 cap); it writes per-DO
+  audit rows and queues embedding work, so it is the slower, noisier path. Check: R14, then R10.
 
 ## 3. How AutoCount builds the blocks
 

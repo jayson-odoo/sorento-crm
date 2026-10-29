@@ -698,3 +698,50 @@ WHERE d.status = 'posted' AND d.document_type IN ('invoice','cash_sale','credit_
 GROUP BY ROLLUP (1, 2) ORDER BY 1 NULLS LAST, 2 NULLS LAST;
 ROLLBACK;
 ```
+
+# Round 4 results (crew, 29 Oct, READ ONLY on the prod backup of 28 Oct 19:00)
+
+- **R12.** SRT holds AutoCount DOs dated Jul 2024 to Aug 2025, all written 24 Oct 2026 (the
+  DO-HISTORY shared-service backfill; the audit log shows its one IMPORT row per batch that day),
+  and DOs dated Aug 2026 onwards, written from 17 Aug 2026 (the live push, daily integration
+  writes through 28 Oct). **Nothing is dated Sep 2025 to Jul 2026: 11 months.** So the history
+  backfill stopped after Aug 2025, and the live push started in Aug 2026. No DO has an empty
+  date. Every month that is present has most lines naming their SO (`naming_an_so`).
+- **R13.** The set-apart group is **three** debtors, not four: 300-H030 (31 documents,
+  81,346.10), 300-H118 (10, 22,715.64), 300-H119 (7, 18,171.25). Total 48 documents,
+  **122,232.99 = AutoCount SET APART to the cent.** One agent sells all three.
+
+## R14. After the DO backfill: do the January invoices reach an SO now? (READ ONLY)
+
+Purpose: the check to run once the Sep 2025 to Jul 2026 DOs have landed, before the tally.
+For January 2026 SRT invoice lines that name a DO: how many find an AutoCount DO in the CRM, and
+how many of those reach an SO (the same three hops as `invoiced_sales._traced_sales_order_ids`:
+the DO line's SO line link, its `FromDocNo`, or the DO header's SO).
+
+Expected after the backfill: `do_found` and `reaches_so` close to `lines` (round 2 showed the push
+names a DO on 17,392 of 17,541 lines). Before it: `do_found` 0.
+
+```sql
+BEGIN READ ONLY;
+WITH l AS (
+  SELECT l.id, l.from_doc_no, d.company_id
+  FROM finance.billing_document_lines l
+  JOIN finance.billing_documents d ON d.id = l.document_id
+  JOIN companies c ON c.id = d.company_id AND c.code = 'SRT'
+  WHERE d.status = 'posted' AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
+    AND d.doc_date >= '2026-01-01' AND d.doc_date < '2026-02-01' AND l.from_doc_type = 'DO')
+SELECT count(*) AS lines,
+       count(*) FILTER (WHERE EXISTS (
+         SELECT 1 FROM orders o WHERE o.company_id = l.company_id AND o.order_number = l.from_doc_no
+           AND o.deleted_at IS NULL AND o.doc_key IS NOT NULL)) AS do_found,
+       count(*) FILTER (WHERE EXISTS (
+         SELECT 1 FROM orders o
+         LEFT JOIN order_lines ol ON ol.order_id = o.id
+         WHERE o.company_id = l.company_id AND o.order_number = l.from_doc_no AND o.deleted_at IS NULL
+           AND (o.sales_order_id IS NOT NULL OR ol.sales_order_line_id IS NOT NULL
+                OR EXISTS (SELECT 1 FROM sales_orders so WHERE so.company_id = o.company_id
+                           AND so.so_number = ol.from_doc_no
+                           AND (ol.from_doc_type IS NULL OR ol.from_doc_type = 'SO'))))) AS reaches_so
+FROM l;
+ROLLBACK;
+```

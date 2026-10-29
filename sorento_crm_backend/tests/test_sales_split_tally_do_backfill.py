@@ -117,3 +117,20 @@ def test_a_crm_made_do_with_the_same_number_is_adopted_and_then_traces(db):
     lines = db.execute(select(OrderLine).where(OrderLine.order_id == crm_made.id)).scalars().all()
     assert [(l.from_doc_type, l.from_doc_no) for l in lines] == [("SO", order.so_number)]
     assert _type(db, invoice) == "dealer"
+
+
+def test_r14_counts_the_january_lines_whose_do_landed_and_reaches_an_so(db):
+    """Owner SQL R14 (the post-backfill check) as written: one line whose DO landed through the
+    ingest and names its SO, one line whose DO never arrived."""
+    from tests.test_sales_split_tally_owner_sql import _blocks, _statements
+
+    prod, wh, order, do_no, _ = _setup(db, "retail")
+    doc(db, "invoice", "50.00", JAN15, lines=[line(from_type="DO", from_no=unique_code("DO"))])
+    _ingest(db, _do_record(do_no, order.so_number, prod.product_code, wh.warehouse_code))
+    db.execute(text("UPDATE companies SET code = 'SRT' WHERE id = :id"), {"id": DEFAULT_COMPANY_ID})
+
+    (block,) = _blocks("R14.")
+    (statement,) = _statements(block, {})
+    row = db.execute(text(statement)).mappings().one()
+
+    assert dict(row) == {"lines": 2, "do_found": 1, "reaches_so": 1}
