@@ -1,7 +1,7 @@
 # PLAN: LOOKUP-EMBED-CENTRAL - one source per lookup list, one lookup-vector table, one screen to see them
 
-Status: CARD + MOCK v2 filed for the owner (29 Oct 2026; v2 answers the owner's Lavish note on v1). No code. Track: L (new table + migration, new screen).
-Build starts only after the owner answers Q1-Q5 and approves the mock
+Status: CARD v2 + MOCK v2 filed for the owner (29 Oct 2026; owner answered v1 Q1-Q5, Q5 = records join the central store). No code. Track: L (new table + migration, new screen).
+Build starts only after the owner answers N1-N5 and approves the mock
 (`documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`).
 
 ## Owner words (29 Oct 2026, verbatim)
@@ -116,126 +116,173 @@ Findings the screen makes visible:
   wc, toilet, toilet bowl, closet, tandas, 马桶, 坐厕; Tap carries paip, kepala paip, water tap, 水龙头. UNVERIFIED on
   prod (no prod reads in crew lanes; owner-run read-only SQL in "Rollout").
 
+## Owner answers to card v1 (29 Oct ~09:3x, relayed by crew)
+
+- Q1 (a): keep the master alias columns; one optional alias set per list without one; delete PROMPT_SYNONYMS.
+- Q2 (a): sales channel rows from code + `sales_channel_alias` set. REUSE #1964 (CHAT-CHANNEL-LOOKUPSET), which
+  seeds that set (`alembic/versions/chan_alias_0001_sales_channel.py:28`, dealer <- retail, retailer, 经销商, 零售,
+  peruncit at `:42`). This lane adds nothing for the set; it only shows it.
+- Q3 (a): sync job every 10 min + "Embed missing" button, plus label flip and the lazy turn path.
+- Q4 (a): grid + Try a phrase, no plot; Try a phrase shows the vector AND spelling scores (mock v2).
+- Q5 NOT separate (owner, verbatim): "we will use gemini for embedding already, so i think embedding cannot stay
+  separate, need to come into play here". Business-record chunks move to gemini-embedding-001 and into the same
+  store and screen. Card v2 below is reworked for that.
+
+## RAG facts (origin/main, read by code; dev counts from sorento_cagent_stack, read-only)
+
+- Store: `embedding_documents` (unique source_type + source_id, company_id; `app/models/embeddings.py:71-105`),
+  `embedding_chunks` (Vector(1536), model_name / model_version / embedding_provider, is_current / superseded_at,
+  company_id; `:108-154`), partial unique (source_type, source_id, model_name, model_version, chunk_index) WHERE
+  is_current (`:144-153`); ONE HNSW cosine index over all rows, raw SQL only
+  (`alembic/versions/142_pgvector_embedding_pipeline.py:117-118`). `embedding_queue` events (`:28-68`).
+- Model: plain settings, provider openai / text-embedding-3-small / v1 / 1536 (`app/config.py:314-317`); the
+  worker POSTs to OpenAI directly (`app/services/embedding_worker.py:646-676`) and needs OPENAI_API_KEY
+  (`:649-650`). `OpenAIProvider.embed` hardcodes text-embedding-3-small (`app/services/llm_provider.py:555-558`).
+- Two models can already sit side by side: the skip check (`embedding_worker.py:898-936`) and the supersede
+  (`:977-982`, `embedding_service.py:227-239`) are per model, so a rebuild under a new model writes new rows and
+  leaves the old model's rows current.
+- Readers, NONE filter by model_name and ALL embed the query with the OpenAI model:
+  `EmbeddingReadService.search_current` (`embedding_service.py:246-276`) used by `/external/rag/search`
+  (`app/api/v1/external/rag.py:57`, own OpenAI POST `:23-43`), `fuzzy_resolver.py:56`,
+  `project_registration_service.py:200`; `search_tool_candidates` (`embedding_service.py:325`) used by
+  `/external/rag/tool-search` (`rag.py:98`) and the AI assistant (`ai_assistant_service.py:1454`); raw `<=>` SQL in
+  `entity_resolver.py:3039-3080` and `:6009-6061`; `frame_service.py:197-222`.
+- Throughput: the `embedding_job_processor` task runs every 30 s (`alembic/versions/143_seed_embedding_job_processor_task.py:25-30`),
+  10 Redis + 10 DB items per run (`config.py:296`), one document per item: about 2,400 documents per hour.
+- Dev volume: 269,914 current chunks (269,431 documents) over 21 sources, all text-embedding-3-small, 50.4M
+  characters; biggest: spo_allocation 82,534, order 74,902, order_line 40,289, promotion_product 24,719, product
+  15,403. Table sizes: chunks 5,066 MB, documents 225 MB, queue 2,479 MB (888,712 pending + 138,874 dead_letter:
+  the dead dev OpenAI key). Other 1536 vectors: `ai_assistant_wishlist_clusters` (0 rows on dev),
+  `ai_assistant_unanswered_queries` (4 rows) (`app/models/ai_assistant.py:233`, `:257`).
+
 ## ARCHITECTURE
 
-- Layer: `head/lookup_lists.py` stays the one place that builds lookup rows (one loader per list). New: one
-  `LookupVector` model + `lookup_vector_service.py` (read / write vectors by `(model, sha1)`), one RQ task
-  `lookup_vectors.sync`, one read-only API `GET /api/v1/master-data/lookup-words` (+ `POST .../try`), one FE page.
-- Shared mechanism: the vector store behind `_vector_embedder` (`lookup_lists.py:990`) swaps the shared file
-  for the table; the in-process cache stays as the hot layer. Every list goes through the same store; no list gets
-  its own path.
-- Fixed classes: every list's rows from its master table (or code constant), every alias from that list's ONE alias
-  home, every vector from the one table. Nothing is per-phrase or per-list special-cased.
+- One table family for every vector: `embedding_documents` + `embedding_chunks`. Lookup words join it as documents
+  of `source_type = 'lookup_word'`, `source_id = '<list>:<row key>'`, one chunk per row text (label, code, each
+  alias, each description word), `company_id` = the row's company (customers, brands, warehouses) or NULL (shared).
+  No new table: the v1 `lookup_vectors` table is dropped from the design.
+- One embed function `embed_texts(texts, model) -> vectors` (Gemini batchEmbedContents, 100 per request,
+  1536 dims, the 429 waits of `lookup_lists.py:919`; OpenAI kept behind the same function for the switch window).
+  The worker, the lookup lists, every RAG reader and the AI assistant call it; the three direct OpenAI POSTs
+  (`embedding_worker.py:666-676`, `rag.py:23-43`, `llm_provider.py:555-558`) go.
+- One model setting, two values: WRITE model (what new and changed text is embedded with) and SEARCH model (what
+  every reader embeds the query with and filters `model_name` on). Both start text-embedding-3-small on prod;
+  during the switch WRITE = both, SEARCH = 3-small; at the flip both become gemini-embedding-001. Every reader gains
+  `model_name = :search_model` (today none filters, so two models in one HNSW index would compare across spaces).
+- One partial HNSW index per model (`WHERE model_name = '...' AND is_current`, CREATE INDEX CONCURRENTLY), so a
+  model-filtered search keeps HNSW recall while two models coexist.
+- Lookup lists: worker start = one SELECT of `lookup_word` chunks for the search model into today's in-process
+  cache (replaces the #1959 shared file, `lookup_lists.py:924-981`); a turn's miss embeds inside the 3 s budget
+  and is written as a chunk; the 10-min sync diffs live rows (`load_rows`) against `lookup_word` documents by
+  source_hash and embeds the difference.
+- Fixed classes: rows from master tables, aliases from one home per list, vectors from one family under one model
+  setting. Nothing is per-list or per-source special-cased.
 
-## Card
+## Card v2
 
-### Per list (proposal = recommended answers below)
+### Per list
 
-| List | Rows from (auto, no set upkeep) | Alias home today | Alias home proposed | Embed trigger |
-|---|---|---|---|---|
-| Category | product_categories (searchable, active) | search_synonyms column + PROMPT_SYNONYMS dict | search_synonyms column (unchanged) | sync job + lazy |
-| Class / type rows | distinct class_label + product_type registry values | PROMPT_SYNONYMS dict | union of its categories' search_synonyms; product_type values: registry user_synonyms | sync job + lazy |
-| Spec | product_spec_registry | synonyms / user_synonyms columns | unchanged | sync job + lazy |
-| File type | attachment_types (non-certificate) | description words + attachment_type_alias set + dict | description words + attachment_type_alias set, option picked from attachment types | sync job + lazy |
-| Brand | brands (active, session companies) | brand_alias set (not on dev) | brand_alias set, option picked from brands | sync job + lazy |
-| Promotion kind | promotion types | none | none (add a set only when a word is needed) | sync job + lazy |
-| Location | warehouses (active) | none | none (same) | sync job + lazy |
-| Salesperson | sales_agents (active) | aliases column | unchanged | sync job + lazy |
-| Customer | customers (active, scoped) | none | none | sync job + lazy |
-| Sales channel | code constant dealer / project | none | `sales_channel_alias` set, option = dealer / project | sync job + lazy |
+| List | Rows from (auto) | Alias home | Embedded as |
+|---|---|---|---|
+| Category | product_categories (searchable, active) | search_synonyms column | lookup_word docs, sync + lazy |
+| Class / type rows | distinct class_label + product_type registry values | union of the class's categories' search_synonyms; registry user_synonyms | same |
+| Spec | product_spec_registry | synonyms / user_synonyms columns | same |
+| File type | attachment_types (non-certificate + certificate kinds) | description words + attachment_type_alias set | same |
+| Brand | brands (active) | brand_alias set | same |
+| Promotion kind | promotion types | none until needed | same |
+| Location | warehouses (active) | none until needed | same |
+| Salesperson | sales_agents (active) | aliases column | same |
+| Customer | customers (active, scoped) | none | same |
+| Sales channel | code values dealer / project | sales_channel_alias set (#1964) | same |
+| Business records (21 sources) | the RAG producer (`embedding_change_listener.py:378-401`) | n/a | record docs, queue + backfill job |
 
-Rule: rows NEVER come from a lookup set. An alias set is optional, one per list, keyed by the master record's code
-(today's attachment_type_alias / brand_alias convention); its option picker lists the master records, and an option
-whose code no longer exists is shown as orphaned on the screen (not silently dropped).
+### Switch of business records to gemini-embedding-001 (Q5)
 
-### Lookup-vector table (proposal)
+1. Deploy (search unchanged): WRITE = 3-small + gemini, SEARCH = 3-small. New and changed records get both models,
+   so search stays complete. Prod only: OpenAI cost for changed records during the window (small); dev has no
+   working OpenAI key, so dev starts at step 3 directly.
+2. Backfill job (one RQ job, resumable, stop/start on the screen): documents with no current gemini chunk, 100 chunks
+   per Gemini request, capped requests per minute, smallest sources first; never through the per-event queue
+   (2,400 documents/hour would take ~112 h for 270k). Screen shows per source: gemini n / total.
+3. Flip (owner presses it when every source shows 100%): SEARCH = WRITE = gemini. One setting change, no deploy.
+4. Keep 3-small rows 14 days for rollback; then an owner-run DELETE (held for the owner, never automatic).
+Rollback: flip SEARCH back to 3-small (rows still there); records changed after the flip have stale 3-small rows
+until a 3-small rebuild of those sources (the per-model skip check, `embedding_worker.py:898-907`, re-embeds them).
 
-`lookup_vectors`: `id` uuid pk, `model` varchar(128), `text_sha1` char(40), `text` text, `dims` int,
-`embedding` vector(1536) null, `status` (`ok` / `failed`), `error` text null, `embedded_at`, `last_seen_at`
-(last sync that found a live row carrying the text; texts unseen for 30 days are pruned by the sync). Unique
-`(model, text_sha1)`. No source / list columns: one text serves many rows (马桶 sits on 5 categories); the screen
-joins LIVE rows to vectors by hash, so a renamed or deleted record can never leave a stale "source" behind.
-No company_id: the table holds words, not records; every read that lists rows goes through `load_rows` under the
-viewer's company scope.
+### Screen (mock v2)
 
-Flow: worker start = one SELECT of the label model's vectors into the in-process cache (no provider call);
-a turn that meets a text with no vector embeds it inside today's 3 s budget and INSERTs it (ON CONFLICT DO
-NOTHING); the sync job diffs live texts vs the table every 10 min (scheduler), on an embedder label flip, and on the
-screen's "Embed missing" button, embedding in 100-text chunks with today's 429 waits. A model flip therefore
-re-embeds in the background; until it completes, turns embed their own misses as they do today.
-
-### Screen (mock: `documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`)
-
-`System > Lookup Words` (`/master-data-management/lookup-words`, beside Lookup Sets, permission
-`master_data.lookup_sets.view`). Header: embedder model + coverage ("422 / 502 texts with a vector"), one CTA
-"Embed missing". Line tabs per list. DataGrid per list: row label, source table, words grouped by home
-(Label, Alias column, Alias set, Description words), each with a vector dot, vector status. Card "Try a phrase"
-(v2): the resolver's verdict (resolved / ambiguous / unresolved), then per candidate row the spelling score + the
-text it was spelt like, the vector (cosine) score + the nearest text, each text's home, partial, the list's floors
-and pass/fail with the winning signal. It runs the span resolver on the phrase as typed (no span model call; one
-embed call for a phrase with no vector). No 2-D plot (Q4).
+`System > Embeddings` (beside Lookup Sets, permission master_data.lookup_sets.view): header with the model, lookup
+word coverage, record coverage and which model search reads; one CTA (Embed missing; it becomes "Switch search to
+gemini-embedding-001" once records are 100%). A Lookup words / Records switch. Lookup words: tabs per list, words
+grouped by home with a vector dot, Try a phrase (verdict + per row spelling, vector, partial, floors, pass/fail).
+Records: grid per source (documents, chunks, 3-small, gemini, last embedded, in queue), Search records card
+(nearest chunks for a phrase under the viewer's company scope). Chunk text is not in the committed mock: it carries
+customer data and the repo is public.
 
 ### Edge cases
 
-- Same word on two lists (photo -> file type and a category synonym): both rows shown with their list's floor.
-- Alias option whose master code was renamed or deleted: orphaned badge on the screen; never matched.
-- Customer / brand / location rows are company-scoped: the screen and Try card read rows under the viewer's scope.
-- Embed failure (429, bad key): row status `failed` + error on screen; the turn path falls back to spelling as today.
-- Model with other dims (3072): refused by the sync with a clear error (column is 1536).
-- Dev OpenAI key is dead: text-embedding-3-small rows can no longer be embedded on dev; the screen shows `failed`.
+- Two models side by side: every read filters `model_name`; the partial HNSW index per model keeps recall.
+- Search flip with a source below 100%: the flip is refused, the screen names the sources still short.
+- Embed failure (429, bad key): chunk not written, row shows failed with the error; turns fall back to spelling.
+- Lookup row text on 5 rows (马桶): 5 chunks with the same text; the embed function sends each distinct text once.
+- Company-scoped lookup rows (customers, brands, warehouses): the document carries the company; the screen and Try
+  a phrase list rows under the viewer's scope (`load_rows`).
+- Other dims (3072): refused by embed_texts (column is 1536).
+- Task type: today no Gemini taskType is sent (lookup_lists.py and llm_provider.py); kept so lookup floors stay valid.
 
 ### Cost and limits
 
-- Gemini embed: USD 0.15 per 1M input tokens (price used by the S3 guard, `crew/state/eval/eem/s3/gem_guard_s3.py:15`;
-  UNVERIFIED against the current price page). Full backfill ~7-8k texts x ~8 tokens = ~60k tokens = ~USD 0.01 per
-  model. Steady state: only new or edited words. Try-a-phrase: 1 embed call per search (~USD 0.000001).
-- Rate: 100 texts per request -> ~80 requests per full backfill, sent serially with the 15/30/60 s 429 waits.
-  Gemini embed RPM / daily quota for the org key: UNVERIFIED (not read; owner to confirm from AI Studio).
-- Org key ledger applies to every build-lane call (`crew/state/eval/gemini-org-key-ledger.md`).
+- Gemini embed price USD 0.15 per 1M input tokens (the S3 guard's price, `crew/state/eval/eem/s3/gem_guard_s3.py:15`;
+  UNVERIFIED against Google's page). Dev copy: 50.4M characters = ~12.6M tokens at 4 characters per token =
+  ~USD 1.9 for all records once; lookup words ~USD 0.01. Prod volume UNVERIFIED: owner-run SQL below.
+- Requests: ~2,700 batch requests of 100. Gemini embed RPM / TPM / daily quota of the org key: UNVERIFIED (owner reads
+  them in AI Studio); the job's per-minute cap is set below that.
+- Storage: a second set of 1536-dim vectors for 270k chunks ~1.7 GB plus its HNSW index while both models are kept;
+  prod disk headroom UNVERIFIED.
+- Build lanes stay under the org key ledger (`crew/state/eval/gemini-org-key-ledger.md`); the full backfill is a
+  prod step for the owner, not a lane run.
 
 ### Migration, rollback, prod rollout
 
-- One additive alembic migration: `lookup_vectors` + unique index. No data migration; no change to lookup_sets /
-  lookup_bindings schema.
-- Data moves (owner-visible, done on the screen or by a one-off script the owner runs): each PROMPT_SYNONYMS word
-  not already on a row of its class / type goes to that row's alias home (list shown to the owner first; on dev 3 of the 8 category
-  words are missing from every category: mangkuk tandas, paip air, sinki dapur; 马桶 / tandas sit on 5, 水龙头 /
-  kepala paip / 厨房水槽 on 4, query 29 Oct); sales_channel_alias set created with
-  dealer / project options.
-- Rollback: revert the PR (cache code returns to the shared file); the table is left unused, drop later.
-- Prod steps for the owner: (1) run the read-only SQL below to confirm the dict's category words are on prod's
-  categories; (2) deploy; (3) open Lookup Words, press Embed missing (~USD 0.01); (4) try 零售 / retail / 马桶.
+- Migrations: one data-free migration adding the partial HNSW index for gemini-embedding-001 (CONCURRENTLY, outside
+  a transaction) and the two model settings (system_settings columns, default 3-small). No table is created; the
+  lookup_bindings / lookup_sets schemas are untouched.
+- Data: PROMPT_SYNONYMS words not already on a row of their class / type go to that row's alias home (list shown to
+  the owner first; on dev 3 of the 8 category words are on no category: mangkuk tandas, paip air, sinki dapur).
+- Rollback of the code: revert the PR. The old readers do not filter by model (see RAG facts), so once gemini
+  record chunks exist they would be compared with 3-small query vectors: a code rollback after step 2 needs the
+  owner-run DELETE of gemini record chunks first (held statement in the rollout doc). Before step 2 a revert is clean.
+- Prod steps for the owner: (1) run the read-only SQL below; (2) deploy; (3) check the Gemini quota; (4) Embed
+  missing (lookup words, ~USD 0.01); (5) start the record backfill, watch the Records tab; (6) Switch search when
+  100%; (7) after 14 days run the held DELETE of 3-small rows.
 
-Owner-run read-only check (prod):
+Owner-run read-only checks (prod):
 ```sql
 SELECT class_label, count(*) AS categories,
        count(*) FILTER (WHERE search_synonyms ?| array['马桶','tandas','水龙头','kepala paip','sinki dapur','厨房水槽']) AS with_dict_words
 FROM product_categories WHERE is_active AND is_searchable IS NOT FALSE
   AND class_label ILIKE ANY (array['%closet%','%tap%','%sink%']) GROUP BY class_label;
+SELECT source_type, model_name, count(*) AS chunks, sum(length(chunk_text)) AS chars
+FROM embedding_chunks WHERE is_current GROUP BY 1, 2 ORDER BY 3 DESC;
+SELECT pg_size_pretty(pg_total_relation_size('embedding_chunks')) AS chunks_size;
 ```
 
-### Questions (options, recommendation)
+### Questions v2 (options, recommendation)
 
-Q1. Where does a list's alias live?
-(a) Keep the master-table alias columns that exist (category, spec, salesperson); lists without one get ONE optional
-alias set keyed by master code (file type, brand, sales channel; others only when needed); delete PROMPT_SYNONYMS.
-(b) Move every alias into lookup sets, drop the columns (39 categories + 23 sales agents re-entered as options).
-(c) Add an alias column to every master table, retire the alias sets.
-Recommend (a): zero upkeep for new records, words stay where the record is edited, no re-entry.
+N1. Where lookup-word vectors live: (a) in the existing family as `lookup_word` documents + chunks; (b) a new
+table family shared by both, with records migrated into it. Recommend (a): no new table, the per-model skip and
+supersede already work, one worker; (b) moves 270k rows and rewrites every reader for no user gain.
 
-Q2. Sales channel (dealer / project), the only list with no table: rows stay the code constant, aliases in a
-`sales_channel_alias` set (a) or a new `sales_channels` master table (b)?
-Recommend (a): the report engine filters on those two values (`reports/ask.py:386`); a table adds a screen for two rows.
+N2. During the switch: (a) write both models, search stays on 3-small until the flip; (b) write gemini only and
+flip search at once (records not yet re-embedded drop out of search for the backfill hours); (c) write gemini only,
+search stays 3-small (new and changed records are unsearchable until the flip). Recommend (a): search never loses
+a record; the extra OpenAI cost is only changed records during the window.
 
-Q3. What embeds a new or edited word?
-(a) Sync job every 10 min + on label flip + "Embed missing" button, plus today's lazy turn path.
-(b) A save listener on every source table (8 tables) enqueueing an embed per change.
-(c) Lazy turn path + button only.
-Recommend (a): one mechanism covers create, edit, model flip and backfill; (b) is 8 hooks to keep in step.
+N3. Backfill pacing: (a) a dedicated batch job (100 per request, capped per minute, resumable, off-hours);
+(b) through today's queue (~2,400 documents/hour, ~112 h). Recommend (a).
 
-Q4. The screen: (a) per-list DataGrid + "Try a phrase" card, no plot; (b) add a 2-D plot of the vectors.
-Recommend (a): a 2-D projection of 1536-dim cosine space misplaces neighbours; Try-a-phrase answers "what matches".
+N4. 3-small rows after the flip: (a) keep 14 days, then an owner-run DELETE; (b) delete at the flip; (c) keep.
+Recommend (a): a one-setting rollback for two weeks, then ~1.7 GB back.
 
-Q5. RAG chunks (`embedding_chunks`, OpenAI, dev key dead): (a) stay in their own table, the screen shows lookup
-words only; (b) the screen gets a read-only "Records" tab with RAG counts per source and model; (c) merge into one table.
-Recommend (a): different shape (document FK, versioning, company); (c) would rewrite the RAG pipeline for no user gain.
+N5. The flip itself: (a) a button on the screen (enabled at 100%, owner only); (b) a System Settings value the
+owner edits. Recommend (a): the screen already shows the coverage that gates it.
