@@ -45,6 +45,7 @@ import { DateRangePicker, parseIsoDate } from '@/components/ui/date-range-picker
 import { useProductFilters } from '../hooks/useProductFilters';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
+import { useItemClassSelectQuery } from '../../shared/hooks/use-item-class-select-query';
 import { CHAT_SEARCH_LABEL, chatSearchState, type ProductListItem } from '../types/product.types';
 import { bulkImportProducts, validateProductsImport } from '../services/productService';
 import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
@@ -143,6 +144,7 @@ const ProductsList = () => {
   } = useDebouncedSearch();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
+  const [selectedItemClass, setSelectedItemClass] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
   const [selectedVariantFilter, setSelectedVariantFilter] = useState<
     'base' | 'variant' | 'all'
@@ -155,6 +157,7 @@ const ProductsList = () => {
   const {
     setCategoryId,
     setBrandId,
+    setItemClassId,
     setStatus,
     setSearch,
     clearFilters,
@@ -209,6 +212,9 @@ const ProductsList = () => {
       const brand = state.filters.brand_id ?? null;
       setSelectedBrand(brand);
       setBrandId(brand ?? undefined);
+      const itemClass = state.filters.item_class_id ?? null;
+      setSelectedItemClass(itemClass);
+      setItemClassId(itemClass ?? undefined);
       const status = state.filters.status ?? 'all';
       setSelectedStatus(status);
       setStatus(status === 'active' ? true : status === 'inactive' ? false : undefined);
@@ -233,6 +239,11 @@ const ProductsList = () => {
     error: brandsError,
     refetch: refetchBrands,
   } = useBrandSelectQuery();
+  const {
+    data: itemClasses,
+    error: itemClassesError,
+    refetch: refetchItemClasses,
+  } = useItemClassSelectQuery();
 
   // Deep link from a "products discontinued" notification - restrict the list to
   // exactly the products reported in that batch.
@@ -255,6 +266,7 @@ const ProductsList = () => {
       searchQuery,
       category_id: selectedCategory || undefined,
       brand_id: effectiveBrandId,
+      item_class_id: selectedItemClass || undefined,
       status: selectedStatus ?? 'all',
       variant_filter: selectedVariantFilter,
       discontinued_batch_id: discontinuedBatchId,
@@ -269,6 +281,7 @@ const ProductsList = () => {
       searchQuery,
       selectedCategory,
       effectiveBrandId,
+      selectedItemClass,
       selectedStatus,
       selectedVariantFilter,
       discontinuedBatchId,
@@ -302,6 +315,13 @@ const ProductsList = () => {
     setPagination({ ...pagination, pageIndex: 0 });
   };
 
+  const handleItemClassSelection = (ids: string[]) => {
+    const joined = joinMulti(ids);
+    setSelectedItemClass(joined || null);
+    setItemClassId(joined || undefined);
+    setPagination({ ...pagination, pageIndex: 0 });
+  };
+
   const handleStatusSelection = (status: string) => {
     setSelectedStatus(status);
     setStatus(status === 'active' ? true : status === 'inactive' ? false : undefined);
@@ -329,6 +349,7 @@ const ProductsList = () => {
     clearFilters();
     setSelectedCategory(null);
     setSelectedBrand(null);
+    setSelectedItemClass(null);
     setSelectedStatus('all');
     setSelectedVariantFilter('all');
     setDiscontinuedFrom(null);
@@ -356,6 +377,7 @@ const ProductsList = () => {
       {
         category_id: listParams.category_id,
         brand_id: listParams.brand_id,
+        item_class_id: listParams.item_class_id,
         status:
           listParams.status && listParams.status !== 'all' ? listParams.status : undefined,
         variant_filter:
@@ -562,6 +584,34 @@ const ProductsList = () => {
         },
         meta: {
           headerTitle: 'Brand',
+          skeleton: <Skeleton className="w-28 h-7" />,
+        },
+        enableSorting: true,
+        enableHiding: true,
+      },
+      {
+        id: 'item_class',
+        accessorFn: (row) => row.item_class?.item_class_name ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Item Class"
+            visibility={true}
+            column={column}
+          />
+        ),
+        size: 150,
+        cell: ({ row }) => {
+          const className = row.original.item_class?.item_class_name;
+          return className ? (
+            <span className="block truncate" title={className}>
+              {className}
+            </span>
+          ) : (
+            '-'
+          );
+        },
+        meta: {
+          headerTitle: 'Item Class',
           skeleton: <Skeleton className="w-28 h-7" />,
         },
         enableSorting: true,
@@ -844,6 +894,7 @@ const ProductsList = () => {
   const simpleFiltersActiveCount =
     (selectedCategory ? 1 : 0) +
     (selectedBrand ? 1 : 0) +
+    (selectedItemClass ? 1 : 0) +
     (selectedStatus && selectedStatus !== 'all' ? 1 : 0) +
     (selectedVariantFilter && selectedVariantFilter !== 'all' ? 1 : 0) +
     (discontinuedFrom || discontinuedTo ? 1 : 0);
@@ -953,6 +1004,25 @@ const ProductsList = () => {
                         <span className="block truncate">{multiChipLabel('Brand', idFilterLabels(chosen))}</span>
                       ) : (
                         <span className="text-muted-foreground">Brand: any</span>
+                      )
+                    }
+                  />
+                  <SearchableMultiSelect
+                    value={splitMulti(selectedItemClass)}
+                    onChange={handleItemClassSelection}
+                    placeholder="Item Class"
+                    loadError={itemClassesError}
+                    onRetry={() => void refetchItemClasses()}
+                    options={(itemClasses ?? []).map((itemClass) => ({
+                      value: itemClass.id,
+                      label: itemClass.item_class_name,
+                    }))}
+                    clearable
+                    renderTriggerLabel={(chosen) =>
+                      chosen.length ? (
+                        <span className="block truncate">{multiChipLabel('Item Class', idFilterLabels(chosen))}</span>
+                      ) : (
+                        <span className="text-muted-foreground">Item Class: any</span>
                       )
                     }
                   />

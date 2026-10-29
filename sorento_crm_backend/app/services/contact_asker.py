@@ -160,6 +160,18 @@ def may_ask_sales_ranking(db: Session, contact_id: str | None, *, granted: bool)
     return ("salesperson_book" if book else "not_granted"), book
 
 
+def pending_delivery_open(db: Session, contact_id: str | None) -> bool:
+    """Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY, as before #1922): pending delivery needs no reveal, for a contact the
+    company knows: office staff (every customer) or a contact linked to customers (only its own, the route's
+    `enforce_customer_scope`). An unlinked, non-staff contact gets nothing without the Outstanding reveal. INTERNAL
+    `respond_contacts.id`; False for none (fail closed)."""
+    if not contact_id:
+        return False
+    from app.services import contact_customer_scope as scope_mod
+
+    return scope_mod.is_office_staff(db, str(contact_id)) or scope_mod.contact_customer_scope(db, str(contact_id)).enforced
+
+
 def classify(db: Session, contact_id: str) -> str:
     """The asker word of one contact (INTERNAL `respond_contacts.id`)."""
     return db.execute(sa.select(_word_for(sa.literal(str(contact_id))))).scalar_one()

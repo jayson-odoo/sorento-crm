@@ -166,6 +166,8 @@ class ProductBase(BaseModel):
     description: Optional[str] = None
     category_id: str
     brand_id: Optional[str] = None
+    # ITEM-CLASS: AutoCount Item Class (nullable; the products ingest or this form sets it).
+    item_class_id: Optional[str] = None
     base_uom_id: str
     item_type: Optional[str] = None
     # CRM-owned (PLAN D14): manual entry here, or a non-empty AutoCount sync
@@ -234,6 +236,7 @@ class ProductUpdate(BaseModel):
     description: Optional[str] = None
     category_id: Optional[str] = None
     brand_id: Optional[str] = None
+    item_class_id: Optional[str] = None
     base_uom_id: Optional[str] = None
     item_type: Optional[str] = None
     barcode: Optional[str] = Field(None, max_length=100)
@@ -327,6 +330,15 @@ class BrandSimple(BaseModel):
     brand_code: str
     brand_name: str
     
+    class Config:
+        from_attributes = True
+
+
+class ItemClassSimple(BaseModel):
+    id: str
+    item_class_code: str
+    item_class_name: str
+
     class Config:
         from_attributes = True
 
@@ -438,6 +450,7 @@ class ProductResponse(ProductBase):
     updated_by: Optional[str] = None
     category: Optional[ProductCategorySimple] = None
     brand: Optional[BrandSimple] = None
+    item_class: Optional["ItemClassSimple"] = None
     base_uom: Optional[UnitOfMeasureSimple] = None
     # Map of `field_key` -> linked attachments. Populated only when an
     # attachment_field_links row exists for this product. Used by the

@@ -62,6 +62,7 @@ _PARAMS = frozenset(
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
         "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine", "spec", "company",
+        "group_offset",
     }
 )
 #: The chat dataset's own query keys (CA-3); any other is 422 `unknown_param`.
@@ -191,7 +192,7 @@ def _echo(
 
 #: REPORT-SMART-1021: keys a sales body carries only when counted or compared, so a body
 #: that is neither stays what every caller already reads.
-_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate")
+_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate", "summary", "documents")
 
 
 def _drop_unset(part: dict, compared: bool) -> dict:
@@ -209,6 +210,10 @@ def _response(data: dict) -> JSONResponse:
     _drop_unset(content["total"], compared)
     for row in content["rows"]:
         _drop_unset(row, compared)
+    for group in (content.get("summary") or {}).get("groups", []):
+        for row in group["rows"]:
+            if row.get("ordered_qty") is None:
+                row.pop("ordered_qty")
     return JSONResponse(content=content)
 
 
@@ -258,6 +263,9 @@ def report_ask(
         None, description="previous_period (the same number of days just before) | last_year (the same dates)."
     ),
     mine: bool = Query(False, description="A salesperson's own customers only."),
+    group_offset: Optional[int] = Query(
+        None, ge=0, description="An outstanding summary's or document list's page start: the first row to show (a 'more')."
+    ),
     company: Optional[str] = Query(
         None, description="A company name, code or id; narrows the contact's own companies to that one (403 if not theirs)."
     ),
@@ -410,6 +418,13 @@ def report_ask(
     # customers below (`enforce_customer_scope`). Only a "my ..." ask is narrowed to a salesperson's own book.
     # The one rule the chatbot seams share (`contact_asker.may_ask_sales_ranking`).
     decision, book = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=granted)
+    if decision == "not_granted" and basis_norm == "pending_delivery" and resolved and contact_asker.pending_delivery_open(db, str(resolved)):
+        # Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY, #b6e9): as before #1922, pending delivery needs no reveal; undelivered
+        # orders and unpaid invoices do. Only a contact the company knows: office staff (every customer) or a linked
+        # contact (its own customers, `enforce_customer_scope` below). An unknown contact stays refused. A live
+        # salesperson never reaches here (its decision is its own book, Q6). `granted` stays False: the agent axis and
+        # filters stay refused below (`own_book_only`), as pre-#1922 pending delivery had none (security S1).
+        decision = "granted"
     if decision == "not_granted":
         if outstanding_kind:
             raise AppException(403, "Outstanding is not enabled for your account.", code="outstanding_not_enabled")
@@ -483,11 +498,14 @@ def report_ask(
         customer_query=None,
     )
     if scoped is not None:
+        # Item 1 (owner 29 Oct, as before #1922): on undelivered orders and pending delivery a dealer may also name and
+        # break down by location, over its own customers' lines.
+        dealer_keys = ask.DEALER_KEYS | (ask.DEALER_OUTSTANDING_KEYS if basis_norm in ask.SUMMARY_BASES else frozenset())
         outside = (
-            (group_norm is not None and group_norm not in ask.DEALER_KEYS)
+            (group_norm is not None and group_norm not in dealer_keys)
             or bool(agents)
             or bool(card_agents)
-            or bool(codes)
+            or (bool(codes) and "location" not in dealer_keys)
             or channel_norm is not None
         )
         if outside:
@@ -620,6 +638,45 @@ def report_ask(
         policy=policy, company_grants=grants, sort=sort_norm,
     )
     data = ask.run_ask(db, date_from=date_from, date_to=date_to, top_n=top_n, **run)
+    product_subject = bool(code or named_products)
+    customer_subject = bool(named_customers) or scoped is not None
+    if (
+        basis_norm in ask.SUMMARY_BASES and compare_norm is None and not spec_group
+        and group_norm not in ask.DOCUMENT_GROUPS  # the "Reply 1" list is the list (review B1)
+        and (product_subject or customer_subject) and data.get("status") == "ok"
+    ):
+        # REPORT-OUTSTANDING-SUMMARY (owner 29 Oct): an outstanding kind naming a product or a customer gets the
+        # pre-#1922 summary. Default breakdowns: by location (unless a location was named), then by customer for a
+        # product, by product for a customer, neither when both were named (R13). An axis the user named replaces the
+        # defaults. A dealer's named axis was already held to its own keys, and a dealer always has a customer subject.
+        if group_norm is not None:
+            axes = [group_norm]
+        else:
+            axes = [] if codes else ["location"]
+            if product_subject != customer_subject:
+                axes.append("customer" if product_subject else "product")
+        data = {
+            **data,
+            "summary": ask.outstanding_summary(
+                db, basis=basis_norm, axes=axes, date_from=date_from, date_to=date_to,
+                sort=sort_norm, top_n=top_n if group_norm else None, measure=measure_norm,
+                filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
+            ),
+        }
+        if group_offset is not None:
+            data["summary"]["group_offset"] = group_offset  # item 6: the page a "more" asked for (the presenter cuts it)
+    if basis_norm in ask.DOCUMENT_LISTS and group_norm == ask.DOCUMENT_LISTS[basis_norm]["column"] and data.get("status") == "ok":
+        # REPORT-OUTSTANDING-SUMMARY item 7 (owner 29 Oct): the document list as before #1922, one 20-row page at a time
+        # (eval hard guard: no reply carries an unpaged list); `group_offset` is the page a "more" asked for.
+        docs = ask.document_rows(
+            db, basis=basis_norm, filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
+            date_from=date_from, date_to=date_to,
+        )
+        start = group_offset or 0
+        data = {
+            **data, "documents": docs[start : start + ask.DOCUMENT_PAGE], "documents_total": len(docs),
+            "group_offset": start,
+        }
     if compare_norm is not None and data.get("status") == "ok":
         # REPORT-SMART-1021: the earlier window, every row (matched by name), one call.
         earlier_from, earlier_to = ask.compare_window(compare_norm, date_from, date_to)
@@ -644,7 +701,7 @@ def report_ask(
             # those set the rate is over more sales orders than the ranking it annotates counts.
             _extra = [SalesOrder.company_id.in_(sorted(grants)) if grants else false()]
             if brand_scope:
-                _extra.append(brand_predicate(brand_scope, Product.brand_id, Product.company_id))
+                _extra.append(brand_predicate(brand_scope, Product.brand_id, Product.company_id, Product.item_class_id))
             _fill = srs.sales_agent_fill_rate(
                 db, group="category" if group_norm == "category" else "item",
                 filters=srs._ranking_filters(

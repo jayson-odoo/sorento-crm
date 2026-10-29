@@ -107,15 +107,16 @@ def test_b1_the_basis_comes_first_then_the_company_last(bot) -> None:
     assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
-def test_b1_a_bare_outstanding_asks_the_kind_first_then_the_company_last(bot) -> None:
+def test_b1_a_bare_outstanding_asks_the_kind_and_never_the_company(bot) -> None:
+    """Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY item 4, as before #1922): no "Sorento or Mocha?" on outstanding; the ask
+    runs over the contact's own companies."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("outstanding", basis=None, **NO_DATES), "outstanding")
     assert calls == [] and "Undelivered orders" in text, (text, calls)
     text, calls = bot.say(_pick(2), "the second")  # Pending delivery
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    text, calls = bot.say(_pick(1), sorento)
     args = _only_report_ask(calls)
-    assert args["company"] == DEFAULT_COMPANY_ID and args["basis"] == "pending_delivery", args
+    assert f"{sorento} or {mocha}?" not in text, text
+    assert "company" not in args and args["basis"] == "pending_delivery", args
     assert "date_from" not in args and "date_to" not in args, args
 
 

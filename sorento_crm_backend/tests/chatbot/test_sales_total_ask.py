@@ -188,6 +188,19 @@ def test_t5_outstanding_runs_the_one_report_ask_total_layout(one):
     assert asks[0].get("date_from") == "2026-01-01" and asks[0].get("date_to") == "2026-01-31", asks[0]
 
 
+def test_t5b_outstanding_answering_the_basis_question_with_no_declared_mode_never_runs_another_report(one):
+    """REPORT-OUTSTANDING-SUMMARY review (eval round): the parser read "outstanding" as `sales_analysis` +
+    `sales_basis: outstanding` and declared no answer mode. With the basis question open that is never a fresh
+    outstanding ask (which dropped the Jan 2026 period and listed every delivery order); as on main, the total's
+    questions stand."""
+    _ask(one)
+    result, captured = one.say(
+        _answer(order_status="sales_analysis", sales_basis="outstanding", basis=None), "outstanding"
+    )
+    assert not _calls(captured, "crm_report_ask"), captured
+    assert "Invoiced, delivered, ordered or outstanding?" in _reply(result), _reply(result)
+
+
 def test_t6_two_companies_basis_then_company_then_both_ride(two):
     _ask(two)
     result, captured = two.say(_answer(basis="ordered", open_question_answer=FILL), "ordered")
