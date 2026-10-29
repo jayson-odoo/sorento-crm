@@ -149,7 +149,7 @@ def clear_embedding_cache() -> None:
 
 
 def embed_texts(
-    texts: List[str], *, timeout: int = REGISTRATION_EMBED_TIMEOUT, model: Optional[str] = None
+    texts: List[str], *, timeout: int = REGISTRATION_EMBED_TIMEOUT, model: Optional[str] = None, db: Any = None
 ) -> List[Optional[List[float]]]:
     """Vectors for `texts`, one network call for everything not seen before.
 
@@ -171,7 +171,11 @@ def embed_texts(
         try:
             from app.services.embedding_settings import embed_search_texts
 
-            vectors = embed_search_texts(missing, model, timeout=timeout)
+            vectors = (
+                embed_search_texts(missing, model, timeout=timeout, db=db)
+                if db is not None
+                else embed_search_texts(missing, model, timeout=timeout)
+            )
         except Exception:
             with _EMBED_LOCK:
                 _EMBED_DOWN_UNTIL = time.monotonic() + EMBED_BACKOFF_SECONDS
@@ -191,8 +195,8 @@ def embed_texts(
         return out
 
 
-def embed_text(text: str, model: Optional[str] = None) -> List[float]:
-    return embed_texts([text], model=model)[0]
+def embed_text(text: str, model: Optional[str] = None, db: Any = None) -> List[float]:
+    return embed_texts([text], model=model, db=db)[0]
 
 
 def semantic_matches(db: Session, *, company_id: str, text: str, top_k: int = 10) -> List[Tuple[str, float]]:
@@ -205,7 +209,7 @@ def semantic_matches(db: Session, *, company_id: str, text: str, top_k: int = 10
         from app.services.embedding_service import EmbeddingReadService
         from app.services.embedding_settings import records_search_model
 
-        vector = embed_text(text, records_search_model(db))
+        vector = embed_text(text, records_search_model(db), db)
 
         with db.begin_nested():
             hits = EmbeddingReadService(db).search_current(vector, top_k=top_k, source_type="project")

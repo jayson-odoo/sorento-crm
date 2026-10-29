@@ -1436,23 +1436,17 @@ class AIAssistantChatService:
         enabled_tools: list[str],
         top_k: int,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Top-K enabled MCP tools by keyword overlap with the reformulated query.
+        """Top-K enabled MCP tools by word overlap with the reformulated query (`tool_keyword_rank`).
 
-        Tool vectors are no longer maintained (the keep set holds records only), so this no longer embeds the
-        query or reads tool chunks: a tool is ranked by how many of its name words the query shares.
+        Tool vectors are no longer maintained (the keep set holds records only), so nothing is embedded: each tool is
+        scored against its capability text, with the portal pin and the intent nudges kept.
         """
-        words = {w for w in re.findall(r"[a-z0-9]+", (standalone_query or "").lower()) if len(w) >= 3}
-        ranked: list[tuple[int, str]] = []
-        for name in enabled_tools:
-            overlap = len(words & {w for w in re.findall(r"[a-z0-9]+", str(name).lower()) if len(w) >= 3})
-            if overlap:
-                ranked.append((overlap, str(name)))
-        ranked.sort(key=lambda r: (-r[0], r[1]))
-        selected_tools = [
-            {"tool_name": name, "score": float(overlap), "why_selected": "keyword overlap", "is_current": True,
-             "chunk_text": "", "missing_params": []}
-            for overlap, name in ranked[:top_k]
-        ]
+        from app.services.tool_keyword_rank import rank_tools
+
+        portal_intent = bool(
+            re.search(r"intent:\s*(stock_inquiry|complaint|purchase_request|sponsorship_form)\b", (standalone_query or "").lower())
+        )
+        selected_tools = rank_tools(standalone_query, enabled_tools, top_k, portal_intent=portal_intent)
         sources = [
             {"title": c["tool_name"], "chunk_text": c["chunk_text"], "score": c["score"],
              "why_selected": c["why_selected"], "is_current": True}

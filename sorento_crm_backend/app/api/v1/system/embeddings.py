@@ -101,8 +101,7 @@ def backfill_embeddings(
 # ---------------------------------------------------------------------------------------------------------------
 # LOOKUP-EMBED-CENTRAL: the Embeddings screen's record side (the lookup-word side lives on the chatbot doorway).
 # ---------------------------------------------------------------------------------------------------------------
-RECORDS_BACKFILL_STOP_KEY = "lec:records_backfill:stop"
-RECORDS_BACKFILL_RUNNING_KEY = "lec:records_backfill:running"
+from app.tasks.embedding_backfill import RECORDS_BACKFILL_RUNNING_KEY, RECORDS_BACKFILL_STOP_KEY  # noqa: E402
 STOP_FLAG_SECONDS = 3600
 
 
@@ -186,7 +185,7 @@ class RecordsBackfillBody(BaseModel):
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(require_permission("system.settings.update"))],
 )
-def records_backfill(body: RecordsBackfillBody):
+def records_backfill(body: RecordsBackfillBody, db: Session = Depends(get_db)):
     # Looked up at call time: the queue and its Redis connection are patched in tests and never bound here.
     from app.services import queue_service
     from app.tasks.embedding_backfill import run_records_backfill
@@ -194,6 +193,12 @@ def records_backfill(body: RecordsBackfillBody):
     if body.action == "stop":
         queue_service.redis_conn.set(RECORDS_BACKFILL_STOP_KEY, "1", ex=STOP_FLAG_SECONDS)
         return {"job_id": None}
+    from app.services.embedding_backfill_service import clear_failures
+    from app.services.embedding_settings import resolve_embedder
+
+    # A fresh start: documents the last run gave up on get another chance.
+    clear_failures(db, resolve_embedder(db)[1])
+    db.commit()
     try:
         queue_service.redis_conn.delete(RECORDS_BACKFILL_STOP_KEY)
     except Exception:  # noqa: BLE001 - a stale flag only stops the run early; the job also clears it

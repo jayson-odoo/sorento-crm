@@ -51,9 +51,12 @@ def semantic_search(
     if not query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
 
-    from app.services.embedding_settings import records_search_model
+    from app.services.embedding_settings import RECORD_KEEP_SET, records_search_model
 
     search_model = records_search_model(db)
+    if body.source_type and body.source_type not in RECORD_KEEP_SET:
+        # Nothing is searchable there: answer before spending an embedding on the query.
+        return EmbeddingSearchResponse(data=[], model=search_model, dimensions=settings.embedding_dimensions)
     query_embedding = _embed_query(query, search_model, db)
     rows = EmbeddingReadService(db).search_current(
         query_embedding,

@@ -22,21 +22,18 @@ def _attachment_types(db: Session) -> list[dict]:
     return list(out.values())
 
 
-def _brands(db: Session) -> list[dict]:
-    """Brand codes of the caller's companies (the session's scope), plus the shared ones."""
-    from sqlalchemy import or_, select
+def _brands(db: Session, scoped: bool = True) -> list[dict]:
+    """Brand codes for the picker: the caller's companies through the standard ORM filter. `scoped=False` (the orphan
+    check) lists every brand code, so an option for a brand of another company is not called orphaned."""
+    from sqlalchemy import select
 
-    from app.models.base import get_company_scope
     from app.models.product import Brand
 
-    t = Brand.__table__
-    query = select(t.c.brand_code, t.c.brand_name).where(t.c.brand_code.isnot(None)).order_by(t.c.brand_code)
-    scope = get_company_scope(db)
-    if isinstance(scope, frozenset):
-        query = query.where(or_(t.c.company_id.in_(list(scope)), t.c.company_id.is_(None)))
-    elif scope is not None:
-        return []  # unresolved scope: fail closed
-    rows = db.execute(query).all()
+    if scoped:
+        rows = db.query(Brand.brand_code, Brand.brand_name).filter(Brand.brand_code.isnot(None)).order_by(Brand.brand_code).all()
+    else:
+        t = Brand.__table__
+        rows = db.execute(select(t.c.brand_code, t.c.brand_name).where(t.c.brand_code.isnot(None)).order_by(t.c.brand_code)).all()
     return [{"value": code, "label": f"{name} ({code})" if name else code} for code, name in rows if code and code.strip()]
 
 
@@ -58,7 +55,10 @@ def is_alias_set(set_key: str) -> bool:
     return set_key in ALIAS_SET_TARGETS
 
 
-def alias_targets(db: Session, set_key: str) -> list[dict] | None:
-    """[{value, label}] for an alias set, None for any other set."""
+def alias_targets(db: Session, set_key: str, *, scoped: bool = True) -> list[dict] | None:
+    """[{value, label}] for an alias set, None for any other set. `scoped=False` ignores the caller's company scope
+    (for the orphan check; only brands are company-scoped)."""
     loader = ALIAS_SET_TARGETS.get(set_key)
-    return loader(db) if loader else None
+    if loader is None:
+        return None
+    return loader(db, scoped) if loader is _brands else loader(db)

@@ -13,10 +13,11 @@ export interface EmbeddingSettings {
   embedding_backfill_rpm: number;
 }
 
-export type EmbeddingSettingsInput = Pick<
-  EmbeddingSettings,
-  'embedding_provider' | 'embedding_model' | 'embedding_backfill_rpm'
->;
+export type EmbeddingSettingsInput = {
+  embedding_provider?: string;
+  embedding_model?: string;
+  embedding_backfill_rpm: number;
+};
 
 const DEFAULT_RPM = 20;
 
@@ -36,6 +37,7 @@ export async function saveEmbeddingSettings(input: EmbeddingSettingsInput): Prom
   const response = await apiFetch('/api/user-management/settings/general', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
+    // Undefined fields are dropped by JSON.stringify: only what the page chose to send goes.
     body: JSON.stringify({
       embedding_provider: input.embedding_provider,
       embedding_model: input.embedding_model,

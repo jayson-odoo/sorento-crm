@@ -433,10 +433,27 @@ def count_failed(db: Session, model: str) -> int:
 
 
 def _counts_against_documents(exc: Exception) -> bool:
-    """Only an error about the documents themselves counts (a 4xx other than auth / rate limit). Auth, rate limit,
-    5xx, a missing key and a dropped connection are not the documents' fault: the run stops uncounted."""
+    """Only an error about the documents themselves counts: a 4xx other than auth (401/403), rate limit (429), an
+    unknown model (404) and the 400s that name the key or the account (API_KEY_INVALID, FAILED_PRECONDITION).
+    A 5xx, a missing key and a dropped connection are not the documents' fault either: the run stops uncounted."""
     status = getattr(exc, "status_code", None)
-    return isinstance(status, int) and 400 <= status < 500 and status not in (401, 403, 429)
+    if not (isinstance(status, int) and 400 <= status < 500) or status in (401, 403, 404, 429):
+        return False
+    text = str(exc).upper()
+    return not any(marker in text for marker in ("API_KEY_INVALID", "FAILED_PRECONDITION"))
+
+
+def clear_failures(db: Session, model: str) -> None:
+    """Forget the failure counts of `model` (a fresh start: the setting moved to it, or Start was pressed)."""
+    from sqlalchemy import text
+
+    db.execute(
+        text(
+            "UPDATE embedding_documents SET metadata = (metadata::jsonb #- ARRAY['embed_failures', :m])::json "
+            "WHERE metadata->'embed_failures'->>:m IS NOT NULL"
+        ),
+        {"m": model},
+    )
 
 
 def failed_documents(db: Session, model: str) -> list[tuple[str, str, int]]:
@@ -494,7 +511,7 @@ def backfill_records(
     stopped = False
     stop_error: list[Exception] = []
 
-    def send(group) -> None:
+    def send(group, split: bool = True) -> None:
         nonlocal embedded, failed, requests_made, stopped
         if should_stop is not None and should_stop():
             stopped = True
@@ -511,6 +528,13 @@ def backfill_records(
             if not _counts_against_documents(exc):
                 stopped = True
                 stop_error.append(exc)
+                return
+            if split and len(group) > 1:
+                # One bad document spoils a whole batch: try them one at a time before anything is counted.
+                for single in group:
+                    send([single], split=False)
+                    if stopped:
+                        return
                 return
             for doc, _chunks in group:
                 meta = dict(doc.metadata_json or {})
@@ -643,10 +667,13 @@ def apply_search_model_guard(db: Session, model: str) -> bool:
 
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             conn.execute(text("SET maintenance_work_mem = '512MB'"))
-            for name in invalid:
-                conn.execute(text(f'REINDEX INDEX CONCURRENTLY "{name}"'))
-            for ddl in statements:
-                conn.execute(text(ddl))
+            try:
+                for name in invalid:
+                    conn.execute(text(f'REINDEX INDEX CONCURRENTLY "{name}"'))
+                for ddl in statements:
+                    conn.execute(text(ddl))
+            finally:
+                conn.execute(text("RESET maintenance_work_mem"))
     db.query(SystemSetting).update({"embedding_records_search_model": model})
     db.commit()
     return True

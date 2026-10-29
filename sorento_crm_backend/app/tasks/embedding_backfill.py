@@ -3,6 +3,7 @@ model (LOOKUP-EMBED-CENTRAL). Runs on the `imports` queue; the worker has no rel
 from __future__ import annotations
 
 import logging
+import uuid
 
 from app.database import SessionLocal
 
@@ -23,19 +24,48 @@ def _stop_requested() -> bool:
 
 
 RECORDS_BACKFILL_RUNNING_KEY = "lec:records_backfill:running"
+#: The running flag outlives a dead worker by at most this; each batch refreshes it.
+RUNNING_TTL_SECONDS = 180
+_RELEASE_IF_OURS = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 
 
-def _set_running(on: bool) -> None:
-    """The Stop button shows only while this flag is up (expires on its own if the worker dies)."""
+def _claim_running() -> str | None:
+    """Raise the running flag if nobody else's is up; the token it carries is this job's. None when another job owns it."""
     try:
         from app.services import queue_service
 
-        if on:
-            queue_service.redis_conn.set(RECORDS_BACKFILL_RUNNING_KEY, "1", ex=6 * 3600)
-        else:
-            queue_service.redis_conn.delete(RECORDS_BACKFILL_RUNNING_KEY)
+        token = uuid.uuid4().hex
+        if queue_service.redis_conn.set(RECORDS_BACKFILL_RUNNING_KEY, token, nx=True, ex=RUNNING_TTL_SECONDS):
+            return token
+    except Exception:  # noqa: BLE001 - no Redis, no flag
+        pass
+    return None
+
+
+def _release_running(token: str | None) -> None:
+    """Take the flag down only if this job owns it."""
+    if token is None:
+        return
+    try:
+        from app.services import queue_service
+
+        queue_service.redis_conn.eval(_RELEASE_IF_OURS, 1, RECORDS_BACKFILL_RUNNING_KEY, token)
     except Exception:  # noqa: BLE001
         pass
+
+
+def _stop_or_refresh(token: str | None):
+    def check() -> bool:
+        if token is not None:
+            try:
+                from app.services import queue_service
+
+                queue_service.redis_conn.expire(RECORDS_BACKFILL_RUNNING_KEY, RUNNING_TTL_SECONDS)
+            except Exception:  # noqa: BLE001
+                pass
+        return _stop_requested()
+
+    return check
 
 
 def run_records_backfill(model: str | None = None) -> dict:
@@ -44,11 +74,11 @@ def run_records_backfill(model: str | None = None) -> dict:
     from app.services.embedding_settings import resolve_embedder
 
     db = SessionLocal()
-    _set_running(True)
+    run_token = _claim_running()
     try:
         if model is None:
             _provider, model = resolve_embedder(db)
-        result = backfill_records(db, model, should_stop=_stop_requested)
+        result = backfill_records(db, model, should_stop=_stop_or_refresh(run_token))
         flipped = apply_search_model_guard(db, model)
         logger.info(
             "records backfill %s: embedded=%s failed=%s remaining=%s flipped=%s",
@@ -59,6 +89,6 @@ def run_records_backfill(model: str | None = None) -> dict:
             "remaining": result.remaining, "flipped": flipped,
         }
     finally:
-        _set_running(False)
+        _release_running(run_token)
         db.close()
 

@@ -35,10 +35,15 @@ export default function EmbeddingsSettingsPage() {
   const [loaded, setLoaded] = useState(false);
 
   // Prefill waits for the overview to settle: a setting never saved shows the embedder that actually runs.
+  // Only known values prefill: a setting never saved with no overview to say what runs stays blank, never a guess.
+  const [initial, setInitial] = useState<{ provider: string; model: string }>({ provider: '', model: '' });
   useEffect(() => {
     if (settings.data && !overview.isLoading && !loaded) {
-      setProvider(settings.data.embedding_provider ?? overview.data?.setting.provider ?? 'openai');
-      setModel(settings.data.embedding_model ?? overview.data?.setting.model ?? 'text-embedding-3-small');
+      const p = settings.data.embedding_provider ?? overview.data?.setting.provider ?? '';
+      const m = settings.data.embedding_model ?? overview.data?.setting.model ?? '';
+      setProvider(p);
+      setModel(m);
+      setInitial({ provider: settings.data.embedding_provider ?? '', model: settings.data.embedding_model ?? '' });
       setRpm(String(settings.data.embedding_backfill_rpm));
       setLoaded(true);
     }
@@ -124,12 +129,13 @@ export default function EmbeddingsSettingsPage() {
         <Button
           onClick={() =>
             save.mutate({
-              embedding_provider: provider,
-              embedding_model: model,
+              // What was saved before is sent as it was; a value that only stands in for "unknown" is not sent.
+              ...(provider && (provider !== initial.provider || initial.provider) ? { embedding_provider: provider } : {}),
+              ...(model && (model !== initial.model || initial.model) ? { embedding_model: model } : {}),
               embedding_backfill_rpm: Number(rpm),
             })
           }
-          disabled={save.isPending || !!rpmError || !provider || !model}
+          disabled={save.isPending || !!rpmError || (!!provider !== !!model)}
         >
           {save.isPending ? <LoaderCircleIcon className="animate-spin" /> : null}
           Save

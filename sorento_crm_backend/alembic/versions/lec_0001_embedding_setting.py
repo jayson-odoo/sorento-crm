@@ -40,7 +40,8 @@ def upgrade() -> None:
     label = bind.execute(
         sa.text(
             "SELECT provider, model FROM ai_prompt_labels "
-            "WHERE name = 'chatbot_lookup_embedder' AND label = 'production' LIMIT 1"
+            "WHERE name = 'chatbot_lookup_embedder' AND label = 'production' "
+            "AND model ~ '^[A-Za-z0-9._-]{1,128}$' LIMIT 1"
         )
     ).first()
     if label is not None:

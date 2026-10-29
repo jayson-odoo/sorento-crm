@@ -132,7 +132,7 @@ def _flag_orphans(db: Session, set_id: str, options) -> None:
     from app.services.lookup_alias_targets import alias_targets
 
     set_obj = db.query(LookupSet).filter(LookupSet.id == set_id).first()
-    targets = alias_targets(db, set_obj.set_key) if set_obj else None
+    targets = alias_targets(db, set_obj.set_key, scoped=False) if set_obj else None
     if targets is None:
         return
     known = {t["value"].strip().casefold() for t in targets}

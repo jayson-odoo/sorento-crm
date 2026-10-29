@@ -1040,7 +1040,7 @@ def _viewable_lists(db: Session, current_user: dict, names) -> set[str]:
     }
 
 
-@router.get("/lookup-words", dependencies=[Depends(require_permission("master_data.lookup_sets.view"))])
+@router.get("/lookup-words")
 def lookup_words(
     list: str = Query(...),
     current_user: dict = Depends(require_permission("master_data.lookup_sets.view")),

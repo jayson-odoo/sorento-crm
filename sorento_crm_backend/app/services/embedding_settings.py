@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session
 
 from app.models.user import SystemSetting
 
+import re
+
 DEFAULT_EMBEDDER = ("openai", "text-embedding-3-small")
+#: The same pattern the settings API validates a model name with.
+MODEL_NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
 EMBEDDER_PROMPT_KEY = "chatbot_lookup_embedder"
 
 
@@ -19,7 +23,7 @@ def resolve_embedder(db: Session) -> tuple[str, str]:
     if row is not None and row[0] and row[1]:
         return row[0], row[1]
     provider, model = ai_prompt_registry.agent_model(db, EMBEDDER_PROMPT_KEY)
-    if provider and model:
+    if provider and model and MODEL_NAME_RE.fullmatch(model):  # a label is data too: a bad name gives the default
         return provider, model
     return DEFAULT_EMBEDDER
 

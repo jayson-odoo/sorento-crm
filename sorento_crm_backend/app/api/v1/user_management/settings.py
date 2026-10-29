@@ -1149,6 +1149,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     db.commit()
     db.refresh(settings)
     if embedder_changed:
+        from app.services.embedding_backfill_service import clear_failures
+
+        if settings.embedding_model:
+            clear_failures(db, settings.embedding_model)  # the new model starts without old failure counts
+            db.commit()
         # A new lookup embedder re-embeds the records in the background; the guard flips the search model
         # only once every document has a vector of the new model.
         try:

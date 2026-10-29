@@ -2933,13 +2933,24 @@ def _search_seam(model: str):
         from app.services.embedding_settings import embed_search_texts
 
         def seam(texts, _model=model):
-            return embed_search_texts(list(texts), _model)
+            db = _SEARCH_DB.get()  # the caller's session (set around the call), so a Gemini key read opens none
+            return embed_search_texts(list(texts), _model, db=db) if db is not None else embed_search_texts(list(texts), _model)
 
         _SEARCH_SEAMS[model] = seam
     return seam
 
 
 _SEARCH_SEAMS: dict[str, Any] = {}
+_SEARCH_DB: ContextVar[Any] = ContextVar("entity_resolver_search_db", default=None)
+
+
+def _embed_with(db: Session, embed, texts):
+    """Run a search seam with `db` as its session."""
+    token = _SEARCH_DB.set(db)
+    try:
+        return embed(texts)
+    finally:
+        _SEARCH_DB.reset(token)
 
 
 def _iterative_scan_for(db: Session, source_types) -> None:
@@ -5255,7 +5266,7 @@ def _prefetch_embeddings(db: Session, tokens: list[str]) -> None:
     if len(todo) < 2:
         return
     try:
-        vectors = _embed_text_chunks(todo)
+        vectors = _embed_with(db, _embed_text_chunks, todo)
     except Exception:  # noqa: BLE001 - the per-token path below is the fallback
         logger.info("Tier-3 batched embedding failed; embedding per token", exc_info=True)
         return
@@ -5314,7 +5325,7 @@ def _memo_embedding(db: Session, token: str, embed) -> list[float]:
         return memo[key]
     vector = _known_vector(embed, scope, token)
     if vector is None:
-        vector = _remember_vector(embed, scope, token, embed([token])[0])
+        vector = _remember_vector(embed, scope, token, _embed_with(db, embed, [token])[0])
     if memo is not None:
         memo[key] = vector
     return vector
@@ -6057,7 +6068,7 @@ def _rag_resolve_phrase(
         return []
 
     try:
-        query_vec = _search_seam(model)([phrase])[0]
+        query_vec = _embed_with(db, _search_seam(model), [phrase])[0]
     except Exception:
         logger.exception("RAG embed failed for phrase=%s", phrase)
         return []

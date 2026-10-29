@@ -68,13 +68,10 @@ export function LookupWordsGrid({
         header: 'Row',
         size: 200,
         meta: { headerTitle: 'Row' },
-        // The label is also one of the row's words (a chip), so its text is drawn from the title: it
-        // reads once on screen and the cell still names the row.
         cell: ({ row }) => (
-          <span
-            className="block truncate font-medium before:content-[attr(title)]"
-            title={row.original.label}
-          />
+          <span className="block truncate font-medium" title={row.original.label}>
+            {row.original.label}
+          </span>
         ),
       },
       {
