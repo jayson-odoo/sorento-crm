@@ -22,12 +22,22 @@ the code = name placeholder a product push back-creates (#1972). A class retired
 goes inactive through `/ingest/item_classes/deletions`. The SS gates on `GET /external/contract`
 reporting `2.11` with `item_classes` in `entities`; a 2.10 CRM simply never lists it.
 
-Wire shape (field names of hapi itemclass to be confirmed by crew; the CRM side is canonical):
+hapi shape (crew, 30 Oct, read only): `GET /api/db{1,2}/itemclass` is a plain array, no paging,
+no id, no timestamps, no active flag, no brand link. Each row is
+`{ItemClass, Description, Desc2, ShortCode}`. db1 has DIY "SORENTO LITE - DIY" and SERENE
+"SORENTO SERENE SERIES"; db2 has DIY. Desc2 and ShortCode are blank. This is the ItemGroup preset
+shape in the SS (`presets.py:1525`).
+
+SS mapping (D8): `code = ItemClass`, `name = Description` (fall back to the code when blank, the
+ItemBrand rule), `description = Desc2` (blank is sent as `""` and clears the CRM placeholder),
+`is_active = true` on every row. AutoCount has no active flag, so being on the list means active.
+Sending it also reactivates a class that an earlier sweep deactivated. There is no watermark, so
+every run is a full-list pull, and a class gone from the list goes to `/deletions` (deactivate).
 
 ```json
 {"companyCode": "SRT", "records": [
-  {"source_ref": "SRT:SERENE", "code": "SERENE", "name": "SERENE",
-   "description": "Serene series", "is_active": true}
+  {"source_ref": "SRT:SERENE", "code": "SERENE", "name": "SORENTO SERENE SERIES",
+   "description": "", "is_active": true}
 ]}
 ```
 
