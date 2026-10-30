@@ -1,7 +1,31 @@
 # PLAN: chatbot failure-reply triage (30 Oct 2026)
 
-**Status:** Phase 1 done (cause table filed to the owner as a crew ask, 30 Oct). Phase 2 waits on
-the owner's answers. Track per slice below (S = small fix track, M = feature track).
+**Status:** Batch 1 building (feature track M, lead pattern: tester red -> coder -> reviewer).
+Owner answered Q1-Q5 on 30 Oct ~21:15; Q1 escalation routing evidence filed as a second ask
+(routing change waits on it). UAC: `chatbot-fail-triage-acceptance-criteria.md`.
+
+## Owner answers (30 Oct ~21:15)
+
+- Global: never "Sorry, I am busy" or "Sorry, I ran into a problem understanding that"; every failure
+  path gets an honest, specific reply. "Couldn't find X" is fine.
+- Q1: evidence first (filed): the customer_service team is the code default (`contracts.py:264`,
+  `turn_runtime.py:2177`) paired with the default agent general_enquiries (`contracts.py:282`), which
+  has no customer_service team.
+- Q2: dealer cost = the dealer promotion's `dealer_cost` (UAC AC-5).
+- Q3: keep the category flag; the reply is a plain "Couldn't find X".
+- Q4: parser extracts code head + size as a spec; the size is the trap length (UAC AC-6).
+- Q5: add the price tag request form. Not prompt-only (UAC AC-3).
+
+## Batches
+
+- Batch 1 (now): AC-1 (every generic / busy path, C2 C4 C6 C8 included), AC-2 (F3), AC-3 (F7), AC-4.
+- Batch 1b (after the Q1 answer): escalation picks agent + team as one reachable pair, default
+  general_enquiries -> marketing_product, assignee uuid only from an assignee option.
+- Batch 2: AC-5 dealer promotion cost, AC-6 code + size (parser prompt via md5 pin, owner publishes,
+  eval gate).
+- Outside this repo: C7, the n8n `sub-error-logger` text "Sorry, I couldn't process that just now"
+  lives in n8n (never touched from a lane); its fix is an n8n promote by crew / owner. CRM side: the
+  turn answers before n8n's ~60 s give-up (UNVERIFIED number, n8n config not in the repo).
 
 ## Ask
 
