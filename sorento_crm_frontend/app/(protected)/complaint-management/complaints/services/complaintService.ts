@@ -10,6 +10,8 @@ import type {
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
+import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
 
 export type ComplaintsListParams = DataGridApiFetchParams & {
   assigned_to?: string;
@@ -54,6 +56,16 @@ export async function getComplaint(id: string): Promise<ComplaintDetail> {
   );
   if (!response.ok) throw new Error('Failed to fetch complaint');
   return response.json();
+}
+
+/** Revision lineage for the office Revisions tab (the portal history's own payload). */
+export async function getComplaintRevisions(id: string): Promise<FormRevisionEntry[]> {
+  const response = await apiFetch(`/api/v1/complaints-management/complaints/${id}/revisions`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load revisions'));
+  }
+  const data = await response.json();
+  return (data?.items ?? []) as FormRevisionEntry[];
 }
 
 export async function createComplaint(
@@ -473,6 +485,8 @@ export async function searchProjectsForLink(
     limit: '25',
     sort: 'updated_at',
     dir: 'desc',
+    // A registration waiting for approval is not a project to link yet (PROJECT-REG-PORTAL R4).
+    approved_only: 'true',
   });
   if (query.trim()) params.set('query', query.trim());
   const response = await apiFetch(`/api/v1/project-sales/projects/?${params.toString()}`);
@@ -483,13 +497,13 @@ export async function searchProjectsForLink(
   return (body.data ?? []).map(
     (row: {
       id: string;
-      project_code: string;
+      project_code: string | null;
       title: string;
       developer_name?: string | null;
       status_label?: string | null;
     }) => ({
       value: row.id,
-      label: `${row.project_code} - ${row.title}`,
+      label: `${projectCodeLabel(row)} - ${row.title}`,
       description: [row.developer_name, row.status_label].filter(Boolean).join(' - ') || undefined,
     }),
   );

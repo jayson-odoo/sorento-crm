@@ -20,7 +20,9 @@ from app.schemas.procurement import (
     InboundShipmentResponse,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import handle_internal_error, handle_unprocessable
+from app.utils.multi_value import multi_values
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -30,7 +32,7 @@ class BulkDeletePackingListsRequest(BaseModel):
 
 
 @router.get("/clearance-checkpoints")
-async def list_clearance_checkpoints(
+def list_clearance_checkpoints(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -80,7 +82,7 @@ async def list_clearance_checkpoints(
 
 
 @router.get("/container-status/latest")
-async def download_latest_container_status(
+def download_latest_container_status(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -137,7 +139,8 @@ async def download_latest_container_status(
 
 
 @router.post("/container-status-import", status_code=status.HTTP_202_ACCEPTED)
-async def import_container_status(
+@heavy
+def import_container_status(
     file: UploadFile = File(..., description="Container Status workbook (.xlsx / .xls / .xlsm)."),
     validate_only: bool = Query(
         False, description="Dry run: report what would change and write nothing."
@@ -176,7 +179,7 @@ async def import_container_status(
             detail=f"Invalid file type: {file.filename}. Please upload Excel (.xlsx, .xls or .xlsm).",
         )
 
-    raw = await file.read()
+    raw = file.file.read()
     if not raw:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="The uploaded file is empty."
@@ -222,19 +225,22 @@ async def import_container_status(
 
 
 @router.get("/", response_model=ListResponse[InboundShipmentListItemResponse])
-async def get_packing_lists(
+def get_packing_lists(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     shipment_status: Optional[str] = Query(None),
-    region: Optional[str] = Query(None, pattern="^(west|east)$"),
+    region: Optional[list[str]] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get packing lists (inbound shipments) with pagination, filtering, and sorting."""
+    regions = multi_values(region)
+    if regions and any(r not in ("west", "east") for r in regions):
+        raise handle_unprocessable("Region: expected one of west, east")
     try:
         service = InboundShipmentService(db)
         result = service.list_shipments(
@@ -245,7 +251,7 @@ async def get_packing_lists(
             shipment_status=shipment_status,
             sort_field=sort or "created_at",
             sort_dir=dir or "asc",
-            region=region,
+            region=regions,
         )
         return result
     except Exception as e:
@@ -253,7 +259,7 @@ async def get_packing_lists(
 
 
 @router.get("/{shipment_id}", response_model=InboundShipmentResponse)
-async def get_packing_list(
+def get_packing_list(
     shipment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -402,7 +408,7 @@ async def get_packing_list(
 
 
 @router.post("/", response_model=InboundShipmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_packing_list(
+def create_packing_list(
     shipment_data: InboundShipmentCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -424,7 +430,7 @@ async def create_packing_list(
 
 
 @router.put("/{shipment_id}", response_model=InboundShipmentResponse)
-async def update_packing_list(
+def update_packing_list(
     shipment_id: str,
     shipment_data: InboundShipmentUpdate,
     current_user: dict = Depends(get_current_user),
@@ -442,7 +448,7 @@ async def update_packing_list(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_packing_lists(
+def bulk_delete_packing_lists(
     body: BulkDeletePackingListsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -458,7 +464,7 @@ async def bulk_delete_packing_lists(
 
 
 @router.delete("/{shipment_id}", status_code=status.HTTP_200_OK)
-async def delete_packing_list(
+def delete_packing_list(
     shipment_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

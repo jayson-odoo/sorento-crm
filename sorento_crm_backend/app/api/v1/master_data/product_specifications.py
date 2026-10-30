@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_text, multi_values
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.product import Brand, Product, ProductCategory
@@ -29,11 +30,13 @@ from app.models.product_spec import (
 )
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services import product_spec_verification
-from app.services.error_handler import AppException, handle_internal_error, handle_not_found
+from app.services.error_handler import AppException, handle_internal_error, handle_not_found, handle_unprocessable
 from app.services.product_class_signal import explain_code
 from app.services.product_spec_registry import value_for_registry
 from app.services.product_spec_extract import MAX_TEXT_LENGTH as MAX_EXTRACT_TEXT
 from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
+
+_VERIFICATION_STATES = ("unverified", "verified", "needs_reverify")
 
 router = APIRouter()
 
@@ -94,7 +97,7 @@ class SpecPreviewRequest(BaseModel):
 
 
 @router.get("/")
-async def list_product_specifications(
+def list_product_specifications(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None, description="Match a product code or class."),
@@ -172,7 +175,7 @@ async def list_product_specifications(
 
 
 @router.get("/by-product/{product_id}")
-async def get_product_specification(
+def get_product_specification(
     product_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
@@ -261,7 +264,7 @@ async def get_product_specification(
 
 
 @router.get("/exceptions")
-async def list_spec_exceptions(
+def list_spec_exceptions(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
@@ -302,7 +305,7 @@ class ManualSpecValue(BaseModel):
 
 
 @router.post("/by-product/{product_id}/rederive")
-async def rederive_one_product(
+def rederive_one_product(
     product_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
@@ -483,7 +486,7 @@ def set_spec_values_in_one_batch(
 
 
 @router.put("/by-product/{product_id}/values/{spec_key}")
-async def set_spec_value_by_hand(
+def set_spec_value_by_hand(
     product_id: str,
     spec_key: str,
     payload: ManualSpecValue,
@@ -535,7 +538,7 @@ async def set_spec_value_by_hand(
 
 
 @router.delete("/by-product/{product_id}/values/{spec_key}")
-async def clear_hand_set_spec_value(
+def clear_hand_set_spec_value(
     product_id: str,
     spec_key: str,
     mode: str = Query(
@@ -717,8 +720,8 @@ def spec_verification_worklist(
     query: Optional[str] = Query(None, description="Match a product code or name."),
     # Literal rather than str: an unknown state or sort is a client bug, and silently
     # serving the unfiltered list instead of 422ing hides it.
-    state: Optional[Literal["unverified", "verified", "needs_reverify"]] = Query(None),
-    class_label: Optional[str] = Query(None),
+    state: Optional[list[str]] = Query(None),
+    class_label: Optional[list[str]] = Query(None),
     include_discontinued: bool = Query(False),
     sort: Literal["default", "coverage", "code"] = Query("default"),
     direction: str = Query("asc", alias="dir", description="asc | desc"),
@@ -731,13 +734,16 @@ def spec_verification_worklist(
     line stays honest while the reviewer is filtered down (AC-D.6). `classes` carries
     the class filter's own options, so the screen needs no second call for a dropdown.
     """
+    states = multi_values(state)
+    if states and any(s not in _VERIFICATION_STATES for s in states):
+        raise handle_unprocessable(f"State: expected one of {', '.join(_VERIFICATION_STATES)}")
     return product_spec_verification.worklist(
         db,
         page=page,
         limit=limit,
         query=query,
-        state=state,
-        class_label=class_label,
+        state=states,
+        class_label=multi_text(class_label),
         include_discontinued=include_discontinued,
         sort=sort,
         direction=direction,

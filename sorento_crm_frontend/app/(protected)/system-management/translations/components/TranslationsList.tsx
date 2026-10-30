@@ -24,7 +24,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 
 import { useDeferredRowAction, useRowPending } from '@/hooks/useDeferredRowAction';
@@ -293,9 +294,9 @@ export default function TranslationsList() {
                 className="w-full sm:w-64"
               />
               <div className="w-full sm:w-48" data-testid="translations-language-filter">
-                <SearchableSelect
-                  value={targetLang}
-                  onChange={setTargetLang}
+                <SearchableMultiSelect
+                  value={splitMulti(targetLang)}
+                  onChange={(v) => setTargetLang(joinMulti(v))}
                   options={LANGUAGE_OPTIONS}
                   placeholder="All languages"
                   clearable

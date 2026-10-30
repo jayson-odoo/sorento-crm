@@ -143,16 +143,16 @@ const IN_GRID_SUBTREE_SITES = new Map<string, string>([
     'LookupSetTable, same shape as above',
   ],
   [
-    'app/(protected)/marketing-management/promotions/components/PromotionsList.tsx:596',
-    'NESTED GRID: AttachmentDetailModal opens inside the promotions grid and holds a PanelDataGrid of linkages. Covered by the context default AND its own scrollerMaxHeight={false} (SF-1)',
+    'app/(protected)/marketing-management/promotions/components/PromotionsList.tsx:591',
+    'NESTED GRID: AttachmentDetailModal opens inside the promotions grid and holds a PanelDataGrid of linkages. Covered by the context default AND its own scrollerMaxHeight={false} (SF-1). (Line moved 596 -> 591 when #1937 FILTER-MULTISELECT PR3 made the promotions filters multi-value above it)',
   ],
   [
     'app/(protected)/scm/reorder/components/PlanLinesGrid.tsx:1333',
     'NESTED GRID: PlanRowDialog opens inside the plan grid and holds DrillTable/OnHandTable/StockDocumentsPanel. Every one already passes scrollerMaxHeight={false}; the context default now agrees with them',
   ],
   [
-    'app/(protected)/master-data-management/products/components/ProductsList.tsx:1092',
-    'NESTED GRID: BarcodeImportDialog (#1811, BARCODE-IMPORT) is rendered inside the products DataGrid and its preview step holds a DataGrid of the parsed rows. It names scrollerMaxHeight: \'20rem\', so the nested default leaves it alone and it keeps its sticky header inside that window, like the ComplaintFulfilmentOrdersSection items popover',
+    'app/(protected)/master-data-management/products/components/ProductsList.tsx:1185',
+    'NESTED GRID: BarcodeImportDialog (#1811, BARCODE-IMPORT) is rendered inside the products DataGrid and its preview step holds a DataGrid of the parsed rows. It names scrollerMaxHeight: \'20rem\', so the nested default leaves it alone and it keeps its sticky header inside that window, like the ComplaintFulfilmentOrdersSection items popover. (Line moved 1092 -> 1106 when #1923 CATALOG-IMAGES added the Extract photos from catalogue menu entry above it; the CatalogueUploadDialog it added on the next line renders no grid, so it is not a new site; 1106 -> 1115 when #1938 FILTER-MULTISELECT PR4 made the products filters multi-value above it; 1115 -> 1185 when #1972 ITEM-CLASS added the Item Class column and filter above it)',
   ],
 ]);
 
@@ -171,7 +171,7 @@ const IN_GRID_SUBTREE_SITES = new Map<string, string>([
  */
 const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
   [
-    'app/(protected)/complaint-management/complaints/components/ComplaintFulfilmentOrdersSection.tsx:91',
+    'app/(protected)/complaint-management/complaints/components/ComplaintFulfilmentOrdersSection.tsx:93',
     'NESTED GRID: the items popover opens from a CELL of this section\'s own grid. It names scrollerMaxHeight="16rem", so the nested default leaves it alone and it keeps its sticky header inside that window',
   ],
   [
@@ -223,11 +223,11 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'The DataGridTable of the same grid, not a second one',
   ],
   [
-    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:322',
+    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:372',
     "G6 (PLAN-oi-request-cs-reserve.md section 6d): one row per selected line, in a dialog opened as a sibling of the OI Lines tab (Request CS to reserve). Already scrollerMaxHeight={false}. Round 4 review (24 Sep, AC-RS-89): line moved - the inert outer overflow-x-auto wrapper is gone and columnsDraggable: false was added.",
   ],
   [
-    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:334',
+    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:384',
     'The DataGridTable of the same grid, not a second one',
   ],
   [

@@ -252,6 +252,7 @@ def test_the_approval_graph_is_readable_by_anyone_who_can_see_a_project(api):
         "draft",
         "rejected",
         "pending_approval",
+        "resubmitted",
         "approved",
         "issued",
     }
@@ -362,7 +363,8 @@ def test_reject_requires_a_reason_and_hands_it_back_on_the_document(api):
         json={"to_status_id": _status_id(db, "pending_approval")},
     )
     assert again.status_code == 200, again.text
-    assert again.json()["approval_status_key"] == "pending_approval"
+    # RESUBMITTED-STATUS (owner, 27 Oct): the resubmit lands on its own rung.
+    assert again.json()["approval_status_key"] == "resubmitted"
     assert again.json()["approval_rejected_reason"] is None
 
 
@@ -774,7 +776,7 @@ def test_f6_without_the_delete_slug_it_is_refused(api):
     assert _document_exists(db, document["id"])
 
 
-def test_f6_the_delete_slug_without_edit_rights_on_that_project_is_refused(api, monkeypatch):
+def test_f6_the_delete_slug_without_edit_rights_on_that_project_is_refused(api):
     """Same check as the DELETE route's `_editable_project`: owner, collaborator or manager."""
     from app.dependencies import get_current_user
     from app.main import app
@@ -786,13 +788,16 @@ def test_f6_the_delete_slug_without_edit_rights_on_that_project_is_refused(api, 
     db.commit()
     actor = {"id": stranger, "email": f"{stranger}@zzt.test", "role": "user"}
     app.dependency_overrides[get_current_user] = lambda: dict(actor)
-    monkeypatch.setattr(
-        UserPermissionService,
-        "get_user_permission_slugs",
-        lambda self, uid: [VIEW, EDIT, DELETE_SLUG],
-    )
-
-    refused = _park_delete(client, document["id"])
+    # Restored by hand, not with `monkeypatch`: the `api` fixture already swapped this method
+    # and puts the original back in its own teardown. A `monkeypatch` created before `api`
+    # undoes AFTER that teardown and re-installs the fixture's stand-in for the rest of the
+    # worker, so every later route test 403s (spec registry files, API-NONBLOCKING shard 4).
+    patched = UserPermissionService.get_user_permission_slugs
+    UserPermissionService.get_user_permission_slugs = lambda self, uid: [VIEW, EDIT, DELETE_SLUG]
+    try:
+        refused = _park_delete(client, document["id"])
+    finally:
+        UserPermissionService.get_user_permission_slugs = patched
 
     assert refused.status_code == 403, refused.text
     assert _document_exists(db, document["id"])

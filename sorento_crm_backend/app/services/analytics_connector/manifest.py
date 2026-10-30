@@ -1,6 +1,6 @@
 """The tool manifest SS registers the connector's tools from (contract section 3).
 
-34 reused read tools (``reused_tools.REUSED_TOOLS``, a static copy of the n8n catalog entries) plus
+33 reused read tools (``reused_tools.REUSED_TOOLS``, a static copy of the n8n catalog entries) plus
 the five chat tools over ``/api/v1/connector/*``. ``version`` is a hash of the tools, so any change
 tells SS to re-read. The route guard's list (``access.CONNECTOR_ROUTES``) is built from the same
 reused table plus ``access.CHAT_ROUTES``; ``tests/analytics_connector/test_manifest.py`` holds the

@@ -1,5 +1,6 @@
 'use client';
 
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -27,11 +28,14 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { useQuery } from '@tanstack/react-query';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import { getUserLookup } from '@/services/userSelectService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
@@ -51,8 +55,8 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
 
 /** API value -> display label for status filter */
 const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'all', label: 'All statuses' },
   { value: 'draft', label: 'Draft' },
+  { value: 'resubmitted', label: APPEALED_LABEL },
   { value: 'pending', label: 'Pending approval' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
@@ -66,6 +70,7 @@ function getDisplayStatus(row: PurchaseRequest): string {
   const s = (row.status ?? '').trim().toLowerCase();
   if (s === 'processed_by_cs') return 'Processed by CS';
   if (s === 'closed') return 'Closed';
+  if (s === 'voided') return 'Voided';
   const a = row.approval_status;
   if (a === 'pending') return 'Pending approval';
   if (a === 'approved') return 'Approved';
@@ -73,6 +78,7 @@ function getDisplayStatus(row: PurchaseRequest): string {
   // No approval decision yet - reflect the lifecycle status so a portal-submitted
   // request shows "Submitted" (tallies with the portal), not "Draft".
   if (s === 'submitted') return 'Submitted';
+  if (s === 'resubmitted') return APPEALED_LABEL;
   return 'Draft';
 }
 
@@ -140,11 +146,22 @@ interface PurchaseRequestsListProps {
   reportPermission?: string;
 }
 
-export default function PurchaseRequestsList({
+/**
+ * A salesperson limited to their own purchase requests or sponsorship forms gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
+export default function PurchaseRequestsList(props: PurchaseRequestsListProps = {}) {
+  const kind = props.requestType ?? 'purchase_request';
+  const { limited } = useRequestScope(kind);
+  if (limited) return <MyRequestPortalList kind={kind} />;
+  return <StaffPurchaseRequestsList {...props} />;
+}
+
+function StaffPurchaseRequestsList({
   requestType,
   basePath = DEFAULT_BASE_PATH,
   reportPermission,
-}: PurchaseRequestsListProps = {}) {
+}: PurchaseRequestsListProps) {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -161,10 +178,10 @@ export default function PurchaseRequestsList({
     reset: resetSearch,
   } = useDebouncedSearch();
   const [requestTypeFilter, setRequestTypeFilter] = useState<string>(
-    requestType ?? 'all',
+    requestType ?? '',
   );
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [assignedToFilter, setAssignedToFilter] = useState<string>('');
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -172,8 +189,8 @@ export default function PurchaseRequestsList({
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
-    setStatusFilter(state.filters.approval_status ?? 'all');
-    setAssignedToFilter(state.filters.assigned_to ?? '__all__');
+    setStatusFilter(state.filters.approval_status ?? '');
+    setAssignedToFilter(state.filters.assigned_to ?? '');
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
@@ -186,9 +203,8 @@ export default function PurchaseRequestsList({
   const canViewReport = useHasPermission(reportPermission ?? '') && Boolean(reportPermission);
 
   const effectiveRequestType =
-    requestType ?? (requestTypeFilter && requestTypeFilter !== 'all' ? requestTypeFilter : undefined);
-  const effectiveStatusFilter =
-    statusFilter && statusFilter !== 'all' ? statusFilter : undefined;
+    requestType ?? (requestTypeFilter || undefined);
+  const effectiveStatusFilter = statusFilter || undefined;
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = usePurchaseRequests({
     pageIndex: pagination.pageIndex,
@@ -197,12 +213,12 @@ export default function PurchaseRequestsList({
     searchQuery,
     requestType: effectiveRequestType,
     approvalStatus: effectiveStatusFilter,
-    assignedTo: assignedToFilter !== '__all__' ? assignedToFilter : undefined,
+    assignedTo: assignedToFilter || undefined,
   });
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
   // page 1 over the page `useListStateFromUrl` had just restored from the URL.
-  useResetPageOnFilterChange(setPagination, [statusFilter, assignedToFilter, searchQuery]);
+  useResetPageOnFilterChange(setPagination, [requestTypeFilter, statusFilter, assignedToFilter, searchQuery]);
 
   // The whole row opens the record, carrying the list query the pager rebuilds its
   // key from. request_type rides along so a PR pager stays in PRs and an SF one in SFs.
@@ -217,10 +233,7 @@ export default function PurchaseRequestsList({
       {
         request_type: effectiveRequestType,
         approval_status: effectiveStatusFilter,
-        assigned_to:
-          assignedToFilter && assignedToFilter !== '__all__'
-            ? assignedToFilter
-            : undefined,
+        assigned_to: assignedToFilter || undefined,
       },
     );
     const qs = search ? `?${search}` : '';
@@ -285,7 +298,6 @@ export default function PurchaseRequestsList({
         accessorKey: 'revision_no',
         header: ({ column }) => <DataGridColumnHeader title="Rev" column={column} />,
         size: 80,
-        enableSorting: false,
         // Denormalized on the row - no per-row query (UAC H4).
         cell: ({ row }) => {
           const label = revisionBadgeLabel(row.original.revision_no);
@@ -396,7 +408,6 @@ export default function PurchaseRequestsList({
           <DataGridColumnHeader title="Assigned To" column={column} />
         ),
         size: 140,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.assigned_to_name ?? undefined}>
             {row.original.assigned_to_name ?? '-'}
@@ -410,7 +421,6 @@ export default function PurchaseRequestsList({
           <DataGridColumnHeader title="Handled By" column={column} />
         ),
         size: 140,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.handled_by_name ?? undefined}>
             {row.original.handled_by_name ?? '-'}
@@ -448,7 +458,7 @@ export default function PurchaseRequestsList({
   });
 
   const filtersActiveCount =
-    (statusFilter !== 'all' ? 1 : 0) + (assignedToFilter !== '__all__' ? 1 : 0);
+    (!requestType && requestTypeFilter ? 1 : 0) + (statusFilter ? 1 : 0) + (assignedToFilter ? 1 : 0);
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
@@ -493,13 +503,13 @@ export default function PurchaseRequestsList({
                   {!requestType && (
                     <div>
                       <Label>Type</Label>
-                      <SearchableSelect
-                        value={requestTypeFilter}
-                        onChange={setRequestTypeFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(requestTypeFilter)}
+                        onChange={(v) => setRequestTypeFilter(joinMulti(v))}
                         placeholder="Type"
                         triggerClassName="mt-1 w-full"
+                        clearable
                         options={[
-                          { value: 'all', label: 'All types' },
                           { value: 'purchase_request', label: 'Purchase Request' },
                           { value: 'sponsorship_form', label: 'Sponsorship Form' },
                         ]}
@@ -508,11 +518,12 @@ export default function PurchaseRequestsList({
                   )}
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={setStatusFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
                       placeholder="Status"
                       triggerClassName="mt-1 w-full"
+                      clearable
                       options={STATUS_FILTER_OPTIONS.map((opt) => ({
                         value: opt.value,
                         label: opt.label,
@@ -521,13 +532,20 @@ export default function PurchaseRequestsList({
                   </div>
                   <div>
                     <Label>Assigned to</Label>
-                    <SearchableSelect
-                      value={assignedToFilter}
-                      onChange={setAssignedToFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(assignedToFilter)}
+                      onChange={(v) => setAssignedToFilter(joinMulti(v))}
                       placeholder="Assigned to"
                       triggerClassName="mt-1 w-full"
+                      clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">{multiChipLabel('Assigned to', idFilterLabels(chosen))}</span>
+                        ) : (
+                          <span className="text-muted-foreground">Assigned to: any</span>
+                        )
+                      }
                       options={[
-                        { value: '__all__', label: 'All assignees' },
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
                           value: u.id,
@@ -543,9 +561,9 @@ export default function PurchaseRequestsList({
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setStatusFilter('all');
-                          setAssignedToFilter('__all__');
-                          if (!requestType) setRequestTypeFilter('all');
+                          setStatusFilter('');
+                          setAssignedToFilter('');
+                          if (!requestType) setRequestTypeFilter('');
                         }}
                       >
                         Clear filters

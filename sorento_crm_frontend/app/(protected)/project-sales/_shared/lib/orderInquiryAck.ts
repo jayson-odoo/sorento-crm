@@ -25,9 +25,9 @@ export const ACK_STATES: OrderInquiryAckState[] = [
  * are untouched, so this is the only place the two vocabularies meet.
  */
 export const ACK_LABELS: Record<OrderInquiryAckState, string> = {
-  awaiting: 'To confirm',
-  acknowledged: 'Confirmed',
-  changed: 'Changed',
+  awaiting: 'To order',
+  acknowledged: 'Done',
+  changed: 'To order',
   rejected: 'Rejected',
 };
 
@@ -48,9 +48,8 @@ export const ACK_ANY = 'all';
  * time the FE offers it again.
  */
 export const ACK_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'to_confirm', label: 'To confirm' },
+  { value: 'to_confirm', label: ACK_LABELS.awaiting },
   { value: 'acknowledged', label: ACK_LABELS.acknowledged },
-  { value: 'changed', label: ACK_LABELS.changed },
   { value: 'rejected', label: ACK_LABELS.rejected },
   { value: ACK_ANY, label: 'All' },
 ];
@@ -58,6 +57,38 @@ export const ACK_FILTER_OPTIONS: { value: string; label: string }[] = [
 export function ackStateOf(row: OrderInquiryAckFields): OrderInquiryAckState {
   const value = (row.ack_state ?? 'awaiting') as OrderInquiryAckState;
   return ACK_STATES.includes(value) ? value : 'awaiting';
+}
+
+const trimQty = (value: number): string =>
+  Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)));
+
+/**
+ * The status pill's text: "To order", "To order \u00b7 8 left" on a part-covered row (live
+ * links including a reserve), "Done", "Rejected", plus " \u00b7 manual" when a person's
+ * Confirm / Unconfirm decided it.
+ */
+export function ackStatusText(
+  row: OrderInquiryAckFields & { qty?: string | number | null; open_qty?: string | number | null },
+): string {
+  const state = ackStateOf(row);
+  let text: string = ACK_LABELS[state];
+  if (state === 'awaiting' || state === 'changed') {
+    // `open_qty` is the backend's own figure (qty less live cover less bundled).
+    const need = Number(row.qty ?? 0);
+    const open = row.open_qty === null || row.open_qty === undefined ? null : Number(row.open_qty);
+    if (open !== null && open > 0 && open < need) text += ` \u00b7 ${trimQty(open)} left`;
+  }
+  if (row.ack_override) text += ' \u00b7 manual';
+  return text;
+}
+
+/** "Confirmed by Aisyah, 13/10/2026, 2:05 pm" (Malaysia time); null on a row nobody overrode. */
+export function ackOverrideHint(row: OrderInquiryAckFields): string | null {
+  if (!row.ack_override) return null;
+  const verb = row.ack_override === 'unconfirmed' ? 'Unconfirmed' : 'Confirmed';
+  const who = row.ack_override_by_name ? ` by ${row.ack_override_by_name}` : '';
+  const stamp = row.ack_override_at ? formatDateTimeInMalaysia(row.ack_override_at) : '';
+  return `${verb}${who}${stamp ? `, ${stamp}` : ''}`;
 }
 
 /** A row purchasing has not refused, so there is still something to refuse. */

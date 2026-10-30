@@ -37,7 +37,7 @@ class _SkipRequest(BaseModel):
 
 
 @router.post("/{source_entity_type}/{source_entity_id}/skip")
-async def skip_form_stage(
+def skip_form_stage(
     source_entity_type: str,
     source_entity_id: str,
     payload: _SkipRequest | None = None,

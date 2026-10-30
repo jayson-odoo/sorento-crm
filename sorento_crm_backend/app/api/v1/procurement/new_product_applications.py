@@ -25,16 +25,32 @@ from app.schemas.new_product_application import (
 from app.services import new_product_application_service as svc
 from app.services import npa_xlsx
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_uuids, multi_values
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
 
 router = APIRouter()
 
-_ANY = (svc.VIEW, svc.CREATE, svc.APPROVE, svc.OPEN_CODE)
+_ANY = (svc.VIEW, svc.VIEW_OWN, svc.CREATE, svc.APPROVE, svc.OPEN_CODE)
 
 
-def _actor(db: Session, user: dict) -> svc.Actor:
-    return svc.actor_from_slugs(user["id"], permission_slugs(db, user["id"]))
+def _actor(db: Session, user: dict, slugs=None) -> svc.Actor:
+    from app.services import own_scope
+
+    slugs = permission_slugs(db, user["id"]) if slugs is None else slugs
+    actor = svc.actor_from_slugs(user["id"], slugs)
+    if actor.own_only:
+        actor.own_contact_id = own_scope.me(db, user["id"]).contact_id
+    return actor
+
+
+def _own(db: Session, user: dict, app) -> svc.Actor:
+    """The actor for a write. A `.view_own` holder gets a row that is not theirs as not
+    found, before the write's own owner rule (403) answers (PORTAL-P2-ONLY-THEIRS)."""
+    actor = _actor(db, user)
+    if actor.own_only:
+        svc.assert_can_view(app, actor)
+    return actor
 
 
 def _any_actor(db: Session, user: dict) -> svc.Actor:
@@ -43,7 +59,7 @@ def _any_actor(db: Session, user: dict) -> svc.Actor:
         raise AppException(
             status_code=403, message=f"Permission required: {svc.VIEW}", code="FORBIDDEN"
         )
-    return svc.actor_from_slugs(user["id"], slugs)
+    return _actor(db, user, slugs)
 
 
 def _load(db: Session, application_id: str, *, for_update: bool = False):
@@ -84,10 +100,10 @@ def search_products(
 
 @router.get("")
 def list_applications(
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     q: Optional[str] = Query(None),
     stock_inquiry_id: Optional[str] = Query(None),
-    applicant_id: Optional[str] = Query(None),
+    applicant_id: Optional[list[str]] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=200),
     sort: Optional[str] = Query(None),
@@ -95,14 +111,15 @@ def list_applications(
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    statuses = [s.strip() for s in status_filter.split(",") if s.strip()] if status_filter else None
+    statuses = multi_values(status_filter)
+    applicant_ids = multi_uuids(applicant_id, "Applicant")
     return svc.list_for(
         db,
         actor=_any_actor(db, user),
         statuses=statuses,
         q=q,
         stock_inquiry_id=stock_inquiry_id,
-        applicant_id=applicant_id or None,
+        applicant_id=applicant_ids,
         page=page,
         limit=limit,
         sort=sort,
@@ -131,8 +148,11 @@ def get_application(
     db: Session = Depends(get_db),
 ):
     app = _load(db, application_id)
-    svc.assert_can_view(app, _actor(db, user))
-    return svc.serialize_detail(db, app)
+    actor = _actor(db, user)
+    svc.assert_can_view(app, actor)
+    # A salesperson limited to their own applications reads the portal's shape: no item group,
+    # base UOM or list price (PORTAL-P4-REQUESTS S5).
+    return svc.serialize_detail(db, app, portal=actor.own_only)
 
 
 @router.put("/{application_id}")
@@ -144,7 +164,7 @@ def update_application(
 ):
     try:
         app = _load(db, application_id, for_update=True)
-        svc.update(db, app, actor=_actor(db, user), data=payload.model_dump(exclude_unset=True))
+        svc.update(db, app, actor=_own(db, user, app), data=payload.model_dump(exclude_unset=True))
         return _done(db, app)
     except Exception:
         db.rollback()
@@ -284,7 +304,7 @@ def link_attachment(
     """Link a file from the attachment library (the Stock Inquiry flow); unlink is a pending action."""
     try:
         app = _load(db, application_id, for_update=True)
-        svc.link_attachment(db, app, actor=_actor(db, user), attachment_id=payload.attachment_id)
+        svc.link_attachment(db, app, actor=_own(db, user, app), attachment_id=payload.attachment_id)
         return _done(db, app)
     except Exception:
         db.rollback()

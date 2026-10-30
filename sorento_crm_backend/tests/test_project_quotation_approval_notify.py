@@ -236,6 +236,10 @@ def test_b4_a_resubmit_from_rejected_tells_the_approvers_again_once_per_press(ap
     calls = [c for c in _of_type(sent, REQUESTED) if c["user_id"] == manager]
     assert len(calls) == 2, "one notification per press, not one per document"
     assert calls[0]["dedup_key"] != calls[1]["dedup_key"]
+    # RESUBMITTED-STATUS (owner, 27 Oct): the second press says it is a resubmit, worded
+    # "appealed" since COMPLAINT-APPEAL-WORDING (#1952, `project_notify_service.py`).
+    assert " sent quotation " in calls[0]["body"]
+    assert " appealed quotation " in calls[1]["body"]
 
 
 # ------------------------------------------------------------------ D5 + withdrawn body

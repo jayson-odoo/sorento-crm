@@ -3,6 +3,10 @@
  *
  * Calls `/api/v1/public/portal/submissions/sample_request` through `portalFetch`.
  * The shapes live in `types/sampleRequest.ts`, shared with the staff feature.
+ *
+ * `makeSampleRequestService(fetcher)` holds the calls (PORTAL-P4-REQUESTS R3, form parity); the
+ * named exports are the portal's instance over `portalFetch`. The CRM builds one over its session
+ * (`services/myRequestsSubmissionClient.ts`), so a salesperson's form makes the portal's calls.
  */
 import { extractApiError } from '@/lib/api-client';
 import { saveBlobAs } from '@/lib/save-blob';
@@ -10,9 +14,12 @@ import {
   SampleRequestError,
   type SampleRequestDetail,
   type SampleRequestProductHit,
+  type SampleRequestProductSource,
+  type SampleRequestQuotationPrefill,
   type SampleRequestRow,
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
+import { productSearchQuery } from '@/lib/sample-request-form';
 import { portalFetch, type PortalSubmissionSummary } from './portal-client';
 
 const BASE = '/api/v1/public/portal/submissions/sample_request';
@@ -48,104 +55,150 @@ export interface SampleRequestCustomerHit {
   debtor_name: string;
 }
 
-export async function lookupSampleRequestCustomers(q: string): Promise<SampleRequestCustomerHit[]> {
-  const res = await portalFetch(
-    `/api/v1/public/portal/sample-request/customers?q=${encodeURIComponent(q)}`,
-  );
-  return unwrapNamingField<SampleRequestCustomerHit[]>(res, 'Failed to load customers');
+export function makeSampleRequestService(fetcher: typeof portalFetch) {
+  async function lookupSampleRequestCustomers(q: string): Promise<SampleRequestCustomerHit[]> {
+    const res = await fetcher(
+      `/api/v1/public/portal/sample-request/customers?q=${encodeURIComponent(q)}`,
+    );
+    return unwrapNamingField<SampleRequestCustomerHit[]>(res, 'Failed to load customers');
+  }
+
+  async function searchSampleRequestProducts(
+    q: string,
+    source?: SampleRequestProductSource,
+  ): Promise<SampleRequestProductHit[]> {
+    const res = await fetcher(
+      `/api/v1/public/portal/sample-request/products?${productSearchQuery(q, source)}`,
+    );
+    return unwrapNamingField<SampleRequestProductHit[]>(res, 'Failed to search products');
+  }
+
+  /** The rows a new request on one of the contact's projects starts with (SAMPLE-FROM-QUOTE). */
+  async function getSampleRequestQuotationPrefill(
+    projectId: string,
+    documentId?: string,
+  ): Promise<SampleRequestQuotationPrefill> {
+    const usp = new URLSearchParams({ project_id: projectId });
+    if (documentId) usp.set('document_id', documentId);
+    const res = await fetcher(
+      `/api/v1/public/portal/sample-request/quotation-prefill?${usp.toString()}`,
+    );
+    return unwrapNamingField<SampleRequestQuotationPrefill>(res, 'Failed to load the quotation');
+  }
+
+  async function listSampleRequests(q?: string): Promise<SampleRequestRow[]> {
+    const usp = new URLSearchParams();
+    if (q && q.trim()) usp.set('q', q.trim());
+    const qs = usp.toString();
+    const res = await fetcher(qs ? `${BASE}?${qs}` : BASE);
+    const page = await unwrapNamingField<{ data: SampleRequestRow[] }>(
+      res,
+      'Failed to load sample requests',
+    );
+    return page.data ?? [];
+  }
+
+  /** The landing card shape: number first, customer on the second line. */
+  async function listSampleRequestsAsSummaries(
+    q?: string,
+  ): Promise<PortalSubmissionSummary[]> {
+    const rows = await listSampleRequests(q);
+    return rows.map((r) => {
+      const isDraft = r.status === 'draft';
+      return {
+        id: r.id,
+        kind: 'sample_request' as const,
+        title: r.customer_name || r.request_no,
+        document_number: r.request_no,
+        reference: null,
+        status: r.status,
+        status_label: r.status_label,
+        is_editable: isDraft,
+        is_draft: isDraft,
+        created_at: r.request_date,
+        customer_name: r.customer_name,
+        project_title: r.project_name,
+      };
+    });
+  }
+
+  async function getSampleRequest(id: string): Promise<SampleRequestDetail> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}`);
+    return unwrapNamingField<SampleRequestDetail>(res, 'Failed to load the sample request');
+  }
+
+  async function createSampleRequest(
+    data: SampleRequestWrite,
+  ): Promise<SampleRequestDetail> {
+    const res = await fetcher(BASE, {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(data),
+    });
+    return unwrapNamingField<SampleRequestDetail>(res, 'Failed to save the sample request');
+  }
+
+  async function updateSampleRequest(
+    id: string,
+    data: SampleRequestWrite,
+  ): Promise<SampleRequestDetail> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(data),
+    });
+    return unwrapNamingField<SampleRequestDetail>(res, 'Failed to save the sample request');
+  }
+
+  async function submitSampleRequest(id: string): Promise<SampleRequestDetail> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/submit`, {
+      method: 'POST',
+    });
+    return unwrapNamingField<SampleRequestDetail>(res, 'Failed to submit the sample request');
+  }
+
+  async function cancelSampleRequest(id: string): Promise<SampleRequestDetail> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+    });
+    return unwrapNamingField<SampleRequestDetail>(res, 'Failed to cancel the sample request');
+  }
+
+  /** The PDF needs the token header, so it is fetched and saved as a blob. */
+  async function downloadSampleRequestPdf(id: string, requestNo: string): Promise<void> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/pdf`);
+    if (!res.ok) throw new Error(await extractApiError(res, 'Failed to download the PDF'));
+    const blob = await res.blob();
+    saveBlobAs(blob, `${requestNo}.pdf`);
+  }
+
+  return {
+    lookupSampleRequestCustomers,
+    searchSampleRequestProducts,
+    getSampleRequestQuotationPrefill,
+    listSampleRequests,
+    listSampleRequestsAsSummaries,
+    getSampleRequest,
+    createSampleRequest,
+    updateSampleRequest,
+    submitSampleRequest,
+    cancelSampleRequest,
+    downloadSampleRequestPdf,
+  };
 }
 
-export async function searchSampleRequestProducts(
-  q: string,
-): Promise<SampleRequestProductHit[]> {
-  const res = await portalFetch(
-    `/api/v1/public/portal/sample-request/products?q=${encodeURIComponent(q)}`,
-  );
-  return unwrapNamingField<SampleRequestProductHit[]>(res, 'Failed to search products');
-}
+export type SampleRequestService = ReturnType<typeof makeSampleRequestService>;
 
-export async function listSampleRequests(q?: string): Promise<SampleRequestRow[]> {
-  const usp = new URLSearchParams();
-  if (q && q.trim()) usp.set('q', q.trim());
-  const qs = usp.toString();
-  const res = await portalFetch(qs ? `${BASE}?${qs}` : BASE);
-  const page = await unwrapNamingField<{ data: SampleRequestRow[] }>(
-    res,
-    'Failed to load sample requests',
-  );
-  return page.data ?? [];
-}
-
-/** The landing card shape: number first, customer on the second line. */
-export async function listSampleRequestsAsSummaries(
-  q?: string,
-): Promise<PortalSubmissionSummary[]> {
-  const rows = await listSampleRequests(q);
-  return rows.map((r) => {
-    const isDraft = r.status === 'draft';
-    return {
-      id: r.id,
-      kind: 'sample_request' as const,
-      title: r.customer_name || r.request_no,
-      document_number: r.request_no,
-      reference: null,
-      status: r.status,
-      status_label: r.status_label,
-      is_editable: isDraft,
-      is_draft: isDraft,
-      created_at: r.request_date,
-      customer_name: r.customer_name,
-      project_title: r.project_name,
-    };
-  });
-}
-
-export async function getSampleRequest(id: string): Promise<SampleRequestDetail> {
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}`);
-  return unwrapNamingField<SampleRequestDetail>(res, 'Failed to load the sample request');
-}
-
-export async function createSampleRequest(
-  data: SampleRequestWrite,
-): Promise<SampleRequestDetail> {
-  const res = await portalFetch(BASE, {
-    method: 'POST',
-    headers: JSON_HEADERS,
-    body: JSON.stringify(data),
-  });
-  return unwrapNamingField<SampleRequestDetail>(res, 'Failed to save the sample request');
-}
-
-export async function updateSampleRequest(
-  id: string,
-  data: SampleRequestWrite,
-): Promise<SampleRequestDetail> {
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    headers: JSON_HEADERS,
-    body: JSON.stringify(data),
-  });
-  return unwrapNamingField<SampleRequestDetail>(res, 'Failed to save the sample request');
-}
-
-export async function submitSampleRequest(id: string): Promise<SampleRequestDetail> {
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}/submit`, {
-    method: 'POST',
-  });
-  return unwrapNamingField<SampleRequestDetail>(res, 'Failed to submit the sample request');
-}
-
-export async function cancelSampleRequest(id: string): Promise<SampleRequestDetail> {
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}/cancel`, {
-    method: 'POST',
-  });
-  return unwrapNamingField<SampleRequestDetail>(res, 'Failed to cancel the sample request');
-}
-
-/** The PDF needs the token header, so it is fetched and saved as a blob. */
-export async function downloadSampleRequestPdf(id: string, requestNo: string): Promise<void> {
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}/pdf`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to download the PDF'));
-  const blob = await res.blob();
-  saveBlobAs(blob, `${requestNo}.pdf`);
-}
+export const {
+  lookupSampleRequestCustomers,
+  searchSampleRequestProducts,
+  getSampleRequestQuotationPrefill,
+  listSampleRequests,
+  listSampleRequestsAsSummaries,
+  getSampleRequest,
+  createSampleRequest,
+  updateSampleRequest,
+  submitSampleRequest,
+  cancelSampleRequest,
+  downloadSampleRequestPdf,
+} = makeSampleRequestService(portalFetch);

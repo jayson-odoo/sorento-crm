@@ -746,6 +746,19 @@ class RespondClient:
             response.raise_for_status()
             return response.json() if response.content else {}
 
+    def merge_contacts(self, contact_ids: list) -> dict:
+        """Merge two contacts via POST /v2/contact/merge. ``contact_ids`` = [primary, other]. Respond.io
+        keeps the OLDER contact whatever the order, so the caller reads the survivor from the
+        response's ``contactId`` (or looks the phone up again), never assumes the first id."""
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        url = f"{self.base_url}/v2/contact/merge"
+        payload = {"contactIds": [int(i) for i in contact_ids]}
+        with self._http(timeout=15) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+
 
 class IntegrationLogService:
     """Service for integration log operations."""
@@ -826,9 +839,9 @@ class IntegrationLogService:
         self,
         page: int = 1,
         limit: int = 50,
-        status: Optional[str] = None,
-        integration_channel: Optional[str] = None,
-        business_table: Optional[str] = None,
+        status: Optional[list[str] | str] = None,
+        integration_channel: Optional[list[str] | str] = None,
+        business_table: Optional[list[str] | str] = None,
         business_id: Optional[str] = None,
         created_from: Optional[datetime] = None,
         created_to: Optional[datetime] = None,
@@ -843,16 +856,19 @@ class IntegrationLogService:
         try:
             q = self.db.query(IntegrationLog)
 
-            if status:
-                q = q.filter(IntegrationLog.status == status)
-            if integration_channel:
-                q = q.filter(IntegrationLog.integration_channel == integration_channel)
+            statuses = [status] if isinstance(status, str) else status
+            channels = [integration_channel] if isinstance(integration_channel, str) else integration_channel
+            tables = [business_table] if isinstance(business_table, str) else business_table
+            if statuses:
+                q = q.filter(IntegrationLog.status.in_(statuses))
+            if channels:
+                q = q.filter(IntegrationLog.integration_channel.in_(channels))
             elif exclude_healthcheck:
                 # Sentinel hygiene: liveness-probe rows are noise in the general list.
                 # Only excluded when the caller didn't explicitly ask for a channel.
                 q = q.filter(IntegrationLog.integration_channel != HEALTHCHECK_CHANNEL)
-            if business_table:
-                q = q.filter(IntegrationLog.business_table == business_table)
+            if tables:
+                q = q.filter(IntegrationLog.business_table.in_(tables))
             if business_id:
                 q = q.filter(IntegrationLog.business_id == business_id)
             if created_from:

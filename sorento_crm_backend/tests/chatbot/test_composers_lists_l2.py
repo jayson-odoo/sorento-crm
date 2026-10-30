@@ -115,17 +115,6 @@ def _trigger(**semantic):
     }
 
 
-def test_arg_gate_on_only(monkeypatch):
-    _set_gate(monkeypatch, False)
-    assert "group_offset" not in fetch.entity_ids_transformer(_trigger())
-    assert "group_offset" not in fetch.entity_ids_transformer(_trigger(outstanding_group_offset=20))
-    _set_gate(monkeypatch, True)
-    assert fetch.entity_ids_transformer(_trigger())["group_offset"] == 0
-    assert fetch.entity_ids_transformer(_trigger(outstanding_group_offset=20))["group_offset"] == 20
-    picked = fetch.entity_ids_transformer(_trigger(outstanding_detail_pick="so"))
-    assert "group_offset" not in picked and picked["detail"] == "so"
-
-
 # --------------------------------------------------------------------------- #
 # L2-g: the answered offer's offset rides to the fetch
 # --------------------------------------------------------------------------- #

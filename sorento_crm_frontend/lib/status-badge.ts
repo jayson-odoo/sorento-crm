@@ -3,6 +3,8 @@
  * Use getStatusBadgeVariant(status) for consistent colors across the app.
  */
 
+import { APPEALED_LABEL, RESUBMITTED } from '@/lib/submission-status';
+
 export type StatusBadgeVariant =
   | 'primary'
   | 'secondary'
@@ -60,6 +62,7 @@ const STATUS_VARIANT_MAP: Record<string, StatusBadgeVariant> = {
   // Info / updated / neutral-positive
   updated: 'info',
   submitted: 'info',
+  resubmitted: 'info',
   overstock: 'secondary',
 
   // Destructive / negative
@@ -115,6 +118,7 @@ export function getStatusBadgeVariant(status: string | null | undefined): Status
  */
 export function formatStatusLabel(status: string | null | undefined): string {
   if (status == null || String(status).trim() === '') return '-';
+  if (String(status).trim().toLowerCase() === RESUBMITTED) return APPEALED_LABEL;
   return String(status)
     .trim()
     .replace(/_/g, ' ')

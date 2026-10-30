@@ -20,13 +20,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 
 from app.services.product_code_family import narrow_code_tokens
 
 from tests.chatbot._turn_helpers import make_office_access_type
 from tests.chatbot.test_engine import CONTACT_ID
-from tests.chatbot.test_outstanding_lane import REPORT_HIT, _qf, _run_turn, _seed_contact
+from tests.chatbot._turn_helpers import do_window
+from tests.chatbot.test_outstanding_lane import _qf, _run_turn, _seed_contact
 
 #: The owner's message, codes ZZT-prefixed, lines in the order typed.
 OWNER_LINES: list[tuple[str, int]] = [
@@ -290,11 +290,11 @@ def test_the_owners_fifteen_line_stock_check_reaches_the_tool_with_fourteen_code
     result, captured = _run_turn(
         session_factory,
         monkeypatch,
-        qf=_qf(order_status="so_outstanding", entities=entities),
-        text_body=_owner_message(tap_word=False) + " sales order outstanding",
+        qf=_qf(order_status=None, **do_window(), entities=entities),
+        text_body=_owner_message(tap_word=False) + " delivery orders",
         msg_id="ZZT-narrow-15",
         attributes=["sales_orders.outstanding"],
-        mcp_response={**REPORT_HIT, "product_code": UNIQUE[0]},
+        mcp_response={"has_result": True, "response": "ZZT DO ROWS"},
         real_resolver=True,
     )
 

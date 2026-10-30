@@ -12,6 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_uuids, multi_values
 from app.database import get_db
 from app.dependencies import require_any_permission, require_permission
 from app.services.company_scope_resolver import apply_company_scope
@@ -19,6 +20,7 @@ from app.services.procurement import cost_price_change_service as service
 from app.services.procurement.supplier_price_list_reader import MAX_FILE_BYTES
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -32,6 +34,7 @@ def _scoped(company_scope) -> frozenset:
 
 
 @router.post("/probe")
+@heavy
 def probe_price_list(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission(UPLOAD_PERM)),
@@ -47,6 +50,7 @@ def probe_price_list(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
+@heavy
 def upload_price_list(
     request: Request,
     file: UploadFile = File(...),
@@ -67,25 +71,25 @@ def upload_price_list(
 
 
 @router.get("")
-async def list_change_sets(
+def list_change_sets(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
     query: Optional[str] = Query(None),
-    status_filter: Optional[str] = Query(None, alias="status"),
-    supplier_id: Optional[str] = Query(None),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
+    supplier_id: Optional[list[str]] = Query(None),
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),
 ):
     return service.list_sets(
         db, page=page, limit=limit, sort=sort, dir=dir, query=query,
-        status=status_filter, supplier_id=supplier_id,
+        status=multi_values(status_filter), supplier_id=multi_uuids(supplier_id, "Supplier"),
     )
 
 
 @router.get("/{id}")
-async def get_change_set(
+def get_change_set(
     id: str,
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),
@@ -95,7 +99,7 @@ async def get_change_set(
 
 
 @router.get("/{id}/lines")
-async def get_change_set_lines(
+def get_change_set_lines(
     id: str,
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),
@@ -104,7 +108,7 @@ async def get_change_set_lines(
 
 
 @router.patch("/{id}/lines/{line_id}")
-async def patch_change_set_line(
+def patch_change_set_line(
     id: str,
     line_id: str,
     body: dict,
@@ -116,7 +120,7 @@ async def patch_change_set_line(
 
 
 @router.post("/{id}/submit")
-async def submit_change_set(
+def submit_change_set(
     id: str,
     request: Request,
     current_user: dict = Depends(require_permission(UPLOAD_PERM)),
@@ -126,7 +130,7 @@ async def submit_change_set(
 
 
 @router.patch("/{id}/lines/{line_id}/decision")
-async def decide_change_set_line(
+def decide_change_set_line(
     id: str,
     line_id: str,
     body: dict,
@@ -141,7 +145,7 @@ async def decide_change_set_line(
 
 
 @router.post("/{id}/decide-all")
-async def decide_all_change_set_lines(
+def decide_all_change_set_lines(
     id: str,
     body: dict,
     request: Request,
@@ -152,7 +156,7 @@ async def decide_all_change_set_lines(
 
 
 @router.post("/{id}/return")
-async def return_change_set(
+def return_change_set(
     id: str,
     body: dict,
     request: Request,
@@ -163,7 +167,7 @@ async def return_change_set(
 
 
 @router.post("/{id}/refresh-prices")
-async def refresh_change_set_prices(
+def refresh_change_set_prices(
     id: str,
     request: Request,
     current_user: dict = Depends(require_permission(UPLOAD_PERM)),
@@ -173,7 +177,7 @@ async def refresh_change_set_prices(
 
 
 @router.post("/{id}/apply")
-async def apply_change_set(
+def apply_change_set(
     id: str,
     request: Request,
     # Which slug actually applies depends on the SET's status (`upload` for a Draft
@@ -187,7 +191,7 @@ async def apply_change_set(
 
 
 @router.delete("/{id}")
-async def discard_change_set(
+def discard_change_set(
     id: str,
     current_user: dict = Depends(require_permission(UPLOAD_PERM)),
     db: Session = Depends(get_db),
@@ -197,7 +201,7 @@ async def discard_change_set(
 
 
 @router.get("/{id}/source-file")
-async def download_source_file(
+def download_source_file(
     id: str,
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),
@@ -211,7 +215,7 @@ async def download_source_file(
 
 
 @router.get("/{id}/history")
-async def get_change_set_history(
+def get_change_set_history(
     id: str,
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),

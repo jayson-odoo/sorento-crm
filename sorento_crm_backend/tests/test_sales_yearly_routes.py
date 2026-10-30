@@ -115,7 +115,7 @@ def test_meta_offers_only_the_callers_companies_by_name_and_defaults_to_the_curr
     assert company["options"] == [{"value": DEFAULT_COMPANY_ID, "label": "Sorento"}]
     assert company["multi"] is False and company["clearable"] is False
     assert meta["default_view"]["params"]["company"] == [DEFAULT_COMPANY_ID]
-    assert meta["default_view"]["params"]["basis"] == ["delivered"]
+    assert meta["default_view"]["params"]["basis"] == ["invoiced"]
     assert meta["opens_on"] == "summary"
     assert meta["title"] == "Yearly comparison"
 

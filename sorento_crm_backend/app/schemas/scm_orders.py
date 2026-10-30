@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -155,11 +155,17 @@ class SalesOrderLine(BaseModel):
     #: sorts and labels by (PLAN-so-lines-autocount-order.md). `None` for a line AutoCount
     #: never numbered.
     line_no: Optional[int] = None
+    #: FULFIL-SO-REMARK (AC-16): the line reads as a mockup line, and wears the Mockup label
+    #: (only when the order mixes mockup and actual lines).
+    is_mockup: bool = False
+    mockup_label: bool = False
     #: Where THIS LINE came from - never inherited from the header (R2): a line with no
     #: provenance of its own reads `manual` even under an AutoCount or uploaded header.
     source: str = "manual"
     sku: str
     product_name: str
+    #: SO-LINE-DESC: AutoCount's line description; `None` when none was sent.
+    description: Optional[str] = None
     qty_ordered: float
     #: What really went out: AutoCount's TransferedQty minus `qty_cancelled` (AC-CANCEL-CRM).
     qty_delivered: float
@@ -337,6 +343,9 @@ class SalesOrder(BaseModel):
     is_transferable: Optional[bool] = None
     #: The customer's own PO number as AutoCount printed it (SO-PO-REF). Read-only.
     po_ref: Optional[str] = None
+    #: FULFIL-SO-REMARK (AC-16): AutoCount Shipping Info, and the default SO remark over all lines.
+    ship_info: Optional[str] = None
+    remark: str = ""
     #: The purchase orders its lines wait on, each with whether the pairing is resolved.
     #: Present on the LIST (attached in one query per page); absent on a single read.
     linked_purchase_orders: List[LinkedPurchaseOrder] = Field(default_factory=list)
@@ -540,6 +549,27 @@ class SalesAgentOption(BaseModel):
 
 # --- purchase orders --------------------------------------------------------
 
+class DocumentReceiptOut(BaseModel):
+    """LINKAGE-UNIFY: one GR bin goods were received at, and how many."""
+
+    qty: str
+    bin: Optional[str] = None
+
+
+class PoLineSpoOut(BaseModel):
+    """LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto
+    (`goods_chain.spo_lines_of`) - the PO screens' SPO column, drawn with the order
+    inquiry's own document pills."""
+
+    spo_number: Optional[str] = None
+    #: `L12` when the book numbered the line.
+    line_label: Optional[str] = None
+    #: Where the SPO line's landed goods sit, per GR bin. Empty while in transit.
+    receipts: List[DocumentReceiptOut] = []
+    #: `spo_withdrawn` when the SPO line brings nothing.
+    dead_reason: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
+
+
 class PurchaseOrderLine(BaseModel):
     id: str
     sku: str
@@ -601,6 +631,13 @@ class PurchaseOrderLine(BaseModel):
     #: and resolving it per page would be a full `sales_orders` scan per search keystroke.
     #: The detail/update routes (`get_one`, `update`) always resolve and never emit `None`.
     book_so_unresolved: Optional[bool] = None
+    #: LINKAGE-UNIFY U4: every SPO line this PO line was transferred onto, with where its
+    #: goods landed or why it brings nothing. Filled on the detail and update routes; the
+    #: list leaves it empty.
+    spos: List[PoLineSpoOut] = []
+    #: `po_cancelled` when this PO line brings nothing (`goods_chain.po_line_is_dead`), so a
+    #: placement on it reads "PO cancelled". Filled with `spos` (detail and update routes).
+    dead_reason: Optional[Literal["po_cancelled"]] = None
 
 
 class PurchaseOrderSpoLanding(BaseModel):
@@ -863,6 +900,11 @@ class SoLineDeliveryRow(BaseModel):
     qty: float
 
 
+class SoOtherDeliveryRow(SoLineDeliveryRow):
+    """A DO line naming the SO whose product is on no line of it: it names its own SKU."""
+    sku: Optional[str] = None
+
+
 class SoLineCancelRow(BaseModel):
     doc_no: str
     doc_date: Optional[date] = None
@@ -887,3 +929,5 @@ class SoProductGroupHistory(BaseModel):
 class SalesOrderDeliveries(BaseModel):
     lines: List[SoLineHistory]
     groups: List[SoProductGroupHistory]
+    # DO lines naming this SO whose product is on no line of it (DO-SO-LINK-SURFACE).
+    others: List[SoOtherDeliveryRow] = []

@@ -16,7 +16,8 @@ export type PortalSubmissionKind =
   | 'complaint'
   | 'stock_inquiry'
   | 'purchase_request'
-  | 'sponsorship_form';
+  | 'sponsorship_form'
+  | 'project_registration';
 
 /** Canonical kind list - single source for route guards, tab lists, labels. */
 export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
@@ -24,6 +25,7 @@ export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
   'stock_inquiry',
   'purchase_request',
   'sponsorship_form',
+  'project_registration',
 ] as const;
 
 export function isSubmissionKind(
@@ -107,6 +109,16 @@ export const LANDING_KINDS: readonly PortalLandingKind[] = [
 ] as const;
 
 /**
+ * The landing's order for a set of kinds: Stock Inquiry first (the dealers' main form, the one
+ * deliberate exception), everything else in `LANDING_KINDS` order. One rule for the portal
+ * dropdown and the CRM's MY REQUESTS menu.
+ */
+export function orderLandingKinds(kinds: readonly string[]): PortalLandingKind[] {
+  const rest = LANDING_KINDS.filter((k) => k !== 'stock_inquiry' && kinds.includes(k));
+  return kinds.includes('stock_inquiry') ? ['stock_inquiry', ...rest] : rest;
+}
+
+/**
  * Every contact already gets `SUBMISSION_KINDS` (the base default,
  * PLAN-portal-forms-market-segment D3) - a market segment can only grant more
  * on top of that base, never take a base kind away. This is what the Market
@@ -114,7 +126,7 @@ export const LANDING_KINDS: readonly PortalLandingKind[] = [
  * opt-in kind joins `LANDING_KINDS` above and appears here automatically.
  */
 export const ADDITIONAL_LANDING_KINDS: readonly PortalLandingKind[] = LANDING_KINDS.filter(
-  (k) => !isSubmissionKind(k),
+  (k) => !isSubmissionKind(k) || k === 'project_registration',
 );
 
 export function isLandingKind(
@@ -128,6 +140,7 @@ export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
   stock_inquiry: 'Stock Inquiry',
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
+  project_registration: 'Project Registration',
 };
 
 /** Every kind the landing can list, legacy or gated (D45). */

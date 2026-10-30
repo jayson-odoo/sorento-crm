@@ -103,6 +103,34 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// The Decision filter is a multi-select now (FILTER-MULTISELECT PR6); a one-value pick stands in for it.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: (props: {
+    id?: string;
+    value?: string[];
+    onChange: (value: string[]) => void;
+    options?: { value: string; label: string }[];
+    clearable?: boolean;
+    placeholder?: string;
+    'aria-label'?: string;
+  }) => (
+    <select
+      id={props.id}
+      aria-label={props['aria-label']}
+      value={props.value?.[0] ?? ''}
+      data-clearable={props.clearable ? 'true' : 'false'}
+      onChange={(event) => props.onChange(event.target.value ? [event.target.value] : [])}
+    >
+      <option value="">{props.placeholder ?? ''}</option>
+      {(props.options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 vi.mock('../../_shared/hooks/useReserveRowOptions', () => ({
   useReserveRowOptions: (entries: Array<{ key: string }>) =>
     Object.fromEntries(

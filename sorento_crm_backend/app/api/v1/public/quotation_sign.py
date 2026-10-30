@@ -9,14 +9,16 @@ anybody guessing that a token exists.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.schemas.projects import (
+    QuotationAmendmentSubmitRequest,
     QuotationSignAcceptRequest,
     QuotationSignChangesRequest,
     QuotationSignPageResponse,
@@ -31,7 +33,7 @@ router = APIRouter()
 
 
 @router.get("/{token}", response_model=QuotationSignPageResponse)
-async def read_quotation_for_signing(
+def read_quotation_for_signing(
     token: str,
     db: Session = Depends(get_db),
 ):
@@ -48,7 +50,7 @@ async def read_quotation_for_signing(
 
 
 @router.post("/{token}/accept", response_model=QuotationSignPageResponse)
-async def accept_quotation(
+def accept_quotation(
     token: str,
     payload: QuotationSignAcceptRequest,
     request: Request,
@@ -72,6 +74,7 @@ async def accept_quotation(
             user_agent=request.headers.get("user-agent"),
             gps_lat=payload.gps_lat,
             gps_lng=payload.gps_lng,
+            terms_accepted=payload.terms_accepted,
         )
         db.commit()
         return svc.serialize_sign_page(db, record)
@@ -81,7 +84,7 @@ async def accept_quotation(
 
 
 @router.post("/{token}/request-changes", response_model=QuotationSignPageResponse)
-async def request_quotation_changes(
+def request_quotation_changes(
     token: str,
     payload: QuotationSignChangesRequest,
     db: Session = Depends(get_db),
@@ -102,6 +105,72 @@ async def request_quotation_changes(
             record=record,
             note=payload.note,
             requester_name=payload.requester_name,
+        )
+        db.commit()
+        return svc.serialize_sign_page(db, record)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+AMENDMENT_BUCKET = "quotation_amendment"
+
+
+def token_bucket_ident(token: str) -> str:
+    """The rate-limit key for a sign token: a digest, never the token itself."""
+    return hashlib.sha256(token.encode()).hexdigest()[:32]
+
+
+def _amendment_rate_limited(token: str, request: Request) -> None:
+    """Per token and per client IP, through the shared fail-open limiter.
+
+    Checked before the token is even resolved, so a guesser spends the same budget whether or not
+    the token exists. `client_ip` believes `X-Forwarded-For` only from trusted proxies.
+    """
+    from app.config import settings as app_settings
+    from app.services import rate_limit
+
+    limit = app_settings.rate_limit_quotation_amendment_max
+    window = app_settings.rate_limit_quotation_amendment_window_seconds
+    ip = client_ip(request) or (request.client.host if request.client else None)
+    for bucket, ident in (
+        # Hashed: the sign token is the customer's whole credential and must not sit in Redis.
+        (f"{AMENDMENT_BUCKET}_token", token_bucket_ident(token)),
+        (f"{AMENDMENT_BUCKET}_ip", ip),
+    ):
+        gate = rate_limit.hit(bucket, ident, limit=limit, window_seconds=window)
+        if not gate.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please try again later.",
+                headers={"Retry-After": str(gate.retry_after_seconds or window)},
+            )
+
+
+@router.post("/{token}/amendment-request", response_model=QuotationSignPageResponse)
+def submit_quotation_amendment(
+    token: str,
+    payload: QuotationAmendmentSubmitRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """The customer suggests quantities and prices, or a line's removal, in ONE request.
+
+    Nothing the customer holds changes: the suggestions wait for the salesperson, and until they
+    are answered the quotation cannot be signed. Answers the page, as `accept` does.
+    """
+    from app.services import quotation_amendment_service as amendments
+
+    try:
+        _amendment_rate_limited(token, request)
+        record = svc.get_issue_by_sign_token(db, token)
+        amendments.submit_request(
+            db,
+            record=record,
+            lines=[line.model_dump() for line in payload.lines],
+            note=payload.note,
+            requester_name=payload.requester_name,
+            ip_address=client_ip(request),
         )
         db.commit()
         return svc.serialize_sign_page(db, record)

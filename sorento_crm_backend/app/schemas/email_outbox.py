@@ -5,6 +5,14 @@ from typing import Any, Optional
 from pydantic import BaseModel
 
 
+class EmailOutboxAttachment(BaseModel):
+    """One file the email carries, addressed by its position: the download route takes no
+    storage key from the caller."""
+
+    index: int
+    filename: str
+
+
 class EmailOutboxRowResponse(BaseModel):
     id: str
     event_key: str
@@ -24,6 +32,7 @@ class EmailOutboxRowResponse(BaseModel):
     error_message: Optional[str] = None
     cancel_reason: Optional[str] = None
     coalesce_key: Optional[str] = None
+    attachments: list[EmailOutboxAttachment] = []
     created_at: datetime
     updated_at: datetime
 

@@ -8,6 +8,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/helpers';
+import { splitHighlightSegments } from '@/lib/textHighlight';
 import { stripWhatsAppMarkup } from '@/lib/whatsappText';
 import { cn } from '@/lib/utils';
 
@@ -39,7 +40,11 @@ interface ConversationListPaneProps {
   tab: ConversationInboxTab;
   onTabChange: (tab: ConversationInboxTab) => void;
   selectedRef: string | null;
-  onSelect: (item: ConversationInboxItem) => void;
+  /**
+   * `searchTerm` is the applied search, so a row found by a MESSAGE can open
+   * the thread on that message with the term marked.
+   */
+  onSelect: (item: ConversationInboxItem, searchTerm?: string) => void;
   /**
    * Every row currently loaded, whenever that set changes. The parent uses it
    * to replace a `?contact=` placeholder selection with the real row (name,
@@ -51,6 +56,23 @@ interface ConversationListPaneProps {
 
 function rowTitle(item: ConversationInboxItem): string {
   return item.name?.trim() || item.phone?.trim() || 'Unknown contact';
+}
+
+/** The matched message's snippet with every occurrence of the term marked. */
+function MatchSnippet({ text, term }: { text: string; term: string }) {
+  return (
+    <>
+      {splitHighlightSegments(text, term).map((segment, i) =>
+        segment.match ? (
+          <mark key={i} className="rounded-sm bg-amber-300 px-0.5 text-zinc-900">
+            {segment.text}
+          </mark>
+        ) : (
+          <span key={i}>{segment.text}</span>
+        ),
+      )}
+    </>
+  );
 }
 
 /**
@@ -134,7 +156,7 @@ export default function ConversationListPane({
         value={searchText}
         onChange={setSearchText}
         isSettling={isSearchInFlight(searchSettling, query.isFetching, appliedQuery)}
-        placeholder="Search name or phone"
+        placeholder="Search name, phone or message"
         aria-label="Search conversations"
         data-testid="inbox-search"
         className="w-full"
@@ -192,7 +214,10 @@ export default function ConversationListPane({
         <ul className="divide-y">
           {items.map((item) => {
             const selected = selectedRef === item.contact_ref;
-            const stamp = item.mentioned_at ?? item.last_message_at;
+            const match = item.match;
+            const stamp = match?.sent_at ?? item.mentioned_at ?? item.last_message_at;
+            const direction = match ? match.direction : item.last_message_direction;
+            const directionNoun = match ? 'Matched message' : 'Last message';
             return (
               <li key={item.contact_ref}>
                 <button
@@ -200,7 +225,7 @@ export default function ConversationListPane({
                   data-testid={`inbox-row-${item.contact_ref}`}
                   data-selected={selected ? 'true' : undefined}
                   aria-current={selected ? 'true' : undefined}
-                  onClick={() => onSelect(item)}
+                  onClick={() => onSelect(item, appliedQuery)}
                   className={cn(
                     'flex w-full flex-col gap-1 px-3 py-2.5 text-start transition-colors hover:bg-muted/60',
                     selected && 'bg-primary/10 hover:bg-primary/10',
@@ -232,21 +257,34 @@ export default function ConversationListPane({
                     <span className="truncate text-xs text-muted-foreground">{item.phone}</span>
                   )}
                   <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    {item.last_message_direction === 'outgoing' ? (
+                    {direction === 'outgoing' ? (
                       <ArrowUpRight
                         className="size-3 shrink-0"
-                        aria-label="Last message was outgoing"
+                        aria-label={`${directionNoun} was outgoing`}
                       />
-                    ) : item.last_message_direction === 'incoming' ? (
+                    ) : direction === 'incoming' ? (
                       <ArrowDownLeft
                         className="size-3 shrink-0"
-                        aria-label="Last message was incoming"
+                        aria-label={`${directionNoun} was incoming`}
                       />
                     ) : null}
-                    <span className="min-w-0 truncate">
-                      {stripWhatsAppMarkup(item.last_message_snippet?.trim() ?? '') ||
-                        'No messages yet'}
-                    </span>
+                    {match ? (
+                      <span
+                        data-testid={`inbox-match-${item.contact_ref}`}
+                        className="min-w-0 truncate"
+                        title={stripWhatsAppMarkup(match.snippet)}
+                      >
+                        <MatchSnippet
+                          text={stripWhatsAppMarkup(match.snippet)}
+                          term={appliedQuery}
+                        />
+                      </span>
+                    ) : (
+                      <span className="min-w-0 truncate">
+                        {stripWhatsAppMarkup(item.last_message_snippet?.trim() ?? '') ||
+                          'No messages yet'}
+                      </span>
+                    )}
                   </span>
                 </button>
               </li>

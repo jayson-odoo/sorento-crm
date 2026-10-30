@@ -9,6 +9,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 class ResizeObserverStub {
   observe() {}
@@ -70,6 +71,41 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       >
         <option value="" />
         {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    );
+  },
+}));
+
+// The filters are multi-selects now (FILTER-MULTISELECT PR3): the same native stand-in, a multiple <select>.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: (props: {
+    id?: string;
+    'aria-label'?: string;
+    value: string[];
+    onChange: (v: string[]) => void;
+    options?: { value: string; label: string }[];
+    fetchOptions?: (q: string) => Promise<{ value: string; label: string }[]>;
+    placeholder?: string;
+  }) => {
+    const [options, setOptions] = React.useState(props.options ?? []);
+    React.useEffect(() => {
+      if (props.fetchOptions) props.fetchOptions('').then(setOptions);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const shown = props.fetchOptions ? options : (props.options ?? []);
+    return (
+      <select
+        multiple
+        id={props.id}
+        aria-label={props['aria-label'] ?? props.id ?? 'select'}
+        value={props.value}
+        onChange={(e) => props.onChange(Array.from(e.target.selectedOptions, (o) => o.value))}
+      >
+        {shown.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
@@ -147,11 +183,12 @@ beforeEach(() => {
 });
 
 describe('SalesOpportunitiesView', () => {
-  it('titles the page with Log opportunity as the header action', () => {
+  it('titles the page with Create (was Log opportunity, L4) as the header action', () => {
     withOpportunities([opportunity()]);
     render(<SalesOpportunitiesView />);
     const actions = screen.getByTestId('header-actions');
-    fireEvent.click(within(actions).getByRole('button', { name: /log opportunity/i }));
+    expect(within(actions).queryByRole('button', { name: /log opportunity/i })).toBeNull();
+    fireEvent.click(within(actions).getByRole('button', { name: 'Create' }));
     expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
@@ -173,6 +210,13 @@ describe('SalesOpportunitiesView', () => {
     expect(screen.getByText('CRM')).toBeTruthy();
   });
 
+  it('O7-1: shows the Source as Chat for an opportunity logged in chat', () => {
+    withOpportunities([opportunity({ id: 'opp-chat', source: 'chat' })]);
+    render(<SalesOpportunitiesView />);
+    expect(screen.getByText('Chat')).toBeTruthy();
+    expect(screen.queryByText('chat')).toBeNull();
+  });
+
   it('links each row to its detail page', () => {
     withOpportunities([opportunity()]);
     render(<SalesOpportunitiesView />);
@@ -180,10 +224,11 @@ describe('SalesOpportunitiesView', () => {
     expect(link.getAttribute('href')).toBe('/sales/opportunities/opp-1');
   });
 
-  it('offers no Log opportunity to a role without sales.opportunities.add', () => {
+  it('offers no Create to a role without sales.opportunities.add', () => {
     perms.granted = new Set(['sales.opportunities.view']);
     withOpportunities([]);
     render(<SalesOpportunitiesView />);
+    expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
     expect(screen.queryByRole('button', { name: /log opportunity/i })).toBeNull();
   });
 
@@ -223,7 +268,7 @@ describe('SalesOpportunitiesView', () => {
     expect(screen.getByText('ALI - Ali Hassan')).toBeTruthy();
   });
 
-  it('fix B2: passes Stage, Agent, Customer and close-date filters to the query', () => {
+  it('fix B2: passes Stage, Agent, Customer and close-date filters to the query', async () => {
     hooks.useSalesOpportunityMeta.mockReturnValue({
       data: { stages: [{ id: 'st-1', key: 'new', label: 'New' }], lost_reasons: [] },
     });
@@ -233,8 +278,8 @@ describe('SalesOpportunitiesView', () => {
     withOpportunities([]);
     render(<SalesOpportunitiesView />);
 
-    fireEvent.change(screen.getByLabelText('Stage'), { target: { value: 'st-1' } });
-    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'agent-1' } });
+    await userEvent.setup().selectOptions(screen.getByLabelText('Stage'), ['st-1']);
+    await userEvent.setup().selectOptions(screen.getByLabelText('Agent'), ['agent-1']);
 
     expect(hooks.useSalesOpportunities).toHaveBeenLastCalledWith(
       expect.objectContaining({ statusId: 'st-1', salesAgentId: 'agent-1' }),

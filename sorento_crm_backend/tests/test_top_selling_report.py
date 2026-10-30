@@ -183,7 +183,9 @@ def _line(
 
 
 def _get(client, **params):
-    merged = {**Y2026, **params}
+    # The SO-line bases are what these tests rank; the route's default is invoiced since
+    # SALES-UNIFIED (tests/test_sales_unified_tally.py covers it), so it is named here.
+    merged = {**Y2026, "basis": "delivered", **params}
     return client.get(BASE, params={k: v for k, v in merged.items() if v is not None})
 
 
@@ -517,7 +519,7 @@ def test_date_default_is_current_calendar_year(client, db):
     _line(db, product_id=last_year.id, ordered=1, delivered=1, order_date=date(year - 1, 12, 31))
     db.commit()
 
-    resp = client.get(BASE, params={"rank_by": "quantity"})
+    resp = client.get(BASE, params={"rank_by": "quantity", "basis": "delivered"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert _codes(body) == ["ZZTYEAR-NOW"]
@@ -1127,7 +1129,7 @@ def test_auth_401_403_apikey_and_company_scope(db, monkeypatch):
     plaintext_key = IntegrationKeyService(db).issue_key(integration)
     db.commit()
 
-    params = {"rank_by": "quantity", **Y2026}
+    params = {"rank_by": "quantity", "basis": "delivered", **Y2026}
     app.dependency_overrides[get_db] = _override_db
     app.dependency_overrides[apply_company_scope] = _override_scope
     try:

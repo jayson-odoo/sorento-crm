@@ -1,5 +1,5 @@
 """Email outbox admin API. List, view, retry, cancel rows."""
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -9,9 +9,12 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.models.email_outbox import EmailOutbox
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
-from app.schemas.email_outbox import EmailOutboxRowResponse
+from app.schemas.email_outbox import EmailOutboxAttachment, EmailOutboxRowResponse
 from app.services.email_outbox_service import cancel as cancel_outbox, retry as retry_outbox
 from app.services.error_handler import handle_internal_error
+from app.tasks.email_outbox_tasks import _fetch_attachment, attachment_refs
+from app.utils.http import content_disposition
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -49,16 +52,20 @@ def _to_response(row: EmailOutbox) -> EmailOutboxRowResponse:
         error_message=row.error_message,
         cancel_reason=row.cancel_reason,
         coalesce_key=row.coalesce_key,
+        attachments=[
+            EmailOutboxAttachment(index=i, filename=ref["filename"])
+            for i, ref in enumerate(attachment_refs(row))
+        ],
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
 
 
 @router.get("/email-outbox", response_model=ListResponse[EmailOutboxRowResponse])
-async def list_email_outbox(
+def list_email_outbox(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     event_key: Optional[str] = Query(None),
     query: Optional[str] = Query(None, description="Search recipient or subject"),
     current_user: dict = Depends(require_permission("system.email_outbox.view")),
@@ -66,8 +73,9 @@ async def list_email_outbox(
 ):
     try:
         q = db.query(EmailOutbox)
-        if status_filter:
-            q = q.filter(EmailOutbox.status == status_filter.strip())
+        statuses = multi_values(status_filter)
+        if statuses:
+            q = q.filter(EmailOutbox.status.in_(statuses))
         if event_key:
             q = q.filter(EmailOutbox.event_key == event_key.strip())
         if query and query.strip():
@@ -93,7 +101,7 @@ async def list_email_outbox(
 
 
 @router.get("/email-outbox/{row_id}", response_model=EmailOutboxRowResponse)
-async def get_email_outbox(
+def get_email_outbox(
     row_id: str,
     current_user: dict = Depends(require_permission("system.email_outbox.view")),
     db: Session = Depends(get_db),
@@ -104,8 +112,49 @@ async def get_email_outbox(
     return _to_response(row)
 
 
+@router.get("/email-outbox/{row_id}/attachments/{index}")
+def download_email_outbox_attachment(
+    row_id: str,
+    index: int = Path(..., ge=0),
+    current_user: dict = Depends(require_permission("system.email_outbox.view")),
+    db: Session = Depends(get_db),
+):
+    """The bytes of one file the row's email carries, by its position in `attachments`.
+
+    Addressed by position, never by a storage key from the caller, so only an object the row
+    itself lists can be served. A plain `def`: the storage read blocks, so it runs on the
+    threadpool rather than the event loop.
+    """
+    row = db.query(EmailOutbox).filter(EmailOutbox.id == row_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outbox row not found")
+    refs = attachment_refs(row)
+    if index >= len(refs):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    ref = refs[index]
+    try:
+        name, mime, data = _fetch_attachment(ref["storage_provider"], ref["storage_key"], ref["filename"])
+    except Exception as exc:  # noqa: BLE001 - the storage backends raise plain Exception
+        # Both backends word a missing object "File not found ..." (s3_service / r2_service).
+        if "not found" in str(exc).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Attachment file not found in storage"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not read the attachment from storage"
+        )
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={
+            "Content-Disposition": content_disposition(name),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.post("/email-outbox/{row_id}/retry", response_model=EmailOutboxRowResponse)
-async def retry_email_outbox(
+def retry_email_outbox(
     row_id: str,
     current_user: dict = Depends(require_permission("system.email_outbox.manage")),
     db: Session = Depends(get_db),
@@ -118,7 +167,7 @@ async def retry_email_outbox(
 
 
 @router.post("/email-outbox/{row_id}/cancel", response_model=EmailOutboxRowResponse)
-async def cancel_email_outbox(
+def cancel_email_outbox(
     row_id: str,
     current_user: dict = Depends(require_permission("system.email_outbox.manage")),
     db: Session = Depends(get_db),
@@ -154,7 +203,7 @@ def _bulk_apply(db: Session, row_ids: list[str], action) -> BulkOutboxResult:
 
 
 @router.post("/email-outbox/bulk-retry", response_model=BulkOutboxResult)
-async def bulk_retry_email_outbox(
+def bulk_retry_email_outbox(
     payload: BulkOutboxRequest,
     current_user: dict = Depends(require_permission("system.email_outbox.manage")),
     db: Session = Depends(get_db),
@@ -165,7 +214,7 @@ async def bulk_retry_email_outbox(
 
 
 @router.post("/email-outbox/bulk-cancel", response_model=BulkOutboxResult)
-async def bulk_cancel_email_outbox(
+def bulk_cancel_email_outbox(
     payload: BulkOutboxRequest,
     current_user: dict = Depends(require_permission("system.email_outbox.manage")),
     db: Session = Depends(get_db),

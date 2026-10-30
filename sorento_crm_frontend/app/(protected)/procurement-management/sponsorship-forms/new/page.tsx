@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -10,7 +11,12 @@ export const metadata: Metadata = {
   description: 'Create a sponsorship form',
 };
 
-export default function NewSponsorshipFormPage() {
+export default async function NewSponsorshipFormPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ project_id?: string }>;
+}) {
+  const { project_id } = await searchParams;
   return (
     <Container>
       <PageHeader
@@ -22,10 +28,14 @@ export default function NewSponsorshipFormPage() {
         }
       />
       <div className="mt-6">
-        <PurchaseRequestForm
-          defaultRequestType="sponsorship_form"
-          successRedirectUrl="/procurement-management/sponsorship-forms"
-        />
+        {/* A salesperson's own form reads ?from= / ?revise= (useSearchParams). */}
+        <Suspense fallback={null}>
+          <PurchaseRequestForm
+            defaultRequestType="sponsorship_form"
+            defaultProjectId={project_id}
+            successRedirectUrl="/procurement-management/sponsorship-forms"
+          />
+        </Suspense>
       </div>
     </Container>
   );

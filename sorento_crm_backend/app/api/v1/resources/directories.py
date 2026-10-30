@@ -10,6 +10,7 @@ from app.dependencies import (
     require_permission_with_api_key,
     require_session_or_api_key_permission,
 )
+from app.services.attachment_entity_access import assert_can_write_directory_files
 from app.services.resources_service import AttachmentDirectoryService, AttachmentService
 from app.schemas.resources import (
     AttachmentDirectoryCreate,
@@ -51,7 +52,7 @@ def _build_tree_node(service: AttachmentDirectoryService, dir_id: str) -> Attach
 
 
 @router.get("/", response_model=list[AttachmentDirectoryResponse])
-async def list_directories(
+def list_directories(
     parent_id: str | None = None,
     current_user: dict = Depends(require_permission_with_api_key("resource.attachment_directories.view")),
     db=Depends(get_db),
@@ -66,7 +67,7 @@ async def list_directories(
 
 
 @router.get("/tree", response_model=list[AttachmentDirectoryTreeNode])
-async def get_directory_tree(
+def get_directory_tree(
     deleted: bool = Query(False, description="If true, return tree of deleted directories only (for Trash)"),
     current_user: dict = Depends(require_session_or_api_key_permission("resource.attachment_directories.view")),
     db=Depends(get_db),
@@ -86,7 +87,7 @@ async def get_directory_tree(
 
 
 @router.get("/{directory_id}", response_model=AttachmentDirectoryResponse)
-async def get_directory(
+def get_directory(
     directory_id: str,
     current_user: dict = Depends(require_permission_with_api_key("resource.attachment_directories.view")),
     db=Depends(get_db),
@@ -103,7 +104,7 @@ async def get_directory(
 
 
 @router.post("/", response_model=AttachmentDirectoryResponse, status_code=201)
-async def create_directory(
+def create_directory(
     data: AttachmentDirectoryCreate,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -119,7 +120,7 @@ async def create_directory(
 
 
 @router.put("/{directory_id}", response_model=AttachmentDirectoryResponse)
-async def update_directory(
+def update_directory(
     directory_id: str,
     data: AttachmentDirectoryUpdate,
     current_user: dict = Depends(get_current_user),
@@ -137,7 +138,7 @@ async def update_directory(
 
 
 @router.post("/{directory_id}/move", response_model=AttachmentDirectoryResponse)
-async def move_directory(
+def move_directory(
     directory_id: str,
     data: AttachmentDirectoryMoveRequest,
     current_user: dict = Depends(get_current_user),
@@ -155,7 +156,7 @@ async def move_directory(
 
 
 @router.delete("/{directory_id}", status_code=200)
-async def delete_directory(
+def delete_directory(
     directory_id: str,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -163,6 +164,8 @@ async def delete_directory(
     """Soft-delete a directory, its subfolders, and archive all attachments in them. Can be restored from Trash."""
     try:
         validate_uuid_path(directory_id, resource="Attachment Directory")
+        # The cascade reaches every file in the subtree (ATTACH-PROJECT-WRITE).
+        assert_can_write_directory_files(db, directory_id, current_user)
         dir_service = AttachmentDirectoryService(db)
         dir_ids = dir_service.get_descendant_directory_ids(directory_id)
         attachment_service = AttachmentService(db)
@@ -179,7 +182,7 @@ async def delete_directory(
 
 
 @router.post("/{directory_id}/restore", status_code=200)
-async def restore_directory(
+def restore_directory(
     directory_id: str,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -187,6 +190,8 @@ async def restore_directory(
     """Restore a deleted directory, its subfolders, and all attachments in them."""
     try:
         validate_uuid_path(directory_id, resource="Attachment Directory")
+        # The cascade reaches every file in the subtree (ATTACH-PROJECT-WRITE).
+        assert_can_write_directory_files(db, directory_id, current_user)
         service = AttachmentDirectoryService(db)
         result = service.restore_directory(directory_id)
         return {
@@ -201,7 +206,7 @@ async def restore_directory(
 
 
 @router.post("/{directory_id}/permanent-delete", status_code=200)
-async def permanent_delete_directory(
+def permanent_delete_directory(
     directory_id: str,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -209,6 +214,8 @@ async def permanent_delete_directory(
     """Permanently delete a directory in Trash and all its contents. Cannot be undone."""
     try:
         validate_uuid_path(directory_id, resource="Attachment Directory")
+        # The cascade reaches every file in the subtree (ATTACH-PROJECT-WRITE).
+        assert_can_write_directory_files(db, directory_id, current_user)
         service = AttachmentDirectoryService(db)
         result = service.permanent_delete_directory(directory_id, deleted_by=current_user["id"])
         return {

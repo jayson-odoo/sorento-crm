@@ -1,7 +1,7 @@
 """Core services for embedding event queue and retrieval."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import uuid
 import json
@@ -10,7 +10,7 @@ import re
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, select, text
 from sqlalchemy import false as sa_false
 from sqlalchemy import func, or_
 
@@ -98,7 +98,11 @@ class EmbeddingEventService:
         payload: Optional[dict[str, Any]] = None,
         triggered_by: Optional[str] = None,
         correlation_id: Optional[str] = None,
-    ) -> EmbeddingQueue:
+    ) -> Optional[EmbeddingQueue]:
+        from app.services.embedding_settings import RECORD_KEEP_SET
+
+        if source_type not in RECORD_KEEP_SET:
+            return None  # LOOKUP-EMBED-CENTRAL: only the keep set is embedded
         changed_fields = changed_fields or []
         if changed_fields and not self._has_semantic_change(changed_fields):
             logger.debug("Skip embedding queue event for %s:%s due to non-semantic changes", source_type, source_id)
@@ -120,18 +124,36 @@ class EmbeddingEventService:
             "triggered_by": triggered_by,
             "payload": payload or {},
         }
-        queue_item = EmbeddingQueue(
-            source_type=source_type,
-            source_id=source_id,
-            event_type=event_type,
-            event_version=1,
-            source_updated_at=source_updated_at,
-            payload=event_payload,
-            status="pending",
-            correlation_id=correlation_id,
-        )
-        self.db.add(queue_item)
-        self.db.flush()
+        from app.services.embedding_change_listener import pending_queue_ids
+
+        # One pending row per source (EMBED-QUEUE-DEDUPE): a row already waiting will read the
+        # source when it runs. Its payload is replaced, since mcp_tool rows carry the text to
+        # embed in the payload itself.
+        pending_id = pending_queue_ids(self.db, source_type, [source_id], lock="update").get(str(source_id))
+        if pending_id is not None:
+            queue_item = self.db.query(EmbeddingQueue).filter(EmbeddingQueue.id == pending_id).one()
+            queue_item.event_type = event_type
+            queue_item.source_updated_at = source_updated_at
+            queue_item.payload = event_payload
+            queue_item.correlation_id = correlation_id
+            self.db.flush()
+            if queue_item.rq_job_id is not None:
+                self.db.commit()
+                self.db.refresh(queue_item)
+                return queue_item
+        else:
+            queue_item = EmbeddingQueue(
+                source_type=source_type,
+                source_id=source_id,
+                event_type=event_type,
+                event_version=1,
+                source_updated_at=source_updated_at,
+                payload=event_payload,
+                status="pending",
+                correlation_id=correlation_id,
+            )
+            self.db.add(queue_item)
+            self.db.flush()
 
         is_priority_source = source_type == "mcp_tool"
         job = enqueue_job(
@@ -234,25 +256,64 @@ class EmbeddingReadService:
         visibility_scope: Optional[str] = None,
         tenant_id: Optional[str] = None,
     ) -> list[tuple[EmbeddingChunk, EmbeddingDocument, float]]:
-        similarity_expr = (1 - EmbeddingChunk.embedding.cosine_distance(query_embedding)).label("similarity")
-        filters = [EmbeddingChunk.is_current.is_(True), EmbeddingDocument.is_active.is_(True)]
+        from sqlalchemy import literal_column
+
+        from app.services import embedding_indexes
+        from app.services.embedding_settings import HOT_FILTERED_SOURCES, RECORD_KEEP_SET, records_search_model
+
+        distance = EmbeddingChunk.embedding.cosine_distance(query_embedding)
+        similarity_expr = (1 - distance).label("similarity")
+        # Spelled unqualified so the ORDER BY reads `embedding_chunks.embedding <=> ...`, the form HNSW matches.
+        order_distance = literal_column("embedding_chunks.embedding", type_=EmbeddingChunk.embedding.type).cosine_distance(
+            query_embedding
+        )
+        # Only the records-search model's vectors are comparable with the query. The predicate is repeated
+        # as literal text (never a bind parameter) so the planner can match it to the partial HNSW index.
+        if source_type and source_type not in RECORD_KEEP_SET:
+            return []  # lookup words, dropped sources and tool vectors are never served as records
+        model = records_search_model(self.db)
+        chunk_filters = [
+            literal_column(f"embedding_chunks.model_name = {embedding_indexes._quote(model)}"),
+            literal_column("embedding_chunks.is_current"),
+        ]
         if source_type:
-            filters.append(EmbeddingChunk.source_type == source_type)
-        if visibility_scope:
-            filters.append(EmbeddingDocument.visibility_scope == visibility_scope)
-        if tenant_id:
-            filters.append(EmbeddingDocument.metadata_json["tenant_id"].astext == tenant_id)
+            chunk_filters.append(
+                literal_column(f"embedding_chunks.source_type = {embedding_indexes._quote(source_type)}")
+            )
+            if source_type not in HOT_FILTERED_SOURCES and source_type in RECORD_KEEP_SET:
+                # The keep-set index post-filters to one source; keep scanning until enough survive.
+                embedding_indexes.set_iterative_scan(self.db)
+        else:
+            chunk_filters.append(
+                literal_column(f"embedding_chunks.source_type IN ({embedding_indexes.keep_set_sql()})")
+            )
         # Multi-company isolation (AC-I4): restrict results to the caller's scope so
         # e.g. a Mocha-scoped search never returns Sorento-owned entities.
         company_filter = _embedding_company_filter(self.db)
         if company_filter is not None:
-            filters.append(company_filter)
+            chunk_filters.append(company_filter)
+        limit = max(1, min(top_k, 30))
+        # The nearest chunks are found on the chunk table alone, so the planner can walk the HNSW index in
+        # distance order; the document filters apply to that short list (over-fetched to cover them).
+        nearest = (
+            select(EmbeddingChunk.id.label("id"))
+            .where(and_(*chunk_filters))
+            .order_by(order_distance)
+            .limit(max(40, limit * 4))
+            .subquery()
+        )
+        doc_filters = [EmbeddingDocument.is_active.is_(True)]
+        if visibility_scope:
+            doc_filters.append(EmbeddingDocument.visibility_scope == visibility_scope)
+        if tenant_id:
+            doc_filters.append(EmbeddingDocument.metadata_json["tenant_id"].astext == tenant_id)
         rows = (
             self.db.query(EmbeddingChunk, EmbeddingDocument, similarity_expr)
+            .join(nearest, nearest.c.id == EmbeddingChunk.id)
             .join(EmbeddingDocument, EmbeddingDocument.id == EmbeddingChunk.document_id)
-            .filter(and_(*filters))
-            .order_by(similarity_expr.desc())
-            .limit(max(1, min(top_k, 30)))
+            .filter(and_(*doc_filters))
+            .order_by(distance)
+            .limit(limit)
             .all()
         )
         return rows
@@ -825,6 +886,108 @@ class EmbeddingReadService:
             item.rq_job_id = job.id
         self.db.commit()
         return len(items)
+
+
+def prune_embedding_queue(
+    db: Session, *, retention_days: int, batch_size: int = 1000, max_batches: int = 100
+) -> dict:
+    """Delete `completed` / `skipped` queue rows older than `retention_days`.
+
+    Age is `available_at` (the insert time, later only for a retried row), so the batch pick
+    rides ix_embedding_queue_status_available_at instead of scanning the table. Each batch
+    commits on its own and a run stops after `max_batches`, so a first run over a large
+    backlog never holds one long DELETE; the next run carries on. `pending`, `processing`
+    and `dead_letter` rows are never touched.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=int(retention_days))
+    deleted_total = 0
+    batches = 0
+    while batches < max_batches:
+        ids = [
+            row_id
+            for (row_id,) in db.query(EmbeddingQueue.id)
+            .filter(
+                EmbeddingQueue.status.in_(("completed", "skipped")),
+                EmbeddingQueue.available_at < cutoff,
+            )
+            .limit(batch_size)
+            .all()
+        ]
+        if not ids:
+            break
+        deleted = (
+            db.query(EmbeddingQueue)
+            .filter(EmbeddingQueue.id.in_(ids))
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        batches += 1
+        deleted_total += deleted
+        if deleted == 0:  # never spin
+            break
+    return {"rows_deleted": deleted_total, "batches": batches, "retention_days": int(retention_days)}
+
+
+def dedupe_pending_embedding_queue(
+    db: Session, *, batch_size: int = 10000, max_batches: int = 10, pause_seconds: float = 1.0
+) -> dict:
+    """Mark every pending row `skipped` that a newer pending row of the same source covers.
+
+    The backlog queued before EMBED-QUEUE-DEDUPE holds many pending rows per source; the
+    worker re-reads the source whatever row it runs, so only the newest is needed (newest,
+    so an mcp_tool row keeps its latest payload). Batches of `batch_size`, each committed on
+    its own with `pause_seconds` between them, at most `max_batches` per run. Idempotent and
+    resumable: a run that stops part-way leaves a smaller backlog for the next, and a clean
+    queue is a no-op.
+    """
+    import time
+
+    from sqlalchemy import text
+
+    from app.services.embedding_change_listener import SUPERSEDED_ERROR
+
+    batch_sql = text(
+        """
+        WITH dupes AS (
+            SELECT id FROM (
+                SELECT id, row_number() OVER (
+                           PARTITION BY source_type, source_id
+                           -- Keep the newest never-failed row: a retrying one may still
+                           -- go to dead_letter, and must not take the fresh change with it.
+                           ORDER BY (retry_count = 0) DESC, created_at DESC, id DESC
+                       ) AS rn
+                  FROM embedding_queue
+                 WHERE status = 'pending'
+            ) ranked
+             WHERE rn > 1
+             LIMIT :batch
+        ), free AS (
+            -- SKIP LOCKED: a row the worker is claiming or an enqueuer holds is left for a
+            -- later run, so this never waits on, or deadlocks with, live work.
+            SELECT q.id FROM embedding_queue q JOIN dupes d ON d.id = q.id
+             WHERE q.status = 'pending'
+               FOR UPDATE OF q SKIP LOCKED
+        )
+        UPDATE embedding_queue q
+           SET status = 'skipped', processed_at = now() AT TIME ZONE 'UTC', last_error = :reason
+          FROM free
+         WHERE q.id = free.id
+        """
+    )
+    skipped_total = 0
+    batches = 0
+    while batches < max_batches:
+        skipped = db.execute(batch_sql, {"reason": SUPERSEDED_ERROR, "batch": int(batch_size)}).rowcount
+        db.commit()
+        if not skipped:
+            break
+        batches += 1
+        skipped_total += skipped
+        if skipped < batch_size:
+            break
+        if pause_seconds > 0 and batches < max_batches:
+            time.sleep(pause_seconds)
+    return {"rows_skipped": skipped_total, "batches": batches}
 
 
 def _get_embedding_worker():

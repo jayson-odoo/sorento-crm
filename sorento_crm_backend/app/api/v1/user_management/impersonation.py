@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_real_user
-from app.models.impersonation import ImpersonationSession
+from app.api.v1.user_management.contact_impersonation import end_contact_session
+from app.models.impersonation import ContactImpersonationSession, ImpersonationSession
 from app.models.user import User
 from app.services.audit_service import log_audit
 from app.services.user_avatar_url import resolve_avatar_url_for_client
@@ -93,7 +94,7 @@ def _serialize_session(db: Session, row: ImpersonationSession, target: User) -> 
 
 
 @router.post("/start", response_model=ImpersonationSessionResponse)
-async def start_impersonation(
+def start_impersonation(
     body: StartImpersonationRequest,
     request: Request,
     real_user: dict = Depends(get_real_user),
@@ -156,7 +157,7 @@ async def start_impersonation(
 
 
 @router.post("/stop")
-async def stop_impersonation(
+def stop_impersonation(
     request: Request,
     real_user: dict = Depends(get_real_user),
     db: Session = Depends(get_db),
@@ -187,12 +188,28 @@ async def stop_impersonation(
         },
         ip_address=request.client.host if request.client else None,
     )
+    # Viewing a salesperson also held a contact session for their contact: end it with this one.
+    target = db.query(User).filter(User.id == row.target_user_id).first()
+    if target is not None and target.respond_contact_id:
+        linked = (
+            db.query(ContactImpersonationSession)
+            .filter(
+                ContactImpersonationSession.admin_user_id == real_user["id"],
+                ContactImpersonationSession.target_contact_id == target.respond_contact_id,
+                ContactImpersonationSession.ended_at.is_(None),
+            )
+            .first()
+        )
+        if linked is not None:
+            end_contact_session(
+                db, linked, real_user["id"], request.client.host if request.client else None
+            )
     db.commit()
     return {"ended": True, "session_id": row.id}
 
 
 @router.get("/current", response_model=Optional[ImpersonationSessionResponse])
-async def current_impersonation(
+def current_impersonation(
     real_user: dict = Depends(get_real_user),
     db: Session = Depends(get_db),
 ):

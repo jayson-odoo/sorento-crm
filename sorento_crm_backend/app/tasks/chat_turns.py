@@ -220,6 +220,14 @@ def start_inbox_queue() -> None:
     inbox_queue.start_sweeper()
 
 
+def start_lookup_warm():
+    """App start-up: the lookup-vector warm (ENTITY-EXTRACT-MATCH AC-S3-9), a daemon thread the engine starts
+    unless `CHATBOT_LOOKUP_WARM_ENABLED` is off. Returns the thread, or None."""
+    from app.services.chatbot import engine
+
+    return engine.start_lookup_warm()
+
+
 def stop_inbox_queue(grace_seconds: float = INBOX_SHUTDOWN_GRACE_SECONDS) -> bool:
     """App shutdown: drains stop taking rows and finish the one they are in (its sender
     POST and done mark included). True when they did within the grace. A process that
@@ -314,3 +322,27 @@ def enqueue_chat_topic_labeller() -> Any:
     from app.services.queue_service import enqueue_job
 
     return enqueue_job(label_chat_topics_job, queue_name=ANALYTICS_QUEUE, job_timeout=3 * 3600)
+
+
+def embed_missing_lookup_words() -> dict:
+    """Keep the `lookup_word` documents and their vectors in step with the lookup rows (queue `imports`)."""
+    from app.models.base import set_company_scope
+    from app.services.chatbot.head import lookup_word_store
+
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        set_company_scope(db, None)
+        result = lookup_word_store.sync_lookup_words(db)
+        db.commit()
+        logger.info("lookup words sync: %s", result)
+        return {
+            "created": getattr(result, "created", 0), "updated": getattr(result, "updated", 0),
+            "retired": getattr(result, "retired", 0), "embedded": getattr(result, "embedded", 0),
+        }
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

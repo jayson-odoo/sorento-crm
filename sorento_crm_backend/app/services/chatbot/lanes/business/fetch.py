@@ -437,8 +437,8 @@ SCALAR_PARAMS: frozenset[str] = frozenset()
 #: The sales analysis's `group_by` -> the route's `rows` (the years are always across).
 #: "month" is months down the side; "year" and no axis said are one line per channel.
 SALES_ANALYSIS_GROUP_BY = {"": "channel", "year": "channel", "month": "month"}
-#: The bases `GET /sales/analysis` answers (finance S1 added invoiced); anything else,
-#: or none, is Delivered, the report's default.
+#: The bases `GET /sales/analysis` answers (finance S1 added invoiced). The lane asks one when the
+#: message names none (`sales_basis_ask`).
 SALES_ANALYSIS_BASES = ("ordered", "delivered", "invoiced")
 
 DATE_PARAMS: dict[str, tuple[str, str]] = {
@@ -467,6 +467,7 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_low_stock_report": ("date_from", "date_to"),
     # PLAN-retail-sales-reports-26sep S1: the period of the sales analysis, by order date.
     "crm_sales_analysis": ("date_from", "date_to"),
+    "crm_sales_target_progress": ("date_from", "date_to"),
 }
 
 def _current_myt_year() -> int:
@@ -496,7 +497,8 @@ ORDER_STATUS_TO_SCOPE: dict[str, str] = {
 SO_NOT_ENABLED_MESSAGE = "Sales order figures are not enabled for your account."
 
 #: The outstanding report's group page size, pinned equal to the MCP presenter's
-#: `OUTSTANDING_GROUP_CAP` (the backend image cannot import that package).
+#: `OUTSTANDING_GROUP_CAP` (the backend image cannot import that package) and to the route's document page
+#: (`reports.ask.DOCUMENT_PAGE`): the three 20s must agree for the "next N" wording.
 OUTSTANDING_GROUP_PAGE = 20
 
 ORDER_TOOLS: frozenset[str] = frozenset(
@@ -1005,154 +1007,6 @@ def entity_ids_transformer(
             if isinstance(narrowed, list) and narrowed:
                 out[key] = list(narrowed)
 
-    # S4 points 2/7/9 (PLAN-chatbot-outstanding-report.md): crm_outstanding_report's
-    # OWN contract (`product_code` a string, `scope`, `customer_ids`, `warehouse_codes`
-    # csv, `order_date_from/to` above) is not the generic UUID-list shape every other
-    # order tool takes, so it is built here rather than through TYPE_TO_PARAM.
-    if tool_name == "crm_outstanding_report":
-        out.pop("product_ids", None)
-        out.pop("warehouse_ids", None)
-        # AC-1119: one rule for which code this report is about, shared with both filter
-        # builders (`outstanding_product_codes`).
-        picked_codes = outstanding_product_codes(entities, semantic_input)
-        if len(picked_codes) == 1:
-            out["product_code"] = picked_codes[0]
-        elif picked_codes:
-            # The SEVERAL-code form, only when there are several: one code keeps the
-            # argument it has always travelled under, so an ordinary outstanding ask is
-            # byte-identical to before.
-            out["product_codes"] = picked_codes
-        scope = jsc.get(semantic_input, "outstanding_scope")
-        if jsc.truthy(scope):
-            out["scope"] = jsc.js_string(scope)
-        warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
-        if isinstance(warehouse_codes, list) and warehouse_codes:
-            out["warehouse_codes"] = warehouse_codes
-        # #1262 slice 9 (F1a): the brand word(s) this turn named, already resolved to
-        # ids by `_resolve_report_product_and_location`'s own brand step (the token
-        # never reached the shared resolver, so this is the only place it becomes an
-        # id) - a brand alone is a valid subject for this report (AC-S9-4).
-        # N1 (security review, 26 Sep 2026): only real uuids ever forward - the same
-        # `is_uuid` guard every other `<entity>_ids` argument in this function uses,
-        # never a bare `isinstance(..., list)` check that would let a non-uuid string
-        # reach the tool call.
-        brand_ids = _resolved_brand_ids(semantic_input)
-        if brand_ids:
-            out["brand_ids"] = brand_ids
-        # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
-        # the route onto its own body so the presenter can render "IB (BRW-IB, MWH-IB)".
-        # The lane never re-renders that header itself: one writer, one wording.
-        location_token = jsc.js_string(jsc.get(semantic_input, "outstanding_location_token") or "")
-        # The route caps it at 32 characters (it is a word, not a filter). `warehouse_code`
-        # is `String(50)`, so an exact match on a very long code could otherwise 422 the
-        # whole report over a header echo; the codes still travel, the word just does not.
-        if location_token and len(location_token) <= 32 and isinstance(warehouse_codes, list) and warehouse_codes:
-            out["location_token"] = location_token
-        # D13/AC-1141: the same wire trip for the withheld SO half, so the refusal line
-        # prints IN PLACE (after the header, before the DO block) rather than in front
-        # of the whole reply.
-        if jsc.truthy(jsc.get(semantic_input, "outstanding_so_refused")):
-            out["so_refused"] = True
-        # AC-1132: the scope-answer's carried customer_ids are ALREADY resolved UUIDs
-        # (restored by `head/output_exchange.py`, never re-parsed) - they win over
-        # whatever THIS turn's own (empty) entity list produced.
-        # #1262 slice 2 (F1c): a session's carried customer subject is a resolved
-        # uuid or it is nothing - a kind-pick's printed label ("Sorento (customer)")
-        # riding on this same key must never reach the tool as a `customer_ids` filter.
-        carried_customers = [
-            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
-        ]
-        if carried_customers and not _self_reference(semantic_input):
-            out["customer_ids"] = carried_customers
-        # AC-1138 (D10 on main): "1"/"2" against an open detail offer re-runs THIS
-        # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
-        # (S4 point 5); the route's own computation is unchanged by it.
-        detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
-        if detail_pick in ("so", "do", "both"):
-            out["detail"] = detail_pick
-        else:
-            from app.services.chatbot import composers
-
-            if composers.enabled():
-                # CHAT-COMPOSER Lists L2: the group page start; page 1 sends 0 so its "more" line prints.
-                offset = jsc.get(semantic_input, "outstanding_group_offset")
-                out["group_offset"] = offset if isinstance(offset, int) and not isinstance(offset, bool) and offset > 0 else 0
-
-    # PLAN-chatbot-sales-report.md S4 wiring point 5: `crm_sales_report`'s OWN
-    # contract - the SAME shape `crm_outstanding_report` above builds by hand
-    # (`product_code` a string, `customer_ids`, `warehouse_codes` csv, `date_from`/
-    # `date_to` above), plus `channel` (S4 point 5's `sales_channel` -> `channel`).
-    if tool_name == "crm_sales_report":
-        out.pop("product_ids", None)
-        out.pop("warehouse_ids", None)
-        picked_code = sales_report_product_code(entities, semantic_input)
-        if jsc.truthy(picked_code):
-            out["product_code"] = picked_code
-        warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
-        if isinstance(warehouse_codes, list) and warehouse_codes:
-            out["warehouse_codes"] = warehouse_codes
-        location_token = jsc.js_string(jsc.get(semantic_input, "outstanding_location_token") or "")
-        if location_token and len(location_token) <= 32 and isinstance(warehouse_codes, list) and warehouse_codes:
-            out["location_token"] = location_token
-        # AC-1132-equivalent: the offer's carried customer_ids are ALREADY resolved
-        # UUIDs (restored by `head/output_exchange.py`, never re-parsed) - they win
-        # over whatever THIS turn's own (empty) entity list produced.
-        # #1262 slice 2 (F1c): same uuid-only rule as `crm_outstanding_report` above.
-        carried_customers = [
-            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
-        ]
-        if carried_customers and not _self_reference(semantic_input):
-            out["customer_ids"] = carried_customers
-        # Chat fix PR-B S5 (AC-B7, R15): the brand this turn named narrows the figures, the
-        # same already-resolved live brand ids the outstanding report sends (a brand word is
-        # kept off the shared resolver under order/sales); never a silently unfiltered total.
-        brand_ids = _resolved_brand_ids(semantic_input)
-        if brand_ids:
-            out["brand_ids"] = brand_ids
-        # R-B3 (reviewer finding, Phase 3 fix round): the turn's OWN sales_channel wins
-        # when given; a pick or a refinement of an open sales_report_detail offer names
-        # no channel of its own, so the offer's CARRIED channel (restored by
-        # `head/output_exchange.py::_apply_outstanding_pending`) is the fallback.
-        channel = jsc.get(semantic_input, "sales_channel")
-        if not jsc.truthy(channel):
-            channel = jsc.get(semantic_input, "outstanding_carried_channel")
-        if jsc.truthy(channel):
-            out["channel"] = jsc.js_string(channel)
-        # AC-SR-28: a drill-down picked off the open `sales_report_detail` offer re-runs
-        # this SAME tool with that `group_by` (the offer's own value, `SALES_REPORT_GROUP_BYS`);
-        # the window, accounts, location and channel ride on the carried keys above.
-        detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
-        if detail_pick in SALES_REPORT_GROUP_BYS:
-            out["group_by"] = detail_pick
-
-        # S18 (owner ruling, mid-lane): a PRODUCT-ONLY ask (a resolved product, no
-        # customer) with no date window defaults to the CURRENT CALENDAR YEAR
-        # (Malaysia time) - a customer ask, or a customer+product ask, with no date
-        # stays all dates (S4, unchanged). Built HERE, in the lane, never the route:
-        # `date_from`/`date_to` absent still means all dates when the route is
-        # called directly (e.g. n8n). "All dates" said in words (`broaden_axis ==
-        # "date"`, the SAME field R15's date-window-drop already reads) turns the
-        # default off - no word table, the parser already decided it.
-        if (
-            jsc.truthy(out.get("product_code"))
-            and not jsc.truthy(out.get("customer_ids"))
-            and not jsc.truthy(out.get("date_from"))
-            and not jsc.truthy(out.get("date_to"))
-            and jsc.lower_or_empty(jsc.get(semantic_input, "broaden_axis")) != "date"
-        ):
-            year = _current_myt_year()
-            out["date_from"] = f"{year}-01-01"
-            out["date_to"] = f"{year}-12-31"
-            # Mutated onto `semantic_input` too (not just `out`, this function's own
-            # return value): `output_structurer` -> `_sales_report_output` ->
-            # `_sales_report_filters_from_ctx` reads `ctx["semantic_input"]` - the
-            # SAME dict object `run_fetch` built `trigger` with - to arm the detail
-            # offer's stored filter set, so the default has to land there too, or a
-            # later "1" would list every date instead of the year just answered.
-            if isinstance(semantic_input, dict):
-                semantic_input["date_filter_start"] = out["date_from"]
-                semantic_input["date_filter_end"] = out["date_to"]
-
     # PLAN-low-stock-report S6 (AC-66/AC-71): this tool's own contract is CODES too - the
     # route resolves warehouse and product CODES, and a UUID would silently match nothing.
     # So the generic UUID params are POPPED rather than left to be dropped by FastMCP,
@@ -1219,9 +1073,10 @@ def entity_ids_transformer(
         channel = jsc.get(semantic_input, "sales_channel")
         if channel in ("dealer", "project"):
             out["channel"] = channel
+        # SALES-TOTAL-ASK: the basis is the one the person named or answered (`sales_basis_ask`), never
+        # defaulted here.
         basis = jsc.get(semantic_input, "sales_basis")
-        out["basis"] = "delivered"  # the sales analysis route's own default basis
-        if basis in SALES_ANALYSIS_BASES:
+        if basis in SALES_ANALYSIS_BASES:  # never defaulted: `run_fetch` asks the basis first (owner, 27 Oct)
             out["basis"] = basis
         company = jsc.get(semantic_input, "sales_company")
         if jsc.truthy(company):
@@ -1242,6 +1097,12 @@ def entity_ids_transformer(
         out["space_id"] = space_id_or_default(
             space_id if space_id is not None else jsc.get(semantic_input, "space_id")
         )
+
+    # SALES-TARGET-CHAT: the target tool names a period and, at most, customers; never a
+    # product, a warehouse or a row limit.
+    if tool_name == "crm_sales_target_progress":
+        for key in ("product_ids", "warehouse_ids", "limit", "group_by", "top_n"):
+            out.pop(key, None)
 
     # REPORT-ENGINE slice 1b: `crm_report_ask`'s params are settled whole by the lane
     # (`report_ask.route_args`, put on `semantic_input` by `run_fetch`, which hands no
@@ -1479,7 +1340,8 @@ def entity_ids_transformer(
         # REPORT-ENGINE 1b code review N3: `crm_report_ask`'s route forces the dealer's own
         # links itself (`enforce_customer_scope`), so the lane sends only what was named
         # (no 50-id cap hit, no header listing every account); the check above stays.
-        if requested or tool_name != "crm_report_ask":
+        # SALES-TARGET-CHAT: the target route scopes the contact itself the same way.
+        if requested or tool_name not in ("crm_report_ask", "crm_sales_target_progress"):
             out["customer_ids"] = requested or list(scope_ids)
         out.pop("customer_query", None)
 
@@ -1564,6 +1426,7 @@ CUSTOMER_SCOPED_TOOLS: frozenset[str] = frozenset(
         "crm_order_management_orders_by_product_list",
         "crm_outstanding_report",
         "crm_sales_report",
+        "crm_sales_target_progress",
         "crm_report_ask",
         "crm_order_analytics",
         "crm_master_customers_list",
@@ -2837,6 +2700,56 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: SALES-TARGET-CHAT: the lane's own words for the target route's refusals (T4-2, T4-6). The
+#: route's `sales_target_not_available` (staff, unclassified) reads as not enabled.
+SALES_TARGET_NOT_ENABLED_MESSAGE = "Sales target is not enabled for your account."
+SALES_TARGET_OWN_ACCOUNTS_MESSAGE = "I can only share targets for your own accounts."
+_SALES_TARGET_ERROR_TEXT = "I could not fetch the sales target just now, please try again."
+_SALES_TARGET_REFUSALS = {
+    "customer_not_permitted": SALES_TARGET_OWN_ACCOUNTS_MESSAGE,
+    "sales_target_not_enabled": SALES_TARGET_NOT_ENABLED_MESSAGE,
+    "sales_target_not_available": SALES_TARGET_NOT_ENABLED_MESSAGE,
+}
+
+
+def sales_target_refusal(envelope: Any) -> str | None:
+    """The lane's line for a target route refusal (an MCP error envelope with a 403), else None."""
+    if not isinstance(envelope, dict) or envelope.get("status_code") != 403:
+        return None
+    detail = envelope.get("detail") if isinstance(envelope.get("detail"), dict) else {}
+    return _SALES_TARGET_REFUSALS.get(jsc.js_string(detail.get("code") or ""))
+
+
+def _sales_target_output(result: Any) -> dict[str, Any]:
+    """`crm_sales_target_progress` never goes through the generic envelope: the presenter's
+    text is the reply, a route refusal arrives as the MCP error envelope (`detail.code`) and
+    is worded here, and a result or a refusal is a final answer (no escalate offer)."""
+    envelope = result if isinstance(result, dict) else {}
+    refusal = sales_target_refusal(envelope)
+    if refusal:
+        text, has_result = refusal, True
+    elif envelope.get("has_result") is True and jsc.truthy(envelope.get("response")):
+        text, has_result = jsc.js_string(envelope.get("response")), True
+    else:
+        text, has_result = _SALES_TARGET_ERROR_TEXT, False
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_ask": None,
+        "outstanding_report": True,
+    }
+
+
 #: The heading the presenter prints above the drill-down options (`_sales_report`).
 _SALES_REPORT_DRILL_HEADING = "*Drill down:*"
 
@@ -2989,11 +2902,55 @@ _ROW_PICK_OFFERS = (
     "Reply with a rank number to see that customer's products and months.",
 )
 
+#: An undelivered-orders total's own offer (owner 28 Oct 09:30; `presenters._ASK_SO_LIST_OFFER`), dropped the same way.
+_SO_LIST_OFFER = "Reply 1 for the sales order list."
+#: REPORT-OUTSTANDING-SUMMARY: a pending-delivery summary's own offer (`presenters._ASK_DO_LIST_OFFER`).
+_DO_LIST_OFFER = "Reply 1 for the delivery order list."
+#: The list each outstanding kind's offer opens: the offer's words, and the label its one pick is held under.
+_LIST_OFFERS = {
+    "outstanding": (_SO_LIST_OFFER, "Sales order list", "sales_order"),
+    "pending_delivery": (_DO_LIST_OFFER, "Delivery order list", "delivery_order"),
+}
+
+
+#: The filter word the route's `not_applied` names each route param by.
+_ARG_FILTERS = {
+    "product_code": "product", "product_ids": "product", "brand_ids": "brand", "category_ids": "category",
+    "spec": "spec", "warehouse_codes": "location", "channel": "channel", "customer_ids": "customer",
+    "sales_agent_ids": "sales_agent", "customer_agent_ids": "customer_agent",
+}
+
+
+def _sole_subject_question(envelope: dict[str, Any], args: Any) -> str | None:
+    """REPORT-UNIFY Q4: when every filter the ask named is one the route could not apply (a product on unpaid
+    invoices) and nothing is grouped, the figure is not what was asked: ask instead of printing it."""
+    skipped = [n for n in jsc.array(envelope.get("not_applied")) if isinstance(n, dict)]
+    if not skipped or not isinstance(args, dict) or args.get("group_by"):
+        return None
+    named = {word for key, word in _ARG_FILTERS.items() if args.get(key)}
+    if not named or not named <= {n.get("filter") for n in skipped}:
+        return None
+    labels = ", ".join(dict.fromkeys(jsc.js_string(n.get("label") or "") for n in skipped))
+    words = "; ".join(dict.fromkeys(jsc.js_string(n.get("words") or "") for n in skipped))
+    return f"{labels}: {words}. Which customer or sales agent do you want?"
+
+
+def _with_not_applied(text: str, words: list[str]) -> str:
+    """REPORT-UNIFY (plan 2.4): the parsed filters the route has no param for, said once under the header: they
+    join the presenter's own "Not applied:" line when it printed one, else a line of their own after the header."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("Not applied:"):
+            lines[i] = line + "; " + "; ".join(words)
+            return "\n".join(lines)
+    lines.insert(1, "Not applied: " + "; ".join(words))
+    return "\n".join(lines)
+
 
 def _without_row_offers(text: str) -> str:
     for offer in _ROW_PICK_OFFERS:
         text = text.replace("\n\n" + offer, "")
-    return text
+    return text.replace("\n\n" + _SO_LIST_OFFER, "").replace("\n\n" + _DO_LIST_OFFER, "")
 
 
 def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -3009,6 +2966,9 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     note = semantic_input.get("report_ask_note") if isinstance(semantic_input, dict) else None
     if note and text:
         text = f"{note}\n\n{text}"
+    unapplied = semantic_input.get("report_ask_not_applied") if isinstance(semantic_input, dict) else None
+    if unapplied and text:
+        text = _with_not_applied(text, [jsc.js_string(u) for u in jsc.array(unapplied)])
     # REPORT-DRILLDOWN: the rows the ranking printed, with their keys, ride on the frame
     # (`shown`), so "these agents" next turn means exactly them. Never a route param.
     drill = envelope.get("drill_rows")
@@ -3017,6 +2977,7 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     pick = None
     if frame is not None:
         frame.pop("shown", None)
+        frame.pop("group_offset", None)  # item 6: a page is never held; "more" carries its own offset
         if isinstance(drill, dict) and drill.get("group_by") == frame.get("group_by") and drill.get("rows"):
             frame["shown"] = drill
             if frame.get("group_by") in ("product", "category", "sales_agent", "customer") and not frame.get("compare_to"):
@@ -3032,6 +2993,58 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                         for i, r in enumerate(jsc.array(drill.get("rows")), start=1) if isinstance(r, dict)
                     ],
                     "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
+                }
+        offer = _LIST_OFFERS.get(frame.get("basis"))
+        if offer is not None and offer[0] in text:
+            # A summary that broke down by the user's own axis printed no rank numbers: its one offer is the list.
+            # Owner 28 Oct 09:30 (AC-RU-17a): an undelivered-orders total offers the open sales orders behind it; "1"
+            # re-runs THIS frame grouped by sales order (`report_ask.settle`, `so_list_outcome`). REPORT-OUTSTANDING-
+            # SUMMARY: a pending-delivery summary offers its delivery orders the same way.
+            from app.services.chatbot.lanes.business.report_ask import LIST_PICKS
+
+            code = LIST_PICKS[frame["basis"]]
+            pick = {
+                "kind": "top_selling_pick",
+                "last_result_set": [{"idx": 1, "label": offer[1], "code": code, "entity_type": offer[2], "keys": []}],
+                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": code}},
+            }
+    if (
+        frame is not None and pick is None and frame.get("group_by") in ("sales_order", "delivery_order")
+        and isinstance(envelope.get("group_window"), dict)  # a list with a "more" to answer; a short one arms nothing
+    ):
+        # Eval hard guard: item 3's document list (no subject) is the frame on screen; its "more" is answered under an
+        # open pick (`turn/apply._answer_top_selling_pick`), so it arms its kind's list pick ("1" re-lists page one).
+        from app.services.chatbot.lanes.business.report_ask import LIST_PICKS
+
+        code, offer = LIST_PICKS.get(frame.get("basis")), _LIST_OFFERS.get(frame.get("basis"))
+        if code is not None and offer is not None:
+            pick = {
+                "kind": "top_selling_pick",
+                "last_result_set": [{"idx": 1, "label": offer[1], "code": code, "entity_type": offer[2], "keys": []}],
+                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": code}},
+            }
+    question = _sole_subject_question(envelope, args)
+    if question:
+        text, frame, pick = question, None, None
+    # A detail list ("1" under a summary) pages too: the summary stays the frame, the carry names the list.
+    listed = detail and isinstance(args, dict) and args.get("group_by") in ("sales_order", "delivery_order")
+    window = envelope.get("group_window") if frame is not None or listed else None
+    set_window = None
+    if isinstance(window, dict):
+        from app.services.chatbot import composers
+
+        if composers.enabled():
+            # Item 6 (owner 29 Oct, as before #1922): a cut summary arms "more", as the old report's output did.
+            o, k, t = window.get("offset"), window.get("shown"), window.get("total")
+            if all(isinstance(v, int) and not isinstance(v, bool) for v in (o, k, t)):
+                from app.services.chatbot.lanes.business.report_ask import LIST_PICKS
+
+                set_window = {
+                    "first": o + 1, "last": o + k, "total": t, "next": max(0, min(OUTSTANDING_GROUP_PAGE, t - o - k)),
+                    "carry": {
+                        "report_groups": True, "total": t, "shown": o + k if k else o,
+                        **({"list": LIST_PICKS[args["basis"]]} if listed and args.get("basis") in LIST_PICKS else {}),
+                    },
                 }
     if pick is None:
         text = _without_row_offers(text)  # an offer for a list this reply never armed would hand the next number to an older list
@@ -3053,6 +3066,7 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
         "requested_attributes": [],
         "keys_served": False,
         "outstanding_report": True,
+        **({"set_window": set_window} if set_window else {}),
     }
 
 
@@ -3183,6 +3197,75 @@ def _file_rows(e: dict[str, Any], *, links: bool) -> dict[str, Any]:
     return {**e, "items": out}
 
 
+def drop_restricted_fields(envelope: dict, granted: set[str], axis: str | None = None) -> None:
+    """Drop, in place, every field the envelope marks restricted that `granted` does not hold.
+
+    The one place a restricted field is dropped for a contact: `output_structurer` (today's
+    chatbot) and the agent's tool dispatch both call it. `axis` is the group-by axis of the
+    ask, if any; a restricted axis is answered flat.
+    """
+    e = envelope
+    restricted = e.get("restricted_fields")
+    if not (isinstance(restricted, dict) and restricted):
+        return
+
+    def _keep_field(f: Any) -> bool:
+        """Keep, drop, or SWAP. A restricted field that carries `granted_value` is
+        a plain field with a granted suffix (D1, the compact stock block's
+        "*Total:* 51 (O/S: 36)"): under the grant its value becomes the granted one,
+        without it the plain value stays and the suffix never reaches the reader.
+        A restricted field with no `granted_value` is dropped whole, as before."""
+        if not _has_key(f):
+            return True
+        perm = restricted.get(jsc.js_string(f["key"]))
+        if perm is None:
+            return True
+        has_granted_value = isinstance(f, dict) and "granted_value" in f
+        if perm in granted:
+            if has_granted_value:
+                f["value"] = f.pop("granted_value")
+            return True
+        if has_granted_value:
+            f.pop("granted_value", None)
+            return True
+        return False
+
+    def _filter_rows(rows: Any) -> None:
+        for row in rows or []:
+            if jsc.truthy(row) and isinstance(jsc.get(row, "fields"), list):
+                row["fields"] = [f for f in row["fields"] if _keep_field(f)]
+
+    _filter_rows(e.get("items"))
+    _filter_rows(e.get("summary_items"))
+    # A3/A5's GROUPED shape carries the same rows a second time, and the first
+    # cut of this rule filtered `items` only - so `group_by=product` on a PO
+    # question rendered every supplier a dealer must never see, and
+    # `group_by=supplier` printed the restricted value as the SECTION HEADING,
+    # where no field filter could ever reach it. Both are closed here: every
+    # group's rows go through the same `_keep_field`, and the AXIS itself is
+    # refused below when the grant is not held.
+    for grp in e.get("groups") or []:
+        if not (jsc.truthy(grp) and isinstance(grp, dict)):
+            continue
+        _filter_rows(grp.get("items"))
+        _filter_rows(grp.get("summary_items"))
+
+    # THE HEADING IS NOT A FIELD. A group's `label` is the axis value itself, so a
+    # restricted axis leaks by being grouped ON, whatever the rows carry. The answer
+    # is to drop the grouping and answer FLAT rather than to redact the headings:
+    # "Supplier A / Supplier B" with the names blanked still tells the dealer how many
+    # suppliers there are and which rows share one, and an ungrouped list is the
+    # honest answer to a question we may not break down.
+    # The axis NAME and the restricted FIELD KEY are the same word by construction:
+    # a tool may only group on an axis it renders as a field, and `group_by=supplier`
+    # groups on the `supplier` field the presenter marked restricted. So the lookup
+    # is the same `restricted` map, with no second table to keep in step.
+    axis_perm = restricted.get(axis) if axis else None
+    if axis_perm is not None and axis_perm not in granted:
+        e["groups"] = []
+        e["group_by_dropped"] = axis
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -3195,6 +3278,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         return _outstanding_report_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_sales_report":
         return _sales_report_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_sales_target_progress":
+        return _sales_target_output(result)
     if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
         return _low_stock_report_output(result)
     if jsc.js_string(ctx.get("tool") or "") == "crm_report_ask":
@@ -3247,63 +3332,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if isinstance(restricted, dict) and restricted:
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
-
-        def _keep_field(f: Any) -> bool:
-            """Keep, drop, or SWAP. A restricted field that carries `granted_value` is
-            a plain field with a granted suffix (D1, the compact stock block's
-            "*Total:* 51 (O/S: 36)"): under the grant its value becomes the granted one,
-            without it the plain value stays and the suffix never reaches the reader.
-            A restricted field with no `granted_value` is dropped whole, as before."""
-            if not _has_key(f):
-                return True
-            perm = restricted.get(jsc.js_string(f["key"]))
-            if perm is None:
-                return True
-            has_granted_value = isinstance(f, dict) and "granted_value" in f
-            if perm in granted:
-                if has_granted_value:
-                    f["value"] = f.pop("granted_value")
-                return True
-            if has_granted_value:
-                f.pop("granted_value", None)
-                return True
-            return False
-
-        def _filter_rows(rows: Any) -> None:
-            for row in rows or []:
-                if jsc.truthy(row) and isinstance(jsc.get(row, "fields"), list):
-                    row["fields"] = [f for f in row["fields"] if _keep_field(f)]
-
-        _filter_rows(e.get("items"))
-        _filter_rows(e.get("summary_items"))
-        # A3/A5's GROUPED shape carries the same rows a second time, and the first
-        # cut of this rule filtered `items` only - so `group_by=product` on a PO
-        # question rendered every supplier a dealer must never see, and
-        # `group_by=supplier` printed the restricted value as the SECTION HEADING,
-        # where no field filter could ever reach it. Both are closed here: every
-        # group's rows go through the same `_keep_field`, and the AXIS itself is
-        # refused below when the grant is not held.
-        for grp in e.get("groups") or []:
-            if not (jsc.truthy(grp) and isinstance(grp, dict)):
-                continue
-            _filter_rows(grp.get("items"))
-            _filter_rows(grp.get("summary_items"))
-
-        # THE HEADING IS NOT A FIELD. A group's `label` is the axis value itself, so a
-        # restricted axis leaks by being grouped ON, whatever the rows carry. The answer
-        # is to drop the grouping and answer FLAT rather than to redact the headings:
-        # "Supplier A / Supplier B" with the names blanked still tells the dealer how many
-        # suppliers there are and which rows share one, and an ungrouped list is the
-        # honest answer to a question we may not break down.
-        # The axis NAME and the restricted FIELD KEY are the same word by construction:
-        # a tool may only group on an axis it renders as a field, and `group_by=supplier`
-        # groups on the `supplier` field the presenter marked restricted. So the lookup
-        # is the same `restricted` map, with no second table to keep in step.
-        axis = group_axis(ctx)
-        axis_perm = restricted.get(axis) if axis else None
-        if axis_perm is not None and axis_perm not in granted:
-            e["groups"] = []
-            e["group_by_dropped"] = axis
+        drop_restricted_fields(e, granted, group_axis(ctx))
 
     if ctx.get("set_by_code") and not e.get("groups"):
         _group_set_rows(e, ctx["set_by_code"])
@@ -3939,6 +3968,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             not_understood=jsc.get(predicate, "unrecognized_terms"),
             offset=offset,
             previous_total=jsc.get(predicate, "previous_total"),
+            dimension_fallback=jsc.get(predicate, "dimension_fallback"),
         )
         set_header = header
         # Round 3 W4: the default brand answered, so the reply closes with the others -
@@ -4002,6 +4032,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                         not_understood=jsc.get(predicate, "unrecognized_terms"),
                         offset=offset,
                         previous_total=jsc.get(predicate, "previous_total"),
+                        dimension_fallback=jsc.get(predicate, "dimension_fallback"),
                     )
                 ),
                 cap=answer_mod.SET_LIST_MAX,

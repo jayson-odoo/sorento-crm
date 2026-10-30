@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CATALOG-IMAGES mock v2</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1f2328;--mute:#6b7280;--line:#e5e7eb;--pri:#1b84ff;--bad:#f8285a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,sans-serif}
+main{max-width:1320px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin:28px 0 8px}
+.frame{max-width:1280px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:0 0 8px;position:relative;overflow:hidden}
+.sub{font-weight:600;font-size:13px;color:var(--mute);margin:16px 0 8px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.sp{flex:1}
+.btn{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer}
+.btn.p{background:var(--pri);border-color:var(--pri);color:#fff}
+.link{background:none;border:0;color:var(--mute);text-decoration:underline;cursor:pointer;font-size:12px;padding:0}
+.badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600}
+.hi{background:#e6f9ee;color:#0b8a3e}.md{background:#fff6dc;color:#8a6400}
+.chip{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:12px;color:var(--mute)}
+.sug{border-style:dashed;color:#0a58ca;background:#eef5ff}
+.menu{border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);width:260px;padding:4px;background:#fff;margin:6px 0 0 auto}
+.menu div{padding:7px 10px;border-radius:6px;font-size:13px}
+.menu div.new{background:#eef5ff;color:#0a58ca}
+.dlg{border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.12);max-width:460px;padding:16px;background:#fff}
+.dlg h3{margin:0 0 12px;font-size:16px}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:16px;text-align:center;color:var(--mute);margin-bottom:12px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);overflow-x:auto;margin-top:12px}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:8px 0;color:var(--mute);white-space:nowrap;cursor:pointer;font-size:14px}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--pri)}
+.pane{display:none;padding-top:14px}.pane.on{display:block}
+.meta{display:flex;gap:20px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px;color:var(--mute)}
+.meta b{color:var(--ink);font-weight:600}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.pc{border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.thumb{height:120px;border-radius:6px;background:linear-gradient(135deg,#e3e6ea,#c5cbd3);display:flex;align-items:center;justify-content:center;font-size:11px;color:#555;text-align:center;padding:4px}
+.thumb.s{height:90px;flex:1}
+.thumb.hl{outline:2px solid var(--pri)}
+.sel{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:13px;display:flex;justify-content:space-between;gap:6px;color:var(--mute)}
+.code{font-weight:600;font-family:ui-monospace,monospace;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ph{color:var(--bad);text-decoration:line-through;opacity:.45;font-size:12px}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg label{flex:1;text-align:center;padding:5px;font-size:12px;cursor:pointer;border-right:1px solid var(--line)}
+.seg label:last-child{border:0}
+.seg input{display:none}.seg input:checked+span{font-weight:700;color:#0a58ca}
+.seg label:has(input:checked){background:#eef5ff}
+.empty{text-align:center;padding:40px 0;color:var(--mute)}.empty b{display:block;color:var(--ink);font-size:15px}
+.drawer{border:1px solid var(--line);border-radius:8px;max-width:360px;padding:10px 12px;margin-top:12px}
+.bar{height:6px;background:var(--line);border-radius:3px;margin-top:6px}.bar i{display:block;width:37%;height:100%;background:var(--pri);border-radius:3px}
+.drive{display:grid;grid-template-columns:240px 1fr;gap:12px}
+.tree{border-right:1px solid var(--line);padding-right:10px;font-size:13px}.tree div{padding:4px 6px;border-radius:5px}
+.tree .on{background:#eef5ff}.tree .drop{border:2px dashed var(--pri);background:#eef5ff;padding:4px 6px;text-align:left;color:var(--ink);margin:0}
+.files{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.file{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.folder{border:2px dashed var(--pri);background:#eef5ff;border-radius:8px;padding:22px 8px;text-align:center;font-size:13px}
+.drag{opacity:.8;transform:rotate(-3deg)}
+.toast{background:#1f2328;color:#fff;border-radius:8px;padding:10px 14px;display:inline-block}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th,td{border-bottom:1px solid var(--line);padding:8px;text-align:left;vertical-align:top;font-size:12px;word-break:break-word}
+.scroll{overflow-x:auto}
+.photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px}
+@media(max-width:600px){.drive{grid-template-columns:1fr}.tree{border:0}.menu{margin:6px 0}}
+</style></head><body><main>
+
+<h1>Screen A: Products list, Actions menu, upload dialog, progress</h1>
+<div class="frame">
+ <div class="row"><b style="font-size:18px">Products</b><span class="sp"></span><input placeholder="Search" style="border:1px solid var(--line);border-radius:6px;padding:6px 10px"><button class="btn">... Actions</button></div>
+ <div class="menu">
+  <div>Create product</div><div>Advanced filters</div><div>Download template</div><div>Import (Excel)</div><div>Import barcodes</div><div>AutoCount pull</div>
+  <div class="new">Extract photos from catalogue</div>
+ </div>
+ <div class="sub">Upload dialog</div>
+ <div class="dlg">
+  <h3>Extract photos from catalogue</h3>
+  <div class="drop">PDF only, up to 50 MB<br><b style="color:var(--ink)">Sorento_Lite_DIY_CATALOG_UPDATE_22062026.pdf (16.6 MB)</b></div>
+  <div class="row"><span class="sp"></span><button class="btn">Cancel</button><button class="btn p">Read catalogue</button></div>
+ </div>
+ <div class="sub">Upload activity drawer</div>
+ <div class="drawer"><div class="row"><span class="code" style="font-family:inherit">Sorento_Lite_DIY_CATALOG_UPDATE_22062026.pdf</span></div>
+  <div style="font-size:12px;color:var(--mute)">Reading catalogue... page 12 of 32</div><div class="bar"><i></i></div></div>
+</div>
+
+<h1>Screen B: Review page /master-data-management/products/catalogue-photos/[id]</h1>
+<div class="frame">
+ <div class="row">
+  <b style="font-size:18px;overflow-wrap:anywhere">Sorento_Lite_DIY_CATALOG_UPDATE_22062026.pdf</b><span class="sp"></span>
+  <button class="btn">Open folder</button><button class="btn">Download all as ZIP</button><button class="btn p">Attach 344 photos</button>
+ </div>
+ <div class="meta"><span><b>32</b> pages</span><span><b>434</b> photos</span><span>Read <b>27 Oct 2026 19:20</b></span><span>By <b>the uploader</b></span></div>
+ <div class="tabs" id="tabs">
+  <button class="on" data-t="t1">Ready (344)</button><button data-t="t2">Looks like an existing photo (N)</button><button data-t="t3">Needs a product (90)</button><button data-t="t4">Skipped (0)</button>
+ </div>
+
+ <div class="pane on" id="t1"><div class="cards">
+  <div class="pc"><div class="thumb">SRTWT1906-BL-DIY</div><div class="row"><span class="chip">Page 2</span><span class="badge hi">High</span></div><div class="code">SRTWT1906-BL-DIY</div><div class="sel"><span>Change product</span><span>v</span></div><div><button class="link">Skip</button></div></div>
+  <div class="pc"><div class="thumb">SRTWT1905-BL-DIY</div><div class="row"><span class="chip">Page 2</span><span class="badge hi">High</span></div><div class="code">SRTWT1905-BL-DIY</div><div class="sel"><span>Change product</span><span>v</span></div><div><button class="link">Skip</button></div></div>
+  <div class="pc"><div class="thumb">SRTWT1906-DIY</div><div class="row"><span class="chip">Page 2</span><span class="badge hi">High</span></div><div class="code">SRTWT1906-DIY</div><div class="sel"><span>Change product</span><span>v</span></div><div><button class="link">Skip</button></div></div>
+  <div class="pc"><div class="thumb">SRTSS8807-GM-DIY</div><div class="row"><span class="chip">Page 14</span><span class="badge hi">High</span></div><div class="code">SRTSS8807-GM-DIY</div><div class="sel"><span>Change product</span><span>v</span></div><div><button class="link">Skip</button></div></div>
+  <div class="pc"><div class="thumb">SRTBV120-DIY</div><div class="row"><span class="chip">Page 19</span><span class="badge hi">High</span></div><div class="code">SRTBV120-DIY</div><div class="sel"><span>Change product</span><span>v</span></div><div><button class="link">Skip</button></div></div>
+  <div class="pc"><div style="font-size:11px;color:var(--mute)">From the owner's example page</div><div class="thumb">SRTBF12613</div><div class="row"><span class="chip">Page 7</span><span class="badge hi">High</span></div><div class="code">SRTBF12613</div>
+   <div style="font-size:12px"><div style="color:var(--mute)">Also attach to</div>
+    <label><input type="checkbox"> SRTW2600</label><br>
+    <span class="ph">SRTWB_____</span> <span style="color:var(--mute)">placeholder, not a code</span></div>
+   <div class="sel"><span>Change product</span><span>v</span></div><div><button class="link">Skip</button></div></div>
+ </div></div>
+
+ <div class="pane" id="t2"><div class="cards">
+  <div class="pc"><div class="row"><div class="thumb s">From catalogue</div><div class="thumb s">On file now</div></div>
+   <div class="row"><span class="chip">Page 2</span><span class="code">SRTWT1906-BL-DIY</span></div><span class="badge md" style="align-self:flex-start">Looks like an existing photo</span>
+   <div class="seg"><label><input type="radio" name="d1" checked><span>Skip</span></label><label><input type="radio" name="d1"><span>Keep both</span></label><label><input type="radio" name="d1"><span>Replace</span></label></div></div>
+  <div class="pc"><div class="row"><div class="thumb s">From catalogue</div><div class="thumb s hl">On file now (1 of 2, look-alike)</div><div class="thumb s" style="flex:.6">On file (2 of 2)</div></div>
+   <div class="row"><span class="chip">Page 19</span><span class="code">SRTBV120-DIY</span></div><span class="badge md" style="align-self:flex-start">Looks like an existing photo</span>
+   <div class="seg"><label><input type="radio" name="d2" checked><span>Skip</span></label><label><input type="radio" name="d2"><span>Keep both</span></label><label><input type="radio" name="d2"><span>Replace</span></label></div></div>
+ </div></div>
+
+ <div class="pane" id="t3"><div class="cards"><div class="pc"><div class="thumb">p01-photo-01</div><div class="chip" style="align-self:flex-start">Page 1, photo 1</div><div style="font-size:12px;color:var(--mute)">No code found near this photo</div><div class="sel"><span>Product</span><span>v</span></div><div><button class="link">Skip</button></div></div><div class="pc"><div class="thumb">p01-photo-02</div><div class="chip" style="align-self:flex-start">Page 1, photo 2</div><div style="font-size:12px;color:var(--mute)">No code found near this photo</div><div class="sel"><span>Product</span><span>v</span></div><div><button class="link">Skip</button></div></div><div class="pc"><div class="thumb">p15-photo-03</div><div class="chip" style="align-self:flex-start">Page 15, photo 3</div><div style="font-size:12px;color:var(--mute)">No code found near this photo</div><div class="sel"><span>Product</span><span>v</span></div><div><button class="link">Skip</button></div></div>
+  <div class="pc"><div style="font-size:11px;color:var(--mute)">Shape for supplier catalogues; this catalogue produced none</div><div class="thumb">example photo</div><div class="chip" style="align-self:flex-start">Page 11</div><div style="font-size:12px;color:var(--mute)">Printed "SRTKT1931SS"</div><div><span class="chip sug">Did you mean SRTKT1931SS-DIY?</span></div><div class="sel"><span>Product</span><span>v</span></div><div><button class="link">Skip</button></div></div>
+ </div></div>
+
+ <div class="pane" id="t4"><div class="empty"><b>Nothing skipped</b>Photos you skip will appear here.</div></div>
+</div>
+
+<h1>Screen C: Open folder (Resources drive view)</h1>
+<div class="frame">
+ <div class="row"><b style="font-size:18px">Resources</b><span class="sp"></span><button class="btn">Download selected</button></div>
+ <div class="drive" style="margin-top:12px">
+  <div class="tree"><div>All files</div><div>Price lists</div><div>Catalogue photos</div>
+   <div class="on" style="margin-left:14px;overflow-wrap:anywhere">Sorento_Lite_DIY_CATALOG_UPDATE_22062026</div>
+   <div class="drop" style="margin-left:28px">Kitchen taps</div><div style="margin-left:28px">Basin mixers</div></div>
+  <div>
+   <div style="font-size:12px;color:var(--mute);margin-bottom:8px">Catalogue photos / Sorento_Lite_DIY_CATALOG_UPDATE_22062026</div>
+   <div class="files">
+    <div class="folder">Kitchen taps<br><span style="font-size:11px;color:var(--mute)">Drop to move</span></div>
+    <div><div class="thumb s"><input type="checkbox" checked> </div><div class="file">SRTWT1906-BL-DIY.jpg</div></div>
+    <div><div class="thumb s"></div><div class="file">SRTWT1905-BL-DIY.jpg</div></div>
+    <div><div class="thumb s"></div><div class="file">SRTBV120-DIY.jpg</div></div>
+    <div><div class="thumb s"></div><div class="file">SRTBV120-DIY (2).jpg</div></div>
+    <div class="drag"><div class="thumb s hl"></div><div class="file">p01-photo-01.jpg</div></div>
+   </div>
+  </div>
+ </div>
+</div>
+
+<h1>Screen D: After Attach</h1>
+<div class="frame">
+ <div class="toast">Attached 335 photos to 300 products. 0 replaced, 9 skipped.</div> <span style="font-size:11px;color:var(--mute)">Illustrative numbers</span>
+ <div class="sub">Product detail, Photos tab</div>
+ <div class="row"><b style="font-size:18px">SRTBV120-DIY</b></div>
+ <div class="tabs"><button>Overview</button><button class="on">Photos</button><button>Pricing</button></div>
+ <div class="photos" style="margin-top:12px">
+  <div class="thumb s">SRTBV120-DIY (earlier)</div><div class="thumb s">SRTBV120-DIY (earlier 2)</div><div class="thumb s">SRTBV120-DIY (new)</div>
+ </div>
+</div>
+
+<h1>Element map</h1>
+<div class="frame scroll"><table>
+<tr><th style="width:20%">Element</th><th style="width:30%">Existing component reused</th><th>Repo path</th></tr>
+<tr><td>Actions menu</td><td>DataGridListToolbar secondaryActions</td><td>sorento_crm_frontend/components/ui/data-grid-list-toolbar.tsx:559-570; items ProductsList.tsx:990-1039</td></tr>
+<tr><td>Upload dialog</td><td>TemplateUploadDialog pattern</td><td>ProductsList.tsx:1070-1091; PDF limit + check reused from sorento_crm_backend/app/services/dealer_kit/flyer_reading_service.py:95,166,232</td></tr>
+<tr><td>Progress</td><td>upload-activity drawer</td><td>sorento_crm_frontend/components/upload-activity/useImportJobDrawer.ts:19-28, useUploadActivity.ts:88-94; worker queue flyer_read, flyer_reading_service.py:582</td></tr>
+<tr><td>Review page layout</td><td>full-page review like cost-price-uploads/[id] and dealer-kit flyer-readings/[readingId]/page.tsx</td><td>UploadPriceListDialog.tsx:117; MatchReportSections.tsx, ReportSection.tsx</td></tr>
+<tr><td>Did-you-mean chip</td><td>flyer_matching.py _suggestions (shown, never applied)</td><td>flyer_matching.py:369</td></tr>
+<tr><td>Product picker</td><td>SearchableSelect (shared component)</td><td>shared component</td></tr>
+<tr><td>Folder view, drag and drop</td><td>AttachmentDirectoriesView, DirectoryTreeSidebar, DriveGridView</td><td>AttachmentDirectoriesView.tsx:293 handleDragEnd, drop targets DirectoryTreeSidebar.tsx:77, DriveGridView.tsx:93; Move endpoint attachments.py:1496</td></tr>
+<tr><td>Download all as ZIP</td><td>existing bulk download</td><td>attachments.py:1366, AttachmentBulkDownloadDialog.tsx (rendered at AttachmentsInFolderPanel.tsx:1446), driveBulkActions.ts:72</td></tr>
+<tr><td>Product photos tab</td><td>ProductAttachmentsTab</td><td>ProductAttachmentsTab.tsx (detail page ProductDetail.tsx:597)</td></tr>
+<tr><td>Link written by Attach</td><td>product_attachments via ProductAttachmentService.create_product_attachment</td><td>product_service.py:3250</td></tr>
+</table></div>
+
+</main>
+<script>
+document.querySelectorAll('#tabs button').forEach(function(b){b.onclick=function(){
+document.querySelectorAll('#tabs button').forEach(function(x){x.classList.remove('on')});b.classList.add('on');
+document.querySelectorAll('.pane').forEach(function(p){p.classList.toggle('on',p.id===b.dataset.t)});}});
+</script></body></html>

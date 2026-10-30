@@ -27,7 +27,10 @@ openpyxl>=3.1.2
 # weasyprint, but a transitive pin is not a contract - openpyxl's own image support needs it too.
 pillow>=10.0.0
 redis>=5.0.0
-rq>=2.0
+# Below 3: rq 3.0.0 (PyPI, 28 Oct 2026) adds the job statuses rate_limited and
+# ready_to_enqueue, which project_extraction_recovery does not classify yet
+# (tests/test_project_extraction_recovery.py guards it). Lift the cap with that change.
+rq>=2.0,<3
 pywebpush>=1.14.0
 pytest>=7.0.0
 # Parallel test execution. Powers the blocking `test-backend` CI gate, which
@@ -41,7 +44,12 @@ pytest-split>=0.10  # CI shards the backend suite across runners (--splits/--gro
 # for the issue each guards against.
 pytest-rerunfailures>=14.0
 pgvector
-PyMuPDF>=1.24
+# LOOKUP-WARM-STORM: below 2.0. PyMuPDF 2.0 (19 Oct 2026) builds an onnxruntime layout model at
+# `import fitz`, so the preloading gunicorn master owns its thread pool and a forked worker that
+# exits hangs in onnxruntime's exit handler (`std::thread::join` on a thread only the master has)
+# until WORKER TIMEOUT kills it 120 s later; its replacement boots only then. The app never uses
+# the layout model. tests/test_gunicorn_conf.py guards it.
+PyMuPDF>=1.24,<2
 opencv-python-headless>=4.9
 openai>=1.40.0
 py-spy

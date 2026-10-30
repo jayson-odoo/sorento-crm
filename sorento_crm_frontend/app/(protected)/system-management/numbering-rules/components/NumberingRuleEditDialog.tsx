@@ -116,12 +116,12 @@ export default function NumberingRuleEditDialog({
               name="prefix_template"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Prefix (use {'{year}'}, {'{yy}'}, {'{month}'}, {'{day}'})</FormLabel>
+                  <FormLabel>Prefix (use {'{year}'}, {'{yy}'}, {'{mm}'}, {'{month}'}, {'{day}'})</FormLabel>
                   <FormControl>
                     <Input placeholder="PR-{year}- or PSSF{yy}-" {...field} />
                   </FormControl>
                   <p className="text-xs text-muted-foreground">
-                    {'{year}'} = 4-digit (2026), {'{yy}'} = 2-digit (26)
+                    {'{year}'} = 4-digit (2026), {'{yy}'} = 2-digit (26), {'{mm}'} = 2-digit month (05)
                   </p>
                   <FormMessage />
                 </FormItem>

@@ -78,6 +78,16 @@ export interface SignaturePadProps {
    * when null, the ecohub rule: an absent value is stated, not hidden.
    */
   extraMetadata?: { label: string; value?: string | null }[];
+  /**
+   * Opt-in. When given, the commit button and the locked canvas stay tappable while not ready
+   * (aria-disabled, nothing is committed) and call this instead, so the caller can show why.
+   * Without it the button is natively disabled, exactly as before.
+   */
+  onNotReadyAttempt?: () => void;
+  /** Opt-in. Rendered beside the commit button; told whether anything is drawn or typed yet. */
+  renderFooterHint?: (state: { hasContent: boolean; hintId: string }) => React.ReactNode;
+  /** Opt-in. Leaves the "GPS location" row out of both the capture and the read-only view. */
+  hideLocation?: boolean;
   /** Set false to skip the geolocation prompt entirely (e.g. an internal desk signature). */
   requestGeolocation?: boolean;
   className?: string;
@@ -171,6 +181,9 @@ export function SignaturePad({
   label = 'Signature',
   commitLabel = 'Apply signature',
   extraMetadata,
+  onNotReadyAttempt,
+  renderFooterHint,
+  hideLocation = false,
   requestGeolocation = true,
   className,
 }: SignaturePadProps) {
@@ -331,6 +344,7 @@ export function SignaturePad({
   // Pointer Events only: mouse, finger and stylus arrive through this one path, so there is
   // no second set of touch handlers to keep in step with the first.
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (disabled && !readOnly) onNotReadyAttempt?.();
     if (locked || mode !== 'draw' || activePointerRef.current !== null) return;
     // Capture keeps the stroke alive when the pointer leaves the canvas mid-gesture, instead
     // of ending it at the edge and leaving a half signature.
@@ -395,10 +409,12 @@ export function SignaturePad({
   const metadata = (
     <div className="grid gap-3 sm:grid-cols-2">
       <MetaRow label="Signed at" value={value?.signedAt ? formatDateTimeInMalaysia(value.signedAt) : null} />
-      <MetaRow
-        label="GPS location"
-        value={formatCoordinate(value?.gpsLat ?? null, value?.gpsLng ?? null, value?.gpsPlace)}
-      />
+      {!hideLocation && (
+        <MetaRow
+          label="GPS location"
+          value={formatCoordinate(value?.gpsLat ?? null, value?.gpsLng ?? null, value?.gpsPlace)}
+        />
+      )}
       {extraMetadata?.map((row) => (
         <MetaRow key={row.label} label={row.label} value={row.value} />
       ))}
@@ -523,18 +539,34 @@ export function SignaturePad({
         {/* The place name once it resolves, the coordinates until then, and the coordinates for
             good if the lookup fails. The browser never derives the name itself: it asks the same
             table the PDF renders from, so the two cannot describe different places. */}
-        <MetaRow
-          label="GPS location"
-          value={
-            nearestPlace
-              ? `near ${nearestPlace}`
-              : formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)
-          }
-        />
+        {!hideLocation && (
+          <MetaRow
+            label="GPS location"
+            value={
+              nearestPlace
+                ? `near ${nearestPlace}`
+                : formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)
+            }
+          />
+        )}
       </CardContent>
 
-      <CardFooter className="justify-end gap-2.5 py-3">
-        <Button type="button" disabled={disabled || !hasContent} onClick={commit}>
+      <CardFooter
+        className={cn('justify-end gap-2.5 py-3', renderFooterHint && 'flex-wrap sm:flex-nowrap')}
+      >
+        {renderFooterHint?.({ hasContent, hintId: `${fieldId}-hint` })}
+        <Button
+          type="button"
+          className="aria-disabled:opacity-60"
+          disabled={onNotReadyAttempt ? undefined : disabled || !hasContent}
+          aria-disabled={onNotReadyAttempt && (disabled || !hasContent) ? true : undefined}
+          aria-describedby={
+            onNotReadyAttempt && renderFooterHint && (disabled || !hasContent)
+              ? `${fieldId}-hint`
+              : undefined
+          }
+          onClick={onNotReadyAttempt && (disabled || !hasContent) ? onNotReadyAttempt : commit}
+        >
           {commitLabel}
         </Button>
       </CardFooter>

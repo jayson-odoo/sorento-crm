@@ -22,7 +22,8 @@ reads the same answer so the board and the view can never disagree about what is
 **The walk** (`PLAN-scm-borrow-ladder-v7-stock-debt.md` 3.1, rulings R14 / R21 / R24 / R31).
 
 1. **Pinned holds bind first, at any date, and PINNED MEANS PINNED** (R21, AC-S2-1b). A
-   confirmed decision or a placement link is a promise already made; re-deciding it every
+   placement link, landed goods or a book S/O pin (a confirmed Reserve plan is NOT one,
+   rule 7) is a promise already made; re-deciding it every
    time somebody opens a screen is what pinning exists to prevent. The pinned quantity
    leaves the pile before anybody queues for it - and when the supply it names is OUTSIDE
    this call's span (a site pool, a bin flagged out of planning, another group when the
@@ -38,9 +39,9 @@ reads the same answer so the board and the view can never disagree about what is
    from its own group's pile, oldest first, at its own date. **UNDECIDED DEMAND NEVER
    CROSSES A GROUP.** The captain, on a BB line of 507 with no inquiry and no planning
    sitting on IB's pile: "who is us to decide those BB group takes our IB pile". Nobody -
-   so the walk does not decide it. Cross-group movement exists only as a PINNED hold, born
-   from a board decision somebody confirmed (step 1 above), and until that Confirm the other
-   group's pile is untouched. The ladder still OFFERS it (`free_piles_at`, read by
+   so the walk does not decide it. Cross-group movement exists only as a PINNED hold or a
+   Reserve plan's ROUTE (rule 7), both born from a board decision somebody confirmed (step
+   1 above), and until that Confirm the other group's pile is untouched. The ladder still OFFERS it (`free_piles_at`, read by
    `use_candidates_for`), which is a PROPOSAL a planner accepts or does not.
    What a line cannot draw is an OPEN SHORTFALL, and the next supply to arrive in ITS OWN
    group clears the group's open shortfalls, earliest required date first, BEFORE it becomes
@@ -88,6 +89,19 @@ reads the same answer so the board and the view can never disagree about what is
    hand at BRW-BB while SO396071 (Sep 2026) read short 32 - "would like this stock to be
    allocated nearer like oct, nov, dec". The Stock Debt VIEW alone sets `lendable`; the
    board and the ladder still pin (their Borrow step is where the lend becomes a decision).
+
+7. **A Reserve plan is a ROUTE, not a hold** (BOARD-NO-HOLD, owner 27 Oct 2026: "board
+   decision is just a planning choice"). A confirmed Reserve (`Hold.route`) holds no stock
+   and binds nothing first. Its one job is that its line may draw the bin the plan names,
+   AT ITS OWN DATE, in date order with everyone else who may draw there: the line takes it
+   at its own step, after its lendable claims and before its own group's pile. A bin outside
+   the span is stood up for route lines alone (never a pile, never free stock). Under a
+   narrowed span (`group=`) a route to a bin outside the span is honoured off that bin's
+   free stock and cannot see the bin's own earlier demand, so the narrowed view may read a
+   routed line covered that the full view reads short: the limit a stand-in pin had too.
+   Routes are the BOARD's and the ladder's reading only: the Stock Debt VIEW hands this walk
+   no route (STOCKDEBT-NO-PLAN-REACH, owner 28 Oct 2026), so on the page a decided line
+   draws exactly as the same line undecided.
 
 **Status.** `short` when anything is left uncovered beyond what the line lent,
 `order_back` when the line lent something and is still owed it, `pinned` when a decision
@@ -337,6 +351,9 @@ class Hold:
     #: `order_back` for what nearer lines drew first. The CALLER decides it (the Stock
     #: Debt view, off `reserve_window_end`); the board never sets it.
     lendable: bool = False
+    #: BOARD-NO-HOLD (rule 7): a confirmed decision (Reserve or Borrow) plan. Not spent in step 1 and never
+    #: pinned; the line may draw the named bin at its own date, in date order.
+    route: bool = False
 
 
 @dataclass(frozen=True)
@@ -454,6 +471,9 @@ class _Open:
     claims: Dict[str, float] = field(default_factory=dict)
     #: Event key -> what nearer lines took of the claim above before this line's step.
     lent_by_event: Dict[str, float] = field(default_factory=dict)
+    #: BOARD-NO-HOLD (rule 7): event key -> what this line's Reserve plans let it draw of
+    #: that bin at its own step.
+    routes: Dict[str, float] = field(default_factory=dict)
 
 
 def parse_supply_key(supply_key: str) -> Tuple[Optional[str], Optional[str]]:
@@ -708,6 +728,9 @@ def assign(
         state = states.get(hold.line_key)
         if state is None:
             continue
+        if hold.route:
+            # Rule 7: a plan, not a hold. Registered below, taken at the line's own step.
+            continue
         if hold in lendable:
             # Rule 6: not spent here. The line takes what is left of the claim at its OWN
             # step (`_walk`), after every nearer line has queued; what they took is lent.
@@ -794,6 +817,50 @@ def assign(
             )
         )
 
+    # Rule 7: register each line's routes. A bin in the span is drawn in place; a bin outside
+    # it is stood up ONCE per key for route lines only (no pile, no free stock).
+    route_events: Dict[str, SupplyEvent] = {}
+    standins: Dict[str, SupplyEvent] = {}
+    for hold in pinned:
+        state = states.get(hold.line_key)
+        if not hold.route or state is None or float(hold.qty) <= EPSILON:
+            continue
+        key = hold.supply_key
+        if key in uncounted_by_key:
+            continue  # a dead document: Reserve is always on hand, ignore the route
+        if key in events:
+            if events[key].pin_only:
+                continue
+            route_events[key] = events[key]
+        else:
+            # A key with both a Borrow stand-in (step 1) and a route stand-in yields two
+            # events with one key; harmless, because the route's free stock is zeroed.
+            if key not in standins:
+                total = sum(
+                    float(h.qty)
+                    for h in pinned
+                    if h.route and h.supply_key == key and h.line_key in states
+                )
+                qty = floor_left[key] if key in floor_left else total
+                if qty <= EPSILON:
+                    continue
+                standins[key] = SupplyEvent(
+                    key=key,
+                    kind=hold.kind,
+                    warehouse=hold.warehouse,
+                    at=as_of,
+                    qty=_round(qty),
+                    ref=hold.ref,
+                    spo_number=hold.spo_number,
+                    spo_line_number=hold.spo_line_number,
+                    po_number=hold.po_number,
+                    purchase_order_id=hold.purchase_order_id,
+                )
+                left[key] = float(standins[key].qty)
+                events[key] = standins[key]
+            route_events[key] = standins[key]
+        state.routes[key] = state.routes.get(key, 0.0) + float(hold.qty)
+
     # 2. ONE chronological walk, with a pile per ownership group ---------------------------
     #
     # R45: a `pin_only` event stays out of the walk. The pins above have already taken
@@ -809,13 +876,22 @@ def assign(
         events=[
             event
             for event in counted
-            if left.get(event.key, 0.0) > EPSILON and not event.pin_only
+            if left.get(event.key, 0.0) > EPSILON
+        and not event.pin_only
         ],
         left=left,
         states=[states[line.key] for line in dated],
         draws=draws,
         claimed=claimed,
+        route_events=route_events,
     )
+    # A stood-up route bin is nobody's free stock: keep only what was taken (so the drill
+    # still names it), and let none of the remainder raise a month.
+    for key, event in standins.items():
+        taken = float(event.qty) - max(left.get(key, 0.0), 0.0)
+        left[key] = 0.0
+        if taken > EPSILON:
+            counted.append(dataclass_replace(event, qty=_round(taken)))
     lent_by_line = _attribute_lends(
         claimants=claimants, free_before=free_before, draws=draws,
     )
@@ -880,6 +956,7 @@ def _walk(
     states: Sequence[_Open],
     draws: Optional[Dict[str, List[Tuple["_Open", int]]]] = None,
     claimed: Optional[Dict[str, float]] = None,
+    route_events: Optional[Dict[str, SupplyEvent]] = None,
 ) -> None:
     """The whole product's book, in date order, with a pile per ownership group.
 
@@ -913,8 +990,14 @@ def _walk(
     only ever what the group could not cover otherwise. Each claim is released at its
     line's own step.
 
+    Rule 7 (BOARD-NO-HOLD): after its claims and before its pile draw, a line takes its
+    ROUTES (`_Open.routes`) off the bins its Reserve plans name, unpinned, at its own date,
+    leaving what other lines still claim of the bin. `route_events` maps those keys to
+    their events (a stood-up bin is here and in no pile).
+
     Mutates `left`, `claimed` and the line states.
     """
+    route_events = route_events or {}
     draws = {} if draws is None else draws
     claimed = {} if claimed is None else claimed
     steps: List[Tuple[date, int, int, object]] = []
@@ -1005,6 +1088,24 @@ def _walk(
             state.taken.append(
                 Assigned(event=event, qty=_round(take), pinned=True, landed=True, at=at)
             )
+        for key, route_qty in state.routes.items():
+            event = route_events.get(key)
+            if event is None or state.remaining <= EPSILON:
+                continue
+            if effective_date(event.at, as_of) > at:
+                continue  # not here yet: a future arrival is drawn by the pile, not by a route
+            take = min(
+                route_qty,
+                state.remaining,
+                left.get(key, 0.0) - max(claimed.get(key, 0.0), 0.0),
+            )
+            if take <= EPSILON:
+                continue
+            left[key] -= take
+            state.remaining -= take
+            state.taken.append(Assigned(event=event, qty=_round(take), at=at))
+            if key in draws:
+                draws[key].append((state, len(state.taken) - 1))
         if state.remaining > EPSILON:
             # Its OWN group's pile, in arrival order (it was appended that way), and no
             # other group's (R40). Two passes (rule 6): first every bin's UNCLAIMED part,
@@ -1202,6 +1303,8 @@ def group_book_positions(assignment: Assignment) -> Dict[str, float]:
         group = _group_of(line.warehouse, line.is_pool, line.is_reserve)
         out[group] = out.get(group, 0.0) - float(line.open_qty)
         for item in row.assigned:
+            # A route take (pinned=False) does not lower the lending group's position: two
+            # plans may name the same stock.
             if not item.pinned or item.event.key not in counted:
                 continue
             lender = _group_of(

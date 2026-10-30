@@ -74,6 +74,7 @@ from app.models.projects import (
     ProjectPurchaseOrderLine,
 )
 from app.services.error_handler import AppException
+from app.services.document_extraction import page_failure_reason
 
 logger = logging.getLogger(__name__)
 
@@ -925,7 +926,12 @@ class ProjectScheduleService:
             if not pages:
                 raise AppException(
                     status_code=422,
-                    message="Nothing could be read from this document.",
+                    message=(
+                        "Nothing could be read from this document."
+                        + page_failure_reason(
+                            page.error for page in (result.pages if result else [])
+                        )
+                    )[:500],
                     code="schedule_extraction_empty",
                 )
             summary = self.persist_pages(
@@ -1775,6 +1781,11 @@ class ProjectScheduleService:
         """
         version = self.get_version(version_id)
         self._assert_open(version)
+        project_id = (
+            self.db.query(DeliverySchedule.project_id)
+            .filter(DeliverySchedule.id == version.delivery_schedule_id)
+            .scalar()
+        )
         touched: Set[str] = set()
         for payload in cells:
             phase_id = _clean(payload.get("phase_id"), 64)
@@ -1801,7 +1812,7 @@ class ProjectScheduleService:
                     code="schedule_cell_no_column",
                 )
             phase = self.db.get(ProjectDeliveryPhase, phase_id)
-            if phase is None:
+            if phase is None or phase.project_id != project_id:
                 raise AppException(
                     status_code=404,
                     message="That delivery phase is not on this project.",

@@ -219,6 +219,9 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product C
 # siblings and gate nothing (there is no row of its own to add or delete).
 PERMISSION_REGISTRY.extend(_crud("master_data", "chatbot_stock_limits", "Chatbot Stock Limits"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
+# ITEM-CLASS: AutoCount Item Class reference data (migration item_class_0001 grants each slug
+# to every role holding the matching brands slug).
+PERMISSION_REGISTRY.extend(_crud("master_data", "item_classes", "Item Classes"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "countries", "Countries"))
@@ -379,6 +382,9 @@ PERMISSION_REGISTRY.extend([
     # to every role holding `scm.sales_orders.edit` by migration 472.
     {"slug": "integration.contract.read", "name": "Read ingest contract", "description": "Read the AutoCount ESB ingest contract version and supported entity list."},
     {"slug": "integration.chat_turn.submit", "name": "Submit chatbot turns", "description": "Post one inbound WhatsApp turn to the chatbot engine and receive the reply and the actions to execute."},
+    # SALES-TARGET-CHAT slice 2: the chatbot's opportunity lane. Granted to admin,
+    # integration_sorento_mcp and integration_n8n by migration stc_0003_opp_log_slug.
+    {"slug": "integration.sales_opportunity.log", "name": "Log sales opportunities from chat", "description": "Log a sales opportunity for a salesperson contact over the chat, and read that salesperson's own customers to pick from."},
 ])
 
 # System
@@ -625,12 +631,12 @@ PERMISSION_REGISTRY.extend([
         "slug": "projects.order_inquiries.acknowledge",
         "name": "Acknowledge Order Inquiry Rows",
         "description": (
-            "Purchasing grant: acknowledge an order inquiry row - which is the moment "
-            "documents are linked to it - reject one with a reason, run Link now, and "
-            "upload the purchase order and SPO books from the Order Inquiries page. "
-            "Separate from `projects.order_inquiry.action`, which is marking a row's "
-            "supply state: acknowledging is purchasing taking CS's instruction on, and "
-            "CS may not do it for them."
+            "Purchasing grant: the manual override on an order inquiry row. The system marks "
+            "a row Done by itself when its documents cover it; this grant lets a person "
+            "Confirm (mark Done by hand) or Unconfirm (put back to To order) over that rule. "
+            "It also covers rejecting a row with a reason, running Link now, and uploading "
+            "the purchase order and SPO books from the Order Inquiries page. Separate from "
+            "`projects.order_inquiry.action`, which is marking a row's supply state."
         ),
     },
     {
@@ -662,6 +668,14 @@ PERMISSION_REGISTRY.extend([
             "confirmed and Delivered, cancel one in Processing, and fill Consignment No "
             "and PO No. Separate from `projects.projects.edit`, which every salesperson "
             "holds and which would let them mark their own request delivered."
+        ),
+    },
+    {
+        "slug": "projects.registrations.approve",
+        "name": "Approve Project Registrations",
+        "description": (
+            "Review, approve or reject project registrations raised from the portal. "
+            "Approving creates the project and draws its PPF code."
         ),
     },
     {
@@ -992,6 +1006,18 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# SALES-UNIFIED (#1916): the set-apart customers the sales reports pull out of Dealer and
+# Project team. Reading the list is `sales.reports.view`; granted to admin and superadmin by
+# `sales_unified_0001`.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "sales.set_apart.edit",
+        "name": "Edit set-apart customers",
+        "description": "Add, change and remove the customers the sales reports set apart, by month.",
+    },
+])
+
+
 # claude.ai connector (CLAUDE-CONNECTOR, contract section 3). Granted to NO role by the migration:
 # admins and superadmins do not get it by bypass either (owner ruling Q1 (a)); the connector checks
 # the role grants directly. Grant listing and revoke live in the shared service.
@@ -1002,3 +1028,83 @@ PERMISSION_REGISTRY.extend([
         "description": "Connect claude.ai to read CRM data as yourself. Chat tools also need View Chat History.",
     },
 ])
+
+
+# PORTAL-P2-ONLY-THEIRS: "only theirs". Holding a module's `view_own` without its `view` narrows
+# every read (and every write on an existing row) to the user's own rows (`app/services/own_scope.py`).
+# Seeded by migration `pp2_0001_view_own_perms` and granted to NO role there; P3 grants them.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "projects.projects.view_own",
+        "name": "View Own Projects",
+        "description": "See only the projects you own, collaborate on or registered from the portal, and everything under them. Ignored when View Projects is also held.",
+    },
+    {
+        "slug": "sales.opportunities.view_own",
+        "name": "View Own Sales Opportunities",
+        "description": "See only the sales opportunities of your own sales agents. Ignored when View Sales Opportunities is also held.",
+    },
+    {
+        "slug": "projects.sample_requests.view_own",
+        "name": "View Own Sample Requests",
+        "description": "See only the sample requests you raised, or your own contact raised from the portal. Ignored when View Sample Requests is also held.",
+    },
+    {
+        "slug": "procurement.new_product_applications.view_own",
+        "name": "View Own New Product Applications",
+        "description": "See only the new product applications you raised, or your own contact raised from the portal. Ignored when View New Product Applications is also held.",
+    },
+    {
+        "slug": "sla_management.conversations.view_own",
+        "name": "View Own Conversations",
+        "description": "See only the conversations of your own sales agents' customers in the Conversations inbox. Ignored when View Conversations is also held.",
+    },
+])
+
+
+# PORTAL-P4-REQUESTS: "only theirs" on the four request forms (`own_scope.REQUEST_KINDS`): a
+# form's `view_own` without its `view` narrows its staff routes to rows their own contact
+# submitted. Seeded and granted to role `salesperson` by migration `pp4_0001_request_view_own`,
+# which also owns `projects.registrations.submit` for lane PROJECT-REGISTER-V2 and the price tag
+# request `view_own` (card v1.2).
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "procurement.stock_inquiries.view_own",
+        "name": "View Own Stock Inquiries",
+        "description": "See only the stock inquiries your own contact submitted. Ignored when View Stock Inquiries is also held.",
+    },
+    {
+        "slug": "complaint_management.complaints.view_own",
+        "name": "View Own Complaints",
+        "description": "See only the complaints your own contact submitted. Ignored when View Complaints is also held.",
+    },
+    {
+        "slug": "procurement.purchase_requests.view_own",
+        "name": "View Own Purchase Requests",
+        "description": "See only the purchase requests your own contact submitted. Ignored when View Purchase Requests is also held.",
+    },
+    {
+        "slug": "procurement.sponsorship_forms.view_own",
+        "name": "View Own Sponsorship Forms",
+        "description": "See only the sponsorship forms your own contact submitted. Ignored when View Sponsorship Forms is also held.",
+    },
+    {
+        "slug": "dealer_kit.price_tag_requests.view_own",
+        "name": "View Own Price Tag Requests",
+        "description": "See only the price tag requests your own contact submitted. Ignored when View Price Tag Requests is also held.",
+    },
+    {
+        "slug": "projects.registrations.submit",
+        "name": "Submit project registrations",
+        "description": "Register a project from the CRM, the way a portal contact registers one.",
+    },
+])
+
+# AGENTIC-P3 W0: change a dealer contact's role or end its access, only for contacts linked to
+# customers of the user's own sales agents. Seeded by `agp3_0002_contacts_edit_own`, granted to NO
+# role there. Holding `user_management.contacts.edit` allows the same for any contact.
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.contacts.edit_own",
+    "name": "Edit Own Dealer Contacts' Access",
+    "description": "Change the role or end the access of dealer contacts linked to customers of your own sales agents, through the agent. Ignored when Edit Contacts is also held.",
+})

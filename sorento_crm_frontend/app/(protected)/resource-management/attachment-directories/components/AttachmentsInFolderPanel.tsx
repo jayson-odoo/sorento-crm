@@ -74,7 +74,9 @@ import {
 } from '../../attachments/hooks/useAttachments';
 import { useAttachmentTypes } from '../../attachment-types/hooks/useAttachmentTypes';
 import { useCompany } from '@/app/providers/CompanyProvider';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { Calendar } from '@/components/ui/calendar';
 import { getUserLookup, type UserLookupItem } from '@/services/userSelectService';
 import { useQuery } from '@tanstack/react-query';
@@ -161,11 +163,12 @@ export default function AttachmentsInFolderPanel({
   const [thisFolderOnly, setThisFolderOnly] = useState(false);
   const [accessLevelFilters, setAccessLevelFilters] = useState<string[]>([]);
   const [accessLevelsMatch, setAccessLevelsMatch] = useState<'any' | 'all' | 'exact'>('any');
-  const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
+  // Attachment type, storage status, company and uploader hold one value or several, comma-joined (OR-ed).
+  const [attachmentTypeId, setAttachmentTypeId] = useState<string>('');
   const [linkStatus, setLinkStatus] = useState<'__all__' | 'linked' | 'unlinked'>('__all__');
-  const [storageStatus, setStorageStatus] = useState<'__all__' | 'accessible' | 'missing' | 'unchecked'>('__all__');
+  const [storageStatus, setStorageStatus] = useState<string>('');
   const [companyFilter, setCompanyFilter] = useState<string>('');
-  const [uploadedBy, setUploadedBy] = useState<string>('__all__');
+  const [uploadedBy, setUploadedBy] = useState<string>('');
   const [uploadedRange, setUploadedRange] = useState<DateRange | undefined>();
   const uploadedAtFrom = uploadedRange?.from ? format(uploadedRange.from, 'yyyy-MM-dd') : '';
   const uploadedAtTo = uploadedRange?.to ? format(uploadedRange.to, 'yyyy-MM-dd') : '';
@@ -191,11 +194,11 @@ export default function AttachmentsInFolderPanel({
 
   const { grants: companyGrants } = useCompany();
   const extraFilterCount =
-    (attachmentTypeId !== '__all__' ? 1 : 0) +
+    (attachmentTypeId ? 1 : 0) +
     (linkStatus !== '__all__' ? 1 : 0) +
-    (storageStatus !== '__all__' ? 1 : 0) +
+    (storageStatus ? 1 : 0) +
     (companyFilter ? 1 : 0) +
-    (uploadedBy !== '__all__' ? 1 : 0) +
+    (uploadedBy ? 1 : 0) +
     (uploadedAtFrom || uploadedAtTo ? 1 : 0);
   const totalFilterCount = accessLevelFilters.length + extraFilterCount;
 
@@ -216,7 +219,7 @@ export default function AttachmentsInFolderPanel({
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [bulkDownloadOpen, setBulkDownloadOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const canDeletePermanently = useHasPermission('resource.attachments.delete');
+  const canDelete = useHasPermission('resource.attachments.delete');
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
   const [setCompanyDialogOpen, setSetCompanyDialogOpen] = useState(false);
@@ -274,11 +277,11 @@ export default function AttachmentsInFolderPanel({
     is_deleted: isTrashView ? true : undefined,
     access_levels: accessLevelFilters.length > 0 ? accessLevelFilters : undefined,
     access_levels_match: accessLevelFilters.length > 0 ? accessLevelsMatch : undefined,
-    attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
+    attachment_type_id: attachmentTypeId || undefined,
     link_status: linkStatus !== '__all__' ? linkStatus : undefined,
-    storage_status: storageStatus !== '__all__' ? storageStatus : undefined,
+    storage_status: storageStatus || undefined,
     company: companyFilter || undefined,
-    uploaded_by: uploadedBy !== '__all__' ? uploadedBy : undefined,
+    uploaded_by: uploadedBy || undefined,
     uploaded_at_from: uploadedAtFrom || undefined,
     uploaded_at_to: uploadedAtTo || undefined,
   });
@@ -725,6 +728,7 @@ export default function AttachmentsInFolderPanel({
         isTrashView,
         isResubmitting: isResubmittingBulk,
         canRestore: !bulkRestoreMutation.isPending && selectedDeletableFileIds.length > 0,
+        canDelete,
       },
       {
         onMove: () => setMoveDialogOpen(true),
@@ -960,7 +964,7 @@ export default function AttachmentsInFolderPanel({
         isTrashView={isTrashView}
         recursive={recursive}
         resubmitting={isFileItem(item) && pendingResubmitIds.has(item.id)}
-        canDeletePermanently={canDeletePermanently}
+        canDelete={canDelete}
         handlers={{
           onOpen: openItem,
           onPreview: handlePreview,
@@ -992,7 +996,7 @@ export default function AttachmentsInFolderPanel({
     [
       isTrashView,
       recursive,
-      canDeletePermanently,
+      canDelete,
       pendingResubmitIds,
       openItem,
       handlePreview,
@@ -1139,11 +1143,11 @@ export default function AttachmentsInFolderPanel({
                           onClick={() => {
                             setAccessLevelFilters([]);
                             setAccessLevelsMatch('any');
-                            setAttachmentTypeId('__all__');
+                            setAttachmentTypeId('');
                             setLinkStatus('__all__');
-                            setStorageStatus('__all__');
+                            setStorageStatus('');
                             setCompanyFilter('');
-                            setUploadedBy('__all__');
+                            setUploadedBy('');
                             setUploadedRange(undefined);
                             setPagination((p) => ({ ...p, pageIndex: 0 }));
                           }}
@@ -1154,21 +1158,28 @@ export default function AttachmentsInFolderPanel({
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Attachment type</p>
-                      <SearchableSelect
-                        value={attachmentTypeId}
+                      <SearchableMultiSelect
+                        value={splitMulti(attachmentTypeId)}
                         onChange={(v) => {
-                          setAttachmentTypeId(v);
+                          setAttachmentTypeId(joinMulti(v));
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
-                        options={[
-                          { value: '__all__', label: 'All attachment types' },
-                          ...attachmentTypes.map((t) => ({
-                            value: t.id,
-                            label: t.type_name,
-                          })),
-                        ]}
+                        options={attachmentTypes.map((t) => ({
+                          value: t.id,
+                          label: t.type_name,
+                        }))}
                         placeholder="All attachment types"
                         triggerClassName="w-full"
+                        clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Type', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">All attachment types</span>
+                          )
+                        }
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -1190,31 +1201,40 @@ export default function AttachmentsInFolderPanel({
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Storage status</p>
-                      <SearchableSelect
-                        value={storageStatus}
+                      <SearchableMultiSelect
+                        value={splitMulti(storageStatus)}
                         onChange={(v) => {
-                          setStorageStatus(v as '__all__' | 'accessible' | 'missing' | 'unchecked');
+                          setStorageStatus(joinMulti(v));
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
                         options={[
-                          { value: '__all__', label: 'All files' },
                           { value: 'accessible', label: 'Accessible' },
                           { value: 'missing', label: 'Missing (broken)' },
                           { value: 'unchecked', label: 'Unchecked' },
                         ]}
                         placeholder="All files"
                         triggerClassName="w-full"
+                        clearable
                       />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Company</p>
-                      <SearchableSelect
-                        value={companyFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(companyFilter)}
                         onChange={(v) => {
-                          setCompanyFilter(v);
+                          setCompanyFilter(joinMulti(v));
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
                         clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Company', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">All companies</span>
+                          )
+                        }
                         options={[
                           ...companyGrants.map((c) => ({ value: c.id, label: c.name })),
                           { value: SHARED_COMPANY_VALUE, label: 'Shared' },
@@ -1225,23 +1245,30 @@ export default function AttachmentsInFolderPanel({
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Uploaded by</p>
-                      <SearchableSelect
-                        value={uploadedBy}
+                      <SearchableMultiSelect
+                        value={splitMulti(uploadedBy)}
                         onChange={(v) => {
-                          setUploadedBy(v);
+                          setUploadedBy(joinMulti(v));
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
                         loadError={usersSelectError}
                         onRetry={() => void refetchUsersSelect()}
-                        options={[
-                          { value: '__all__', label: 'All users' },
-                          ...usersSelect.map((u) => ({
-                            value: u.id,
-                            label: u.name?.trim() || 'Unnamed user',
-                          })),
-                        ]}
+                        options={usersSelect.map((u) => ({
+                          value: u.id,
+                          label: u.name?.trim() || 'Unnamed user',
+                        }))}
                         placeholder="All users"
                         triggerClassName="w-full"
+                        clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Uploaded by', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">All users</span>
+                          )
+                        }
                       />
                     </div>
                     <div className="space-y-1.5">

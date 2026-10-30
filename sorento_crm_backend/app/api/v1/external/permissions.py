@@ -143,11 +143,23 @@ EXTERNAL_ENDPOINT_PERMISSIONS: dict[str, str] = {
     "media": "integration.chatbot_media.process",
     "contract": "integration.contract.read",
     "chat": "integration.chat_turn.submit",
+    # SALES-TARGET-CHAT slice 2: the chatbot logs a salesperson's opportunity (and reads that
+    # salesperson's own customers for it). The per-contact gate in the route decides whose.
+    "sales-opportunities": "integration.sales_opportunity.log",
 }
 
 # Slugs invented for this surface because no human-facing equivalent existed.
 # Registered in permission_registry and granted by migration 298.
 NEW_INTEGRATION_PERMISSIONS: list[dict] = [
+    {
+        "slug": "integration.sales_opportunity.log",
+        "name": "Log sales opportunities from chat",
+        "description": (
+            "Log a sales opportunity for a salesperson contact over the chat, and read that "
+            "salesperson's own customers to pick from. Its own slug because it WRITES a CRM record "
+            "on a contact's behalf; the route's per-contact gate decides whose."
+        ),
+    },
     {
         "slug": "integration.storage.presign",
         "name": "Presign storage URLs",

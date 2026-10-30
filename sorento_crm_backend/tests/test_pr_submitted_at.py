@@ -72,6 +72,7 @@ def _seed(db, kind="sponsorship_form"):
         source="portal",
         contact_id=contact_id,
         space_id="space-1",
+        requested_by_contact_id=contact_id,  # required on submit (FORM-REQUIRED-SERVER)
         portal_draft_at=datetime.utcnow(),
     )
     db.add_all([contact, token, header])
@@ -107,6 +108,6 @@ def test_resubmit_after_rejection_restamps_submitted_at(db):
     svc.submit_draft(token, "sponsorship_form", str(header.id))
 
     db.refresh(header)
-    assert header.status == "submitted"
+    assert header.status == "resubmitted"  # RESUBMITTED-STATUS (owner, 27 Oct)
     assert header.submitted_at > older  # re-stamped to the latest submit
     assert header.approval_status is None  # rejection cleared on resubmit

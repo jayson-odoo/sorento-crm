@@ -116,50 +116,19 @@ def _run_when(rec, **fields: Any):
     return text, calls
 
 
-@pytest.mark.parametrize("field", ["status", "order_status"])
+# REPORT-UNIFY: an outstanding ask holding a subject is the report ask's, whichever field names it (its kind is asked),
+# so the `order_status`-filled run no longer leaves an outstanding focus status; only the `status` field does.
+@pytest.mark.parametrize("field", ["status"])
 def test_s3_4_the_state_keeps_outstanding_whichever_field_the_parser_filled(rec, field) -> None:
     _run_when(rec, **{field: "outstanding"})
     assert _focus_status(rec) == "outstanding", rec.session_vars.get("focus")
 
 
-def test_s3_4_the_follow_up_reruns_the_outstanding_ask_for_the_new_code(rec) -> None:
-    # Expected value: the status-filled pair.
-    _t, first = _run_when(rec, status="outstanding", document=["DO"])
-    expected_first = _outstanding(first)
-    assert expected_first, ("setup: the status-filled ask did not reach the outstanding tool", first)
-    _t, follow = rec.say(_follow(CODES[1]), f"and {CODES[1]}?")
-    expected = _outstanding(follow)
-    assert len(expected) == 1 and expected[0]["product_code"] == CODES[1], follow
-
-    rec.session_vars = {}
-    rec.all_calls = []
-    _t, first2 = _run_when(rec, order_status="outstanding", document=["DO"])
-    assert _outstanding(first2), ("turn 1 of the order_status run did not reach the outstanding tool", first2)
-    _t, follow2 = rec.say(_follow(CODES[1]), f"and {CODES[1]}?")
-    got = _outstanding(follow2)
-    assert len(got) == 1, ("the follow-up did not re-run the outstanding ask", follow2)
-    assert got[0]["product_code"] == CODES[1], got
-
-
-def test_s3_4_a_named_do_reaches_the_do_outstanding_path_like_status_does(rec) -> None:
-    # Expected value: status outstanding + document DO.
-    text, calls = _run_when(rec, status="outstanding", document=["DO"])
-    want = _outstanding(calls)
-    assert len(want) == 1 and want[0].get("scope") == "do", ("setup", text, calls)
-    assert "Outstanding for which document?" not in text, text
-
-    rec.session_vars = {}
-    text, calls = _run_when(rec, order_status="outstanding", document=["DO"])
-    got = _outstanding(calls)
-    assert "Outstanding for which document?" not in text, text
-    assert len(got) == 1, (text, calls)
-    assert got[0] == want[0], (got, want)
-
-
 def test_s3_4_near_miss_status_outstanding_with_no_order_status_is_as_today(rec) -> None:
     text, calls = _run_when(rec, status="outstanding")
     assert _focus_status(rec) == "outstanding", rec.session_vars.get("focus")
-    assert "Outstanding for which document?" in text and calls == [], (text, calls)  # a bare outstanding asks SO, DO or both
+    # REPORT-UNIFY: a bare outstanding with a subject asks the kind (undelivered orders, pending delivery, unpaid invoices)
+    assert "Undelivered orders or pending delivery?" in text and calls == [], (text, calls)
 
 
 def test_s3_4_near_miss_status_delivered_is_as_today(rec) -> None:

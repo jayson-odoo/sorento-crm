@@ -363,7 +363,9 @@ def test_a_call_without_dataset_is_the_sales_report_unchanged(client, db):
     resp = client.get(ROUTE, params={**PERIOD, **_as_contact(contact), "group_by": "sales_agent", "top_n": 3}, headers=KEY)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["basis"] == "delivered" and body["basis_label"] == "delivered sales", body
+    # SALES-UNIFIED (#1916): a direct caller naming no basis gets invoiced, the one sales
+    # definition (`report_ask.DEFAULT_BASIS`); the dataset is still sales.
+    assert body["basis"] == "invoiced" and body["basis_label"] == "invoiced sales", body
     assert body.get("dataset") in (None, "sales") and not body.get("coverage"), body
     assert body["rows"] == [] and body["total"] == {"qty": 0, "amount": 0.0}, body
 

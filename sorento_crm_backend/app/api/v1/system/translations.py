@@ -15,6 +15,8 @@ from app.dependencies import require_permission
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.translation_memory import TranslationMemoryResponse, TranslationMemoryUpdate
 from app.services import translation_service
+from app.services.error_handler import handle_unprocessable
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -31,12 +33,15 @@ def list_translations(
     dir: Optional[str] = Query(None),
     # The language a row translates INTO: `en` is the supplier-document memory, `ms` / `zh`
     # the chatbot's reply wording (CHAT-LANGUAGE).
-    target_lang: Optional[str] = Query(None, pattern="^(en|ms|zh)$"),
+    target_lang: Optional[list[str]] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
+    langs = multi_values(target_lang)
+    if langs and any(v not in ("en", "ms", "zh") for v in langs):
+        raise handle_unprocessable("Language: expected one of en, ms, zh")
     rows, total = translation_service.list_memory(
-        db, page=page, limit=limit, query=query, sort=sort, dir=dir, target_lang=target_lang,
+        db, page=page, limit=limit, query=query, sort=sort, dir=dir, target_lang=langs,
     )
     return {
         "data": rows,

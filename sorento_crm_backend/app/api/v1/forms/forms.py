@@ -28,7 +28,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[FormResponse])
-async def get_forms(
+def get_forms(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     entities: Optional[list[str]] = Query(
@@ -121,7 +121,7 @@ async def get_forms(
 
 
 @router.get("/{form_id}", response_model=FormResponse)
-async def get_form(
+def get_form(
     form_id: str,
     current_user: dict = Depends(require_permission_with_api_key("forms.forms.view")),
     db: Session = Depends(get_db)
@@ -139,7 +139,7 @@ async def get_form(
 
 
 @router.post("/", response_model=FormResponse, status_code=status.HTTP_201_CREATED)
-async def create_form(
+def create_form(
     form_data: FormCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -156,7 +156,7 @@ async def create_form(
 
 
 @router.put("/{form_id}", response_model=FormResponse)
-async def update_form(
+def update_form(
     form_id: str,
     form_data: FormUpdate,
     current_user: dict = Depends(get_current_user),
@@ -175,7 +175,7 @@ async def update_form(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_forms(
+def bulk_delete_forms(
     body: BulkDeleteFormsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -191,7 +191,7 @@ async def bulk_delete_forms(
 
 
 @router.delete("/{form_id}", status_code=status.HTTP_200_OK)
-async def delete_form(
+def delete_form(
     form_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -208,7 +208,7 @@ async def delete_form(
 
 
 @router.post("/submissions", response_model=FormSubmissionResponse, status_code=status.HTTP_201_CREATED)
-async def create_form_submission(
+def create_form_submission(
     submission_data: FormSubmissionCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -225,7 +225,7 @@ async def create_form_submission(
 
 
 @router.put("/submissions/{submission_id}", response_model=FormSubmissionResponse)
-async def update_form_submission(
+def update_form_submission(
     submission_id: str,
     submission_data: FormSubmissionUpdate,
     current_user: dict = Depends(get_current_user),

@@ -4,10 +4,10 @@ import logging
 import re
 import uuid
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, func, select
 from typing import Any, Optional, List, Callable, Tuple, Iterable
 from decimal import Decimal
-from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+from app.models.product import Product, ProductCategory, Brand, ItemClass, UnitOfMeasure, ProductAttachment
 from app.models.product_set import ProductSet, ProductSetMember
 from app.services.sla_service import MALAYSIA_TZ
 
@@ -241,6 +241,30 @@ class ProductService:
     # to an empty result without hitting the DB.
     _EMPTY_RESULT = object()
 
+    def _resolve_category_filter(self, category_id: Optional[str]) -> Optional[list[str]]:
+        """Category ids for ``category_id``, one value or several comma-joined (OR-ed).
+
+        Each value resolves on its own (id, code or name) and the results are unioned, the
+        categories themselves with no subtree expansion. ``None`` is "no filter", ``[]`` is
+        "definitively no rows", as :func:`resolve_identifier` answers.
+        """
+        tokens = [t.strip() for t in (category_id or "").split(",") if t.strip()]
+        if len(tokens) <= 1:
+            return resolve_identifier(
+                self.db, category_id, ProductCategory, code_fields=("category_code", "category_name")
+            )
+        resolved: list[str] = []
+        picked = False
+        for token in tokens:
+            ids = resolve_identifier(
+                self.db, token, ProductCategory, code_fields=("category_code", "category_name")
+            )
+            if ids is None:  # "all"
+                continue
+            picked = True
+            resolved.extend(i for i in ids if i not in resolved)
+        return resolved if picked else None
+
     def _resolve_brand_filter(self, brand_id: Optional[str]) -> Optional[list[str]]:
         """Brand ids for the ``brand_id`` filter, which accepts a comma-separated list.
 
@@ -310,6 +334,7 @@ class ProductService:
         price_min: Optional[float] = None,
         price_max: Optional[float] = None,
         item_type: Optional[str] = None,
+        item_class_ids: Optional[list[str]] = None,
         length_min: Optional[float] = None,
         length_max: Optional[float] = None,
         width_min: Optional[float] = None,
@@ -351,12 +376,7 @@ class ProductService:
             lowered = [c.lower() for c in entity_buckets.product_codes]
             filters.append(_func.lower(Product.product_code).in_(lowered))
 
-        category_ids = resolve_identifier(
-            self.db,
-            category_id,
-            ProductCategory,
-            code_fields=("category_code", "category_name"),
-        )
+        category_ids = self._resolve_category_filter(category_id)
         if category_ids is not None:
             if not category_ids:
                 return self._EMPTY_RESULT
@@ -379,6 +399,10 @@ class ProductService:
 
         if item_type:
             filters.append(Product.item_type == item_type)
+
+        # ITEM-CLASS: multi-select filter over AutoCount Item Class ids.
+        if item_class_ids:
+            filters.append(Product.item_class_id.in_(item_class_ids))
 
         # Deep link from a "products discontinued" notification: show exactly the
         # products reported in that batch (see product_discontinued_notify_service).
@@ -489,6 +513,11 @@ class ProductService:
             "largest_dimension": largest_dim,
             "smallest_dimension": smallest_dim,
             "discontinued_at": Product.discontinued_notified_at,
+            # ITEM-CLASS: by class name, products with no class last (nulls_last below).
+            "item_class": select(ItemClass.item_class_name)
+            .where(ItemClass.id == Product.item_class_id)
+            .correlate(Product)
+            .scalar_subquery(),
         }
         sort_column = sort_map.get(sort_field, Product.created_at)
         if sort_dir == "desc":
@@ -508,6 +537,7 @@ class ProductService:
         price_min: Optional[float] = None,
         price_max: Optional[float] = None,
         item_type: Optional[str] = None,
+        item_class_ids: Optional[list[str]] = None,
         length_min: Optional[float] = None,
         length_max: Optional[float] = None,
         width_min: Optional[float] = None,
@@ -566,6 +596,7 @@ class ProductService:
             price_min=price_min,
             price_max=price_max,
             item_type=item_type,
+            item_class_ids=item_class_ids,
             length_min=length_min,
             length_max=length_max,
             width_min=width_min,
@@ -607,6 +638,7 @@ class ProductService:
             q.options(
                 joinedload(Product.category),
                 joinedload(Product.brand),
+                joinedload(Product.item_class),
                 joinedload(Product.base_uom),
             )
             .offset(offset)
@@ -1106,6 +1138,19 @@ class ProductService:
         )
         self.db.flush()
 
+    def _assert_item_class(self, item_class_id: Optional[str], company_id: Optional[str]) -> None:
+        """422 for an item class id the caller cannot see, or one of another company than the
+        product's (classes are per company; ITEM-CLASS review S3)."""
+        if not item_class_id:
+            return
+        try:
+            uuid.UUID(str(item_class_id))
+        except ValueError:
+            raise AppException(422, "Unknown item class", code="UNKNOWN_ITEM_CLASS") from None
+        row = self.db.query(ItemClass.company_id).filter(ItemClass.id == str(item_class_id)).first()
+        if row is None or (company_id and str(row[0]) != str(company_id)):
+            raise AppException(422, "Unknown item class", code="UNKNOWN_ITEM_CLASS")
+
     def create_product(self, product_data: ProductCreate, created_by: str):
         """Create a new product."""
         # Trim product_code defensively (schema validator also does this; belt-and-suspenders)
@@ -1117,6 +1162,14 @@ class ProductService:
         
         data = product_data.model_dump()
         data["product_code"] = product_code
+        if data.get("item_class_id"):
+            from app.models.base import get_company_scope
+            from app.services.company_scope import resolve_write_company_id
+
+            self._assert_item_class(
+                data["item_class_id"],
+                resolve_write_company_id(get_company_scope(self.db), ambiguous=None),
+            )
         # Live finding, 2026-09-06: derive from product_rules.derivation_text
         # (description if non-blank else name), not the raw description column
         # directly - the ESB maps AutoCount's Description onto name and sends
@@ -1160,6 +1213,8 @@ class ProductService:
         product = self.get_product(product_id)
         
         update_data = product_data.model_dump(exclude_unset=True)
+        if update_data.get("item_class_id"):
+            self._assert_item_class(update_data["item_class_id"], product.company_id)
         if update_data:
             update_data["updated_by"] = updated_by
             update_data["updated_at"] = datetime.utcnow()
@@ -1573,7 +1628,6 @@ class ProductService:
         """
         if not touched:
             return
-        from app.models.embeddings import EmbeddingQueue
         from app.services.queue_service import enqueue_job
         from app.services.embedding_service import _get_embedding_worker
         from app.config import settings as _settings
@@ -1613,8 +1667,12 @@ class ProductService:
             })
             enqueue_payload.append(queue_id)
 
+        from app.services.embedding_change_listener import enqueue_pending
+
         try:
-            self.db.bulk_insert_mappings(EmbeddingQueue, rows)
+            # A product with a row already pending gets no second one (EMBED-QUEUE-DEDUPE).
+            inserted = {row["id"] for row in enqueue_pending(self.db, rows)}
+            enqueue_payload = [q_id for q_id in enqueue_payload if q_id in inserted]
             self.db.commit()
         except Exception:
             self.db.rollback()
@@ -2552,6 +2610,14 @@ class BrandService:
             .all()
         )
         count_by_brand = {str(bid): c for bid, c in counts}
+        from app.models.company import Company
+
+        dealer_ids = {b.dealer_company_id for b in brands if b.dealer_company_id}
+        dealer_names = (
+            {str(i): n for i, n in self.db.query(Company.id, Company.name).filter(Company.id.in_(dealer_ids))}
+            if dealer_ids
+            else {}
+        )
         data = []
         for b in brands:
             row = {
@@ -2569,6 +2635,8 @@ class BrandService:
                 "flows_to_purchasing": b.flows_to_purchasing,
                 "chatbot_weight": float(b.chatbot_weight or 0),
                 "is_searchable": b.is_searchable,
+                "dealer_company_id": b.dealer_company_id,
+                "dealer_company_name": dealer_names.get(str(b.dealer_company_id)) if b.dealer_company_id else None,
                 "created_at": b.created_at,
                 "updated_at": b.updated_at,
                 "created_by": str(b.created_by) if b.created_by else None,
@@ -2602,6 +2670,7 @@ class BrandService:
         if existing:
             raise handle_conflict("Brand code already exists.")
         
+        self._assert_dealer_company(brand_data.dealer_company_id)
         brand = Brand(**brand_data.model_dump())
         self.db.add(brand)
         self.db.commit()
@@ -2613,12 +2682,26 @@ class BrandService:
         brand = self.get_brand(brand_id)
         
         update_data = brand_data.model_dump(exclude_unset=True)
+        self._assert_dealer_company(update_data.get("dealer_company_id"))
         for key, value in update_data.items():
             setattr(brand, key, value)
         
         self.db.commit()
         self.db.refresh(brand)
         return brand
+
+    def _assert_dealer_company(self, company_id):
+        """An unknown dealer group is a 422 (a missing or null one is fine)."""
+        if company_id is None:
+            return
+        from app.models.company import Company
+        from app.services.error_handler import handle_unprocessable
+        from app.services.identifier_resolver import is_uuid
+
+        if not is_uuid(company_id):
+            raise handle_unprocessable("Dealer group company not found.")
+        if self.db.query(Company.id).filter(Company.id == company_id).first() is None:
+            raise handle_unprocessable("Dealer group company not found.")
 
     def delete_brand(self, brand_id: str):
         """Delete a brand. Products using this brand have their brand_id set to null (brand is optional)."""
@@ -3269,6 +3352,7 @@ class ProductAttachmentService:
             self._apply_brochure_choice(existing, chosen)
             self.db.commit()
             self.db.refresh(existing)
+            self._notify_if_drawing(existing)
             row = self.db.query(ProductAttachment).options(
                 joinedload(ProductAttachment.product),
                 joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
@@ -3293,12 +3377,33 @@ class ProductAttachmentService:
         self._apply_brochure_choice(product_attachment, chosen)
         self.db.commit()
         self.db.refresh(product_attachment)
+        self._notify_if_drawing(product_attachment)
 
         return self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         ).filter(ProductAttachment.id == product_attachment.id).first()
     
+    def _notify_if_drawing(self, link) -> None:
+        """Tell the assignee of an open drawing or photo request that a matching file was linked (best-effort).
+
+        Create path only: a later edit of an attachment's type does not come through here.
+        """
+        try:
+            from app.services import product_drawing_request_service as drawing_requests
+
+            kind = drawing_requests.attachment_kind(self.db, link.attachment_id)
+            if kind == "drawing":
+                drawing_requests.notify_drawing_linked(self.db, link.product_id)
+            elif kind == "photo":
+                drawing_requests.notify_photo_linked(self.db, link.product_id)
+        except Exception:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            logger.warning("drawing request notice after a product attachment link failed", exc_info=True)
+
     def _apply_brochure_choice(self, link, chosen: Optional[bool]) -> None:
         """Set or clear the brochure image flag through the one service that owns it.
 

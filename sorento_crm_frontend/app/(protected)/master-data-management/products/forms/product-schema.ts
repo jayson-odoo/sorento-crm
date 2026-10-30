@@ -40,6 +40,7 @@ export const ProductSchema = z.object({
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   category_id: z.string().uuid({ message: 'Category is required.' }),
   brand_id: z.string().uuid().optional().nullable(),
+  item_class_id: z.string().uuid().optional().nullable(),
   barcode: z
     .string()
     .max(100, { message: 'Barcode must not exceed 100 characters.' })
@@ -65,6 +66,7 @@ export const ProductSchema = z.object({
   warranty_months: optionalNumber((n) => n >= 0, 'Warranty months cannot be negative.', true),
   has_serial_tracking: z.boolean(),
   has_batch_tracking: z.boolean(),
+  show_so_line_description: z.boolean(),
   reorder_level: requiredNumber({ min: 0, integer: true }),
   reorder_quantity: requiredNumber({ min: 0, integer: true }),
   // Chatbot stock ask v2 (PLAN-chatbot-stock-ask-v2-24sep.md S1): X and Y,

@@ -750,7 +750,7 @@ def test_capture_columns_exist_on_the_model_they_snapshot():
             "approval_signature_ref", "approval_comments",
             "requested_approval_by_user_id")),
         "pr.finalize": (PurchaseRequestHeader, ("status",)),
-        "pr.void": (PurchaseRequestHeader, ("status", "voided_by", "voided_at", "void_reason")),
+        "pr.void": (PurchaseRequestHeader, ("status", "approval_status", "voided_by", "voided_at", "void_reason")),
         "si.project_sales_approve": (StockInquiry, (
             "status", "rejection_reason", "rejected_at", "rejected_by", "rejected_from")),
         "si.purchasing_respond": (StockInquiry, ("status", "last_responded_by", "last_responded_at")),
@@ -853,6 +853,44 @@ def test_contact_correction_names_the_restored_status_and_reason():
     # An unmapped code still reads as words, never as a raw column value.
     assert _status_label("awaiting_parts") == "Awaiting Parts"
     assert _status_label(None) == "its previous state"
+
+
+def test_contact_correction_calls_a_resubmission_an_appeal():
+    """COMPLAINT-APPEAL-WORDING (owner, 28 Oct): a form back at `resubmitted` reads
+    "Appealed" to its contact, on every form."""
+    from app.services.form_action_notify import _status_label
+
+    assert _status_label("resubmitted") == "Appealed"
+    assert _status_label("rejected") == "Rejected"
+
+
+def test_complaint_correction_message_tells_the_contact_appealed(db, monkeypatch):
+    """The WhatsApp correction itself, not just the helper: an undo that puts a complaint
+    back at `resubmitted` tells its contact it changed back to Appealed."""
+    from types import SimpleNamespace
+
+    from app.services.complaints_service import ComplaintService
+    from app.services.form_action_notify import _notify_contact
+
+    complaint = SimpleNamespace(
+        status="resubmitted", respond_inbox_url=None, contact_id="contact-1",
+        last_responded_by=None, space_id="space-1",
+    )
+    sent: list[str] = []
+    monkeypatch.setattr(ComplaintService, "get_complaint", lambda self, _id: complaint)
+    monkeypatch.setattr(ComplaintService, "_identifier_from_respond_inbox_url", lambda self, _u: "id-1")
+    monkeypatch.setattr(
+        ComplaintService,
+        "_enqueue_respond_message_for_complaint",
+        lambda self, **kw: sent.append(kw["display_message"]),
+    )
+    record = SimpleNamespace(source_entity_type="complaint", source_entity_id="c-1")
+
+    _notify_contact(db, record, number="ZZT26-0001", reason="approved by mistake")
+
+    assert len(sent) == 1
+    assert "Appealed" in sent[0]
+    assert "resubmit" not in sent[0].lower()
 
 
 def test_undo_notifies_the_contact_even_for_an_internal_only_action(db, monkeypatch):

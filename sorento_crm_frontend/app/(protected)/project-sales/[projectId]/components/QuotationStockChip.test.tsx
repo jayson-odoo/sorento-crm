@@ -8,10 +8,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const useQuotationLineStockMock = vi.fn();
 const useStockDetailMock = vi.fn();
 vi.mock('../../_shared/hooks/useFulfilmentPlanning', () => ({
+  useQuotationLineStock: (...args: unknown[]) => useQuotationLineStockMock(...args),
+  // Kept only to prove the chip no longer asks for a group or pool read.
   useStockDetail: (...args: unknown[]) => useStockDetailMock(...args),
-  useStockGroups: () => ({ data: ['IB'] }),
 }));
 
 const cellStockTableSpy = vi.fn();
@@ -29,42 +31,93 @@ vi.mock('@/components/stock-status/useStockStatus', () => ({
 
 import { QuotationStockChip } from './QuotationStockChip';
 
-const GROUP_ROWS = [{ location: 'BRW-IB', net_of: 'IB' }, { location: 'MWH-IB', net_of: 'IB' }];
-const POOL_ROWS = [{ location: 'BRW', net_of: 'pools' }];
-const STATUS = { product_id: 'prod-1', locations: [], incoming_pl: [] };
+const row = (location: string, onHand: string, so = '0', spo = '0') => ({
+  location,
+  qty_on_hand: onHand,
+  so_qty: so,
+  spo_qty: spo,
+});
+const READ_ROWS = [row('BRW-IB', '10', '2'), row('MWH-IB', '5')];
+const ZERO_ROW = row('DC1-BB', '0');
+const INCOMING = [{ spo_number: 'SPO-77', spo_qty: '4', location: 'BRW-IB', expected_date: null }];
+const STATUS = {
+  product_id: 'prod-1',
+  locations: [{ warehouse_id: 'wh-x', warehouse_code: 'OTHER-GROUP', warehouse_name: 'OTHER-GROUP' }],
+  incoming_pl: [],
+};
+
+function answer(data: unknown) {
+  useQuotationLineStockMock.mockReturnValue({ data, isLoading: false, isError: false });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useStockDetailMock.mockImplementation((_p: unknown, _w: unknown, _l: unknown, group: unknown) =>
-    group === 'pools'
-      ? { data: { locations: POOL_ROWS, incoming: [] }, isLoading: false, isError: false }
-      : { data: { locations: GROUP_ROWS, incoming: [], available_qty: '-1988' }, isLoading: false, isError: false },
-  );
+  window.localStorage.clear();
+  answer({ locations: [...READ_ROWS, ZERO_ROW], incoming: INCOMING, available_qty: '-1988' });
+  useStockDetailMock.mockReturnValue({ data: undefined, isLoading: false, isError: false });
   useStockStatusMock.mockReturnValue({ data: STATUS, isLoading: false });
 });
 
 function openPopover() {
-  render(<QuotationStockChip productId="prod-1" group="IB" quantity="2" uom="UNIT" label="SRTWB1515" />);
+  render(<QuotationStockChip productId="prod-1" quantity="2" uom="UNIT" label="SRTWB1515" />);
   fireEvent.click(screen.getByRole('button', { name: 'Stock on SRTWB1515' }));
 }
 
-describe('QuotationStockChip popover, round 6', () => {
-  it('draws one stock table: the group, then the site pools, with the AutoCount read', () => {
+describe('QuotationStockChip, QUOTE-STOCK-AGENT-LOC', () => {
+  it('AC-QSA-21: reads the line product through useQuotationLineStock and shows N avail', () => {
+    answer({ locations: READ_ROWS, incoming: [], available_qty: '25.00' });
+    render(<QuotationStockChip productId="prod-1" quantity="10" uom="UNIT" label="SRTWB1515" />);
+    expect(useQuotationLineStockMock).toHaveBeenCalledWith('prod-1');
+    expect(useStockDetailMock).not.toHaveBeenCalled();
+    const chip = screen.getByRole('button', { name: 'Stock on SRTWB1515' });
+    expect(chip).toHaveTextContent('25 avail');
+    expect(chip).toHaveAttribute('data-tone', 'ok');
+  });
+
+  it.each([
+    ['4', 'part'],
+    ['0', 'none'],
+    ['-3', 'none'],
+  ])('AC-QSA-21: %s available against 10 wanted is %s', (available, tone) => {
+    answer({ locations: READ_ROWS, incoming: [], available_qty: available });
+    render(<QuotationStockChip productId="prod-1" quantity="10" uom="UNIT" label="SRTWB1515" />);
+    expect(screen.getByRole('button', { name: 'Stock on SRTWB1515' })).toHaveAttribute('data-tone', tone);
+  });
+
+  it('AC-QSA-22: a read answering null draws no chip and no text', () => {
+    answer(null);
+    const { container } = render(
+      <QuotationStockChip productId="prod-1" quantity="2" uom="UNIT" label="SRTWB1515" />,
+    );
+    expect(useQuotationLineStockMock).toHaveBeenCalledWith('prod-1');
+    expect(screen.queryByRole('button', { name: 'Stock on SRTWB1515' })).toBeNull();
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('AC-QSA-23: the table gets only the read locations, no all-zero row, no AutoCount extra', () => {
     openPopover();
     expect(screen.getAllByTestId('cell-stock-table')).toHaveLength(1);
     const props = cellStockTableSpy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
-    expect(props.locations).toEqual([...GROUP_ROWS, ...POOL_ROWS]);
-    expect(props.autoCount).toBe(STATUS);
-    expect(props.stockOnly).toBe(true);
-    expect(useStockStatusMock).toHaveBeenCalledWith('prod-1');
+    expect(props.locations).toEqual(READ_ROWS);
+    expect(JSON.stringify(props.locations)).not.toContain('OTHER-GROUP');
+    expect(JSON.stringify(props.locations)).not.toContain('DC1-BB');
   });
 
-  it("keeps today's figures when the AutoCount read fails", () => {
-    useStockStatusMock.mockReturnValue({ data: undefined, isLoading: false });
+  it('AC-QSA-23: no group or pools stock read is made', () => {
     openPopover();
-    const props = cellStockTableSpy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
-    expect(props.locations).toEqual([...GROUP_ROWS, ...POOL_ROWS]);
-    expect(props.autoCount ?? null).toBeNull();
+    expect(useStockDetailMock).not.toHaveBeenCalled();
+  });
+
+  it('AC-QSA-23: incoming lists the read incoming only', () => {
+    openPopover();
+    expect(screen.getByText('SPO-77')).toBeInTheDocument();
+    expect(screen.getAllByText(/Incoming:/)).toHaveLength(1);
+  });
+
+  it('AC-QSA-23: a read with no incoming says so', () => {
+    answer({ locations: READ_ROWS, incoming: [], available_qty: '3' });
+    openPopover();
+    expect(screen.getByText('No incoming SPO')).toBeInTheDocument();
   });
 });
 
@@ -98,6 +151,92 @@ describe('STOCK-GROUPBY (AC-17, AC-20): the quotation popover carries the bar on
     openPopover();
     await drawActual();
     expect(screen.getByTestId('group-by-bar')).toBeInTheDocument();
+  });
+
+  it('AC-QSA-23: an AutoCount location the read did not list is not drawn in the popover table', async () => {
+    useStockStatusMock.mockReturnValue({
+      data: {
+        product_id: 'prod-1',
+        item_code: 'ITEM-1',
+        locations: [
+          { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', warehouse_name: 'BRW-IB', is_active: true, on_hand: 10, so_qty: 2, po_qty: 0, spo_qty: 0, forecast: 8 },
+          { warehouse_id: 'wh-WH3-BB', warehouse_code: 'WH3-BB', warehouse_name: 'WH3-BB', is_active: true, on_hand: 9, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 9 },
+        ],
+        totals: { on_hand: 19, so_qty: 2, po_qty: 0, spo_qty: 0, forecast: 17, incoming_pl: 0, forecast_incl_pl: 17 },
+        incoming_pl: [],
+        sales_orders: [],
+        purchase_orders: [],
+        spos: [],
+      },
+      isLoading: false,
+    });
+    openPopover();
+    await drawActual();
+    expect(screen.getAllByText(/BRW-IB/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/WH3-BB/)).not.toBeInTheDocument();
+  });
+
+  it.each([['type'], ['customer']])(
+    'review blocker 1: grouped by %s, a location the read did not list leaks nothing',
+    async (level) => {
+      window.localStorage.setItem('cellStockTable.groupBy', JSON.stringify([level]));
+      useStockStatusMock.mockReturnValue({
+        data: {
+          product_id: 'prod-1',
+          item_code: 'ITEM-1',
+          description: null,
+          as_of: null,
+          so_due_by: null,
+          locations: [
+            { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', warehouse_name: 'BRW-IB', is_active: true, on_hand: 10, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 10 },
+            { warehouse_id: 'wh-WH3-BB', warehouse_code: 'WH3-BB', warehouse_name: 'WH3-BB', is_active: true, on_hand: 9, so_qty: 4, po_qty: 0, spo_qty: 0, forecast: 5 },
+          ],
+          totals: { on_hand: 19, so_qty: 4, po_qty: 0, spo_qty: 0, forecast: 15, incoming_pl: 0, forecast_incl_pl: 15 },
+          incoming_pl: [],
+          sales_orders: [
+            { line_id: 'l1', sales_order_id: 's1', so_number: 'SO-LEAK-1', debtor_code: 'D1', debtor_name: 'Leaky Debtor Sdn Bhd', project_label: null, salesperson: null, doc_date: null, due_date: null, qty: 4, covered_in_crm: false, warehouse_id: 'wh-WH3-BB' },
+          ],
+          purchase_orders: [],
+          spos: [],
+        },
+        isLoading: false,
+      });
+      openPopover();
+      await drawActual();
+      const table = document.body.textContent ?? '';
+      expect(table).not.toContain('Leaky Debtor');
+      expect(table).not.toContain('SO-LEAK-1');
+      expect(table).not.toContain('WH3-BB');
+      expect(screen.queryByText('19')).not.toBeInTheDocument();
+    },
+  );
+
+  it('review: an allowed location with figures only in AutoCount stays a normal row, never Other group', async () => {
+    answer({
+      locations: [row('BRW-IB', '0'), row('MWH-IB', '4'), row('ZERO-IB', '0')],
+      incoming: [],
+      available_qty: '4',
+    });
+    const ac = (code: string, onHand: number) => ({
+      warehouse_id: `wh-${code}`, warehouse_code: code, warehouse_name: code, is_active: true,
+      on_hand: onHand, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: onHand,
+    });
+    useStockStatusMock.mockReturnValue({
+      data: {
+        product_id: 'prod-1', item_code: 'ITEM-1', description: null, as_of: null, so_due_by: null,
+        locations: [ac('BRW-IB', 5), ac('MWH-IB', 4), ac('ZERO-IB', 0)],
+        totals: { on_hand: 9, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 9, incoming_pl: 0, forecast_incl_pl: 9 },
+        incoming_pl: [], sales_orders: [], purchase_orders: [], spos: [],
+      },
+      isLoading: false,
+    });
+    openPopover();
+    await drawActual();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('BRW-IB');
+    expect(text).toContain('MWH-IB');
+    expect(text).not.toContain('ZERO-IB');
+    expect(text).not.toMatch(/Other group/i);
   });
 
   it('AC-17 without the read (a failed read), the table has no bar', async () => {

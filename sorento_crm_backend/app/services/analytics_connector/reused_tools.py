@@ -1,4 +1,4 @@
-"""The 34 reused read tools the connector manifest offers (CLAUDE-CONNECTOR card 4.2).
+"""The 33 reused read tools the connector manifest offers (CLAUDE-CONNECTOR card 4.2).
 
 GENERATED from `sorento_crm_mcp` (catalog + merged module catalogs), then hand-edited where dropping
 params left broken sentences (incoming-stock list, the two attachment tools): name, description, method and
@@ -774,9 +774,12 @@ REUSED_TOOLS: tuple[dict, ...] = (
             'List PROJECT SALES pursuits (property developments, hotels, fitouts we are '
             'trying to win) with UUID filters, stage filter and pagination. PRIMARY TOOL for '
             "'which projects are we chasing', 'my pipeline', 'projects for <developer>', "
-            "'projects at tendering stage', 'critical projects', 'what is <salesperson> "
+            "'projects at sample submission stage', 'critical projects', 'what is <salesperson> "
             "working on'. NOT for delivery orders or purchase orders -- a project is a "
-            'pursuit, not a transaction.\n\nEach row returns project_code, title, '
+            'pursuit, not a transaction.\n\nOnly APPROVED projects are listed: a portal '
+            'project registration still waiting for approval (or rejected) is not a project '
+            'yet and is left out, so every row carries a project_code.\n\nEach row returns '
+            'project_code, title, '
             'developer_name, type_name, status_label, outcome (open / won / lost / partial), '
             'owner_name, estimated_sales_value, launch_date, days_since_last_activity, '
             'next_action_date, next_action_overdue, stale_level (0 fine, 1 nudged, 2 warned, '
@@ -788,12 +791,12 @@ REUSED_TOOLS: tuple[dict, ...] = (
             "`owner_name`, never an owner UUID, so the salesperson's FULL NAME or work email "
             'has to be resolved to a user UUID first (the CRM assistant does that '
             'automatically for this param); an unresolved name is rejected rather than '
-            'answered about the wrong person.\n  * `status_key` -- funnel rung by stable key: '
-            'identified, registered, specified, quoted, tendering, po_received, lost, '
-            'dormant. An unknown key returns 422 naming the valid ones.\n  * `outcome` -- '
+            'answered about the wrong person.\n  * `status_key` -- funnel rung by stable key (from the status graph): '
+            'identified, registered, specified (Spec In), sample_submission, '
+            'final_negotiation, sponsorship_form, po_received, lost, dormant. An unknown key returns 422 naming the valid ones.\n  * `outcome` -- '
             'open | won | lost | partial. Commercial result, DERIVED from the quotations; a '
-            "project can sit at 'tendering' with outcome 'partial' when one scope is won.\n  "
-            '* `only_critical=true` -- the Final Negotiation flag, not a stage.\nSORT KEYS: '
+            "project can sit at 'final_negotiation' with outcome 'partial' when one scope is won.\n  "
+            "* `only_critical=true` -- the critical flag (management actively involved), independent of the final_negotiation stage; for 'projects in final negotiation' use status_key=final_negotiation instead.\nSORT KEYS: "
             'created_at, updated_at, title, project_code, estimated_sales_value, '
             'last_meaningful_activity_at; combine with dir=asc|desc.'
         ),
@@ -901,46 +904,6 @@ REUSED_TOOLS: tuple[dict, ...] = (
         "path": '/api/v1/sla-management/conversation-sla-tracking/dashboard',
         "path_params": (),
         "query_params": (),
-        "body_params": (),
-    },
-    {
-        "name": 'crm_top_selling_report',
-        "description": (
-            'Top selling ITEMS (or CATEGORIES) over a date window, ranked by quantity or by '
-            'amount - the same sales_order_lines source, exclusions and bucket date as '
-            'crm_sales_report. Returns `rows[]` (rank, code, quantity, amount - code alone, '
-            'no name, owner ruling 26 Sep), `total_count` (every ranked row, always the full '
-            'count), `totals` over the whole set, the resolved `date_from`/`date_to`, '
-            '`basis`, the applied `filters`, and `sales_agent_fill_rate` when a sales agent '
-            'filter was used.\n\n`rank_by` - quantity | amount, REQUIRED (422 '
-            '`rank_by_required`): never guess, ask the customer which one. `basis` - '
-            'delivered (default: transferred to DO, capped at ordered) | ordered. `group` - '
-            'item (default) | category (rank categories). `n` - how many rows, 1 to 1000 (a '
-            'safety ceiling, not a product limit: 200 is fine), exactly the number the '
-            "customer named (no paging, no 'more'). When the customer named no number, send "
-            '`count_only=true`: it returns the full `total_count` and NO rows (a single '
-            'ranked row is still returned), so you can say the count and ask how many; never '
-            'omit `n` to pull every row.\n\nFILTERS (all optional, ANDed): `customer_ids` '
-            '(csv/JSON/repeated UUIDs), `customer_query` (partial customer NAME, min 3 '
-            'chars), `category_ids`, `sales_agent_ids` (sales_orders.sales_agent_id), '
-            '`brand_ids` (products.brand_id), `channel` dealer | project, '
-            '`date_from`/`date_to` on the bucket date (required_date, else order_date); both '
-            'omitted = the current calendar year.\n\nDIRECTION: `direction` top (default, most '
-            "sold first) | bottom (least sold first, for 'cold selling', 'least sold'). Only "
-            'items with a sale in the window are ranked either way.\n\nDETAIL: `detail_code` = '
-            "one row's code (a product code, or a category code under group=category) "
-            'answers the detail offer: `rows`/`totals` narrow to that code and `detail` '
-            'carries its `by_customer` and `by_month`, same filters and basis.\n\nThe contact '
-            'needs the Sales report reveal (403 `sales_report_not_enabled`). A contact '
-            'holding any active office access type is staff and sees every customer, '
-            'whatever else it holds. Otherwise a contact linked to customers is forced to '
-            'them and naming another is 403 `customer_not_permitted`, the same 403 any other '
-            'contact gets.'
-        ),
-        "method": 'GET',
-        "path": '/api/v1/order-management/top-selling',
-        "path_params": (),
-        "query_params": ('rank_by', 'basis', 'group', 'n', 'customer_ids', 'customer_query', 'category_ids', 'sales_agent_ids', 'brand_ids', 'channel', 'date_from', 'date_to', 'detail_code', 'count_only', 'direction'),
         "body_params": (),
     },
 )

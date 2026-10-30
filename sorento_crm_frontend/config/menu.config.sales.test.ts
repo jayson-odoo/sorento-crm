@@ -55,6 +55,7 @@ describe.each([
         path: '/sales/customer-asks',
         permission: 'sales.customer_asks.view',
         moduleKey: 'sales',
+        audience: 'staff',
       },
       {
         title: 'Sales Teams',
@@ -103,6 +104,10 @@ describe('filterMenuByModule - Sales group', () => {
       'Sales Teams',
       'Sales Agents',
       'Yearly comparison',
+      'Sales by debtor type',
+      'Top selling items',
+      'Sales & outstanding',
+      'Set-apart customers',
     ]);
   });
 });

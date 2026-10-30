@@ -288,6 +288,19 @@ def resolve_classes_for_term(db: Session, term: str) -> list[str]:
     return ClassVocabulary(db).resolve(term)
 
 
+def category_class(
+    db: Session, *, code: str | None, name: str | None, class_label: str | None, vocab: ClassVocabulary | None = None,
+) -> str | None:
+    """EEM-CATEGORY-PICK: the class of a category. Its `class_label` when set; else the ONE class the vocabulary
+    gives its code or name (the generic "WC" joins Water Closet); none or several -> None. A caller classing many
+    categories passes one `vocab` snapshot."""
+    if class_label and class_label.strip():
+        return class_label
+    vocab = vocab or ClassVocabulary(db)
+    found = {c for term in (code, name) for c in vocab.resolve(term or "")}
+    return next(iter(found)) if len(found) == 1 else None
+
+
 def stored_class_labels(db: Session) -> list[str]:
     """Every class value products actually carry, however it was derived."""
     from sqlalchemy import text as sql_text

@@ -1554,17 +1554,18 @@ def _placed_links(db: Session, project_line_id: Optional[str]) -> dict:
 
     `qty` is the SUM of every link, unchanged (arrival/late maths still reads the whole of
     it). `po_qty` (D1, R1) is what a suggestion may still reallocate: link qty on a link
-    that CARRIES a `po_line_id` and whose PO line is not yet fully received
+    that CARRIES a `po_line_id` and is not a fully received placement
     (`_received_documents_for`'s own test, `project_order_inquiry_service.py`). Both halves
     of that are load-bearing (AC-S2-4, review round SF12): `_document_links_by_row` filters
     `OrderInquiryLink.po_line_id.isnot(None)`, so an SPO-allocation link is something
     Confirm can never re-deal no matter how OPEN it is, and counting it here would offer a
     planner a move the apply would then refuse. `received_qty` is the landed part: link qty
-    on a received PO line, or on an SPO allocation judged received (the negation of
-    `scm.spo_supply.open_incoming_clauses`, reused via `_received_documents_for` rather
-    than restated a second time). A received link is stock in hand for this line (R1) - it
-    is never offered back to `reallocate_to`. An OPEN SPO-allocation link is in `qty`
-    alone, and in neither of the other two.
+    on a placement the goods chain reads as fully received (LINKAGE-UNIFY U2, Q3: a PO
+    link once its goods land on the SPO the line was transferred onto, or straight into a
+    bin when no SPO names the line; never on the transfer itself), reused via
+    `_received_documents_for` rather than restated a second time. A received link is
+    stock in hand for this line (R1) - it is never offered back to `reallocate_to`. An
+    OPEN SPO-allocation link is in `qty` alone, and in neither of the other two.
 
     `arrival_date` is when that supply is expected: the purchase order LINE's own date,
     else the order's, else the date the inquiry row was raised against - the date the
@@ -2046,9 +2047,21 @@ def _reserve_rival(
     if held_reserve <= _ZERO:
         return None
     # Only when the re-run would KEEP the hold: a line whose stock the ladder has already
-    # taken away has nothing left to give anybody.
+    # taken away has nothing left to give anybody. BOARD-NO-HOLD: a Reserve no longer holds
+    # stock, so an earlier waiting row wins the pile in the walk by date and the re-run
+    # reads a plain Buy ("nothing free by the delivery date"). That is the rival at work,
+    # not stock taken away for another rung, so an all-Buy re-run still asks the question;
+    # a Borrow or a timely SPO in the re-run is a different answer and does not.
     proposed = _proposed_classes(proposal)
-    if proposed is None or proposed["reserve"]["qty"] <= _ZERO:
+    if proposed is None:
+        return None
+    only_buy = (
+        proposed["buy"]["qty"] > _ZERO
+        and proposed["borrow"]["qty"] <= _ZERO
+        and proposed["spo"]["qty"] <= _ZERO
+    )
+    reserve_dropped = proposed["reserve"]["qty"] <= _ZERO
+    if reserve_dropped and not only_buy:
         return None
     waiting = _waiting_rows(
         db, project_line_id, product_id, due_before=new_date,
@@ -2058,6 +2071,21 @@ def _reserve_rival(
         return None
     best, unlinked = waiting[0]
     qty = min(unlinked, held_reserve)
+    if reserve_dropped:
+        # The all-Buy reading carries no stock check of its own (a kept Reserve already
+        # passed the ladder's), so cap by what the held bin(s) really have free right now.
+        bins = {
+            str(entry.get("warehouse_id"))
+            for entry in (held or {}).get("reserve") or []
+            if entry.get("warehouse_id")
+        }
+        from app.services.project_supply_service import ProjectSupplyService
+
+        free = ProjectSupplyService(db).free_stock_by_location([str(product_id)])
+        qty = min(
+            qty,
+            sum((max(free.get((str(product_id), wid), _ZERO), _ZERO) for wid in bins), _ZERO),
+        )
     if qty <= _ZERO:
         return None
     return {

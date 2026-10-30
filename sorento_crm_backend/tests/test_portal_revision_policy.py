@@ -160,9 +160,8 @@ def test_voided_record_blocks(db, kind):
     assert "voided" in policy.blocked_reason.lower()
 
 
-def test_complaint_has_no_adapter_and_is_disabled(db):
-    """Complaint ships with a config row so it is one checkbox away, but with no
-    adapter registered it still fails closed today (UAC A5, K)."""
+def test_complaint_policy_follows_the_setting_now_that_it_has_an_adapter(db):
+    """Owner Q6 a: complaint has a revision adapter, so an enabled row in an allowed status is revisable."""
     seed_config(db, "complaint", is_enabled=True, allowed_statuses=["submitted"])
     contact = seed_contact(db)
     service = PortalRevisionService(db)
@@ -174,7 +173,7 @@ def test_complaint_has_no_adapter_and_is_disabled(db):
     db.add(complaint)
     db.commit()
     policy = service.resolve_policy("complaint", complaint)
-    assert (policy.enabled, policy.allowed) == (False, False)
+    assert (policy.enabled, policy.allowed) == (True, True)
 
 
 def test_policy_block_carries_every_declared_field(db):

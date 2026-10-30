@@ -412,7 +412,7 @@ def register_company_scope_listeners() -> None:
             state.statement = state.statement.options(
                 with_loader_criteria(
                     Product,
-                    brand_predicate(brand_scope, Product.brand_id, Product.company_id),
+                    brand_predicate(brand_scope, Product.brand_id, Product.company_id, Product.item_class_id),
                     include_aliases=True,
                 )
             )

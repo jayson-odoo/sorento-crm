@@ -20,6 +20,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_values
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.certificate import CERTIFICATE_SOURCE_MANUAL, CertificateProduct
@@ -33,6 +34,7 @@ from app.schemas.certificate import (
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.certificate_query_service import CertificateQueryService
 from app.services.certificate_service import CertificateService
+from app.services import product_link_audit
 from app.services.error_handler import handle_internal_error, handle_not_found
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.uuid_path_param import validate_uuid_path
@@ -46,7 +48,7 @@ _DELETE = "master_data.certificates.delete"
 
 
 @router.get("/", response_model=ListResponse[CertificateResponse])
-async def get_certificates(
+def get_certificates(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query(None, description="Sort column (allowlisted server-side)."),
@@ -65,9 +67,9 @@ async def get_certificates(
     product_ids: Optional[List[str]] = Query(
         None, description="Certificates covering these product UUIDs (repeated / csv / JSON array)."
     ),
-    scheme: Optional[str] = Query(None, description="Certification scheme, e.g. PPS or SPAN."),
-    status_: Optional[str] = Query(None, alias="status", description="active | archived."),
-    validity_state: Optional[str] = Query(
+    scheme: Optional[List[str]] = Query(None, description="Certification scheme(s), e.g. PPS or SPAN."),
+    status_: Optional[List[str]] = Query(None, alias="status", description="active | archived."),
+    validity_state: Optional[List[str]] = Query(
         None,
         description=(
             "Comma-separated derived states: valid, expiring_soon, expired, "
@@ -117,9 +119,9 @@ async def get_certificates(
             certificate_ids=parse_uuid_list(certificate_ids, param_name="certificate_ids"),
             certificate_number=certificate_number,
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
-            scheme=scheme,
-            status=status_,
-            validity_state=validity_state,
+            scheme=multi_values(scheme),
+            status=multi_values(status_),
+            validity_state=",".join(multi_values(validity_state) or []) or None,
             expiring_within_days=expiring_within_days,
             valid_on=parsed_valid_on,
             needs_review=needs_review,
@@ -133,7 +135,7 @@ async def get_certificates(
 
 
 @router.post("/", response_model=CertificateResponse, status_code=status.HTTP_201_CREATED)
-async def create_certificate(
+def create_certificate(
     payload: CertificateCreate,
     current_user: dict = Depends(require_permission(_ADD)),
     db: Session = Depends(get_db),
@@ -153,7 +155,7 @@ async def create_certificate(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_certificates(
+def bulk_delete_certificates(
     body: BulkDeleteCertificatesRequest = Body(...),
     current_user: dict = Depends(require_permission(_DELETE)),
     db: Session = Depends(get_db),
@@ -177,7 +179,7 @@ async def bulk_delete_certificates(
 
 
 @router.get("/{certificate_id}", response_model=CertificateResponse)
-async def get_certificate(
+def get_certificate(
     certificate_id: str,
     resolve_signed_urls: bool = Query(
         False, description="Sign the CURRENT revision's file into preview_url / download_url."
@@ -202,7 +204,7 @@ async def get_certificate(
 
 
 @router.put("/{certificate_id}", response_model=CertificateResponse)
-async def update_certificate(
+def update_certificate(
     certificate_id: str,
     payload: CertificateEditRequest,
     current_user: dict = Depends(require_permission(_EDIT)),
@@ -255,7 +257,7 @@ async def update_certificate(
 
 
 @router.delete("/{certificate_id}", status_code=status.HTTP_200_OK)
-async def delete_certificate(
+def delete_certificate(
     certificate_id: str,
     current_user: dict = Depends(require_permission(_DELETE)),
     db: Session = Depends(get_db),
@@ -275,7 +277,7 @@ async def delete_certificate(
 @router.post(
     "/{certificate_id}/merge-into/{target_id}", response_model=CertificateResponse
 )
-async def merge_certificate_into(
+def merge_certificate_into(
     certificate_id: str,
     target_id: str,
     current_user: dict = Depends(require_permission(_EDIT)),
@@ -298,12 +300,30 @@ async def merge_certificate_into(
         raise handle_internal_error(str(e))
 
 
+def _coverage_rows(db: Session, certificate) -> list:
+    return db.query(CertificateProduct).filter(CertificateProduct.certificate_id == certificate.id).all()
+
+
+def _log_coverage(db: Session, service: CertificateService, certificate, coverage, action: str, user_id) -> None:
+    """A person covered or uncovered a product: one row on that product's Audit Trail, naming
+    the certificate's current file (PRODUCT-ATTACH-AUDIT). Reconcile and ingest stay silent."""
+    revision = service.get_current_revision(certificate)
+    product_link_audit.log_product_file_link(
+        db, action,
+        product_id=str(coverage.product_id),
+        attachment_id=str(revision.attachment_id) if revision and revision.attachment_id else None,
+        entity_type="certificate_products", entity_id=str(coverage.id),
+        user_id=user_id,
+        extra={"certificate_id": str(certificate.id), "certificate_number": certificate.certificate_number},
+    )
+
+
 @router.post(
     "/{certificate_id}/products",
     response_model=CertificateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def add_certificate_product(
+def add_certificate_product(
     certificate_id: str,
     payload: CertificateProductAddRequest,
     current_user: dict = Depends(require_permission(_EDIT)),
@@ -313,12 +333,20 @@ async def add_certificate_product(
     row for the current revision's attachment is written with it (COV-3)."""
     try:
         validate_uuid_path(certificate_id, resource="Certificate")
-        CertificateService(db).add_coverage(
+        service = CertificateService(db)
+        user_id = str(current_user.get("id") or "") or None
+        before = {str(row.id) for row in _coverage_rows(db, service.get_certificate(certificate_id))}
+        service.add_coverage(
             certificate_id,
             [payload.product_id],
             source=CERTIFICATE_SOURCE_MANUAL,
-            created_by=str(current_user.get("id") or "") or None,
+            created_by=user_id,
         )
+        certificate = service.get_certificate(certificate_id)
+        for row in _coverage_rows(db, certificate):
+            if str(row.id) not in before:
+                _log_coverage(db, service, certificate, row, product_link_audit.LINK, user_id)
+        db.commit()
         return CertificateQueryService(db).get_detail(certificate_id)
     except HTTPException:
         raise
@@ -327,7 +355,7 @@ async def add_certificate_product(
 
 
 @router.delete("/{certificate_id}/products/{coverage_id}", status_code=status.HTTP_200_OK)
-async def remove_certificate_product(
+def remove_certificate_product(
     certificate_id: str,
     coverage_id: str,
     current_user: dict = Depends(require_permission(_EDIT)),
@@ -352,6 +380,11 @@ async def remove_certificate_product(
         )
         if coverage is None:
             raise handle_not_found("Certificate coverage", coverage_id)
+        # Flushed here, committed by remove_coverage, so a failed removal leaves no row.
+        _log_coverage(
+            db, service, certificate, coverage, product_link_audit.UNLINK,
+            str(current_user.get("id") or "") or None,
+        )
         service.remove_coverage(certificate_id, [str(coverage.product_id)])
         return {"message": "Covered product removed successfully"}
     except HTTPException:

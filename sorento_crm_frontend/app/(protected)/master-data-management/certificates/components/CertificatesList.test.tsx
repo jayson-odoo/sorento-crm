@@ -27,6 +27,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 class ResizeObserverStub {
@@ -102,6 +103,35 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       onChange={(e) => onChange(e.target.value)}
     >
       <option value="">{placeholder ?? ''}</option>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
+// Validity, Scheme and Status are multi-selects now (FILTER-MULTISELECT PR4): the same native stand-in,
+// a multiple <select> labelled by its placeholder.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+  }: {
+    value: string[];
+    onChange: (v: string[]) => void;
+    options: { value: string; label: string }[];
+    placeholder?: string;
+  }) => (
+    <select
+      multiple
+      aria-label={placeholder ?? 'multi'}
+      value={value}
+      onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}
+    >
       {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}
@@ -255,14 +285,14 @@ describe('CertificatesList - opens unfiltered', () => {
   it('"Needs attention" is still one click away and narrows to both states', async () => {
     mockList([cert()]);
     renderList();
-    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: 'attention' } });
+    await userEvent.setup().selectOptions(screen.getByLabelText('Validity'), ['attention']);
     await waitFor(() => expect(lastParams().validity_state).toBe('expiring_soon,expired'));
   });
 
   it('choosing a single validity state sends just that state', async () => {
     mockList([cert()]);
     renderList();
-    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: 'expired' } });
+    await userEvent.setup().selectOptions(screen.getByLabelText('Validity'), ['expired']);
     await waitFor(() => expect(lastParams().validity_state).toBe('expired'));
   });
 });
@@ -278,9 +308,9 @@ describe('CertificatesList - filters feed the query (FE-4)', () => {
   it('scheme is sent, and "All schemes" clears it', async () => {
     mockList([cert()]);
     renderList();
-    fireEvent.change(screen.getByLabelText('All schemes'), { target: { value: 'SPAN' } });
+    await userEvent.setup().selectOptions(screen.getByLabelText('All schemes'), ['SPAN']);
     await waitFor(() => expect(lastParams().scheme).toBe('SPAN'));
-    fireEvent.change(screen.getByLabelText('All schemes'), { target: { value: 'all' } });
+    await userEvent.setup().deselectOptions(screen.getByLabelText('All schemes'), ['SPAN']);
     await waitFor(() => expect(lastParams().scheme).toBeUndefined());
   });
 
@@ -294,9 +324,9 @@ describe('CertificatesList - filters feed the query (FE-4)', () => {
   it('status narrows, and "All statuses" clears the param again', async () => {
     mockList([cert()]);
     renderList();
-    fireEvent.change(screen.getByLabelText('All statuses'), { target: { value: 'archived' } });
+    await userEvent.setup().selectOptions(screen.getByLabelText('All statuses'), ['archived']);
     await waitFor(() => expect(lastParams().status).toBe('archived'));
-    fireEvent.change(screen.getByLabelText('All statuses'), { target: { value: 'all' } });
+    await userEvent.setup().deselectOptions(screen.getByLabelText('All statuses'), ['archived']);
     await waitFor(() => expect(lastParams().status).toBeUndefined());
   });
 
@@ -314,7 +344,7 @@ describe('CertificatesList - filters feed the query (FE-4)', () => {
     renderList();
     // The button only exists once something IS filtered - the list now opens
     // clean, so narrow first.
-    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: 'expired' } });
+    await userEvent.setup().selectOptions(screen.getByLabelText('Validity'), ['expired']);
     await waitFor(() => expect(lastParams().validity_state).toBe('expired'));
     fireEvent.click(screen.getByRole('button', { name: /Clear filters/i }));
     await waitFor(() => {

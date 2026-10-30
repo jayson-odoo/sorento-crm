@@ -75,7 +75,11 @@ def _po_lines(db: Session, po_id: Any) -> list[tuple[str, Any]]:
         (code or "", qty)
         for code, qty in db.query(Product.product_code, PurchaseOrderLine.qty_ordered)
         .join(Product, Product.id == PurchaseOrderLine.product_id)
-        .filter(PurchaseOrderLine.purchase_order_id == po_id)
+        # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+        .filter(
+            PurchaseOrderLine.purchase_order_id == po_id,
+            PurchaseOrderLine.removed_unreferenced.is_(False),
+        )
         .order_by(Product.product_code, PurchaseOrderLine.id)
         .all()
     ]
@@ -155,7 +159,7 @@ def lookup_purchase_requests(db: Session, words: Iterable[str]) -> RefLookup:
             lines = _pr_lines(db, pr.id)
             head = f"*Purchase request {pr.request_number}*" + (f" - {pr.customer_name}" if pr.customer_name else "")
             status = _words(pr.status).capitalize() or "Unknown"
-            if pr.approval_status:
+            if pr.approval_status and pr.approval_status != pr.status:
                 status += f" - {_words(pr.approval_status)}"
             second = f"Requested {_day(pr.request_date)} - {status}" if pr.request_date else status
             out.cards.append("\n".join([head, second, *_lines_text(lines)]))

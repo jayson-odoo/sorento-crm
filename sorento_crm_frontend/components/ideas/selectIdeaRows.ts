@@ -9,10 +9,10 @@ import type { Idea } from '@/types/ideas';
 export interface IdeaRowQuery {
   search: string;
   view: 'active' | 'archived';
-  /** A status LABEL, or empty for every status. */
-  status: string;
-  submitter: string;
-  channel: string;
+  /** Status LABELS, OR-ed; empty (or '') for every status. A lone string is one value. */
+  status: string | string[];
+  submitter: string | string[];
+  channel: string | string[];
   /** `yyyy-MM-dd` bounds on the submitted date, inclusive; empty for open. */
   from: string;
   to: string;
@@ -58,6 +58,8 @@ function localDay(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+const picked = (v: string | string[]): string[] => (typeof v === 'string' ? (v ? [v] : []) : v);
+
 export function selectIdeaRows(ideas: Idea[], q: IdeaRowQuery): Idea[] {
   let rows = ideas.filter((r) =>
     q.view === 'archived' ? r.statusIsArchived : !r.statusIsArchived,
@@ -72,9 +74,12 @@ export function selectIdeaRows(ideas: Idea[], q: IdeaRowQuery): Idea[] {
         r.productName.toLowerCase().includes(needle),
     );
   }
-  if (q.status) rows = rows.filter((r) => r.statusLabel === q.status);
-  if (q.submitter) rows = rows.filter((r) => r.submitterName === q.submitter);
-  if (q.channel) rows = rows.filter((r) => r.source === q.channel);
+  const statuses = picked(q.status);
+  const submitters = picked(q.submitter);
+  const channels = picked(q.channel);
+  if (statuses.length) rows = rows.filter((r) => statuses.includes(r.statusLabel));
+  if (submitters.length) rows = rows.filter((r) => submitters.includes(r.submitterName));
+  if (channels.length) rows = rows.filter((r) => channels.includes(String(r.source)));
   if (q.from) rows = rows.filter((r) => localDay(r.createdAt) >= q.from);
   if (q.to) rows = rows.filter((r) => localDay(r.createdAt) <= q.to);
   if (q.sort) {

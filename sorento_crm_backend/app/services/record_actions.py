@@ -206,9 +206,49 @@ register(
 )
 
 
+def _delete_set_apart_customer(db: Session, payload: dict):
+    from app.services.sales import set_apart_service
+
+    return set_apart_service.delete_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_set_apart.delete",
+        entity_types=("sales_set_apart",),
+        execute=_delete_set_apart_customer,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.set_apart.edit",
+        label="Remove set-apart customer",
+    )
+)
+
+
+def _delete_agent_class(db: Session, payload: dict):
+    from app.services.sales import agent_class_service
+
+    return agent_class_service.delete_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_agent_class.delete",
+        entity_types=("sales_agent_class",),
+        execute=_delete_agent_class,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.sales_agents.edit",
+        label="Remove class row",
+    )
+)
+
+
 def _delete_sales_opportunity(db: Session, payload: dict):
+    from app.services import own_scope
     from app.services.sales import opportunity_service
 
+    own_scope.assert_pending_action_allowed(
+        db, "sales_opportunity.delete", _entity_id(payload), payload.get("requested_by_id")
+    )
     return opportunity_service.delete_opportunity_by_id(db, _entity_id(payload))
 
 
@@ -640,6 +680,12 @@ def _delete_country(db: Session, payload: dict):
     return CountryService(db).delete_country(_entity_id(payload))
 
 
+def _delete_item_class(db: Session, payload: dict):
+    from app.services.item_class_service import ItemClassService
+
+    return ItemClassService(db).delete(_entity_id(payload))
+
+
 def _delete_brand(db: Session, payload: dict):
     from app.services.product_service import BrandService
 
@@ -706,6 +752,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.brands.delete",
         label="Delete brand",
+    )
+)
+
+register(
+    FormAction(
+        key="item_class.delete",
+        entity_types=("item_class",),
+        execute=_delete_item_class,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.item_classes.delete",
+        label="Delete item class",
     )
 )
 
@@ -2223,6 +2280,71 @@ register(
         window=WINDOW_REVERSIBLE,
         permission=OWN_RECORD,
         label="Unlink attachment",
+    )
+)
+
+
+def _delete_my_request(db: Session, payload: dict):
+    from app.api.v1.my_requests import delete_request
+
+    # A salesperson's own draft from the CRM request pages (PORTAL-P4-REQUESTS D7): the portal's
+    # own delete, behind the my-requests gates, re-checked here as the state can change inside
+    # the window. The parked entity type is the form.
+    delete_request(
+        db,
+        str(payload.get("requested_by_id") or ""),
+        str(payload.get("entity_type") or ""),
+        _entity_id(payload),
+        # The admin who parked it while viewing as them, for the audit (set by the route).
+        real_user_id=payload.get("real_user_id"),
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="my_request.delete",
+        # Parked against the form itself; `my_request` is the key's own prefix, as on every
+        # record action, and refused by the handler (not a form).
+        entity_types=(
+            "my_request",
+            "stock_inquiry",
+            "complaint",
+            "purchase_request",
+            "sponsorship_form",
+            "price_tag_request",
+        ),
+        execute=_delete_my_request,
+        # Destructive: a hard delete of the salesperson's draft and its lines.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
+def _unlink_my_request_attachment(db: Session, payload: dict):
+    from app.api.v1.my_requests import unlink_attachment
+
+    # The salesperson's own upload on their own request, through the portal's own unlink; a
+    # staff upload stays locked. Re-checked here as the state can change inside the window.
+    unlink_attachment(
+        db,
+        str(payload.get("requested_by_id") or ""),
+        _entity_id(payload),
+        real_user_id=payload.get("real_user_id"),
+    )
+    return {"message": "Unlinked"}
+
+
+register(
+    FormAction(
+        key="my_request_attachment.unlink",
+        entity_types=("my_request_attachment",),
+        execute=_unlink_my_request_attachment,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Remove attachment",
     )
 )
 

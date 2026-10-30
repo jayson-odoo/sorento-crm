@@ -449,10 +449,11 @@ def test_a_later_confirmation_carries_the_covered_lines_forward(api):
     assert _snapshot_of(active, line_1.id) == frozen_1
 
 
-def test_a_carried_line_keeps_its_borrow_reason_and_its_hold(api):
-    """The carried snapshot is verbatim (the person's borrow reason included), and the stock
-    it holds is held by revision 2 exactly as revision 1 held it: same warehouses, same
-    quantities, and the claim it made is not made a second time.
+def test_a_carried_line_keeps_its_borrow_reason_and_its_allocations(api):
+    """The carried snapshot is verbatim (the person's borrow reason included), and revision 2
+    carries the same allocation rows as revision 1: same warehouses, same quantities, and
+    the claim it made is not made a second time. Nothing is held (BORROW-NO-HOLD, 28 Oct
+    2026), neither before nor after.
 
     The composition is wholly from stock (AC-L5: a line is met entirely from stock or
     entirely bought), which is also the interesting carry - two different locations under one
@@ -497,8 +498,9 @@ def test_a_carried_line_keeps_its_borrow_reason_and_its_hold(api):
 
     supply = ProjectSupplyService(db)
     held_before = supply.held_stock_by_location([world.product.id])
-    assert held_before[(world.product.id, world.pool_wh.id)] == Decimal("40")
-    assert held_before[(world.product.id, donor_wh.id)] == Decimal("10")
+    # BOARD-NO-HOLD / BORROW-NO-HOLD: the Reserve of 40 at the pool and the Borrow of 10 at
+    # the donor are plans and hold nothing.
+    assert held_before == {}
 
     second = client.post(
         f"{BASE}/sales-orders/{order.id}/confirm",
@@ -512,7 +514,7 @@ def test_a_carried_line_keeps_its_borrow_reason_and_its_hold(api):
     assert _snapshot_of(rev_2, line_1.id) == frozen_1
 
     held_after = ProjectSupplyService(db).held_stock_by_location([world.product.id])
-    assert held_after == held_before, "the carried line's hold is neither lost nor doubled"
+    assert held_after == {}, "carrying the line must not invent a hold"
 
     def rows_of(decision):
         return sorted(
@@ -526,6 +528,7 @@ def test_a_carried_line_keeps_its_borrow_reason_and_its_hold(api):
         )
 
     assert rows_of(rev_2) == rows_of(rev_1)
+    assert len(rows_of(rev_2)) == 2, "the pool Reserve and the donor Borrow are both carried"
     assert db.query(AllocationClaim).count() == 0, (
         "an other-location borrow makes no claim, and carrying it must not invent one"
     )

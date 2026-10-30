@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Request CS to reserve: pick lines (mockup v2)</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), same set as documentation/mockups/STOCK-DEBT-SNAPSHOT/index.html */
+:root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--input:#e4e4e7;--primary:#3b82f6;--primary-soft:#eff6ff;--page:#f7f7f8;--destructive:#dc2626}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:980px}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:980px}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--foreground);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.desk{width:1280px;max-width:100%;flex:none;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.phone{width:375px;flex:none;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.stage{position:relative;background:#f4f4f5}
+.desk .stage{min-height:470px}
+.phone .stage{min-height:640px}
+.overlay{position:absolute;inset:0;background:rgba(9,9,11,.5);display:flex;align-items:flex-start;justify-content:center;padding:34px 24px}
+.phone .overlay{padding:16px 8px}
+.dlg{background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.25);width:100%;max-width:896px;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.dlg .dh{padding:18px 22px 14px;border-bottom:1px solid var(--border)}
+.phone .dlg .dh{padding:14px 14px 12px}
+.dlg .dt{font-size:16px;font-weight:600;padding-right:28px}
+.dlg .ds{font-size:12.5px;color:var(--muted-fg);margin-top:2px}
+.dlg .x{position:absolute;right:18px;top:18px;color:var(--muted-fg);font-size:15px;line-height:1}
+.dlg .db{padding:14px 22px 18px;display:flex;flex-direction:column;gap:12px}
+.phone .dlg .db{padding:12px 14px 14px}
+.dlg .df{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 22px;border-top:1px solid var(--border);flex-wrap:wrap}
+.phone .dlg .df{padding:10px 14px}
+.scroll{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+table.dg{border-collapse:collapse;table-layout:fixed;font-size:12.5px;width:100%}
+.phone table.dg{width:684px}
+table.dg th{height:36px;background:#fafafa;color:var(--muted-fg);font-weight:500;font-size:12px;text-align:left;padding:0 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+table.dg th.r,table.dg td.r{text-align:right}
+table.dg td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.dg tr.sel td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
+table.dg tr.off td{color:var(--muted-fg)}
+.num{font-variant-numeric:tabular-nums}
+.mut{color:var(--muted-fg)}
+.sku{font-weight:500}
+.inp{height:26px;border:1px solid var(--input);border-radius:6px;padding:0 10px;display:flex;align-items:center;font-size:13px;background:#fff;justify-content:space-between}
+.inp.r{justify-content:flex-end}
+.inp.ta{height:54px;align-items:flex-start;padding-top:6px}
+.inp.dis{opacity:.5;background:#fafafa}
+.inp .x2{color:var(--muted-fg);font-size:11px}
+.field{display:flex;flex-direction:column;gap:4px;font-size:12.5px}
+.field label{font-weight:500}
+/* Checkbox: components/ui/checkbox.tsx */
+.cb{width:16px;height:16px;border:1px solid var(--input);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;background:#fff;vertical-align:middle}
+.cb.on{background:var(--primary);border-color:var(--primary)}
+.cb.on::after{content:"";width:8px;height:4px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
+.cb.ind{background:var(--primary);border-color:var(--primary)}
+.cb.ind::after{content:"";width:8px;height:2px;background:#fff}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:12.5px}
+.btn{display:inline-flex;align-items:center;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--input);background:#fff;font-size:12.5px;font-weight:500;white-space:nowrap}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.off{opacity:.45}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.note{font-size:12px;color:var(--muted-fg);max-width:1000px;margin:8px 0 0}
+.map{border-collapse:collapse;font-size:12.5px;width:100%;max-width:1280px;background:#fff;border:1px solid var(--border)}
+.map th,.map td{border-bottom:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+.map th{background:#fafafa;color:var(--muted-fg);font-weight:500}
+.map code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Request CS to reserve: pick the lines <span class="mut" style="font-size:14px;font-weight:400">mockup v2, RESERVE-REQ-PICK</span></h1>
+<p class="intro">Owner, 30 Oct: "when user want to request to reserve this OI, need to give option to remove some lines that they dont want to request". The ONE shared dialog (OI page and Stock Debt snapshot drill) gets the app's standard grid tick column. Every line opens ticked; untick a line and it is not sent. Real case: Stock Debt 26/10/2026 snapshot, product M9713SS, OI-2609-0676 (customer masked), figures from the dev copy as read in <code>crew/state/files/stock-debt-reserve-request-30oct.md</code>. Only the Location value is a placeholder (each row still defaults to its own pool, unchanged).</p>
+<p class="intro"><b>v2 (owner, 30 Oct):</b> v1 approved ("I can tick it back right if I really want those covered to be requested": yes, section 1). New section 6: an OI raised AFTER the snapshot can now be requested from the drill ("we snapshot the sales order but not the OI"). Sections 1 to 5 unchanged.</p>
+
+<!-- ============================================================ 1 -->
+<section id="s1">
+<h2><span class="nb">1</span>From the snapshot drill: M9713SS on OI-2609-0676 (1280)</h2>
+<p class="why">The drill offers two OI rows for M9713SS, both qty 2, both 07/10/2026. Row A is on SO409325 line 288, whose snapshot line reads Short 0 (its PO landed, pinned): it opens UNTICKED. Row B is on line 720 (26 ordered, still short): it opens ticked. Header reads "1 of 2 lines". An unticked line's Requested and Location are greyed and never block Send.</p>
+<div class="row"><div class="desk"><div class="stage">
+<div class="overlay"><div class="dlg">
+<div class="dh"><div class="dt">Request CS to reserve</div><div class="ds">1 of 2 lines</div><span class="x">&#10005;</span></div>
+<div class="db">
+<div class="scroll"><table class="dg">
+<colgroup><col style="width:44px"><col style="width:150px"><col style="width:120px"><col style="width:90px"><col style="width:110px"><col style="width:170px"></colgroup>
+<thead><tr><th><span class="cb ind"></span></th><th>Product</th><th>Delivery date</th><th class="r">Remaining</th><th>Requested</th><th>Location</th></tr></thead>
+<tbody>
+<tr class="off"><td><span class="cb"></span></td><td class="sku">M9713SS</td><td>07/10/2026</td><td class="r num">2</td><td><span class="inp r dis">2</span></td><td><span class="inp dis">Row's pool<span class="x2">&#9662;</span></span></td></tr>
+<tr class="sel"><td><span class="cb on"></span></td><td class="sku">M9713SS</td><td>07/10/2026</td><td class="r num">2</td><td><span class="inp r">2</span></td><td><span class="inp">Row's pool<span class="x2">&#9662;</span></span></td></tr>
+</tbody></table></div>
+<div class="field"><label>Note (optional)</label><div class="inp ta"></div></div>
+</div>
+<div class="df"><span class="chk"><span class="cb"></span>Park this first</span><div class="tools"><span class="btn">Cancel</span><span class="btn pri">Send request</span></div></div>
+</div></div>
+</div></div></div>
+<p class="note">Send request posts ONE row (row B, 2, its pool). The pre-untick of Short 0 lines is the snapshot drill only and sits behind one switch (owner approved 30 Oct). Tick row A again and it is sent too, exactly as today.</p>
+</section>
+
+<!-- ============================================================ 2 -->
+<section id="s2">
+<h2><span class="nb">2</span>Nothing ticked: Send is off</h2>
+<p class="why">Header box unticks every line; header reads "0 of 2 lines" and Send request (or Park request) is disabled. Header box ticks them all back.</p>
+<div class="row"><div class="desk"><div class="stage">
+<div class="overlay"><div class="dlg">
+<div class="dh"><div class="dt">Request CS to reserve</div><div class="ds">0 of 2 lines</div><span class="x">&#10005;</span></div>
+<div class="db">
+<div class="scroll"><table class="dg">
+<colgroup><col style="width:44px"><col style="width:150px"><col style="width:120px"><col style="width:90px"><col style="width:110px"><col style="width:170px"></colgroup>
+<thead><tr><th><span class="cb"></span></th><th>Product</th><th>Delivery date</th><th class="r">Remaining</th><th>Requested</th><th>Location</th></tr></thead>
+<tbody>
+<tr class="off"><td><span class="cb"></span></td><td class="sku">M9713SS</td><td>07/10/2026</td><td class="r num">2</td><td><span class="inp r dis">2</span></td><td><span class="inp dis">Row's pool<span class="x2">&#9662;</span></span></td></tr>
+<tr class="off"><td><span class="cb"></span></td><td class="sku">M9713SS</td><td>07/10/2026</td><td class="r num">2</td><td><span class="inp r dis">2</span></td><td><span class="inp dis">Row's pool<span class="x2">&#9662;</span></span></td></tr>
+</tbody></table></div>
+<div class="field"><label>Note (optional)</label><div class="inp ta"></div></div>
+</div>
+<div class="df"><span class="chk"><span class="cb"></span>Park this first</span><div class="tools"><span class="btn">Cancel</span><span class="btn pri off">Send request</span></div></div>
+</div></div>
+</div></div></div>
+</section>
+
+<!-- ============================================================ 3 -->
+<section id="s3">
+<h2><span class="nb">3</span>From the OI page: OI-2609-0676, three lines ticked on the Lines tab</h2>
+<p class="why">The OI page still picks rows on its Lines tab first (unchanged). The dialog opens with all of them ticked ("3 of 3 lines"); the operator can still drop one here without closing. Shown after unticking CKS1050: "2 of 3 lines", Send posts B2155-NL-BLUE 12 and M-FH14 12.</p>
+<div class="row"><div class="desk"><div class="stage">
+<div class="overlay"><div class="dlg">
+<div class="dh"><div class="dt">Request CS to reserve</div><div class="ds">2 of 3 lines</div><span class="x">&#10005;</span></div>
+<div class="db">
+<div class="scroll"><table class="dg">
+<colgroup><col style="width:44px"><col style="width:150px"><col style="width:120px"><col style="width:90px"><col style="width:110px"><col style="width:170px"></colgroup>
+<thead><tr><th><span class="cb ind"></span></th><th>Product</th><th>Delivery date</th><th class="r">Remaining</th><th>Requested</th><th>Location</th></tr></thead>
+<tbody>
+<tr class="sel"><td><span class="cb on"></span></td><td class="sku">B2155-NL-BLUE</td><td>07/10/2026</td><td class="r num">12</td><td><span class="inp r">12</span></td><td><span class="inp">Row's pool<span class="x2">&#9662;</span></span></td></tr>
+<tr class="off"><td><span class="cb"></span></td><td class="sku">CKS1050</td><td>07/10/2026</td><td class="r num">2</td><td><span class="inp r dis">2</span></td><td><span class="inp dis">Row's pool<span class="x2">&#9662;</span></span></td></tr>
+<tr class="sel"><td><span class="cb on"></span></td><td class="sku">M-FH14</td><td>07/10/2026</td><td class="r num">12</td><td><span class="inp r">12</span></td><td><span class="inp">Row's pool<span class="x2">&#9662;</span></span></td></tr>
+</tbody></table></div>
+<div class="field"><label>Note (optional)</label><div class="inp ta"></div></div>
+</div>
+<div class="df"><span class="chk"><span class="cb"></span>Park this first</span><div class="tools"><span class="btn">Cancel</span><span class="btn pri">Send request</span></div></div>
+</div></div>
+</div></div></div>
+</section>
+
+<!-- ============================================================ 4 -->
+<section id="s4">
+<h2><span class="nb">4</span>Phone 375: same dialog</h2>
+<p class="why">Tick column stays first and narrow (44px); the grid scrolls sideways inside the dialog as today; footer wraps.</p>
+<div class="row"><div class="phone"><div class="stage">
+<div class="overlay"><div class="dlg">
+<div class="dh"><div class="dt">Request CS to reserve</div><div class="ds">1 of 2 lines</div><span class="x">&#10005;</span></div>
+<div class="db">
+<div class="scroll"><table class="dg">
+<colgroup><col style="width:44px"><col style="width:150px"><col style="width:120px"><col style="width:90px"><col style="width:110px"><col style="width:170px"></colgroup>
+<thead><tr><th><span class="cb ind"></span></th><th>Product</th><th>Delivery date</th><th class="r">Remaining</th><th>Requested</th><th>Location</th></tr></thead>
+<tbody>
+<tr class="off"><td><span class="cb"></span></td><td class="sku">M9713SS</td><td>07/10/2026</td><td class="r num">2</td><td><span class="inp r dis">2</span></td><td><span class="inp dis">Row's pool<span class="x2">&#9662;</span></span></td></tr>
+<tr class="sel"><td><span class="cb on"></span></td><td class="sku">M9713SS</td><td>07/10/2026</td><td class="r num">2</td><td><span class="inp r">2</span></td><td><span class="inp">Row's pool<span class="x2">&#9662;</span></span></td></tr>
+</tbody></table></div>
+<div class="field"><label>Note (optional)</label><div class="inp ta"></div></div>
+</div>
+<div class="df"><span class="chk"><span class="cb"></span>Park this first</span><div class="tools"><span class="btn">Cancel</span><span class="btn pri">Send request</span></div></div>
+</div></div>
+</div></div></div>
+</section>
+
+<!-- ============================================================ 6 -->
+<section id="s6">
+<h2><span class="nb">6</span>v2: an OI raised after the snapshot, requested from the drill</h2>
+<p class="why">Shape of the 26/10 SRT2564-BL case (customer masked): SO line SO427404 was frozen with 12 to deliver and no OI; OI-2610-0159 was raised later and links a row of 11 to it. The drill already shows that row in Now with "after the snapshot". Before: no Request CS to reserve on that group. Now: the group carries the button whenever one of its rows can be requested today, and the dialog lists the late row ticked (its line is still short). A late row on an OI that was already frozen joins that OI's request the same way.</p>
+<div class="row"><div class="desk"><div class="stage" style="background:#fff;padding:16px;min-height:0">
+<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:#fafafa;border-bottom:1px solid var(--border);flex-wrap:wrap"><span style="font-size:12.5px"><b style="color:var(--primary)">OI-2610-0159</b> &#8599;</span><span class="btn pri" style="height:26px;font-size:12px">Request CS to reserve</span></div>
+<div class="scroll" style="border:0;border-radius:0"><table class="dg">
+<colgroup><col style="width:130px"><col style="width:110px"><col style="width:90px"><col style="width:90px"><col style="width:110px"><col></colgroup>
+<thead><tr><th>Sales order</th><th>Required</th><th class="r">Ordered</th><th class="r">Short</th><th>OI row</th><th>Now</th></tr></thead>
+<tbody><tr><td>SO427404</td><td class="mut">frozen date</td><td class="r num">12</td><td class="r num">12</td><td style="color:var(--primary)">11</td><td><span class="mut">Open 11 &middot; Raised &middot; after the snapshot</span></td></tr></tbody>
+</table></div></div>
+</div></div>
+<div class="desk" style="width:896px"><div class="stage" style="min-height:330px">
+<div class="overlay"><div class="dlg">
+<div class="dh"><div class="dt">Request CS to reserve</div><div class="ds">1 of 1 lines</div><span class="x">&#10005;</span></div>
+<div class="db">
+<div class="scroll"><table class="dg">
+<colgroup><col style="width:44px"><col style="width:150px"><col style="width:120px"><col style="width:90px"><col style="width:110px"><col style="width:170px"></colgroup>
+<thead><tr><th><span class="cb on"></span></th><th>Product</th><th>Delivery date</th><th class="r">Remaining</th><th>Requested</th><th>Location</th></tr></thead>
+<tbody><tr class="sel"><td><span class="cb on"></span></td><td class="sku">SRT2564-BL</td><td class="mut">row's date</td><td class="r num">11</td><td><span class="inp r">11</span></td><td><span class="inp">Row's pool<span class="x2">&#9662;</span></span></td></tr></tbody>
+</table></div>
+</div>
+<div class="df"><span class="chk"><span class="cb"></span>Park this first</span><div class="tools"><span class="btn">Cancel</span><span class="btn pri">Send request</span></div></div>
+</div></div>
+</div></div></div>
+<p class="note">Group header, Now chips and OI row link are today's drill (<code>stock-debt/components/SnapshotDrillDialog.tsx</code>); only the button's condition and the dialog's row set change. Dates shown as "frozen date" / "row's date" because crew's finding did not record them.</p>
+</section>
+
+<!-- ============================================================ 5 -->
+<section id="s5">
+<h2><span class="nb">5</span>Reuse map</h2>
+<table class="map">
+<thead><tr><th>Element</th><th>Reuses</th></tr></thead>
+<tbody>
+<tr><td>Dialog, grid, Requested, Location, Note, Park, Send</td><td>Unchanged <code>project-sales/_shared/components/RequestReserveDialog.tsx</code> (shared by OI page and snapshot drill)</td></tr>
+<tr><td>Tick column + header tick-all</td><td><code>components/ui/data-grid-select-column.tsx</code> <code>buildSelectColumn</code>, react-table <code>rowSelection</code> (same as <code>order-inquiries/[id]/components/OrderInquiryLinesTab.tsx:260</code>, <code>sample-requests/components/SampleRequestsList.tsx:220</code>)</td></tr>
+<tr><td>"N of M lines"</td><td><code>DialogDescription</code>, <code>components/ui/dialog.tsx</code></td></tr>
+<tr><td>Short 0 lines pre-unticked (drill only)</td><td>Frozen <code>short_qty</code> already on each drill line (<code>stock-debt/components/SnapshotDrillDialog.tsx</code>), one constant to switch off</td></tr>
+<tr><td>Send</td><td>Unchanged <code>POST /order-inquiries/{id}/reserve-requests</code>, which already takes any subset of rows (no backend change)</td></tr>
+</tbody></table>
+</section>
+</div>
+</body>
+</html>

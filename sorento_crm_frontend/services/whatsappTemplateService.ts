@@ -86,7 +86,8 @@ export type UseCase =
   | 'ideation_draft_reminder'
   | 'ideation_status_update'
   | 'supplier_request_chat'
-  | 'stock_ask_salesman';
+  | 'stock_ask_salesman'
+  | 'wa_phone_share';
 
 export type ParamVariable =
   | 'contact_name'
@@ -379,6 +380,12 @@ export const USE_CASES: {
     description:
       'Sent to the customer\'s sales agent when the chatbot answers a dealer\'s stock ask (too big, in stock, or no stock and no incoming) and the dealer contact has "Notify salesman" on. Map params to "Customer", "Contact name" (the dealer who asked), "Product", "Quantity", "Outcome" and "Asked at".',
   },
+  {
+    key: 'wa_phone_share',
+    label: 'WhatsApp Phone Share',
+    description:
+      'Utility template with the Share Contact Info button, sent to a WhatsApp contact that chats by username only so they can share their phone number. No params.',
+  },
 ];
 
 export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: string }[] = [
@@ -387,7 +394,7 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'entity_number', label: 'Entity number', description: 'e.g. CMP-2606-0012 / RMA-PS2605-0017' },
   { key: 'status', label: 'Status', description: 'New status of the record (approved, rejected…)' },
   { key: 'reason', label: 'Reason', description: 'Decision reason when present' },
-  { key: 'portal_url', label: 'Portal URL', description: 'Interactive portal link - contact can act / resubmit (complaint: /portal/c/…)' },
+  { key: 'portal_url', label: 'Portal URL', description: 'Interactive portal link - contact can act / appeal (complaint: /portal/c/…)' },
   { key: 'view_url', label: 'View link', description: 'Read-only public view of the record (token link, /view/…)' },
   { key: 'message', label: 'Full update message', description: 'The composed update text, flattened to one line' },
   { key: 'otp_code', label: 'OTP code', description: 'The 6-digit portal login verification code' },
@@ -453,7 +460,8 @@ export async function listTemplates(params: {
   page?: number;
   limit?: number;
   query?: string;
-  status?: TemplateStatus | 'all';
+  /** One status, several comma-joined, or 'all' / absent for no filter. */
+  status?: string;
 }): Promise<TemplateListResult> {
   const sp = new URLSearchParams();
   sp.set('page', String(params.page ?? 1));

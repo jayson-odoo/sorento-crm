@@ -264,10 +264,10 @@ def test_the_product_wide_override_beats_the_autocount_master(scm_app):
 
 # --- AC-R4 / AC-R5: which project demand counts -----------------------------------------
 
-def test_an_awaiting_order_inquiry_row_is_not_demand(scm_app):
-    """AC-R4 (`PLAN-scm-oi-handshake.md` section 3): a plan may only buy against an
-    instruction purchasing has taken on. 100 awaiting + 20 acknowledged is 20 of demand."""
-    from app.models.project_so import ACK_AWAITING
+def test_a_done_order_inquiry_row_is_not_demand(scm_app):
+    """AC-R4 (OI-AUTO-CONFIRM Q4 b): a plan buys against what is still To order. 100 Done
+    (acknowledged) + 20 To order (awaiting) is 20 of demand."""
+    from app.models.project_so import ACK_ACKNOWLEDGED
 
     _, db, _, _ = scm_app
     _use_level_basis(db)
@@ -278,19 +278,19 @@ def test_an_awaiting_order_inquiry_row_is_not_demand(scm_app):
     _mk_demand(db, pid, wid, 0.0)
     _link(db, pid, _mk_supplier(db, f"{MARKER} R4"), moq=None, mult=None)
     _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=100,
-                   ack_state=ACK_AWAITING)
+                   ack_state=ACK_ACKNOWLEDGED)
     _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=20)
     db.flush()
 
     buys = _buys(_recs(db, _run(db, [wh_code], code), pid))
     assert len(buys) == 1
     assert float(buys[0]["inputs"]["project_committed"]) == 20.0
-    assert float(buys[0]["inputs"]["net"]) == 80.0, "100 on hand less the acknowledged 20"
+    assert float(buys[0]["inputs"]["net"]) == 80.0, "100 on hand less the To order 20"
     assert float(buys[0]["rounded_qty"]) == 120.0
 
 
 def test_only_the_unlinked_remainder_counts_and_the_po_counts_once(scm_app):
-    """AC-R5: an acknowledged row of 50 with 30 already placed on a purchase order is 20
+    """AC-R5: a To order row of 50 with 30 already placed on a purchase order is 20
     of demand, and that purchase order's 30 is incoming supply - counted once."""
     _, db, _, _ = scm_app
     _use_level_basis(db)

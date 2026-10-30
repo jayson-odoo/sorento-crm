@@ -16,12 +16,19 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useCollaborators,
   useTakeoverMutations,
   useTakeoverRequests,
 } from '../../_shared/hooks/useProjects';
-import type { Project } from '../../_shared/types/project.types';
+import type { ColumnDef } from '@tanstack/react-table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import type { Project, TakeoverRequest } from '../../_shared/types/project.types';
+import { isProjectApproved } from '../../_shared/lib/projectApproval';
+import { projectCodeLabel } from '../../_shared/lib/projectCode';
 
 /**
  * Who may work this project, and the recorded history of how that was decided.
@@ -35,10 +42,114 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
   const collaborators = useCollaborators(project.id);
   const requests = useTakeoverRequests(project.id);
   const { decide } = useTakeoverMutations(project.id);
+  const canManage = useHasPermission('projects.projects.manage');
   const [requesting, setRequesting] = React.useState<'join' | 'dispute' | null>(null);
 
-  const pending = (requests.data ?? []).filter((request) => request.status === 'pending');
-  const decided = (requests.data ?? []).filter((request) => request.status !== 'pending');
+  // A secondary lead is the existing dispute request, shown to everyone as a table (pending
+  // and decided); join requests stay under Open requests for the owner to rule on.
+  const secondaryLeads = (requests.data ?? []).filter((request) => request.kind === 'dispute');
+  const pending = (requests.data ?? []).filter(
+    (request) => request.status === 'pending' && request.kind !== 'dispute',
+  );
+  const decided = (requests.data ?? []).filter(
+    (request) => request.status !== 'pending' && request.kind !== 'dispute',
+  );
+
+  const columns = React.useMemo<ColumnDef<TakeoverRequest>[]>(
+    () => [
+      {
+        id: 'requester_name',
+        accessorFn: (row) => row.requester_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Salesperson" column={column} />,
+        cell: ({ row }) => {
+          const name = row.original.requester_name ?? 'Someone';
+          return (
+            <span className="truncate text-sm font-medium" title={name}>
+              {name}
+            </span>
+          );
+        },
+        size: 160,
+        meta: { headerTitle: 'Salesperson' },
+      },
+      {
+        id: 'created_at',
+        accessorFn: (row) => row.created_at ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Date" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm">
+            {row.original.created_at ? formatDateInMalaysia(row.original.created_at) : '-'}
+          </span>
+        ),
+        size: 120,
+        meta: { headerTitle: 'Date' },
+      },
+      {
+        id: 'reason',
+        accessorFn: (row) => row.reason,
+        header: ({ column }) => <DataGridColumnHeader title="How they found it" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm" title={row.original.reason}>
+            {row.original.reason}
+          </span>
+        ),
+        size: 260,
+        meta: { headerTitle: 'How they found it' },
+      },
+      {
+        id: 'status',
+        accessorFn: (row) => row.status,
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        cell: ({ row }) => {
+          const status = row.original.status;
+          const label =
+            status === 'pending' ? 'Pending' : status === 'approved' ? 'Reassigned' : 'Dismissed';
+          const variant =
+            status === 'pending' ? 'warning' : status === 'approved' ? 'success' : 'secondary';
+          return (
+            <Badge variant={variant} appearance="light">
+              {label}
+            </Badge>
+          );
+        },
+        size: 120,
+        meta: { headerTitle: 'Status' },
+      },
+      ...(canManage
+        ? [
+            {
+              id: 'actions',
+              header: () => null,
+              enableSorting: false,
+              cell: ({ row }: { row: { original: TakeoverRequest } }) =>
+                row.original.status === 'pending' ? (
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={decide.isPending}
+                      onClick={() => decide.mutate({ id: row.original.id, approve: true })}
+                    >
+                      Reassign to {row.original.requester_name ?? 'requester'}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={decide.isPending}
+                      onClick={() => decide.mutate({ id: row.original.id, approve: false })}
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                ) : null,
+              size: 300,
+            } satisfies ColumnDef<TakeoverRequest>,
+          ]
+        : []),
+    ],
+    [canManage, decide],
+  );
 
   return (
     <>
@@ -69,7 +180,8 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             )}
           </div>
 
-          {!project.can_edit && (
+          {/* No join or dispute on a registration that is not a project yet (security N3). */}
+          {!project.can_edit && isProjectApproved(project) && (
             <div className="space-y-2 rounded-md border border-border bg-muted/40 p-2.5">
               {/* The fact is about this record and stays; the instruction that followed it
                   only named the two buttons sitting underneath. */}
@@ -81,11 +193,22 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                   Ask to join
                 </Button>
                 <Button type="button" size="sm" variant="ghost" onClick={() => setRequesting('dispute')}>
-                  Dispute
+                  Register as secondary lead
                 </Button>
               </div>
             </div>
           )}
+
+          <PanelDataGrid
+            title="Secondary leads"
+            columns={columns}
+            rows={secondaryLeads}
+            getRowId={(row) => row.id}
+            listingKey="projects.projects.view::project-secondary-leads"
+            isLoading={requests.isLoading}
+            error={requests.isError ? requests.error : undefined}
+            emptyTitle="No secondary leads"
+          />
 
           <div>
             <p className="text-xs text-muted-foreground">Open requests</p>
@@ -96,9 +219,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                 {pending.map((request) => (
                   <li key={request.id} className="rounded-md border border-border p-2.5">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <Badge variant={request.kind === 'dispute' ? 'destructive' : 'secondary'}>
-                        {request.kind === 'dispute' ? 'Dispute' : 'Join request'}
-                      </Badge>
+                      <Badge variant="secondary">Join request</Badge>
                       <span className="text-sm font-medium">
                         {request.requester_name ?? 'Someone'}
                       </span>
@@ -147,7 +268,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                         {request.status}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
-                        {request.kind === 'dispute' ? 'Dispute' : 'Join'} by{' '}
+                        Join by{' '}
                         {request.requester_name ?? 'someone'}
                         {request.decided_by_name ? ` · decided by ${request.decided_by_name}` : ''}
                       </span>
@@ -196,7 +317,9 @@ function RequestDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>{isJoin ? 'Ask to join this project' : 'Dispute this project'}</DialogTitle>
+          <DialogTitle>
+            {isJoin ? 'Ask to join this project' : `Register as secondary lead on ${projectCodeLabel(project)}`}
+          </DialogTitle>
           <DialogDescription>
             {isJoin
               ? `${project.owner_name ?? 'The owner'} decides. On approval you get edit rights.`
@@ -214,7 +337,8 @@ function RequestDialog({
           <DialogBody className="max-h-[60vh] overflow-y-auto">
             <div className="space-y-1.5">
               <Label htmlFor="access-reason">
-                Reason <span className="text-destructive">*</span>
+                {isJoin ? 'Reason' : 'How and when did you find this project?'}{' '}
+                <span className="text-destructive">*</span>
               </Label>
               <Textarea
                 id="access-reason"
@@ -235,7 +359,7 @@ function RequestDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!reason.trim() || request.isPending}>
-              {isJoin ? 'Send request' : 'Raise dispute'}
+              {isJoin ? 'Send request' : 'Register as secondary lead'}
             </Button>
           </DialogFooter>
         </form>

@@ -6,6 +6,7 @@ import { type ComplaintsListParams } from '../services/complaintService';
 import {
   getComplaints,
   getComplaint,
+  getComplaintRevisions,
   getComplaintConversation,
   createComplaint,
   updateComplaint,
@@ -93,6 +94,22 @@ export function useComplaint(id: string | null) {
     queryFn: () => {
       if (!id) throw new Error('Complaint ID is required');
       return getComplaint(id);
+    },
+    enabled: !!id,
+    retry: 1,
+  });
+}
+
+/**
+ * Revision lineage for the office Revisions tab. Keyed on `revisionNo` so a revision
+ * landing while the page is open refetches the timeline.
+ */
+export function useComplaintRevisions(id: string | null, revisionNo?: number | null) {
+  return useQuery({
+    queryKey: ['complaint-revisions', id, revisionNo ?? 0],
+    queryFn: () => {
+      if (!id) throw new Error('Complaint ID is required');
+      return getComplaintRevisions(id);
     },
     enabled: !!id,
     retry: 1,

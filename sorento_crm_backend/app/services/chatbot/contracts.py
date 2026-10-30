@@ -63,6 +63,9 @@ class ParserOutputError(ValueError):
 # and "claimed by nobody, on purpose" - which is what makes the allow-list a derived view
 # instead of a third list to keep in step.
 UNDOMAINED_CHATBOT_TOOLS: tuple[str, ...] = (
+    # REPORT-UNIFY (Q1): the Yearly comparison file is the one sales analysis left on its own tool (the lane's
+    # `sales_analysis` override, axis `year`); no domain row lists it any more.
+    "crm_sales_analysis",
     "crm_complaint_analytics",
     "crm_complaints_list",
     "crm_lookup_resolve",
@@ -77,6 +80,10 @@ UNDOMAINED_CHATBOT_TOOLS: tuple[str, ...] = (
     "crm_sla_conversation_event_logs_list",
     "crm_sla_conversation_tracking_dashboard",
     "crm_sla_conversation_tracking_list",
+    "crm_sales_target_progress",
+    # SALES-TARGET-CHAT slice 2: the salesperson's own customers, read by the opportunity lane
+    # at its own seam (`lanes/opportunity.py`); its write twin is on no read path.
+    "crm_sales_opportunity_customer_options",
     "crm_system_tool_capabilities_summary",
     "user_guides_read",
 )
@@ -153,6 +160,10 @@ BRAND_SCOPE_TREATMENT: dict[str, BrandScopeTreatment] = {
     "crm_resource_attachments_list": "filtered",
     "crm_sales_analysis": "filtered",
     "crm_sales_report": "filtered",
+    "crm_sales_target_progress": "no_products",
+    # SALES-TARGET-CHAT slice 2: customers and one opportunity, never a product row.
+    "crm_sales_opportunity_customer_options": "no_products",
+    "crm_sales_opportunity_log": "no_products",
     "crm_sla_conversation_event_logs_list": "no_products",
     "crm_sla_conversation_tracking_dashboard": "no_products",
     "crm_sla_conversation_tracking_list": "no_products",
@@ -360,6 +371,13 @@ BRANCH_KINDS = (
     "media_denied",
     # AI-ALLOWED-GATE: the CRM declined to answer this contact (blocked, or not in the CRM).
     "ai_not_allowed",
+    # SALES-TARGET-CHAT slice 2: a salesperson logging an opportunity (`lanes/opportunity.py`).
+    "log_opportunity",
+    # WA-USERNAME-CONTACTS: the phone flow for a username-only WhatsApp contact (`engine._phone_turn`).
+    "phone_ask",
+    "phone_linked",
+    "phone_ignored",
+    "phone_handoff",
 )
 BranchKind = Literal[BRANCH_KINDS]  # type: ignore[valid-type]
 
@@ -514,6 +532,13 @@ SALES_REPORT_GROUP_BYS: tuple[str, ...] = ("customer", "product", "delivery_orde
 # check reads this one tuple, so the asks cannot be gated differently. `sales_analysis`
 # (PLAN-retail-sales-reports-26sep S1, #1269) is gated by the same key, and so is
 # `sales_ranking` (REPORT-ENGINE slice 1b, `crm_report_ask`).
+# SALES-TARGET-CHAT: a target ask is the `sales` domain too, but it is NOT a sales figure
+# status: its gates take the `sales.sales_target` grant, not the sales report's.
+SALES_TARGET_STATUS = "sales_target"
+#: SALES-TARGET-CHAT slice 2: logging an opportunity is the `sales` domain (turn_runtime maps it)
+#: and its own branch kind (`log_opportunity`, `lanes/opportunity.py`). Not a sales figure status.
+LOG_OPPORTUNITY_STATUS = "log_opportunity"
+
 SALES_FIGURE_STATUSES: tuple[str, ...] = ("sales_report", "top_selling", "sales_analysis", "sales_ranking")
 
 # PLAN-prompt-dynamic-30sep D9 (owner, 30 Sep 2026: "better own sales domain otherwise

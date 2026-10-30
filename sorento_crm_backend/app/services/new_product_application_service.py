@@ -25,7 +25,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import exists, func, or_
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.new_product_application import NewProductApplication, NewProductApplicationLine
@@ -34,6 +34,7 @@ from app.models.procurement import ProductSupplier, StockInquiry, Supplier
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.user import User
+from app.services import submission_status
 from app.services.error_handler import AppException, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -41,12 +42,14 @@ logger = logging.getLogger(__name__)
 ENTITY = "new_product_application"
 
 VIEW = "procurement.new_product_applications.view"
+VIEW_OWN = "procurement.new_product_applications.view_own"
 CREATE = "procurement.new_product_applications.create"
 APPROVE = "procurement.new_product_applications.approve"
 OPEN_CODE = "procurement.new_product_applications.open_code"
 
 DRAFT = "draft"
-SUBMITTED = "submitted"
+SUBMITTED = submission_status.SUBMITTED
+RESUBMITTED = submission_status.RESUBMITTED
 APPROVED = "approved"
 REJECTED = "rejected"
 COMPLETED = "completed"
@@ -55,16 +58,18 @@ CANCELLED = "cancelled"
 STATUS_LABELS = {
     DRAFT: "Draft",
     SUBMITTED: "Submitted",
+    RESUBMITTED: submission_status.APPEALED_LABEL,
     APPROVED: "Approved",
     REJECTED: "Rejected",
     COMPLETED: "Completed",
     CANCELLED: "Cancelled",
 }
 
-#: Statuses the applicant may edit in. Submitted and Approved are LOCKED (422), the
-#: terminal ones are closed (409).
+#: Statuses the applicant may edit in. Submitted (or Resubmitted) and Approved are LOCKED
+#: (422), the terminal ones are closed (409).
 EDITABLE = (DRAFT, REJECTED)
-LOCKED = (SUBMITTED, APPROVED)
+AWAITING_REVIEW = submission_status.AWAITING_REVIEW
+LOCKED = (*AWAITING_REVIEW, APPROVED)
 
 HEADER_TEXT = ("customer_name", "project_name", "remark")
 #: The v4 paper form's product block (AC-NPA-70): nothing else is written by the applicant.
@@ -84,16 +89,23 @@ class Actor:
     can_create: bool = False
     can_approve: bool = False
     can_open_code: bool = False
+    #: `.view_own` without the view-all grants (PORTAL-P2-ONLY-THEIRS): their own rows, the
+    #: ones their own contact raised from the portal included, and anything else not found.
+    own_only: bool = False
+    own_contact_id: Optional[str] = None
 
 
 def actor_from_slugs(user_id: str, slugs: Iterable[str]) -> Actor:
     s = set(slugs)
+    can_view_all = bool(s & {VIEW, APPROVE, OPEN_CODE})
+    own_only = VIEW_OWN in s and not can_view_all
     return Actor(
         user_id=user_id,
-        can_view_all=bool(s & {VIEW, APPROVE, OPEN_CODE}),
+        can_view_all=can_view_all,
         can_create=CREATE in s,
         can_approve=APPROVE in s,
         can_open_code=OPEN_CODE in s,
+        own_only=own_only,
     )
 
 
@@ -134,11 +146,20 @@ def is_owner(app: NewProductApplication, actor: Actor) -> bool:
     return bool(actor.user_id and app.applicant_id and str(app.applicant_id) == str(actor.user_id))
 
 
+def _own_contact_row(app: NewProductApplication, actor: Actor) -> bool:
+    return bool(
+        actor.own_contact_id and app.contact_id and str(app.contact_id) == str(actor.own_contact_id)
+    )
+
+
 def assert_can_view(app: NewProductApplication, actor: Actor) -> None:
     if actor.contact_id is None and actor.can_view_all:
         return
-    if not is_owner(app, actor):
-        raise _forbidden("You do not have access to this application.")
+    if is_owner(app, actor) or _own_contact_row(app, actor):
+        return
+    if actor.own_only:
+        raise handle_not_found("New product application", app.id)
+    raise _forbidden("You do not have access to this application.")
 
 
 def assert_unlocked(app: NewProductApplication) -> None:
@@ -356,12 +377,12 @@ def submit(db: Session, app: NewProductApplication, *, actor: Actor) -> str:
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
         )
     validate_submit(app)
-    app.status = SUBMITTED
+    app.status = submission_status.status_on_submit(was_rejected=app.status == REJECTED)
     app.submitted_at = datetime.utcnow()
     app.decided_at = None
     app.decided_by = None
     db.flush()
-    return "submitted"
+    return app.status
 
 
 def _require(app: NewProductApplication, status: str, verb: str) -> None:
@@ -372,10 +393,19 @@ def _require(app: NewProductApplication, status: str, verb: str) -> None:
         )
 
 
+def _require_awaiting_review(app: NewProductApplication, verb: str) -> None:
+    """Approve / reject: Submitted, or Resubmitted after a rejection (RESUBMITTED-STATUS)."""
+    if not submission_status.is_awaiting_review(app.status):
+        raise _conflict(
+            f"Only a submitted application can be {verb}.",
+            "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
+        )
+
+
 def approve(db: Session, app: NewProductApplication, *, actor: Actor) -> str:
     if not actor.can_approve:
         raise _forbidden("You cannot approve new product applications.")
-    _require(app, SUBMITTED, "approved")
+    _require_awaiting_review(app, "approved")
     app.status = APPROVED
     app.decided_at = datetime.utcnow()
     app.decided_by = actor.user_id
@@ -387,7 +417,7 @@ def approve(db: Session, app: NewProductApplication, *, actor: Actor) -> str:
 def reject(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> str:
     if not actor.can_approve:
         raise _forbidden("You cannot reject new product applications.")
-    _require(app, SUBMITTED, "rejected")
+    _require_awaiting_review(app, "rejected")
     reason = _clean(reason)
     if not reason:
         raise _invalid("reason", "Enter the reason for rejecting.")
@@ -434,13 +464,13 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     for line in app.lines:
         line.cost_price = None
     db.flush()
-    return "withdrawn" if was == SUBMITTED else None
+    return "withdrawn" if was in AWAITING_REVIEW else None
 
 
 def cancel(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> None:
     if not is_owner(app, actor):
         raise _forbidden("Only the applicant can cancel this application.")
-    if app.status not in (DRAFT, SUBMITTED, APPROVED, REJECTED):
+    if app.status not in (DRAFT, *AWAITING_REVIEW, APPROVED, REJECTED):
         raise _conflict(
             f"A {STATUS_LABELS[app.status].lower()} application cannot be cancelled.",
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
@@ -720,7 +750,10 @@ def _visible(query, actor: Actor):
         return query.filter(NewProductApplication.contact_id == str(actor.contact_id))
     if actor.can_view_all:
         return query
-    return query.filter(NewProductApplication.applicant_id == str(actor.user_id))
+    mine = NewProductApplication.applicant_id == str(actor.user_id)
+    if actor.own_contact_id:
+        mine = or_(mine, NewProductApplication.contact_id == str(actor.own_contact_id))
+    return query.filter(mine)
 
 
 _SORTS = {
@@ -730,6 +763,30 @@ _SORTS = {
     "submitted_at": NewProductApplication.submitted_at,
     "needed_by": NewProductApplication.needed_by,
     "customer_name": NewProductApplication.customer_name,
+    # Every column of the list sorts (PORTAL-P4-REQUESTS P4-23), each by what it shows
+    # (`serialize_summary`): the linked inquiry's number, the first line's text, the line counts.
+    "stock_inquiry_number": select(StockInquiry.inquiry_number)
+    .where(StockInquiry.id == NewProductApplication.stock_inquiry_id)
+    .scalar_subquery(),
+    "first_line": select(
+        func.coalesce(NewProductApplicationLine.description, NewProductApplicationLine.proposed_code)
+    )
+    .where(NewProductApplicationLine.application_id == NewProductApplication.id)
+    .order_by(NewProductApplicationLine.line_no)
+    .limit(1)
+    .scalar_subquery(),
+    "lines_total": select(func.count(NewProductApplicationLine.id))
+    .where(NewProductApplicationLine.application_id == NewProductApplication.id)
+    .scalar_subquery(),
+    "lines_done": select(func.count(NewProductApplicationLine.id))
+    .where(
+        NewProductApplicationLine.application_id == NewProductApplication.id,
+        or_(
+            NewProductApplicationLine.opened_product_id.isnot(None),
+            NewProductApplicationLine.closed_reason.isnot(None),
+        ),
+    )
+    .scalar_subquery(),
 }
 
 
@@ -740,7 +797,7 @@ def list_for(
     statuses: Optional[List[str]] = None,
     q: Optional[str] = None,
     stock_inquiry_id: Optional[str] = None,
-    applicant_id: Optional[str] = None,
+    applicant_id: Optional[list[str] | str] = None,
     page: int = 1,
     limit: int = 25,
     sort: Optional[str] = None,
@@ -754,7 +811,9 @@ def list_for(
             return {"items": [], "total": 0, "page": page, "limit": limit}
         query = query.filter(NewProductApplication.stock_inquiry_id == stock_inquiry_id)
     if applicant_id:
-        query = query.filter(NewProductApplication.applicant_id == applicant_id)
+        query = query.filter(
+            NewProductApplication.applicant_id.in_([applicant_id] if isinstance(applicant_id, str) else applicant_id)
+        )
     text = (q or "").strip()
     if text:
         like = f"%{text}%"
@@ -1006,6 +1065,7 @@ def _holders(db: Session, slug: str, company_id: str, exclude: Iterable[Any] = (
 
 _EVENTS = {
     "submitted": ("waits for your approval", "approvers"),
+    "resubmitted": ("was appealed and waits for your approval", "approvers"),
     "withdrawn": ("was taken back for changes", "approvers"),
     "approved": ("is approved: codes to open", "purchasing"),
     "rejected": ("was rejected", "applicant"),

@@ -236,5 +236,8 @@ class BillingDocumentLine(CompanyScopedMixin, Base):
         ),
         Index("ix_finance_billing_document_lines_sales_order_line", "sales_order_line_id"),
         Index("ix_finance_billing_document_lines_product", "product_id"),
+        # DOC-RELATIONS' SO / DO Invoices lookup. Prod builds it online in
+        # bfd_idx_0001_billing_from_doc_no (app/utils/online_index.py BILLING_FROM_DOC_INDEXES).
+        Index("ix_finance_billing_document_lines_from_doc_no", "from_doc_no"),
         {"schema": SCHEMA},
     )

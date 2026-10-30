@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
@@ -162,17 +162,16 @@ class ClashCandidateResponse(BaseModel):
     """
 
     project_id: str
-    project_code: str
+    project_code: Optional[str] = None
     title: str
-    outcome: str
+    outcome: Optional[str] = None
     status_label: Optional[str] = None
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
     developer_name: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = None
-    brands: List[str] = Field(default_factory=list)
     last_activity_at: Optional[datetime] = None
-    similarity: float
+    similarity: Optional[float] = None
     blocks: bool
 
 
@@ -208,17 +207,23 @@ class ProjectRegisterRequest(BaseModel):
     # lead another project already carries is refused.
     lead_id: Optional[str] = None
     admin_ref: Optional[str] = Field(None, max_length=64)
+    # Required to register or submit (422 project_customer_required); a draft and an edit
+    # may leave it out.
+    customer_id: Optional[str] = None
+    # A salesperson holding only the submit grant: false saves a draft, true submits it.
+    submit: bool = False
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
     architect_party_id: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brand_ids: List[str] = Field(default_factory=list)
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -236,20 +241,73 @@ class ProjectUpdateRequest(BaseModel):
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
     architect_party_id: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brand_ids: Optional[List[str]] = None
     # Sent as null to unlink; omitted leaves the link as it is (#1339).
     lead_id: Optional[str] = None
+    customer_id: Optional[str] = None
 
     # AC-G7: critical is a flag settable at any status, never a funnel rung.
     is_critical: Optional[bool] = None
     management_support: Optional[str] = None
     management_notes: Optional[str] = None
+
+
+class ProjectApproveRequest(BaseModel):
+    """Approve a pending portal registration (PROJECT-REG-PORTAL R9). Every field is
+    optional: the header's Approve sends `{}` once the developer was picked on the edit page,
+    and a field sent here wins over what the project already carries."""
+
+    title: Optional[str] = Field(None, min_length=1)
+    developer_party_id: Optional[str] = None
+    type_id: Optional[str] = None
+    template_id: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    admin_ref: Optional[str] = Field(None, max_length=64)
+
+    registered_company_name: Optional[str] = None
+    location: Optional[str] = None
+    address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
+    architect_party_id: Optional[str] = None
+    main_contractor_party_id: Optional[str] = None
+    estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
+    launch_date: Optional[date] = None
+    expected_delivery_from: Optional[date] = None
+    expected_delivery_to: Optional[date] = None
+
+
+class ProjectRejectRequest(BaseModel):
+    reason: str
+
+
+class ProjectPossibleDuplicate(BaseModel):
+    """An approved project a pending registration may repeat (D8): a link, never a block."""
+
+    project_id: str
+    project_code: Optional[str] = None
+    title: str
+
+
+class ProjectRegistrationInfo(BaseModel):
+    """What the sales agent typed on the portal that has no home on a project (R7), shown
+    read-only under the detail header. Null on a staff-registered project."""
+
+    sales_agent_name: Optional[str] = None
+    distributor_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    your_ref: Optional[str] = None
+    type_of_building: Optional[str] = None
+    developer_name: Optional[str] = None
+    main_contractor_name: Optional[str] = None
+    architect_name: Optional[str] = None
 
 
 class ProjectStatusChangeRequest(BaseModel):
@@ -261,7 +319,7 @@ class ProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    project_code: str
+    project_code: Optional[str] = None
     title: str
     outcome: str
     loss_reason: Optional[str] = None
@@ -286,6 +344,7 @@ class ProjectResponse(BaseModel):
     # Null with no lead, or with a lead whose buyer is not known yet.
     customer_id: Optional[str] = None
     customer_name: Optional[str] = None
+    customer_code: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_attn: Optional[str] = None
 
@@ -304,6 +363,8 @@ class ProjectResponse(BaseModel):
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
     architect_party_id: Optional[str] = None
     architect_name: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
@@ -312,8 +373,6 @@ class ProjectResponse(BaseModel):
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brands: List[str] = Field(default_factory=list)
-    brand_ids: List[str] = Field(default_factory=list)
 
     last_meaningful_activity_at: Optional[datetime] = None
     days_since_last_activity: Optional[int] = None
@@ -332,6 +391,15 @@ class ProjectResponse(BaseModel):
     stale_since: Optional[datetime] = None
     is_unattended: bool = False
     can_edit: bool = False
+
+    # Portal registration (PROJECT-REG-PORTAL R1, R7): NULL approval_state is a staff project.
+    # A pending or rejected one has no code yet.
+    approval_state: Optional[str] = None
+    reject_reason: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    decided_at: Optional[datetime] = None
+    registration: Optional[ProjectRegistrationInfo] = None
+    possible_duplicates: List[ProjectPossibleDuplicate] = Field(default_factory=list)
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -785,7 +853,6 @@ class ProjectLeadQualifyRequest(BaseModel):
     type_id: Optional[str] = None
     template_id: Optional[str] = None
     owner_user_id: Optional[str] = None
-    brand_ids: Optional[List[str]] = None
     details: Optional[Dict[str, Any]] = Field(
         None, description="Sales-profile fields, same shape as registration."
     )
@@ -1342,6 +1409,18 @@ class QuotationLineFileCandidate(BaseModel):
     preview_url: Optional[str] = None
 
 
+class QuotationLineEscalationResponse(BaseModel):
+    """A drawing request on the line's product. Task fields are null once it is resolved, leaving
+    only when it was last resolved."""
+
+    tracking_id: Optional[str] = None
+    opened_at: Optional[datetime] = None
+    responded_at: Optional[datetime] = None
+    due_at: Optional[datetime] = None
+    requester_count: Optional[int] = None
+    last_resolved_at: Optional[datetime] = None
+
+
 class QuotationLineImageResponse(BaseModel):
     """The picture cell for one line (S21).
 
@@ -1369,6 +1448,8 @@ class QuotationLineImageResponse(BaseModel):
     candidate_count: int = 0
     #: The product's photos, for the picker that writes `image_attachment_id`.
     candidates: List[QuotationLineFileCandidate] = Field(default_factory=list)
+    #: The product's photo request (kind `photo`), or null when none was ever opened.
+    escalation: Optional[QuotationLineEscalationResponse] = None
 
 
 class QuotationLineDrawingResponse(BaseModel):
@@ -1379,7 +1460,8 @@ class QuotationLineDrawingResponse(BaseModel):
     no field declares.
     """
 
-    #: chosen (picked or stamped) | default (first by upload) | no_drawings | off_catalog
+    #: chosen (picked or stamped) | default (first by upload) | pdf (a PDF drawing only, never
+    #: printed) | no_drawings | off_catalog
     state: str
     url: Optional[str] = None
     preview_url: Optional[str] = None
@@ -1387,6 +1469,19 @@ class QuotationLineDrawingResponse(BaseModel):
     filename: Optional[str] = None
     candidate_count: int = 0
     candidates: List[QuotationLineFileCandidate] = Field(default_factory=list)
+    #: The product's drawing request, or null when none was ever opened.
+    escalation: Optional[QuotationLineEscalationResponse] = None
+
+
+class MediaEscalationRequest(BaseModel):
+    """Which missing file the salesperson is asking the marketing product team for."""
+
+    kind: Literal["drawing", "photo"]
+
+
+class DrawingEscalationResponse(BaseModel):
+    joined: bool
+    escalation: Optional[QuotationLineEscalationResponse] = None
 
 
 class QuotationLineImagesResponse(BaseModel):
@@ -2103,7 +2198,8 @@ class QuotationSignatureRequest(BaseModel):
 
 
 class QuotationSignAcceptRequest(QuotationSignatureRequest):
-    pass
+    # The customer ticked "I have read and agree to the Terms and conditions."
+    terms_accepted: bool = False
 
 
 class QuotationSignChangesRequest(BaseModel):
@@ -2118,6 +2214,84 @@ class QuotationSignChangesRequest(BaseModel):
     note: str = Field(min_length=1, max_length=4000)
     # No signature is captured here, so this is the only name the request can carry.
     requester_name: Optional[str] = Field(None, max_length=200)
+
+
+class QuotationAmendmentLineChange(BaseModel):
+    """One line the customer changed. Quantity and price are STRINGS so a bad value is refused by
+    the service with the lane's own code, not by pydantic. There is deliberately no field for a
+    description, code, brand or spec: the server cannot be asked to write one, and any such key
+    a client sends is ignored."""
+
+    line_id: str = Field(max_length=64)
+    quantity: Optional[str] = Field(None, max_length=32)
+    unit_price: Optional[str] = Field(None, max_length=32)
+    remove: bool = False
+
+
+class QuotationAmendmentSubmitRequest(BaseModel):
+    requester_name: Optional[str] = Field(None, max_length=200)
+    note: Optional[str] = Field(None, max_length=4000)
+    lines: List[QuotationAmendmentLineChange] = Field(default_factory=list, max_length=500)
+
+
+class QuotationAmendmentDecideRequest(BaseModel):
+    # Checked by the service (accepted | rejected | pending, reason <= 500), so the rule is
+    # stated once.
+    decision: str = Field(max_length=16)
+    reason: Optional[str] = Field(None, max_length=2000)
+
+
+class QuotationAmendmentRowResponse(BaseModel):
+    id: str
+    line_id: str
+    field: str
+    value_from: Optional[Decimal] = None
+    value_to: Optional[Decimal] = None
+    decision: str = "pending"
+    decision_reason: Optional[str] = None
+
+
+class QuotationAmendmentStaffRowResponse(QuotationAmendmentRowResponse):
+    # Staff only: a floor is internal pricing, so the customer's page has no such keys.
+    below_floor: bool = False
+    floor_value: Optional[Decimal] = None
+
+
+class QuotationAmendmentResponse(BaseModel):
+    """What the customer's page shows of their own request."""
+
+    id: str
+    status: str
+    submitted_at: Optional[datetime] = None
+    requester_name: Optional[str] = None
+    note: Optional[str] = None
+    applied_at: Optional[datetime] = None
+    rows: List[QuotationAmendmentRowResponse] = Field(default_factory=list)
+
+
+class QuotationAmendmentBlockedScope(BaseModel):
+    quotation_id: str
+    scope_label: str
+    # The issued version the rows name, where the review is still decided.
+    version_id: str
+    # An accepted row sits on this scope, so Apply refuses until it is rejected or the draft issued.
+    has_accepted: bool = False
+
+
+class QuotationAmendmentStaffResponse(QuotationAmendmentResponse):
+    rows: List[QuotationAmendmentStaffRowResponse] = Field(default_factory=list)
+    # Scopes a suggestion touches that already carry a hand-made draft: Apply would refuse.
+    blocked_scopes: List[QuotationAmendmentBlockedScope] = Field(default_factory=list)
+    # Apply drafted a revision (only then does an applied request keep blocking the issue).
+    revised: bool = False
+    # The issue's total, and the total with the ACCEPTED rows applied (the summary row).
+    total_issued: Decimal = Decimal("0")
+    total_after: Decimal = Decimal("0")
+
+
+class QuotationAmendmentApplyResponse(BaseModel):
+    request: QuotationAmendmentStaffResponse
+    version_ids: List[str] = Field(default_factory=list)
 
 
 class QuotationSignatureResponse(BaseModel):
@@ -2156,6 +2330,7 @@ ProjectQuotationDocumentResponse.model_rebuild()
 
 
 class QuotationSignScopeLine(BaseModel):
+    id: Optional[str] = None
     item_label: Optional[str] = None
     description: Optional[str] = None
     technical_spec: Optional[str] = None
@@ -2176,10 +2351,10 @@ class QuotationSignScope(BaseModel):
 
 
 class QuotationSignPageResponse(BaseModel):
-    """The read-only quotation a customer sees on the counter-sign link.
+    """The quotation a customer sees on the counter-sign link.
 
-    Deliberately does NOT carry ids: the page needs no handle on anything, and a public payload
-    that leaks internal identifiers invites somebody to try them elsewhere.
+    The only ids it carries are the issue's own lines and its own request's rows, which a
+    suggested change has to name; the server accepts back only lines of this issue.
     """
 
     our_ref: Optional[str] = None
@@ -2187,12 +2362,14 @@ class QuotationSignPageResponse(BaseModel):
     doc_date: Optional[date] = None
     subject_title: Optional[str] = None
     sender_name: Optional[str] = None
+    sender_logo_url: Optional[str] = None
     recipient_name: Optional[str] = None
     recipient_address: Optional[str] = None
     attn_name: Optional[str] = None
     cover_letter: Optional[str] = None
     terms: Optional[str] = None
     signatory_name: Optional[str] = None
+    signatory_phone: Optional[str] = None
     scopes: List[QuotationSignScope] = Field(default_factory=list)
     grand_total: Decimal = Decimal("0")
     sorento_signature: Optional[QuotationSignatureResponse] = None
@@ -2205,3 +2382,8 @@ class QuotationSignPageResponse(BaseModel):
     changes_requested_note: Optional[str] = None
     changes_requested_by_name: Optional[str] = None
     is_changes_requested: bool = False
+    amendment_request: Optional[QuotationAmendmentResponse] = None
+    superseded_by_ref: Optional[str] = None
+    can_sign: bool = True
+    # accepted | superseded | amendment_open | amendment_applied, or null when signable.
+    sign_blocked_reason: Optional[str] = None

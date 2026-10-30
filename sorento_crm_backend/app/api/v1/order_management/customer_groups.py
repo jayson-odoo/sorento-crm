@@ -32,7 +32,7 @@ _EDIT = "order_management.customers.edit"
 
 
 @router.get("/", response_model=ListResponse[CustomerGroupResponse])
-async def list_customer_groups(
+def list_customer_groups(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -53,7 +53,7 @@ async def list_customer_groups(
 
 
 @router.get("/select", response_model=dict)
-async def select_customer_groups(
+def select_customer_groups(
     query: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(require_permission(_VIEW)),
@@ -70,7 +70,7 @@ async def select_customer_groups(
 
 
 @router.post("/", response_model=CustomerGroupResponse, status_code=status.HTTP_201_CREATED)
-async def create_customer_group(
+def create_customer_group(
     payload: CustomerGroupWrite,
     current_user: dict = Depends(require_permission(_EDIT)),
     db: Session = Depends(get_db),
@@ -86,7 +86,7 @@ async def create_customer_group(
 
 
 @router.get("/{group_id}", response_model=CustomerGroupResponse)
-async def get_customer_group(
+def get_customer_group(
     group_id: str,
     current_user: dict = Depends(require_permission(_VIEW)),
     db: Session = Depends(get_db),
@@ -101,7 +101,7 @@ async def get_customer_group(
 
 
 @router.patch("/{group_id}", response_model=CustomerGroupResponse)
-async def rename_customer_group(
+def rename_customer_group(
     group_id: str,
     payload: CustomerGroupWrite,
     current_user: dict = Depends(require_permission(_EDIT)),
@@ -119,7 +119,7 @@ async def rename_customer_group(
 
 
 @router.get("/{group_id}/customers", response_model=ListResponse[CustomerResponse])
-async def list_customer_group_customers(
+def list_customer_group_customers(
     group_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -144,7 +144,7 @@ async def list_customer_group_customers(
 
 
 @router.post("/{group_id}/customers")
-async def assign_customer_group_customers(
+def assign_customer_group_customers(
     group_id: str,
     payload: CustomerGroupCustomersAssign,
     current_user: dict = Depends(require_permission(_EDIT)),

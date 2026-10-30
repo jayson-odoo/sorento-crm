@@ -4,6 +4,11 @@
  * Calls `/api/v1/public/portal/sales-opportunities` and reuses the portal's own product
  * lookup (`/lookups/products`, the same one `ComplaintLinesTable` calls) via `portalFetch`
  * - no CRM `lib/api-client`, no bearer auth, the portal token header only.
+ *
+ * `makeSalesOpportunityService(fetcher)` holds the calls (PORTAL-P4-REQUESTS R3, form parity);
+ * the named exports are the portal's instance over `portalFetch`. The CRM builds one over its
+ * session (`services/myRequestsSubmissionClient.ts`), so a salesperson's form makes the portal's
+ * calls.
  */
 import { portalFetch, unwrap } from './portal-client';
 
@@ -61,45 +66,6 @@ export interface PortalCustomerOptionsResponse {
   blocked: { name: string; message: string } | null;
 }
 
-export async function listPortalSalesOpportunities(): Promise<PortalSalesOpportunity[]> {
-  const res = await portalFetch(BASE);
-  const body = await unwrap<{ items: PortalSalesOpportunity[] }>(res, 'Failed to load opportunities.');
-  return body.items;
-}
-
-export async function getPortalSalesOpportunity(id: string): Promise<PortalSalesOpportunity> {
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}`);
-  return unwrap(res, 'Failed to load opportunity.');
-}
-
-export async function createPortalSalesOpportunity(
-  payload: PortalSalesOpportunitySavePayload,
-): Promise<PortalSalesOpportunity> {
-  const res = await portalFetch(BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return unwrap(res, 'Failed to log the opportunity.');
-}
-
-export async function updatePortalSalesOpportunity(
-  id: string,
-  payload: PortalSalesOpportunitySavePayload,
-): Promise<PortalSalesOpportunity> {
-  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return unwrap(res, 'Failed to save the opportunity.');
-}
-
-export async function getPortalCustomerOptions(q: string): Promise<PortalCustomerOptionsResponse> {
-  const res = await portalFetch(`${BASE}/customer-options?q=${encodeURIComponent(q)}`);
-  return unwrap(res, 'Failed to search customers.');
-}
-
 export interface PortalProductOption {
   id: string;
   code: string;
@@ -109,34 +75,97 @@ export interface PortalProductOption {
   listPrice: string | null;
 }
 
-/** The catalog's own portal lookup (LESSONS-LEARNT: never a capped static list). */
-export async function getPortalProductOptions(q: string): Promise<PortalProductOption[]> {
-  const url = `/api/v1/public/portal/lookups/products?q=${encodeURIComponent(q)}`;
-  const res = await portalFetch(url);
-  const items = await unwrap<
-    {
-      product_id?: string | null;
-      product_code: string;
-      product_name: string | null;
-      list_price?: string | null;
-    }[]
-  >(res, 'Failed to search products.');
-  return items
-    .filter((item) => !!item.product_id)
-    .map((item) => ({
-      id: item.product_id as string,
-      code: item.product_code,
-      name: item.product_name,
-      listPrice: item.list_price ?? null,
-    }));
-}
-
 export interface PortalSalesOpportunityMeta {
   stages: { id: string; key: string; label: string; win_probability: string | number | null; is_active: boolean }[];
   lost_reasons: { value: string; label: string }[];
 }
 
-export async function getPortalOpportunityMeta(): Promise<PortalSalesOpportunityMeta> {
-  const res = await portalFetch(`${BASE}/meta`);
-  return unwrap(res, 'Failed to load stages.');
+export function makeSalesOpportunityService(fetcher: typeof portalFetch) {
+  async function listPortalSalesOpportunities(): Promise<PortalSalesOpportunity[]> {
+    const res = await fetcher(BASE);
+    const body = await unwrap<{ items: PortalSalesOpportunity[] }>(res, 'Failed to load opportunities.');
+    return body.items;
+  }
+
+  async function getPortalSalesOpportunity(id: string): Promise<PortalSalesOpportunity> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}`);
+    return unwrap(res, 'Failed to load opportunity.');
+  }
+
+  async function createPortalSalesOpportunity(
+    payload: PortalSalesOpportunitySavePayload,
+  ): Promise<PortalSalesOpportunity> {
+    const res = await fetcher(BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return unwrap(res, 'Failed to log the opportunity.');
+  }
+
+  async function updatePortalSalesOpportunity(
+    id: string,
+    payload: PortalSalesOpportunitySavePayload,
+  ): Promise<PortalSalesOpportunity> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return unwrap(res, 'Failed to save the opportunity.');
+  }
+
+  async function getPortalCustomerOptions(q: string): Promise<PortalCustomerOptionsResponse> {
+    const res = await fetcher(`${BASE}/customer-options?q=${encodeURIComponent(q)}`);
+    return unwrap(res, 'Failed to search customers.');
+  }
+
+  /** The catalog's own portal lookup (LESSONS-LEARNT: never a capped static list). */
+  async function getPortalProductOptions(q: string): Promise<PortalProductOption[]> {
+    const url = `/api/v1/public/portal/lookups/products?q=${encodeURIComponent(q)}`;
+    const res = await fetcher(url);
+    const items = await unwrap<
+      {
+        product_id?: string | null;
+        product_code: string;
+        product_name: string | null;
+        list_price?: string | null;
+      }[]
+    >(res, 'Failed to search products.');
+    return items
+      .filter((item) => !!item.product_id)
+      .map((item) => ({
+        id: item.product_id as string,
+        code: item.product_code,
+        name: item.product_name,
+        listPrice: item.list_price ?? null,
+      }));
+  }
+
+  async function getPortalOpportunityMeta(): Promise<PortalSalesOpportunityMeta> {
+    const res = await fetcher(`${BASE}/meta`);
+    return unwrap(res, 'Failed to load stages.');
+  }
+
+  return {
+    listPortalSalesOpportunities,
+    getPortalSalesOpportunity,
+    createPortalSalesOpportunity,
+    updatePortalSalesOpportunity,
+    getPortalCustomerOptions,
+    getPortalProductOptions,
+    getPortalOpportunityMeta,
+  };
 }
+
+export type SalesOpportunityService = ReturnType<typeof makeSalesOpportunityService>;
+
+export const {
+  listPortalSalesOpportunities,
+  getPortalSalesOpportunity,
+  createPortalSalesOpportunity,
+  updatePortalSalesOpportunity,
+  getPortalCustomerOptions,
+  getPortalProductOptions,
+  getPortalOpportunityMeta,
+} = makeSalesOpportunityService(portalFetch);

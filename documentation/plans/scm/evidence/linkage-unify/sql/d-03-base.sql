@@ -1,0 +1,1 @@
+-- base view as temp table is not allowed (read only); use CTE text included in each query

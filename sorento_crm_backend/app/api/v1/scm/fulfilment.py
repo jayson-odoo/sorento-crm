@@ -51,6 +51,7 @@ from app.services.scm import (
 )
 from app.services.scm.upload_intake import read_upload, read_upload_retained
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -130,7 +131,8 @@ def _refuse_cancelled(plan: LoadingPlan) -> None:
 
 
 @router.post("/supplier-inventory/preview")
-async def preview_supplier_inventory(
+@heavy
+def preview_supplier_inventory(
     file: UploadFile = File(..., description="The supplier's own stock list"),
     supplier_id: str = Form(..., description="Which supplier sent it"),
     loading_plan_id: Optional[str] = Form(
@@ -154,7 +156,7 @@ async def preview_supplier_inventory(
     """
     return supplier_inventory_service.preview(
         db,
-        await read_upload(file),
+        read_upload(file),
         supplier_id=supplier_id,
         loading_plan_id=loading_plan_id,
         header_row=header_row,
@@ -162,7 +164,8 @@ async def preview_supplier_inventory(
 
 
 @router.post("/supplier-inventory/apply")
-async def apply_supplier_inventory(
+@heavy
+def apply_supplier_inventory(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     supplier_id: str = Form(...),
     loading_plan_id: Optional[str] = Form(
@@ -184,7 +187,7 @@ async def apply_supplier_inventory(
     db: Session = Depends(get_db),
 ):
     """Replace a stock snapshot - this plan's own, or the supplier's."""
-    upload = await read_upload_retained(file)
+    upload = read_upload_retained(file)
     if validate_only:
         return supplier_inventory_service.validate(
             db, upload.data, supplier_id=supplier_id, header_row=header_row
@@ -614,7 +617,7 @@ def list_loading_plans(
     query: Optional[str] = Query(None),
     #: "active" (the default chip) is planning + sent. A cancelled plan is a decision
     #: already made, and a list that opens on it hides the work in front of somebody.
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
@@ -950,7 +953,7 @@ async def preview_supplier_documents(
     already in the memory. `run_in_threadpool` (B4) for the same reason the sibling upload
     route above does - a slow read must not freeze every other request this worker holds.
     """
-    read = [(f.filename, await read_upload(f)) for f in files]
+    read = await run_in_threadpool(lambda: [(f.filename, read_upload(f)) for f in files])
     out = await run_in_threadpool(
         supplier_document_service.preview,
         db,
@@ -1000,7 +1003,9 @@ async def apply_supplier_documents(
     """Proforma invoices first, then packing lists (S2). Each file is filed in Drive under
     its own type (Proforma Invoice / Packing List) and linked to the invoice it belongs to;
     a packing list's rows land on that invoice, and no shipment is created here (AC-C1)."""
-    read = [(f.filename, await read_upload(f), f.content_type) for f in files]
+    read = await run_in_threadpool(
+        lambda: [(f.filename, read_upload(f), f.content_type) for f in files]
+    )
     parsed_translations = None
     if translations:
         try:
@@ -1148,6 +1153,7 @@ def consolidated_packing_list_for_shipment(
 
 
 @router.get("/inbound-shipments/{shipment_id}/packing-list/export")
+@heavy
 def export_consolidated_packing_list(
     shipment_id: str,
     _user: dict = Depends(_READ),
@@ -1418,6 +1424,7 @@ def delete_spo(
 
 
 @router.get("/inbound-shipments/{shipment_id}/spo-worksheet/export")
+@heavy
 def export_spo_worksheet(
     shipment_id: str,
     _user: dict = Depends(_READ),

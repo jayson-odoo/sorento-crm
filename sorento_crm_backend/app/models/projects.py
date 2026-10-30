@@ -82,6 +82,18 @@ OUTCOME_DORMANT = "dormant"
 # re-tender three years later.
 BLOCKING_OUTCOMES = (OUTCOME_OPEN,)
 
+# A portal registration IS a project row, waiting for approval (PROJECT-REG-PORTAL R1).
+# NULL = a staff-registered project, which never needed approving. A draft / pending /
+# rejected row has no code yet and is kept out of every internal path (R4) until Approve.
+APPROVAL_DRAFT = "draft"
+APPROVAL_PENDING = "pending"
+# Submitted again after a rejection; waits for a decision exactly like `pending`
+# (RESUBMITTED-STATUS, app/services/submission_status.py).
+APPROVAL_RESUBMITTED = "resubmitted"
+APPROVAL_REJECTED = "rejected"
+APPROVAL_APPROVED = "approved"
+UNAPPROVED_STATES = (APPROVAL_DRAFT, APPROVAL_PENDING, APPROVAL_RESUBMITTED, APPROVAL_REJECTED)
+
 PARTY_DEVELOPER = "developer"
 PARTY_ARCHITECT = "architect"
 PARTY_MAIN_CONTRACTOR = "main_contractor"
@@ -238,7 +250,8 @@ class Project(Base, CompanyScopedMixin):
     __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
-    project_code = Column(String(64), nullable=False)
+    # NULL until a portal registration is approved (R2); every staff project has one.
+    project_code = Column(String(64), nullable=True)
     title = Column(Text, nullable=False)
     # Comparison key for the registration lock. Minimal normalisation (casefold +
     # whitespace collapse) so "Phase 3A" and "Phase 3B" stay distinct.
@@ -299,6 +312,14 @@ class Project(Base, CompanyScopedMixin):
     stale_since = Column(DateTime(timezone=False), nullable=True)
     stale_reason = Column(String(16), nullable=True)  # overdue_task | no_activity
 
+    # Portal registration (PROJECT-REG-PORTAL R1): draft | pending | rejected | approved,
+    # NULL for a staff-registered project.
+    approval_state = Column(String(16), nullable=True)
+    reject_reason = Column(Text, nullable=True)
+    submitted_at = Column(DateTime(timezone=False), nullable=True)
+    decided_at = Column(DateTime(timezone=False), nullable=True)
+    decided_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -308,7 +329,8 @@ class Project(Base, CompanyScopedMixin):
     __table_args__ = (
         # THE registration lock (ADR-0004). Buildable only because both keys live on
         # this table. NULLS NOT DISTINCT so a null developer cannot be used to slip
-        # duplicates past it.
+        # duplicates past it. PARTIAL over staff and approved rows (R3): a portal
+        # registration still waiting (or refused) neither collides nor blocks.
         Index(
             "uq_projects_company_developer_title",
             "company_id",
@@ -316,6 +338,7 @@ class Project(Base, CompanyScopedMixin):
             "normalised_title",
             unique=True,
             postgresql_nulls_not_distinct=True,
+            postgresql_where=text("approval_state IS NULL OR approval_state = 'approved'"),
         ),
         UniqueConstraint("company_id", "project_code", name="uq_projects_company_code"),
         Index("ix_projects_company_outcome", "company_id", "outcome"),
@@ -335,7 +358,11 @@ class ProjectSalesProfile(Base):
     __tablename__ = "sales_profile"
     # Audit entity type pinned to the pre-move table name (ADR-0011).
     __audit_entity_type__ = "project_sales_profile"
-    __table_args__ = {"schema": "projects"}
+    __table_args__ = (
+        # The portal reads a contact's own registrations by this key.
+        Index("ix_project_sales_profile_contact", "contact_id"),
+        {"schema": "projects"},
+    )
 
     project_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), primary_key=True
@@ -345,6 +372,27 @@ class ProjectSalesProfile(Base):
     registered_company_name = Column(Text, nullable=True)
     location = Column(Text, nullable=True)
     address = Column(Text, nullable=True)
+    # Malaysian state (lookup set my_state) and mukim; both free text, optional (D12).
+    state = Column(String(100), nullable=True)
+    mukim = Column(String(255), nullable=True)
+    # The portal registration's legacy-only fields (PROJECT-REG-PORTAL R1), as the sales
+    # agent typed them; all NULL on a staff-registered project.
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    sales_agent_id = Column(
+        UUID(as_uuid=False), ForeignKey("sales_agents.id", ondelete="SET NULL"), nullable=True
+    )
+    distributor_name = Column(String(255), nullable=True)
+    customer_id = Column(
+        UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
+    )
+    customer_name = Column(String(255), nullable=True)
+    your_ref = Column(String(255), nullable=True)
+    type_of_building = Column(String(255), nullable=True)
+    developer_name = Column(String(255), nullable=True)
+    main_contractor_name = Column(String(255), nullable=True)
+    architect_name = Column(String(255), nullable=True)
     architect_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
@@ -1252,6 +1300,108 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("document_id", "issue_no", name="uq_project_quotation_issues_no"),
+        {"schema": "projects"},
+    )
+
+
+AMENDMENT_STATUSES = ("open", "applied", "superseded")
+AMENDMENT_FIELDS = ("quantity", "unit_price", "remove")
+AMENDMENT_DECISIONS = ("pending", "accepted", "rejected")
+
+
+class QuotationAmendmentRequest(Base, CompanyScopedMixin):
+    """The customer's suggested quantities and prices on one issue (QUOTE-CUSTOMER-AMEND).
+
+    One OPEN request per issue, held by a partial unique index rather than by the application
+    check alone, so two submits racing past the check still leave one. The issued lines are
+    never touched by a request: Apply drafts the next revision instead.
+    """
+
+    __tablename__ = "quotation_amendment_requests"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_issues.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # open | applied | superseded (a newer revision was issued while it was open).
+    status = Column(String(16), nullable=False, server_default="open", default="open")
+    requester_name = Column(String(200), nullable=True)
+    note = Column(Text, nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    submitted_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    applied_at = Column(DateTime(timezone=False), nullable=True)
+    applied_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Apply drafted a revision. Only then does an applied request keep the issue from being
+    # signed or asked about again (captain's ruling S4): a note, or all-rejected rows, changes
+    # nothing the customer holds.
+    revised = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_quotation_amendment_requests_open",
+            "issue_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
+        CheckConstraint(
+            "status IN ('open', 'applied', 'superseded')",
+            name="ck_quotation_amendment_requests_status",
+        ),
+        {"schema": "projects"},
+    )
+
+
+class QuotationAmendmentRequestRow(Base, CompanyScopedMixin):
+    """One suggested change: one field of one ISSUED line, decided on its own.
+
+    One row per field rather than per line, so the salesperson can accept the quantity and
+    reject the price of the same line. `value_to` is null for a removal.
+    """
+
+    __tablename__ = "quotation_amendment_request_rows"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    request_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_amendment_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    field = Column(String(16), nullable=False)
+    value_from = Column(Numeric(12, 2), nullable=True)
+    value_to = Column(Numeric(12, 2), nullable=True)
+    decision = Column(String(16), nullable=False, server_default="pending", default="pending")
+    decision_reason = Column(String(500), nullable=True)
+    decided_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    decided_at = Column(DateTime(timezone=False), nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "request_id", "line_id", "field", name="uq_quotation_amendment_rows_line_field"
+        ),
+        CheckConstraint(
+            "field IN ('quantity', 'unit_price', 'remove')",
+            name="ck_quotation_amendment_rows_field",
+        ),
+        CheckConstraint(
+            "decision IN ('pending', 'accepted', 'rejected')",
+            name="ck_quotation_amendment_rows_decision",
+        ),
         {"schema": "projects"},
     )
 

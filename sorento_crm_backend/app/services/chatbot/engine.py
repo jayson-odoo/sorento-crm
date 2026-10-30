@@ -25,12 +25,14 @@ import copy
 import hashlib
 import json
 import logging
+import os
 import re
+import threading
 import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace as dataclasses_replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator, Mapping
 
 from sqlalchemy.exc import IntegrityError
@@ -61,12 +63,17 @@ from app.services.customer_group_service import family_overrides
 from app.services.error_handler import AppException
 from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
-from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, scheme_index
+from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, lookup_lists, scheme_index
+from app.services.chatbot.head import list_resolver, span_extract
 from app.services.chatbot.head import access as access_mod
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
 from app.services.chatbot.lanes import fallback as fallback_mod
+# SALES-TARGET-CHAT slice 2: imported here, not only at its seam, so `OPPORTUNITY_ASK` is registered in
+# `required_fields.ASKS` the moment the engine is (a fresh process's first turn answering the lane's field
+# question must not read as `required_ask_dropped`).
+from app.services.chatbot.lanes import opportunity as opportunity_lane
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane, routing_line as escalation_routing_line
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.analytics import facts as chat_facts
@@ -1180,6 +1187,338 @@ def _candidate_lines(
         if failed_out is not None:
             failed_out.append(True)
     return (indexed or lines), codes, picks
+
+
+def _may_see_salespeople(db: Session, resolved: str) -> bool:
+    """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
+    `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
+    the rule the report route shares). Raises on a lookup error; `_lookup_lines` runs it in a savepoint
+    and a failure means no block."""
+    from app.services import contact_asker, contact_field_reveal_service
+
+    granted = "sales_orders.sales_report" in contact_field_reveal_service.granted_keys(db, resolved)
+    return contact_asker.may_ask_sales_ranking(db, str(resolved), granted=granted)[0] != "not_granted"
+
+
+def _customer_visibility(db: Session, resolved: str) -> tuple[bool, frozenset[str] | None]:
+    """(include, ids) for the Customer block: office staff see every active customer; a dealer (linked
+    customers, no office access type, `ContactCustomerScope.enforced`) only its own links; a contact with
+    neither gets no Customer block. Raises on a lookup error (run in a savepoint by `_lookup_lines`)."""
+    from app.services import contact_customer_scope
+
+    scope = contact_customer_scope.contact_customer_scope(db, str(resolved))
+    if scope.staff:
+        return True, None
+    if scope.enforced:
+        return True, frozenset(scope.customer_ids)
+    return False, None
+
+
+def _guarded(db: Session, fn: Any, default: Any) -> Any:
+    """`fn()` in its own savepoint; `default` (fail closed) when it raises, with the session still usable."""
+    try:
+        with db.begin_nested():
+            return fn()
+    except Exception:  # noqa: BLE001 - fail closed
+        logger.warning("chatbot: lookup list check failed", exc_info=True)
+        return default
+
+
+def _lookup_visibility(
+    db: Session, contact_respond_id: str, space_id: Any
+) -> tuple[bool, bool, frozenset[str] | None]:
+    """(include_salespeople, include_customers, customer_ids) for the contact: the contact is resolved once and each
+    check runs in its own savepoint, so a database error in one drops only that block."""
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    resolved = _guarded(
+        db,
+        lambda: resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
+        ),
+        None,
+    )
+    include_salespeople = bool(resolved) and _guarded(db, lambda: _may_see_salespeople(db, str(resolved)), False)
+    include_customers, customer_ids = (
+        _guarded(db, lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
+    )
+    return include_salespeople, include_customers, customer_ids
+
+
+def _lookup_lines(
+    db: Session, message: str, config: Any, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
+    brands: list[dict[str, Any]] | None = None, held: dict[str, tuple[str, ...]] | None = None,
+) -> tuple[list[str], dict[str, Any]]:
+    """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line and the values the State already holds
+    (`held`, CHAT-V66-REGRESSIONS), plus the trace event
+    (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
+    leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
+    resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
+    database error in one drops only that block (fail closed)."""
+    group = bool(getattr(config, "category_pick", False))
+    try:
+        # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
+        embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
+        pieces_ready = lookup_lists.prefetch(message, embed)
+        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        with db.begin_nested():
+            rows = lookup_lists.load_rows(
+                db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group,
+            )
+            brand_words = lookup_lists.brand_words(db, brands)
+            lookup_lists.warm(rows, embed)
+            usable = lookup_lists.usable_embedder(rows, embed)
+            if usable is not None and not pieces_ready():
+                usable = None  # the round trip did not arrive in time: spelling only, never a second request
+            hits = lookup_lists.shortlist(message, rows, usable, brand_words=brand_words, held=held)
+            # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
+            numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
+            if numbers:
+                hits["spec"] = lookup_lists.with_numbers(numbers, hits.get("spec", []), hits.get("category"))
+        event = {
+            "pieces": lookup_lists.pieces(message),
+            "hits": [
+                {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
+                for name in hits
+                for h in hits[name]
+            ],
+        }
+        return lookup_lists.render(hits, group_categories=group, row_ids=bool(getattr(config, "row_ids", False))), event
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
+        return [], {"pieces": [], "hits": [], "failed": True}
+
+
+@dataclass
+class _SpanPrep:
+    """What the span pass needs from the turn's session, so the span call itself runs with none open."""
+
+    message: str
+    rows: list[lookup_lists.LookupRow]
+    spec_key_rows: list[lookup_lists.LookupRow]
+    brand_words: frozenset[str]
+    numbers: list[lookup_lists.Hit]
+    held: dict[str, tuple[str, ...]]
+    embed: Any
+    config: span_extract.SpanConfig | None
+    # EEM-CATEGORY-PICK: the parser prompt asks for a category pick, so the Category block is grouped by class.
+    group_categories: bool = False
+    # REPORT-UNIFY slice 3: the parser prompt asks for the row id (`parser.ROW_ID_ASK`), so a brand, salesperson or
+    # category line carries it. Off for a bare prep; `_span_prep` takes it from the prompt in use.
+    row_ids: bool = False
+
+
+def _span_prep(
+    db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
+    brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
+    group_categories: bool = False, row_ids: bool = False,
+) -> _SpanPrep | None:
+    """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
+    rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
+    try:
+        embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
+        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        with db.begin_nested():
+            from app.services.product_spec_registry import active_registry
+
+            rows = lookup_lists.load_rows(
+                db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group_categories,
+            )
+            spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
+            brand_words = lookup_lists.brand_words(db, brands)
+            numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
+        config = None
+        try:
+            with db.begin_nested():
+                config = span_extract.resolve_config(db, llm_choice=llm_choice)
+        except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
+            logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
+        lookup_lists.warm([*rows, *spec_keys], embed)
+        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories, row_ids)
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
+        return None
+
+
+def start_lookup_warm(session_factory: Any = None) -> threading.Thread | None:
+    """ENTITY-EXTRACT-MATCH S3: warm the lookup vectors (widest visibility plus the spec names) on a daemon thread at
+    API start-up, so the first turn finds them cached. Process start had a no-meaning window of more than 70 s on
+    Gemini until the first turn's lazy warm filled the cache. Off with `CHATBOT_LOOKUP_WARM_ENABLED` (the test suite
+    turns it off). Advisory: every failure is logged and swallowed. Returns the thread, or None when off."""
+    if os.getenv("CHATBOT_LOOKUP_WARM_ENABLED", "1").strip().lower() in ("0", "false", "off", "no"):
+        return None
+    if session_factory is None:
+        from app.database import SessionLocal as session_factory
+
+    def _run() -> None:
+        db = None
+        try:
+            db = session_factory()
+            set_company_scope(db, None)
+            embed = lookup_lists.embedder(db)
+            if embed is None:
+                return
+            from app.services import product_spec_registry
+
+            rows = lookup_lists.load_rows(
+                db, include_salespeople=True, include_customers=True, customer_ids=None, group_categories=False,
+            )
+            spec_keys = list_resolver.spec_key_rows(product_spec_registry.active_registry(db))
+            db.rollback()
+            db.close()
+            db = None
+            lookup_lists.warm([*rows, *spec_keys], embed)
+        except Exception:  # noqa: BLE001 - advisory, the first turn's lazy warm takes over
+            logger.warning("chatbot: start-up lookup warm failed", exc_info=True)
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    thread = threading.Thread(target=_run, name="lookup-lists-startup-warm", daemon=True)
+    thread.start()
+    return thread
+
+
+def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
+    """Trace only: the rows the resolver offered for one span, best first, the first 8 (`close`
+    carries the full count) so the event stays inside the trace entry cap."""
+    return [
+        {"list": c.row.list_name, "label": c.row.label, "score": round(c.score, 3), "signal": c.signal}
+        for c in res.candidates[:8]
+    ]
+
+
+def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[lookup_lists.Hit]]:
+    """The resolver's matched rows as lookup hits: per list, best first, one hit per row. Spec-name rows have no
+    block (`lookup_lists.render` knows no such list); they are in the resolver so "colour" is not read as a value."""
+    best: dict[str, dict[str, lookup_lists.Hit]] = {}
+    for res in resolutions:
+        for c in res.candidates:
+            seen = best.setdefault(c.row.list_name, {})
+            if c.row.key not in seen or seen[c.row.key].spelling + seen[c.row.key].meaning < c.score:
+                spelled = c.signal != "meaning"
+                seen[c.row.key] = lookup_lists.Hit(c.row, res.span.text, c.score if spelled else 0.0, 0.0 if spelled else c.score)
+    return {name: sorted(h.values(), key=lambda x: (-(x.spelling + x.meaning), x.row.label)) for name, h in best.items()}
+
+
+def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_respond_id: str, dry_run: bool,
+                 turn_id: str | None) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+    """The span call, then the lookup blocks. Runs with no DB session open. Returns (lines, `lookup_lists` event,
+    `span_extract` event). A call that fails or answers unreadably leaves today's n-gram lines (`fallback`)."""
+    config = prep.config
+    answer = span_extract.extract(config, prep.message) if config is not None else None
+    event: dict[str, Any] = {
+        "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
+        "provider": config.provider if config else None, "model": config.model if config else None,
+        "model_source": config.model_source if config else None,
+        "embedding_model": None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
+        "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
+    }
+    if answer is not None and answer.usage and not dry_run:
+        try:
+            with _session(session_factory) as db:
+                record_turn_llm_usage(
+                    db, feature=span_extract.FEATURE, usage=answer.usage, response_time_ms=answer.ms,
+                    contact_respond_id=contact_respond_id, answered=answer.spans is not None, chatbot_turn_id=turn_id,
+                )
+        except Exception:  # noqa: BLE001 - telemetry must never fail a customer's turn
+            logger.warning("chatbot turn %s: span usage log failed", turn_id, exc_info=True)
+    reason = "no_config" if answer is None else answer.failure
+    try:
+        hits: dict[str, list[lookup_lists.Hit]] | None = None
+        if answer is not None and answer.spans is not None:
+            try:
+                all_rows = [*prep.rows, *prep.spec_key_rows]
+                embed = lookup_lists.usable_embedder(all_rows, prep.embed)
+                event["embedding_model"] = getattr(embed, "model", None) if embed is not None else None
+                resolutions = list_resolver.resolve(answer.spans, all_rows, embed=embed)
+                # A merged mention ("zzsean zzsorento") resolves to one row; the words that row did not match are
+                # resolved as their own untyped span, one level only.
+                rest = [
+                    list_resolver.Span(left)
+                    for r in resolutions
+                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code" and r.matched_by == "text"
+                    for left in [list_resolver.unmatched_words(r.span.text, r.candidates[0].row, all_rows)]
+                    if left
+                ]
+                extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
+                hits = _hits_of([*resolutions, *extra])
+                span_keys = {h.row.key for hs in hits.values() for h in hs}
+                near_rows: list[dict[str, Any]] = []
+                # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
+                # only: no embedder is passed, so this makes no network call after the session closed.
+                near_exact = 0
+                for name, spelled in lookup_lists.shortlist(
+                    prep.message, prep.rows, None, brand_words=prep.brand_words
+                ).items():
+                    have = {h.row.key for h in hits.get(name, [])}
+                    added = [h for h in spelled if h.spelling >= lookup_lists.NEAR_EXACT_SPELLING and h.row.key not in have]
+                    near_exact += len(added)
+                    near_rows += [
+                        {"list": name, "label": h.row.label, "spelling": round(h.spelling, 3), "source": "near_exact"}
+                        for h in added
+                    ]
+                    hits[name] = [*hits.get(name, []), *added]
+                event["near_exact_rows"] = near_exact
+                event["near_exact"] = near_rows
+                held_keys: set[str] = set()
+                for name, held_hits in lookup_lists.shortlist("", prep.rows, None, held=prep.held).items():
+                    known = {h.row.key for h in held_hits}
+                    held_keys |= known
+                    hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
+                hits = {name: lookup_lists.cap_hits(name, hs) for name, hs in hits.items()}
+                event["spans"] = [
+                    {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates),
+                     "candidates": _candidates_of(r), "meaning": r.span.meaning, "matched_by": r.matched_by}
+                    for r in resolutions
+                ] + [
+                    {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True,
+                     "candidates": _candidates_of(r), "meaning": None, "matched_by": "text"}
+                    for r in extra
+                ]
+                lookup_event: dict[str, Any] = {"spans": [r.span.text for r in [*resolutions, *extra]]}
+            except Exception:  # noqa: BLE001 - the resolver or the adapter failed: today's n-gram lines take over
+                logger.warning("chatbot: span matching failed; using the n-gram lookup", exc_info=True)
+                hits, reason = None, "resolver_error"
+        if hits is None:
+            event["fallback"], event["fallback_reason"] = True, reason
+            hits = lookup_lists.shortlist(
+                prep.message, prep.rows, lookup_lists.usable_embedder(prep.rows, prep.embed),
+                brand_words=prep.brand_words, held=prep.held,
+            )
+            lookup_event = {"pieces": lookup_lists.pieces(prep.message), "fallback": True}
+        # Spec NUMBERS join the spec block on every path, as in `_lookup_lines`.
+        number_keys = {h.row.key for h in prep.numbers}
+        if prep.numbers:
+            hits["spec"] = lookup_lists.with_numbers(prep.numbers, hits.get("spec", []), hits.get("category"))
+        if not event["fallback"]:
+            # Trace only: where each row of the final block came from, in render order.
+            event["final_block"] = {
+                name: [
+                    {"label": h.row.label, "source": (
+                        "number" if h.row.key in number_keys else "held" if h.row.key in held_keys
+                        else "span" if h.row.key in span_keys else "near_exact")}
+                    for h in hs
+                ]
+                for name, hs in hits.items()
+            }
+        lines = lookup_lists.render(hits, group_categories=prep.group_categories, row_ids=prep.row_ids)
+        event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
+        lookup_event["hits"] = [
+            {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
+            for name in hits
+            for h in hits[name]
+        ]
+        return lines, lookup_event, event
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: span lookup failed; parsing without lookup lists", exc_info=True)
+        event["fallback"], event["fallback_reason"] = True, "resolver_error"
+        return [], {"pieces": [], "hits": [], "failed": True}, event
 
 
 def _scoped_factory(
@@ -2762,6 +3101,311 @@ def _ai_not_allowed_turn(
     )
 
 
+# WA-USERNAME-CONTACTS: asks per contact per rolling window (`PHONE_ASK_CAP`) before the chat goes to staff.
+PHONE_ASK_CAP = 3
+PHONE_WINDOW = timedelta(hours=24)
+
+
+def _phone_gate_applies(
+    envelope: Envelope, *, session_factory: SessionFactory, contact_respond_id: str
+) -> str | None:
+    """WA-USERNAME-CONTACTS: which side of the phone flow this turn is on, or None.
+
+    "card_linked": a contact card from a contact the CRM already knows (ignored, whatever
+    its flag). "unknown": a contact the CRM does not know AND whose envelope carries no
+    phone (a username-only WhatsApp contact). An unknown contact WITH a phone is not this
+    flow: it falls through to the AI-allowed gate unchanged.
+    """
+    from app.models.access import RespondContact
+    from app.services import wa_phone_link
+    from app.services.chat_history_ingest_service import normalise_channel
+
+    # WU20: Share Contact Info is a WhatsApp feature; any other channel is not this flow.
+    channel = envelope.message.get("channel")
+    channel = channel if isinstance(channel, dict) else {}
+    if normalise_channel(channel.get("source") or channel.get("type")) != "whatsapp":
+        return None
+
+    with _session(session_factory) as db:
+        linked = (
+            db.query(RespondContact.id)
+            .filter(RespondContact.respond_io_id == contact_respond_id)
+            .first()
+            is not None
+        )
+    if linked:
+        return "card_linked" if wa_phone_link.is_contact_card(envelope.message) else None
+    contact = envelope.contact
+    if jsc.truthy(contact.get("phone")) or jsc.truthy(contact.get("phoneNumber")):
+        return None
+    return "unknown"
+
+
+def _recent_turn_count(db: Session, *, contact_respond_id: str, branch_kind: str) -> int:
+    return (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.branch_kind == branch_kind,
+            ChatbotTurn.created_at >= _now() - PHONE_WINDOW,
+        )
+        .count()
+    )
+
+
+def _card_accepted_before(db: Session, *, contact_respond_id: str) -> bool:
+    """Has a live turn of this contact ever accepted a contact card (whatever the link did,
+    whatever branch the turn closed on)?"""
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.trace.contains([{"stage": "received", "facts": {"card": "accepted"}}]),
+        )
+        .first()
+        is not None
+    )
+
+
+def _recent_link_failure(db: Session, *, contact_respond_id: str) -> bool:
+    """Did a live turn of this contact hand a failed link to staff in the window?"""
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.branch_kind == "phone_handoff",
+            ChatbotTurn.created_at >= _now() - PHONE_WINDOW,
+            ChatbotTurn.trace.contains([{"stage": "received", "facts": {"link": "failed"}}]),
+        )
+        .first()
+        is not None
+    )
+
+
+def _phone_turn(
+    envelope: Envelope,
+    *,
+    side: str,
+    session_factory: SessionFactory,
+    contact_respond_id: str,
+    turn_id: str | None = None,
+) -> TurnResult:
+    """WA-USERNAME-CONTACTS: close a turn of the phone flow, sending the sender nothing.
+
+    Runs before the AI-allowed gate (an unknown contact would otherwise close silently
+    there). Same shape as `_ai_not_allowed_turn`: deduplicated, one recorded terminal turn,
+    empty reply, no actions. Every Respond.io output (the ask, the verified line, the staff
+    comment) is made by the CRM itself through `wa_phone_link`, because after a merge the
+    turn's own contact id no longer exists and the sender could not reach the survivor. A
+    test turn takes the same decision and makes no Respond.io call. The side effects run
+    only after the dedup read and the row insert, so a repeated delivery never repeats them.
+    """
+    turn_trace = trace_mod.TurnTrace()
+    turn_trace.start()
+    dry_run = envelope.dry_run
+    message_id = _message_id(envelope)
+    with _session(session_factory) as db:
+        existing = (
+            None
+            if turn_id is not None
+            else _existing_turn(
+                db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+            )
+        )
+        retrying = existing if _awaiting_retry(existing) else None
+        if existing is not None and retrying is None:
+            return _duplicate_result(existing)
+        if turn_id is None:
+            try:
+                row = _insert_turn(
+                    db,
+                    envelope=envelope,
+                    contact_respond_id=contact_respond_id,
+                    retrying=retrying,
+                    queued=False,
+                )
+            except IntegrityError:
+                db.rollback()
+                winner = _select_turn(
+                    db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+                )
+                if winner is None or _awaiting_retry(winner):
+                    raise
+                return _duplicate_result(winner)
+            turn_id = str(row.id)
+
+        facts: dict[str, Any] = {"lane": "wa_phone_link", "side": side}
+        try:
+            if side == "card_linked":
+                branch_kind, summary = "phone_ignored", "Contact card from a known contact; sent no reply"
+                why = "The CRM already knows this contact, so a shared contact card needs no answer."
+            else:
+                # IQ-27 / IQ-45: on the inbox drain the turn claims its place BEFORE any Respond.io
+                # call, so a yielded or lost claim never repeats a merge or a send.
+                inbox_queue.checkpoint(turn_id)
+                branch_kind, summary = _phone_unknown_decision(
+                    db, envelope, contact_respond_id=contact_respond_id, dry_run=dry_run, facts=facts, turn_id=turn_id
+                )
+                why = "A WhatsApp username-only contact has no phone, so the CRM cannot tell who it is until it shares one."
+        except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never left `processing`
+            from app.services import wa_phone_link
+
+            # WU18: the message can carry a phone; log and store the scrubbed text, no traceback.
+            message = wa_phone_link.scrub_phone(f"{type(exc).__name__}: {exc}")
+            logger.error("chatbot turn %s failed in the phone flow: %s", turn_id, message)
+            db.rollback()
+            turn_trace.record(
+                "received",
+                status="failed",
+                summary="The turn stopped before it could be answered.",
+                why="Something the turn depends on did not respond as expected.",
+                facts={"stage": "received"},
+                error=message,
+                raw=None,
+            )
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="received",
+                branch_kind=None,
+                error=message,
+                records=turn_trace.persisted(),
+            )
+            # Nothing is sent: a phone-flow failure must not answer a contact the CRM cannot yet identify.
+            failed = _failed_result(turn_id, "received", message, [], dry_run, reply_text="")
+            failed.actions = []
+            return failed
+        turn_trace.record(
+            "received",
+            status="skipped",
+            summary=summary,
+            why=why,
+            facts=facts,
+            raw=None,
+        )
+        _close_turn(
+            db,
+            turn_id,
+            status="done",
+            stage="received",
+            branch_kind=branch_kind,
+            error=None,
+            records=turn_trace.persisted(),
+            response={"actions": [], "reply": {"text": "", "quick_replies": None}},
+        )
+    return TurnResult(
+        turn_id=turn_id,
+        is_test=dry_run,
+        branch_kind=branch_kind,
+        delegate=None,
+        reply={"text": "", "quick_replies": None},
+        actions=[],
+        status="done",
+        stage="received",
+    )
+
+
+def _phone_unknown_decision(
+    db: Session,
+    envelope: Envelope,
+    *,
+    contact_respond_id: str,
+    dry_run: bool,
+    facts: dict[str, Any],
+    turn_id: str | None = None,
+) -> tuple[str, str]:
+    """The branch and trace summary for an unknown phoneless contact; makes the Respond.io calls."""
+    from app.services import wa_phone_link
+
+    def comment(client: Any, identifier: str, reason: str, phone: str | None = None) -> None:
+        text = f"WhatsApp phone link: {reason}."
+        if phone:
+            text += f" Phone shared: +{phone}."
+        try:
+            client.create_comment(identifier, text)
+        except Exception:  # noqa: BLE001 - a failed staff comment must not fail the turn
+            logger.warning("chatbot: phone-link staff comment failed", exc_info=True)
+
+    handoffs = _recent_turn_count(db, contact_respond_id=contact_respond_id, branch_kind="phone_handoff")
+    # Only a card that arrived through the CRM's own HMAC-signed webhook counts as proof (WU22):
+    # every other ingress can carry a body its caller wrote.
+    is_card = wa_phone_link.is_contact_card(envelope.message)
+    if not is_card:
+        refusal: str | None = "not_a_card"
+    elif envelope.ingress != DIRECT_INGRESS:
+        refusal = "not_signed"
+    else:
+        refusal = wa_phone_link.card_refusal(envelope.message)
+    phone = wa_phone_link.accepted_card_phone(envelope.message) if refusal is None else None
+    if phone:
+        facts["card"] = "accepted"
+        if dry_run:
+            return "phone_linked", "Accepted contact card; a test turn links nothing"
+        client = wa_phone_link.respond_client(db)
+        outcome = wa_phone_link.link_phone(db, client, contact_respond_id=contact_respond_id, phone=phone)
+        facts["link"] = outcome.status
+        if outcome.status == "failed":
+            facts["reason"] = outcome.reason
+            # WU21: one link-failure comment per 24 h. An earlier hand-off for another reason (the
+            # ask cap) told staff nothing about this phone, so it does not count.
+            if _recent_link_failure(db, contact_respond_id=contact_respond_id):
+                return "phone_ignored", "Phone link failed; staff already told in the last 24 hours"
+            # After a merge the turn's own id may no longer exist: the survivor gets the comment (WU26).
+            comment(
+                client,
+                outcome.survivor_respond_id or contact_respond_id,
+                f"could not link the shared phone ({outcome.reason})",
+                phone,
+            )
+            return "phone_handoff", "Phone link failed; handed to staff"
+        survivor = outcome.survivor_respond_id or contact_respond_id
+        if outcome.chatbot_allowed:
+            wa_phone_link.send_verified(db, client, identifier=survivor, turn_id=turn_id)
+        else:
+            # WA-PHONE-SHARE-LOOP: told once, on this turn; the contact now has a CRM row, so every
+            # later message closes silently at the AI-allowed gate.
+            wa_phone_link.send_verified(
+                db, client, identifier=survivor, turn_id=turn_id, line=wa_phone_link.NO_ACCESS_LINE
+            )
+            comment(client, survivor, "phone verified, AI off for this contact")
+        return "phone_linked", "Phone linked to the contact that holds its access"
+
+    facts["card"] = "none" if not is_card else "not_accepted"
+    if is_card:
+        facts["card_refusal"] = refusal
+    if handoffs:
+        return "phone_ignored", "Already handed to staff in the last 24 hours; sent nothing"
+    if _card_accepted_before(db, contact_respond_id=contact_respond_id):
+        # WA-PHONE-SHARE-LOOP: the contact already answered with a tap whose link failed and staff
+        # were told; asking again would loop. Only another tap retries the link (WU21).
+        return "phone_ignored", "Contact card already accepted and handed to staff; sent nothing"
+    asks = _recent_turn_count(db, contact_respond_id=contact_respond_id, branch_kind="phone_ask")
+    facts["asks_in_window"] = asks
+    if dry_run:
+        return ("phone_ask", "Asked for a phone number") if asks < PHONE_ASK_CAP else (
+            "phone_handoff",
+            "Ask cap reached; handed to staff",
+        )
+    client = wa_phone_link.respond_client(db)
+    if asks >= PHONE_ASK_CAP:
+        comment(client, contact_respond_id, f"asked for a phone number {PHONE_ASK_CAP} times in 24 hours with no answer")
+        return "phone_handoff", "Ask cap reached; handed to staff"
+    try:
+        sent = wa_phone_link.send_ask(db, contact_respond_id=contact_respond_id, turn_id=turn_id)
+        reason = "no template is mapped for the phone-share ask"
+    except Exception as e:  # noqa: BLE001 - a failed ask is a hand-off, not a failed turn
+        logger.warning("chatbot: phone-share ask failed", exc_info=True)
+        sent, reason = False, f"the phone-share ask could not be sent ({type(e).__name__})"
+    if sent:
+        return "phone_ask", "Asked for a phone number"
+    comment(client, contact_respond_id, reason)
+    return "phone_handoff", "Ask not sent; handed to staff"
+
+
 @_refer_tracked
 def _run_turn(
     envelope: Envelope,
@@ -2806,6 +3450,20 @@ def _run_turn(
     # database error inside `_ai_allowed` propagates (fails closed, the route answers 500 and
     # the integration log records it); no turn row exists for that call, accepted because
     # "could not tell" must never answer the customer.
+    # WA-USERNAME-CONTACTS: a username-only WhatsApp contact (no phone) or a contact card from a
+    # known contact. Before `_ai_allowed`, which would close an unknown contact silently.
+    phone_side = _phone_gate_applies(
+        envelope, session_factory=session_factory, contact_respond_id=contact_respond_id
+    )
+    if phone_side is not None:
+        return _phone_turn(
+            envelope,
+            side=phone_side,
+            session_factory=session_factory,
+            contact_respond_id=contact_respond_id,
+            turn_id=queued_turn_id,
+        )
+
     if not _ai_allowed(session_factory, contact_respond_id):
         return _ai_not_allowed_turn(
             envelope,
@@ -3855,6 +4513,7 @@ def _close_the_episode(
 def _reset_turn(
     envelope: Envelope,
     *,
+    parsed_language: Any = language_mod.NOT_PARSED,
     verdict: dict[str, Any],
     parser_raw: Any,
     state_in: Any,
@@ -3905,7 +4564,7 @@ def _reset_turn(
         )
         from app.services.chatbot import copy as copy_mod
 
-        reply_language = _turn_language(user_turn, remembered_before, profile)
+        reply_language = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
         ack = copy_mod.resolve(db).render_in("reset_ack", reply_language)
         # Round 8: a reset closes the topic it ended, exactly as the routed reset did. A cancel or
         # a new subject naming nothing is a topic reset too (the chat_state mirror rule).
@@ -4430,6 +5089,8 @@ def _run_stages_body(  # noqa: PLR0915
             "media_intake",
             status="failed" if outcome.stops_here else "ok",
             summary=(
+                "Could not read the photo; answered its caption instead."
+            ) if outcome.caption_fallback else (
                 "Read the photo." if modality == "image" else "Heard the voice note."
             ) if not outcome.stops_here else (
                 "Could not read the photo." if modality == "image" else "Could not hear the voice note."
@@ -4532,17 +5193,33 @@ def _run_stages_body(  # noqa: PLR0915
         # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
         # candidate lines name the product types and spec values the words say; the index
         # lines the held products' own values), so index mode reads neither.
-        product_types = None if parser_config.closed_lists_index else turn_runtime.product_type_names(db)
-        product_details = None if parser_config.closed_lists_index else turn_runtime.product_detail_values(db)
+        # CHAT-SLIM-INDEX: a version with the LOOKUP LISTS line gets the blocks instead of the five lists.
+        lists_free = parser_config.closed_lists_index or parser_config.lookup_lists
+        product_types = None if lists_free else turn_runtime.product_type_names(db)
+        product_details = None if lists_free else turn_runtime.product_detail_values(db)
         # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
         # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
         # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
         # applied at the parser's two entries (the block it is shown, the spec entities it emits).
         hidden_spec = (
             frozenset(access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db)))
-            if parser_config.closed_lists
+            if parser_config.closed_lists or parser_config.lookup_lists
             else frozenset()
         )
+        lookup_lines, lookup_event, span_prep, span_event = None, None, None, None
+        if parser_config.lookup_spans:
+            # ENTITY-EXTRACT-MATCH S2: the rows are read here; the span call runs once this session is closed.
+            span_prep = _span_prep(
+                db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
+                lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
+                group_categories=parser_config.category_pick, row_ids=parser_config.row_ids,
+            )
+            lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
+        elif parser_config.lookup_lists:
+            lookup_lines, lookup_event = _lookup_lines(
+                db, user_turn.own_text, parser_config, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
+                lookup_lists.held_values(chat_state._subject(state_in.focus)),
+            )
         index_matches: list[dict] = []
         index_failed: list[bool] = []
         candidate_lines, listed_codes, pick_info = (
@@ -4558,6 +5235,12 @@ def _run_stages_body(  # noqa: PLR0915
             )
             if parser_config.closed_lists
             else (None, frozenset(), {})
+        )
+
+    if span_prep is not None:
+        lookup_lines, lookup_event, span_event = _span_lookup(
+            span_prep, session_factory=session_factory, contact_respond_id=str(contact_respond_id), dry_run=dry_run,
+            turn_id=turn_id,
         )
 
     # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
@@ -4601,15 +5284,18 @@ def _run_stages_body(  # noqa: PLR0915
         media_line=None,
         task_lines=parser.open_task_lines(state_in.focus, open_question),
         open_question_line=parser.open_question_line(open_question),
-        brands=brands,
-        promotion_kinds=promotion_kinds,
+        brands=None if parser_config.lookup_lists else brands,
+        promotion_kinds=None if parser_config.lookup_lists else promotion_kinds,
         # REPORT-SMART-L R9: printed only when the prompt names the line (`ParserConfig.sales_channels`; owner ruling
         # 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule that names it).
-        sales_channels=list(SALES_CHANNELS) if parser_config.sales_channels else None,
+        sales_channels=(
+            list(SALES_CHANNELS) if parser_config.sales_channels and not parser_config.lookup_lists else None
+        ),
         product_types=product_types,
         product_details=product_details,
         recent_exchanges=recent,
         candidate_lines=candidate_lines,
+        lookup_lines=lookup_lines,
         state_block=state_block,
     )
     user_block, context_report = context_mod.assemble(context_layers)
@@ -4782,6 +5468,10 @@ def _run_stages_body(  # noqa: PLR0915
         raw={"parser_raw": parser_raw, "derived": verdict},
     )
     turn_trace.add("prompt_text", {"text": user_block})
+    if lookup_event is not None:
+        turn_trace.add("lookup_lists", lookup_event)
+    if span_event is not None:
+        turn_trace.add("span_extract", span_event)
     if parser_config.closed_lists_index:
         turn_trace.add(
             "closed_lists_index",
@@ -4811,10 +5501,15 @@ def _run_stages_body(  # noqa: PLR0915
     # stage (AC-105/R5/H44's own "no routing" shape).
     turn_trace.add("context", context_report)
 
+    # EEM-CATEGORY-PICK: the parser's own reading of the message language, only for a prompt that asks for it.
+    parsed_language = (
+        verdict.get("message_language") if parser_config.message_language and not parser_bypassed else language_mod.NOT_PARSED
+    )
     # Release gate #1829, round 7: the ONE reset seam, before the state applier, apply, routing
     # and every lane (`_reset_turn`).
     reset_result = _reset_turn(
         envelope,
+        parsed_language=parsed_language,
         verdict=verdict,
         parser_raw=parser_raw,
         state_in=state_in,
@@ -5038,8 +5733,12 @@ def _run_stages_body(  # noqa: PLR0915
     # so grounding never splits one ("ZZT SINK" into the class SINK plus a spec word).
     from app.services.chatbot.lanes.business import report_ask as _report_ask
 
+    # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
+    verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
     # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
-    verdict = _report_ask.by_capability(verdict)
+    verdict = _report_ask.by_capability(
+        verdict, answering=_report_ask.offers_outstanding_basis(state_in.focus.required_ask)
+    )
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
         verdict, grounding_notes = grounding.ground(
@@ -5047,6 +5746,7 @@ def _run_stages_body(  # noqa: PLR0915
             verdict,
             message=user_turn.own_text,
             closed_lists=parser_config.closed_lists,
+            lookup_lists=parser_config.lookup_lists,
             closed_lists_index=parser_config.closed_lists_index,
             listed_codes=listed_codes if parser_config.code_lookup else None,
             pick_info=pick_info if parser_config.code_lookup else None,
@@ -5128,7 +5828,10 @@ def _run_stages_body(  # noqa: PLR0915
         # they leave the verdict here with their mark (no later step, store or session sees either).
         verdict = chat_state.without_kept_aside(verdict)
     if _ranking_words:
-        verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
+        # The words held out of grounding skipped the hidden-key strip above: run it over them before they go back, so
+        # a spec the contact may not see never rides the report ask (security review S2).
+        _held_back = _strip_hidden_spec_entities({"entities": _ranking_words}, hidden_spec)["entities"]
+        verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_held_back]}
     if grounding_notes:
         turn_trace.add("grounding", {"changes": grounding_notes})
     # Fix round 12 on PR #833 (owner ruling 28 Sep 2026): once grounding has read the ask
@@ -5204,8 +5907,59 @@ def _run_stages_body(  # noqa: PLR0915
         open_ask = state_in.focus.required_ask
         state_in.focus.required_ask = None
         asked_before, replaced_ask = open_ask, None
+        # SALES-TARGET-CHAT slice 2: a salesperson logging an opportunity. The parser's
+        # `log_opportunity` status, a declared answer to the lane's own field question, or a
+        # yes / no to its read-back is the lane's turn, answered whole before any other seam
+        # reads the verdict (`lanes/opportunity.py`). Any other ask drops an open read-back.
+        # Reachable only when the active parser prompt carries the LOG OPPORTUNITY line
+        # (`ParserConfig.opportunity`): a prompt without it (production v63) never offers the lane.
+        if (
+            access.get("allowed") is True
+            and parser_config.opportunity
+            and opportunity_lane.takes_turn(verdict, open_ask, state_in.pending)
+        ):
+            return _run_opportunity_arm(
+                db,
+                parsed_language=parsed_language,
+                turn_id=turn_id,
+                envelope=envelope,
+                verdict=verdict,
+                parser_verdict=parser_verdict,
+                open_ask=open_ask,
+                state=state_in,
+                access=access,
+                actions=actions,
+                dry_run=dry_run,
+                session_factory=session_factory,
+                turn_trace=turn_trace,
+                stage=stage,
+                contact_respond_id=contact_respond_id,
+                session_block=session_block,
+                known_phone=known_phone,
+                remembered_before=remembered_before,
+                recalled=recalled,
+                user_turn=user_turn,
+                profile=profile,
+            )
+        if opportunity_lane.own_pending(state_in.pending) is not None:
+            state_in = dataclasses_replace(state_in, pending=None)
         parser_ops = (remembered_before.get("_chat_state") or {}).get("changes")
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and report_ask.names_its_own_ask(
+        _company_pick = False
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "company":
+            # The company question's pick from the parser's own output (`sales_company`, `reference_positions`) is the
+            # answer, whatever stray axis the reply also carried: only when the reply types no axis of its own
+            # (`by_words` null or absent, so its `group_by` is a guess) and no count, direction or ranked measure.
+            _candidate = sales_company_ask.as_answer(verdict, open_ask)
+            _typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
+                verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
+            )
+            _declared = _candidate.get("open_question_answer")
+            if not _typed and (_candidate is not verdict or (isinstance(_declared, dict) and _declared.get("mode") == "pick")):
+                # An untyped `group_by` on the answering turn is a guess (R6): the held ask's axis stands.
+                verdict, _company_pick = {**_candidate, "group_by": None}, _candidate is not verdict
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
+            verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and report_ask.names_its_own_ask(
             verdict, open_ask, parser_ops=parser_ops
         ):
             replaced_ask, open_ask = open_ask, None  # a new sales ranking ask, not the answer to the open question
@@ -5609,6 +6363,7 @@ def _run_stages_body(  # noqa: PLR0915
         # run_fetch`'s own `_SALES_REPORT_GRANT` check stays as the second line of
         # defence, for a re-entry path that calls it directly.
         from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
+        from app.services.chatbot.lanes.business import report_ask as _report_ask_lane
 
         from app.services.chatbot.contracts import SALES_FIGURE_STATUSES
 
@@ -5616,7 +6371,7 @@ def _run_stages_body(  # noqa: PLR0915
         # the same money under the same key, refused at the same seam.
         sales_report_grant_refused = (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
-            and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
+            and _report_ask_lane.grant_key(parsed_output) not in set(access.get("attributes") or [])
         )
         if sales_report_grant_refused:
             # REPORT-SMART-L: the sales ranking has ONE 'may ask' rule, shared with the route
@@ -5628,7 +6383,7 @@ def _run_stages_body(  # noqa: PLR0915
                 order_status=jsc.js_string(parsed_output.get("order_status") or "").strip(),
                 parse_output=parsed_output,
             )
-            sales_report_grant_refused = _decision != "salesperson_book"
+            sales_report_grant_refused = _decision not in ("salesperson_book", "pending_delivery_open")
             if not sales_report_grant_refused:
                 turn_trace.add(
                     "domain_grant",
@@ -5662,7 +6417,12 @@ def _run_stages_body(  # noqa: PLR0915
             and _CHAT_REPORT_GRANT in _granted
         ) or (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
-            and _SALES_REPORT_GRANT in _granted
+            and _report_ask_lane.grant_key(parsed_output) in _granted
+        ) or (
+            # SALES-TARGET-CHAT: the target ask is exempt under its own grant; whose customer
+            # it may name is the route's call (403 customer_not_permitted).
+            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_target"
+            and "sales.sales_target" in _granted
         )
         # The grant opens the report's customers, never their delivery orders: the picker's DO
         # probe stays off for any unlinked contact that is not document staff.
@@ -6258,7 +7018,7 @@ def _run_stages_body(  # noqa: PLR0915
         # CHAT-LANGUAGE: this turn's reply language, from the message's own words first. Pure,
         # so every arm has it (`run_tail` carries `item["reply_language"]` to the next turn);
         # the business lane below recomputes it once its codes and names are known.
-        item["reply_language"] = _turn_language(user_turn, remembered_before, profile)
+        item["reply_language"] = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
 
         # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
         # replay.py::TestHandPass10PromotionAskRepeatsAfterATierPick`): a fresh
@@ -6378,7 +7138,7 @@ def _run_stages_body(  # noqa: PLR0915
                 # heard: X" followed by "I have X."). `None` on a patched-upstream
                 # turn (no outcome ran here at all - S3), which still needs this arm's
                 # own lead.
-                media_prefixed=bool(media_box.get("outcome")),
+                media_prefixed=bool(media_box.get("outcome")) and not media_box["outcome"].caption_fallback,
                 # AC-23: a contact refused the agent gets no fit line on the arm's reply.
                 refused=branch_kind == "access_denied",
             )
@@ -6486,6 +7246,7 @@ def _run_stages_body(  # noqa: PLR0915
                     user_turn,
                     remembered_before,
                     state_out.profile,
+                    parsed=parsed_language,
                     strip=[
                         str(e[k])
                         for e in verdict.get("entities") or []
@@ -6544,6 +7305,7 @@ def _run_stages_body(  # noqa: PLR0915
                 user_turn,
                 remembered_before,
                 state_out.profile,
+                parsed=parsed_language,
                 strip=[
                     str(e[k])
                     for e in verdict.get("entities") or []
@@ -6888,6 +7650,7 @@ def _run_stages_body(  # noqa: PLR0915
                 user_turn,
                 remembered_before,
                 state_out.profile,
+                parsed=parsed_language,
                 strip=[
                     str(e[k])
                     for e in compatible_entities
@@ -7671,10 +8434,10 @@ def _run_stages_body(  # noqa: PLR0915
         # nothing else composed it, exactly the shape `stock_denied` handles the
         # same way just above.
         if answer is None and sales_report_grant_refused and completes_here:
-            from app.services.chatbot.lanes.business import SALES_REPORT_NOT_ENABLED_MESSAGE
+            from app.services.chatbot.lanes.business import report_ask as _refusal_lane
 
             stage[0] = "replied"
-            answer = turn_compose.Answer(text=SALES_REPORT_NOT_ENABLED_MESSAGE)
+            answer = turn_compose.Answer(text=_refusal_lane.not_enabled_line(parsed_output))
 
         # -- the REFUSAL: a customer word outside a scoped contact's links -------- #
         # Once for the whole turn, however many domains the plan fans out to; no picker,
@@ -7974,6 +8737,7 @@ def _run_stages_body(  # noqa: PLR0915
             fallback=fallback_ctx,
             chat_console=_chat_console(envelope),
             user_turn=user_turn,
+            parsed_language=parsed_language,
         )
 
     return TurnResult(
@@ -8427,7 +9191,7 @@ def _run_answer(
             written=written,
             facts_saved=facts_saved,
         )
-        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
+        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run, reply=reply)]
         turn_trace.record(
             "sent",
             summary="Handed the reply to the caller to send.",
@@ -8561,6 +9325,94 @@ def _dropped_reason(db: Session, key: str, value: Any) -> str:
     if profile_facts_mod._normalize_for_stated(key, spec, value, db) is None:
         return "invalid value"
     return "outranked"
+
+
+def _run_opportunity_arm(
+    db: Session,
+    *,
+    parsed_language: Any = language_mod.NOT_PARSED,
+    turn_id: str,
+    envelope: Envelope,
+    verdict: dict[str, Any],
+    parser_verdict: dict[str, Any],
+    open_ask: Any,
+    state: Any,
+    access: dict[str, Any],
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+    contact_respond_id: str,
+    session_block: Any,
+    known_phone: str | None,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    user_turn: Any,
+    profile: Any,
+) -> TurnResult:
+    """SALES-TARGET-CHAT slice 2: the `log_opportunity` arm. The lane answers the whole turn
+    (`lanes/opportunity.run`: who may log, the field asked, the read-back or the save); this
+    routes it, carries its open field question (`focus.required_ask`) and its read-back
+    (`pending`) to the next message, and hands the reply to the ONE answer tail. A dry run
+    calls the lane too: the write goes with `dry_run`, so nothing is saved (LESSONS-LEARNT 101)."""
+    branch_kind = opportunity_lane.BRANCH_KIND
+    space_id = default_space_id(db)
+    salesperson = opportunity_lane.is_salesperson(db, contact_respond_id, space_id)
+    item = _stamp_item(access, branch_kind, {})
+    item["reply_language"] = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
+    turn_trace.record(
+        "routed",
+        summary=f"Routed to {trace_mod.lane_words(branch_kind, verdict.get('domain_hint'))}.",
+        why="The parser read the message as logging a sales opportunity, or as the answer to its question.",
+        facts={"lane": branch_kind, "salesperson": salesperson, "domains": ["sales"]},
+        raw={"item": item},
+    )
+    stage[0] = "looked_up"
+    lane = opportunity_lane.run(
+        verdict,
+        open_ask=open_ask,
+        pending=state.pending,
+        salesperson=salesperson,
+        contact_respond_id=contact_respond_id,
+        space_id=space_id,
+        dry_run=dry_run,
+        turn_no=state.turn_no,
+    )
+    turn_trace.add("opportunity", {"called": list(lane.called), "asking": (lane.slot or {}).get("asking"),
+                                   "read_back": lane.pending is not None, "dry_run": dry_run})
+    state_out = dataclasses_replace(state, pending=lane.pending)
+    state_out.focus.required_ask = lane.slot
+    ctx = build_ctx(
+        contact=_contact_block(envelope, known_phone),
+        text=_tf_message(envelope),
+        session=session_block,
+        parse={"output": verdict, "_parser_raw": parser_verdict},
+        access=access,
+        media=getattr(envelope, "media", None),
+    )[0]["json"]["ctx"]
+    # The routing session read only; it is done before the answer tail writes, as on the main
+    # path (whose tail runs after that session's block has closed it).
+    db.close()
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind=branch_kind,
+        actions=actions,
+        answer=turn_compose.Answer(text=lane.text),
+        state=state_out,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+        chat_console=_chat_console(envelope),
+        refused=not salesperson,
+    )
 
 
 def _run_entities_only_arm(
@@ -8750,8 +9602,9 @@ def _run_entities_only_arm(
     )
 
 
-def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
-    """What the caller executes: the message, then any files, in that order."""
+def _answer_actions(answer: Any, *, dry_run: bool, reply: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the caller executes: the message, then any files, in that order. The files
+    action carries the persisted `reply`, as the tail's and the formatter's do."""
     built: list[dict[str, Any]] = []
     words = getattr(answer, "text", "") or ""
     if words.strip():
@@ -8764,7 +9617,12 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
         )
     if answer.files:
         built.append(
-            {"kind": "send_attachments", "attachments_src": answer.files, "dry_run": dry_run}
+            {
+                "kind": "send_attachments",
+                "attachments_src": answer.files,
+                "reply": dict(reply),
+                "dry_run": dry_run,
+            }
         )
     return built
 
@@ -8827,9 +9685,11 @@ def _apply_media_reply_prefix(result: TurnResult, outcome: Any) -> None:
         return
     prefix = media_intake.reply_prefix(outcome)
     notices = media_intake.notice_texts(outcome)
+    if not prefix and not notices:
+        return
     reply = result.reply or {}
     body = reply.get("text") or ""
-    lines = [prefix, *([body] if body else []), *notices]
+    lines = [*([prefix] if prefix else []), *([body] if body else []), *notices]
     full_text = "\n".join(lines)
     result.reply = {**reply, "text": full_text}
     for action in result.actions or []:
@@ -8891,7 +9751,8 @@ def _media_source_modality(media_box: dict[str, Any]) -> str | None:
     the same either way."""
     outcome = media_box.get("outcome")
     if outcome is not None:
-        return outcome.modality
+        # A caption fallback answers the caption as typed text, not "that photo".
+        return None if outcome.caption_fallback else outcome.modality
     return media_box.get("patched_modality")
 
 
@@ -8939,6 +9800,8 @@ def _media_intake_facts(outcome: media_intake.MediaIntakeOutcome) -> dict[str, A
         facts["attachment_error"] = outcome.attachment_error
     if outcome.extraction_error:
         facts["extraction_error"] = outcome.extraction_error
+    if outcome.caption_fallback:
+        facts["caption_fallback"] = True
     return facts
 
 
@@ -8968,56 +9831,9 @@ def _demand_qty_missing(verdict: dict[str, Any]) -> bool:
 
 
 def _readable_customers(db: Any, rows: Any, contact_respond_id: Any, has_company_scope: bool) -> list[Any]:
-    """CHAT-STATE S7: the carried customer rows this contact can still read, at turn start.
-    One read through the contact's scope-stamped session (company scope applies), narrowed to
-    the current customer links for an enforced contact. A row whose keys are all unreadable is
-    dropped; a row with no code and no key is dropped; token-only rows travel to the resolver."""
-    keys_of = lambda r: [  # noqa: E731
-        str(k) for k in ([r.get("uuid")] if r.get("uuid") else []) + list(r.get("uuids") or []) if k
-    ]
-    from app.services.identifier_resolver import is_uuid
-
-    every_key = {k for r in rows or [] if isinstance(r, dict) for k in keys_of(r)}
-    wanted = {k for k in every_key if is_uuid(k)}
-    # A key that is not a UUID can name nothing readable.
-    unreadable: set[str] = every_key - wanted
-    if wanted:
-        try:
-            from app.models.base import company_scope
-            from app.models.order import Customer
-
-            # A key nothing holds names no data and is left to the resolver; a key a customer
-            # holds but this contact's scope cannot read is dropped.
-            with company_scope(db, None):
-                existing = {str(i) for (i,) in db.query(Customer.id).filter(Customer.id.in_(wanted)).all()}
-            readable = (
-                {str(i) for (i,) in db.query(Customer.id).filter(Customer.id.in_(wanted)).all()}
-                if has_company_scope
-                else set()
-            )
-            scope = business_services.customer_scope(db, contact_respond_id, business_services.fetch_space_id(db))
-            if scope and scope.get("enforced"):
-                readable &= {str(i) for i in scope["ids"]}
-            # With no company scope at all nothing is readable, whether or not the key exists.
-            unreadable |= (existing - readable) if has_company_scope else set(wanted)
-        except Exception:  # noqa: BLE001 - fail closed: no keyed row is trusted when the read fails
-            logger.warning("chatbot: the carried-customer read failed; keyed customer rows dropped", exc_info=False)
-            unreadable = set(every_key)
-    kept: list[Any] = []
-    for row in rows or []:
-        if not isinstance(row, dict):
-            continue
-        keys = keys_of(row)
-        if keys:
-            live = [k for k in keys if k not in unreadable]
-            if not live:
-                continue
-            if len(live) != len(keys):
-                row = {**row, "uuid": live[0], **({"uuids": live} if row.get("uuids") else {})}
-        elif not (row.get("canonical_code") or row.get("raw") or row.get("name")):
-            continue
-        kept.append(row)
-    return kept
+    """CHAT-STATE S7: see `business_services.readable_customers`, the one rule the agent's
+    `crm_resolve` shares."""
+    return business_services.readable_customers(db, rows, contact_respond_id, has_company_scope)
 
 
 def _customer_docs_hidden(doc_scope: Any, doc_staff: bool, profile: Any) -> bool:
@@ -9263,6 +10079,7 @@ def _run_casual_lane(
     fallback: Any = None,
     chat_console: bool = False,
     user_turn: Any,
+    parsed_language: Any = language_mod.NOT_PARSED,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -9321,7 +10138,7 @@ def _run_casual_lane(
             answer_shape = said.shape
             text = said.text
             if fallback is not None and (said.shape == "ack" or fallback.kind == "history"):
-                reply_language = _fallback_language(user_turn, fallback, remembered_before, said.language)
+                reply_language = _fallback_language(user_turn, fallback, remembered_before, said.language, parsed_language)
                 ack = said.text.strip()
                 # AC-MEM081: an ack stating a figure, code, price or date its own
                 # input never had is replaced by the canned one for the language.
@@ -9362,7 +10179,7 @@ def _run_casual_lane(
             logger.warning("chatbot turn %s: clarifier usage log failed", turn_id, exc_info=True)
     if failed is not None and fallback is not None and fallback.kind == "history" and fallback.copy is not None:
         # The history list needs no model: behind the canned ack it still answers.
-        reply_language = _fallback_language(user_turn, fallback, remembered_before, None)
+        reply_language = _fallback_language(user_turn, fallback, remembered_before, None, parsed_language)
         text = fallback_mod.compose(
             fallback.copy.render_in("fallback_ack", reply_language), fallback, fallback.copy, reply_language
         )
@@ -10312,12 +11129,17 @@ def _ask_localizer(ask: Any, db: Session, item: Mapping[str, Any], *, dry_run: b
 
 
 def _fallback_language(
-    user_turn: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None
+    user_turn: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None,
+    parsed: Any = language_mod.NOT_PARSED,
 ) -> str:
-    """The fallback reply's language: one the contact STATED this turn, then the message's own
-    words (`UserTurn.typed_line`, what they typed), the clarifier's reading, the conversation's
-    last language, the saved fact."""
+    """The fallback reply's language: one the contact STATED this turn, then (a parsed turn) the parser's own
+    reading of the message and the saved fact, else the message's own words (`UserTurn.typed_line`, what they
+    typed), the clarifier's reading, the conversation's last language, the saved fact."""
     stated = next((s.get("value") for s in fallback.noted if s.get("key") == "language"), None)
+    if parsed is not language_mod.NOT_PARSED:
+        return fallback_mod.pick_language(
+            stated, parsed, fallback.saved_language, (remembered_before or {}).get("reply_language"),
+        )
     return fallback_mod.pick_language(
         stated,
         language_mod.detect(user_turn.typed_line),
@@ -10333,12 +11155,13 @@ def _turn_language(
     profile: Any,
     *,
     strip: Any = (),
+    parsed: Any = language_mod.NOT_PARSED,
 ) -> str:
     """`language.for_turn` on the customer's own line (`UserTurn.own_text`: the quoted
     `reply to:` line is not their words), against a copy so `remembered_before` stays the
     state the turn started with."""
     carried = {"reply_language": remembered_before.get("reply_language")}
-    return language_mod.for_turn(user_turn.own_text, carried, getattr(profile, "language", None), strip=strip)
+    return language_mod.for_turn(user_turn.own_text, carried, getattr(profile, "language", None), strip=strip, parsed=parsed)
 
 
 def _ctx_message_text(ctx: Any) -> str:

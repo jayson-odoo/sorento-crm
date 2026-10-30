@@ -11,7 +11,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Link2, PenLine, SquarePen, Trash2 } from 'lucide-react';
+import { Download, Link2, MessageCircle, PenLine, SquarePen, Trash2 } from 'lucide-react';
 import type { RecordAction } from '@/components/common/recordActions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
@@ -26,6 +26,7 @@ import {
 } from '../../_shared/services/quotationDocumentService';
 import { QuotationSignDialog } from './[documentId]/components/QuotationSignDialog';
 import { QuotationSignLinkDialog } from './[documentId]/components/QuotationSignLinkDialog';
+import { QuotationWhatsAppDialog } from './[documentId]/components/QuotationWhatsAppDialog';
 
 export interface QuotationDocumentActionSet {
   actions: RecordAction[];
@@ -34,6 +35,8 @@ export interface QuotationDocumentActionSet {
   /** The delete countdown, for the record page's primary slot. Null on a list row. */
   pending: React.ReactNode;
   openSign: () => void;
+  /** Opens the WhatsApp prompt for a revision that was just sent. */
+  openWhatsApp: (issue: QuotationIssue) => void;
   isSigned: boolean;
 }
 
@@ -63,6 +66,7 @@ export function useQuotationDocumentActions({
   const mutations = useQuotationDocumentMutations(projectId, documentId);
   const [signing, setSigning] = React.useState(false);
   const [linkToShow, setLinkToShow] = React.useState<string | null>(null);
+  const [whatsAppIssue, setWhatsAppIssue] = React.useState<QuotationIssue | null>(null);
 
   const documentPath = `/project-sales/${projectId}/quotation-documents/${documentId}`;
   const isSigned = Boolean(document?.signatory_signature);
@@ -91,7 +95,16 @@ export function useQuotationDocumentActions({
   }, [latestIssue, projectId, documentId]);
 
   const actions: RecordAction[] = [];
-  if (!document) return { actions, dialogs: null, pending: null, openSign: () => {}, isSigned };
+  if (!document) {
+    return {
+      actions,
+      dialogs: null,
+      pending: null,
+      openSign: () => {},
+      openWhatsApp: () => {},
+      isSigned,
+    };
+  }
 
   if (canEdit) {
     actions.push({
@@ -184,6 +197,17 @@ export function useQuotationDocumentActions({
       },
     });
     actions.push({
+      key: 'quotation_document.whatsapp',
+      label: 'Send via WhatsApp',
+      icon: MessageCircle,
+      description: issued ? undefined : 'Send it to the customer first',
+      disabled: !issued,
+      run: async () => {
+        const issue = await issueToExport();
+        if (issue) setWhatsAppIssue(issue);
+      },
+    });
+    actions.push({
       key: 'quotation_document.delete',
       label: 'Delete quotation',
       icon: Trash2,
@@ -211,8 +235,21 @@ export function useQuotationDocumentActions({
         }}
       />
       <QuotationSignLinkDialog url={linkToShow} onOpenChange={() => setLinkToShow(null)} />
+      <QuotationWhatsAppDialog
+        projectId={projectId}
+        document={document}
+        issue={whatsAppIssue}
+        onOpenChange={() => setWhatsAppIssue(null)}
+      />
     </>
   );
 
-  return { actions, dialogs, pending: remove.countdown, openSign: () => setSigning(true), isSigned };
+  return {
+    actions,
+    dialogs,
+    pending: remove.countdown,
+    openSign: () => setSigning(true),
+    openWhatsApp: setWhatsAppIssue,
+    isSigned,
+  };
 }

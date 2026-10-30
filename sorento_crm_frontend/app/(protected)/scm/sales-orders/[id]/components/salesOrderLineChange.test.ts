@@ -67,4 +67,40 @@ describe('lineChangeAnnotation sides', () => {
     expect(annotation?.was.date).toBe('2026-08-30');
     expect(annotation?.now).toEqual({ qty: null, date: null, decision: null });
   });
+
+  it('PRODUCT-CHANGE-TALLY: a product swap reads the old product off from.item_code', () => {
+    // SO426847-like: AutoCount edited the line's product in place (same line key).
+    const annotation = lineChangeAnnotation(
+      {
+        id: 'l-48',
+        sku: 'NEWCODE-CR',
+        planning_change: {
+          id: 'pcr-48',
+          kind: 'product_changed',
+          applied_state: 'pending',
+          result: null,
+          from: { qty: '10', required_date: '2026-11-03', status: 'open', item_code: 'OLDCODE-CR' },
+          to: { qty: '10', required_date: '2026-11-03', status: 'open', item_code: 'NEWCODE-CR' },
+        },
+      } as unknown as SalesOrderLine,
+      'SO900048',
+    );
+    expect(annotation?.productChangedFrom).toBe('OLDCODE-CR');
+    expect(annotation?.itemCode).toBe('NEWCODE-CR');
+  });
+
+  it('PRODUCT-CHANGE-TALLY: a row that is not a product swap names no old product', () => {
+    const annotation = lineChangeAnnotation(
+      lineWith({
+        id: 'pcr-4',
+        kind: 'qty_up',
+        applied_state: 'applied',
+        result: null,
+        from: side('1', null),
+        to: side('2', null),
+      }),
+      'SO314593',
+    );
+    expect(annotation?.productChangedFrom).toBeNull();
+  });
 });

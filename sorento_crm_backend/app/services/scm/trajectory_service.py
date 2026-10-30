@@ -111,6 +111,8 @@ def demand_context_for_product(
         WHERE sol.product_id = CAST(:product_id AS uuid)
           AND so.order_date >= :since AND so.order_date < :until
           {co_clause}
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT sol.removed_unreferenced
     """), {
         "product_id": product_id,
         "project_class": PROJECT_CLASS,
@@ -147,6 +149,8 @@ LEFT JOIN warehouses w ON w.id = sol.warehouse_id
 JOIN pairs pr ON pr.product_id = sol.product_id
             AND pr.segment = COALESCE(w.segment, 'project')
 WHERE so.order_date >= :since AND so.order_date < :until
+  -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+  AND NOT sol.removed_unreferenced
   {co}
 GROUP BY sol.product_id, COALESCE(w.segment, 'project'),
          date_trunc('month', so.order_date)
@@ -165,15 +169,19 @@ WITH prods AS (
     WHERE r.run_id = CAST(:run_id AS uuid)
 )
 SELECT sol.product_id::text AS product_id,
-       COALESCE(so.demand_class, 'unclassified') AS channel,
+       -- `other` trends with retail, as fulfilment weighs it (`demand_class.planning_class`).
+       COALESCE(CASE WHEN so.demand_class = 'other' THEN 'retail' ELSE so.demand_class END,
+                'unclassified') AS channel,
        to_char(date_trunc('month', so.order_date), 'YYYY-MM') AS month,
        SUM(sol.qty_ordered) AS qty
 FROM sales_order_lines sol
 JOIN sales_orders so ON so.id = sol.sales_order_id
 JOIN prods p ON p.product_id = sol.product_id
 WHERE so.order_date >= :since AND so.order_date < :until
+  -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+  AND NOT sol.removed_unreferenced
   {co}
-GROUP BY sol.product_id, COALESCE(so.demand_class, 'unclassified'),
+GROUP BY sol.product_id, 2,
          date_trunc('month', so.order_date)
 """
 
@@ -207,6 +215,8 @@ SELECT product_id, segment, customer_name, customer_key, qty, last_order_date FR
     JOIN pairs pr ON pr.product_id = sol.product_id
                 AND pr.segment = COALESCE(w.segment, 'project')
     WHERE so.order_date >= :since AND so.order_date < :until
+      -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+      AND NOT sol.removed_unreferenced
       {{co}}
     -- Grouped on the KEY, not the printed name: two customers can share a name, and the
     -- drill below has to be able to open exactly the row that was clicked.
@@ -228,6 +238,8 @@ _CUSTOMER_ORDERS_SQL = """
     WHERE sol.product_id = CAST(:product_id AS uuid)
       AND COALESCE(w.segment, 'project') = :segment
       AND so.order_date >= :since AND so.order_date < :until
+      -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+      AND NOT sol.removed_unreferenced
       AND {customer}
       {co}
 """

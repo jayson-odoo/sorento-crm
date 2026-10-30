@@ -15,8 +15,10 @@ See documentation/plans/identity/s1-contract.md.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
+import secrets
 from dataclasses import dataclass
 from typing import Optional
 
@@ -90,6 +92,18 @@ def mask(num: str) -> Optional[str]:
     return PortalService._mask_phone(num)
 
 
+def _eligible_user_clauses() -> tuple:
+    """Who may sign in by phone or by portal link: ACTIVE, not trashed, not an
+    integration, with a linked WhatsApp contact. Shared by :func:`find_eligible`
+    and :func:`eligible_user_for_contact` so the two cannot drift."""
+    return (
+        User.status == "ACTIVE",
+        User.is_trashed.is_(False),
+        User.is_integration.is_(False),
+        User.respond_contact_id.isnot(None),
+    )
+
+
 def find_eligible(db: Session, num: str) -> Optional[tuple[User, RespondContact]]:
     """Resolve a normalised number to exactly one eligible user, or ``None``.
 
@@ -106,13 +120,7 @@ def find_eligible(db: Session, num: str) -> Optional[tuple[User, RespondContact]
     """
     users = (
         db.query(User)
-        .filter(
-            User.contact_number.in_([num, f"+{num}"]),
-            User.status == "ACTIVE",
-            User.is_trashed.is_(False),
-            User.is_integration.is_(False),
-            User.respond_contact_id.isnot(None),
-        )
+        .filter(User.contact_number.in_([num, f"+{num}"]), *_eligible_user_clauses())
         .limit(2)
         .all()
     )
@@ -291,10 +299,21 @@ def rate_limited_minutes_message(retry_after_seconds: int) -> str:
     return f"Too many tries. Try again in {minutes} {word}."
 
 
+def is_salesperson(db: Session, user: User) -> bool:
+    """An active, untrashed salesperson (roles within salesperson + portal_user) with a linked contact."""
+    from app.services.user_service import UserPermissionService
+
+    if user.status != "ACTIVE" or user.is_trashed or not user.respond_contact_id:
+        return False
+    role_slugs = UserPermissionService(db).get_user_role_slugs(str(user.id))
+    return "salesperson" in role_slugs and role_slugs <= {"salesperson", "portal_user"}
+
+
 def home_path_for_user(db: Session, user: User) -> str:
     """AC-28: a `callbackUrl` (frontend concern) always wins; otherwise -
 
-    - `salesperson` role + a linked contact -> that contact's portal home;
+    - an active salesperson (see `is_salesperson`) -> "/my-requests", inside the CRM;
+    - `salesperson` plus another role + a linked contact -> that contact's portal home;
     - any admin role or CRM permission -> the CRM home ("/");
     - a linked contact -> its portal home;
     - else -> "/".
@@ -312,6 +331,12 @@ def home_path_for_user(db: Session, user: User) -> str:
             .filter(RespondContact.id == user.respond_contact_id)
             .first()
         )
+
+    if is_salesperson(db, user):
+        # Mint the contact's portal slug now, so /users/me and the verify page find it.
+        if contact is not None:
+            PortalService(db).get_or_create_slug(contact)
+        return "/my-requests"
 
     if "salesperson" in role_slugs and contact is not None:
         return f"/portal/c/{PortalService(db).get_or_create_slug(contact)}"
@@ -440,5 +465,123 @@ def attempt_verify(
         user_agent=user_agent,
         ip_address=ip_address,
         auth_method="phone_otp",
+    )
+    return build_login_response(db, user, session_row)
+
+
+# --------------------------------------------------------------------------- #
+# Portal link -> CRM session (PORTAL-P1-SESSION-LINK)                          #
+# --------------------------------------------------------------------------- #
+# `verify-otp` hands the browser that typed the code a one-time secret; the card
+# exchanges it at `/auth/portal-link` right away, so two minutes covers a slow
+# network with room to spare.
+PORTAL_LINK_SECRET_TTL_SECONDS = 120
+
+
+def eligible_user_for_contact(db: Session, contact_id: str) -> Optional[User]:
+    """The eligible user linked to this contact, or ``None``.
+
+    Same rule as :func:`find_eligible`, keyed on the contact instead of a typed
+    number (``uq_users_respond_contact_id`` allows one user per contact): the
+    user is eligible and the user's own number still matches the contact's
+    (a stale link after a phone change is refused, plan 5.3 "lost phone").
+    """
+    if not contact_id:
+        return None
+    user = (
+        db.query(User)
+        .filter(User.respond_contact_id == contact_id, *_eligible_user_clauses())
+        .first()
+    )
+    if user is None:
+        return None
+    contact = db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+    if contact is None:
+        return None
+    contact_num = normalize_msisdn(contact.phone_number)
+    if not contact_num or normalize_msisdn(user.contact_number) != contact_num:
+        return None
+    return user
+
+
+def _portal_link_key(secret: str) -> str:
+    return "portal_link:secret:" + hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def issue_portal_link_secret(db: Session, contact_id: str) -> Optional[str]:
+    """A one-time secret for the browser that just verified, or ``None`` when the
+    contact has no eligible user (or Redis is down: no secret, the portal still works).
+
+    Security review H1: the exchange must not accept a portal token, because
+    ``verify_otp`` stamps every token of the contact and staff can re-send the
+    verified one (``get_or_mint_token``). Only the verify-otp response body carries
+    this secret, so only that browser can mint, and only its hash is stored.
+    """
+    if eligible_user_for_contact(db, contact_id) is None:
+        return None
+    r = _redis()
+    if r is None:
+        return None
+    secret = secrets.token_urlsafe(32)
+    try:
+        r.set(_portal_link_key(secret), contact_id, ex=PORTAL_LINK_SECRET_TTL_SECONDS)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Portal link: Redis secret write failed (%s)", e)
+        return None
+    return secret
+
+
+def _take_portal_link_secret(secret: str) -> Optional[str]:
+    """The contact id the secret was issued for, deleting it in the same
+    transaction (GET + DEL under MULTI), so two parallel exchanges cannot both
+    read it. Fails closed without Redis."""
+    if not secret:
+        return None
+    r = _redis()
+    if r is None:
+        return None
+    try:
+        pipe = r.pipeline(transaction=True)
+        pipe.get(_portal_link_key(secret))
+        pipe.delete(_portal_link_key(secret))
+        value, _deleted = pipe.execute()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Portal link: Redis secret read failed (%s); refusing.", e)
+        return None
+    if value is None:
+        return None
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def exchange_portal_link_secret(
+    db: Session,
+    secret: str,
+    *,
+    user_agent: Optional[str],
+    ip_address: Optional[str],
+) -> Optional[LoginResponse]:
+    """A live portal-link secret becomes a `portal_link` CRM session for the
+    contact's eligible user. ``None`` for every refusal (unknown, spent or expired
+    secret, no Redis, the user no longer eligible), so the router answers one
+    401 body whatever the reason."""
+    from app.services.user_session_service import mint_session
+
+    contact_id = _take_portal_link_secret(secret)
+    if contact_id is None:
+        return None
+    user = eligible_user_for_contact(db, contact_id)
+    if user is None:
+        return None
+
+    user.last_sign_in_at = _utcnow()
+    db.add(user)
+    db.commit()
+
+    session_row = mint_session(
+        db,
+        str(user.id),
+        user_agent=user_agent,
+        ip_address=ip_address,
+        auth_method="portal_link",
     )
     return build_login_response(db, user, session_row)

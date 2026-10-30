@@ -233,12 +233,12 @@ beforeEach(() => {
 });
 
 describe('SalesOrderDetail Lines: the Split column (B1)', () => {
-  it('has a "Split" header right after Product', () => {
+  it('has a "Split" header right after Description', () => {
     renderLines();
     const heads = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
-    const product = heads.indexOf('Product');
-    expect(product).toBeGreaterThan(-1);
-    expect(heads[product + 1]).toBe('Split');
+    const description = heads.indexOf('Description');
+    expect(description).toBeGreaterThan(-1);
+    expect(heads[description + 1]).toBe('Split');
   });
 
   it('shows "Split 3" and the (i) button on the split line only', () => {

@@ -13,6 +13,7 @@ from app.schemas.lookup import (
     LookupBindingCreate, LookupBindingResponse, LookupBindingDefaultUpdate,
 )
 from app.services.error_handler import handle_internal_error
+from app.services.lookup_alias_targets import is_alias_set
 from app.services.lookup_set_service import LookupSetService
 from app.services.lookup_option_service import LookupOptionService
 from app.services.lookup_binding_service import LookupBindingService
@@ -23,7 +24,7 @@ router = APIRouter()
 # ----- Sets -----
 
 @router.get("/", response_model=ListResponse[LookupSetResponse])
-async def list_sets(
+def list_sets(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -37,7 +38,7 @@ async def list_sets(
 
 
 @router.post("/", response_model=LookupSetResponse, status_code=status.HTTP_201_CREATED)
-async def create_set(
+def create_set(
     data: LookupSetCreate,
     current_user=Depends(require_permission("master_data.lookup_sets.add")),
     db: Session = Depends(get_db),
@@ -56,7 +57,7 @@ async def create_set(
 
 
 @router.get("/{set_id}", response_model=LookupSetResponse)
-async def get_set(
+def get_set(
     set_id: str,
     current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
     db: Session = Depends(get_db),
@@ -72,7 +73,7 @@ async def get_set(
 
 
 @router.patch("/{set_id}", response_model=LookupSetResponse)
-async def update_set(
+def update_set(
     set_id: str,
     data: LookupSetUpdate,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),
@@ -89,7 +90,7 @@ async def update_set(
 
 
 @router.delete("/{set_id}")
-async def delete_set(
+def delete_set(
     set_id: str,
     current_user=Depends(require_permission("master_data.lookup_sets.delete")),
     db: Session = Depends(get_db),
@@ -117,6 +118,7 @@ def _set_to_response(db: Session, s) -> dict:
         "is_active": s.is_active,
         "option_count": opt_count,
         "binding_count": bind_count,
+        "alias_set": is_alias_set(s.set_key),
         "created_at": s.created_at,
         "updated_at": s.updated_at,
     }
@@ -124,8 +126,42 @@ def _set_to_response(db: Session, s) -> dict:
 
 # ----- Options nested -----
 
+def _flag_orphans(db: Session, set_id: str, options) -> None:
+    """Options of an alias set carry `orphaned`: their value is not among the set's targets."""
+    from app.models.lookup import LookupSet
+    from app.services.lookup_alias_targets import alias_targets
+
+    set_obj = db.query(LookupSet).filter(LookupSet.id == set_id).first()
+    targets = alias_targets(db, set_obj.set_key, scoped=False) if set_obj else None
+    if targets is None:
+        return
+    known = {t["value"].strip().casefold() for t in targets}
+    for option in options:
+        option.orphaned = (option.value or "").strip().casefold() not in known
+
+
+@router.get("/{set_id}/alias-targets")
+def get_alias_targets(
+    set_id: str,
+    current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
+    db: Session = Depends(get_db),
+):
+    """What this alias set's option values may name; 404 for a set that is not an alias set."""
+    from fastapi import HTTPException
+
+    from app.models.lookup import LookupSet
+    from app.services.lookup_alias_targets import alias_targets
+
+    validate_uuid_path(set_id, resource="Lookup Set")
+    set_obj = db.query(LookupSet).filter(LookupSet.id == set_id).first()
+    targets = alias_targets(db, set_obj.set_key) if set_obj else None
+    if targets is None:
+        raise HTTPException(status_code=404, detail="Not an alias set")
+    return targets
+
+
 @router.get("/{set_id}/options", response_model=ListResponse[LookupOptionResponse])
-async def list_options(
+def list_options(
     set_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=MAX_PAGE_LIMIT),
@@ -134,13 +170,15 @@ async def list_options(
 ):
     try:
         validate_uuid_path(set_id, resource="Lookup Set")
-        return LookupOptionService(db).list(set_id, page=page, limit=limit)
+        result = LookupOptionService(db).list(set_id, page=page, limit=limit)
+        _flag_orphans(db, set_id, result["data"])
+        return result
     except Exception as e:
         raise handle_internal_error(str(e))
 
 
 @router.post("/{set_id}/options", response_model=LookupOptionResponse, status_code=status.HTTP_201_CREATED)
-async def create_option(
+def create_option(
     set_id: str,
     data: LookupOptionCreate,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),
@@ -157,7 +195,7 @@ async def create_option(
 
 
 @router.patch("/{set_id}/options/{option_id}", response_model=LookupOptionResponse)
-async def update_option(
+def update_option(
     set_id: str,
     option_id: str,
     data: LookupOptionUpdate,
@@ -175,7 +213,7 @@ async def update_option(
 
 
 @router.delete("/{set_id}/options/{option_id}")
-async def delete_option(
+def delete_option(
     set_id: str,
     option_id: str,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),
@@ -194,7 +232,7 @@ async def delete_option(
 # ----- Bindings nested -----
 
 @router.get("/{set_id}/bindings", response_model=list[LookupBindingResponse])
-async def list_bindings(
+def list_bindings(
     set_id: str,
     current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
     db: Session = Depends(get_db),
@@ -208,7 +246,7 @@ async def list_bindings(
 
 
 @router.post("/{set_id}/bindings", response_model=LookupBindingResponse, status_code=status.HTTP_201_CREATED)
-async def add_binding(
+def add_binding(
     set_id: str,
     data: LookupBindingCreate,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),
@@ -226,7 +264,7 @@ async def add_binding(
 
 
 @router.patch("/{set_id}/bindings/{binding_id}", response_model=LookupBindingResponse)
-async def update_binding_default(
+def update_binding_default(
     set_id: str,
     binding_id: str,
     data: LookupBindingDefaultUpdate,
@@ -246,7 +284,7 @@ async def update_binding_default(
 
 
 @router.delete("/{set_id}/bindings/{binding_id}")
-async def remove_binding(
+def remove_binding(
     set_id: str,
     binding_id: str,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),

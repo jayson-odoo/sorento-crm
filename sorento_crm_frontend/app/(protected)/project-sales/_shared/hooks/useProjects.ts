@@ -6,9 +6,17 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import type { QueryKey } from '@tanstack/react-query';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from '@/lib/toast';
+import { splitMulti } from '@/lib/list-filters/multiValue';
+import { projectCodeLabel } from '../lib/projectCode';
+import { formatMyrExact } from '../lib/money';
 import { getProductSetsForLineSelect } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
   addStakeholder,
+  aiExtractProject,
+  approveProject,
+  listCustomerOptions,
+  submitProject,
+  rejectProject,
   changeProjectStatus,
   changeTaskStatus,
   createProjectTask,
@@ -28,6 +36,7 @@ import {
   deletePriceFloor,
   deleteQuotation,
   deleteQuotationLine,
+  escalateLineMedia,
   deleteSeries,
   getEffectivePriceFloor,
   getSeriesPricedRows,
@@ -55,10 +64,6 @@ import {
   updateSeries,
   uploadSeriesProducts,
   upsertPriceFloor,
-  listSamples,
-  createSample,
-  updateSample,
-  deleteSample,
   listPurchaseOrders,
   createPurchaseOrder,
   updatePurchaseOrder,
@@ -118,7 +123,6 @@ import type {
   LeadListParams,
   FloorTargetLevel,
   PriceFloorRuleBody,
-  ProjectSampleBody,
   ProjectPurchaseOrderBody,
   ProjectPurchaseOrderSaveBody,
   PurchaseOrderLineBody,
@@ -126,6 +130,7 @@ import type {
   ProjectQuotationBody,
   ProjectSeriesBody,
   QuotationLineBody,
+  MediaKind,
   QuotationLineBulkItem,
   QuotationOutcomeBody,
   SeriesProductImportBody,
@@ -140,7 +145,7 @@ import type {
 } from '../types/project.types';
 import { importJobPhase } from '../types/project.types';
 // Keys only, and the document hooks import nothing from here, so the two files do not circle.
-import { quotationDocumentsKey } from './useQuotationDocuments';
+import { AMENDMENT_KEY, quotationDocumentsKey } from './useQuotationDocuments';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const PROJECTS_KEY = 'projects';
@@ -163,13 +168,14 @@ export function projectsListParamsFromUrl(params: ListPagerParams): ProjectListP
   return {
     query: params.searchQuery || undefined,
     developer_party_id: params.filters.developer_party_id
-      ? [params.filters.developer_party_id]
+      ? splitMulti(params.filters.developer_party_id)
       : undefined,
     owner_user_id: params.filters.owner_user_id
       ? [params.filters.owner_user_id]
       : undefined,
-    type_id: params.filters.type_id ? [params.filters.type_id] : undefined,
+    type_id: params.filters.type_id ? splitMulti(params.filters.type_id) : undefined,
     only_critical: params.filters.only_critical === 'true' || undefined,
+    approval_state: (params.filters.approval_state || undefined) as ProjectListParams['approval_state'],
     page: params.pageIndex + 1,
     limit: params.pageSize,
     sort: params.sorting[0]?.id ?? 'created_at',
@@ -201,14 +207,19 @@ export function useProject(projectId: string | undefined) {
   });
 }
 
-export function useProjectTypes() {
-  return useQuery({ queryKey: PROJECT_TYPES_KEY, queryFn: () => listProjectTypes() });
+export function useProjectTypes(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: PROJECT_TYPES_KEY,
+    queryFn: () => listProjectTypes(),
+    enabled: options.enabled ?? true,
+  });
 }
 
-export function useProjectTemplates(typeId?: string) {
+export function useProjectTemplates(typeId?: string, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['project-templates', typeId ?? null],
     queryFn: () => listProjectTemplates(typeId),
+    enabled: options.enabled ?? true,
   });
 }
 
@@ -218,11 +229,12 @@ export function useProjectParties(params: {
   page?: number;
   limit?: number;
   include_inactive?: boolean;
-}) {
+}, options: { enabled?: boolean } = {}) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: [PARTIES_KEY, params],
     queryFn: () => listParties(params),
+    enabled: options.enabled ?? true,
   });
 }
 
@@ -306,7 +318,22 @@ export function useRegisterProject() {
     mutationFn: (body: ProjectRegisterBody) => registerProject(body),
     onSuccess: (project) => {
       invalidate();
-      toast.success(`${project.project_code} registered`);
+      if (project.approval_state === 'draft') toast.success('Draft saved');
+      else if (project.approval_state === 'pending') toast.success('Submitted for approval');
+      else toast.success(`${project.project_code} registered`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/** Submits an own draft or rejected registration for approval (J1, J5). */
+export function useSubmitProject(projectId: string) {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: () => submitProject(projectId),
+    onSuccess: () => {
+      invalidate(projectId);
+      toast.success('Submitted for approval');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -335,12 +362,42 @@ export function useChangeProjectStatus() {
       changeProjectStatus(projectId, toStatusId),
     onSuccess: (project) => {
       invalidate(project.id);
-      toast.success(`${project.project_code} moved to ${project.status_label ?? 'a new stage'}`);
+      toast.success(`${projectCodeLabel(project)} moved to ${project.status_label ?? 'a new stage'}`);
     },
     onError: (error: Error, variables) => {
       invalidate(variables.projectId);
       toast.error(error.message);
     },
+  });
+}
+
+/**
+ * Approve a pending portal registration (PROJECT-REG-PORTAL R9). A refusal toasts the server's
+ * message and still rejects, so the header can link the project an exact duplicate names
+ * (`ProjectApprovalError.existingProject`).
+ */
+export function useApproveProject(projectId: string) {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: (body?: Partial<ProjectRegisterBody>) => approveProject(projectId, body),
+    onSuccess: (project) => {
+      invalidate(projectId);
+      toast.success(`Approved as ${projectCodeLabel(project)}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/** Reject a pending portal registration with a reason (R10). */
+export function useRejectProject(projectId: string) {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: (reason: string) => rejectProject(projectId, reason),
+    onSuccess: () => {
+      invalidate(projectId);
+      toast.success('Registration rejected');
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 }
 
@@ -400,7 +457,7 @@ export function usePartyMutations() {
     mutationFn: (body: ProjectPartyBody) => createParty(body),
     onSuccess: (party) => {
       invalidate();
-      toast.success(`${party.name} added`);
+      toast.success(party.already_existed ? `${party.name} already exists` : `${party.name} added`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -443,7 +500,7 @@ export function useTakeoverMutations(projectId: string) {
       toast.success(
         created.kind === 'join'
           ? 'Request sent to the project owner'
-          : 'Dispute raised with the sales manager',
+          : 'Registered as secondary lead',
       );
     },
     onError: (error: Error) => toast.error(error.message),
@@ -676,7 +733,7 @@ export function useProjectTemplateMutations() {
     mutationFn: (body: ProjectTemplateBody) => createProjectTemplate(body),
     onSuccess: () => {
       invalidate();
-      toast.success('Template created');
+      toast.success('To-do list template created');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -686,7 +743,7 @@ export function useProjectTemplateMutations() {
       updateProjectTemplate(id, body),
     onSuccess: () => {
       invalidate();
-      toast.success('Template saved');
+      toast.success('To-do list template saved');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -695,7 +752,7 @@ export function useProjectTemplateMutations() {
     mutationFn: (id: string) => deleteProjectTemplate(id),
     onSuccess: () => {
       invalidate();
-      toast.success('Template deleted');
+      toast.success('To-do list template deleted');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -726,20 +783,34 @@ export function useLeads(params: LeadListParams) {
 }
 
 /**
- * The project form's Lead picker (D4): a server search over OPEN leads only, capped at
- * 20, by title or lead code. Returned as options rather than raw leads so `ProjectForm`
- * never has to know the field is async-searched vs static.
+ * Async options for the Developer / Architect / Main contractor pickers: a server-side search
+ * of one party type (PROJECT-REGISTER-V2 B1), so a party past the first page is found by name.
  */
-export function useFetchLeadOptions() {
-  return React.useCallback(async (query: string) => {
-    const result = await listLeads({ query: query || undefined, outcome: ['open'], limit: 20 });
-    // Title first, code as the second line: no " · " joins (owner rule, 13 Oct).
-    return result.data.map((lead) => ({
-      value: lead.id,
-      label: lead.title,
-      description: lead.lead_code,
-    }));
-  }, []);
+export function useFetchPartyOptions(partyType: 'developer' | 'architect' | 'main_contractor') {
+  return React.useCallback(
+    async (query: string) => {
+      const result = await listParties({ party_type: partyType, query: query || undefined, limit: 20 });
+      return result.data.map((party) => ({
+        value: party.id,
+        label: party.name,
+        description: party.registration_no ?? undefined,
+      }));
+    },
+    [partyType],
+  );
+}
+
+/** Async options for the register form's Customer picker (name only). */
+export function useFetchCustomerOptions() {
+  return React.useCallback((query: string) => listCustomerOptions(query), []);
+}
+
+/** The register form's AI extract call, handed to the shared dialog. */
+export function useProjectAiExtract() {
+  return React.useCallback(
+    (text: string | null, files: File[]) => aiExtractProject(text, files),
+    [],
+  );
 }
 
 /** The leads list a detail URL describes, in the shape `LeadsClient` passes. */
@@ -1020,6 +1091,8 @@ export function useQuotationMutations(projectId: string) {
     queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
     queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'list'] });
     if (quotationId) queryClient.invalidateQueries({ queryKey: versionsKey(quotationId) });
+    // A revise can open the draft that blocks a customer's suggestions (QUOTE-CUSTOMER-AMEND).
+    queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY] });
   };
 
   const create = useMutation({
@@ -1098,7 +1171,7 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
       // while somebody is working down a column of twenty lines.
       if (line.is_below_floor) {
         toast.warning(
-          `Below the floor of ${line.floor_value_applied}. Management has been notified.`,
+          `Below the minimum price of ${formatMyrExact(line.floor_value_applied)}. Management has been notified.`,
         );
       }
     },
@@ -1111,7 +1184,9 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
     onSuccess: (line) => {
       invalidate();
       if (line.is_below_floor) {
-        toast.warning(`Below the floor of ${line.floor_value_applied}.`);
+        toast.warning(
+          `Below the minimum price of ${formatMyrExact(line.floor_value_applied)}.`,
+        );
       }
     },
     onError: (error: Error) => toast.error(error.message),
@@ -1127,6 +1202,27 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
   });
 
   return { create, update, remove };
+}
+
+/**
+ * Escalate a line's missing drawing or photo. The request belongs to the PRODUCT, so every quotation that
+ * lists it shows the new state: the prefix key refetches every open lines table, not just this
+ * version's.
+ */
+export function useEscalateMedia(versionId: string, kind: MediaKind) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (lineId: string) => escalateLineMedia(versionId, lineId, kind),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'lines'] });
+      toast.success(
+        result.joined
+          ? 'Already escalated: added you to the request'
+          : 'Escalated: you will be told when the request is resolved',
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 }
 
 /**
@@ -1489,20 +1585,10 @@ export function usePriceFloorMutations() {
   return { upsert, remove };
 }
 
-// ------------------------------------------------------- samples and customer POs
+// ------------------------------------------------------- customer POs
 
-export const SAMPLES_KEY = 'project-samples';
 export const POS_KEY = 'project-purchase-orders';
-export const samplesKey = (projectId: string) => [SAMPLES_KEY, projectId];
 export const poLinesKey = (poId: string) => [POS_KEY, 'lines', poId];
-
-export function useSamples(projectId: string | undefined) {
-  return useQuery({
-    queryKey: samplesKey(projectId ?? ''),
-    queryFn: () => listSamples(projectId as string),
-    enabled: Boolean(projectId),
-  });
-}
 
 export function usePurchaseOrders(projectId: string | undefined) {
   return useQuery({
@@ -1519,45 +1605,6 @@ export function usePurchaseOrderLines(poId: string | undefined) {
     queryFn: () => listPurchaseOrderLines(poId as string),
     enabled: Boolean(poId),
   });
-}
-
-/**
- * A sample write invalidates the QUOTATIONS too: the version a sample hangs off shows a
- * sample count, so recording one changes a panel the user may be looking at.
- */
-export function useSampleMutations(projectId: string) {
-  const queryClient = useQueryClient();
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: samplesKey(projectId) });
-    queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
-  };
-
-  const create = useMutation({
-    mutationFn: (body: ProjectSampleBody) => createSample(projectId, body),
-    onSuccess: () => {
-      invalidate();
-      toast.success('Sample recorded');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const update = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectSampleBody> }) =>
-      updateSample(id, body),
-    onSuccess: () => {
-      invalidate();
-      toast.success('Sample saved');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  // No success toast: the only caller is a ConfirmDeleteDialog, which raises its own.
-  const remove = useMutation({
-    mutationFn: (sampleId: string) => deleteSample(sampleId),
-    onSuccess: () => invalidate(),
-  });
-
-  return { create, update, remove };
 }
 
 /**

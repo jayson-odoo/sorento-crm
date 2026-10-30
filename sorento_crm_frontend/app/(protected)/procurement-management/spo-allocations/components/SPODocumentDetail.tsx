@@ -1260,7 +1260,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
             ).map(
               (c, i): SoCoverageRow => ({
                 key: `${soCoverageLine?.id ?? 'doc'}-${i}`,
-                kind: c.demand_class,
+                kind: c.demand_class === 'other' ? 'retail' : c.demand_class,
                 demand_class: c.demand_class,
                 document: c.document,
                 customer_name: c.customer,
@@ -1269,6 +1269,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                 warehouse_code: null,
                 taken_qty: 0,
                 taken_by: [],
+                via_po: c.via_po ?? null,
               }),
             )}
             tickedKeys={[]}

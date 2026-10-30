@@ -1,18 +1,27 @@
 'use client';
 
+import { APPEAL_VERB } from '@/lib/submission-status';
 import * as React from 'react';
 import Link from 'next/link';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { useRouter } from 'next/navigation';
-import { PenLine } from 'lucide-react';
+import { ChevronDown, Mail, MessageCircle, PenLine } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import DetailActions from '@/components/common/DetailActions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import {
+  useQuotationAmendmentRequest,
   useQuotationApprovalGraph,
   useQuotationDocument,
   useQuotationDocumentMutations,
@@ -137,6 +146,9 @@ export function QuotationDocumentClient({
   }, [quotations.data, scopeVersions.rows, scopes]);
 
   const canEditProject = project.data?.can_edit ?? false;
+  // The customer's suggested changes, shared with the Lines tab (same query): while there are
+  // some, the free-text banner below stands down. Staff with the edit right only, as the route.
+  const amendment = useQuotationAmendmentRequest(projectId, documentId, canEditProject);
   const gear = useQuotationDocumentActions({
     projectId,
     document: document.data,
@@ -201,11 +213,16 @@ export function QuotationDocumentClient({
    */
   const pendingStatus = approvalGraph.data?.statuses.find((row) => row.key === 'pending_approval');
   const draftStatus = approvalGraph.data?.statuses.find((row) => row.key === 'draft');
+  // From Rejected the same press is a resubmission (RESUBMITTED-STATUS): the server lands it on
+  // the resubmitted rung, so the label comes off that rung's draft -> resubmitted edge.
+  const isResubmit = record.approval_status_key === 'rejected';
+  const resubmittedStatus = approvalGraph.data?.statuses.find((row) => row.key === 'resubmitted');
+  const sendTarget = isResubmit && resubmittedStatus ? resubmittedStatus : pendingStatus;
   const sendEdge = approvalGraph.data?.transitions.find(
-    (edge) =>
-      edge.to_status_id === pendingStatus?.id && edge.from_status_id === draftStatus?.id,
+    (edge) => edge.to_status_id === sendTarget?.id && edge.from_status_id === draftStatus?.id,
   );
-  const sendForApprovalLabel = sendEdge?.label || 'Send for approval';
+  const sendForApprovalLabel =
+    sendEdge?.label || (isResubmit ? APPEAL_VERB : 'Send for approval');
 
   /** What the next copy of a single frozen scope will be called, e.g. "v3". */
   const nextVersionLabel =
@@ -296,8 +313,8 @@ export function QuotationDocumentClient({
               {standing.label}
             </span>
           </div>
-          <h2 className="mt-1 break-words text-xl font-semibold">
-            {record.subject_title ?? '-'}
+          <h2 className="mt-1 text-xl font-semibold">
+            <TruncatedTextCell text={record.subject_title} lines={2} dialogTitle="Title" />
           </h2>
           <p className="break-words text-sm text-muted-foreground">
             {record.recipient_name_snapshot ?? '-'}
@@ -397,17 +414,33 @@ export function QuotationDocumentClient({
                 </>
               )}
               {action.kind === 'send' && (
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={mutations.issue.isPending}
-                  onClick={() => mutations.issue.mutate(documentId)}
-                >
-                  {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
-                      stays in the label, as it did, because R2 is a different paper from R1. The
-                      API and the status names keep "issue". */}
-                  {`Send to Customer R${nextIssueNo}`}
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" size="sm" disabled={mutations.issue.isPending}>
+                      {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
+                          stays in the label, as it did, because R2 is a different paper from R1. The
+                          API and the status names keep "issue". */}
+                      {`Send to Customer R${nextIssueNo}`}
+                      <ChevronDown className="size-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => mutations.issue.mutate(documentId)}>
+                      <Mail className="size-4" aria-hidden />
+                      Email
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        mutations.issue.mutate(documentId, {
+                          onSuccess: (issue) => gear.openWhatsApp(issue),
+                        })
+                      }
+                    >
+                      <MessageCircle className="size-4" aria-hidden />
+                      WhatsApp
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
               {/* Where a queued export is actually collected. Rendered only once something has
                   been issued, because a download of a revision that does not exist yet cannot: the
@@ -458,6 +491,7 @@ export function QuotationDocumentClient({
         // asked about. Withheld from a reader.
         onRevise={canEdit ? startEditing : undefined}
         isRevising={quotationMutations.revise.isPending}
+        amendment={amendment.data ?? null}
       />
 
       {/* The price-floor gate. Renders nothing at all unless a line on this quotation is

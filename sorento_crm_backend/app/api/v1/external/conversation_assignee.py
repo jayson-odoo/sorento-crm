@@ -12,7 +12,7 @@ router = APIRouter()
 
 
 @router.post("", status_code=200)
-async def set_conversation_assignee(
+def set_conversation_assignee(
     body: dict,
     current_user: dict = Depends(get_external_api_user),
     db=Depends(get_db),

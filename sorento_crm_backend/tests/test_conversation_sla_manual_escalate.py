@@ -6,7 +6,6 @@ guards that run before assignee resolution + the happy-path delegation.
 """
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -34,13 +33,11 @@ def _call(reason, tracking, *, assignee=None, escalated=None):
     with patch.object(mod, "ConversationSLATrackingService", return_value=svc), patch.object(
         mod, "build_conversation_sla_tracking_response", return_value={"ok": True}
     ), patch.object(mod, "_notify_conversation_sla_escalation", notify):
-        result = asyncio.run(
-            escalate_conversation_sla_tracking(
-                tracking_id="t1",
-                payload=_ConversationEscalateRequest(reason=reason),
-                current_user={"id": "me"},
-                db=MagicMock(),
-            )
+        result = escalate_conversation_sla_tracking(
+            tracking_id="t1",
+            payload=_ConversationEscalateRequest(reason=reason),
+            current_user={"id": "me"},
+            db=MagicMock(),
         )
     return result, svc, notify
 

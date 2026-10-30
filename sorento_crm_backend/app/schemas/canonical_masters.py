@@ -20,7 +20,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.ingest_extras import INGEST_MODEL_CONFIG, note_unknown_fields
 
@@ -90,6 +90,25 @@ class CanonicalBrand(_Canonical):
     # Absent vs null (D14): omitted leaves the stored value untouched (or, on
     # create, the model's own True default); an explicit null clears it.
     is_active: Optional[bool] = None
+
+
+class CanonicalItemClass(_Canonical):
+    """AutoCount ItemClass (ITEM-CLASS-MASTER, contract 2.11), the brands master exactly.
+    Syncs BEFORE brands and products, so a product's `item_class_code` links a real master row
+    instead of back-creating the code = name placeholder. Caps are the `item_classes` column
+    widths (`app/models/product.py`)."""
+
+    code: str = Field(..., min_length=1, max_length=50)
+    name: str = Field(..., min_length=1, max_length=150)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("code")
+    @classmethod
+    def _not_reserved(cls, v: str) -> str:
+        from app.schemas.item_class import refuse_reserved_code
+
+        return refuse_reserved_code(v)
 
 
 class CanonicalUnitOfMeasure(_Canonical):
@@ -197,6 +216,9 @@ class CanonicalProduct(_Canonical):
     # AutoCount ItemType (ITEM-TYPE-CRM). Back-created like brand_code; absent or
     # blank leaves the stored link untouched.
     item_type_code: Optional[str] = Field(None, max_length=100)
+    # AutoCount ItemClass (ITEM-CLASS). Back-created like item_type_code, but "" (or null)
+    # CLEARS the product's class; absent leaves it untouched.
+    item_class_code: Optional[str] = Field(None, max_length=100)
     # CRM-owned (PLAN D14, price-tag-feedback-r2). Overwrites the stored value
     # only when non-empty; empty/absent leaves a manually entered barcode
     # untouched - see `master_ingest_service._product_columns`.
@@ -210,3 +232,11 @@ class CanonicalProduct(_Canonical):
     # concatenated into `description` the way the xlsx import's Desc 2
     # handling does. See migration 475_products_remark.
     remark: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("item_class_code")
+    @classmethod
+    def _class_not_reserved(cls, v: Optional[str]) -> Optional[str]:
+        # TAG-BRAND-CLASS: "__NONE__" means "No class" in contact access, never a real class.
+        from app.schemas.item_class import refuse_reserved_code
+
+        return refuse_reserved_code(v)

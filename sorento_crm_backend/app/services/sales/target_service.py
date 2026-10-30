@@ -37,6 +37,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy import Integer, cast, func, or_, select, text
 from sqlalchemy.orm import Session
 
+from app.models.company import Company
 from app.models.order import Customer, CustomerGroup
 from app.models.product import Brand, Product, ProductCategory
 from app.models.sales import (
@@ -1415,14 +1416,20 @@ def list_targets(
     *,
     on: Optional[date] = None,
     subject: str = "team",
-    sales_team_id: Optional[str] = None,
+    sales_team_id: Optional[list[str] | str] = None,
     query: Optional[str] = None,
 ) -> dict:
     """The Targets page and the team page (16.3): one row per target period containing `on`,
-    plus a "No target" row per active agent or active team with none."""
+    plus a "No target" row per active agent or active team with none.
+
+    `sales_team_id` is one team or several (OR-ed); `none` (agents in no team) is a pseudo-value
+    that ORs with real teams."""
     on = on or _today()
     company_id = acting_company_id(db)
-    if sales_team_id == "none" and subject != "agent":
+    team_filter = [sales_team_id] if isinstance(sales_team_id, str) else list(sales_team_id or [])
+    no_team = "none" in team_filter
+    real_teams = [t for t in team_filter if t != "none"]
+    if no_team and subject != "agent":
         raise _unprocessable("No team filters agents only.", "INVALID_FILTER")
 
     covering = _covering_on(db, on)
@@ -1445,18 +1452,24 @@ def list_targets(
     rows: List[dict] = []
     left_on: Dict[str, Optional[date]] = {}
     if subject == "agent":
-        if sales_team_id == "none":
-            subjects = {a.id: a for a in active_agents if a.id not in team_of_agent}
-        elif sales_team_id:
-            # The agents the team page shows for the team on `on` (16.3, "Leaving agent").
-            team = team_service.get_team_or_404(db, sales_team_id)
-            members = team_service.team_detail(db, team, on=on)["members"]
-            subjects = _agents_by_id(db, company_id, [m["sales_agent_id"] for m in members])
-            left_on = {m["sales_agent_id"]: m["valid_to"] if m["left"] else None for m in members}
+        if team_filter:
+            subjects = (
+                {a.id: a for a in active_agents if a.id not in team_of_agent} if no_team else {}
+            )
+            for team_id in real_teams:
+                # The agents the team page shows for the team on `on` (16.3, "Leaving agent").
+                team = team_service.get_team_or_404(db, team_id)
+                members = team_service.team_detail(db, team, on=on)["members"]
+                subjects.update(
+                    _agents_by_id(db, company_id, [m["sales_agent_id"] for m in members])
+                )
+                left_on.update(
+                    {m["sales_agent_id"]: m["valid_to"] if m["left"] else None for m in members}
+                )
         else:
             subjects = {a.id: a for a in active_agents}
         pairs = pairs_q.all()
-        if sales_team_id:
+        if team_filter:
             pairs = [(t, p) for t, p in pairs if t.sales_agent_id in subjects]
         subjects.update(_agents_by_id(db, company_id, {t.sales_agent_id for t, _ in pairs} - set(subjects)))
         labels = {agent_id: agent_label(agent) for agent_id, agent in subjects.items()}
@@ -1464,12 +1477,12 @@ def list_targets(
         no_target_ids = [
             agent_id
             for agent_id, agent in subjects.items()
-            if agent_id not in with_target and (agent.is_active or sales_team_id)
+            if agent_id not in with_target and (agent.is_active or team_filter)
         ]
     else:
         teams_q = db.query(SalesTeam)
-        if sales_team_id:
-            teams_q = teams_q.filter(SalesTeam.id == sales_team_id)
+        if real_teams:
+            teams_q = teams_q.filter(SalesTeam.id.in_(real_teams))
         teams = {t.id: t for t in teams_q.all()}
         pairs = [(t, p) for t, p in pairs_q.all() if t.sales_team_id in teams]
         labels = {team_id: team.name for team_id, team in teams.items()}
@@ -1566,7 +1579,7 @@ def list_all_targets(
     db: Session,
     *,
     subject: str = "team",
-    sales_team_id: Optional[str] = None,
+    sales_team_id: Optional[list[str] | str] = None,
     query: Optional[str] = None,
 ) -> dict:
     """Targets > Teams and Targets > Agents (the owner's hand test of 27 Sep, "it should show a
@@ -1576,19 +1589,23 @@ def list_all_targets(
     today, or `none` for agents in no team today."""
     on = _today()
     company_id = acting_company_id(db)
-    if sales_team_id == "none" and subject != "agent":
+    team_filter = [sales_team_id] if isinstance(sales_team_id, str) else list(sales_team_id or [])
+    no_team = "none" in team_filter
+    real_teams = [t for t in team_filter if t != "none"]
+    if no_team and subject != "agent":
         raise _unprocessable("No team filters agents only.", "INVALID_FILTER")
     team_of_agent: Dict[str, SalesTeam] = {m.sales_agent_id: t for m, t in _covering_on(db, on)}
 
     targets_q = db.query(SalesTarget).filter(SalesTarget.subject_kind == subject)
-    if subject == "team" and sales_team_id:
-        targets_q = targets_q.filter(SalesTarget.sales_team_id == sales_team_id)
+    if subject == "team" and real_teams:
+        targets_q = targets_q.filter(SalesTarget.sales_team_id.in_(real_teams))
     targets = targets_q.all()
-    if subject == "agent" and sales_team_id == "none":
-        targets = [t for t in targets if t.sales_agent_id not in team_of_agent]
-    elif subject == "agent" and sales_team_id:
+    if subject == "agent" and team_filter:
         targets = [
-            t for t in targets if getattr(team_of_agent.get(t.sales_agent_id), "id", None) == sales_team_id
+            t
+            for t in targets
+            if (no_team and t.sales_agent_id not in team_of_agent)
+            or getattr(team_of_agent.get(t.sales_agent_id), "id", None) in real_teams
         ]
 
     accounts: Dict[str, List[Customer]] = {}
@@ -2081,3 +2098,195 @@ def agent_progress(db: Session, agent_id: str, *, on: Optional[date] = None) -> 
             }
         )
     return {"today": on, "targets": rows}
+
+
+# --------------------------------------------------------------------------------------
+# chat read: the tier ladder and one progress line per (target, period) (SALES-TARGET-CHAT)
+# --------------------------------------------------------------------------------------
+
+
+def _r2(value) -> Optional[float]:
+    return None if value is None else float(commission_service._round(Decimal(str(value))))
+
+
+def _rate_entries(rates: Dict[Optional[str], Decimal], labels: List[Tuple[str, str]]) -> List[dict]:
+    """One `{label, rate}` per account rate (in account order), or one label-less entry."""
+    return [{"label": label, "rate": _r2(rates[cid])} for cid, label in labels if cid in rates]
+
+
+def tier_ladder(
+    tiers: List[commission_service.Tier],
+    tier_starts: List[Optional[date]],
+    period: SalesTargetPeriod,
+    target: SalesTarget,
+    ratios: List[SalesPointRatio],
+    labels: Optional[List[Tuple[str, str]]] = None,
+) -> List[dict]:
+    """The period's main rungs sorted by RM threshold (the engine's ordering, so `tier` is the
+    engine's `tier_reached` number), each with its rates and the additional rates sharing its
+    RM threshold. An additional tier matching no rung is left out. Empty when no threshold can
+    be known (a points target with no ratio)."""
+    unit = target.threshold_unit or "pct"
+    ratio = ratio_on(ratios, period.period_end) if unit == "points" else None
+    mine = [
+        t
+        for t, start in zip(tiers, tier_starts)
+        if not target.tiers_per_period or start == period.period_start
+    ]
+
+    def at(tier: commission_service.Tier) -> Optional[Decimal]:
+        return commission_service.threshold_in_rm(tier, unit, period.target_value, ratio)
+
+    def entries(tier: commission_service.Tier) -> List[dict]:
+        if tier.account_rates is not None:
+            return _rate_entries(tier.account_rates, labels or [])
+        return [{"label": None, "rate": _r2(tier.rate)}]
+
+    main = sorted(
+        (t for t in mine if not t.is_additional and at(t) is not None), key=lambda t: at(t)
+    )
+    extra = [t for t in mine if t.is_additional and at(t) is not None]
+    return [
+        {
+            "tier": index,
+            "from_pct": tier.from_pct,
+            "threshold_rm": at(tier),
+            "threshold_points": _r2(tier.threshold) if unit == "points" else None,
+            "rates": entries(tier),
+            "additional_rates": [r for a in extra if at(a) == at(tier) for r in entries(a)],
+        }
+        for index, tier in enumerate(main, start=1)
+    ]
+
+
+def _rung_out(rung: dict, gap: Optional[Decimal] = None) -> dict:
+    out = {
+        "tier": rung["tier"],
+        "threshold": _r2(rung["threshold_rm"]),
+        "threshold_points": rung["threshold_points"],
+        "rates": rung["rates"],
+        "additional_rates": rung["additional_rates"],
+    }
+    if gap is not None:
+        out["gap"] = _r2(gap)
+    return out
+
+
+def _reached(rung: dict, achieved: Decimal, target: SalesTarget, period: SalesTargetPeriod) -> bool:
+    if (target.threshold_unit or "pct") == "pct" and Decimal(period.target_value) <= 0:
+        # The engine's own rule (commission_service.payout_for `reached`).
+        return Decimal(rung["from_pct"]) <= Decimal("100")
+    return achieved >= rung["threshold_rm"]
+
+
+def period_progress(
+    db: Session,
+    targets: List[SalesTarget],
+    *,
+    date_from: date,
+    date_to: date,
+) -> List[dict]:
+    """One line per (target, period overlapping the window). The achieved figure is the
+    engine's own (`_achieved_by_account`, what `target_detail` sums). Carries no RM incentive
+    and no id."""
+    today = _today()
+    window_has_today = date_from <= today <= date_to
+    if not targets:
+        return []
+    periods = {t.id: [p for p in _periods(db, t.id) if p.period_start <= date_to and p.period_end >= date_from] for t in targets}
+    pairs = [(t, p) for t in targets for p in periods[t.id]]
+    achieved: Dict[str, Decimal] = {}
+    for company_id in {t.company_id for t, _ in pairs}:
+        for dealer in (True, False):
+            chunk = [
+                (t, p)
+                for t, p in pairs
+                if t.company_id == company_id and (t.subject_kind == "dealer") == dealer
+            ]
+            if chunk:
+                for pid, by_account in _achieved_by_account(db, company_id, chunk).items():
+                    achieved[pid] = sum(by_account.values(), Decimal("0"))
+
+    tiers_by = _tiers_by_target(db, [t.id for t in targets])
+    all_rates = _tier_rates(db, [x.id for rows in tiers_by.values() for x in rows])
+    accounts = _accounts_by_target(db, [t.id for t in targets if t.subject_kind == "dealer"])
+    all_ratios = point_ratios(db) if any((t.threshold_unit or "pct") == "points" for t in targets) else []
+    company_codes = {
+        cid: code
+        for cid, code in db.query(Company.id, Company.code).filter(
+            Company.id.in_({t.company_id for t in targets})
+        )
+    }
+    agent_ids = {t.sales_agent_id for t in targets if t.subject_kind == "agent"}
+    agents = {a.id: a for a in db.query(SalesAgent).filter(SalesAgent.id.in_(agent_ids))} if agent_ids else {}
+    team_ids = {t.sales_team_id for t in targets if t.subject_kind == "team"}
+    teams = {x.id: x for x in db.query(SalesTeam).filter(SalesTeam.id.in_(team_ids))} if team_ids else {}
+    pipeline: Dict[str, Decimal] = {}
+    if window_has_today:
+        for agent_id in agent_ids:
+            for row in agent_progress(db, agent_id, on=today)["targets"]:
+                pipeline[row["target_id"]] = row["pipeline_value"]
+
+    lines: List[dict] = []
+    for target, period in pairs:
+        unit = target.threshold_unit or "pct"
+        ratios = [r for r in all_ratios if r.company_id == target.company_id]
+        dealer_accounts = accounts.get(target.id, [])
+        labels = [(c.id, account_label(c)) for c in dealer_accounts]
+        engine = _engine_tiers(tiers_by[target.id], all_rates)
+        starts = [x.period_start for x in tiers_by[target.id]]
+        if target.subject_kind == "dealer":
+            # A chat line never carries a ledger marker ("[A/C I]"): the group name stays, a
+            # single account's name loses its marker.
+            from app.services.ledger_family import ledger_family_label
+
+            subject = dealer_label(db, dealer_accounts)
+            groups = {c.customer_group_id for c in dealer_accounts}
+            shared_group = len(groups) == 1 and None not in groups
+            if not (shared_group and db.get(CustomerGroup, next(iter(groups))) is not None):
+                subject = ledger_family_label(subject)
+        elif target.subject_kind == "agent":
+            agent = agents.get(target.sales_agent_id)
+            subject = agent_label(agent) if agent else ""
+        else:
+            team = teams.get(target.sales_team_id)
+            subject = team.name if team else ""
+        value = achieved.get(period.id, Decimal("0"))
+        ratio = ratio_on(ratios, period.period_end) if unit == "points" else None
+        missing = unit == "points" and ratio is None
+        figure = None if missing else (period.target_value * ratio if ratio is not None else period.target_value)
+        ladder = [] if missing else tier_ladder(engine, starts, period, target, ratios, labels)
+        hit = [r for r in ladder if _reached(r, value, target, period)]
+        upcoming = [r for r in ladder if r not in hit]
+        is_current = window_has_today and period.period_start <= today <= period.period_end
+        lines.append(
+            {
+                "target_no": target.target_no,
+                "name": target.name,
+                "subject_kind": target.subject_kind,
+                "subject_label": subject,
+                "company_code": company_codes.get(target.company_id),
+                "period_start": period.period_start,
+                "period_end": period.period_end,
+                "is_current": is_current,
+                "metric": target.metric,
+                "threshold_unit": unit,
+                "provisional": target.subject_kind == "dealer",
+                "accounts": [{"code": c.customer_code, "label": account_label(c)} for c in dealer_accounts],
+                "target_value": _r2(figure),
+                "target_points": _r2(period.target_value) if unit == "points" else None,
+                "achieved_value": _r2(value),
+                "ratio_missing": missing,
+                "tier_reached": _rung_out(hit[-1]) if hit else None,
+                "next_tier": (
+                    _rung_out(upcoming[0], upcoming[0]["threshold_rm"] - value) if upcoming else None
+                ),
+                "target_end_date": target.end_date if target.subject_kind == "agent" else None,
+                "pipeline_value": (
+                    _r2(pipeline.get(target.id, Decimal("0")))
+                    if target.subject_kind == "agent" and is_current
+                    else None
+                ),
+            }
+        )
+    return lines

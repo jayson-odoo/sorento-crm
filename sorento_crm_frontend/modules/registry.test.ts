@@ -35,6 +35,8 @@ describe('module registry purge manifests', () => {
       'sales.target_scope',
       'sales.target_periods',
       'sales.targets',
+      'sales.set_apart_customers',
+      'sales.agent_classes',
       'sales.point_ratios',
       'sales.team_members',
       'sales.teams',

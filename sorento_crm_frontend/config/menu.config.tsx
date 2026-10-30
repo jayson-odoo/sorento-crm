@@ -59,10 +59,49 @@ import {
   Briefcase as WorkIcon,
   Zap,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { type MenuConfig } from './types';
+import { LANDING_LABELS, LANDING_KINDS, orderLandingKinds } from '@/lib/portal-form-kinds';
+import { MY_REQUEST_STAFF_PAGES } from '@/lib/my-requests-staff-pages';
+
+// MY REQUESTS: one item per portal form kind, in portal order. Customer asks and Conversation are
+// MY WORK entries instead (their own CRM pages), so they are not request kinds.
+const MY_REQUEST_ICONS: Partial<Record<(typeof LANDING_KINDS)[number], LucideIcon>> = {
+  complaint: AlertCircle,
+  stock_inquiry: Warehouse,
+  purchase_request: ShoppingCart,
+  sponsorship_form: Gift,
+  sample_request: Package,
+  new_product_application: FileText,
+  price_tag_request: Receipt,
+  sales_opportunity: TrendingUp,
+};
+
+// The four request forms open the STAFF pages (MY_REQUEST_STAFF_PAGES, PORTAL-P4-REQUESTS); the
+// other kinds still render the portal form in place. Project Registration has no item: the
+// salesperson registers projects on the one Projects page.
+const MY_REQUEST_ITEMS: MenuConfig = orderLandingKinds(
+  LANDING_KINDS.filter(
+    (k) =>
+      k !== 'customer_asks' &&
+      k !== 'conversation' &&
+      k !== 'project_registration',
+  ),
+).map((kind) => {
+  const staff = MY_REQUEST_STAFF_PAGES[kind];
+  return {
+    title: LANDING_LABELS[kind],
+    icon: MY_REQUEST_ICONS[kind],
+    path: staff ? staff.path : `/my-requests?type=${kind}`,
+    ...(staff ? { permission: staff.permission } : {}),
+    audience: 'salesperson' as const,
+    portalKind: kind,
+  };
+});
 
 
-export const MENU_SIDEBAR: MenuConfig = [
+/** The staff menu: everything above MY WORK. */
+const STAFF_SIDEBAR: MenuConfig = [
   { heading: 'OVERVIEW' },
   {
     // The home page is the My pending widget (/conversation-sla-tracking/my-pending) over
@@ -75,6 +114,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Ideas',
     icon: Lightbulb,
+    audience: 'staff',
     children: [
       {
         title: 'All ideas',
@@ -116,6 +156,7 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sales/customer-asks',
         permission: 'sales.customer_asks.view',
         moduleKey: 'sales',
+        audience: 'staff',
       },
       {
         title: 'Sales Teams',
@@ -133,6 +174,31 @@ export const MENU_SIDEBAR: MenuConfig = [
         // PLAN-retail-sales-reports-26sep 5.4. The Sales report item lands with S2.
         title: 'Yearly comparison',
         path: '/sales/yearly-comparison',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Sales by debtor type',
+        path: '/sales/sales-by-debtor-type',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Top selling items',
+        path: '/sales/top-selling-items',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Sales & outstanding',
+        path: '/sales/sales-and-outstanding',
+        // Invoiced needs the reports slug, unpaid the finance one, the other four the orders slug: any opens the screen.
+        permissionsAny: ['sales.reports.view', 'order_management.orders.view', 'finance.billing_documents.view'],
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Set-apart customers',
+        path: '/sales/set-apart-customers',
         permission: 'sales.reports.view',
         moduleKey: 'sales',
       },
@@ -469,6 +535,12 @@ export const MENU_SIDEBAR: MenuConfig = [
         permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
       },
       {
+        title: 'Stock position',
+        path: '/inventory-management/stock-position',
+        // Same gate as Stock status (`app/api/v1/inventory/stock_position.py` reuses its slugs).
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
+      },
+      {
         title: 'Stock Batches',
         path: '/inventory-management/stock-batches',
         permission: 'inventory.stock_batches.view',
@@ -544,6 +616,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Brands',
             path: '/master-data-management/brands',
             permission: 'master_data.brands.view',
+          },
+          {
+            title: 'Item Classes',
+            path: '/master-data-management/item-classes',
+            permission: 'master_data.item_classes.view',
           },
           {
             title: 'Units of Measure',
@@ -1100,6 +1177,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             path: '/master-data-management/lookup-sets',
             permission: 'master_data.lookup_sets.view',
           },
+          {
+            title: 'Embeddings',
+            path: '/system-management/embeddings',
+            permission: 'master_data.lookup_sets.view',
+          },
         ],
       },
       {
@@ -1400,6 +1482,39 @@ export const MENU_SIDEBAR: MenuConfig = [
   // { title: 'Store - Services', icon: Codepen, disabled: true },
   // { title: 'AI Promt', icon: Theater, disabled: true },
   // { title: 'Invoice Generator', icon: ScrollText, disabled: true },
+];
+
+/**
+ * The sidebar. The staff menu is tagged `staff` here, once, so no staff item reaches a salesperson
+ * whatever staff grant they also hold (pp4_0001 grants them `.create` on new product applications),
+ * the next item added to it included. A salesperson sees MY WORK and MY REQUESTS only.
+ */
+export const MENU_SIDEBAR: MenuConfig = [
+  ...STAFF_SIDEBAR.map((item) => (item.audience ? item : { ...item, audience: 'staff' as const })),
+  { heading: 'MY WORK', audience: 'salesperson' },
+  {
+    title: 'Projects',
+    icon: Briefcase,
+    path: '/project-sales/pipeline',
+    permission: 'projects.projects.view_own',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Conversations',
+    icon: MessageSquare,
+    path: '/sla-management/conversations',
+    permission: 'sla_management.conversations.view_own',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Customer asks',
+    icon: Star,
+    path: '/sales/customer-asks',
+    permission: 'sales.customer_asks.view',
+    audience: 'salesperson',
+  },
+  { heading: 'MY REQUESTS', audience: 'salesperson' },
+  ...MY_REQUEST_ITEMS,
 ];
 
 export const MENU_SIDEBAR_CUSTOM: MenuConfig = [
@@ -1896,6 +2011,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       permission: 'master_data.brands.view',
     },
     {
+      title: 'Item Classes',
+      path: '/master-data-management/item-classes',
+      permission: 'master_data.item_classes.view',
+    },
+    {
       title: 'Units of Measure',
       path: '/master-data-management/units-of-measure',
       permission: 'master_data.units_of_measure.view',
@@ -2011,6 +2131,12 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/inventory-management/stock-status',
         // The API's own gate (`app/api/v1/inventory/stock_status.py`): the panel shows SO
         // customers and PO suppliers, which `inventory.stock.view` alone never granted.
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
+      },
+      {
+        title: 'Stock position',
+        path: '/inventory-management/stock-position',
+        // Same gate as Stock status (`app/api/v1/inventory/stock_position.py` reuses its slugs).
         permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
       },
       {
@@ -2447,6 +2573,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Lookup Sets',
         path: '/master-data-management/lookup-sets',
+        permission: 'master_data.lookup_sets.view',
+      },
+      {
+        title: 'Embeddings',
+        path: '/system-management/embeddings',
         permission: 'master_data.lookup_sets.view',
       },
       {

@@ -21,10 +21,13 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import permission_slugs
 from app.api.v1.projects.quotations import _notify_breaches
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import require_any_permission_with_api_key, require_permission
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
     ProjectQuotationDocumentCreate,
+    QuotationAmendmentApplyResponse,
+    QuotationAmendmentDecideRequest,
+    QuotationAmendmentStaffResponse,
     QuotationApprovalMoveRequest,
     QuotationRejectRequest,
     QuotationReviseRequest,
@@ -41,16 +44,22 @@ from app.schemas.status import StatusGraphResponse
 from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_document_service as svc
 from app.services import project_service as projects
+from app.services import quotation_amendment_service as amendments
 from app.services.client_ip import client_ip
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 # S16: the sales-manager grant on below-floor pricing. The whole access control on that
@@ -82,12 +91,13 @@ def _issue_or_404(db: Session, document, issue_id: str):
     return record
 
 
-def _editable_project(db: Session, project_id: str, current_user: dict):
+def _editable_project(db: Session, project_id: str, current_user: dict, *, write: bool = True):
+    """`write=False` for a read behind the edit right (the letter templates): it does not
+    need the project approved, only the right to work it."""
     validate_uuid_path(project_id, resource="Project")
     project = projects.get_project_or_404(db, project_id)
-    projects.assert_can_edit_project(
-        db, project, current_user["id"], permission_slugs(db, current_user["id"])
-    )
+    check = projects.assert_can_write_project if write else projects.assert_can_edit_project
+    check(db, project, current_user["id"], permission_slugs(db, current_user["id"]))
     return project
 
 
@@ -98,9 +108,9 @@ def _editable_project(db: Session, project_id: str, current_user: dict):
     "/projects/{project_id}/quotation-documents",
     response_model=ListResponse[ProjectQuotationDocumentResponse],
 )
-async def list_quotation_documents(
+def list_quotation_documents(
     project_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -116,7 +126,7 @@ async def list_quotation_documents(
     response_model=ProjectQuotationDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_quotation_document(
+def create_quotation_document(
     project_id: str,
     payload: ProjectQuotationDocumentCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -144,7 +154,7 @@ async def create_quotation_document(
 
 
 @router.get("/projects/{project_id}/quotation-documents/letter-templates")
-async def get_quotation_letter_templates(
+def get_quotation_letter_templates(
     project_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -152,7 +162,7 @@ async def get_quotation_letter_templates(
     """The company's cover letter and terms for the create form's own tabs (#1341). Declared
     before ``/{document_id}`` so the literal segment is not read as a document id."""
     try:
-        project = _editable_project(db, project_id, current_user)
+        project = _editable_project(db, project_id, current_user, write=False)
         return svc.letter_templates(db, project=project)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -162,10 +172,10 @@ async def get_quotation_letter_templates(
     "/projects/{project_id}/quotation-documents/{document_id}",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def get_quotation_document(
+def get_quotation_document(
     project_id: str,
     document_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -184,7 +194,7 @@ async def get_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def update_quotation_document(
+def update_quotation_document(
     project_id: str,
     document_id: str,
     payload: ProjectQuotationDocumentUpdate,
@@ -247,7 +257,7 @@ async def update_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_quotation_document(
+def delete_quotation_document(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
@@ -274,7 +284,7 @@ async def delete_quotation_document(
     response_model=ProjectQuotationScopeSummary,
     status_code=status.HTTP_201_CREATED,
 )
-async def add_quotation_scope(
+def add_quotation_scope(
     project_id: str,
     document_id: str,
     payload: ProjectQuotationScopeCreate,
@@ -306,7 +316,7 @@ async def add_quotation_scope(
     "/projects/{project_id}/quotation-documents/{document_id}/scopes/{quotation_id}",
     response_model=ProjectQuotationScopeSummary,
 )
-async def update_quotation_scope(
+def update_quotation_scope(
     project_id: str,
     document_id: str,
     quotation_id: str,
@@ -336,10 +346,10 @@ async def update_quotation_scope(
     "/projects/{project_id}/quotation-documents/{document_id}/issues",
     response_model=ListResponse[ProjectQuotationIssueResponse],
 )
-async def list_quotation_issues(
+def list_quotation_issues(
     project_id: str,
     document_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -358,7 +368,7 @@ async def list_quotation_issues(
     response_model=ProjectQuotationIssueResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def issue_quotation_document(
+def issue_quotation_document(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -387,8 +397,8 @@ async def issue_quotation_document(
 
 
 @router.get("/quotation-approval-graph", response_model=StatusGraphResponse)
-async def get_quotation_approval_graph(
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+def get_quotation_approval_graph(
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The `quotation` approval graph, readable by anyone who can see a project.
@@ -420,7 +430,7 @@ async def get_quotation_approval_graph(
     "/projects/{project_id}/quotation-documents/{document_id}/approval-status",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def move_quotation_approval(
+def move_quotation_approval(
     project_id: str,
     document_id: str,
     payload: QuotationApprovalMoveRequest,
@@ -459,7 +469,7 @@ async def move_quotation_approval(
     "/projects/{project_id}/quotation-documents/{document_id}/approve",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def approve_quotation_document(
+def approve_quotation_document(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_permission(APPROVE)),
@@ -496,7 +506,7 @@ async def approve_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}/reject",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def reject_quotation_document(
+def reject_quotation_document(
     project_id: str,
     document_id: str,
     payload: QuotationRejectRequest,
@@ -536,7 +546,7 @@ async def reject_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}/approval-revise",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def revise_quotation_approval(
+def revise_quotation_approval(
     project_id: str,
     document_id: str,
     payload: QuotationReviseRequest,
@@ -548,7 +558,7 @@ async def revise_quotation_approval(
         validate_uuid_path(document_id, resource="Quotation")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
-        was_pending = approvals.current_key(db, document) == approvals.STATUS_PENDING
+        was_pending = approvals.current_key(db, document) in approvals.AWAITING_KEYS
         approvals.revise_approval(db, document, current_user["id"], payload.reason)
         reason = " ".join((payload.reason or "").split())
         db.commit()
@@ -569,7 +579,7 @@ async def revise_quotation_approval(
     response_model=QuotationSignatureResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def sign_quotation_document(
+def sign_quotation_document(
     project_id: str,
     document_id: str,
     payload: QuotationSignatureRequest,
@@ -602,9 +612,40 @@ async def sign_quotation_document(
 
 
 @router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/whatsapp-opened",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def log_quotation_whatsapp_opened(
+    project_id: str,
+    document_id: str,
+    issue_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """One line on the project feed: the salesperson opened the quotation link in WhatsApp.
+
+    The message and the number never come here; only the fact that the chat was opened.
+    """
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(issue_id, resource="Revision")
+        _editable_project(db, project_id, current_user)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        record = _issue_or_404(db, document, issue_id)
+        svc.record_whatsapp_opened(
+            db, document=document, record=record, actor_id=current_user["id"]
+        )
+        db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/sign-link",
 )
-async def create_quotation_sign_link(
+def create_quotation_sign_link(
     project_id: str,
     document_id: str,
     issue_id: str,
@@ -634,17 +675,119 @@ async def create_quotation_sign_link(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+# ------------------------------------------------- customer suggested changes
+
+
+@router.get(
+    "/projects/{project_id}/quotation-documents/{document_id}/amendment-request",
+    response_model=QuotationAmendmentStaffResponse | None,
+)
+def read_quotation_amendment_request(
+    project_id: str,
+    document_id: str,
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
+    db: Session = Depends(get_db),
+):
+    """The open (or latest) suggestion request on the document's latest issue, or null.
+
+    Behind the edit right as well as the read right: the request is only shown to be decided.
+    """
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        _editable_project(db, project_id, current_user, write=False)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        return amendments.serialize_request(
+            db, amendments.latest_request_for_document(db, document)
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/projects/{project_id}/quotation-documents/{document_id}"
+    "/amendment-requests/{request_id}/rows/{row_id}",
+    response_model=QuotationAmendmentStaffResponse,
+)
+def decide_quotation_amendment_row(
+    project_id: str,
+    document_id: str,
+    request_id: str,
+    row_id: str,
+    payload: QuotationAmendmentDecideRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Accept, reject (with a reason) or put one suggestion back to pending."""
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(request_id, resource="Request")
+        validate_uuid_path(row_id, resource="Suggestion")
+        _editable_project(db, project_id, current_user)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        request = amendments.get_request_for_document_or_404(db, document, request_id)
+        amendments.decide_row(
+            db,
+            request=request,
+            row_id=row_id,
+            decision=payload.decision,
+            reason=payload.reason,
+            actor_user_id=current_user["id"],
+        )
+        db.commit()
+        return amendments.serialize_request(db, request)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}"
+    "/amendment-requests/{request_id}/apply",
+    response_model=QuotationAmendmentApplyResponse,
+)
+def apply_quotation_amendment_request(
+    project_id: str,
+    document_id: str,
+    request_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Draft the next revision of every scope with an accepted suggestion. Nothing is issued."""
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(request_id, resource="Request")
+        _editable_project(db, project_id, current_user)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        request = amendments.get_request_for_document_or_404(db, document, request_id)
+        written: list = []
+        drafts = amendments.apply_request(
+            db, request=request, actor_user_id=current_user["id"], written=written
+        )
+        # An accepted price below its floor alerts management exactly as a hand edit does.
+        for line in written:
+            _notify_breaches(db, line, current_user["id"])
+        db.commit()
+        return {
+            "request": amendments.serialize_request(db, request),
+            "version_ids": [str(draft.id) for draft in drafts],
+        }
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 # ------------------------------------------------------------------------ pdf
 
 
 @router.get(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf",
 )
-async def download_quotation_issue_pdf(
+@heavy
+def download_quotation_issue_pdf(
     project_id: str,
     document_id: str,
     issue_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The issued quotation, as the customer received it, rendered inline in this request.
@@ -697,11 +840,11 @@ async def download_quotation_issue_pdf(
 @router.get(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx",
 )
-async def download_quotation_issue_xlsx(
+def download_quotation_issue_xlsx(
     project_id: str,
     document_id: str,
     issue_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The same issued quotation as a workbook, one sheet per scope (AC-F2).
@@ -778,7 +921,7 @@ def _queue_issue_export(
         # Named up front so the drawer reads as the quotation it is while still pending; the
         # task overwrites it with the renderer's own name once it knows it.
         filename=(
-            f"quotation-{(record.our_ref_text or document.document_no or 'quotation')}"
+            f"quotation-{svc.quotation_no(document.document_no, record.issue_no)}"
             f".{suffix}"
         ).replace("/", "-"),
     )
@@ -806,11 +949,11 @@ def _queue_issue_export(
 @router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/pdf",
 )
-async def queue_quotation_issue_pdf(
+def queue_quotation_issue_pdf(
     project_id: str,
     document_id: str,
     issue_id: str,
-    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Queue the issued quotation's PDF; it appears in My Downloads when it is ready.
@@ -838,11 +981,11 @@ async def queue_quotation_issue_pdf(
 @router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/xlsx",
 )
-async def queue_quotation_issue_xlsx(
+def queue_quotation_issue_xlsx(
     project_id: str,
     document_id: str,
     issue_id: str,
-    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Queue the issued quotation's workbook; it appears in My Downloads when it is ready."""

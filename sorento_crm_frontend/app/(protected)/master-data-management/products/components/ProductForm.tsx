@@ -38,6 +38,7 @@ import type { Product, ProductFormData } from '../types/product.types';
 import { useCategory } from '../../product-categories/hooks/useProductCategories';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
+import { useItemClassSelectQuery } from '../../shared/hooks/use-item-class-select-query';
 import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
 // The floor is project-sales pricing POLICY, not a product column, so the panel and its
 // rules live with the rest of that policy and are only surfaced here.
@@ -80,6 +81,11 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
     error: brandsError,
     refetch: refetchBrands,
   } = useBrandSelectQuery();
+  const {
+    data: itemClasses,
+    error: itemClassesError,
+    refetch: refetchItemClasses,
+  } = useItemClassSelectQuery();
   const { data: uoms, error: uomsError, refetch: refetchUoms } = useUOMSelectQuery();
   const createMutation = useCreateProduct();
   const updateMutation = useUpdateProduct();
@@ -97,6 +103,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       description: '',
       category_id: '',
       brand_id: null,
+      item_class_id: null,
       barcode: '',
       item_type: null,
       is_active: true,
@@ -112,6 +119,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       warranty_months: null,
       has_serial_tracking: false,
       has_batch_tracking: false,
+      show_so_line_description: false,
       reorder_level: 10,
       reorder_quantity: 50,
       chatbot_max_qty: null,
@@ -156,6 +164,11 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       : product.brand?.id
         ? String(product.brand.id)
         : null;
+    const itemClassId = product.item_class_id
+      ? String(product.item_class_id)
+      : product.item_class?.id
+        ? String(product.item_class.id)
+        : null;
     const uomId = String(product.base_uom_id || '');
 
     form.reset({
@@ -164,6 +177,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       description: product.description || '',
       category_id: categoryId,
       brand_id: brandId,
+      item_class_id: itemClassId,
       barcode: product.barcode || '',
       item_type: product.item_type || null,
       is_active: product.is_active,
@@ -179,6 +193,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       warranty_months: product.warranty_months ?? null,
       has_serial_tracking: product.has_serial_tracking,
       has_batch_tracking: product.has_batch_tracking,
+      show_so_line_description: product.show_so_line_description ?? false,
       reorder_level: product.reorder_level,
       reorder_quantity: product.reorder_quantity,
       chatbot_max_qty: product.chatbot_max_qty ?? null,
@@ -218,6 +233,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         description: data.description || undefined,
         category_id: data.category_id,
         brand_id: data.brand_id ?? (isEditMode ? null : undefined),
+        item_class_id: data.item_class_id ?? (isEditMode ? null : undefined),
         barcode: data.barcode ? data.barcode : isEditMode ? null : undefined,
         base_uom_id: data.base_uom_id,
         list_price: typeof data.list_price === 'number' ? data.list_price : Number(data.list_price),
@@ -230,6 +246,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         warranty_months: toOptionalNumber(data.warranty_months, isEditMode),
         has_serial_tracking: data.has_serial_tracking,
         has_batch_tracking: data.has_batch_tracking,
+        show_so_line_description: data.show_so_line_description,
         reorder_level: data.reorder_level,
         reorder_quantity: data.reorder_quantity,
         chatbot_max_qty: toOptionalNumber(data.chatbot_max_qty, isEditMode),
@@ -458,6 +475,47 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                                       value: product.brand.id,
                                       label: product.brand.brand_code,
                                       searchText: `${product.brand.brand_code} ${product.brand.brand_name ?? ''}`,
+                                    },
+                                  ]
+                                : []),
+                            ]}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="item_class_id"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Item Class</FormLabel>
+                        <FormControl>
+                          <SearchableSelect
+                            value={field.value || '__none__'}
+                            onChange={(v) => field.onChange(v === '__none__' ? null : v)}
+                            placeholder="Search item class..."
+                            emptyMessage="No item class found."
+                            loadError={itemClassesError}
+                            onRetry={() => void refetchItemClasses()}
+                            options={[
+                              { value: '__none__', label: 'None' },
+                              ...(itemClasses ?? []).map((itemClass) => ({
+                                value: itemClass.id,
+                                label: itemClass.item_class_name,
+                                searchText: `${itemClass.item_class_code} ${itemClass.item_class_name}`,
+                              })),
+                              // A saved class that is now inactive is not in the active select:
+                              // keep it as the current value so it never shows as a raw id.
+                              ...(product?.item_class &&
+                              !itemClasses?.some((c) => c.id === product.item_class?.id)
+                                ? [
+                                    {
+                                      value: product.item_class.id,
+                                      label: product.item_class.item_class_name,
+                                      searchText: `${product.item_class.item_class_code} ${product.item_class.item_class_name}`,
                                     },
                                   ]
                                 : []),
@@ -865,6 +923,24 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                             Track batches with expiry dates
                           </FormDescription>
                         </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="show_so_line_description"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <FormLabel className="text-base">
+                          Show SO line description in OI email
+                        </FormLabel>
                         <FormControl>
                           <Switch
                             checked={field.value}

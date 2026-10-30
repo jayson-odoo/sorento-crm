@@ -1096,8 +1096,8 @@ function columnDefs() {
 // "redirected" and "received" as visible cell text before writing these; every
 // remaining "redirected" occurrence below is a `queryByText`/`not.toMatch` guard, never
 // an assertion that it renders.
-describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings): a received document is the word "received", one muted pill', () => {
-  it('a received link shows the word "received" as a muted pill, and clicking it opens the dialog reading "Received 158 of 158" for it and nothing for an open link', () => {
+describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings) as amended by LINKAGE-UNIFY Q1 (owner, 26 Oct): a received SPO reads "Received <qty> at <bin>", one muted pill; a PO chip never says received', () => {
+  it('a received SPO link shows "Received 158 at BRW-IR" as a muted pill off its receipts, and clicking it opens the dialog reading "Received 158 of 158" for it and nothing for an open link', () => {
     renderRows(
       [
         worklistRow({
@@ -1113,7 +1113,8 @@ describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings): a re
               location: 'BRW-IR',
               received: true,
               received_qty: '158',
-            },
+              receipts: [{ qty: '158', bin: 'BRW-IR' }],
+            } as never,
             {
               id: 'l2',
               kind: 'po',
@@ -1131,7 +1132,7 @@ describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings): a re
 
     const row = screen.getByTestId('row-row-mixed');
     const mark = within(row).getByTestId('backing-documents-received-spo-row-mixed');
-    expect(mark.textContent).toBe('received');
+    expect(mark.textContent).toBe('Received 158 at BRW-IR');
     // One line: no block-level child hides the row height.
     expect(row.querySelectorAll('div')).toHaveLength(0);
 
@@ -1139,6 +1140,25 @@ describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings): a re
     const dialog = screen.getByTestId('backing-documents-row-mixed');
     expect(within(dialog).getByText('Received 158 of 158')).toBeInTheDocument();
     expect(within(dialog).queryByText(/Received 20/)).not.toBeInTheDocument();
+  });
+
+  it('a PO chip never carries a "received" pill, even on a received PO line', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-po-rcv',
+        qty: '40',
+        linked_qty: '40',
+        links: [
+          { id: 'l1', kind: 'po', document: '202607-S0105', qty: '40', received: true, received_qty: '40', receipts: [] } as never,
+        ],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-po-rcv');
+    expect(
+      within(row).queryByTestId('backing-documents-received-row-po-rcv'),
+    ).not.toBeInTheDocument();
+    expect(within(row).queryByText(/received/i)).not.toBeInTheDocument();
   });
 
   it('an OPEN link carries no "received" pill', () => {
@@ -1920,7 +1940,7 @@ describe('the Raised at cell carries its own history in a tooltip (PLAN-oi-workl
  * wiring that produces it (S3).
  */
 describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as a received link does today', () => {
-  it('a row settled in place under Path B (redirected_to_pool false, note carries "Was N on date") still shows the "received" pill on its linked document', () => {
+  it('a row settled in place under Path B (redirected_to_pool false, note carries "Was N on date") still shows "Received 40 at BRW-BB" on its linked SPO (LINKAGE-UNIFY Q1)', () => {
     renderRows(
       [
         worklistRow({
@@ -1938,7 +1958,8 @@ describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as 
               location: 'BRW-BB',
               received: true,
               received_qty: '40',
-            },
+              receipts: [{ qty: '40', bin: 'BRW-BB' }],
+            } as never,
           ],
         }),
       ],
@@ -1949,7 +1970,7 @@ describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as 
     const mark = within(row).getByTestId(
       'backing-documents-received-spo-row-own-arrival-retained',
     );
-    expect(mark.textContent).toBe('received');
+    expect(mark.textContent).toBe('Received 40 at BRW-BB');
     // Path B is a RETAIN, never a redirect: the row stays active, not muted.
     expect(row.className).not.toContain('opacity-60');
   });
@@ -2238,5 +2259,88 @@ describe('OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit beside
     const row = screen.getByTestId('row-row-none');
     expect(within(row).queryByText('0')).not.toBeInTheDocument();
     expect(within(row).getByText('-')).toBeInTheDocument();
+  });
+});
+
+describe('AC-AC-10b: a reserve link prints in the PO cell as "Reserved @ <code> <qty>"', () => {
+  const reserveRow = () =>
+    worklistRow({
+      id: 'row-reserve',
+      qty: '3',
+      linked_qty: '0',
+      links: [],
+      reserve_label: 'Reserved @ BRW',
+      reserved_qty: '3',
+    } as never);
+
+  it('reads "Reserved @ BRW 3" instead of a dash', () => {
+    renderRows([reserveRow()]);
+
+    const cell = screen.getByTestId('row-row-reserve');
+    expect(within(cell).getByText('Reserved @ BRW 3')).toBeInTheDocument();
+    expect(within(cell).queryByText('-')).not.toBeInTheDocument();
+  });
+
+  it('is not a link to a purchase order', () => {
+    renderRows([reserveRow()]);
+
+    const cell = screen.getByTestId('row-row-reserve');
+    expect(within(cell).queryByTestId('document-detail-trigger-Reserved @ BRW')).toBeNull();
+    expect(within(cell).queryByRole('link')).toBeNull();
+  });
+});
+
+describe('OI-AUTO-CONFIRM: a row with a PO link AND a reserve link shows both chips in the PO cell', () => {
+  it('prints the PO number and "Reserved @ BRW 3" together', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-both',
+        qty: '8',
+        linked_qty: '8',
+        links: [{ id: 'p1', kind: 'po', document: '202607-S0105', po_id: 'po-1', qty: '5' }],
+        reserve_label: 'Reserved @ BRW',
+        reserved_qty: '3',
+      } as never),
+    ]);
+
+    const cell = screen.getByTestId('row-row-both');
+    expect(within(cell).getByText('202607-S0105')).toBeInTheDocument();
+    expect(within(cell).getByText('Reserved @ BRW 3')).toBeInTheDocument();
+  });
+});
+
+describe('OI-AUTO-CONFIRM review round 1: a row the system marked done is not "Confirmed by Purchasing"', () => {
+  it('system-done (no acknowledged_by, no override) carries no Confirmed by label', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-sysdone',
+        ack_state: 'acknowledged',
+        acknowledged_by: null,
+        acknowledged_by_name: null,
+        acknowledged_at: '2026-10-13T06:05:00Z',
+        ack_override: null,
+        links: [{ id: 'p1', kind: 'po', document: 'PO-9', po_id: 'po-9', qty: '5' }],
+      } as never),
+    ]);
+    const cell = screen.getByTestId('row-row-sysdone');
+    const mark = within(cell).queryByTestId('link-confirmed-mark');
+    expect(mark?.getAttribute('title') ?? '').not.toMatch(/Confirmed by Purchasing/);
+    expect(within(cell).queryByLabelText(/Confirmed by Purchasing/)).toBeNull();
+  });
+
+  it('a manual Confirm still names the person', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-manual',
+        ack_state: 'acknowledged',
+        acknowledged_by: 'u-1',
+        acknowledged_by_name: 'Aisyah',
+        acknowledged_at: '2026-10-13T06:05:00Z',
+        ack_override: 'confirmed',
+        links: [{ id: 'p1', kind: 'po', document: 'PO-8', po_id: 'po-8', qty: '5' }],
+      } as never),
+    ]);
+    const mark = within(screen.getByTestId('row-row-manual')).getByTestId('link-confirmed-mark');
+    expect(mark.getAttribute('title')).toMatch(/Confirmed by Aisyah/);
   });
 });

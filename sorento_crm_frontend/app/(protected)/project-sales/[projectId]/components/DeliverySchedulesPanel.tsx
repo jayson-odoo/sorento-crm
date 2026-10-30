@@ -24,6 +24,7 @@ import {
 import { DeliveryScheduleUploadDialog } from './DeliveryScheduleUploadDialog';
 import { DeliveryScheduleVersionsGrid } from './DeliveryScheduleVersionsGrid';
 import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 /**
  * Delivery schedules (P6, contract section 4).
@@ -184,7 +185,7 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
                 </Link>
               </Button>
             )}
-            {project.can_edit && (
+            {canWorkOnProject(project) && (
               <Button
                 type="button"
                 mode="icon"
@@ -204,7 +205,7 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [project.id, project.can_edit],
+    [project.id, project.can_edit, project.approval_state],
   );
 
   const open = rows.find((row) => row.id === openId) ?? null;
@@ -232,7 +233,7 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
                 {`${awaitingConfirm} not confirmed yet`}
               </Badge>
             )}
-            {project.can_edit && (
+            {canWorkOnProject(project) && (
               <Button
                 type="button"
                 size="sm"
@@ -271,7 +272,7 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
             <DeliveryScheduleVersionsGrid
               projectId={project.id}
               schedule={open}
-              canEdit={project.can_edit}
+              canEdit={canWorkOnProject(project)}
             />
           </CardContent>
         </Card>

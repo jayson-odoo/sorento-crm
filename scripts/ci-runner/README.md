@@ -2,9 +2,10 @@
 
 One self-hosted GitHub Actions runner, `sorento-mac-1` (labels
 `self-hosted, Linux, ARM64, sorento-mac`), registered to
-`jayson-odoo/sorento-crm` only. `deploy.yml` sends jobs here only when crew
-says so: repo variables `RUNNER_TESTS` / `RUNNER_FAST`, or the dispatch input
-`runner` (see the note above `jobs:` in `.github/workflows/deploy.yml`).
+`jayson-odoo/sorento-crm` only. `deploy.yml` sends jobs here only on a
+release dispatch with `-f runner=mac` (or `auto`); PR runs and the repo
+variables never route here since CI-HOSTED-RUNNERS (29 Oct 2026, repo public
+again). See the note above `jobs:` in `.github/workflows/deploy.yml`.
 Image builds and the deploy always stay on GitHub-hosted (prod is amd64).
 
 ## Layout
@@ -26,6 +27,9 @@ Image builds and the deploy always stay on GitHub-hosted (prod is amd64).
   every job.
 - One runner: a 6 GB VM holds one type-check (4 GB heap) or one xdist shard,
   not two.
+- No image builds here: an amd64 build on this arm64 VM is QEMU emulation
+  (measured 27 Oct 2026: backend image 5.5 min, frontend `next build`
+  OOM-killed in the 6 GB VM). See `documentation/plans/_archive/ci/PLAN-ci-runner-mac-26oct.md`.
 
 ## Commands (on the Mac)
 

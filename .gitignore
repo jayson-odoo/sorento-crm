@@ -1,5 +1,7 @@
 # Node modules
 sorento_crm_frontend/node_modules/*
+# A worktree may link node_modules in as a symlink, which the pattern above does not match.
+sorento_crm_frontend/node_modules
 sorento_crm_backend/node_modules/*
 
 # Next.js build output and cache

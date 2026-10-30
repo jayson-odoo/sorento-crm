@@ -223,7 +223,13 @@ export function DivergenceReviewClient({
             {data.autocount_doc_no ? ` - ${data.autocount_doc_no}` : ''}
           </h2>
           <p className="text-sm text-muted-foreground break-words">
-            {data.project_title} · {data.provisional_ref}
+            <span
+              className="inline-block max-w-full truncate align-bottom"
+              title={data.project_title ?? undefined}
+            >
+              {data.project_title}
+            </span>
+            {` · ${data.provisional_ref}`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

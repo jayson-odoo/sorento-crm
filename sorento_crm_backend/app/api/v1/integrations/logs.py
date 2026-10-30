@@ -12,18 +12,19 @@ from app.services.integration_service import IntegrationLogService
 from app.schemas.integration import IntegrationLogResponse, IntegrationLogUpdateRequest, IntegrationLogCreate
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_model=ListResponse[IntegrationLogResponse])
-async def get_integration_logs(
+def get_integration_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    status: Optional[str] = Query(None),
-    integration_channel: Optional[str] = Query(None),
-    business_table: Optional[str] = Query(None),
+    status: Optional[List[str]] = Query(None),
+    integration_channel: Optional[List[str]] = Query(None),
+    business_table: Optional[List[str]] = Query(None),
     business_id: Optional[str] = Query(None),
     created_from: Optional[datetime] = Query(None, description="Filter created_at >= (ISO); e.g. 24h drill-down"),
     created_to: Optional[datetime] = Query(None, description="Filter created_at <= (ISO)"),
@@ -39,9 +40,9 @@ async def get_integration_logs(
         result = service.list_integration_logs(
             page=page,
             limit=limit,
-            status=status,
-            integration_channel=integration_channel,
-            business_table=business_table,
+            status=multi_values(status),
+            integration_channel=multi_values(integration_channel),
+            business_table=multi_values(business_table),
             business_id=business_id,
             created_from=created_from,
             created_to=created_to,
@@ -58,7 +59,7 @@ async def get_integration_logs(
 
 
 @router.get("/{log_id}", response_model=IntegrationLogResponse)
-async def get_integration_log(
+def get_integration_log(
     log_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -76,7 +77,7 @@ async def get_integration_log(
 
 
 @router.get("/{log_id}/status", response_model=IntegrationLogResponse)
-async def get_integration_log_status(
+def get_integration_log_status(
     log_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -94,7 +95,7 @@ async def get_integration_log_status(
 
 
 @router.put("/{log_id}", response_model=IntegrationLogResponse)
-async def update_integration_log(
+def update_integration_log(
     log_id: str,
     update_data: IntegrationLogUpdateRequest,
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -131,7 +132,7 @@ async def update_integration_log(
 
 
 @router.post("/{log_id}/status", status_code=status.HTTP_200_OK)
-async def update_integration_log_status(
+def update_integration_log_status(
     log_id: str,
     update_data: IntegrationLogUpdateRequest,
     request: Request,
@@ -169,7 +170,7 @@ async def update_integration_log_status(
 
 
 @router.post("/{log_id}/retry", response_model=IntegrationLogResponse)
-async def retry_integration_log(
+def retry_integration_log(
     log_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)

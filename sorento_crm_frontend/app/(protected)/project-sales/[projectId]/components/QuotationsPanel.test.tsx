@@ -616,3 +616,20 @@ describe('QuotationsPanel: search with no match (round 3)', () => {
     expect(screen.queryByText('Nothing matches that search')).toBeNull();
   });
 });
+
+describe('QuotationsPanel on a project waiting for approval (review round 3)', () => {
+  it.each(['pending', 'rejected'] as const)(
+    'offers no Add a quotation on a %s registration, even to someone who may edit it',
+    async (approvalState) => {
+      renderPanel({ approval_state: approvalState, project_code: null, can_edit: true });
+      expect(await screen.findByText(/Nothing quoted yet/i)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Add a quotation/i })).toBeNull();
+    },
+  );
+
+  it('an approved registration offers it again', async () => {
+    renderPanel({ approval_state: 'approved', project_code: 'PPF2610001', can_edit: true });
+    expect(await screen.findByText(/Nothing quoted yet/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add a quotation/i })).toBeInTheDocument();
+  });
+});

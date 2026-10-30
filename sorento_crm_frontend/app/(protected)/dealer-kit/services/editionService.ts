@@ -31,10 +31,11 @@ import { extractApiError } from '@/lib/api-client';
 
 const BASE = '/api/v1/dealer-kit/editions';
 
-/** The five states of the seeded `dealer_kit_edition` graph. */
+/** The states of the seeded `dealer_kit_edition` graph. */
 export type EditionStatus =
   | 'draft'
   | 'pending_approval'
+  | 'resubmitted'
   | 'approved'
   | 'rejected'
   | 'done';

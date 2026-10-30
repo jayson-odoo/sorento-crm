@@ -263,6 +263,9 @@ class ContextLayers:
     #: (`head/candidates.candidate_lines`), right after the message; None for a prompt
     #: version without the CLOSED LISTS section, which keeps the block unchanged.
     candidate_lines: list[str] | None = None
+    #: CHAT-SLIM-INDEX: the lookup-list blocks (`head/lookup_lists.render`), right after the
+    #: candidate lines; None for a prompt version without the LOOKUP LISTS line.
+    lookup_lines: list[str] | None = None
     #: CHAT-STATE: the rendered `State:` block. When set it replaces the five legacy state
     #: lines (Current subject, Open task, Open question, Pending, Open question options)
     #: and is never trimmed.
@@ -503,6 +506,7 @@ def _assemble_off(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
         f"Previous response: {previous}",
         f"Current user message: {layers.current_message}",
         *(layers.candidate_lines or []),
+        *(layers.lookup_lines or []),
     ]
     if not layers.state_block:
         if layers.current_subject:
@@ -572,6 +576,8 @@ def assemble(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
     l1_text, l1_dropped = _render_l1(layers.current_message, layers.reply_to, layers.media_line)
     if layers.candidate_lines:
         l1_text = "\n".join([l1_text, *layers.candidate_lines])
+    if layers.lookup_lines:
+        l1_text = "\n".join([l1_text, *layers.lookup_lines])
 
     blocks = [b for b in (l5_text, l4_text, l3_text, l2_text, l1_text) if b]
     text = "\n".join(blocks)

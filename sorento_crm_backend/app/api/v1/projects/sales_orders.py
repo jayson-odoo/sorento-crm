@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import require_any_permission, require_any_permission_with_api_key, require_permission
 from app.models.project_so import SODraftFinding
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_sales_order import (
@@ -66,12 +66,17 @@ from app.services.project_so_delta_service import ProjectSODeltaService
 from app.services.project_so_draft_service import ProjectSODraftService
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 # Deleting a draft is its own grant, the way it is on the customer PO beside it: correcting an
 # order and removing it are different privileges even though both act on a proposal.
@@ -90,7 +95,7 @@ def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
     if not order.project_id:
         return
     project = projects.get_project_or_404(db, order.project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
 
@@ -123,9 +128,9 @@ def _order_for_edit(db: Session, pso_id: str, current_user: dict):
     "/purchase-orders/{po_id}/delivery-schedule-versions",
     response_model=ListResponse[ScheduleVersionOption],
 )
-async def list_schedule_versions(
+def list_schedule_versions(
     po_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Across every schedule row on this PO: a revision may arrive from another company."""
@@ -150,7 +155,7 @@ async def list_schedule_versions(
     response_model=BuildSalesOrdersResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def build_sales_orders(
+def build_sales_orders(
     po_id: str,
     payload: BuildSalesOrdersRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -166,7 +171,7 @@ async def build_sales_orders(
         validate_uuid_path(payload.schedule_version_id, resource="Delivery schedule version")
         po = po_svc.get_po(db, po_id)
         project = projects.get_project_or_404(db, po.project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = ProjectSODraftService(db).build(
@@ -195,10 +200,10 @@ async def build_sales_orders(
     "/purchase-orders/{po_id}/schedule-findings",
     response_model=List[SODraftFindingRow],
 )
-async def list_schedule_findings(
+def list_schedule_findings(
     po_id: str,
     schedule_version_id: str = Query(...),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -215,7 +220,7 @@ async def list_schedule_findings(
     "/purchase-orders/{po_id}/schedule-findings/{finding_id}/acknowledge",
     response_model=SODraftFindingRow,
 )
-async def acknowledge_schedule_finding(
+def acknowledge_schedule_finding(
     po_id: str,
     finding_id: str,
     payload: AcknowledgeFindingRequest,
@@ -231,7 +236,7 @@ async def acknowledge_schedule_finding(
         validate_uuid_path(finding_id, resource="Finding")
         po = po_svc.get_po(db, po_id)
         project = projects.get_project_or_404(db, po.project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         finding = (
@@ -267,7 +272,7 @@ async def acknowledge_schedule_finding(
     "/projects/{project_id}/sales-orders",
     response_model=ListResponse[ProjectSalesOrderRow],
 )
-async def list_project_sales_orders(
+def list_project_sales_orders(
     project_id: str,
     query: Optional[str] = Query(None, description="Matches provisional ref, doc no or area"),
     so_status: Optional[List[str]] = Query(None, alias="status"),
@@ -279,7 +284,7 @@ async def list_project_sales_orders(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("created_at"),
     dir: str = Query("desc"),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -312,9 +317,9 @@ async def list_project_sales_orders(
 
 
 @router.get("/sales-orders/{pso_id}", response_model=ProjectSalesOrderDetail)
-async def get_sales_order(
+def get_sales_order(
     pso_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -334,7 +339,7 @@ async def get_sales_order(
 
 
 @router.put("/sales-orders/{pso_id}", response_model=ProjectSalesOrderDetail)
-async def save_sales_order(
+def save_sales_order(
     pso_id: str,
     payload: SalesOrderDocumentSave,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -379,7 +384,7 @@ async def save_sales_order(
 
 
 @router.delete("/sales-orders/{pso_id}", response_model=SalesOrderDeleteResponse)
-async def delete_sales_order(
+def delete_sales_order(
     pso_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -411,7 +416,7 @@ async def delete_sales_order(
 
 
 @router.post("/sales-orders/bulk-delete", response_model=SalesOrderBulkDeleteResponse)
-async def bulk_delete_sales_orders(
+def bulk_delete_sales_orders(
     payload: SalesOrderBulkDeleteRequest,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -489,7 +494,7 @@ async def bulk_delete_sales_orders(
     "/sales-orders/{pso_id}/findings/{finding_id}/acknowledge",
     response_model=SODraftFindingRow,
 )
-async def acknowledge_finding(
+def acknowledge_finding(
     pso_id: str,
     finding_id: str,
     payload: AcknowledgeFindingRequest,
@@ -530,7 +535,7 @@ async def acknowledge_finding(
 
 
 @router.put("/sales-orders/{pso_id}/lines/order", response_model=RenumberLinesResponse)
-async def reorder_sales_order_lines(
+def reorder_sales_order_lines(
     pso_id: str,
     payload: ReorderLinesRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -558,7 +563,7 @@ async def reorder_sales_order_lines(
 @router.put(
     "/sales-orders/{pso_id}/lines/{line_id}", response_model=ProjectSalesOrderLineRow
 )
-async def update_sales_order_line(
+def update_sales_order_line(
     pso_id: str,
     line_id: str,
     payload: SalesOrderLineUpdate,
@@ -588,7 +593,7 @@ async def update_sales_order_line(
 @router.post(
     "/sales-orders/{pso_id}/regroup", response_model=List[ProjectSalesOrderRow]
 )
-async def regroup_sales_order(
+def regroup_sales_order(
     pso_id: str,
     payload: RegroupRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -612,7 +617,7 @@ async def regroup_sales_order(
 @router.post(
     "/sales-orders/{pso_id}/renumber-lines", response_model=RenumberLinesResponse
 )
-async def renumber_sales_order_lines(
+def renumber_sales_order_lines(
     pso_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -637,7 +642,7 @@ async def renumber_sales_order_lines(
 
 
 @router.post("/sales-orders/{pso_id}/publish", response_model=PublishResponse)
-async def publish_sales_order(
+def publish_sales_order(
     pso_id: str,
     payload: Optional[PublishRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -666,7 +671,7 @@ async def publish_sales_order(
 
 
 @router.post("/sales-orders/{pso_id}/unpublish", response_model=UnpublishResponse)
-async def unpublish_sales_order(
+def unpublish_sales_order(
     pso_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -694,7 +699,7 @@ async def unpublish_sales_order(
     "/sponsorship-forms/{form_id}/build-sales-order",
     response_model=ProjectSalesOrderDetail,
 )
-async def build_sponsorship_sales_order(
+def build_sponsorship_sales_order(
     form_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -711,7 +716,7 @@ async def build_sponsorship_sales_order(
             form_id, actor_user_id=current_user["id"]
         )
         project = projects.get_project_or_404(db, order.project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = service.serialize_detail(
@@ -727,7 +732,7 @@ async def build_sponsorship_sales_order(
 @router.post(
     "/sales-orders/{pso_id}/confirm-costing", response_model=ProjectSalesOrderDetail
 )
-async def confirm_sales_order_costing(
+def confirm_sales_order_costing(
     pso_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -749,7 +754,7 @@ async def confirm_sales_order_costing(
 @router.get("/sales-orders/{pso_id}/worksheet", response_model=SalesOrderWorksheet)
 def sales_order_worksheet(
     pso_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The AutoCount worksheet as data (Stage 1A, J02): the same document the CSV carries.
@@ -772,7 +777,7 @@ def sales_order_worksheet(
 @router.get("/sales-orders/{pso_id}/import-file")
 def sales_order_import_file(
     pso_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The stage 1 AutoCount import file (D3), generated on demand rather than stored.
@@ -807,10 +812,10 @@ def sales_order_import_file(
 @router.post(
     "/sales-orders/{pso_id}/amendments/preview", response_model=AmendmentPreviewResponse
 )
-async def preview_amendment(
+def preview_amendment(
     pso_id: str,
     payload: AmendmentPreviewRequest,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Writes nothing. `unmatched` is never silently empty."""
@@ -830,7 +835,7 @@ async def preview_amendment(
     response_model=AmendmentCreateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_amendment(
+def create_amendment(
     pso_id: str,
     payload: AmendmentCreateRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -854,9 +859,9 @@ async def create_amendment(
 
 
 @router.get("/amendments/{amendment_id}", response_model=AmendmentDetail)
-async def get_amendment(
+def get_amendment(
     amendment_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key([VIEW])),
     db: Session = Depends(get_db),
 ):
     try:
@@ -869,7 +874,7 @@ async def get_amendment(
 @router.post(
     "/amendments/{amendment_id}/publish", response_model=AmendmentPublishResponse
 )
-async def publish_amendment(
+def publish_amendment(
     amendment_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -883,7 +888,7 @@ async def publish_amendment(
             detail["project_sales_order_id"]
         ).project_id
         project = projects.get_project_or_404(db, project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = service.publish_amendment(amendment_id, actor_user_id=current_user["id"])
@@ -895,7 +900,7 @@ async def publish_amendment(
 
 
 @router.put("/amendments/{amendment_id}/rows", response_model=AmendmentDetail)
-async def update_amendment_row_decisions(
+def update_amendment_row_decisions(
     amendment_id: str,
     payload: AmendmentRowDecisionsRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -910,7 +915,7 @@ async def update_amendment_row_decisions(
             detail["project_sales_order_id"]
         ).project_id
         project = projects.get_project_or_404(db, project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = service.update_row_decisions(
@@ -928,9 +933,9 @@ async def update_amendment_row_decisions(
     "/amendments/{amendment_id}/autocount-change-list",
     response_model=AutocountChangeListResponse,
 )
-async def get_autocount_change_list(
+def get_autocount_change_list(
     amendment_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key([VIEW])),
     db: Session = Depends(get_db),
 ):
     """The accepted rows, in the shape a person keys into AutoCount (section 9.4)."""
@@ -942,9 +947,10 @@ async def get_autocount_change_list(
 
 
 @router.get("/amendments/{amendment_id}/autocount-change-list.xlsx")
-async def export_autocount_change_list(
+@heavy
+def export_autocount_change_list(
     amendment_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key([VIEW])),
     db: Session = Depends(get_db),
 ):
     """Same rows as the JSON twin, as the workbook that is keyed into AutoCount."""

@@ -809,16 +809,18 @@ def api(monkeypatch):
 
 
 def test_the_handshake_round_trips_over_http(api):
-    """Create with no buyer, assign, refuse somebody else's Accept, accept, all through
-    FastAPI. The acceptance columns and the informant have to survive the response model."""
+    """Create with a customer and an informant, assign, refuse somebody else's Accept, accept,
+    all through FastAPI. The acceptance columns and the informant have to survive the response model."""
     client, db, company_id, marketing, act_as = api
     ali = _user(db, f"{MARKER} Ali")
     firm = _party(db, company_id, f"{MARKER} BCI Asia")
+    buyer = _customer(db, company_id, f"{MARKER} Buyer Sdn Bhd")
 
     created = client.post(
         BASE,
         json={
             "title": "Maryam Tuju Residence",
+            "customer_id": buyer.id,
             "location": "Cyberjaya, Selangor",
             "informant_source": "bci",
             "informant_ref": "BCI-2026-114523",
@@ -827,8 +829,8 @@ def test_the_handshake_round_trips_over_http(api):
     )
     assert created.status_code == 201, created.text
     lead = created.json()
-    assert lead["customer_id"] is None
-    assert lead["customer_name"] is None
+    assert lead["customer_id"] == buyer.id
+    assert lead["customer_name"] == f"{MARKER} Buyer Sdn Bhd"
     assert lead["informant_party_label"] == f"{MARKER} BCI Asia"
     assert lead["acceptance_state"] is None
 
@@ -850,10 +852,13 @@ def test_the_handshake_round_trips_over_http(api):
 
 
 def test_declining_over_http_returns_the_lead_to_the_pool(api):
-    client, db, _company_id, marketing, act_as = api
+    client, db, company_id, marketing, act_as = api
     ali = _user(db, f"{MARKER} Ali")
+    buyer = _customer(db, company_id, f"{MARKER} Buyer Sdn Bhd")
 
-    lead = client.post(BASE, json={"title": f"{MARKER} Johor tower"}).json()
+    lead = client.post(
+        BASE, json={"title": f"{MARKER} Johor tower", "customer_id": buyer.id}
+    ).json()
     client.post(f"{BASE}/{lead['id']}/assign", json={"owner_user_id": ali})
 
     act_as(ali)
@@ -891,10 +896,13 @@ def test_the_worklist_endpoint_is_not_swallowed_by_the_lead_id_route(api):
     Reading it as a lead id is the classic failure here, and it surfaces as a 404 or a
     422 on a path that looks correct.
     """
-    client, db, _company_id, _marketing, _act_as = api
+    client, db, company_id, _marketing, _act_as = api
     ali = _user(db, f"{MARKER} Ali")
+    buyer = _customer(db, company_id, f"{MARKER} Buyer Sdn Bhd")
 
-    lead = client.post(BASE, json={"title": f"{MARKER} awaiting"}).json()
+    lead = client.post(
+        BASE, json={"title": f"{MARKER} awaiting", "customer_id": buyer.id}
+    ).json()
     client.post(f"{BASE}/{lead['id']}/assign", json={"owner_user_id": ali})
 
     response = client.get(f"{BASE}/awaiting-acceptance")

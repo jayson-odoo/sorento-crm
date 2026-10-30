@@ -40,6 +40,7 @@ from app.services.media_extract import transcribe as transcribe_module
 from app.services.media_extract.schema import MediaEntity, MediaExtraction, empty_result_body
 from app.services.media_extract.service import (
     MediaExtractService,
+    MediaExtractionError,
     MediaJobInput,
     build_image_result_body,
     build_voice_result_body,
@@ -577,6 +578,126 @@ def test_image_lane_produces_the_confirmation_and_stamps_the_ledger_cost(monkeyp
         assert usage.completion_tokens == 40
 
 
+def _image_job(usage_id):
+    return MediaJobInput(
+        job_id=str(uuid.uuid4()),
+        modality="image",
+        tier="standard",
+        media_url="https://cdn.respond.io/x.jpg",
+        mime_type="image/jpeg",
+        caption="SRTKS6547",
+        usage_id=usage_id,
+    )
+
+
+def _stub_image_provider(monkeypatch, result):
+    class _StubProvider:
+        def chat(self, **kwargs):
+            return result
+
+    monkeypatch.setattr(
+        "app.services.media_extract.service.fetch_media_bytes",
+        lambda url: (JPEG_HEAD, "image/jpeg"),
+    )
+    monkeypatch.setattr(
+        MediaExtractService,
+        "_resolve_image_provider",
+        lambda self, tier, settings: (_StubProvider(), "openai", "gpt-4o"),
+    )
+
+
+def test_image_lane_reads_an_extraction_the_model_wrapped_in_a_list(monkeypatch):
+    """Prod 27 Oct: `[{...}]` failed the whole turn instead of being read."""
+    from app.services.llm_provider import ChatResult
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        canned = json.dumps(
+            [{"entities": [{"raw": "SRTKS6547", "hint": "product", "confident": True}]}]
+        )
+        _stub_image_provider(
+            monkeypatch,
+            ChatResult(content=canned, prompt_tokens=10, completion_tokens=5, total_tokens=15),
+        )
+
+        outcome = MediaExtractService(db).extract(_image_job(usage.id))
+
+        assert [e["raw"] for e in outcome.result["entities"]] == ["SRTKS6547"]
+
+
+def test_image_lane_parse_failure_names_model_finish_reason_and_raw_output_and_logs_usage(
+    monkeypatch,
+):
+    """A parse failure used to lose everything but "non-object JSON value": no
+    model, no finish reason, no raw text, and no usage row (it was only written
+    after a successful parse). The job error now carries all three and the spend
+    still lands on the usage dashboard, marked unanswered."""
+    from types import SimpleNamespace
+
+    from app.models.ai_assistant import AIAssistantUsageLog
+    from app.services.llm_provider import ChatResult
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        raw = SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="length")]
+        )
+        _stub_image_provider(
+            monkeypatch,
+            ChatResult(
+                content='{"entities": [{"raw": "SRTKS65',
+                prompt_tokens=900,
+                completion_tokens=1200,
+                total_tokens=2100,
+                raw=raw,
+            ),
+        )
+
+        with pytest.raises(MediaExtractionError) as exc:
+            MediaExtractService(db).extract(_image_job(usage.id))
+
+        message = str(exc.value)
+        assert "gpt-4o" in message
+        assert "length" in message
+        assert '{"entities": [{"raw": "SRTKS65' in message
+
+        rows = (
+            db.query(AIAssistantUsageLog)
+            .filter(AIAssistantUsageLog.contact_id == usage.contact_id)
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].model == "gpt-4o"
+        assert rows[0].prompt_tokens == 900
+        assert rows[0].completion_tokens == 1200
+        assert rows[0].was_answered is False
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (None, None),
+        ({"candidates": [{"finishReason": "STOP"}]}, "STOP"),  # Gemini: a dict body
+        ({"candidates": []}, None),
+    ],
+)
+def test_finish_reason_reads_the_gemini_body(raw, expected):
+    from app.services.media_extract.service import _finish_reason
+
+    assert _finish_reason(raw) == expected
+
+
+def test_finish_reason_reads_the_openai_and_anthropic_responses():
+    from types import SimpleNamespace
+
+    from app.services.media_extract.service import _finish_reason
+
+    openai_raw = SimpleNamespace(choices=[SimpleNamespace(finish_reason="length")])
+    anthropic_raw = SimpleNamespace(stop_reason="max_tokens")
+    assert _finish_reason(openai_raw) == "length"
+    assert _finish_reason(anthropic_raw) == "max_tokens"
+
+
 def test_voice_lane_transcribes_and_defaults_to_the_pinned_english_strategy(
     monkeypatch,
 ):
@@ -1059,7 +1180,7 @@ def test_image_lane_on_gemini_uses_the_gemini_key_column_and_its_own_default_mod
 
         assert isinstance(provider, GeminiProvider)
         assert provider_name == "gemini"
-        assert model_name == "gemini-2.5-flash"
+        assert model_name == "gemini-3.5-flash"
         assert provider.api_key == "ZZT-gemini-key"
 
 
@@ -1602,7 +1723,7 @@ def test_image_lane_never_inherits_the_assistants_model_across_providers():
         )
 
         assert provider_name == "gemini"
-        assert model_name == "gemini-2.5-flash"
+        assert model_name == "gemini-3.5-flash"
 
 
 def test_image_lane_inherits_the_assistants_model_when_the_provider_matches():

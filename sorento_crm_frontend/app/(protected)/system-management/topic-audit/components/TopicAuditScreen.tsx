@@ -16,6 +16,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { cn } from '@/lib/utils';
 import { formatDateSafe } from '@/lib/helpers';
 import { useTopicAuditQuery } from '@/hooks/useTopicAuditQuery';
@@ -454,9 +456,9 @@ export default function TopicAuditScreen() {
                   ))}
                 </ToggleGroup>
                 <div className="w-52">
-                  <SearchableSelect
-                    value={subject}
-                    onChange={setSubject}
+                  <SearchableMultiSelect
+                    value={splitMulti(subject)}
+                    onChange={(v) => setSubject(joinMulti(v))}
                     options={subjectOptions}
                     clearable
                     placeholder="All subjects"

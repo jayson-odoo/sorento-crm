@@ -32,8 +32,12 @@ import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import PortalNewProductApplicationForm from '@/app/(auth)/portal/components/NewProductApplicationForm';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { numberFieldError } from '@/lib/number-field';
+import { isAwaitingReview, submitVerb } from '@/lib/submission-status';
 import { stateFromDetail } from '@/lib/new-product-application-form';
 import { codeWithName } from '@/lib/product-display';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -276,7 +280,28 @@ function OpenedAs({
   );
 }
 
+/**
+ * A salesperson limited to their own applications (PORTAL-P4-REQUESTS R3, form parity) views theirs
+ * in the portal's own form, read-only exactly as the portal shows it, with its own Revise, Cancel
+ * and files; everyone else the staff detail, unchanged.
+ */
 export default function NewProductApplicationDetail({
+  applicationId,
+}: {
+  applicationId: string;
+}) {
+  const { limited } = useRequestScope('new_product_application');
+  if (limited) {
+    return (
+      <MyRequestClientProvider>
+        <PortalNewProductApplicationForm applicationId={applicationId} />
+      </MyRequestClientProvider>
+    );
+  }
+  return <StaffNewProductApplicationDetail applicationId={applicationId} />;
+}
+
+function StaffNewProductApplicationDetail({
   applicationId,
 }: {
   applicationId: string;
@@ -370,7 +395,7 @@ export default function NewProductApplicationDetail({
   const isOwner = Boolean(userId) && r.applicant_id === userId;
   const ownerActs = isOwner && canCreate;
   const editable = r.status === 'draft' || r.status === 'rejected';
-  const locked = r.status === 'submitted' || r.status === 'approved';
+  const locked = isAwaitingReview(r.status) || r.status === 'approved';
   const anyResolved = r.lines.some(isResolved);
   const canRevise = locked && !anyResolved && (ownerActs || canApprove);
   const canCancel =
@@ -581,10 +606,10 @@ export default function NewProductApplicationDetail({
             <div className="flex flex-wrap items-center gap-2">
               {editable && ownerActs && (
                 <Button disabled={busy} onClick={() => submit.mutate(r.id)}>
-                  Submit
+                  {submitVerb(r.status)}
                 </Button>
               )}
-              {r.status === 'submitted' && canApprove && (
+              {isAwaitingReview(r.status) && canApprove && (
                 <>
                   <Button disabled={busy} onClick={() => approve.mutate(r.id)}>
                     Approve

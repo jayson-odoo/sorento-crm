@@ -71,6 +71,8 @@ from app.models.project_so import (
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
+    IV_ORDER,
+    IV_ORDER_BACK,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -80,6 +82,7 @@ from app.models.project_so import (
 from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services import project_line_draft_service
+from app.services import so_remark_rules
 from app.services.error_handler import AppException
 from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
@@ -404,6 +407,16 @@ def _project_label_from_note(note: Optional[str]) -> Optional[str]:
     return text_value
 
 
+def _remark_facts(order: SalesOrder, line: Any) -> Dict[str, Any]:
+    """FULFIL-SO-REMARK: the two facts the Confirm guide's default remark is decided from."""
+    return {
+        "is_mockup": so_remark_rules.is_mockup_line(
+            order.internal_note, line.line_remark, line.section_heading
+        ),
+        "remark_type": so_remark_rules.remark_type(order.ship_info),
+    }
+
+
 def _project_label(order: SalesOrder) -> Optional[str]:
     # PLAN-so-project-label.md: the column, once a rule has ever written it, before the
     # note-reading fallback below - so the board keeps reading exactly what it always has
@@ -455,6 +468,11 @@ class _Row:
         #: OI-SPLIT-GUIDE (UAC F3, F10): the purchasing email's words for what the next
         #: Confirm sends for this line (`_attach_saved_remarks`). `None` when it sends nothing.
         "saved_remark",
+        #: FULFIL-SO-REMARK: `so_remark_rules.is_mockup_line` for this line, and the order's
+        #: `remark_type` (Sponsorship / Purchase Request / None). Read by the Confirm guide.
+        "is_mockup", "remark_type",
+        #: SO-LINE-DESC: the core line's AutoCount description, off the same line row.
+        "description",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -966,6 +984,7 @@ class FulfilmentBoardService:
         warehouse_id: Optional[str] = None,
         line_ids: Optional[Sequence[str]] = None,
         group: Optional[str] = None,
+        warehouse_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """One product at one location - or at a whole OWNERSHIP GROUP - and its documents.
 
@@ -1001,6 +1020,10 @@ class FulfilmentBoardService:
         on the pile it actually starts from. The set is resolved through `group_netting`,
         which is the same reader the cell's subtotal prints its net from, so the drill and
         the subtotal cannot come to disagree about who is in the group.
+
+        **`warehouse_ids` reads an explicit set of bins** (the quotation line's stock, which
+        follows the user's contact's Stock visibility). It is a plain multi-location read: no
+        group, so no `net`/`net_of` and no holds, the totals are the sum of the listed bins.
         """
         product = (
             self.db.query(Product).filter(Product.id == product_id).first()
@@ -1009,10 +1032,10 @@ class FulfilmentBoardService:
         )
         warehouse = (
             self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
-            if warehouse_id and not group
+            if warehouse_id and not group and not warehouse_ids
             else None
         )
-        if product is None or (warehouse is None and not group):
+        if product is None or (warehouse is None and not group and not warehouse_ids):
             raise AppException(
                 status_code=404,
                 message="That product or location does not exist.",
@@ -1021,7 +1044,12 @@ class FulfilmentBoardService:
         # The bins this read covers: one, or the whole set. Codes by id, so every document
         # row can say where it sits without a second lookup.
         set_position = self._set_position(str(product.id), group) if group else None
-        if set_position is not None:
+        if warehouse_ids and not group:
+            codes = {
+                str(row.id): row.warehouse_code or ""
+                for row in self.db.query(Warehouse).filter(Warehouse.id.in_(list(warehouse_ids)))
+            }
+        elif set_position is not None:
             codes = {
                 str(entry.warehouse_id): entry.location
                 for entry in set_position.by_location
@@ -1684,8 +1712,10 @@ class FulfilmentBoardService:
                 so_doc_type=order.doc_type,
                 # R7 (query-count): off the SAME `line` row this read already fetched -
                 # see `_Row.__slots__`'s own docstring.
+                description=line.description,
                 source_ref=line.source_ref,
                 company_id=str(line.company_id) if line.company_id else None,
+                **_remark_facts(order, line),
             )
             addressing = self._addressing.get(str(line.id), {})
             # Null when nobody has adopted this sales order: there is no record to confirm
@@ -1841,6 +1871,7 @@ class FulfilmentBoardService:
                     line_no=change_row.line_no,
                     so_line_no=core_line.line_no,
                     item_code=change_row.item_code,
+                    description=core_line.description,
                     product_id=str(core_line.product_id) if core_line.product_id else None,
                     project_sales_order_id=str(project_line.project_sales_order_id),
                     project_line_id=str(project_line.id),
@@ -1853,6 +1884,7 @@ class FulfilmentBoardService:
                     bucket_key=NO_DATE_BUCKET,
                     cancelled=change_row.kind == "cancelled",
                     pending_change_batch_id=str(change_row.batch_id),
+                    **_remark_facts(order, core_line),
                     source_ref=core_line.source_ref,
                     company_id=(
                         str(core_line.company_id) if core_line.company_id else None
@@ -1883,7 +1915,9 @@ class FulfilmentBoardService:
             .exists()
         )
         records = (
-            self.db.query(SalesOrderLine, SalesOrder, ProjectSalesOrderLine, Product, User)
+            self.db.query(
+                SalesOrderLine, SalesOrder, ProjectSalesOrderLine, Product, User, Warehouse
+            )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(
                 ProjectSalesOrderLine,
@@ -1891,6 +1925,8 @@ class FulfilmentBoardService:
             )
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(User, User.id == SalesOrderLine.cancelled_by_id)
+            # PLAN-SO-LOCATION: the List view's Location column reads these rows too.
+            .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status.in_(["open", "closed"]),
@@ -1914,7 +1950,7 @@ class FulfilmentBoardService:
             {str(order.customer_id) for _cl, order, *_r in records if order.customer_id}
         )
         rows: List[_Row] = []
-        for core_line, order, project_line, product, user in records:
+        for core_line, order, project_line, product, user, warehouse in records:
             customer_id = str(order.customer_id) if order.customer_id else None
             autocount = by_cancel_doc.get(str(core_line.id))
             rows.append(
@@ -1926,7 +1962,9 @@ class FulfilmentBoardService:
                     customer_name=customers.get(customer_id or ""),
                     line_no=project_line.line_no,
                     so_line_no=core_line.line_no,
+                    **_remark_facts(order, core_line),
                     item_code=product.product_code,
+                    description=core_line.description,
                     product_id=str(core_line.product_id) if core_line.product_id else None,
                     project_sales_order_id=str(project_line.project_sales_order_id),
                     project_line_id=str(project_line.id),
@@ -1935,6 +1973,7 @@ class FulfilmentBoardService:
                     qty_delivered=delivered_qty_of(core_line),
                     required_date=core_line.required_date,
                     warehouse_id=str(core_line.warehouse_id) if core_line.warehouse_id else None,
+                    location=warehouse.warehouse_code if warehouse else None,
                     bucket_key=NO_DATE_BUCKET,
                     cancelled=True,
                     # Always set: the screen reads a set `cancelled_at` as committed, never
@@ -2302,6 +2341,9 @@ class FulfilmentBoardService:
                     "received": bool(link.get("received")),
                 }
                 for link in links_by_row.get(row_id, [])
+                # LINKAGE-UNIFY U3: a dead document brings nothing to the line, so the
+                # board lists it no more than it did before the link was listed.
+                if not link.get("dead_reason")
             ]
         return out
 
@@ -2530,6 +2572,9 @@ class FulfilmentBoardService:
             "suspected_system_issue": bool(frozen.get("suspected_system_issue")),
             # OI-SPLIT-GUIDE (UAC F32): read by the contribution's `confirmed_remark`.
             "remark": frozen.get("remark"),
+            # Whether the Buy was an Order back, so the board's email words read it as the
+            # email does (OI-EMAIL-PURCHASING-FOCUS crew audit, 26 Oct 2026).
+            "order_back": bool(frozen.get("order_back")),
         }
 
     def _demand_pressure(
@@ -5380,6 +5425,26 @@ class FulfilmentBoardService:
         }
         inquiries = ProjectOrderInquiryService(self.db)
         links = inquiries._links_by_row(sorted(held)) if held else {}
+        # A line's FIRST Confirm takes back the raised orders purchasing holds on it (a sheet
+        # import's rows): their kind and qty, so the guide words them as the email will
+        # (`first_take_back_remark`, crew final audit, 26 Oct 2026). One read.
+        first = [
+            str(row.project_line_id)
+            for row in rows
+            if decisions.get(id(row)) and not row.decision and row.project_line_id
+        ]
+        raised_rows: Dict[str, List[Tuple[str, Decimal]]] = {}
+        if first:
+            for line_id, verb, qty in self.db.query(
+                OrderInquiryRow.so_line_id, OrderInquiryRow.verb, OrderInquiryRow.qty
+            ).filter(
+                OrderInquiryRow.so_line_id.in_(first),
+                OrderInquiryRow.state == INQUIRY_RAISED,
+                OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+            ).order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc()):
+                raised_rows.setdefault(str(line_id), []).append(
+                    ("ORDER BACK" if verb == IV_ORDER_BACK else "ORDER", _dec(qty))
+                )
 
         def _withdraws(row: _Row) -> bool:
             if not _rejecting(row):
@@ -5392,6 +5457,21 @@ class FulfilmentBoardService:
                 INQUIRY_PARTLY_LINKED,
             ) and inquiries._cascade_only(links.get(str(inquiry.get("row_id")), []))
 
+        def _held(row: _Row) -> Optional[Dict[str, Any]]:
+            # The email tells a take-back only while purchasing still holds the line's order:
+            # an open OI row. A Buy whose goods arrived holds nothing (lane review S5), so it
+            # is read with no confirmed "before".
+            return (
+                row.decision
+                if (row.order_inquiry or {}).get("state")
+                in (INQUIRY_RAISED, INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
+                else None
+            )
+
+        settle_words = self._swap_settle_words(
+            [row for row in rows if decisions.get(id(row)) and _held(row)]
+        )
+
         for row in rows:
             decision = decisions.get(id(row))
             if decision:
@@ -5400,17 +5480,58 @@ class FulfilmentBoardService:
                     decision,
                     location=row.location,
                     codes=codes,
+                    # By arrival then number, as the email orders them (`_spo_numbers`, which
+                    # also prints each SPO once however many allocation rows it has).
                     spo_numbers=[
                         ref.spo_number
-                        for ref in spo.get(key, [])
+                        for ref in sorted(
+                            spo.get(key, []),
+                            key=lambda r: (r.arrival_date or date.max, r.spo_number or ""),
+                        )
                         if row.required_date is None
                         or (ref.arrival_date is not None and ref.arrival_date <= row.required_date)
                     ],
                     buy_origin=self._buy_origin.get(str(row.product_id)) if row.product_id else None,
                     withdraws_raised=_withdraws(row),
+                    before=_held(row),
+                    held_rows=raised_rows.get(str(row.project_line_id or ""), ()),
+                    settle_words=settle_words.get(str(row.project_line_id or "")),
                 )
             elif row.cancelled and not row.cancelled_at:
                 row.saved_remark = handover_remark("cancelled", row, None)
+
+    def _swap_settle_words(self, rows: Sequence[_Row]) -> Dict[str, str]:
+        """SWAP-REMARK-TALLY (follow-up of #1956): `mirror line id -> REMARK` of the settle line
+        the next Confirm's email sends for each of these held lines whose product AutoCount
+        swapped. Only a PENDING swap: one a Confirm already applied was told then. The words are
+        the split read's own (`line_plans`' `remark_generated`, `NEW ITEM CODE`), never a second
+        copy of the rule; a line splits touch prints its plan's rows instead, so it is left out.
+        One read when no line is swapped."""
+        rows = [row for row in rows if row.project_line_id and row.project_sales_order_id]
+        if not rows:
+            return {}
+        from app.services.project_line_split_service import LineSplitService, line_plans
+
+        service = LineSplitService(self.db)
+        pending = service.pending_from_by_line({str(row.project_line_id) for row in rows})
+        swapped = sorted(
+            {
+                str(row.project_sales_order_id)
+                for row in rows
+                if (pending.get(str(row.project_line_id)) or {}).get("item_code")
+                not in (None, "", row.item_code)
+            }
+        )
+        if not swapped:
+            return {}
+        facts = service._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(swapped))
+        sits = service.effective_sits_on([split for f in facts.values() for split in f.splits])
+        plans = line_plans(facts, sits, {target for target in sits.values() if target})
+        return {
+            line_id: plan.remark_generated
+            for line_id, plan in plans.items()
+            if plan.facts.pending and plan.was_item_code and not plan.involved
+        }
 
     def _contribution(self, row: _Row) -> Dict[str, Any]:
         return {
@@ -5437,6 +5558,8 @@ class FulfilmentBoardService:
             "project_line_id": row.project_line_id,
             "so_number": row.so_number,
             "so_doc_type": row.so_doc_type,
+            #: SO-LINE-DESC: AutoCount's line description, `None` when none was sent.
+            "description": row.description,
             "customer_name": row.customer_name,
             #: Addressing only, and the key a pivot BY CUSTOMER groups on: two different
             #: customers can carry the same name, and grouping by the label would merge them.
@@ -5453,6 +5576,8 @@ class FulfilmentBoardService:
             #: .line_no`), `None` when AutoCount gave the line none. What the Line column,
             #: the drawer title and every confirm message print; `line_no` is addressing.
             "so_line_no": row.so_line_no,
+            #: FULFIL-SO-REMARK: the Confirm guide's Mockup badge and default remark.
+            "is_mockup": bool(row.is_mockup),
             "item_code": row.item_code,
             #: The quantity this board PLANS for, kept under its old name because the
             #: frontend reads it. Since the 14 September 2026 ruling that is
@@ -5779,6 +5904,8 @@ class FulfilmentBoardService:
                     #: DATE before (or without) a split read.
                     "so_date": row.order_date,
                     "customer_name": row.customer_name,
+                    #: FULFIL-SO-REMARK: Sponsorship / Purchase Request / null, off Shipping Info.
+                    "remark_type": row.remark_type,
                     "line_count": 0,
                     "decided_count": 0,
                     "unplannable_count": 0,

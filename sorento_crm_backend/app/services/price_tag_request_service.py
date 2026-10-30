@@ -18,7 +18,7 @@ import uuid
 from typing import Optional
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import Integer, cast, func, or_
+from sqlalchemy import Integer, and_, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -43,6 +43,8 @@ STATUS_READY_FOR_COLLECTION = "ready_for_collection"
 STATUS_COLLECTED = "collected"
 STATUS_REJECTED = "rejected"
 STATUS_VOID = "void"
+# Not a status: the listing's filter value for a portal draft (`portal_draft_at` set).
+DRAFT_STATUS_FILTER = "draft"
 
 # Terminal for everyone. `approved` joins them for a SELF print only, which is
 # why `is_terminal` takes the request rather than the status (D8).
@@ -2256,7 +2258,7 @@ Marketing's own work is not part of the form's payload, so it is captured
         db: Session,
         *,
         contact_id: str | None,
-        status: str | None,
+        status: list[str] | str | None,
         search: str | None,
         include_drafts: bool,
     ):
@@ -2267,7 +2269,23 @@ Marketing's own work is not part of the form's payload, so it is captured
         if not include_drafts:
             q = q.filter(PriceTagRequest.portal_draft_at.is_(None))
         if status:
-            q = q.filter(PriceTagRequest.status == status)
+            wanted = [status] if isinstance(status, str) else list(status)
+            real = [s for s in wanted if s != DRAFT_STATUS_FILTER]
+            if not include_drafts or len(real) == len(wanted):
+                q = q.filter(PriceTagRequest.status.in_(real or wanted))
+            else:
+                # A draft is `portal_draft_at`, not a status (D48c): `draft` in the filter
+                # (PORTAL-P4-REQUESTS S7, a salesperson's own list) is the drafts, and the real
+                # statuses beside it are submitted rows only.
+                conditions = [PriceTagRequest.portal_draft_at.isnot(None)]
+                if real:
+                    conditions.append(
+                        and_(
+                            PriceTagRequest.status.in_(real),
+                            PriceTagRequest.portal_draft_at.is_(None),
+                        )
+                    )
+                q = q.filter(or_(*conditions))
         if search:
             like = f"%{search}%"
             q = q.filter(
@@ -2278,10 +2296,10 @@ Marketing's own work is not part of the form's payload, so it is captured
             )
         return q
 
-    # What the queue may sort by. Only real columns: the salesperson, the
-    # assignee, the promotion and the line count are RESOLVED per page rather
-    # than stored, so sorting on them would mean sorting something the query
-    # cannot see. The listing does not offer those as sortable either.
+    # What the queue may sort by: every column it draws (PORTAL-P4-REQUESTS
+    # P4-23). The salesperson, the assignee and the line count are resolved per
+    # page for display (``resolved_labels``), so their sort keys are correlated
+    # subqueries asking the same question in SQL (``_sort_expression``).
     SORTABLE_COLUMNS = {
         "doc_number": PriceTagRequest.doc_number,
         "debtor_name": PriceTagRequest.debtor_name,
@@ -2289,14 +2307,44 @@ Marketing's own work is not part of the form's payload, so it is captured
         "status": PriceTagRequest.status,
         "needed_by_date": PriceTagRequest.needed_by_date,
         "created_at": PriceTagRequest.created_at,
+        "data_changed_tag_count": PriceTagRequest.data_changed_tag_count,
     }
+
+    @staticmethod
+    def _sort_expression(sort: str | None):
+        """The ORDER BY expression for a listing sort key, or None for an unknown one."""
+        column = PriceTagRequestService.SORTABLE_COLUMNS.get(sort or "")
+        if column is not None:
+            return column
+        from app.models.access import RespondContact
+        from app.models.user import User
+
+        if sort == "contact_name":
+            return (
+                select(RespondContact.name)
+                .where(RespondContact.id == PriceTagRequest.contact_id)
+                .scalar_subquery()
+            )
+        if sort == "assigned_to_name":
+            return (
+                select(User.name)
+                .where(User.id == PriceTagRequest.assigned_to_id)
+                .scalar_subquery()
+            )
+        if sort == "line_count":
+            return (
+                select(func.count(PriceTagRequestLine.id))
+                .where(PriceTagRequestLine.request_id == PriceTagRequest.id)
+                .scalar_subquery()
+            )
+        return None
 
     @staticmethod
     def list_page(
         db: Session,
         *,
         contact_id: str | None = None,
-        status: str | None = None,
+        status: list[str] | str | None = None,
         search: str | None = None,
         include_drafts: bool = True,
         page: int = 1,
@@ -2320,7 +2368,7 @@ Marketing's own work is not part of the form's payload, so it is captured
         )
         total = q.order_by(None).count()
 
-        column = PriceTagRequestService.SORTABLE_COLUMNS.get(sort or "")
+        column = PriceTagRequestService._sort_expression(sort)
         if column is None:
             # Newest first is the queue's own order, and it is what an unknown
             # or a resolved-only column falls back to rather than a 400 the

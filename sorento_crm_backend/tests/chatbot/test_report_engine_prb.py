@@ -37,7 +37,7 @@ from tests.chatbot.test_report_ask_lane import (  # noqa: F401 - fixtures + help
 )
 
 METRIC_Q = "By quantity or by amount?"
-BASIS_Q = "Delivered, ordered or outstanding?"
+BASIS_Q = "Invoiced, delivered, ordered or outstanding?"
 THIS_YEAR = {"date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31"}
 _NUMBERED = re.compile(r"^\s*([1-9])[.)]", re.M)
 
@@ -353,6 +353,10 @@ def test_b5_a_refine_changes_only_the_channel_whatever_report_type_the_parser_pi
     text, calls = console.say(
         _refine(order_status=order_status, sales_channel="project"), "only the project channel"
     )
+    if order_status == "outstanding":
+        # Owner Q2 (round 4): a flagged refine to the outstanding type never infers the kind from the held delivered basis.
+        assert calls == [] and "Undelivered orders" in text, (text, calls)
+        return
     assert len(calls) == 1, (text, calls)
     args = calls[0]
     assert args["channel"] == "project", args
@@ -392,7 +396,9 @@ def test_b5_near_miss_another_ask_in_between_drops_the_held_report(console) -> N
     from tests.chatbot.test_report_ask_lane import CUSTOMER_NAME, _order_ask
 
     _t1(console)
-    console.say(_order_ask(_e(CUSTOMER_NAME, "customer")), f"orders for {CUSTOMER_NAME}")
+    # (A customer word now resolves for this non-staff contact and is refused without a fetch, which holds the report
+    # on screen; the in-between ask here names none, so it is the order lane's own "needs a filter" turn.)
+    console.say(_order_ask(), "orders")
     text, calls = console.say(_refine(order_status=None, sales_channel="project"), "project only")
     assert calls == [], (text, calls)
 

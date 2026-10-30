@@ -1245,7 +1245,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
 
 
 def awaiting_acknowledgement_rows(db: Session) -> int:
-    """How many order inquiry rows are waiting for purchasing to take them on.
+    """How many order inquiry rows are still To order (awaiting or changed).
 
     The plan page's chip (`PLAN-scm-oi-handshake.md` section 4, AC-H10): the plan counts
     acknowledged rows only, so the awaiting ones would otherwise be invisible on the very
@@ -1293,13 +1293,13 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
     """``{(product_id, warehouse_id): qty}`` of stock an ACTIVE Project decision has
     already claimed, at the location it was claimed FROM.
 
-    > "every confirmed non-Buy component of an active Project decision (Reserve, Borrow,
-    >  and timely SPO cover) is removed from Retail planning supply at its recorded source
-    >  location"   (front planning 1.3, 5.3, AC-F07)
+    Every non-Buy claim (Reserve and Borrow) counts: this is what lowers the PROJECT Buy.
+    RETAIL's net is lowered by none (BOARD-NO-HOLD / BORROW-NO-HOLD: a decision is a plan).
 
-    Confirmed cover that stays free in the next Retail calculation is the double count the
-    whole read model exists to prevent: CS promised those units to a project, so Retail
-    must not net against them a second time. Every non-Buy `so_line_allocations` row of a
+    The earlier ruling (front planning 1.3, 5.3, AC-F07) also removed these claims from
+    RETAIL's planning supply so Retail did not net against them a second time. That is
+    superseded for retail: a decision holds no stock, so only the project Buy is lowered.
+    Every non-Buy `so_line_allocations` row of a
     decided SO counts, at `warehouse_id` when it names one (BRW-pool Reserve names the
     pool, Borrow names the donor) and at the core line's fulfilment location otherwise
     (own-location Reserve). `source_type = 'order'` is the Buy leg and is NOT a claim on
@@ -1323,7 +1323,9 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
     if not pids:
         return {}
     so_join = ""
-    params: dict[str, Any] = {"pids": pids, "horizon": horizon, "horizon_start": horizon_start}
+    params: dict[str, Any] = {
+        "pids": pids, "horizon": horizon, "horizon_start": horizon_start,
+    }
     if so_numbers:
         # `sso.id = sol.sales_order_id` (security N1, 21 Sep 2026) - the "equivalent
         # alias" to `oir.company_id` this query has no `oir` row to compare against: it
@@ -1382,12 +1384,10 @@ def _apply_project_supply_reduction(db: Session, rows: list[dict],
     claims = _project_supply_reduction_map(db, rows, horizon=horizon,
                                            horizon_start=horizon_start,
                                            so_numbers=scoped_so_numbers)
-    if not claims:
-        return
     for r in rows:
-        qty = claims.get((str(r["product_id"]), str(r["warehouse_id"])))
-        if qty:
-            r["project_supply_reduction"] = qty
+        key = (str(r["product_id"]), str(r["warehouse_id"]))
+        if claims.get(key):
+            r["project_supply_reduction"] = claims[key]
 
 
 def _last_movement_map(db: Session, product_ids: list[str],
@@ -1438,6 +1438,8 @@ def _last_purchase_map(db: Session, product_ids: list[str]) -> dict[str, date]:
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         WHERE pol.product_id::text = ANY(:pids)
           AND po.issue_date IS NOT NULL
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT pol.removed_unreferenced
           {("AND " + co) if co else ""}
         GROUP BY pol.product_id
     """), {"pids": pids, **co_params}).fetchall()
@@ -1487,6 +1489,8 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
           LEFT JOIN suppliers su ON su.id = po.supplier_id
          WHERE pol.product_id::text = ANY(:pids)
            AND pol.unit_cost IS NOT NULL
+           -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+           AND NOT pol.removed_unreferenced
            {("AND " + co) if co else ""}
          ORDER BY pol.product_id, COALESCE(pol.warehouse_id::text, 'none'),
                   po.issue_date DESC NULLS LAST, pol.created_at DESC
@@ -2239,7 +2243,8 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                 # comes from this bin.
                 for k in ("net", "rop", "demand_rate", "doc",
                           "project_need", "retail_need",
-                          "project_supply_reduction", "retail_net",
+                          "project_supply_reduction",
+                          "retail_net",
                           "ss", "ss_used", "ss_fallback",
                           "demand_window_days",
                           "on_hand", "on_order", "po_ordered", "segment",
@@ -2741,17 +2746,12 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     project_committed = float(row.get("project_committed") or 0.0)
     project_need = float(row.get("project_confirmed_committed") or 0.0)
     project_supply_reduction = float(row.get("project_supply_reduction") or 0.0)
+    # BOARD-NO-HOLD + BORROW-NO-HOLD: a decision is a plan, so retail's net loses nothing to
+    # a Reserve or a Borrow; only the project half's own Buy (`project_supply_reduction`) does.
     # RETAIL's own net, for the channel drill (AC-F07) AND - since Lane F, below - what
     # Retail is actually SIZED against: the firm project channel taken back out (`net`
-    # already subtracted it as part of `committed`) and the stock a project has already
-    # claimed removed. Review round 3 nit (reviewer, 23 Sep 2026): the reduction is
-    # CLAMPED to this row's own project need - an oversized Reserve (data entry, or a
-    # Reserve raised before the confirmed qty was trimmed) is stock CS claimed against
-    # THIS row's need, never more than the need itself, so anything past it is not evidence
-    # Retail lost anything. Unclamped, a reserve of 100 against a confirmed need of 20 read
-    # `retail_net` 80 units WORSE than the no-project baseline (`net - 80`) - only 20 of
-    # that reduction was ever this row's own stock.
-    retail_net = net + project_need - min(project_supply_reduction, project_need)
+    # already subtracted it as part of `committed`). No claim comes off it any more.
+    retail_net = net + project_need
 
     # LANE F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026 - supersedes
     # the ONE-FORMULA ruling below for the project channel): Retail is triggered and sized
@@ -3952,6 +3952,8 @@ def net_breakdown(db: Session, product_id: str,
         WHERE sol.product_id = :pid
           AND so.status = 'open'
           AND sol.qty_ordered > sol.qty_delivered
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT sol.removed_unreferenced
           {co_sol_clause}
           {wh_sol}
         ORDER BY so.order_date DESC NULLS LAST, so.so_number

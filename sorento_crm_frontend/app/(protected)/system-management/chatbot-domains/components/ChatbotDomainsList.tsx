@@ -13,6 +13,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useChatbotDomainsQuery } from '../hooks/useChatbotDomains';
@@ -62,7 +64,8 @@ export default function ChatbotDomainsList() {
         d.switch_words.some((w) => w.toLowerCase().includes(q));
       const matchesSupported =
         supportedFilter === 'all' || (supportedFilter === 'yes' ? d.supported : !d.supported);
-      const matchesTeam = !teamFilter || d.escalation_team_code === teamFilter;
+      const teams = splitMulti(teamFilter);
+      const matchesTeam = !teams.length || teams.includes(d.escalation_team_code ?? '');
       return matchesSearch && matchesSupported && matchesTeam;
     });
   }, [domains, searchQuery, supportedFilter, teamFilter]);
@@ -247,9 +250,9 @@ export default function ChatbotDomainsList() {
                     </div>
                     <div>
                       <Label>Team</Label>
-                      <SearchableSelect
-                        value={teamFilter}
-                        onChange={setTeamFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(teamFilter)}
+                        onChange={(v) => setTeamFilter(joinMulti(v))}
                         clearable
                         placeholder="All teams"
                         triggerClassName="mt-1"

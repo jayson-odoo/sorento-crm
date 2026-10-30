@@ -11,6 +11,7 @@ import secrets
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, inspect, func
+from app.utils.multi_value import multi_values
 from typing import List, Optional, Iterable
 from app.config import settings
 from app.models.complaints import Complaint
@@ -21,6 +22,7 @@ from app.models.sla import ConversationSLATracking
 from app.services.sla_scope import open_tracker_scope
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.contact_brand_scope import complaint_in_scope_clauses, in_scope_product_codes
+from app.services import submission_status
 from app.services.error_handler import handle_not_found
 from app.services.response_gate import (
     ALLOWED_RESPONSE_STATUSES,
@@ -417,8 +419,8 @@ class ComplaintService:
     def _build_list_query(
         self,
         query: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-        status: Optional[str] = None,
+        assigned_to: Optional[list[str] | str] = None,
+        status: Optional[list[str] | str] = None,
         sort_field: str = "complaint_date",
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
@@ -426,6 +428,7 @@ class ComplaintService:
         root_cause_ids: Optional[List[str]] = None,
         resolution_ids: Optional[List[str]] = None,
         customer_names: Optional[List[str]] = None,
+        viewer_user_id: Optional[str] = None,
     ):
         """Build the filtered + sorted complaints query shared by ``list_complaints``
         and ``neighbours`` so the two can never drift.
@@ -433,6 +436,11 @@ class ComplaintService:
         The ORDER BY always appends ``Complaint.id`` as a deterministic tie-breaker
         so ``row_number``/offset position and prev/next neighbours are unambiguous
         when the primary sort column has equal values.
+
+        Every grid column sorts (PORTAL-P4-REQUESTS P4-23), the derived ones by the same
+        rule that fills them: Handled By reads the latest open form-SLA tracker
+        (``_batch_latest_unresolved_sla_trackers``), Attachments the linked files, Print
+        Count the viewer's own downloads.
         """
         q = self.db.query(Complaint)
         # CONTACT-BRAND-SCOPE: only complaints with a product line the contact may see.
@@ -463,15 +471,19 @@ class ComplaintService:
                     Complaint.assigned_to.ilike(like),
                 )
             )
-        if assigned_to is not None and str(assigned_to).strip():
-            if str(assigned_to).strip().lower() == "__unassigned__":
-                q = q.filter(
-                    (Complaint.assigned_to.is_(None)) | (Complaint.assigned_to == "")
-                )
-            else:
-                q = q.filter(Complaint.assigned_to == assigned_to.strip())
-        if status and str(status).strip():
-            q = q.filter(Complaint.status == status.strip())
+        assignees = multi_values(assigned_to)
+        if assignees:
+            # `__unassigned__` is a pseudo-value that ORs with real assignees.
+            clauses = []
+            if any(a.lower() == "__unassigned__" for a in assignees):
+                clauses.append((Complaint.assigned_to.is_(None)) | (Complaint.assigned_to == ""))
+            real = [a for a in assignees if a.lower() != "__unassigned__"]
+            if real:
+                clauses.append(Complaint.assigned_to.in_(real))
+            q = q.filter(or_(*clauses))
+        statuses = multi_values(status)
+        if statuses:
+            q = q.filter(Complaint.status.in_(statuses))
         contact_filter = (contact_id or "").strip()
         if contact_filter:
             q = q.filter(Complaint.contact_id == contact_filter)
@@ -504,13 +516,84 @@ class ComplaintService:
             "salesperson": Complaint.salesperson,
             "assigned_to": Complaint.assigned_to,
             "status": Complaint.status,
+            "complaint_number": Complaint.complaint_number,
+            "complaint_type": Complaint.complaint_type,
+            "project_title": Complaint.project_title,
+            "revision_no": Complaint.revision_no,
         }
+        if sort_field == "handled_by_name":
+            sort_map[sort_field] = self._handled_by_name_sort()
+        elif sort_field == "attachments":
+            sort_map[sort_field] = self._attachment_count_sort()
+        elif sort_field == "print_count":
+            sort_map[sort_field] = self._print_count_sort(viewer_user_id)
         sort_column = sort_map.get(sort_field, Complaint.complaint_date)
         if sort_dir == "desc":
             q = q.order_by(sort_column.desc(), Complaint.id.asc())
         else:
             q = q.order_by(sort_column.asc(), Complaint.id.asc())
         return q
+
+    @staticmethod
+    def _handled_by_name_sort():
+        """Name (or email) of the handling-lock holder on the complaint's latest open
+        form-SLA tracker: the value the list's Handled By shows, as a sort key."""
+        from sqlalchemy import select
+        from app.models.user import User
+
+        latest = (
+            select(ConversationSLATracking.handled_by_id)
+            .where(
+                ConversationSLATracking.source_entity_type == "complaint",
+                ConversationSLATracking.source_entity_id == Complaint.id,
+                *open_tracker_scope(),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .limit(1)
+            .correlate(Complaint)
+            .scalar_subquery()
+        )
+        return (
+            select(func.coalesce(User.name, User.email))
+            .where(User.id == latest)
+            .scalar_subquery()
+        )
+
+    @staticmethod
+    def _attachment_count_sort():
+        """How many files are linked to the complaint (the Attachments column)."""
+        from sqlalchemy import String, cast, select
+        from app.models.entity_attachment import EntityAttachmentLink
+
+        return (
+            select(func.count(EntityAttachmentLink.id))
+            .where(
+                EntityAttachmentLink.entity_type == "complaint",
+                EntityAttachmentLink.entity_id == cast(Complaint.id, String),
+            )
+            .correlate(Complaint)
+            .scalar_subquery()
+        )
+
+    @staticmethod
+    def _print_count_sort(viewer_user_id: Optional[str]):
+        """How many PDFs the viewer took of the complaint; 0 for everyone when there is
+        no viewer."""
+        from sqlalchemy import literal, select
+        from app.models.download import UserDownload
+
+        if not viewer_user_id:
+            return literal(0)
+        return (
+            select(func.count(UserDownload.id))
+            .where(
+                UserDownload.user_id == str(viewer_user_id),
+                UserDownload.source_entity_type == "complaint",
+                UserDownload.source_entity_id == Complaint.id,
+            )
+            .correlate(Complaint)
+            .scalar_subquery()
+        )
 
     # ------------------------------------------------------------------ #
     # Aggregation / analytics
@@ -711,8 +794,8 @@ class ComplaintService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-        status: Optional[str] = None,
+        assigned_to: Optional[list[str] | str] = None,
+        status: Optional[list[str] | str] = None,
         sort_field: str = "complaint_date",
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
@@ -739,6 +822,7 @@ class ComplaintService:
             root_cause_ids=root_cause_ids,
             resolution_ids=resolution_ids,
             customer_names=customer_names,
+            viewer_user_id=viewer_user_id,
         )
 
         from sqlalchemy.orm import joinedload
@@ -1202,8 +1286,9 @@ class ComplaintService:
             rejected_at = getattr(row, "rejected_at", None)
             cycle_key = rejected_at.isoformat() if rejected_at else "resubmit"
             event_type = f"external_resubmitted:{cycle_key}"
-            title = "Complaint resubmitted"
-            sentence = "A previously rejected complaint has been resubmitted and requires your review."
+            # A send-back after a rejection is an appeal (owner, 28 Oct 2026).
+            title = "Complaint appealed"
+            sentence = "A previously rejected complaint has been appealed and requires your review."
         else:
             event_type = "external_created"
             title = "New Complaint created"
@@ -1690,11 +1775,19 @@ class ComplaintService:
             )
             order += 1
 
+    def _assert_linkable_project(self, project_id, current=None) -> None:
+        """A complaint links to a PROJECT, never a portal registration still waiting for
+        approval (PROJECT-REG-PORTAL R4). Re-saving the link it already has is not a change."""
+        from app.services.project_service import assert_linkable_project
+
+        assert_linkable_project(self.db, project_id, current, code="complaint_project_not_approved")
+
     def create_complaint(self, complaint_data: ComplaintCreate):
         """Create a new complaint with attachments (generic entity_attachment_links)."""
         complaint_dict = complaint_data.model_dump(
             exclude={"attachments", "product_lines", "assigned_to_name", "last_responded_by_name"}
         )
+        self._assert_linkable_project(complaint_dict.get("project_id"))
         if complaint_dict.get("technical_team_response"):
             complaint_dict["technical_team_response"] = self._normalize_complaint_reply_body_for_storage(
                 str(complaint_dict["technical_team_response"])
@@ -1762,11 +1855,25 @@ class ComplaintService:
     # the status flip can never disagree about what the response stage is.
     _RESPONSE_STAGE_STATUSES: tuple[str, ...] = ALLOWED_RESPONSE_STATUSES["complaint"]
 
+    def resubmit_rejected_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
+        """Edit-via-submit of a rejected complaint (chatbot / integration path).
+
+        The caller has already checked the complaint is ``rejected``. The edit is a
+        submission answering that rejection, so it lands on ``resubmitted`` whatever
+        status the payload carried.
+        """
+        update = complaint_data.model_copy(
+            update={"status": submission_status.status_on_submit(was_rejected=True)}
+        )
+        return self.update_complaint(complaint_id, update)
+
     def update_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
         """Update a complaint."""
         complaint = self.get_complaint(complaint_id)
 
         update_data = complaint_data.model_dump(exclude_unset=True)
+        if "project_id" in update_data:
+            self._assert_linkable_project(update_data["project_id"], complaint.project_id)
         explicit_lines = update_data.pop("product_lines", None)
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
@@ -1877,6 +1984,8 @@ class ComplaintService:
         # so refuse it outside the response stage rather than gating one field.
         assert_response_write_allowed("complaint", complaint.status)
         update_data = complaint_data.model_dump(exclude_unset=True)
+        if "project_id" in update_data:
+            self._assert_linkable_project(update_data["project_id"], complaint.project_id)
         # Same handling as update_complaint: `product_lines` dumps to a list of plain
         # dicts, and the setattr loop below would assign them straight onto the ORM
         # relationship ("'dict' object has no attribute '_sa_instance_state'"). The

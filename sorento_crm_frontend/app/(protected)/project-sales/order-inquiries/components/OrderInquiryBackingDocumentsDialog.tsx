@@ -14,6 +14,7 @@ import { ackStateOf } from '../../_shared/lib/orderInquiryAck';
 import { formatInquiryQty, linkedSummary } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryDocumentLink, ViaSpoPoNumber } from './OrderInquiryDocumentDialog';
+import { DocumentStatePills, receiptsByBin } from './orderInquiryDocumentPills';
 
 /**
  * What a bundled row's lightbox adds on top of the plain one (UAC D1-D3, D10): the
@@ -101,10 +102,13 @@ export function OrderInquiryBackingDocumentsDialog({
                   className="flex items-start justify-between gap-3 rounded-md border p-2.5 text-sm"
                 >
                   <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-2xs font-medium uppercase text-muted-foreground">
                         {link.kind}
                       </span>
+                      {link.kind === 'reserve' ? (
+                        <span className="text-xs font-medium">{link.document}</span>
+                      ) : (
                       <OrderInquiryDocumentLink
                         kind={link.kind}
                         document={link.document}
@@ -118,11 +122,25 @@ export function OrderInquiryBackingDocumentsDialog({
                         // lightbox - `spo_allocation_id` is already on the wire.
                         spoLineId={link.spo_allocation_id}
                       />
+                      )}
                       {/* S5, R-E: never a real link - the SAME "via" tag the cell itself
                           shows, so the lightbox and the cell can never disagree. */}
+                      {/* LINKAGE-UNIFY U3: the line, and the same state pills the chip draws,
+                          so a line behind "+N" (a withdrawn one included) reads in full. */}
+                      {link.line_label ? (
+                        <span className="shrink-0 text-2xs text-muted-foreground">
+                          {link.line_label}
+                        </span>
+                      ) : null}
                       {link.derived ? (
                         <span className="shrink-0 text-2xs text-muted-foreground">via PO</span>
                       ) : null}
+                      <DocumentStatePills
+                        receipts={receiptsByBin(link.receipts ?? [])}
+                        deadReason={link.dead_reason ?? null}
+                        testIdPrefix="backing-documents-link"
+                        testIdSuffix={link.id}
+                      />
                     </div>
                     {/* Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO
                         number of this SPO?" - named here, clearly subordinate to the SPO

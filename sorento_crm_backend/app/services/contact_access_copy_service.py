@@ -51,7 +51,8 @@ from app.models.access import (
 from app.models.company import Company, RespondContactCompany
 from app.models.media import MEDIA_MODALITIES, ContactMediaLimit
 from app.models.price_tag import ContactPortalFormOverride
-from app.models.product import Brand
+from app.models.product import Brand, ItemClass
+from app.services.contact_brand_scope import NO_CLASS, NO_CLASS_LABEL, known_class_codes, normalise_class_codes
 from app.models.resources import AttachmentType
 from app.services import contact_field_reveal_service
 from app.services import audit_service
@@ -217,6 +218,8 @@ class AccessSnapshot:
     companies: list[str] = field(default_factory=list)  # company ids
     segments: list[str] = field(default_factory=list)  # market segment codes
     brands: list[str] = field(default_factory=list)  # brand ids; empty = every brand
+    #: TAG-BRAND-CLASS: allowed item class codes (normalised); empty = every class.
+    item_classes: list[str] = field(default_factory=list)
     #: modality -> (is_allowed, monthly_limit, max_clip_seconds); MEDIA_OFF with no row.
     media: dict[str, tuple] = field(default_factory=lambda: {m: MEDIA_OFF for m in MEDIA_MODALITIES})
     attachment_types: list[str] = field(default_factory=list)  # attachment type ids (grants only add)
@@ -237,6 +240,7 @@ class Names:
     companies: dict[str, tuple[str, str]] = field(default_factory=dict)  # id -> (code, name)
     segments: dict[str, str] = field(default_factory=dict)  # code -> name
     brands: dict[str, str] = field(default_factory=dict)  # brand id -> name
+    item_classes: dict[str, str] = field(default_factory=dict)  # item class code -> name
     attachment_types: dict[str, str] = field(default_factory=dict)  # type id -> name
     specs: dict[str, str] = field(default_factory=dict)  # spec key -> label
     agents: dict[str, str] = field(default_factory=dict)  # agent code -> name
@@ -261,9 +265,14 @@ def media_text(modality: str, key: tuple) -> str:
     return "On, " + ", ".join(parts)
 
 
-def brands_text(brands: list[str], names: Names) -> str:
-    """Empty is every brand, so it never reads as "nothing"."""
-    return ", ".join(sorted(names.brands.get(b, REMOVED_BRAND) for b in brands)) or ALL_BRANDS
+def brands_text(brands: list[str], names: Names, classes: Optional[list[str]] = None) -> str:
+    """Empty is every brand, so it never reads as "nothing". Allowed item classes follow as
+    `All brands; classes: No class, DIY` (TAG-BRAND-CLASS)."""
+    text = ", ".join(sorted(names.brands.get(b, REMOVED_BRAND) for b in brands)) or ALL_BRANDS
+    if not classes:
+        return text
+    labels = [NO_CLASS_LABEL if c == NO_CLASS else names.item_classes.get(c, c) for c in classes]
+    return f"{text}; classes: {', '.join(labels)}"
 
 
 def portal_forms_text(forms: dict[str, bool]) -> str:
@@ -305,10 +314,19 @@ def brands_to_skip(db: Session, source: AccessSnapshot) -> frozenset[str]:
     """`{brands}` when the source holds a brand the actor's company scope cannot see: the direct
     editor (`contact_brand_scope.set_contact_brands`) refuses such an id, so the copy must not
     write it either. The ORM query runs under the request's company scope."""
-    if not source.brands:
-        return frozenset()
-    visible = {str(i) for (i,) in db.query(Brand.id).filter(Brand.id.in_(source.brands)).all()}
-    return frozenset({BRANDS_FACET}) if set(source.brands) - visible else frozenset()
+    if source.brands:
+        visible = {str(i) for (i,) in db.query(Brand.id).filter(Brand.id.in_(source.brands)).all()}
+        if set(source.brands) - visible:
+            return frozenset({BRANDS_FACET})
+    return _classes_to_skip(db, source)
+
+
+def _classes_to_skip(db: Session, source: AccessSnapshot) -> frozenset[str]:
+    """TAG-BRAND-CLASS: the same rule for an allowed class code the actor cannot see; the facet
+    is left out whole, never written without its class limit (a widening)."""
+    if source.item_classes and set(source.item_classes) - known_class_codes(db, source.item_classes):
+        return frozenset({BRANDS_FACET})
+    return frozenset()
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -338,6 +356,7 @@ def snapshots(db: Session, contacts: Iterable[RespondContact]) -> dict[str, Acce
             switches={col: bool(getattr(c, col)) for col, _ in SWITCHES},
             regions=[r for r in REGION_ORDER if r in (c.regions or ["west"])],
             brands=sorted(str(b) for b in (c.brand_ids or [])),
+            item_classes=normalise_class_codes(c.allowed_item_class_codes),
         )
 
     for contact_id, code in db.execute(
@@ -461,6 +480,7 @@ def names_for(db: Session, snaps: Iterable[AccessSnapshot]) -> Names:
     company_ids = {c for s in snaps for c in s.companies}
     segment_codes = {c for s in snaps for c in s.segments}
     brand_ids = {b for s in snaps for b in s.brands}
+    class_codes = {c for s in snaps for c in s.item_classes} - {NO_CLASS}
     names = Names()
     if codes:
         names.types = dict(
@@ -487,6 +507,17 @@ def names_for(db: Session, snaps: Iterable[AccessSnapshot]) -> Names:
         names.brands = {
             str(bid): name
             for bid, name in db.query(Brand.id, Brand.brand_name).filter(Brand.id.in_(sorted(brand_ids)))
+        }
+    if class_codes:
+        # Under the request's company scope, as brand names are; one name per code.
+        from sqlalchemy import func
+
+        code = func.upper(func.btrim(ItemClass.item_class_code))
+        names.item_classes = {
+            c: n
+            for c, n in db.query(code, func.min(ItemClass.item_class_name))
+            .filter(code.in_(sorted(class_codes)))
+            .group_by(code)
         }
     type_ids = {t for s in snaps for t in s.attachment_types}
     if type_ids:
@@ -665,18 +696,20 @@ def diff(
                 lambda c: c,
             )
         )
-    if BRANDS_FACET not in skip and source.brands != target.brands:
-        if source.brands and target.brands:
+    brands_differ = source.brands != target.brands or source.item_classes != target.item_classes
+    if BRANDS_FACET not in skip and brands_differ:
+        if source.brands and target.brands and not (source.item_classes or target.item_classes):
             label_of = lambda b: names.brands.get(b, REMOVED_BRAND)  # noqa: E731
             changes.append(_list_change(BRANDS_FACET, target.brands, source.brands, label_of, label_of))
         else:
-            # One side is every brand: a struck-out list would read as narrowing when it widens.
+            # One side is every brand, or allowed classes are involved: a struck-out list of
+            # brand names would read as narrowing when it widens, or hide the classes.
             changes.append(
                 _change(
                     BRANDS_FACET,
                     FACET_LABELS[BRANDS_FACET],
-                    brands_text(target.brands, names),
-                    brands_text(source.brands, names),
+                    brands_text(target.brands, names, target.item_classes),
+                    brands_text(source.brands, names, source.item_classes),
                 )
             )
     for modality, (facet, label) in MEDIA_FACETS.items():
@@ -761,7 +794,9 @@ def summary(source: AccessSnapshot, names: Names, skip: frozenset[str] = frozens
     }
     lines.extend({"label": FACET_LABELS[f], "value": v} for f, v in extra.items() if f not in skip)
     if BRANDS_FACET not in skip:
-        lines.append({"label": FACET_LABELS[BRANDS_FACET], "value": brands_text(source.brands, names)})
+        lines.append(
+            {"label": FACET_LABELS[BRANDS_FACET], "value": brands_text(source.brands, names, source.item_classes)}
+        )
     lines.extend(
         {"label": label, "value": media_text(modality, source.media[modality])}
         for modality, (_facet, label) in MEDIA_FACETS.items()
@@ -875,6 +910,9 @@ def _write(
     if BRANDS_FACET in changed:
         # Empty means every brand; stored as NULL, as `contact_brand_scope.set_contact_brands` does.
         target.brand_ids = list(source.brands) or None
+        # TAG-BRAND-CLASS: the allowed classes travel with the brands, or a copy would widen a
+        # target to every class (SERENE included).
+        target.allowed_item_class_codes = list(source.item_classes) or None
 
     for modality, (facet, _label) in MEDIA_FACETS.items():
         if facet in changed:

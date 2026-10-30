@@ -1,5 +1,5 @@
 /**
- * S4 - PurchaseOrdersPanel + SamplesPanel (AC-F1, AC-F2, AC-F8, AC-F9, AC-F9a).
+ * S4 - PurchaseOrdersPanel (AC-F1, AC-F2, AC-F8, AC-F9, AC-F9a).
  *
  * The distinction worth pinning is the one AC-F9 and AC-F9a draw: a MISMATCH reads as an
  * exception to chase, while DRIFT from v1 reads as a plain number. A UI that presented
@@ -64,7 +64,6 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
 
 import { PurchaseOrderLinesEditor } from './PurchaseOrderLinesEditor';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
-import { SamplesPanel } from './SamplesPanel';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -151,17 +150,6 @@ function renderLines(poOverrides: Partial<ProjectPurchaseOrder> = {}) {
   );
 }
 
-function renderSamples(overrides: Partial<Project> = {}) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <SamplesPanel project={project(overrides)} />
-    </QueryClientProvider>,
-  );
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   listPurchaseOrders.mockResolvedValue([]);
@@ -183,7 +171,7 @@ describe('PurchaseOrdersPanel', () => {
     ).toBeNull();
     // The explainer under the heading is gone (ADR 1e); the two ways in live in the toolbar.
     expect(screen.getByRole('button', { name: /Upload a PO document/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Record a PO/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions' })).toBeInTheDocument();
   });
 
   it('offers both ways in when nothing is recorded, without explaining the funnel', async () => {
@@ -193,9 +181,57 @@ describe('PurchaseOrdersPanel', () => {
     // The two ways in live in the TOOLBAR only (ADR 1d): no centred duplicates in the empty
     // state, and no paragraph teaching what recording a PO does to the funnel.
     expect(screen.getByRole('button', { name: /Upload a PO document/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Record a PO/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Record it by hand/i })).toBeNull();
     expect(screen.queryByText(/moves this project to PO Received/i)).not.toBeInTheDocument();
+  });
+
+  it('puts Upload at the right end and Record a PO only inside the Actions menu (PROJECT-PO-ACTIONS)', async () => {
+    renderPos();
+    expect(await screen.findByText(/No PO received yet/i)).toBeInTheDocument();
+
+    // The shared list toolbar's right cluster: Actions, then the primary, at the end.
+    const upload = screen.getByRole('button', { name: /Upload a PO document/i });
+    const actions = screen.getByRole('button', { name: 'Actions' });
+    const columns = screen.getByRole('button', { name: /Columns/i });
+    const rightCluster = upload.parentElement as HTMLElement;
+    expect(rightCluster).toBe(actions.parentElement);
+    expect(rightCluster.className).toContain('ms-auto');
+    expect(rightCluster.lastElementChild).toBe(upload);
+    expect(rightCluster.contains(columns)).toBe(false);
+    expect(
+      columns.compareDocumentPosition(upload) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    // Not a button of its own any more.
+    expect(screen.queryByRole('button', { name: /Record a PO/i })).toBeNull();
+
+    fireEvent.keyDown(actions, { key: 'Enter' });
+    const menu = await screen.findByRole('menu');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Record a PO/i }));
+    // The same dialog the old button opened.
+    expect(await screen.findByText('Record a purchase order')).toBeInTheDocument();
+  });
+
+  it('searches from inside the shared toolbar, so the header stays one row', async () => {
+    listPurchaseOrders.mockResolvedValue([
+      po(),
+      po({ id: 'po2', po_number: 'PO-7777', issuing_party_name: 'Other Builder' }),
+    ]);
+    const { container } = renderPos();
+    expect(await screen.findByText('PO-7777')).toBeInTheDocument();
+
+    const box = screen.getByRole('searchbox', { name: 'Search POs' });
+    const toolbar = container.querySelector('[data-slot="data-grid-list-toolbar"]') as HTMLElement;
+    expect(toolbar.contains(box)).toBe(true);
+    expect(screen.getAllByRole('searchbox')).toHaveLength(1);
+
+    fireEvent.change(box, { target: { value: '7777' } });
+    expect(await screen.findByText('PO-7777')).toBeInTheDocument();
+    expect(screen.queryByText('PO-9001')).toBeNull();
+
+    fireEvent.change(box, { target: { value: 'nothing like this' } });
+    expect(await screen.findByText('Nothing matches that search')).toBeInTheDocument();
   });
 
   it('separates the two mismatch kinds instead of one generic warning', async () => {
@@ -332,48 +368,9 @@ describe('PurchaseOrdersPanel', () => {
 
     expect((await screen.findAllByText('PO-9001')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /Record a PO/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Upload a PO document/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Delete PO-9001/i })).toBeNull();
-  });
-});
-
-describe('SamplesPanel', () => {
-  it('tells the user a sample needs a quoted version first', async () => {
-    renderSamples();
-
-    expect(await screen.findByText(/No samples sent yet/i)).toBeInTheDocument();
-    // The heading says it; the sentence explaining the dependency is gone.
-    expect(screen.getByText('No samples sent yet')).toBeInTheDocument();
-  });
-
-  it('states that a version was superseded rather than leaving a badge off', async () => {
-    listSamples.mockResolvedValue([sample({ is_version_current: false })]);
-
-    renderSamples();
-
-    expect(await screen.findByText('Superseded')).toBeInTheDocument();
-    expect(screen.getByText('1 against a superseded version')).toBeInTheDocument();
-  });
-
-  it('names the scope and version on every row', async () => {
-    listSamples.mockResolvedValue([
-      sample({ scope_label: 'Common Area', version_no: 3, submitted_by_name: 'Siti' }),
-    ]);
-
-    renderSamples();
-
-    expect(await screen.findByText('Common Area')).toBeInTheDocument();
-    // Scope and version are separate columns now, so they are asserted separately.
-    expect(screen.getByText('v3')).toBeInTheDocument();
-    // Its own "By" column now, so the name stands alone without the "by" preposition.
-    expect(screen.getByText('Siti')).toBeInTheDocument();
-  });
-
-  it('says feedback is missing instead of rendering an empty gap', async () => {
-    listSamples.mockResolvedValue([sample({ developer_feedback: null })]);
-
-    renderSamples();
-
-    expect((await screen.findAllByText('-')).length).toBeGreaterThan(0);
   });
 });
 

@@ -17,8 +17,7 @@ import type {
   PortalRevisionAttachment,
   PortalRevisionEntry,
 } from '../lib/portal-client';
-import { portalAttachmentDownloadUrl } from '../lib/portal-client';
-import { portalFetchBytes } from '../lib/portal-preview';
+import { useSubmissionClient, useSubmissionFetchBytes } from '../lib/submission-client';
 
 /**
  * The lineage of one submission as a vertical timeline: the original, every
@@ -89,6 +88,7 @@ function formatValue(value: unknown): string {
 function toHistoryPreviewItem(
   file: PortalRevisionAttachment,
   urlByAttachmentId: Record<string, string>,
+  portalAttachmentDownloadUrl: (attachmentId: string) => string,
 ): AttachmentPreviewItem {
   return {
     id: file.attachment_id,
@@ -120,6 +120,9 @@ export function RevisionHistory({
   } | null>(null);
   // The full form of one revision, opened read-only from its history entry.
   const [snapshotEntry, setSnapshotEntry] = useState<PortalRevisionEntry | null>(null);
+  // The API this history reads through (R1): portal-client, or the CRM's My Requests client.
+  const client = useSubmissionClient();
+  const portalFetchBytes = useSubmissionFetchBytes();
 
   const urlByAttachmentId = useMemo(() => {
     const out: Record<string, string> = {};
@@ -155,7 +158,9 @@ export function RevisionHistory({
           <ol className="relative">
             {entries.map((entry, index) => {
               const files = entry.attachments ?? [];
-              const items = files.map((f) => toHistoryPreviewItem(f, urlByAttachmentId));
+              const items = files.map((f) =>
+                toHistoryPreviewItem(f, urlByAttachmentId, (id) => client.portalAttachmentDownloadUrl(id)),
+              );
               const when = formatWhen(entry.submitted_at);
               return (
                 <li
@@ -300,7 +305,7 @@ export function RevisionHistory({
         entry={snapshotEntry}
         onOpenChange={(open) => !open && setSnapshotEntry(null)}
         fetchBytes={portalFetchBytes}
-        attachmentDownloadUrl={portalAttachmentDownloadUrl}
+        attachmentDownloadUrl={(id: string) => client.portalAttachmentDownloadUrl(id)}
       />
     </Card>
   );

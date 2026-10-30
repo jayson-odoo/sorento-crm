@@ -10,7 +10,7 @@ import {
 } from '@tanstack/react-table';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import { Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
+import { Check, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2, X } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +46,9 @@ import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import type {
+  QuotationAmendmentDecision,
+  QuotationAmendmentField,
+  QuotationAmendmentRow,
   QuotationLine,
   StagedQuotationLine,
 } from '../../_shared/types/project.types';
@@ -77,7 +80,7 @@ import {
 } from './QuotationLineFileCell';
 import { QuotationStockChip, SetStockChip } from './QuotationStockChip';
 import { SET_OPTION_PREFIX, isSetOption } from '@/app/(protected)/scm/components/productOrSetPicker';
-import { LineFlags } from './QuotationLineFlags';
+import { LineFlags, MinimumPriceBadge, MinimumPriceFlag } from './QuotationLineFlags';
 
 /** One line of the grid: the staged (or stored) line, and its true position in the scope. */
 interface GridRow {
@@ -108,7 +111,6 @@ interface GridContextValue {
   uomError: unknown;
   onUomRetry: () => void;
   brandOptions: SearchableSelectOption[];
-  stockGroup: string | null;
   total: string | null;
   update: (key: string, patch: LineDraft) => void;
   selectProduct: (key: string, option: SearchableSelectOption | null) => void;
@@ -122,6 +124,162 @@ interface GridContextValue {
   /** Rows whose description was left at least once: an empty one is marked from then on. */
   visited: Set<string>;
   markVisited: (key: string) => void;
+  /** The customer's suggestions on a stored line, by field (review mode only). */
+  suggestionOf: (row: GridRow, field: QuotationAmendmentField) => QuotationAmendmentRow | null;
+  onDecide: QuotationLinesReview['onDecide'] | null;
+  reviewDisabled: boolean;
+}
+
+/**
+ * Review mode (QUOTE-CUSTOMER-AMEND): the customer's suggestions on the issued lines, each in the
+ * cell it concerns, decided there. View mode only.
+ */
+export interface QuotationLinesReview {
+  rows: QuotationAmendmentRow[];
+  onDecide: (rowId: string, decision: QuotationAmendmentDecision, reason?: string) => void;
+  disabled?: boolean;
+}
+
+const SUGGESTION_WORDS: Record<QuotationAmendmentField, string> = {
+  quantity: 'suggested quantity on',
+  unit_price: 'suggested unit price on',
+  remove: 'removal of',
+};
+
+/**
+ * Accept and Reject for one suggestion. Reject opens the reason in the same place; Enter sends
+ * it, Escape closes it unsent. Pressing the decision already taken puts the row back to pending.
+ * `compact` (the narrow row-actions column) stacks the buttons and opens the reason in a popover.
+ */
+function SuggestionDecision({
+  suggestion,
+  label,
+  compact = false,
+}: {
+  suggestion: QuotationAmendmentRow;
+  label: string;
+  compact?: boolean;
+}) {
+  const grid = useGrid();
+  const [asking, setAsking] = React.useState(false);
+  const [reason, setReason] = React.useState(suggestion.decision_reason ?? '');
+  const words = SUGGESTION_WORDS[suggestion.field];
+  const decide = (decision: QuotationAmendmentDecision, why?: string) =>
+    why === undefined
+      ? grid.onDecide?.(suggestion.id, decision)
+      : grid.onDecide?.(suggestion.id, decision, why);
+  const accepted = suggestion.decision === 'accepted';
+  const rejected = suggestion.decision === 'rejected';
+
+  const reasonInput = (
+    <Input
+      variant="sm"
+      autoFocus
+      value={reason}
+      maxLength={500}
+      placeholder="Reason (optional)"
+      aria-label={`Reason for rejecting the ${words} ${label}`}
+      className="mt-1 w-full text-start text-xs"
+      onChange={(event) => setReason(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          setAsking(false);
+          decide('rejected', reason.trim());
+        } else if (event.key === 'Escape') {
+          setAsking(false);
+        }
+      }}
+    />
+  );
+
+  const rejectButton = (
+    <Button
+      type="button"
+      mode="icon"
+      variant={rejected ? 'destructive' : 'outline'}
+      size="sm"
+      aria-label={`Reject ${words} ${label}`}
+      aria-pressed={rejected}
+      title="Reject"
+      className="size-6"
+      disabled={grid.reviewDisabled}
+      onClick={() => (rejected ? decide('pending') : setAsking((open) => !open))}
+    >
+      <X className="size-3.5" />
+    </Button>
+  );
+
+  return (
+    <div className={compact ? 'flex flex-col items-center gap-0.5' : 'mt-1'}>
+      <div className={compact ? 'flex flex-col items-center gap-1' : 'flex justify-end gap-1.5'}>
+        <Button
+          type="button"
+          mode="icon"
+          variant={accepted ? 'primary' : 'outline'}
+          size="sm"
+          aria-label={`Accept ${words} ${label}`}
+          aria-pressed={accepted}
+          title="Accept"
+          className="size-6"
+          disabled={grid.reviewDisabled}
+          onClick={() => {
+            setAsking(false);
+            decide(accepted ? 'pending' : 'accepted');
+          }}
+        >
+          <Check className="size-3.5" />
+        </Button>
+        {compact ? (
+          <Popover open={asking} onOpenChange={setAsking}>
+            <PopoverTrigger asChild>{rejectButton}</PopoverTrigger>
+            <PopoverPortal>
+              <PopoverContent align="end" className="w-60 p-2">
+                {reasonInput}
+              </PopoverContent>
+            </PopoverPortal>
+          </Popover>
+        ) : (
+          rejectButton
+        )}
+      </div>
+      {!compact && asking && reasonInput}
+      {rejected && suggestion.decision_reason && !asking && (
+        <p
+          className="mt-0.5 truncate text-end text-2xs text-muted-foreground"
+          title={suggestion.decision_reason}
+        >
+          {suggestion.decision_reason}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The issued value struck through above the suggested one, and the decision under them. */
+function Suggestion({
+  suggestion,
+  label,
+  format,
+  children,
+}: {
+  suggestion: QuotationAmendmentRow;
+  label: string;
+  format: (value: string) => string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-end text-end">
+      <s className="text-xs text-muted-foreground tabular-nums">
+        {suggestion.value_from ? format(suggestion.value_from) : '-'}
+      </s>
+      <span className="text-sm font-medium tabular-nums">
+        {suggestion.value_to ? format(suggestion.value_to) : '-'}
+      </span>
+      {children}
+      <SuggestionDecision suggestion={suggestion} label={label} />
+    </div>
+  );
 }
 
 const GridContext = React.createContext<GridContextValue | null>(null);
@@ -238,6 +396,7 @@ function FileCell({ row, kind }: { row: GridRow; kind: LineFileKind }) {
       label={grid.labelOf(row)}
       pickedId={staged.draft[field] ?? ''}
       editable={grid.editing && !staged.removed}
+      canEscalate={stored !== null}
       onPick={(attachmentId) => grid.update(row.key, { [field]: attachmentId })}
       onPreview={(shown) => grid.openPreview(kind, shown)}
     />
@@ -276,23 +435,13 @@ function SetBadge() {
   );
 }
 
-/** A picker option: a set wears the Set badge, a product keeps its name beside the code. */
+/**
+ * A picker option is its code alone, wrapping rather than cut short. In Sorento the product code
+ * IS the name, so a name beside it printed the code twice (owner, 29 Oct: "just show product code
+ * only"). A set's Set badge shows on the picked value, not in the list.
+ */
 function renderLineOption(option: SearchableSelectOption): React.ReactNode {
-  // A set is its code on one line: the Set badge shows on the picked value, not in the list.
-  if (isSetOption(option.value)) {
-    return <span className="block min-w-0 truncate">{option.label}</span>;
-  }
-  return (
-    <span className="flex min-w-0 items-center gap-2">
-      <span className="min-w-0 break-words">{option.label}</span>
-      {isSetOption(option.value) ? <SetBadge /> : null}
-      {option.description ? (
-        <span className="min-w-0 truncate text-xs text-muted-foreground">
-          {option.description}
-        </span>
-      ) : null}
-    </span>
-  );
+  return <span className="block min-w-0 break-words">{option.label}</span>;
 }
 
 /** A set line's stock pill: the parts frozen on the line, else the picked set's own parts. */
@@ -307,7 +456,6 @@ function SetStock({ row, quantity }: { row: GridRow; quantity: string }) {
   return (
     <SetStockChip
       parts={parts.filter((part): part is typeof part & { product_id: string } => Boolean(part.product_id))}
-      group={grid.stockGroup}
       quantity={quantity}
       label={grid.labelOf(row)}
     />
@@ -456,12 +604,20 @@ function QtyCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   ) : productId ? (
     <QuotationStockChip
       productId={productId}
-      group={grid.stockGroup}
       quantity={quantity}
       uom={uom}
       label={label}
     />
   ) : null;
+
+  const suggested = grid.editing ? null : grid.suggestionOf(row, 'quantity');
+  if (suggested) {
+    return (
+      <Suggestion suggestion={suggested} label={label} format={trimAmount}>
+        {chip}
+      </Suggestion>
+    );
+  }
 
   if (!grid.editing || staged.removed) {
     return (
@@ -538,6 +694,24 @@ function RateCell({ row: tableRow }: CellContext<GridRow, unknown>) {
       {`List ${formatMyr(listPrice)}`}
     </span>
   ) : null;
+  // Under the price it judges (owner meeting, 29 Oct), not in the Product cell.
+  const minimum = (
+    <MinimumPriceFlag quotationId={grid.quotationId} line={staged.line} draft={staged.draft} />
+  );
+
+  const suggested = grid.editing ? null : grid.suggestionOf(row, 'unit_price');
+  if (suggested) {
+    return (
+      <Suggestion suggestion={suggested} label={grid.labelOf(row)} format={formatMyr}>
+        {list}
+        {suggested.below_floor && (
+          <div className="mt-1">
+            <MinimumPriceBadge value={suggested.floor_value ?? null} />
+          </div>
+        )}
+      </Suggestion>
+    );
+  }
 
   if (!grid.editing || staged.removed) {
     return (
@@ -546,6 +720,7 @@ function RateCell({ row: tableRow }: CellContext<GridRow, unknown>) {
           {price ? formatMyr(price) : '-'}
         </span>
         {list}
+        {minimum}
       </div>
     );
   }
@@ -567,6 +742,7 @@ function RateCell({ row: tableRow }: CellContext<GridRow, unknown>) {
         }
       />
       {list}
+      {minimum}
     </div>
   );
 }
@@ -631,6 +807,20 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const [open, setOpen] = React.useState(false);
   /** Set by an action that puts the caret somewhere itself, so the menu does not take it back. */
   const keepFocus = React.useRef(false);
+
+  // In review (view mode) this column holds only a suggested removal, where Remove lives in edit.
+  if (!grid.editing) {
+    const removal = grid.suggestionOf(row, 'remove');
+    if (!removal) return null;
+    return (
+      <div className="flex flex-col items-center gap-0.5 py-0.5">
+        <Badge variant="destructive" appearance="light" size="xs">
+          Remove
+        </Badge>
+        <SuggestionDecision suggestion={removal} label={label} compact />
+      </div>
+    );
+  }
 
   if (staged.removed) {
     return (
@@ -804,7 +994,8 @@ const FLUSH = 'px-0';
 
 /**
  * The columns, per the approved mock (section 1) and the owner's hand test (UOM beside Qty):
- * the defaults sum to 876px, so the grid fits the 878px scroller at 1280 with the sidebar open. The handle and the row menu only exist while editing (column visibility), so the
+ * the defaults sum to 908px, 852px in view mode, where the 28px handle and the 28px row menu are
+ * hidden. The handle and the row menu only exist while editing (column visibility), so the
  * column order a user saves holds in both views.
  */
 const COLUMNS: ColumnDef<GridRow>[] = [
@@ -843,8 +1034,8 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     accessorFn: (row) => row.staged.draft.image_attachment_id,
     header: 'Photo',
     cell: PhotoCell,
-    size: 44,
-    minSize: 40,
+    size: 56,
+    minSize: 56,
     meta: {
       headerTitle: 'Photo',
       headerClassName: TIGHT,
@@ -925,7 +1116,8 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     accessorFn: (row) => row.staged.draft.unit_price,
     header: 'Rate (RM)',
     cell: RateCell,
-    size: 80,
+    // Wide enough for the "Minimum price RM x" pill under the price on two lines.
+    size: 112,
     minSize: 76,
     meta: {
       headerTitle: 'Rate (RM)',
@@ -964,6 +1156,23 @@ const COLUMNS: ColumnDef<GridRow>[] = [
   },
 ];
 
+/**
+ * Review mode's widths (QUOTE-CUSTOMER-AMEND): the row-actions column holds a removal's badge over
+ * its Accept / Reject, and Qty holds a decision pair. View mode's ten columns sum to 864px (the
+ * Photo column is 56px like Drawing, so its Escalate tile fits: QUOTE-DRAWING-ESCALATE);
+ * Description gives up what these two gain, so review sums to 892px, inside the 893px the grid
+ * shows at 1280 with the sidebar open (measured in the browser pass). Same ids and order, so a
+ * saved column order holds in both modes.
+ */
+const REVIEW_WIDTHS: Record<string, { size: number; minSize: number }> = {
+  row_actions: { size: 56, minSize: 56 },
+  qty: { size: 72, minSize: 64 },
+  description: { size: 144, minSize: 140 },
+};
+const REVIEW_COLUMNS: ColumnDef<GridRow>[] = COLUMNS.map((column) =>
+  column.id && REVIEW_WIDTHS[column.id] ? { ...column, ...REVIEW_WIDTHS[column.id] } : column,
+);
+
 // ------------------------------------------------------------------------------- grid
 
 export interface QuotationLinesGridProps {
@@ -987,12 +1196,13 @@ export interface QuotationLinesGridProps {
   uomError: unknown;
   onUomRetry: () => void;
   brandOptions: SearchableSelectOption[];
-  stockGroup: string | null;
-  /** The search and "Stock at" controls, drawn in the grid's own toolbar beside Columns. */
+  /** The search control, drawn in the grid's own toolbar beside Columns. */
   toolbar?: React.ReactNode;
   /** Every edit, addition and reorder, as the whole staged set. Edit mode only. */
   onStage?: (lines: StagedQuotationLine[]) => void;
   onToggleRemoved?: (key: string) => void;
+  /** The customer's suggestions to decide, in view mode (QUOTE-CUSTOMER-AMEND). */
+  review?: QuotationLinesReview;
 }
 
 /**
@@ -1019,10 +1229,10 @@ export function QuotationLinesGrid({
   uomError,
   onUomRetry,
   brandOptions,
-  stockGroup,
   onStage,
   onToggleRemoved,
   toolbar,
+  review,
 }: QuotationLinesGridProps) {
   const [bandOpen, setBandOpen] = React.useState<Set<string>>(() => new Set());
   const [preview, setPreview] = React.useState<{
@@ -1295,6 +1505,21 @@ export function QuotationLinesGrid({
     [productCodeOf],
   );
 
+  /** Suggestions by stored line id and field. Matched on the stored line only: they name issued lines. */
+  const reviewRows = review?.rows;
+  const suggestions = React.useMemo(() => {
+    const map = new Map<string, QuotationAmendmentRow>();
+    (reviewRows ?? []).forEach((item) => map.set(`${item.line_id}:${item.field}`, item));
+    return map;
+  }, [reviewRows]);
+  const suggestionOf = React.useCallback(
+    (row: GridRow, field: QuotationAmendmentField) =>
+      row.staged.line ? (suggestions.get(`${row.staged.line.id}:${field}`) ?? null) : null,
+    [suggestions],
+  );
+  const onDecide = review?.onDecide ?? null;
+  const reviewDisabled = Boolean(review?.disabled);
+
   const context = React.useMemo<GridContextValue>(
     () => ({
       editing,
@@ -1305,7 +1530,6 @@ export function QuotationLinesGrid({
       uomError,
       onUomRetry,
       brandOptions,
-      stockGroup,
       total,
       update,
       selectProduct,
@@ -1317,6 +1541,9 @@ export function QuotationLinesGrid({
       visited,
       markVisited,
       labelOf,
+      suggestionOf,
+      onDecide,
+      reviewDisabled,
     }),
     [
       act,
@@ -1327,13 +1554,15 @@ export function QuotationLinesGrid({
       fetchProducts,
       labelOf,
       markVisited,
+      onDecide,
       onToggleRemoved,
       onUomRetry,
       openPreview,
       quotationId,
       resolveProduct,
+      reviewDisabled,
       selectProduct,
-      stockGroup,
+      suggestionOf,
       total,
       uomError,
       uomOptions,
@@ -1347,7 +1576,7 @@ export function QuotationLinesGrid({
     React.useState<VisibilityState>({});
 
   const table = useReactTable({
-    columns: COLUMNS,
+    columns: review ? REVIEW_COLUMNS : COLUMNS,
     data: visibleRows,
     getRowId: (row) => row.key,
     getCoreRowModel: getCoreRowModel(),
@@ -1357,7 +1586,8 @@ export function QuotationLinesGrid({
       columnVisibility: {
         ...columnVisibility,
         drag_handle: editing,
-        row_actions: editing,
+        // In review the column holds a suggested removal's decision.
+        row_actions: editing || Boolean(review),
       },
     },
     onColumnVisibilityChange: setColumnVisibility,

@@ -128,6 +128,16 @@ class Brand(Base, CompanyScopedMixin):
     # brand it reaches first and names the other brands in weight order. 0 = no preference.
     # Seeded Sorento 1.5 by migration bcw_0001; edited on Master Data > Brands.
     chatbot_weight = Column(Numeric(6, 2), nullable=False, default=0, server_default=text("0"))
+    # BULK-CONTACT-ACCESS (owner ruling 26 Oct): the company whose dealers get this brand from
+    # the access-sheet upload. NULL = a project brand the upload never gives.
+    dealer_company_id = Column(
+        UUID(as_uuid=False), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True
+    )
+    dealer_company = relationship("Company", foreign_keys=[dealer_company_id], lazy="select")
+
+    @property
+    def dealer_company_name(self):
+        return self.dealer_company.name if self.dealer_company is not None else None
     # "Customers can ask for this brand" (#1286, D3). False for OTHERS and NO LOGO,
     # which is how the catalogue records the ABSENCE of a brand: the understanding
     # model is never offered them, and a single word never binds one in search (a
@@ -171,6 +181,32 @@ class ItemType(Base, CompanyScopedMixin):
         Index(
             "uq_item_types_company_item_type_code",
             "company_id", "item_type_code",
+            unique=True,
+        ),
+    )
+
+
+class ItemClass(Base, CompanyScopedMixin):
+    """AutoCount `Item.ItemClass` (SERENE, DIY; blank on most items) as reference data, the
+    ItemType rule exactly: back-created code = name = raw value by the products ingest
+    (`product_rules.ensure_reference`). A contact's access can be limited to some class codes
+    (`contact_brand_scope`, TAG-BRAND-CLASS). PLAN-item-class-29oct.md D1."""
+    __tablename__ = "item_classes"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    item_class_code = Column(String(50), nullable=False)
+    item_class_name = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
+
+    products = relationship("Product", back_populates="item_class")
+
+    __table_args__ = (
+        Index(
+            "uq_item_classes_company_item_class_code",
+            "company_id", "item_class_code",
             unique=True,
         ),
     )
@@ -246,6 +282,12 @@ class Product(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("item_types.id", ondelete="SET NULL"), nullable=True,
         index=True,
     )
+    # AutoCount ItemClass (migration item_class_0001), set by the products ingest or the
+    # product form. Narrows a contact's brand access (`contact_brand_scope.brand_predicate`).
+    item_class_id = Column(
+        UUID(as_uuid=False), ForeignKey("item_classes.id", ondelete="SET NULL"), nullable=True,
+        index=True,
+    )
     # Self-referential variant graph. A variant points at its (longest existing
     # boundary-prefix) parent product; a base has variant_of_id IS NULL. Deleting
     # a parent SET-NULLs its children (never blocks) - derivation re-anchors them
@@ -288,6 +330,8 @@ class Product(Base, CompanyScopedMixin):
     warranty_months = Column(Integer, nullable=True)
     has_serial_tracking = Column(Boolean, default=False, server_default=text("false"), nullable=False)
     has_batch_tracking = Column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # SO-LINE-DESC: print the SO line description beside this product's code in the OI email.
+    show_so_line_description = Column(Boolean, default=False, server_default=text("false"), nullable=False)
     reorder_level = Column(Integer, nullable=True)
     reorder_quantity = Column(Integer, nullable=True)
     # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X (max quantity
@@ -325,6 +369,7 @@ class Product(Base, CompanyScopedMixin):
 
     category = relationship("ProductCategory", back_populates="products")
     brand = relationship("Brand", back_populates="products")
+    item_class = relationship("ItemClass", back_populates="products")
     variant_of = relationship("Product", remote_side=[id], backref="variants")
     base_uom = relationship("UnitOfMeasure", back_populates="products", foreign_keys=[base_uom_id])
     product_suppliers = relationship(

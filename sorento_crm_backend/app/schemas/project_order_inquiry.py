@@ -24,6 +24,7 @@ from pydantic import (
 )
 
 from app.schemas.project_line_split import LineSplitViewOut
+from app.schemas.scm_orders import PoLineSpoOut
 from app.services.uuid_path_param import UUID_PATTERN
 
 #: The longest free-text search string the worklist routes accept
@@ -38,6 +39,29 @@ WORKLIST_FILTER_MAX_LENGTH = 200
 #: The closed state set the worklist list route accepts on `state` - shared so
 #: `AcknowledgeFilter.state` cannot name a value the list route itself would refuse.
 WorklistState = Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]
+WORKLIST_STATES = ("raised", "partly_linked", "actioned", "cancelled", "placed")
+
+#: FILTER-MULTISELECT PR6: a worklist filter body field now carries one id or several, comma-joined (the
+#: shape the list's own query string takes). Each id is still a UUID, so a malformed one stays a 422.
+_UUID_CORE = UUID_PATTERN[1:-1]
+MULTI_UUID_PATTERN = rf"^{_UUID_CORE}(,{_UUID_CORE})*$"
+
+
+
+def _cap_each(value, label: str):
+    """A free-text filter is one string (capped whole) or a list (each item capped). A string is ONE value."""
+    for item in [value] if isinstance(value, str) else list(value or []):
+        if len(str(item)) > WORKLIST_FILTER_MAX_LENGTH:
+            raise ValueError(f"{label}: a value is longer than {WORKLIST_FILTER_MAX_LENGTH} characters")
+    return value
+
+
+def _check_worklist_states(value: Optional[str]) -> Optional[str]:
+    """`state` takes one or several comma-joined states; each is checked like the GET route's Literal."""
+    from app.utils.multi_value import multi_choices
+
+    multi_choices(value, WORKLIST_STATES, "state")
+    return value
 
 
 class OrderInquiryBundledWithOut(BaseModel):
@@ -70,6 +94,13 @@ class OrderInquiryBundledHostChangeOut(BaseModel):
     delivery_date: Optional[date] = None
     previous_qty: Optional[str] = None
     previous_delivery_date: Optional[date] = None
+
+
+class OrderInquiryLinkReceiptOut(BaseModel):
+    """LINKAGE-UNIFY U3: one GR bin a placement's goods were received at, and how many."""
+
+    qty: str
+    bin: Optional[str] = None
 
 
 class OrderInquiryLinkOut(BaseModel):
@@ -112,14 +143,24 @@ class OrderInquiryLinkOut(BaseModel):
     #: print rather than a zero it would have to read as "on time" (AC-D17). Derived
     #: beside `late` from the same two dates, never stored.
     late_days: Optional[int] = None
-    #: The document this link names is FULLY received (`PLAN-oi-replan-received-links.md`
-    #: S1, AC-RL-17): a PO line whose `qty_received >= qty_ordered` or `line_status =
-    #: 'closed'`, or an SPO allocation that fails `spo_supply.open_incoming_clauses()`.
-    #: Goods that have landed, not a promise still in transit.
+    #: The placement is FULLY received (`PLAN-oi-replan-received-links.md` S1, AC-RL-17;
+    #: LINKAGE-UNIFY U2, owner ruling Q3): every unit of it has landed in a bin by the goods
+    #: chain (`goods_chain.is_received`) - a PO link once the goods land on the SPO the
+    #: line was transferred onto, or straight into a bin when no SPO names the line; never
+    #: on the AutoCount transfer itself, never on a dead document. Goods that have landed,
+    #: not a promise still in transit.
     received: bool = False
-    #: How much of THIS link's own line has been received, stated even when `received`
-    #: itself is false - a partly received document says the figure too.
+    #: How much of THIS placement has landed (`goods_chain.received_qty`): its own share,
+    #: not the document's whole receipt, stated even when `received` itself is false.
     received_qty: Optional[str] = None
+    #: LINKAGE-UNIFY U3 (owner rulings Q1, Q4, Q6): where the goods were received, one
+    #: entry per GR bin - an SPO entry's received hops, or a PO entry's own received-direct
+    #: hops (a PO line no SPO names). Empty when nothing landed. Goods that went on through
+    #: an SPO sit on that SPO's (derived) entry, never on the PO's.
+    receipts: List[OrderInquiryLinkReceiptOut] = []
+    #: Q5: `po_cancelled` / `spo_withdrawn` when the document brings nothing; the link
+    #: stays placed. Null on a live link and on a derived entry.
+    dead_reason: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
     auto: bool = False
     linked_at: Optional[datetime] = None
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
@@ -263,6 +304,9 @@ class OrderInquiryRowOut(BaseModel):
     #: `qty - linked_qty` is what still flows to reorder planning, and is exactly what
     #: `scm.committed_v` now nets (migration 422).
     linked_qty: str = "0"
+    #: OI-AUTO-CONFIRM: what is still to order, and the CS reserve in words.
+    open_qty: str = "0"
+    reserve_label: Optional[str] = None
     #: PLAN-scm-supplied-with-companions.md S5. `bundled_qty` never exceeds
     #: `qty - linked_qty`; `bundled_with` is null on an un-bundled row. Both declared
     #: here because `response_model` drops a field it has not been told about
@@ -292,6 +336,10 @@ class OrderInquiryRowOut(BaseModel):
     ack_state: str = "awaiting"
     acknowledged_by_name: Optional[str] = None
     acknowledged_at: Optional[datetime] = None
+    #: OI-AUTO-CONFIRM: a person's Confirm / Unconfirm over the automatic rule, with who.
+    ack_override: Optional[str] = None
+    ack_override_at: Optional[datetime] = None
+    ack_override_by_name: Optional[str] = None
     rejected_by_name: Optional[str] = None
     rejected_at: Optional[datetime] = None
     rejected_reason: Optional[str] = None
@@ -527,6 +575,10 @@ class OrderInquiryWorklistRow(BaseModel):
     ack_state: str = "awaiting"
     acknowledged_by_name: Optional[str] = None
     acknowledged_at: Optional[datetime] = None
+    #: OI-AUTO-CONFIRM: a person's Confirm / Unconfirm over the automatic rule, with who.
+    ack_override: Optional[str] = None
+    ack_override_at: Optional[datetime] = None
+    ack_override_by_name: Optional[str] = None
     rejected_by_name: Optional[str] = None
     rejected_at: Optional[datetime] = None
     rejected_reason: Optional[str] = None
@@ -567,6 +619,10 @@ class OrderInquiryWorklistRow(BaseModel):
     #: `taken_from_po`/`remaining_open`, both of which already include it (they sum by
     #: `row_id` with no target filter).
     reserved_qty: str = "0"
+    #: OI-AUTO-CONFIRM: "Reserved @ <warehouse code>" when CS reserved stock for the row, else
+    #: null; and what is still to order (qty less live cover less bundled, never below zero).
+    reserve_label: Optional[str] = None
+    open_qty: str = "0"
     #: Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): the OPEN reserve request row's
     #: own `qty_requested` for this row - "0" when `reserve_state` is not `requested`.
     #: The Lines grid's `Request to reserve N` pill and the tick's default stage both
@@ -714,6 +770,10 @@ class OrderInquiryWorklistSummary(BaseModel):
     #: How many rows sit at each acknowledgement state (AC-H4), computed with the `ack`
     #: filter dropped for the same reason `kinds` drops its own.
     ack: OrderInquiryAckCounts = OrderInquiryAckCounts()
+    #: LINKAGE-UNIFY U3 (Q5): rows holding a link whose document is dead, by reason
+    #: (`po_cancelled`, `spo_withdrawn`) - the "Dead document" filter's own counts, with
+    #: that filter dropped like every other control here.
+    dead_documents: Dict[str, int] = {}
     #: What the page's "Link up to" date starts at (AC-LH5): the latest completed reorder
     #: run's own "Plan until". Read from here rather than invented on the page, so the plan
     #: and the buyer cannot be working to two different horizons. `None` when no run has
@@ -754,16 +814,18 @@ class AcknowledgeFilter(BaseModel):
     query: Optional[str] = Field(None, max_length=WORKLIST_QUERY_MAX_LENGTH)
     delivery_month: Optional[str] = None
     raised_date: Optional[str] = None
-    state: Optional[WorklistState] = None
-    project_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
-    project: Optional[str] = None
-    supplier_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    state: Optional[str] = None
+    project_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
+    #: Free-text titles: one string, or several (never split on a comma).
+    project: Optional[str | List[str]] = None
+    supplier_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     raised_by: Optional[str] = None
     linked: Optional[str] = None
     kind: Optional[str] = None
     ack: Optional[str] = None
-    location: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
-    agent: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    #: Free text: one location, or a list of them (each read whole). An older body may hold one string.
+    location: Optional[str | List[str]] = None
+    agent: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     so_month: Optional[str] = None
     po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
     spo_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
@@ -777,6 +839,16 @@ class AcknowledgeFilter(BaseModel):
     inquiry_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
     #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
+
+    @field_validator("state")
+    @classmethod
+    def _states_are_known(cls, value: Optional[str]) -> Optional[str]:
+        return _check_worklist_states(value)
+
+    @field_validator("location")
+    @classmethod
+    def _each_location_is_capped(cls, value):
+        return _cap_each(value, "location")
 
 
 class AcknowledgeRowsRequest(BaseModel):
@@ -1176,12 +1248,12 @@ class UnplaceAllRequest(BaseModel):
     query: Optional[str] = None
     delivery_month: Optional[str] = None
     raised_date: Optional[str] = None
-    project_id: Optional[str] = None
+    project_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     #: S5 (`PLAN-oi-project-label-from-so.md` section 5): text, exact match on the
     #: Project column - separate from `project_id`, unchanged. No length bound:
     #: `projects.title` is TEXT with none.
-    project: Optional[str] = None
-    supplier_id: Optional[str] = None
+    project: Optional[str | List[str]] = None
+    supplier_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     #: The user whose inquiries the list is narrowed to, so the action can never reach
     #: further than what the person pressing it can see.
     raised_by: Optional[str] = None
@@ -1207,18 +1279,20 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     query: Optional[str] = Field(None, max_length=WORKLIST_QUERY_MAX_LENGTH)
     delivery_month: Optional[str] = None
     raised_date: Optional[str] = None
-    state: Optional[WorklistState] = None
-    project_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
-    project: Optional[str] = None
-    supplier_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    state: Optional[str] = None
+    project_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
+    #: Free-text titles: one string, or several (never split on a comma).
+    project: Optional[str | List[str]] = None
+    supplier_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     raised_by: Optional[str] = None
     linked: Optional[Literal["po", "spo", "none"]] = None
     kind: Optional[Literal["spo", "po", "buy"]] = None
     ack: Optional[
         Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]
     ] = None
-    location: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
-    agent: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    #: Free text: one location, or a list of them (each read whole). An older body may hold one string.
+    location: Optional[str | List[str]] = None
+    agent: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     so_month: Optional[str] = None
     po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
     spo_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
@@ -1226,6 +1300,18 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     delivery_to: Optional[str] = None
     #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
+    #: LINKAGE-UNIFY U3 (Q5): the "Dead document" filter, as on the GET list.
+    dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
+
+    @field_validator("state")
+    @classmethod
+    def _states_are_known(cls, value: Optional[str]) -> Optional[str]:
+        return _check_worklist_states(value)
+
+    @field_validator("location")
+    @classmethod
+    def _each_location_is_capped(cls, value):
+        return _cap_each(value, "location")
 
 
 class UnplaceAllResult(BaseModel):
@@ -1284,6 +1370,12 @@ class OrderInquiryPoDetailLine(BaseModel):
     #: SUPPLY-SPO-LINK: every SPO this line was transferred onto (OI-SPO-EXACT), sorted,
     #: each once. Empty when the line never moved onto a shipping order.
     spo_numbers: List[str] = []
+    #: LINKAGE-UNIFY U4: one entry per SPO line this line was transferred onto, with where
+    #: its goods landed (`receipts`) or why it brings nothing (`dead_reason`) - the popup's
+    #: SPO column draws them with the document pills.
+    spos: List[PoLineSpoOut] = []
+    #: `po_cancelled` when this PO line brings nothing (`goods_chain.po_line_is_dead`).
+    dead_reason: Optional[Literal["po_cancelled"]] = None
 
 
 class OrderInquiryDocumentAllocation(BaseModel):

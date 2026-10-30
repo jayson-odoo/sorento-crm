@@ -32,6 +32,12 @@ describe('USE_CASES', () => {
     expect(entry?.label).toBe('Ideation - Draft Reminder');
   });
 
+  it('lists wa_phone_share so the owner can map the phone-share ask template', () => {
+    const entry = USE_CASES.find((u) => u.key === 'wa_phone_share');
+    expect(entry).toBeDefined();
+    expect(entry?.label).toBeTruthy();
+  });
+
   it('lists supplier_request_chat with its label, grouped as chat', () => {
     const entry = USE_CASES.find((u) => u.key === 'supplier_request_chat');
     expect(entry?.label).toBe('Supplier Request - Chat Reply');

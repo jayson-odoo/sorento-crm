@@ -47,22 +47,23 @@ vi.mock('../../_shared/services/plansService', () => ({
   listPlans: (...args: unknown[]) => listPlans(...args),
 }));
 
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: ({
+// The filter is a multi-select now (FILTER-MULTISELECT PR6); a one-value pick stands in for it here.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
     value,
     onChange,
     options,
     placeholder,
   }: {
-    value: string;
-    onChange: (next: string) => void;
+    value: string[];
+    onChange: (next: string[]) => void;
     options?: { value: string; label: string }[];
     placeholder?: string;
   }) => (
     <select
       aria-label={placeholder ?? 'State'}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
+      value={value[0] ?? ''}
+      onChange={(event) => onChange(event.target.value ? [event.target.value] : [])}
     >
       {(options ?? []).map((option) => (
         <option key={option.value} value={option.value}>

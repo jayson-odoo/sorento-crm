@@ -24,8 +24,9 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useComplaintRootCausesSelect } from '../../complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks/useComplaintResolutions';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -44,8 +45,31 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 
+const STATUS_OPTIONS = [
+  { value: 'new', label: 'New' },
+  { value: 'submitted', label: 'Submitted' },
+  { value: 'resubmitted', label: APPEALED_LABEL },
+  { value: 'updated', label: 'Updated' },
+  { value: 'responded', label: 'Responded' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'settled_on_site', label: 'Settled on site' },
+];
+
+/**
+ * A salesperson limited to their own complaints gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function ComplaintsList() {
+  const { limited } = useRequestScope('complaint');
+  if (limited) return <MyRequestPortalList kind="complaint" />;
+  return <StaffComplaintsList />;
+}
+
+function StaffComplaintsList() {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -61,8 +85,8 @@ export default function ComplaintsList() {
     isSettling: searchSettling,
     reset: resetSearchQuery,
   } = useDebouncedSearch();
-  const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
-  const [statusFilter, setStatusFilter] = useState<string>('__all__');
+  const [assignedToFilter, setAssignedToFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('');
   const [rootCauseFilter, setRootCauseFilter] = useState<string[]>([]);
   const [resolutionFilter, setResolutionFilter] = useState<string[]>([]);
 
@@ -72,8 +96,8 @@ export default function ComplaintsList() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearchQuery(state.searchQuery);
-    setAssignedToFilter(state.filters.assigned_to ?? '__all__');
-    setStatusFilter(state.filters.status ?? '__all__');
+    setAssignedToFilter(state.filters.assigned_to ?? '');
+    setStatusFilter(state.filters.status ?? '');
     setRootCauseFilter(state.filters.root_cause_ids ? state.filters.root_cause_ids.split(',') : []);
     setResolutionFilter(state.filters.resolution_ids ? state.filters.resolution_ids.split(',') : []);
   });
@@ -98,12 +122,8 @@ export default function ComplaintsList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    assigned_to:
-      assignedToFilter && assignedToFilter !== '__all__'
-        ? assignedToFilter
-        : undefined,
-    status:
-      statusFilter && statusFilter !== '__all__' ? statusFilter : undefined,
+    assigned_to: assignedToFilter || undefined,
+    status: statusFilter || undefined,
     root_cause_ids: rootCauseFilter.length ? rootCauseFilter : undefined,
     resolution_ids: resolutionFilter.length ? resolutionFilter : undefined,
   });
@@ -131,8 +151,8 @@ export default function ComplaintsList() {
   } = useComplaintResolutionsSelect();
 
   const filtersActiveCount =
-    (assignedToFilter !== '__all__' ? 1 : 0) +
-    (statusFilter !== '__all__' ? 1 : 0) +
+    (assignedToFilter ? 1 : 0) +
+    (statusFilter ? 1 : 0) +
     (rootCauseFilter.length ? 1 : 0) +
     (resolutionFilter.length ? 1 : 0);
 
@@ -147,12 +167,8 @@ export default function ComplaintsList() {
         searchQuery,
       },
       {
-        assigned_to:
-          assignedToFilter && assignedToFilter !== '__all__'
-            ? assignedToFilter
-            : undefined,
-        status:
-          statusFilter && statusFilter !== '__all__' ? statusFilter : undefined,
+        assigned_to: assignedToFilter || undefined,
+        status: statusFilter || undefined,
         root_cause_ids: rootCauseFilter.length
           ? rootCauseFilter.join(',')
           : undefined,
@@ -306,7 +322,6 @@ export default function ComplaintsList() {
           </span>
         ),
         size: 160,
-        enableSorting: false,
         meta: { headerTitle: 'Handled By', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
@@ -399,7 +414,7 @@ export default function ComplaintsList() {
       }
     >
       <Plus />
-      Create Complaint
+      Create
     </Button>
   );
 
@@ -436,13 +451,12 @@ export default function ComplaintsList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Assigned to</Label>
-                    <SearchableSelect
-                      value={assignedToFilter}
-                      onChange={setAssignedToFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(assignedToFilter)}
+                      onChange={(v) => setAssignedToFilter(joinMulti(v))}
                       loadError={respondSyncedUsersError}
                       onRetry={() => void refetchRespondSyncedUsers()}
                       options={[
-                        { value: '__all__', label: 'All assignees' },
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
                           value: u.respond_user_id!,
@@ -451,24 +465,25 @@ export default function ComplaintsList() {
                       ]}
                       placeholder="All assignees"
                       triggerClassName="mt-1"
+                      clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">{multiChipLabel('Assigned to', idFilterLabels(chosen))}</span>
+                        ) : (
+                          <span className="text-muted-foreground">Assigned to: any</span>
+                        )
+                      }
                     />
                   </div>
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={setStatusFilter}
-                      options={[
-                        { value: '__all__', label: 'All statuses' },
-                        { value: 'new', label: 'New' },
-                        { value: 'updated', label: 'Updated' },
-                        { value: 'responded', label: 'Responded' },
-                        { value: 'approved', label: 'Approved' },
-                        { value: 'rejected', label: 'Rejected' },
-                        { value: 'settled_on_site', label: 'Settled on site' },
-                      ]}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
+                      options={STATUS_OPTIONS}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
+                      clearable
                     />
                   </div>
                   <div>
@@ -507,8 +522,8 @@ export default function ComplaintsList() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setAssignedToFilter('__all__');
-                          setStatusFilter('__all__');
+                          setAssignedToFilter('');
+                          setStatusFilter('');
                           setRootCauseFilter([]);
                           setResolutionFilter([]);
                         }}

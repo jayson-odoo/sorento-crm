@@ -42,6 +42,7 @@ from app.services.reports import engine, registry as reg
 from app.services.reports.views_service import PUBLISH_PERMISSION, ReportViewsService
 from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ def _params_meta(
                     years=_years(db, definition),
                 )
             )
-        elif isinstance(param, reg.SelectParam):
+        elif isinstance(param, reg.SelectParam) and not param.hidden:
             metas.append(
                 ReportSelectParamMeta(
                     key=param.key,
@@ -211,6 +212,7 @@ def get_report_meta(
                 unavailable_for=lacking[c.key],
             )
             for c in definition.catalog()
+            if not c.hidden
         ],
         default_view=default_view,
         can_publish=_holds(db, current_user, PUBLISH_PERMISSION),
@@ -230,6 +232,7 @@ def _params_of(body: ReportRunRequest) -> dict:
 
 
 @router.post("/{key}/run", response_model=ReportResult)
+@heavy
 def run_report(
     key: str,
     body: ReportRunRequest,

@@ -31,12 +31,12 @@ from contextlib import nullcontext
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_actor_user_id, get_current_user
 from app.models.base import company_scope
 from app.services.company_scope_resolver import grants_scope_value
 from app.models.sla import (
@@ -135,6 +135,12 @@ _ANY_OF_PERMISSIONS: dict = {
 }
 
 
+#: Actions whose commit names the admin at the keyboard when one parked it while viewing as the
+#: requester: the salesperson's own deletes from the CRM request pages (PORTAL-P4-REQUESTS D7).
+#: The commit runs after the request, so the admin is stored with the action, server-side.
+_REAL_USER_ACTIONS = ("my_request.delete", "my_request_attachment.unlink")
+
+
 #: Actions whose ids become an ss URL path: the record id (and `payload.idea_id`) must be a UUID
 #: at park time, so a crafted id is refused here and not ten seconds later (AC-A-10).
 _UUID_ENTITY_ACTIONS = (
@@ -162,13 +168,22 @@ def _assert_required_payload(action_key: str, payload: dict, entity_id: Optional
             require_uuid((payload or {}).get("idea_id"), "idea_id")
 
 
-def _assert_entity_visible(db: Session, action_key: str, entity_id: str, actor_id: Optional[str] = None) -> None:
+def _assert_entity_visible(
+    db: Session,
+    action_key: str,
+    entity_id: str,
+    actor_id: Optional[str] = None,
+    entity_type: Optional[str] = None,
+) -> None:
     """Park-time existence check for the contact-customers and customer-group actions.
 
     The record is read under the requester's company scope, so a link or customer in
     another company (or one that does not exist) refuses 404 before anything is parked -
     the same answer either way, and no countdown for a record the caller cannot see.
     Deliberately just these keys: no other action asked for it."""
+    from app.services import own_scope
+
+    own_scope.assert_pending_action_allowed(db, action_key, entity_id, actor_id)
     if action_key == "product_alternatives.reset_auto":
         from app.services.product_alternative_service import list_for_product
 
@@ -216,6 +231,15 @@ def _assert_entity_visible(db: Session, action_key: str, entity_id: str, actor_i
         from app.services import new_product_application_service
 
         new_product_application_service.assert_attachment_unlinkable(db, entity_id, actor_id)
+    elif action_key == "my_request.delete":
+        # The portal DELETE's own refusals (409/400 not a draft, 404 not theirs, 403 staff).
+        from app.api.v1.my_requests import delete_request
+
+        delete_request(db, str(actor_id or ""), str(entity_type or ""), entity_id, check_only=True)
+    elif action_key == "my_request_attachment.unlink":
+        from app.api.v1.my_requests import unlink_attachment
+
+        unlink_attachment(db, str(actor_id or ""), entity_id, check_only=True)
     elif action_key in ("customer.unassign_sales_agent", "customer.remove_from_group"):
         from app.services.contact_customer_service import get_customer_in_scope
 
@@ -477,6 +501,7 @@ def _commit_if_due(service: FormActionService, row: Optional[SlaFormAction]) -> 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 def create_pending_action(
     body: _CreateRequest,
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -497,7 +522,7 @@ def create_pending_action(
         else nullcontext()
     )
     with scope:
-        _assert_entity_visible(db, body.action_key, body.entity_id, actor_id)
+        _assert_entity_visible(db, body.action_key, body.entity_id, actor_id, body.entity_type)
         _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 
         try:
@@ -527,17 +552,25 @@ def create_pending_action(
                 )
 
             window_seconds = record_action_window_seconds(db, action)
+            # The handler is handed the record it runs on and who asked for it, so it
+            # never has to read the action row back.
+            payload = {
+                **(body.payload or {}),
+                "entity_id": str(body.entity_id),
+                # The record's kind, for the one action parked against several (the
+                # salesperson's `my_request.delete`); set here, never by the caller.
+                "entity_type": body.entity_type,
+                "requested_by_id": actor_id,
+            }
+            if body.action_key in _REAL_USER_ACTIONS:
+                # The admin when one is viewing as the requester, else the requester; set
+                # here, never by the caller.
+                payload["real_user_id"] = get_actor_user_id(request, current_user)
             outcome = service.dispatch(
                 action_key=body.action_key,
                 entity_type=body.entity_type,
                 entity_id=str(body.entity_id),
-                # The handler is handed the record it runs on and who asked for it, so it
-                # never has to read the action row back.
-                payload={
-                    **(body.payload or {}),
-                    "entity_id": str(body.entity_id),
-                    "requested_by_id": actor_id,
-                },
+                payload=payload,
                 actor_id=actor_id,
                 channel=FORM_ACTION_CHANNEL_UI,
                 grace_seconds=window_seconds,

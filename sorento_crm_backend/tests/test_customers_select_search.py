@@ -142,3 +142,14 @@ def test_an_inactive_customer_is_not_offered(client, db):
     _seed(db, "ZZT-CUS-LIVE", "ZZT Live Account")
 
     assert _codes(client.get(URL, params={"query": "ZZT-CUS-"})) == ["ZZT-CUS-LIVE"]
+
+
+def test_customer_id_reads_back_that_one_row_inactive_included(client, db):
+    """ACCESS-SHEET-FIXES: a filter restored from the URL labels its customer through this
+    endpoint (with `company_scope=grants` it reaches the other companies the caller holds, which
+    the single-customer GET does not). A closed account is still the filter's subject."""
+    _seed(db, "ZZT-CUS-OTHER", "ZZT Other")
+    gone = _seed(db, "ZZT-CUS-BACK", "ZZT Read Back", is_active=False)
+
+    assert _codes(client.get(URL, params={"customer_id": gone.id})) == ["ZZT-CUS-BACK"]
+    assert client.get(URL, params={"customer_id": "not-a-uuid"}).status_code == 422

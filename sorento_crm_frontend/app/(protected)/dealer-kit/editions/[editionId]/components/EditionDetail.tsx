@@ -28,6 +28,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { APPEAL_VERB, isAwaitingReview } from '@/lib/submission-status';
 
 import {
   useApproveEdition,
@@ -122,11 +123,15 @@ export function EditionDetail({ editionId }: { editionId: string }) {
             {edition.status === 'draft' && (
               <Button disabled={busy} onClick={() => submit.mutate()}>
                 <Send className="size-4" />
-                {submit.isPending ? 'Sending' : 'Send for approval'}
+                {submit.isPending
+                  ? 'Sending'
+                  : edition.rejectionReason
+                    ? APPEAL_VERB
+                    : 'Send for approval'}
               </Button>
             )}
 
-            {edition.status === 'pending_approval' && (
+            {isAwaitingReview(edition.status, 'pending_approval') && (
               <>
                 <Button disabled={busy} onClick={() => approve.mutate()}>
                   <ThumbsUp className="size-4" />

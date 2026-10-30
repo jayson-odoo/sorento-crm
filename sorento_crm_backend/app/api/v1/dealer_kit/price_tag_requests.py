@@ -5,6 +5,9 @@ Mounted at ``/api/v1/dealer-kit`` behind
 
 Permission gates:
   * ``dealer_kit.price_tag_requests.view``    - list + detail
+  * ``dealer_kit.price_tag_requests.view_own`` - list + detail of their own rows only, drafts
+    included (PORTAL-P4-REQUESTS S7; every other route refused by
+    ``_request_own_scope.price_tag_request_own_scope``)
   * ``dealer_kit.price_tag_requests.process`` - claim, transition, line update
 """
 from __future__ import annotations
@@ -19,7 +22,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.api.v1._request_own_scope import empty_page, module_limited_me
+from app.dependencies import (
+    require_any_permission_with_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.models.dealer_kit import Page, PageVersion
 from app.models.price_tag import (
     PriceTagRequest,
@@ -57,6 +65,7 @@ from app.services import price_tag_review_service
 from app.services.uuid_path_param import validate_uuid_path
 from app.services.dealer_kit import tag_data_service, tag_sheet_export_service
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
     PRINT_BY_CHOICES,
@@ -71,6 +80,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/price-tag-requests", tags=["price-tag-requests"])
 
 _VIEW = require_permission_with_api_key("dealer_kit.price_tag_requests.view")
+# The table and the request page also open for a salesperson's own rows (S7).
+_VIEW_OR_OWN = require_any_permission_with_api_key(
+    ["dealer_kit.price_tag_requests.view", "dealer_kit.price_tag_requests.view_own"]
+)
 _PROCESS = require_permission("dealer_kit.price_tag_requests.process")
 
 # Security review 16 Sep: a live resolve costs 16-414ms measured (PLAN
@@ -157,14 +170,14 @@ class PriceTagRequestPage(BaseModel):
 
 @router.get("", response_model=PriceTagRequestPage)
 def list_price_tag_requests(
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     query: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     sort: Optional[str] = Query(None),
     dir: str = Query("asc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
-    _user: dict = Depends(_VIEW),
+    _user: dict = Depends(_VIEW_OR_OWN),
 ):
     """One page of price tag requests, searched, sorted and counted here.
 
@@ -175,12 +188,19 @@ def list_price_tag_requests(
     Drafts are not in it either. A request the salesperson has saved but not
     submitted is not work yet, and it used to sit in this queue at status ``new``
     looking exactly like one that had been sent.
+
+    A salesperson holding only ``view_own`` (PORTAL-P4-REQUESTS S7) sees their own rows, drafts
+    included, as the portal lists them; ``status=draft`` narrows to the drafts.
     """
+    mine = module_limited_me(db, str(_user.get("id") or ""), "price_tag_request")
+    if mine is not None and not mine.contact_id:
+        return empty_page(page, limit)
     rows, total = PriceTagRequestService.list_page(
         db,
-        status=status_filter,
+        contact_id=mine.contact_id if mine is not None else None,
+        status=multi_values(status_filter),
         search=query,
-        include_drafts=False,
+        include_drafts=mine is not None,
         page=page,
         limit=limit,
         sort=sort,
@@ -246,7 +266,7 @@ def _with_resolved_lines(db: Session, req) -> PriceTagRequestResponse:
 def get_price_tag_request(
     request_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(_VIEW),
+    _user: dict = Depends(_VIEW_OR_OWN),
 ):
     req = PriceTagRequestService.get_request(db, request_id)
     if not req:

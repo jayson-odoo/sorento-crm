@@ -11,15 +11,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { toast } from '@/lib/toast';
 import type { PendingAction } from '@/services/pendingActionService';
 import { FORM_COMMENT_MAX_FILES, type FormComment } from '@/types/formComments';
-import {
-  deleteSubmissionComment,
-  editSubmissionComment,
-  fetchSubmissionComments,
-  portalAttachmentDownloadUrl,
-  postSubmissionComment,
-  type PortalLandingKind,
-} from '../lib/portal-client';
-import { portalFetchBytes } from '../lib/portal-preview';
+import { type PortalLandingKind } from '../lib/portal-client';
+import { useSubmissionClient, useSubmissionFetchBytes } from '../lib/submission-client';
 
 /** Same window as a staff hard delete. */
 const DELETE_WINDOW_SECONDS = 10;
@@ -122,10 +115,11 @@ export function usePortalSubmissionComments(
   const [comments, setComments] = useState<FormComment[]>([]);
   const [loading, setLoading] = useState(enabled);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const client = useSubmissionClient();
 
   const refresh = useCallback(async () => {
-    setComments(await fetchSubmissionComments(kind, submissionId));
-  }, [kind, submissionId]);
+    setComments(await client.fetchSubmissionComments(kind, submissionId));
+  }, [kind, submissionId, client]);
 
   // A failed load is an inline error with Retry, not a toast: the thread is one card on a
   // longer page, and an empty "No comments yet" would hide that the read failed.
@@ -165,6 +159,8 @@ export function PortalSubmissionComments({
   const { comments, loading, loadError, refresh, load } = thread ?? own;
   const [posting, setPosting] = useState(false);
   const { isDeleting, report } = useDeletingIds();
+  const client = useSubmissionClient();
+  const portalFetchBytes = useSubmissionFetchBytes();
 
   if (loadError) {
     return (
@@ -198,14 +194,14 @@ export function PortalSubmissionComments({
             id: a.attachmentId,
             name: a.filename,
             url: '',
-            downloadUrl: portalAttachmentDownloadUrl(a.attachmentId),
+            downloadUrl: client.portalAttachmentDownloadUrl(a.attachmentId),
             sizeBytes: a.size,
           })}
           fetchBytes={portalFetchBytes}
           onAdd={async (body, files, parentId) => {
             setPosting(true);
             try {
-              const { delivery } = await postSubmissionComment(
+              const { delivery } = await client.postSubmissionComment(
                 kind,
                 submissionId,
                 body,
@@ -228,7 +224,7 @@ export function PortalSubmissionComments({
           }}
           onEdit={async (commentId, body) => {
             try {
-              await editSubmissionComment(kind, submissionId, commentId, body);
+              await client.editSubmissionComment(kind, submissionId, commentId, body);
               await refresh();
               toast.success('Comment saved');
             } catch (e) {
@@ -244,7 +240,7 @@ export function PortalSubmissionComments({
               onActive={report}
               onDelete={async (commentId) => {
                 try {
-                  await deleteSubmissionComment(kind, submissionId, commentId);
+                  await client.deleteSubmissionComment(kind, submissionId, commentId);
                   await refresh();
                   toast.success('Comment deleted');
                 } catch (e) {

@@ -8,6 +8,7 @@ iterate tool calls in the agent loop.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -46,6 +47,20 @@ class ChatResult:
     # The model id the provider says answered (a dated snapshot of the alias asked for);
     # "" when it reports none (PARSER-GEMINI-LITE: the parser's `understood` facts carry it).
     model: str = ""
+    # The provider-native assistant turn, when it carries what a rebuild from `tool_calls` would lose
+    # (a Gemini thought signature, Claude thinking blocks); None otherwise. A tool loop echoes it on
+    # the assistant message as `continuation`, and the same provider replays it as is (AGENTIC-P0-PROVIDER).
+    continuation: Optional[dict] = None
+
+
+class ResponseTruncated(RuntimeError):
+    """The model stopped on the output cap. `result` is what the call billed, so a caller can
+    record the spend of an answer it cannot use (PARSER-MAX-TOKENS)."""
+
+    # `result` defaults to None so the exception survives a pickle / copy round trip (args hold the message only).
+    def __init__(self, message: str, result: Optional[ChatResult] = None) -> None:
+        super().__init__(message)
+        self.result = result
 
 
 @dataclass
@@ -100,7 +115,7 @@ LIST_MODELS_TIMEOUT_SECONDS = 10.0
 DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o",
     "anthropic": "claude-sonnet-4-6",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3.5-flash",
 }
 
 
@@ -558,8 +573,9 @@ class OpenAIProvider:
         model = "text-embedding-3-small"
 
         def live() -> list[float]:
-            resp = self._client().embeddings.create(model=model, input=text)
-            return list(resp.data[0].embedding)
+            from app.services.embedding_client import embed_texts
+
+            return embed_texts([text], "openai", model, api_key=self.api_key)[0]
 
         return llm_cassette.through(
             kind="embed",
@@ -745,6 +761,11 @@ def _convert_messages_to_anthropic(messages: list[dict]) -> list[dict]:
             continue
 
         if role == "assistant":
+            native = msg.get("continuation")
+            if isinstance(native, dict) and native.get("provider") == "anthropic" and native.get("content"):
+                # Thinking blocks go back byte for byte, signatures included, or the tool loop loses them.
+                out.append({"role": "assistant", "content": native["content"]})
+                continue
             blocks: list[dict] = []
             text = msg.get("content")
             if isinstance(text, str) and text.strip():
@@ -780,6 +801,43 @@ def _convert_messages_to_anthropic(messages: list[dict]) -> list[dict]:
         else:
             out.append({"role": "user", "content": json.dumps(content) if content is not None else ""})
     return out
+
+
+# A caller's `reasoning_effort` on Claude, as the tokens its thinking may add to `max_tokens` (the
+# caller's number is its answer budget, the same rule as Gemini).
+ANTHROPIC_EFFORT_BUDGETS: dict[str, int] = {"low": 1024, "medium": 4096, "high": 16384, "xhigh": 16384, "max": 16384}
+ANTHROPIC_EFFORTS = frozenset({"none", "minimal", *ANTHROPIC_EFFORT_BUDGETS})
+# The SDK refuses, before sending, a non-streaming call whose `max_tokens` could run past ten
+# minutes (21,333 tokens) when the caller sets no timeout, so the thinking room stops there.
+# Opus 4.0 / 4.1 carry their own 8,192 cap in the SDK and refuse any effort whose max_tokens passes it
+# (`high` and up at a 2048 answer budget) the same way.
+ANTHROPIC_NONSTREAMING_MAX_TOKENS = 21_333
+
+
+def _anthropic_thinking(model: str, effort: str, answer_tokens: int) -> dict[str, Any]:
+    """The request fields (`max_tokens` included) for an effort on this Claude model.
+
+    Claude 4.6 and later think adaptively, steered by `output_config.effort`; older models
+    (Haiku 4.5, Sonnet 4.5, ...) take only a fixed `budget_tokens`. `none` / `minimal` asks
+    for the least: effort `low` without thinking from 4.6, nothing at all before it.
+    An unknown value, or an older model left no room to think, raises rather than being
+    dropped, so a label typo shows at once.
+    """
+    key = (effort or "").strip().lower()
+    if key not in ANTHROPIC_EFFORTS:
+        raise ValueError(f"Anthropic takes no reasoning effort {effort!r}; use one of {sorted(ANTHROPIC_EFFORTS)}.")
+    version = re.search(r"claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2})(?!\d))?", (model or "").lower())
+    adaptive = version is not None and (int(version.group(1)), int(version.group(2) or 0)) >= (4, 6)
+    if key not in ANTHROPIC_EFFORT_BUDGETS:
+        return {"output_config": {"effort": "low"}} if adaptive else {}
+    room = max(0, min(ANTHROPIC_EFFORT_BUDGETS[key], ANTHROPIC_NONSTREAMING_MAX_TOKENS - answer_tokens))
+    if adaptive:
+        return {"thinking": {"type": "adaptive"}, "output_config": {"effort": key}, "max_tokens": answer_tokens + room}
+    if room < 1024:  # the smallest budget Anthropic takes
+        raise ValueError(
+            f"No room to think under the {ANTHROPIC_NONSTREAMING_MAX_TOKENS}-token ceiling at max_tokens={answer_tokens}."
+        )
+    return {"thinking": {"type": "enabled", "budget_tokens": room}, "max_tokens": answer_tokens + room}
 
 
 class AnthropicProvider:
@@ -824,6 +882,12 @@ class AnthropicProvider:
         # We surface that object as ``content`` (JSON string) so the caller parses
         # it exactly like the OpenAI path.
         if json_schema is not None:
+            if reasoning_effort:
+                # Anthropic refuses thinking alongside a forced tool, which is how structured output works here.
+                raise ValueError(
+                    "Anthropic cannot take a reasoning effort on a structured-output (forced tool) call; "
+                    "send `json_schema` without `reasoning_effort`."
+                )
             tool_name = json_schema_name or "structured_result"
             ant_messages = _convert_messages_to_anthropic(rest)
             if images:
@@ -891,15 +955,24 @@ class AnthropicProvider:
             kwargs["system"] = system_text
         if tools:
             kwargs["tools"] = _convert_tools_to_anthropic(tools)
+        if reasoning_effort:
+            thinking_fields = _anthropic_thinking(kwargs["model"], reasoning_effort, kwargs["max_tokens"])
+            kwargs.update(thinking_fields)
+            if "thinking" in thinking_fields:
+                # Anthropic refuses a set temperature alongside thinking.
+                kwargs.pop("temperature")
 
         resp = client.messages.create(**kwargs)
 
         text_chunks: list[str] = []
         normalized_calls: list[dict] = []
+        # Every block in the order it came, for a tool loop to send back when thinking is among them.
+        native: list[dict] = []
         for block in (getattr(resp, "content", None) or []):
             block_type = getattr(block, "type", None)
             if block_type == "text":
                 text_chunks.append(getattr(block, "text", "") or "")
+                native.append({"type": "text", "text": getattr(block, "text", "") or ""})
             elif block_type == "tool_use":
                 normalized_calls.append(
                     {
@@ -908,6 +981,19 @@ class AnthropicProvider:
                         "arguments": getattr(block, "input", {}) or {},
                     }
                 )
+                call = normalized_calls[-1]
+                native.append(
+                    {"type": "tool_use", "id": call["id"], "name": call["name"], "input": copy.deepcopy(call["arguments"])}
+                )
+            elif block_type == "thinking":
+                native.append({
+                    "type": "thinking",
+                    "thinking": getattr(block, "thinking", "") or "",
+                    "signature": getattr(block, "signature", "") or "",
+                })
+            elif block_type == "redacted_thinking":
+                native.append({"type": "redacted_thinking", "data": getattr(block, "data", "") or ""})
+        thought = any(b["type"] in ("thinking", "redacted_thinking") for b in native)
 
         usage = getattr(resp, "usage", None)
         prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
@@ -923,6 +1009,7 @@ class AnthropicProvider:
             raw=resp,
             cached_tokens=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
             model=str(getattr(resp, "model", "") or ""),
+            continuation={"provider": "anthropic", "content": native} if thought else None,
         )
 
     def embed(self, text: str) -> list[float]:
@@ -1314,6 +1401,11 @@ def _convert_messages_to_gemini(messages: list[dict]) -> list[dict]:
                 if call_id:
                     call_names[str(call_id)] = name
                 parts.append({"functionCall": {"name": name, "args": parsed}})
+            native = msg.get("continuation")
+            if isinstance(native, dict) and native.get("provider") == "gemini" and native.get("parts"):
+                # The model's own parts, thought signatures included: Gemini 3 refuses a function call
+                # replayed in the current turn without its signature. Ids above still map to names.
+                parts = list(native["parts"])
             if not parts:
                 parts = [{"text": ""}]
             contents.append({"role": "model", "parts": parts})
@@ -1431,7 +1523,7 @@ class GeminiProvider:
 
     name = "gemini"
 
-    def __init__(self, api_key: str, default_model: str = "gemini-2.5-flash") -> None:
+    def __init__(self, api_key: str, default_model: str = DEFAULT_MODELS["gemini"]) -> None:
         self.api_key = api_key
         self.default_model = default_model
 
@@ -1479,6 +1571,121 @@ class GeminiProvider:
             raise RuntimeError("Gemini returned an unexpected response shape.")
         return body
 
+    def _generate(self, model_name: str, payload: dict, timeout: Optional[float], *, cache: bool) -> dict:
+        """`generateContent`, through an explicit context cache when asked (GEMINI-EXPLICIT-CACHE).
+
+        Gemini caches nothing implicitly for these calls (0 cached tokens on every parser
+        turn), so a caller that passes `prompt_cache_key` gets its system prompt and tools
+        put in a `cachedContents` entry once and every later call pointed at it. The API
+        refuses `systemInstruction` / `tools` beside `cachedContent`, so they leave the
+        request; `generationConfig` (the response schema included) stays on it.
+
+        Every cache problem answers the call uncached: a refused or slow create, an
+        unreachable Redis, or a cached call refused with 400/403/404 (retried uncached; if
+        THAT answers, the cache was the problem and is dropped, see `_blame_cache`). A 429 or
+        5xx is the provider's, not the cache's, and is raised for `llm_call` to wait out.
+        The whole thing stays inside the caller's `timeout`, which is `llm_call`'s per-attempt
+        budget: the cache steps spend from it, they do not add to it.
+        """
+        started = time.monotonic()
+
+        def remaining() -> Optional[float]:
+            if timeout is None:
+                return None
+            return max(timeout - (time.monotonic() - started), 1.0)
+
+        path = f"models/{model_name}:generateContent"
+        found = self._cached_content(model_name, payload, timeout) if cache else None
+        if found is None:
+            return self._request("POST", path, json_body=payload, timeout=remaining())
+        cached_name, created_now = found
+
+        cached_payload = {k: v for k, v in payload.items() if k not in ("systemInstruction", "tools")}
+        cached_payload["cachedContent"] = cached_name
+        try:
+            return self._request("POST", path, json_body=cached_payload, timeout=remaining())
+        except GeminiHTTPError as exc:
+            if exc.status_code not in (400, 403, 404):
+                raise
+            logger.warning("gemini cache: %s refused (%s); answering uncached", cached_name, exc)
+            refusal = exc
+        # Raises as an uncached call always did when the request itself is what is wrong.
+        body = self._request("POST", path, json_body=payload, timeout=remaining())
+        self._blame_cache(model_name, payload, cached_name, created_now, refusal)
+        return body
+
+    def _blame_cache(
+        self, model_name: str, payload: dict, name: str, created_now: bool, refusal: Exception
+    ) -> None:
+        """The uncached call answered where the cached one was refused: the cache is the fault.
+
+        An entry this very call created and Google already refuses will be refused again
+        (a model or config that cannot use it): remembered as a failure for the backoff
+        window, so no turn pays a create plus a refused call plus storage. An older entry
+        (expired, deleted) is forgotten, but only if Redis still holds THAT name: another
+        worker may already have stored a fresh one.
+        """
+        from app.services import gemini_context_cache
+
+        key = gemini_context_cache.cache_key(
+            self.api_key, model_name, payload.get("systemInstruction"), payload.get("tools")
+        )
+        if created_now:
+            logger.warning("gemini cache: new entry %s refused (%s); not caching for a while", name, refusal)
+            gemini_context_cache.mark_failed(key)
+            try:
+                # Nothing will use it, so stop its storage bill now rather than in an hour.
+                self._request("DELETE", name, timeout=gemini_context_cache.CREATE_TIMEOUT_SECONDS)
+            except Exception:  # noqa: BLE001 - it expires on its own
+                logger.warning("gemini cache: delete of refused %s failed", name, exc_info=True)
+        else:
+            gemini_context_cache.forget(key, name)
+
+    def _cached_content(
+        self, model_name: str, payload: dict, timeout: Optional[float]
+    ) -> Optional[tuple[str, bool]]:
+        """(`cachedContents/...` name, created by this call) for this payload's system prompt, or None."""
+        from app.services import gemini_context_cache
+
+        system = payload.get("systemInstruction")
+        if not system:
+            return None
+        tools = payload.get("tools")
+        key = gemini_context_cache.cache_key(self.api_key, model_name, system, tools)
+        held = gemini_context_cache.lookup(key)
+        if held == gemini_context_cache.FAILED:
+            return None
+        if held is not None:
+            return held, False
+        entry: dict[str, Any] = {
+            "model": f"models/{model_name}",
+            "systemInstruction": system,
+            "ttl": f"{gemini_context_cache.CACHE_TTL_SECONDS}s",
+        }
+        if tools:
+            entry["tools"] = tools
+        create_timeout = gemini_context_cache.CREATE_TIMEOUT_SECONDS
+        if timeout is not None:
+            create_timeout = min(create_timeout, timeout)
+        try:
+            created = self._request("POST", "cachedContents", json_body=entry, timeout=create_timeout)
+            name = str(created.get("name") or "")
+            if not name:
+                raise RuntimeError("Gemini cachedContents create returned no name.")
+        except Exception as exc:  # noqa: BLE001 - a cache that cannot be made is a miss
+            logger.warning("gemini cache: create failed for %s (%s); answering uncached", model_name, exc)
+            gemini_context_cache.mark_failed(key)
+            return None
+        winner = gemini_context_cache.claim(key, name)
+        if winner != name:
+            # Another worker created one first: use theirs, and stop paying storage for ours.
+            try:
+                self._request("DELETE", name, timeout=create_timeout)
+            except Exception:  # noqa: BLE001 - it expires on its own
+                logger.warning("gemini cache: delete of duplicate %s failed", name, exc_info=True)
+            return winner, False
+        return name, True
+
     def chat(
         self,
         messages: list[dict],
@@ -1495,6 +1702,7 @@ class GeminiProvider:
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
+        """`prompt_cache_key` turns on the explicit context cache (`_generate`); its value is not sent."""
         from app.services import llm_cassette
 
         llm_cassette.refuse_uncovered(self.name)
@@ -1551,9 +1759,7 @@ class GeminiProvider:
             generation["responseMimeType"] = "application/json"
         payload["generationConfig"] = generation
 
-        body = self._request(
-            "POST", f"models/{model_name}:generateContent", json_body=payload, timeout=timeout
-        )
+        body = self._generate(model_name, payload, timeout, cache=bool(prompt_cache_key))
 
         candidates = body.get("candidates") or []
         if not candidates:
@@ -1589,32 +1795,6 @@ class GeminiProvider:
                     }
                 )
 
-        finish = candidate.get("finishReason")
-        # A truncated answer is worse than a failed one: half a purchase order
-        # looks like a whole one with lines missing, and nothing downstream can
-        # tell. Same for a candidate cut short by SAFETY or RECITATION - it
-        # carries real text, so only the finish reason says it is incomplete.
-        # `MAX_TOKENS` is named separately because the caller's answer budget is
-        # already topped up with the thinking budget above, so reaching it means
-        # the answer itself ran out of room.
-        if finish == "MAX_TOKENS":
-            # Where the budget went, so the trace says whether thinking or the answer
-            # ran out of room (crew gate, 13 Oct 2026).
-            spent = body.get("usageMetadata") or {}
-            raise RuntimeError(
-                "Gemini stopped early: MAX_TOKENS (response truncated; "
-                f"thinking {int(spent.get('thoughtsTokenCount') or 0)}, "
-                f"answer {int(spent.get('candidatesTokenCount') or 0)} tokens)."
-            )
-        if finish and finish != "STOP":
-            raise RuntimeError(f"Gemini stopped early: {finish}.")
-
-        if not text_chunks and not normalized_calls:
-            raise RuntimeError(
-                "Gemini returned an empty candidate "
-                f"(finishReason={finish or 'unknown'})."
-            )
-
         usage = body.get("usageMetadata") or {}
         prompt_tokens = int(usage.get("promptTokenCount") or 0)
         # Reasoning is reported separately as `thoughtsTokenCount` but is
@@ -1628,8 +1808,7 @@ class GeminiProvider:
         total_tokens = int(
             usage.get("totalTokenCount") or (prompt_tokens + completion_tokens)
         )
-
-        return ChatResult(
+        result = ChatResult(
             content="".join(text_chunks),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -1641,38 +1820,46 @@ class GeminiProvider:
                 int(usage["thoughtsTokenCount"]) if usage.get("thoughtsTokenCount") is not None else None
             ),
             model=str(body.get("modelVersion") or ""),
+            continuation=(
+                {"provider": "gemini", "parts": copy.deepcopy(parts)}
+                if any(isinstance(part, dict) and part.get("thoughtSignature") for part in parts)
+                else None
+            ),
         )
+
+        finish = candidate.get("finishReason")
+        # A truncated answer is worse than a failed one: half a purchase order
+        # looks like a whole one with lines missing, and nothing downstream can
+        # tell. Same for a candidate cut short by SAFETY or RECITATION - it
+        # carries real text, so only the finish reason says it is incomplete.
+        # `MAX_TOKENS` is named separately because the caller's answer budget is
+        # already topped up with the thinking budget above, so reaching it means
+        # the answer itself ran out of room.
+        if finish == "MAX_TOKENS":
+            # Where the budget went, so the trace says whether thinking or the answer
+            # ran out of room (crew gate, 13 Oct 2026).
+            raise ResponseTruncated(
+                "Gemini stopped early: MAX_TOKENS (response truncated; "
+                f"thinking {int(usage.get('thoughtsTokenCount') or 0)}, "
+                f"answer {int(usage.get('candidatesTokenCount') or 0)} tokens).",
+                result,
+            )
+        if finish and finish != "STOP":
+            raise RuntimeError(f"Gemini stopped early: {finish}.")
+
+        if not text_chunks and not normalized_calls:
+            raise RuntimeError(
+                "Gemini returned an empty candidate "
+                f"(finishReason={finish or 'unknown'})."
+            )
+
+        return result
 
     def embed(self, text: str) -> list[float]:
-        """Embed via ``embedContent``, sized to the pgvector column.
+        """Embed through the one embedding client: 1536 wide and unit length, the size of the pgvector column."""
+        from app.services.embedding_client import embed_texts
 
-        ``outputDimensionality`` is asked for explicitly because the column the
-        pipeline writes into is ``settings.embedding_dimensions`` wide and the
-        model's native size is larger; a mismatch is an insert error, not a
-        quality question.
-        """
-        from app.config import settings
-
-        dimensions = int(settings.embedding_dimensions or 0)
-        request: dict[str, Any] = {
-            "model": f"models/{GEMINI_EMBEDDING_MODEL}",
-            "content": {"parts": [{"text": text}]},
-        }
-        if dimensions and dimensions != GEMINI_EMBEDDING_NATIVE_DIMS:
-            request["outputDimensionality"] = dimensions
-
-        body = self._request(
-            "POST", f"models/{GEMINI_EMBEDDING_MODEL}:embedContent", json_body=request
-        )
-        values = (body.get("embedding") or {}).get("values") or []
-        if not values:
-            raise RuntimeError("Gemini embedContent returned no vector.")
-        vector = [float(v) for v in values]
-        if len(vector) != GEMINI_EMBEDDING_NATIVE_DIMS:
-            magnitude = sum(v * v for v in vector) ** 0.5
-            if magnitude:
-                vector = [v / magnitude for v in vector]
-        return vector
+        return embed_texts([text], "gemini", GEMINI_EMBEDDING_MODEL, api_key=self.api_key)[0]
 
     def test_connection(self) -> tuple[bool, str, int]:
         """List one model: authenticated, free, and no thinking-token trap.
@@ -1766,7 +1953,7 @@ def get_provider(provider: str, api_key: str, model: Optional[str] = None) -> LL
     if key == "anthropic":
         return AnthropicProvider(api_key=api_key, default_model=model or "claude-haiku-4-5")
     if key == "gemini":
-        return GeminiProvider(api_key=api_key, default_model=model or "gemini-2.5-flash")
+        return GeminiProvider(api_key=api_key, default_model=model or DEFAULT_MODELS["gemini"])
     raise ValueError(f"Unsupported provider: {provider}")
 
 

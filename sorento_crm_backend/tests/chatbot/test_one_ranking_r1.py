@@ -122,7 +122,7 @@ def test_r1_4_a_top_selling_verdict_reaching_the_old_dispatch_is_sent_to_the_rep
     """A live session mid-ranking never passed `by_capability`: drive the verdict straight to the lane dispatch."""
     from app.services.chatbot.lanes.business import report_ask
 
-    monkeypatch.setattr(report_ask, "by_capability", lambda verdict: verdict)
+    monkeypatch.setattr(report_ask, "by_capability", lambda verdict, **_: verdict)
     text, log = _say_all(
         console, monkeypatch, _top_selling(top_n=10, measure="qty", basis="delivered", rank_by="quantity"),
         "top 10 selling items this year by qty delivered")
@@ -149,12 +149,13 @@ def test_r1_5b_guard_a_contact_without_the_switch_is_refused_an_item_ranking(con
     assert text.strip(), text
 
 
-def test_r1_5c_guard_an_ungranted_salesperson_without_my_is_refused_items(console_no_grant, monkeypatch) -> None:
+def test_r1_5c_an_ungranted_salesperson_without_my_gets_the_item_ranking_over_all(console_no_grant, monkeypatch) -> None:
+    """Owner 28 Oct 10:15 (R1 retired for a contact with no linked customer): it runs, never narrowed (no `mine`)."""
     _make_salesperson(console_no_grant)
     text, log = _say_all(
         console_no_grant, monkeypatch, _top_selling(self_reference=None, **FULL_ITEMS), "top selling items this year")
-    assert not [n for n in _names(log) if n in (TOOL, OLD_TOOL)], _names(log)
-    assert text.strip(), text
+    assert OLD_TOOL not in _names(log) and len(_ran(log)) == 1, (text, log)
+    assert not _ran(log)[0].get("mine"), log
 
 
 def test_r1_5d_an_ungranted_salesperson_my_items_gets_the_own_book_ranking(console_no_grant, monkeypatch) -> None:
@@ -171,20 +172,21 @@ def test_r1_5d_an_ungranted_salesperson_my_items_gets_the_own_book_ranking(conso
 # ---------------------------------------------------------------- 5. access (the route)
 
 
-def test_r1_5e_a_granted_unlinked_non_staff_contact_is_refused_an_item_ranking(client, db) -> None:
-    from tests.test_report_ask_route import _ask, _code, _full, _ranking_world
+def test_r1_5e_a_granted_unlinked_non_staff_contact_gets_an_item_ranking(client, db) -> None:
+    """Owner 28 Oct 10:15: no linked customer sees everything, staff or not."""
+    from tests.test_report_ask_route import _ask, _full, _ranking_world
 
     _ranking_world(db)
     resp = _ask(client, _full(db), group_by="product", top_n=3)
-    assert resp.status_code == 403 and _code(resp) == "customer_not_permitted", resp.text
+    assert resp.status_code == 200, resp.text
 
 
-def test_r1_5e_the_same_contact_is_refused_a_category_ranking(client, db) -> None:
-    from tests.test_report_ask_route import _ask, _code, _full, _ranking_world
+def test_r1_5e_the_same_contact_gets_a_category_ranking(client, db) -> None:
+    from tests.test_report_ask_route import _ask, _full, _ranking_world
 
     _ranking_world(db)
     resp = _ask(client, _full(db), group_by="category", top_n=3)
-    assert resp.status_code == 403 and _code(resp) == "customer_not_permitted", resp.text
+    assert resp.status_code == 200, resp.text
 
 
 def test_r1_5f_guard_a_dealer_gets_only_its_own_customers_items(client, db) -> None:
@@ -208,14 +210,14 @@ def test_r1_6_guard_a_salesman_ranking_is_unchanged(console) -> None:
     assert len(calls) == 1 and calls[0]["group_by"] == "sales_agent" and calls[0]["top_n"] == 5, (text, calls)
 
 
-def test_r1_6_guard_total_sales_this_month_still_uses_the_sales_report_tool(console, monkeypatch) -> None:
+def test_r1_6_guard_total_sales_this_month_is_the_report_ask_not_the_sales_report_tool(console, monkeypatch) -> None:
+    # REPORT-UNIFY (Q1): a sales total is `crm_report_ask` too (no axis, both measures, the basis named).
     text, log = _say_all(
         console, monkeypatch,
         _parser_output(domain_hint="order", intent_hint="check_order", order_status="sales_report", group_by=None,
-                       top_n=None, measure=None, basis=None, entities=[], domain_in_message=True, **SEP),
+                       top_n=None, measure=None, basis="delivered", entities=[], domain_in_message=True, **SEP),
         "total sales this month")
-    assert "crm_sales_report" in _names(log), (text, log)
-    assert TOOL not in _names(log), _names(log)
+    assert TOOL in _names(log) and "crm_sales_report" not in _names(log), (text, log)
 
 
 # ---------------------------------------------------------------- review round
@@ -273,7 +275,7 @@ def test_r1_review_1_a_customer_pick_continues_the_ranking_never_the_catalogue_l
         assert ran[0].get("customer_ids") == [ZZ_UUID_1] and ran[0]["top_n"] == 4 and ran[0]["measure"] == "amount", ran
     else:
         # Or it asks only what is still missing, in one reply (the period and / or the basis).
-        assert "Which period" in reply or "Delivered" in reply, reply
+        assert "Which period" in reply or "Invoiced, delivered" in reply, reply
         assert "Which one" not in reply, reply
         # The answer to what was missing runs the ranking for the PICKED customer.
         result, captured = _run_turn(
@@ -306,7 +308,7 @@ def test_r1_review_2_an_old_top_selling_session_still_reaches_the_own_book_run(c
 def test_r1_review_3_guard_a_noisy_axis_word_in_a_basis_answer_does_not_change_the_axis(console, monkeypatch, group_by, label) -> None:
     text, log = _say_all(
         console, monkeypatch, _top_selling(top_n=10, measure="qty", rank_by="quantity", basis=None), "top 10 selling items this year by qty")
-    assert _names(log) == [] and "Delivered" in text, ("setup: the basis must be asked", text, log)
+    assert _names(log) == [] and "Invoiced, delivered" in text, ("setup: the basis must be asked", text, log)
     text, log = _say_all(
         console, monkeypatch,
         _answer(order_status=label, group_by=group_by, measure=None, basis="delivered"), "delivered")
@@ -320,7 +322,7 @@ def test_r1_review_2b_a_top_selling_verdict_that_skips_by_capability_still_reach
     """A live session never passed `by_capability`: the verdict reaches the domain-grant check as top_selling."""
     from app.services.chatbot.lanes.business import report_ask
 
-    monkeypatch.setattr(report_ask, "by_capability", lambda verdict: verdict)
+    monkeypatch.setattr(report_ask, "by_capability", lambda verdict, **_: verdict)
     _make_salesperson(console_no_grant)
     text, log = _say_all(
         console_no_grant, monkeypatch, _top_selling(self_reference=True, **FULL_ITEMS), "my top selling items this year")

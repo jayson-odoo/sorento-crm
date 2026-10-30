@@ -30,7 +30,8 @@ from app.services.chat_history_query import (
     list_messages_page,
 )
 from app.services.download_service import DownloadService
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import handle_internal_error, handle_unprocessable
+from app.utils.multi_value import multi_values
 from app.services.queue_service import enqueue_job
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ def list_chat_messages(
     # turns failed and the list asks the server for their messages - so the page, the
     # total and the pager all describe the filtered set.
     contact_id: Optional[list[str]] = Query(None),
-    direction: Optional[str] = Query(None, pattern="^(incoming|outgoing)$"),
+    direction: Optional[list[str]] = Query(None),
     # The DataGrid sends its free-text box as `query`; `search` is accepted too.
     query: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
@@ -65,13 +66,16 @@ def list_chat_messages(
     db: Session = Depends(get_db),
 ):
     """Offset page of messages for the DataGrid. Defaults to the last 24h."""
+    directions = multi_values(direction)
+    if directions and any(d not in ("incoming", "outgoing") for d in directions):
+        raise handle_unprocessable("Direction: expected one of incoming, outgoing")
     settings_target = _p99_target(db)
     rows, total = list_messages_page(
         db,
         date_from=date_from,
         date_to=date_to,
         contact_id=contact_id,
-        direction=direction,
+        direction=directions,
         search=query or search,
         breached_only=breached_only,
         target_seconds=settings_target,

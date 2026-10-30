@@ -42,6 +42,11 @@ import { extractApiError } from '@/lib/api-client';
  *                                             16.1): the image tiers were measured, no
  *                                             cheaper transcription model has been, so none
  *                                             is seeded and none is suggested here
+ *   document_ai_provider / document_ai_model   the PO / delivery schedule reader.
+ *                                             NULL -> the server's DOCUMENT_AI_* env
+ *                                             fallback; migration po_read_0001 seeds
+ *                                             gemini / gemini-3.5-flash so a fresh
+ *                                             deploy never depends on it
  */
 
 export type MediaLanguageMode = 'pinned' | 'hints' | 'auto';
@@ -64,6 +69,9 @@ export interface ChatbotMediaSettings {
   media_image_model: string | null;
   /** null = no degradation possible; the monthly quota becomes a hard stop. */
   media_image_degraded_model: string | null;
+  /** The PO / delivery schedule reader. null = the server's env fallback. */
+  document_ai_provider: string | null;
+  document_ai_model: string | null;
   media_transcribe_model: string;
   /**
    * null = no degradation possible for voice; the monthly quota becomes a hard stop.
@@ -108,6 +116,11 @@ export interface ChatbotMediaSettings {
   report_ask_rate_limit: number;
   /** The report cap's window in minutes. Range 1-1440. */
   report_ask_rate_window_minutes: number;
+  /** AGENTIC-P1 budgets for one agent turn. Ranges 1-30, 5-300, 10000-2000000, 5000-500000. */
+  chatbot_agent_max_rounds: number;
+  chatbot_agent_max_seconds: number;
+  chatbot_agent_max_input_tokens: number;
+  chatbot_agent_compact_tokens: number;
 }
 
 const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
@@ -120,6 +133,8 @@ const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
   'media_image_provider',
   'media_image_model',
   'media_image_degraded_model',
+  'document_ai_provider',
+  'document_ai_model',
   'media_transcribe_model',
   'media_voice_degraded_model',
   'media_language_mode',
@@ -131,6 +146,10 @@ const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
   'low_stock_sync_wait_seconds',
   'report_ask_rate_limit',
   'report_ask_rate_window_minutes',
+  'chatbot_agent_max_rounds',
+  'chatbot_agent_max_seconds',
+  'chatbot_agent_max_input_tokens',
+  'chatbot_agent_compact_tokens',
 ];
 
 /** The plan's section 2.4 defaults, used when the settings row predates the columns. */
@@ -144,6 +163,8 @@ const FALLBACKS: ChatbotMediaSettings = {
   media_image_provider: null,
   media_image_model: null,
   media_image_degraded_model: null,
+  document_ai_provider: null,
+  document_ai_model: null,
   media_transcribe_model: 'whisper-1',
   // Deliberately null, and deliberately not the image tier's seeded model: no cheaper
   // transcription model has been measured, so naming one here would claim a
@@ -158,6 +179,10 @@ const FALLBACKS: ChatbotMediaSettings = {
   low_stock_sync_wait_seconds: 40,
   report_ask_rate_limit: 10,
   report_ask_rate_window_minutes: 10,
+  chatbot_agent_max_rounds: 8,
+  chatbot_agent_max_seconds: 45,
+  chatbot_agent_max_input_tokens: 150000,
+  chatbot_agent_compact_tokens: 40000,
 };
 
 /**

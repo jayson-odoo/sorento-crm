@@ -96,11 +96,11 @@ on:
         default: false
         type: boolean
       runner:
-        description: "Where this run's test and fast-gate jobs run: vars = follow the RUNNER_TESTS / RUNNER_FAST repo variables; auto = the test jobs go to the Mac mini runner when it is online and idle, else GitHub-hosted (fast-gate jobs follow RUNNER_FAST); mac = the Mac mini runner (sorento-mac); github = GitHub-hosted. Images and the deploy always run GitHub-hosted (amd64)."
+        description: "Where this run's test and fast-gate jobs run: github = GitHub-hosted (the default, and where every PR run goes); auto = the test jobs go to the Mac mini runner when it is online and idle, else GitHub-hosted (fast-gate jobs stay GitHub-hosted); mac = the Mac mini runner (sorento-mac). Images and the deploy always run GitHub-hosted (amd64)."
         required: false
-        default: vars
+        default: github
         type: choice
-        options: [vars, auto, mac, github]
+        options: [github, auto, mac]
 
 # Cancels a PR's own superseded `ci` runs without touching anything else,
 # which is why the group key and cancel-in-progress both differ by event and
@@ -142,28 +142,35 @@ concurrency:
 env:
   IMAGE_REPO: jayson1004/sorento-crm
   RELEASE_TAG: 1.0.1
+  # Every job runs in UTC, as GitHub-hosted runners always did. Prod is expected to be UTC too: no
+  # tracked Dockerfile, compose or deploy script sets TZ (python-slim / node-alpine default), though
+  # the server's own compose and .env are not in the repo. The self-hosted sorento-mac VM
+  # (colima-ci) is Asia/Kuala_Lumpur, which moved naive-time tests 8 h on release run 40680704839
+  # (RELEASE5-FIX).
+  TZ: UTC
 
-# Where the jobs run (owner, 14 Oct 2026: Actions minutes nearly spent).
-# Self-hosted Linux arm64 runners on the Mac mini carry the label
-# `sorento-mac`; crew flips between them and GitHub-hosted with
-# `gh variable set`, no code change:
-#   - RUNNER_TESTS (PR gate, backend + SCM shards, vitest, type-check):
-#     github (or unset) | mac | auto. `auto` is decided by the first step of
-#     `Changed areas` (no extra billed job): the Mac when a sorento-mac runner
-#     is online and idle, else GitHub-hosted. It reads the runners API with
-#     the RUNNERS_READ_TOKEN secret (fine-grained PAT, this repo only,
-#     Administration: read-only); no secret or a failed call = GitHub-hosted.
-#   - RUNNER_FAST (alembic heads, PII guard, Changed areas, ci-full refusal,
-#     CI gate): github (or unset) | mac. Keep it github unless the Mac is
-#     reliably up: a job routed to an offline self-hosted runner waits in
-#     the queue (up to 24 h) instead of failing over.
-#   - workflow_dispatch input `runner` overrides both for that run.
+# Where the jobs run. GitHub-hosted (`ubuntu-latest`) for every job unless a
+# release dispatch asks otherwise (CI-HOSTED-RUNNERS, owner 29 Oct 2026: the
+# repo is public again, so GitHub-hosted minutes are free and jobs run in
+# parallel, where the one Mac runner queued 6-8 PR runs for hours; run
+# 40810095336 waited 109 min for 9 min of work). The repo variables
+# RUNNER_TESTS / RUNNER_FAST no longer route anything, and a PR run has no
+# inputs, so a PR gate never lands on a self-hosted runner (a self-hosted
+# runner on a public repo is what scripts/ci-runner/up.sh refuses).
+#   - workflow_dispatch input `runner`: github (default) | auto | mac.
+#     `mac` sends the test and fast-gate jobs to the self-hosted Linux arm64
+#     runner on the Mac mini (label `sorento-mac`). `auto` sends the test jobs
+#     there when a sorento-mac runner is online and idle, else GitHub-hosted;
+#     it is decided by the first step of `Changed areas` (no extra billed job)
+#     from the runners API with the RUNNERS_READ_TOKEN secret (fine-grained
+#     PAT, this repo only, Administration: read-only); no secret or a failed
+#     call = GitHub-hosted. Fast-gate jobs follow `mac` only.
 #   - Every job that can land on the Mac declares its token: contents read,
 #     plus the label removal the PR gate and the ci-full refusal need. The
 #     repo default is write-all, and the Mac runner keeps state between jobs.
 #   - build-images, build-and-deploy, validate-backend and validate-mcp stay
 #     GitHub-hosted: prod images are amd64, the Mac runners are arm64.
-# Any value other than the ones above lands on GitHub-hosted. Pinned by
+# Any other value lands on GitHub-hosted. Pinned by
 # sorento_crm_backend/tests/test_ci_runner_routing.py.
 jobs:
   # Fast pre-check: fail in under a minute when the alembic migration graph
@@ -177,7 +184,7 @@ jobs:
   # revision/down_revision graph, and fails unless exactly one head remains.
   check-migration-heads:
     name: Single alembic head (fast gate)
-    runs-on: ${{ (inputs.runner == 'mac' || (inputs.runner != 'github' && vars.RUNNER_FAST == 'mac')) && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 20
@@ -217,7 +224,7 @@ jobs:
   # only commits that passed it there.
   pii-guard:
     name: PII guard (fast gate)
-    runs-on: ${{ (inputs.runner == 'mac' || (inputs.runner != 'github' && vars.RUNNER_FAST == 'mac')) && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 20
@@ -348,7 +355,7 @@ jobs:
   # the signal to extend NOT_DOCS_RE below.
   changes:
     name: Changed areas
-    runs-on: ${{ (inputs.runner == 'mac' || (inputs.runner != 'github' && vars.RUNNER_FAST == 'mac')) && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     timeout-minutes: 20
     # Same gate as check-migration-heads above, and for the same reason: this
     # is the other root job (no `needs`), so skipping it here skips every job
@@ -404,18 +411,16 @@ jobs:
         id: runner
         env:
           OVERRIDE: ${{ inputs.runner }}
-          SETTING: ${{ vars.RUNNER_TESTS }}
           # This step only: lists the repo's self-hosted runners for `auto`.
           GH_TOKEN: ${{ secrets.RUNNERS_READ_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           mac=sorento-mac
           mode="$OVERRIDE"
-          if [ -z "$mode" ] || [ "$mode" = "vars" ]; then mode="$SETTING"; fi
           runner=ubuntu-latest
           case "$mode" in
             mac|sorento-mac) runner=$mac; why="set to mac" ;;
-            ""|github|ubuntu-latest) why="set to github (or unset)" ;;
+            ""|github|ubuntu-latest) why="github (a PR run, or no override)" ;;
             auto)
               if [ -z "${GH_TOKEN:-}" ]; then
                 why="auto: no RUNNERS_READ_TOKEN secret"
@@ -439,6 +444,9 @@ jobs:
           # job does not run on any other label).
           LABEL: ${{ github.event.label.name }}
           PR: ${{ github.event.pull_request.number }}
+          # pull_request: the PR head now (the PR gate tests it merged into
+          # main's head now, step "Merge main's current head into the PR head").
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # Release inputs (workflow_dispatch only; empty on every other event).
           SKIP_TESTS: ${{ inputs.skip_tests }}
           FULL_SUITE: ${{ inputs.full_suite }}
@@ -467,11 +475,24 @@ jobs:
               # A merge tree whose PR gate already passed (a re-label with no
               # new commit on either side) tests nothing (CI-COST round 2:
               # 1.15 runs per head, 4-11 Oct; the PR gate still runs its
-              # secret scan). `PUSH_AFTER` is the merge
-              # commit here. The marker's own prefix keeps a release, which
-              # looks up `validated-tree-`, running its own tests. A failed
-              # lookup tests.
-              tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$PUSH_AFTER" --jq '.tree.sha') || tree=""
+              # secret scan). `PUSH_AFTER` is GitHub's merge commit here,
+              # built when the head was pushed and NOT rebuilt when main
+              # moves (CI-STALE-MERGE-REF: run 40354117904 took the marker
+              # for a merge on 1aaeed54 while main was seven merges on). The
+              # PR gate tests the head merged into main's head at job time
+              # and marks that tree, so the marker counts only when this
+              # merge commit is that merge: parent 1 is main's head now and
+              # parent 2 is the PR head. The marker's own prefix keeps a
+              # release, which looks up `validated-tree-`, running its own
+              # tests. A failed lookup tests.
+              merge=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$PUSH_AFTER" \
+                        --jq '"\(.tree.sha) \(.parents[0].sha) \(.parents[1].sha)"') || merge=""
+              main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha') || main=""
+              read -r tree merged_main merged_head <<< "$merge"
+              if [ -n "$tree" ] && [ "$merged_main $merged_head" != "$main $HEAD_SHA" ]; then
+                echo "merge commit $PUSH_AFTER holds main $merged_main and head $merged_head; now main is ${main:-unknown} and the head $HEAD_SHA: testing"
+                tree=""
+              fi
               if [ -n "$tree" ] \
                   && n=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=pr-validated-tree-$tree&per_page=5" \
                            --jq '[.artifacts[] | select(.expired | not)] | length') \
@@ -671,15 +692,39 @@ jobs:
 
       # Only on a PR that changes backend code: the selection reads the
       # backend sources, and nothing else in this job needs a checkout.
-      # Sparse: app/, scripts/ and tests/ are all the script parses.
+      # Sparse: app/, scripts/ and tests/ are all the script parses. On a
+      # PR the PR head with its history (sparse means blob:none, so commits
+      # and trees only), merged with main's head in the next step: the
+      # selection reads the tree the PR gate tests, not GitHub's merge
+      # commit (CI-STALE-MERGE-REF). The `ref` is empty off a PR, so a
+      # release checks out as before.
       - name: Checkout backend sources for test selection
         if: steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true'
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           sparse-checkout: |
             sorento_crm_backend/app
             sorento_crm_backend/scripts
             sorento_crm_backend/tests
+
+      # The same shell as the PR gate's step of this name (a test holds the
+      # two equal).
+      - name: Merge main's current head into the PR head
+        if: github.event_name == 'pull_request' && (steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true')
+        run: |
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          main=$(git rev-parse refs/remotes/origin/main)
+          head=$(git rev-parse HEAD)
+          # The runner has no git identity; the merge commit is local, never pushed.
+          if ! git -c user.name=sorento-ci -c user.email=ci@example.invalid merge --no-edit origin/main; then
+            echo "::error title=PR head does not merge into main::$head conflicts with main $main: merge origin/main into the branch, resolve, push, then re-label"
+            git diff --name-only --diff-filter=U | sed 's/^/  conflict: /'
+            exit 1
+          fi
+          echo "testing PR head $head merged into main $main: tree $(git rev-parse 'HEAD^{tree}')"
+          echo "main=$main" >> "$GITHUB_OUTPUT"
 
       # Point 5 of the job comment. Stdlib-only script on the runner's own
       # python3; it prints the selection, so the job log shows what runs.
@@ -1500,10 +1545,39 @@ jobs:
       # changed (`vitest --changed` diffs against the base commit). '0' is
       # quoted: a bare 0 is falsy in an expression, so the unquoted form was
       # always 1 (run 38124709009: gitleaks "Invalid revision range").
+      # On a PR the PR head, not GitHub's merge commit (the default), which
+      # is built when the head is pushed and not rebuilt when main moves; the
+      # next step merges main's head now (CI-STALE-MERGE-REF). The `ref` is
+      # empty off a PR, so a release checks out as before.
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: ${{ (github.event_name == 'pull_request' || needs.changes.outputs.frontend == 'true') && '0' || '1' }}
+
+      # Before every gate, so the alembic head check, the tests, tsc, vitest
+      # and the validated-tree marker all see what would land now: run
+      # 40354117904 (#1876) tested "Merge 149c4b3d into 1aaeed54" while main
+      # was seven merges on. A conflict fails the PR gate here. Inline, not
+      # a script: on a PR this workflow comes from GitHub's merge commit but
+      # the checkout is the PR head, and a head that branched before this
+      # step holds no such script (reviewer, CI-STALE-MERGE-REF). Writes
+      # `main` (the main it merged) for vitest's base.
+      - name: Merge main's current head into the PR head
+        id: merge
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          main=$(git rev-parse refs/remotes/origin/main)
+          head=$(git rev-parse HEAD)
+          # The runner has no git identity; the merge commit is local, never pushed.
+          if ! git -c user.name=sorento-ci -c user.email=ci@example.invalid merge --no-edit origin/main; then
+            echo "::error title=PR head does not merge into main::$head conflicts with main $main: merge origin/main into the branch, resolve, push, then re-label"
+            git diff --name-only --diff-filter=U | sed 's/^/  conflict: /'
+            exit 1
+          fi
+          echo "testing PR head $head merged into main $main: tree $(git rev-parse 'HEAD^{tree}')"
+          echo "main=$main" >> "$GITHUB_OUTPUT"
 
       # The four fast gates, folded into this job on a PR (CI-COST round 2):
       # as separate jobs each billed a whole minute for 16-54 s of work (run
@@ -1556,6 +1630,32 @@ jobs:
           fi
           echo "files=$run" >> "$GITHUB_OUTPUT"
 
+      # FORMS-REGRESSION (owner, 30 Oct 2026: three forms regressions reached main
+      # through PRs that ran only their own changed tests). A PR that touches the
+      # forms lifecycle code (the form services, routes and models, the SLA,
+      # form-action, handling-lock, revision, outbox and Respond send paths, or the
+      # chains themselves) runs every forms chain below, whatever the import
+      # selection picked. The diff is main's head against the merged tree, the
+      # change this gate tests. A step of the PR gate, not a job: the PR runs one
+      # job (CI-COST round 2). Release runs get the chains from release_core.txt.
+      - name: Detect a forms lifecycle change
+        id: forms
+        if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
+        env:
+          MAIN: ${{ steps.merge.outputs.main }}
+        run: |
+          FORMS_RE='^(sorento_crm_backend/(app/(api/v1/(procurement|complaints|sla|public|projects|dealer_kit)/|services/(procurement_service|complaints?_[a-z_]+|portal_[a-z_]+|form_[a-z_]+|handling_lock_service|sla_[a-z_]+|submission_status|revision_fence|response_gate|price_tag_[a-z_]+|sample_request_service|project_registration_service|respond_messaging_service|respond_identifier|integration_service|notification_service|queue_service|user_service|coverage_subscription_service|crm_chat_outbound_webhook)\.py$|services/dealer_kit/|schemas/(procurement|complaints|sla|portal|price_tag|sample_request|projects)[a-z_]*\.py$|models/(procurement|complaints|sla|portal|price_tag|sample_request|projects|access|integration|user)\.py$|tasks/respond_io_tasks\.py$)|tests/(test_forms_chain_[a-z_]+|_forms_chain_support|_project_registration_support|_sample_request_seed|_portal_grant|_pg_fixture|conftest|test_form_handling_lock_routes|test_sla_due_escalations|test_complaint_status_guard)\.py$)|\.github/workflows/deploy\.yml$)'
+          files=$(git diff --name-only --no-renames "$MAIN" HEAD)
+          # Here-string, not a pipe: see flag() in job `changes`.
+          hits=$(grep -E "$FORMS_RE" <<< "$files" || true)
+          if [ -n "$hits" ]; then
+            echo "forms lifecycle paths changed, the forms chains run:"; printf '%s\n' "$hits" | sed 's/^/  /'
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no forms lifecycle path changed"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Python
         if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true'
         uses: actions/setup-python@v5
@@ -1596,7 +1696,7 @@ jobs:
         run: python -m pytest -q -p no:cacheprovider tests/test_lessons_learnt_regressions.py
 
       - name: Relax Postgres durability for the test run
-        if: steps.select.outputs.files != ''
+        if: steps.select.outputs.files != '' || steps.forms.outputs.run == 'true'
         run: |
           PSQL="psql $DATABASE_URL -v ON_ERROR_STOP=1"
           $PSQL -c "ALTER SYSTEM SET fsync = off" \
@@ -1613,7 +1713,7 @@ jobs:
                 -c "SHOW max_locks_per_transaction"
 
       - name: Bootstrap the database
-        if: steps.select.outputs.files != ''
+        if: steps.select.outputs.files != '' || steps.forms.outputs.run == 'true'
         working-directory: sorento_crm_backend
         run: python -m scripts.bootstrap_env
 
@@ -1652,6 +1752,23 @@ jobs:
           done
           [ -z "$migrations" ] || run -p no:xdist --durations=10 $migrations
           exit "$rc"
+
+      # The forms chains (see "Detect a forms lifecycle change"), minus any file
+      # the step above already ran. About 90 tests, under 3 minutes under xdist.
+      - name: Run the forms lifecycle chains (executing gate)
+        if: steps.forms.outputs.run == 'true'
+        working-directory: sorento_crm_backend
+        env:
+          FILES: ${{ steps.select.outputs.files }}
+          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
+        run: |
+          chains=""
+          for f in tests/test_forms_chain_*.py tests/test_form_handling_lock_routes.py \
+                   tests/test_sla_due_escalations.py tests/test_complaint_status_guard.py; do
+            case " $FILES " in *" $f "*) echo "already ran: $f" ;; *) chains="$chains $f" ;; esac
+          done
+          [ -n "$chains" ] || { echo "every forms chain already ran above"; exit 0; }
+          python -m pytest -q -p no:cacheprovider -n "$XDIST_WORKERS" --dist load --max-worker-restart 0 -p tests._xdist_crash_guard --durations=10 $chains
 
       # validate-mcp's checks without the image: the package in this Python,
       # its real entrypoint's imports, then its test suite.
@@ -1694,7 +1811,9 @@ jobs:
         if: needs.changes.outputs.frontend == 'true'
         working-directory: sorento_crm_frontend
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || needs.changes.outputs.base_sha }}
+          # On a PR the main it merged: the PR's own change, not main's moves
+          # since the payload's base.sha.
+          BASE_SHA: ${{ steps.merge.outputs.main || github.event.pull_request.base.sha || needs.changes.outputs.base_sha }}
         run: npx vitest run --changed "$BASE_SHA" --passWithNoTests
 
       # A release whose tests passed leaves a marker for its tree, so a
@@ -2210,7 +2329,7 @@ jobs:
   # run on the same PR. The full suite runs on a release only.
   refuse-ci-full:
     name: ci-full refused (release-only)
-    runs-on: ${{ (inputs.runner == 'mac' || (inputs.runner != 'github' && vars.RUNNER_FAST == 'mac')) && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     timeout-minutes: 20
     if: github.event_name == 'pull_request' && github.event.label.name == 'ci-full'
     permissions:
@@ -2255,7 +2374,7 @@ jobs:
   # sorento_crm_backend/tests/test_ci_docs_only_filter.py.
   ci-gate:
     name: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'ci' && 'CI gate') || 'CI gate (full)' }}
-    runs-on: ${{ (inputs.runner == 'mac' || (inputs.runner != 'github' && vars.RUNNER_FAST == 'mac')) && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 20

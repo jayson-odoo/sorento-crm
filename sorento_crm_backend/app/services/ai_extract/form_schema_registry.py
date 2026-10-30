@@ -397,12 +397,92 @@ def _build_master_schema_from_field_linkage(entity_type: str) -> list[ExtractFie
 _PORTAL_PRICE_TAG_REQUEST: list[ExtractFieldSpec] = []
 
 
+# Project registration (PROJECT-REG-PORTAL D13): the legacy paper form. customer_id is a pick,
+# never extracted. The server resolves nothing else: developer, architect and contractor stay
+# typed text until a Project Sales Admin matches them to parties.
+_PORTAL_PROJECT_REGISTRATION: list[ExtractFieldSpec] = [
+    ExtractFieldSpec(
+        name="title",
+        label="Project title",
+        kind="textarea",
+        note=(
+            "The full project description as written on the document, e.g. 'CADANGAN "
+            "PEMBINAAN ... DI ATAS LOT 1234, MUKIM ...'. Keep the lot and mukim wording."
+        ),
+    ),
+    ExtractFieldSpec(
+        name="distributor_name",
+        label="Distributor name",
+        kind="text",
+        note="The distributor named on the form, if any. Leave empty when none is named.",
+    ),
+    ExtractFieldSpec(
+        name="customer_name",
+        label="Customer name",
+        kind="fk_customer",
+        note="The customer company the agent is selling to, if one is named.",
+    ),
+    ExtractFieldSpec(
+        name="type_of_building",
+        label="Type of building",
+        kind="lookup",
+        set_key="project_building_type",
+        note=(
+            "Infer from the title words: KILANG / FACTORY = Factory / industrial; "
+            "HOTEL = Hotel; HOSPITAL = Hospital; SEKOLAH = School / institutional. "
+            "Leave empty when the title does not say."
+        ),
+    ),
+    ExtractFieldSpec(
+        name="state",
+        label="State",
+        kind="lookup",
+        set_key="my_state",
+        note=(
+            "The Malaysian state of the site. Leave EMPTY when the place name exists in two "
+            "states (e.g. Cheras, Bukit Jalil) or when it is not stated."
+        ),
+    ),
+    ExtractFieldSpec(
+        name="mukim",
+        # Shown on the extract review; the name stays `mukim` (owner, 29 Oct: Mukim is called Area).
+        label="Area",
+        kind="text",
+        note="The mukim after the word MUKIM in the title or address, name only.",
+    ),
+    ExtractFieldSpec(name="your_ref", label="Your ref", kind="text"),
+    ExtractFieldSpec(
+        name="developer_name",
+        label="Developer",
+        kind="text",
+        note=(
+            "The developer / owner of the project. 'UNTUK (TETUAN)', 'FOR MESSRS' and 'KEPADA' "
+            "introduce the developer. A government department or a person can be the developer. "
+            "NOT the architect, NOT the main contractor, NOT Sorento."
+        ),
+    ),
+    ExtractFieldSpec(
+        name="main_contractor_name",
+        label="Main contractor",
+        kind="text",
+        note="The main contractor (kontraktor utama), when named.",
+    ),
+    ExtractFieldSpec(
+        name="architect_name",
+        label="Architect",
+        kind="text",
+        note="The architect firm (arkitek), when named.",
+    ),
+]
+
+
 FORM_SCHEMAS: dict[str, list[ExtractFieldSpec]] = {
     "portal.complaint": _PORTAL_COMPLAINT,
     "portal.stock_inquiry": _PORTAL_STOCK_INQUIRY,
     "portal.purchase_request": _PORTAL_PURCHASE_REQUEST,
     "portal.sponsorship_form": _PORTAL_SPONSORSHIP_FORM,
     "portal.price_tag_request": _PORTAL_PRICE_TAG_REQUEST,
+    "portal.project_registration": _PORTAL_PROJECT_REGISTRATION,
 }
 
 

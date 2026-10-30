@@ -34,6 +34,8 @@ import type {
   Project,
   ProjectStakeholder,
 } from '../../_shared/types/project.types';
+import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 const INFLUENCE_OPTIONS = [
   { value: 'high', label: 'High' },
@@ -164,7 +166,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
         size: 220,
         meta: { headerTitle: 'Phone / email' },
       },
-      ...(project.can_edit
+      ...(canWorkOnProject(project)
         ? [
             {
               id: 'actions',
@@ -198,7 +200,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
           ]
         : []),
     ],
-    [project.can_edit],
+    [project.can_edit, project.approval_state],
   );
 
   const toolbar = (
@@ -216,7 +218,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
           },
         ]}
       />
-      {project.can_edit && (
+      {canWorkOnProject(project) && (
         <Button type="button" size="sm" onClick={() => setCreating(true)}>
           <Plus className="size-4" aria-hidden />
           Add stakeholder
@@ -254,7 +256,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
             ) : rows.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
                 <h3 className="text-sm font-semibold">No stakeholders recorded</h3>
-                {project.can_edit && (
+                {canWorkOnProject(project) && (
                   <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
                     <Plus className="size-4" aria-hidden />
                     Add the decision maker
@@ -313,7 +315,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
                           </p>
                         )}
                       </div>
-                      {project.can_edit && (
+                      {canWorkOnProject(project) && (
                         <div className="flex shrink-0 gap-1">
                           <Button
                             mode="icon"
@@ -362,7 +364,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
         title="Confirm remove"
         description={
           deleting
-            ? `Remove ${deleting.person_name} from ${project.project_code}? This action cannot be undone.`
+            ? `Remove ${deleting.person_name} from ${projectCodeLabel(project)}? This action cannot be undone.`
             : ''
         }
         onDelete={async () => {
@@ -457,8 +459,8 @@ function StakeholderFormDialog({
                 {roles.length === 0 ? (
                   <p className="rounded-md border border-dashed border-border px-2.5 py-2 text-xs text-muted-foreground">
                     {project.template_id
-                      ? 'This template offers no roles yet.'
-                      : 'Set a project type and template on this project to choose from its roles.'}
+                      ? 'This to-do list template offers no roles yet.'
+                      : 'Set a project type and to-do list template on this project to choose from its roles.'}
                   </p>
                 ) : (
                   <SearchableSelect

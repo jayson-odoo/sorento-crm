@@ -196,23 +196,27 @@ const authOptions: NextAuthOptions = {
       credentials: {
         phone: { label: 'Phone', type: 'text' },
         code: { label: 'Code', type: 'text' },
+        // PORTAL-P1-SESSION-LINK: the one-time secret the portal verify-otp call returned
+        // to this browser; exchanged at /auth/portal-link instead of phone + code.
+        portal_link_secret: { label: 'Portal link secret', type: 'text' },
       },
       async authorize(credentials, req) {
-        if (!credentials?.phone || !credentials?.code) {
+        const portalLinkSecret = credentials?.portal_link_secret;
+        if (!portalLinkSecret && (!credentials?.phone || !credentials?.code)) {
           throw new Error(
             JSON.stringify({ code: 400, message: 'Enter the verification code.' }),
           );
         }
+        const [path, body] = portalLinkSecret
+          ? ['/api/v1/auth/portal-link', { portal_link_secret: portalLinkSecret }]
+          : ['/api/v1/auth/phone/verify', { phone: credentials!.phone, code: credentials!.code }];
 
         let res: Response;
         try {
-          res = await fetch(`${backendBaseUrl()}/api/v1/auth/phone/verify`, {
+          res = await fetch(`${backendBaseUrl()}${path}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...forwardedForHeader(req?.headers) },
-            body: JSON.stringify({
-              phone: credentials.phone,
-              code: credentials.code,
-            }),
+            body: JSON.stringify(body),
           });
         } catch {
           throw new Error(

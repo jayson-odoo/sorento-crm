@@ -16,6 +16,7 @@ import {
   CalendarRange,
   Columns3,
   FileText,
+  Link2,
   ListOrdered,
   LoaderCircleIcon,
   Move,
@@ -84,7 +85,12 @@ import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { SoLineLinksBody } from './SoLineLinksBody';
-import { SoLineHistoryBody } from './SoLineHistoryBody';
+import {
+  DeliveriesLoadError,
+  DeliveriesTable,
+  SoLineHistoryBody,
+  soDeliveryRows,
+} from './SoLineHistoryBody';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
 import { ConsignmentBadge } from '../../../lib/docType';
@@ -123,7 +129,8 @@ import { PLAN_PERMISSION } from '../../lib/planActions';
 import { SOURCE_LABELS as LINE_SOURCE_LABELS } from '../../lib/sourceLabels';
 import { cancelSourcesTitle, isPartlyCancelled, PARTLY_CANCELLED } from '@/app/(protected)/scm/lib/autocountCancel';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { SalesOrderInvoices } from '@/app/(protected)/finance/billing-documents/components/SalesOrderInvoices';
+import { OrderInvoices } from '@/app/(protected)/finance/billing-documents/components/OrderInvoices';
+import { RelatedDocumentsPanel } from '@/app/(protected)/order-management/shared/related/RelatedDocumentsPanel';
 import { BILLING_VIEW_SLUG } from '@/app/(protected)/finance/billing-documents/lib/permissions';
 import { distinctName } from '@/lib/product-display';
 
@@ -500,7 +507,6 @@ export function SalesOrderDetail({
   const canPlan = useHasPermission(PLAN_PERMISSION);
   const canOpenDo = useHasPermission('order_management.orders.view');
   const canSeeInvoices = useHasPermission(BILLING_VIEW_SLUG);
-  const deliveries = useSalesOrderDeliveries(id, deliveriesRequested);
   const searchParams = useSearchParams();
   // A consignment opened by a sales-orders link lands on its own page.
   const isConsignmentOnSalesOrderRoute = !docType && data?.doc_type === 'consignment';
@@ -669,6 +675,13 @@ export function SalesOrderDetail({
   // `?line=<id>` deep link always lands on Lines, whatever `tab` says - the only tab that
   // line could ever be found on.
   const tab = searchParams.get('line') ? 'lines' : searchParams.get('tab') || 'general';
+  // The truck lightbox and the Delivery tab's DO list (DO-SO-LINK-SURFACE R3) read the same
+  // rows: fetched on the first of the two, then shared.
+  const deliveries = useSalesOrderDeliveries(id, deliveriesRequested || tab === 'delivery');
+  const deliveryRows = useMemo(
+    () => soDeliveryRows(data?.lines ?? [], deliveries.data),
+    [data, deliveries.data],
+  );
   const handleTabChange = useCallback(
     (next: string) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -950,7 +963,22 @@ export function SalesOrderDetail({
             distinctName(row.original.sku, row.original.product_name) !== null;
           return (
             <div className="flex min-w-0 flex-col">
-              <span className="font-medium">{row.original.sku}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="truncate font-medium" title={row.original.sku}>
+                  {row.original.sku}
+                </span>
+                {row.original.mockup_label ? (
+                  <Badge
+                    variant="warning"
+                    appearance="light"
+                    size="sm"
+                    className="shrink-0"
+                    data-testid="so-line-mockup-badge"
+                  >
+                    Mockup
+                  </Badge>
+                ) : null}
+              </div>
               {showProductName && (
                 <span
                   className="truncate text-xs text-muted-foreground"
@@ -965,8 +993,21 @@ export function SalesOrderDetail({
         size: 260,
         meta: { headerTitle: 'Product' },
       },
+      // SO-LINE-DESC: AutoCount's line description, read-only (also in edit mode).
+      {
+        id: 'description',
+        accessorFn: (line) => line.description ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.description ?? undefined}>
+            {row.original.description ?? ''}
+          </span>
+        ),
+        size: 260,
+        meta: { headerTitle: 'Description' },
+      },
       // OI-SPLIT-VIEW (UAC B1): "Split N" and the (i) popup in their own column right after
-      // Product, on Columns like the rest; empty for a line with no splits.
+      // Description, on Columns like the rest; empty for a line with no splits.
       {
         id: 'split',
         // B7a: sorts by the chip's N (the AutoCount extra row not counted).
@@ -1850,6 +1891,10 @@ export function SalesOrderDetail({
             <Move />
             <span>Transfers</span>
           </TabsTrigger>
+          <TabsTrigger value="related">
+            <Link2 />
+            <span>Related</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -2035,6 +2080,18 @@ export function SalesOrderDetail({
               <Field label="PO ref">
                 {so.po_ref ? <span title={so.po_ref}>{so.po_ref}</span> : '-'}
               </Field>
+              {/* FULFIL-SO-REMARK (AC-17): what the purchasing email prints beside this SO, and
+                  AutoCount's Shipping Info. Read-only in both views. */}
+              <div data-testid="so-remark-field">
+                <Field label="Remark">
+                  {so.remark ? <span title={so.remark}>{so.remark}</span> : '-'}
+                </Field>
+              </div>
+              <div data-testid="so-ship-info-field">
+                <Field label="Shipping Info">
+                  {so.ship_info ? <span title={so.ship_info}>{so.ship_info}</span> : '-'}
+                </Field>
+              </div>
               {/* What purchasing has been told to do about this order. Read-only in both
                   views, so nothing moves between them: it is a record of what happened,
                   not a field anybody sets here. Empty states as "-", never hidden. */}
@@ -2263,6 +2320,11 @@ export function SalesOrderDetail({
                 <CardTitle>Delivery</CardTitle>
               </CardHeading>
             </CardHeader>
+            {/* DOC-RELATIONS bug 5 (owner, mock v2): the sentence reads the order lines'
+                `qty_delivered` while the table below reads the DO lines, so a stale line said
+                "Nothing delivered yet" over a full table. With DO rows the table is the answer
+                and no sentence is shown; the sentences stay for an order with none. */}
+            {deliveryRows.length > 0 || deliveries.isLoading ? null : (
             <div className="p-4">
               {so.total_qty > 0 && so.committed_qty === 0 ? (
                 <div className="flex items-center gap-2 text-sm">
@@ -2284,13 +2346,32 @@ export function SalesOrderDetail({
                 </p>
               )}
             </div>
+            )}
+            {/* DO-SO-LINK-SURFACE R3: every DO line under this SO, the truck lightbox's own
+                rows and columns plus SKU. Nothing (not an empty table) when there is none. */}
+            {deliveries.isError && !deliveries.data ? (
+              <div className="border-t border-border p-4">
+                <DeliveriesLoadError onRetry={() => void deliveries.refetch()} />
+              </div>
+            ) : null}
+            {deliveryRows.length > 0 ? (
+              <section aria-label="Delivery orders" className="border-t border-border">
+                <DeliveriesTable
+                  rows={deliveryRows}
+                  canOpenDo={canOpenDo}
+                  emptyMessage="No DO in the CRM for this order."
+                  withSku
+                  onPage
+                />
+              </section>
+            ) : null}
           </Card>
         </TabsContent>
 
         {/* PLAN-finance-billing-documents S3-1: billing documents pointing at this order's lines. */}
         {canSeeInvoices ? (
           <TabsContent value="invoices" className="mt-0 focus-visible:outline-none">
-            <SalesOrderInvoices salesOrderId={so.id} />
+            <OrderInvoices salesOrderId={so.id} />
           </TabsContent>
         ) : null}
 
@@ -2303,6 +2384,11 @@ export function SalesOrderDetail({
             listingKey="scm.sales_orders.view::stock-transfers"
             showFilters={false}
           />
+        </TabsContent>
+
+        {/* DOC-RELATIONS: the delivery orders and billing documents of this order, one table. */}
+        <TabsContent value="related" className="mt-0 focus-visible:outline-none">
+          <RelatedDocumentsPanel kind="sales_order" id={so.id} />
         </TabsContent>
       </Tabs>
 

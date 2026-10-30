@@ -89,7 +89,10 @@ def _landed_for(db, core_line, product, warehouse, *, qty, marker):
     """What R7's tier 1 reads as LANDED for `core_line`: its own purchase
     (`purchase_order_lines.from_so_line_ref` = the line's `source_ref`), received on an
     SPO row (`spo_allocations.from_po_line_ref` = the PO line's `source_ref`,
-    `quantity_received`). The SPO row is fully received, so it is no longer incoming."""
+    `quantity_received`). The SPO row is fully received, so it is no longer incoming.
+
+    AutoCount always sends from_po_number with from_po_line_ref (0 of 72,340 dev rows without
+    it); LINKAGE-UNIFY U5 matches on both."""
     from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation
 
     so_ref = f"ZZTBOOK:{marker}:{core_line.id[:8]}"
@@ -116,7 +119,8 @@ def _landed_for(db, core_line, product, warehouse, *, qty, marker):
             product_id=product.id, warehouse_id=warehouse.id,
             allocated_quantity=qty, quantity_received=qty, receipt_status="received",
             line_status="closed", expected_date=TODAY - timedelta(days=20),
-            from_po_line_ref=po_ref, company_id=SORENTO_COMPANY_ID,
+            from_po_line_ref=po_ref, from_po_number=po.po_number,
+            company_id=SORENTO_COMPANY_ID,
         )
     )
     db.flush()
@@ -473,9 +477,10 @@ def test_the_far_lines_placement_inside_the_window_stays_pinned(scm_app):
     assert far["lent_qty"] == 0
 
 
-def test_a_confirmed_reserve_on_a_far_line_is_never_lent(scm_app):
-    """A decision hold (`so_line_allocations`, a Reserve somebody confirmed on the board)
-    is not landed goods: it stays pinned however far out the line is due."""
+def test_a_confirmed_borrow_on_a_far_line_is_never_lent(scm_app):
+    """A decision (`so_line_allocations`, a Borrow somebody confirmed on the board) is not
+    landed goods: it is a route read in date order (BORROW-NO-HOLD, 28 Oct 2026), so the
+    NEAR line draws the bin first and the far line is never charged a `Lent`."""
     from tests.scm.test_stock_debt_routes import _confirmed_hold
 
     app, db, _uid = _client(scm_app, VIEW)
@@ -497,7 +502,8 @@ def test_a_confirmed_reserve_on_a_far_line_is_never_lent(scm_app):
     with TestClient(app) as c:
         near_cell = _cell(c, product, month_key(TODAY + timedelta(days=20)))
         far_cell = _cell(c, product, month_key(far_due))
-    assert _by_so(near_cell, "NEAR")["status"] == "short"
+    assert _by_so(near_cell, "NEAR")["status"] == "covered"
     far = _by_so(far_cell, "FAR")
-    assert far["status"] == "pinned"
+    assert far["status"] == "short"
+    assert (far["assigned_qty"], far["short_qty"]) == (56, 32)
     assert far["lent_qty"] == 0

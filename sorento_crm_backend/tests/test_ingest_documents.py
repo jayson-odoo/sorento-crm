@@ -600,8 +600,15 @@ class TestLineUpsert:
 
         assert res.json()["records"][0]["outcome"] == "updated", res.text
         lines = env.so_lines(header["id"])
-        assert {l["source_ref"] for l in lines} == {keep["source_ref"], added["source_ref"]}
+        # AC-REMOVED-KEEP-CANCELLED (owner, 27 Oct 2026): the dropped AutoCount line
+        # is never deleted; it stays, cancelled, under its own id.
+        assert {l["source_ref"] for l in lines} == {
+            keep["source_ref"], drop["source_ref"], added["source_ref"]
+        }
         by_ref = {l["source_ref"]: l for l in lines}
+        assert str(by_ref[drop["source_ref"]]["id"]) == original[drop["source_ref"]]
+        assert by_ref[drop["source_ref"]]["line_status"] == "cancelled"
+        assert by_ref[added["source_ref"]]["line_status"] != "cancelled"
         assert str(by_ref[keep["source_ref"]]["id"]) == original[keep["source_ref"]]
         assert by_ref[keep["source_ref"]]["qty_ordered"] == 12
         assert by_ref[keep["source_ref"]]["qty_delivered"] == 2
@@ -1298,8 +1305,13 @@ class TestPurchaseOrders:
 
         assert res.json()["records"][0]["outcome"] == "updated", res.text
         lines = env.po_lines(header["id"])
-        assert {l["source_ref"] for l in lines} == {keep["source_ref"], added["source_ref"]}
+        # AC-REMOVED-KEEP-CANCELLED: the dropped AutoCount line stays, cancelled.
+        assert {l["source_ref"] for l in lines} == {
+            keep["source_ref"], drop["source_ref"], added["source_ref"]
+        }
         by_ref = {l["source_ref"]: l for l in lines}
+        assert str(by_ref[drop["source_ref"]]["id"]) == original[drop["source_ref"]]
+        assert by_ref[drop["source_ref"]]["line_status"] == "cancelled"
         assert str(by_ref[keep["source_ref"]]["id"]) == original[keep["source_ref"]]
         assert by_ref[keep["source_ref"]]["qty_ordered"] == 8
 

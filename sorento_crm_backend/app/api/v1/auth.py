@@ -21,6 +21,7 @@ from app.schemas.auth import (
     VerifyResetTokenRequest, VerifyResetTokenResponse,
     SessionInfo, MessageResponse,
     PhoneRequestCodeRequest, PhoneRequestCodeResponse, PhoneVerifyRequest,
+    PortalLinkRequest,
     SetPasswordRequest,
 )
 from app.dependencies import get_current_user, get_actor_user_id
@@ -146,7 +147,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
-async def signup(
+def signup(
     payload: SignupRequest,
     request: Request,
     db: Session = Depends(get_db)
@@ -248,7 +249,7 @@ async def signup(
 
 
 @router.post("/reset-password", response_model=ResetPasswordResponse)
-async def reset_password(
+def reset_password(
     payload: ResetPasswordRequest,
     request: Request,
     db: Session = Depends(get_db)
@@ -329,7 +330,7 @@ async def reset_password(
 
 
 @router.post("/verify-reset-token", response_model=VerifyResetTokenResponse)
-async def verify_reset_token(
+def verify_reset_token(
     payload: VerifyResetTokenRequest,
     db: Session = Depends(get_db)
 ):
@@ -356,7 +357,7 @@ async def verify_reset_token(
 
 
 @router.post("/change-password", response_model=ChangePasswordResponse)
-async def change_password(
+def change_password(
     payload: ChangePasswordRequest,
     db: Session = Depends(get_db)
 ):
@@ -412,7 +413,7 @@ async def change_password(
 
 
 @router.post("/verify-email", response_model=VerifyEmailResponse)
-async def verify_email(
+def verify_email(
     payload: VerifyEmailRequest,
     db: Session = Depends(get_db)
 ):
@@ -648,6 +649,42 @@ def phone_verify(payload: PhoneVerifyRequest, request: Request, db: Session = De
         # Redis down: fail open on the count, not on the refusal itself.
         content = {"code": "CODE_WRONG", "message": "That code is not right."}
     return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content=content)
+
+
+@router.post("/portal-link", response_model=LoginResponse)
+def portal_link(payload: PortalLinkRequest, request: Request, db: Session = Depends(get_db)):
+    """The one-time secret `/public/portal/verify-otp` handed the browser that
+    entered the code becomes a CRM session for the contact's linked user
+    (PORTAL-P1-SESSION-LINK). A portal token is never accepted here (security
+    review H1). Every refusal answers the same 401 body.
+
+    Its own per-IP limit (`rate_limit_portal_link_*`; NextAuth forwards the
+    browser's address, `forwardedForHeader`). The secret carries 256 bits and
+    lives 120 s, so the limit is a brake on noise, not the guessing bound.
+    """
+    from app.services import phone_signin_service as svc
+    from app.services import rate_limit
+
+    ip = client_ip(request)
+    gate = rate_limit.hit(
+        "portal_link", ip,
+        limit=app_settings.rate_limit_portal_link_max,
+        window_seconds=app_settings.rate_limit_portal_link_window_seconds,
+    )
+    if not gate.allowed:
+        return _rate_limited_response(gate.retry_after_seconds or app_settings.rate_limit_portal_link_window_seconds)
+
+    login_response = svc.exchange_portal_link_secret(
+        db, payload.portal_link_secret,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=ip,
+    )
+    if login_response is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Portal link sign-in refused.",
+        )
+    return login_response
 
 
 @router.post("/password", response_model=MessageResponse)

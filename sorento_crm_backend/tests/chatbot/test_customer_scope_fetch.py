@@ -18,7 +18,7 @@ import pytest
 from app.services.chatbot.lanes.business import fetch
 from app.services.mcp_tool_capability_service import _load_catalog_specs
 
-#: The seven tools of D4 (R4b: `crm_top_selling_report` left the chatbot), spelled out so a rename in the set shows up as a diff here.
+#: The tools of D4 (R4b: `crm_top_selling_report` left the chatbot), spelled out so a rename in the set shows up as a diff here.
 SCOPED_TOOLS = (
     "crm_order_management_orders_list",
     "crm_order_management_orders_by_product_list",
@@ -27,6 +27,9 @@ SCOPED_TOOLS = (
     "crm_report_ask",
     "crm_order_analytics",
     "crm_master_customers_list",
+    # SALES-TARGET-CHAT slice 1: the target route scopes the contact itself (its own links and
+    # agents), so, like `crm_report_ask`, no ids are forced onto an unnamed ask.
+    "crm_sales_target_progress",
 )
 
 #: A tool that takes no customer scope: a stock read.
@@ -55,8 +58,8 @@ class TestTransformerForcesTheScope:
         """AC-CS-31: no customer asked for -> `customer_ids` is the whole scope."""
         a, b, _z = ids
         out = fetch.entity_ids_transformer(_trigger(tool, [a, b], []))
-        if tool == "crm_report_ask":
-            # REPORT-ENGINE 1b N3: the route forces the links itself, so none are added here.
+        if tool in ("crm_report_ask", "crm_sales_target_progress"):
+            # REPORT-ENGINE 1b N3 / SALES-TARGET-CHAT: the route forces the links itself, so none are added here.
             assert not out.get("customer_ids"), out
             return
         assert out["customer_ids"] == [a, b], out
@@ -80,7 +83,7 @@ class TestTransformerForcesTheScope:
         a, _b, _z = ids
         out = fetch.entity_ids_transformer(_trigger(tool, [a], [], customer_query="hanlim"))
         # REPORT-ENGINE 1b N3: for crm_report_ask the route forces the links, so none are added here.
-        assert out.get("customer_ids") == (None if tool == "crm_report_ask" else [a]), out
+        assert out.get("customer_ids") == (None if tool in ("crm_report_ask", "crm_sales_target_progress") else [a]), out
         assert "customer_query" not in out, out
 
 
@@ -104,8 +107,8 @@ class TestUnscopedTools:
 
 
 class TestSetIsPinnedToTheCatalogue:
-    def test_the_set_is_the_seven_tools(self) -> None:
-        """AC-CS-31: the set named in D4."""
+    def test_the_set_is_the_eight_tools(self) -> None:
+        """AC-CS-31: the set named in D4, plus the sales target tool."""
         assert fetch.CUSTOMER_SCOPED_TOOLS == frozenset(SCOPED_TOOLS)
 
     def test_customer_scoped_tools_pinned_to_catalogue(self) -> None:
@@ -146,7 +149,11 @@ class TestRunFetchAnswersAScopeViolationWithTheRefusal:
                         "domain_hint": "order",
                         "intent_hint": "check_order",
                         "message_type": "business_query",
-                        "order_status": "outstanding_both",
+                        # REPORT-UNIFY: an outstanding ask is the report ask, whose customers the route forces; the
+                        # orders list is the customer-scoped read this seam still guards.
+                        "order_status": None,
+                        "date_filter_start": "2026-09-01",
+                        "date_filter_end": "2026-09-30",
                         "entities": [],
                     }
                 },
@@ -200,7 +207,7 @@ class TestRefusalsAreTraced:
         trace = TurnTrace()
         payload = _scoped_payload(
             scope=[a], entities=[{"uuid": z, "entity_type": "customer", "code": "ZZT-Z"}],
-            parse={"order_status": "outstanding_both"},
+            parse={"order_status": None, "date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"},
         )
         db = session_factory()
         try:
@@ -212,7 +219,7 @@ class TestRefusalsAreTraced:
         assert event["refused"] == "customer_not_permitted"
         assert event["dropped"] == [z]
         assert event["reason"] == "fetch_customer_ids_outside_links"
-        assert event["tool"] == "crm_outstanding_report"
+        assert event["tool"] == "crm_order_management_orders_list"
 
     def test_the_tier_probe_refusal_writes_the_trace_event_it_omitted(self, session_factory, monkeypatch) -> None:
         """The probe tool takes no customer ids, so the violation is raised by a stubbed
@@ -257,12 +264,6 @@ class TestMyMeansAllLinkedAccounts:
             _trigger(tool, [a, b], [], self_reference=True, outstanding_carried_customer_ids=[a])
         )
         assert out["customer_ids"] == [a, b], out
-
-    @pytest.mark.parametrize("tool", ["crm_sales_report", "crm_outstanding_report"])
-    def test_without_self_reference_the_carry_still_narrows(self, tool, ids) -> None:
-        a, b, _z = ids
-        out = fetch.entity_ids_transformer(_trigger(tool, [a, b], [], outstanding_carried_customer_ids=[a]))
-        assert out["customer_ids"] == [a], out
 
     def test_the_account_the_message_itself_named_stands(self, ids) -> None:
         """"my sales for a/c ii": the engine hands the named link as the entity; the

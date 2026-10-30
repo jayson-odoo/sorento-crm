@@ -24,18 +24,14 @@ import { toast } from '@/lib/toast';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
-import { canPreviewLocally, portalFetchBytes, toPreviewItem } from '../lib/portal-preview';
+import { canPreviewLocally, toPreviewItem } from '../lib/portal-preview';
+import { clientDeletes, useSubmissionClient, useSubmissionFetchBytes } from '../lib/submission-client';
 
 function isTextFile(name?: string | null, type?: string | null): boolean {
   if (type?.startsWith('text/')) return true;
   return /\.txt$/i.test(name ?? '');
 }
-import {
-  PortalAttachment,
-  PortalLandingKind,
-  deleteAttachment,
-  uploadAttachment,
-} from '../lib/portal-client';
+import { PortalAttachment, PortalLandingKind } from '../lib/portal-client';
 
 /** Lowercase extension after the last dot, '' when the name has none (the
  *  server then judges by content type, so the dropzone lets it through). */
@@ -108,6 +104,11 @@ export function AttachmentDropzone({
   allowedExtensions,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  // The API this dropzone talks to (R1): portal-client, or the CRM's My Requests client, whose
+  // removes are deferred (D7) instead of confirmed.
+  const client = useSubmissionClient();
+  const portalFetchBytes = useSubmissionFetchBytes();
+  const deferredDeletes = clientDeletes(client);
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -197,7 +198,7 @@ export function AttachmentDropzone({
         setExtractingIds(new Set(extractingRef.current));
       }
     },
-    [onExtract],
+    [onExtract, portalFetchBytes],
   );
 
   const addFiles = useCallback(
@@ -230,7 +231,7 @@ export function AttachmentDropzone({
       const next = [...attachments];
       for (const file of files) {
         try {
-          const att = await uploadAttachment(kind, submissionId, file);
+          const att = await client.uploadAttachment(kind, submissionId, file);
           next.push(att);
           onChange([...next]);
         } catch (e) {
@@ -239,7 +240,7 @@ export function AttachmentDropzone({
       }
       setBusy(false);
     },
-    [allowedExtensions, attachments, kind, onChange, onPendingFilesChange, pendingFiles, submissionId]
+    [allowedExtensions, attachments, client, kind, onChange, onPendingFilesChange, pendingFiles, submissionId]
   );
 
   const handleSelect = useCallback(
@@ -369,7 +370,7 @@ export function AttachmentDropzone({
     if (!unlinkTarget) return;
     setUnlinking(true);
     try {
-      await deleteAttachment(unlinkTarget.link_id);
+      await client.deleteAttachment(unlinkTarget.link_id);
       onChange(attachments.filter((a) => a.link_id !== unlinkTarget.link_id));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to remove attachment.');
@@ -377,7 +378,7 @@ export function AttachmentDropzone({
       setUnlinking(false);
       setUnlinkTarget(null);
     }
-  }, [attachments, onChange, unlinkTarget]);
+  }, [attachments, client, onChange, unlinkTarget]);
 
   return (
     <div className="space-y-3">
@@ -450,6 +451,16 @@ export function AttachmentDropzone({
               extracting={extractingIds.has(a.link_id)}
               onView={() => openPreview(a.link_id)}
               onRemove={readOnly ? undefined : () => setUnlinkTarget(a)}
+              removeControl={
+                deferredDeletes && !readOnly ? (
+                  <deferredDeletes.AttachmentRemove
+                    kind={kind}
+                    attachment={a}
+                    disabled={disabled}
+                    onRemoved={() => onChange(attachments.filter((x) => x.link_id !== a.link_id))}
+                  />
+                ) : undefined
+              }
               onExtract={
                 !readOnly && onExtract ? () => handleExtractAttachment(a) : undefined
               }
@@ -536,6 +547,7 @@ function UploadedRow({
   onView,
   onRemove,
   onExtract,
+  removeControl,
 }: {
   attachment: PortalAttachment;
   disabled?: boolean;
@@ -545,6 +557,8 @@ function UploadedRow({
   onView: () => void;
   onRemove?: () => void;
   onExtract?: () => void;
+  /** Rendered in place of the remove button: the CRM's deferred remove (D7). */
+  removeControl?: ReactNode;
 }) {
   const isImage = isImageAttachment(attachment);
   const isVideo = isVideoAttachment(attachment);
@@ -616,7 +630,8 @@ function UploadedRow({
             </span>
           </Button>
         )}
-        {canUnlink && (
+        {canUnlink && removeControl}
+        {canUnlink && !removeControl && (
           <Button
             type="button"
             variant="ghost"

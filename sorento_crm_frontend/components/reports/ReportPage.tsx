@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   type ColumnDef,
   type PaginationState,
   type SortingState,
   type VisibilityState,
   getCoreRowModel,
-  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import {
@@ -46,6 +45,7 @@ import {
   type ReportPeriod,
   type ReportPivotLayout,
   type ReportRow,
+  type ReportSortConfig,
   type ReportView,
   type ReportViewConfig,
 } from '@/services/reportService';
@@ -63,6 +63,8 @@ type PageState = {
   /** Bumped when a view is applied, so the grid drops the user's in-session columns. */
   token: number;
 };
+
+const PIVOT_FIXED_SORT_KEYS = ['__row__', '__total__'];
 
 type GridState = {
   visibility: VisibilityState;
@@ -210,6 +212,7 @@ function buildColumns(layout: ReportDetailLayout): ColumnDef<ReportRow>[] {
     ),
     size: column.size ?? 140,
     cell: cellFor(column),
+    enableSorting: !grouped.has(column.key),
     sortingFn:
       column.type === 'money' || column.type === 'integer'
         ? (a, b, id) => numericSortingFn(a, b, id)
@@ -330,9 +333,13 @@ export function periodIsRunnable(params: ReportParamValues): boolean {
 function SummaryBlock({
   title,
   layout,
+  sort,
+  onSort,
 }: {
   title?: string;
   layout: ReportPivotLayout;
+  sort?: ReportSortConfig | null;
+  onSort?: (key: string) => void;
 }) {
   const empty = Object.keys(layout.cells).length === 0;
   return (
@@ -341,7 +348,7 @@ function SummaryBlock({
       {empty && (
         <p className="text-sm text-muted-foreground">No sales in this period</p>
       )}
-      <ReportPivotTable layout={layout} />
+      <ReportPivotTable layout={layout} sort={sort} onSort={onSort} />
       {(layout.chart === 'line' || layout.chart === 'bar') && !empty && (
         <Card>
           <CardContent className="py-4">
@@ -374,9 +381,15 @@ export const ONE_PAGE: PaginationState = { pageIndex: 0, pageSize: 15 };
 export function ReportPage({
   reportKey,
   breadcrumb,
+  belowHeader,
+  title,
 }: {
   reportKey: string;
+  /** The page title when it is not the report's own (a screen that holds several reports). */
+  title?: string;
   breadcrumb: { label: string; href?: string }[];
+  /** A strip shown directly under the page header (a screen that holds several reports, one tab each). */
+  belowHeader?: ReactNode;
 }) {
   const {
     data: meta,
@@ -394,7 +407,6 @@ export function ReportPage({
   const [gridOverride, setGridOverride] = useState<GridState | null>(null);
   const [configureOpen, setConfigureOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('detail');
-  const [sorting, setSorting] = useState<SortingState>([]);
 
   const applyView = (view: ReportView | null, fallback: ReportViewConfig) => {
     const config = view?.view ?? fallback;
@@ -478,7 +490,7 @@ export function ReportPage({
       if (measures.length === 0) measures = [firstOf('measure')];
     }
     return {
-      pivot: { rows, cols, measures },
+      pivot: { rows, cols, measures, sort: state.pivot.sort },
       pivotNote: cleared.length
         ? `${cleared.join(', ')} does not apply to this ${
             meta.params.find((p) => p.key === meta.dataset_param)?.label ?? 'choice'
@@ -494,7 +506,7 @@ export function ReportPage({
           // client-side tick rather than a round trip, and a hidden column stays offerable.
           {
             params: runParams,
-            detail: { columns: [], order: [] },
+            detail: { columns: [], order: [], sort: state.detail.sort ?? null },
             pivot: pivot ?? state.pivot,
           }
         : null,
@@ -544,6 +556,15 @@ export function ReportPage({
     return (effectiveGrid?.order ?? []).filter((id) => present.has(id));
   }, [detailLayout, effectiveGrid]);
 
+  // The sort lives in the view and runs on the server: the table only shows its arrow.
+  const sorting: SortingState = useMemo(
+    () =>
+      state?.detail.sort
+        ? [{ id: state.detail.sort.key, desc: state.detail.sort.dir === 'desc' }]
+        : [],
+    [state?.detail.sort],
+  );
+
   const table = useReactTable({
     data: (detailLayout?.rows ?? []) as ReportRow[],
     columns,
@@ -554,7 +575,22 @@ export function ReportPage({
       columnVisibility: effectiveGrid?.visibility ?? {},
       columnOrder,
     },
-    onSortingChange: setSorting,
+    manualSorting: true,
+    onSortingChange: (updater) => {
+      const next = typeof updater === 'function' ? updater(sorting) : updater;
+      const first = next[0];
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              detail: {
+                ...prev.detail,
+                sort: first ? { key: first.id, dir: first.desc ? 'desc' : 'asc' } : null,
+              },
+            }
+          : prev,
+      );
+    },
     // Both changes start from `effectiveGrid`, which already DISCARDS an override written
     // against an older token. Starting from the raw override instead resurrected the
     // pre-view columns on the first toggle after a saved view was applied.
@@ -588,7 +624,6 @@ export function ReportPage({
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   });
 
   /** What Save view and Export record: the columns the user can actually see, in order. */
@@ -597,7 +632,7 @@ export function ReportPage({
     const visible = detailLayout
       ? collapseDetailColumns(leaves, detailLayout)
       : leaves;
-    return { columns: visible, order: visible };
+    return { columns: visible, order: visible, sort: state?.detail.sort ?? null };
   };
 
   const currentConfig: ReportViewConfig | null = state
@@ -618,15 +653,28 @@ export function ReportPage({
             ...prev,
             params: { ...prev.params, [key]: value },
             ...(rows ? { pivot: { ...prev.pivot, rows } } : {}),
+            // A column-value sort names a value the new question may not carry.
+            ...(prev.pivot.sort && !PIVOT_FIXED_SORT_KEYS.includes(prev.pivot.sort.key)
+              ? { pivot: { ...prev.pivot, ...(rows ? { rows } : {}), sort: null } }
+              : {}),
           }
         : prev,
     );
   };
 
+  /** A pivot header click: a new key sorts ascending, the same key flips. */
+  const sortPivot = (key: string) =>
+    setState((prev) => {
+      if (!prev) return prev;
+      const held = pivot?.sort ?? prev.pivot.sort;
+      const dir = held?.key === key && held.dir === 'asc' ? 'desc' : 'asc';
+      return { ...prev, pivot: { ...prev.pivot, sort: { key, dir } } };
+    });
+
   const heading = (
     <Container>
       <PageHeader
-        title={meta?.title ?? 'Report'}
+        title={title ?? meta?.title ?? 'Report'}
         crumbs={breadcrumb.map((crumb) => ({
           title: crumb.label,
           path: crumb.href,
@@ -666,6 +714,7 @@ export function ReportPage({
           ) : null
         }
       />
+      {belowHeader}
     </Container>
   );
 
@@ -901,10 +950,16 @@ export function ReportPage({
                         key={block.key}
                         title={block.title}
                         layout={block.summary}
+                        sort={pivot?.sort ?? state.pivot.sort}
+                        onSort={sortPivot}
                       />
                     ))
                   ) : (
-                    <SummaryBlock layout={summary} />
+                    <SummaryBlock
+                      layout={summary}
+                      sort={pivot?.sort ?? state.pivot.sort}
+                      onSort={sortPivot}
+                    />
                   )}
                 </TabsContent>
               </Tabs>
@@ -920,7 +975,20 @@ export function ReportPage({
         datasetValue={datasetValue}
         datasetLabel={meta.params.find((p) => p.key === meta.dataset_param)?.label}
         onApply={(pivot) =>
-          setState((prev) => (prev ? { ...prev, pivot } : prev))
+          setState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  pivot: {
+                    ...pivot,
+                    sort:
+                      prev.pivot.rows === pivot.rows && prev.pivot.cols === pivot.cols
+                        ? prev.pivot.sort
+                        : null,
+                  },
+                }
+              : prev,
+          )
         }
       />
     </>

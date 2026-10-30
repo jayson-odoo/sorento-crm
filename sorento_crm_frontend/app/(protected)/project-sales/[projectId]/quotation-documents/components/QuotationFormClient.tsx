@@ -12,6 +12,7 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { projectCrumbs } from '../../../_shared/lib/crumbs';
 import {
   useProject,
+  useProjectSeries,
   useQuotations,
   useQuotationVersions,
 } from '../../../_shared/hooks/useProjects';
@@ -33,7 +34,7 @@ import type {
 } from '../../../_shared/types/project.types';
 import { OutcomePill } from '../../../_shared/components/OutcomePill';
 import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
-import { QuotationDialog } from '../../components/QuotationDialog';
+import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
 import {
   QuotationVersionEditor,
   stagedLinesToBody,
@@ -111,9 +112,11 @@ function newScope(): FormScope {
 /**
  * A scope added on this form and never touched: no name, no line. Header-only is a real save
  * (owner on Q3: "yes can, header only is fine"), so this one is left out rather than refused.
+ * Its series does not count: a new scope starts on the only active series by itself, and the
+ * Edit scope dialog, the one place a series is picked, always writes a name with it.
  */
 function isUntouchedNewScope(scope: FormScope, lines: StagedQuotationLine[]): boolean {
-  return !scope.id && !scope.scope_label.trim() && !scope.series_id && lines.length === 0;
+  return !scope.id && !scope.scope_label.trim() && lines.length === 0;
 }
 
 /** Staged lines whose quantity or unit price is typed but is not a number: the server would 422. */
@@ -180,6 +183,24 @@ export function QuotationFormClient({
   /** The create form's letter tabs have taken the templates, once. */
   const [letterSeeded, setLetterSeeded] = React.useState(false);
   const [scopes, setScopes] = React.useState<FormScope[] | null>(null);
+  const soleSeriesId = soleActiveSeriesId(useProjectSeries().data);
+  /** New scopes already given the only active series: once each, so clearing it sticks. */
+  const seriesDefaulted = React.useRef(new Set<string>());
+  React.useEffect(() => {
+    if (!soleSeriesId || !scopes) return;
+    const keys = new Set(
+      scopes
+        .filter((scope) => !scope.id && !scope.series_id && !seriesDefaulted.current.has(scope.key))
+        .map((scope) => scope.key),
+    );
+    if (keys.size === 0) return;
+    keys.forEach((key) => seriesDefaulted.current.add(key));
+    setScopes((previous) =>
+      (previous ?? []).map((scope) =>
+        keys.has(scope.key) && !scope.series_id ? { ...scope, series_id: soleSeriesId } : scope,
+      ),
+    );
+  }, [scopes, soleSeriesId]);
   /** The staged lines of every scope opened on this form: the quotation page's own session. */
   const edit = useQuotationEditSession();
   const [activeKey, setActiveKey] = React.useState<string | null>(null);
@@ -577,6 +598,8 @@ export function QuotationFormClient({
                       notes: body.notes,
                     })
                   }
+                  // A new scope this form already defaulted: an empty series was cleared on purpose.
+                  preselectSoleSeries={!seriesDefaulted.current.has(scope.key)}
                   onDone={() => setEditingScopeKey(null)}
                 />
               );

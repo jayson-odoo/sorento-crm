@@ -1,5 +1,5 @@
 """Order management schemas."""
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional, List
 from datetime import datetime
 from decimal import Decimal
@@ -93,6 +93,8 @@ class CustomerResponse(CustomerBase):
     customer_group_id: Optional[str] = None
     customer_group_name: Optional[str] = None
     debtor_type: Optional[DebtorTypeValue] = None
+    # AutoCount `Debtor.DebtorType` (SALES-UNIFIED 2.3), read-only: the master ingest writes it.
+    autocount_debtor_type: Optional[str] = None
     # Shown as columns on a sales agent's Customers tab.
     region: Optional[str] = None
     market_segment_code: Optional[str] = None
@@ -142,6 +144,7 @@ class OrderCreate(OrderBase):
 
 
 class OrderUpdate(BaseModel):
+    # Omit it, or send null, to keep the stored date (DO-IMPORT-DATE).
     order_date: Optional[datetime] = None
     estimated_delivery_date: Optional[datetime] = None
     actual_delivery_date: Optional[datetime] = None
@@ -174,6 +177,15 @@ class OrderUpdate(BaseModel):
     tax_amount: Optional[Decimal] = None
     total_amount: Optional[Decimal] = None
     remarks: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_order_date_keeps_stored(cls, data):
+        # A sent null used to clear the DO date; it now means "unchanged", so no
+        # caller fails and no stored date is lost.
+        if isinstance(data, dict) and "order_date" in data and data["order_date"] is None:
+            data = {k: v for k, v in data.items() if k != "order_date"}
+        return data
 
 
 class OrderStatusSimple(BaseModel):
@@ -370,6 +382,14 @@ class WarehouseSimpleRef(BaseModel):
         from_attributes = True
 
 
+class SalesOrderLinkRef(BaseModel):
+    """The SO a DO line delivers (DO-SO-LINK-SURFACE). ``line_no`` only when AutoCount named
+    the exact SO line; the SO alone when it named the SO + product."""
+    id: str
+    so_number: str
+    line_no: Optional[int] = None
+
+
 class OrderLineResponse(OrderLineBase):
     id: str
     order_id: str
@@ -378,6 +398,11 @@ class OrderLineResponse(OrderLineBase):
     updated_at: datetime
     product: Optional[ProductSimpleRef] = None
     warehouse: Optional[WarehouseSimpleRef] = None
+    # AutoCount's own source document number, as sent; ``sales_order`` is it resolved to a
+    # CRM sales order (only on the single-DO read, stamped by OrderService.get_order).
+    from_doc_no: Optional[str] = None
+    from_doc_type: Optional[str] = None
+    sales_order: Optional[SalesOrderLinkRef] = None
 
     class Config:
         from_attributes = True

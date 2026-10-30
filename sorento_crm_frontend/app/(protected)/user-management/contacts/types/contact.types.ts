@@ -47,6 +47,8 @@ export interface RespondContact {
   chatbot_stock_allowed?: boolean;
   /** Linked customer codes, sorted (list rows). */
   customer_codes?: string[];
+  /** The distinct companies of those customers, by name, sorted (list rows). */
+  customer_companies?: string[];
   /** CONTACT-TAGS: the tags the contact holds, ordered by tag sort order then name. */
   tags?: { id: string; name: string }[];
   /** CONTACT-TAGS S2: how the contact's values compare with its tags' settings (list rows). */
@@ -68,6 +70,7 @@ export interface RespondContact {
   chatbot_allowed?: boolean;
   chatbot_skip_period_questions?: boolean;
   chatbot_files_as_links?: boolean;
+  chatbot_agent_enabled?: boolean;
   /** MODEL-PER-CONTACT: the effective model and where it came from (detail reads only). */
   chatbot_llm?: ChatbotLlm | null;
   /** Identity S3: the user this contact is linked to, if any (list rows). Null

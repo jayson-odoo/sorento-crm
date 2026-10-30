@@ -59,6 +59,7 @@ const mockCreate = vi.mocked(createEdition);
 const LABELS: Record<EditionStatus, string> = {
   draft: 'Draft',
   pending_approval: 'Pending approval',
+  resubmitted: 'Resubmitted',
   approved: 'Approved',
   rejected: 'Rejected',
   done: 'Done',

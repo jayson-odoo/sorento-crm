@@ -11,6 +11,7 @@
  * credential on the admin's machine. sessionStorage wins on read so an
  * active impersonation takes precedence in its tab.
  */
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { extractApiError } from '@/lib/api-client';
 import {
   formCommentFormData,
@@ -83,6 +84,10 @@ export interface PortalContact {
   /** The "Portal Submission" attachment type's allowed extensions (no dots).
    *  The file picker's accept list; empty = the type sets no limit. */
   attachment_allowed_extensions?: string[];
+  /** The contact's first active sales agent as a name (project registration's read-only field). */
+  sales_agent_name?: string | null;
+  /** Set on an admin's impersonation token of a salesperson's contact: that user's id (their CRM view). */
+  crm_user_id?: string | null;
 }
 
 export interface PortalSubmissionSummary {
@@ -373,18 +378,27 @@ function absoluteApiUrl(path: string): string {
   return path;
 }
 
+/**
+ * A 401 ends the token the request carried, no other: an impersonation token (this tab's
+ * sessionStorage) is dropped alone, so the admin's own stored sign-in survives; a normal token
+ * is cleared as ever. `wasImpersonation` is read BEFORE the request.
+ */
+function dropRefusedToken(wasImpersonation: boolean): never {
+  if (wasImpersonation) clearImpersonationToken();
+  else clearPortalToken();
+  throw new PortalUnauthorizedError();
+}
+
 export async function portalFetch(
   input: string,
   init: RequestInit = {},
 ): Promise<Response> {
   const token = readPortalToken();
+  const wasImpersonation = isImpersonationToken();
   const headers = new Headers(init.headers || {});
   if (token) headers.set('X-Portal-Token', token);
   const res = await fetch(input, { ...init, headers });
-  if (res.status === 401) {
-    clearPortalToken();
-    throw new PortalUnauthorizedError();
-  }
+  if (res.status === 401) dropRefusedToken(wasImpersonation);
   return res;
 }
 
@@ -393,6 +407,7 @@ async function portalMultipartFetch(
   form: FormData,
 ): Promise<Response> {
   const token = readPortalToken();
+  const wasImpersonation = isImpersonationToken();
   const url = absoluteApiUrl(path);
   // IMPORTANT: do NOT pass a Content-Type header. fetch must auto-set
   // 'multipart/form-data; boundary=...' when body is FormData. Passing a
@@ -408,10 +423,7 @@ async function portalMultipartFetch(
     init.credentials = 'omit';
   }
   const res = await fetch(url, init);
-  if (res.status === 401) {
-    clearPortalToken();
-    throw new PortalUnauthorizedError();
-  }
+  if (res.status === 401) dropRefusedToken(wasImpersonation);
   return res;
 }
 
@@ -832,6 +844,7 @@ export async function fetchPortalAttachmentBytes(
   downloadUrl: string,
 ): Promise<Response> {
   const token = readPortalToken();
+  const wasImpersonation = isImpersonationToken();
   const url = absoluteApiUrl(downloadUrl);
   const init: RequestInit = {
     method: 'GET',
@@ -842,10 +855,7 @@ export async function fetchPortalAttachmentBytes(
     init.credentials = 'omit';
   }
   const res = await fetch(url, init);
-  if (res.status === 401) {
-    clearPortalToken();
-    throw new PortalUnauthorizedError();
-  }
+  if (res.status === 401) dropRefusedToken(wasImpersonation);
   return res;
 }
 
@@ -878,7 +888,7 @@ export async function verifyOtp(
   contactId: string,
   spaceId: string,
   code: string,
-): Promise<{ token: string; expires_at: string }> {
+): Promise<{ token: string; expires_at: string; portal_link_secret?: string }> {
   const res = await fetch('/api/v1/public/portal/verify-otp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -923,11 +933,73 @@ export async function fetchSlugInfo(
   return unwrap<PortalSlugInfo>(res, 'Could not look up portal link.');
 }
 
+// ---------------------------------------------------------------------------
+// CRM session opened from the portal link (PORTAL-P1-SESSION-LINK)
+// ---------------------------------------------------------------------------
+
+/**
+ * Holds the id of the user the verify card signed in, so portal Log out ends
+ * that session and never a different user's who signed in on this browser since.
+ */
+export const CRM_SESSION_FLAG_KEY = 'sorento.portal.crmSession';
+
+async function currentSessionUserId(): Promise<string | null> {
+  const { getSession } = await import('next-auth/react');
+  const session = await getSession();
+  const id = (session?.user as { id?: unknown } | undefined)?.id;
+  return typeof id === 'string' && id ? id : null;
+}
+
+/**
+ * Exchange the one-time secret `verify-otp` returned (only for a contact with a
+ * CRM user) for a CRM session through the existing `phone-otp` NextAuth provider.
+ * Best-effort: the portal never depends on it, so a refusal or a network error
+ * is swallowed.
+ */
+export async function openCrmSession(portalLinkSecret: string): Promise<boolean> {
+  try {
+    const { signIn } = await import('next-auth/react');
+    const res = await signIn('phone-otp', {
+      portal_link_secret: portalLinkSecret,
+      redirect: false,
+    });
+    if (!res?.ok || res.error) return false;
+    const userId = await currentSessionUserId();
+    if (userId) window.localStorage.setItem(CRM_SESSION_FLAG_KEY, userId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * End the CRM session the verify card opened: revoke the FastAPI row, then sign
+ * NextAuth out. A no-op (no request at all) when the card never opened one, and
+ * it leaves alone a session that now belongs to someone else.
+ */
+export async function endCrmSession(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const flagged = window.localStorage.getItem(CRM_SESSION_FLAG_KEY);
+  if (!flagged) return;
+  window.localStorage.removeItem(CRM_SESSION_FLAG_KEY);
+  try {
+    if ((await currentSessionUserId()) !== flagged) return;
+    const { revokeCurrentSession, clearCachedAuthToken } = await import('@/lib/api');
+    await revokeCurrentSession();
+    clearCachedAuthToken();
+    const { signOut } = await import('next-auth/react');
+    await signOut({ redirect: false });
+  } catch {
+    /* the portal logout below is what matters */
+  }
+}
+
 /**
  * POST /api/v1/public/portal/logout - revokes the active token server-side
  * (clearing client storage alone would leave a copied token valid).
  */
 export async function portalLogout(): Promise<void> {
+  await endCrmSession();
   const token = readPortalToken();
   if (!token) return;
   await fetch('/api/v1/public/portal/logout', {
@@ -957,6 +1029,7 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   rejected: 'Rejected',
   responded: 'Responded',
   submitted: 'Submitted',
+  resubmitted: APPEALED_LABEL,
   processed_by_cs: 'Processed by CS',
   closed: 'Closed',
   completed: 'Completed',
@@ -969,6 +1042,9 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   collected: 'Collected',
   void: 'Void',
 };
+
+// One rule for staff and portal send buttons; re-exported so portal code keeps one import.
+export { submitVerb } from '@/lib/submission-status';
 
 export function statusLabel(status: string | null | undefined): string {
   const s = (status ?? '').trim();
@@ -1037,8 +1113,12 @@ export async function lookupProducts(
 export async function lookupDebtors(
   q: string,
   limit = 20,
+  /** The form asking: `project_registration` is offered only the agent's own debtors. */
+  kind?: string,
 ): Promise<DebtorLookupItem[]> {
-  const url = `/api/v1/public/portal/lookups/debtors?q=${encodeURIComponent(q)}&limit=${limit}`;
+  const url =
+    `/api/v1/public/portal/lookups/debtors?q=${encodeURIComponent(q)}&limit=${limit}` +
+    (kind ? `&kind=${encodeURIComponent(kind)}` : '');
   const res = await portalFetch(url);
   return unwrap<DebtorLookupItem[]>(res, 'Failed to load debtors.');
 }
@@ -1213,6 +1293,7 @@ export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {
   stock_inquiry: 'portal.stock_inquiry',
   purchase_request: 'portal.purchase_request',
   sponsorship_form: 'portal.sponsorship_form',
+  project_registration: 'portal.project_registration',
   // D7: registered in the backend's FORM_SCHEMAS with the same `portal.`
   // prefix as every other portal form key (Phase 1 briefly had this as a
   // bare `price_tag_request` - wrong; fixed to match convention).

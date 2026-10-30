@@ -22,12 +22,15 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import require_any_permission, require_any_permission_with_api_key, require_permission
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.project_board import StockDetail
 from app.schemas.projects import (
     PriceFloorEffectiveResponse,
     PriceFloorRuleResponse,
     PriceFloorRuleUpsert,
+    DrawingEscalationResponse,
+    MediaEscalationRequest,
     ProjectQuotationCreate,
     ProjectQuotationLineBulkWrite,
     ProjectQuotationLineCreate,
@@ -62,6 +65,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 CONFIG_VIEW = "projects.types.view"
@@ -126,10 +133,10 @@ def _notify_breaches(db: Session, line, actor_user_id: str) -> None:
     "/projects/{project_id}/quotations",
     response_model=ListResponse[ProjectQuotationResponse],
 )
-async def list_quotations(
+def list_quotations(
     project_id: str,
     # API-key readable (AC-K1): `crm_project_quotations_list` answers "what did we quote".
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -153,7 +160,7 @@ async def list_quotations(
     response_model=ProjectQuotationResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_quotation(
+def create_quotation(
     project_id: str,
     payload: ProjectQuotationCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -163,7 +170,7 @@ async def create_quotation(
     try:
         validate_uuid_path(project_id, resource="Project")
         project = projects.get_project_or_404(db, project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         quotation = svc.create_quotation(
@@ -181,7 +188,7 @@ async def create_quotation(
 
 
 @router.put("/quotations/{quotation_id}", response_model=ProjectQuotationResponse)
-async def update_quotation(
+def update_quotation(
     quotation_id: str,
     payload: ProjectQuotationUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -202,7 +209,7 @@ async def update_quotation(
 
 
 @router.post("/quotations/{quotation_id}/outcome", response_model=ProjectQuotationResponse)
-async def set_quotation_outcome(
+def set_quotation_outcome(
     quotation_id: str,
     payload: ProjectQuotationOutcomeRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -231,7 +238,7 @@ async def set_quotation_outcome(
 
 
 @router.delete("/quotations/{quotation_id}")
-async def delete_quotation(
+def delete_quotation(
     quotation_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -266,7 +273,7 @@ def _quotation_for_edit(db: Session, quotation_id: str, current_user: dict):
             status_code=404, message="Quotation not found.", code="quotation_not_found"
         )
     project = projects.get_project_or_404(db, quotation.project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
     return quotation
@@ -276,12 +283,12 @@ def _quotation_for_edit(db: Session, quotation_id: str, current_user: dict):
     "/quotations/{quotation_id}/line-verdict",
     response_model=QuotationLineVerdictResponse,
 )
-async def judge_draft_line(
+def judge_draft_line(
     quotation_id: str,
     product_id: Optional[str] = Query(None),
     product_set_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
     unit_price: Optional[str] = Query(None),
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Judge one DRAFT line, before anything is saved.
@@ -384,9 +391,9 @@ async def judge_draft_line(
 
 
 @router.get("/quotation-line-images", response_model=QuotationLineImagesResponse)
-async def quotation_line_images(
+def quotation_line_images(
     product_id: str = Query(..., pattern=UUID_PATTERN),
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The photo and drawing cells a line with this product would show, before it is saved.
@@ -408,6 +415,28 @@ async def quotation_line_images(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get("/quotation-line-stock", response_model=Optional[StockDetail])
+def quotation_line_stock(
+    product_id: str = Query(..., pattern=UUID_PATTERN),
+    _user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """A line's stock over the locations the user's contact may see; null when none.
+
+    Stock visibility of `users.respond_contact_id`, inside the active fulfilment-planning
+    warehouses. No contact, or a contact that may see no location, answers null.
+    """
+    try:
+        from app.services import quotation_line_stock as line_stock
+        from app.services.field_access import staff_may_see_clearance
+
+        return line_stock.quotation_line_stock(
+            db, _user, product_id, reveal_eta_delay=staff_may_see_clearance(db, _user)
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 # ----------------------------------------------------------------- versions
 
 
@@ -415,9 +444,9 @@ async def quotation_line_images(
     "/quotations/{quotation_id}/versions",
     response_model=ListResponse[ProjectQuotationVersionResponse],
 )
-async def list_versions(
+def list_versions(
     quotation_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Newest first. ``is_current`` is derived from MAX(version_no), not stored."""
@@ -434,7 +463,7 @@ async def list_versions(
     response_model=ProjectQuotationVersionResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def revise_quotation(
+def revise_quotation(
     quotation_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -459,9 +488,9 @@ async def revise_quotation(
     "/quotation-versions/{version_id}/lines",
     response_model=ListResponse[ProjectQuotationLineResponse],
 )
-async def list_lines(
+def list_lines(
     version_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -476,7 +505,7 @@ async def list_lines(
     response_model=ProjectQuotationLineResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_line(
+def create_line(
     version_id: str,
     payload: ProjectQuotationLineCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -506,7 +535,7 @@ async def create_line(
     "/quotation-versions/{version_id}/lines",
     response_model=ListResponse[ProjectQuotationLineResponse],
 )
-async def replace_lines(
+def replace_lines(
     version_id: str,
     payload: ProjectQuotationLineBulkWrite,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -552,7 +581,7 @@ async def replace_lines(
     "/quotation-versions/{version_id}/lines/{line_id}",
     response_model=ProjectQuotationLineResponse,
 )
-async def update_line(
+def update_line(
     version_id: str,
     line_id: str,
     payload: ProjectQuotationLineUpdate,
@@ -584,7 +613,7 @@ async def update_line(
 
 
 @router.delete("/quotation-versions/{version_id}/lines/{line_id}")
-async def delete_line(
+def delete_line(
     version_id: str,
     line_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -604,10 +633,37 @@ async def delete_line(
 
 
 @router.post(
+    "/quotation-versions/{version_id}/lines/{line_id}/media-escalation",
+    response_model=DrawingEscalationResponse,
+)
+def escalate_line_media(
+    version_id: str,
+    line_id: str,
+    payload: MediaEscalationRequest,
+    current_user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """Ask the marketing product team for the drawing or the photo of this line's product (one
+    open request per kind and product: a second click joins it). Escalating changes no quotation data, so anyone who can
+    open the quotation may."""
+    from app.services import product_drawing_request_service as drawing_requests
+
+    try:
+        validate_uuid_path(version_id, resource="Quotation version")
+        validate_uuid_path(line_id, resource="Line")
+        return drawing_requests.escalate(
+            db, version_id=version_id, line_id=line_id, user=current_user, kind=payload.kind
+        )
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
     "/quotation-versions/{version_id}/recompute",
     response_model=QuotationRecomputeResponse,
 )
-async def recompute_version(
+def recompute_version(
     version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -721,8 +777,8 @@ def _line_or_404(db: Session, version_id: str, line_id: str):
 
 
 @router.get("/config/loss-reasons", response_model=List[dict])
-async def list_loss_reasons(
-    _user: dict = Depends(require_permission(VIEW)),
+def list_loss_reasons(
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The configured loss reasons (AC-E9). Empty means an admin has not set any up, and
@@ -734,7 +790,7 @@ async def list_loss_reasons(
 
 
 @router.get("/config/series", response_model=ListResponse[ProjectSeriesResponse])
-async def list_series(
+def list_series(
     include_inactive: bool = Query(False),
     _user: dict = Depends(require_permission(CONFIG_VIEW)),
     db: Session = Depends(get_db),
@@ -756,7 +812,7 @@ async def list_series(
     response_model=ProjectSeriesResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_series(
+def create_series(
     payload: ProjectSeriesCreate,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
     db: Session = Depends(get_db),
@@ -781,7 +837,7 @@ async def create_series(
 
 
 @router.put("/config/series/{series_id}", response_model=ProjectSeriesResponse)
-async def update_series(
+def update_series(
     series_id: str,
     payload: ProjectSeriesUpdate,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -817,7 +873,7 @@ async def update_series(
 
 
 @router.delete("/config/series/{series_id}")
-async def delete_series(
+def delete_series(
     series_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
     db: Session = Depends(get_db),
@@ -874,13 +930,13 @@ def _series_or_404(db: Session, series_id: str):
     "/config/series/{series_id}/products/rows",
     response_model=ListResponse[SeriesProductRowResponse],
 )
-async def list_series_product_rows(
+def list_series_product_rows(
     series_id: str,
     page: int = Query(1, ge=1, le=1000000),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None, max_length=200),
     priced: bool = Query(False),
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """One page of the series' products with their price, percentage and derived floor (T2).
@@ -904,7 +960,7 @@ async def list_series_product_rows(
     "/config/series/{series_id}/products/{product_id}",
     response_model=SeriesProductRowResponse,
 )
-async def update_series_product_pricing(
+def update_series_product_pricing(
     series_id: str,
     product_id: str,
     payload: SeriesProductPricingUpdate,
@@ -934,7 +990,7 @@ async def update_series_product_pricing(
     "/config/series/{series_id}/products/{product_id}",
     status_code=204,
 )
-async def remove_series_product(
+def remove_series_product(
     series_id: str,
     product_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -962,9 +1018,9 @@ async def remove_series_product(
     "/config/series/{series_id}/sets/rows",
     response_model=ListResponse[SeriesSetRowResponse],
 )
-async def list_series_set_rows(
+def list_series_set_rows(
     series_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The series' product sets with their price, percentage and derived floor."""
@@ -980,7 +1036,7 @@ async def list_series_set_rows(
     "/config/series/{series_id}/sets/{product_set_id}",
     response_model=SeriesSetRowResponse,
 )
-async def update_series_set_pricing(
+def update_series_set_pricing(
     series_id: str,
     product_set_id: str,
     payload: SeriesProductPricingUpdate,
@@ -1010,7 +1066,7 @@ async def update_series_set_pricing(
     "/config/series/{series_id}/sets/{product_set_id}",
     status_code=204,
 )
-async def remove_series_set(
+def remove_series_set(
     series_id: str,
     product_set_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -1038,7 +1094,7 @@ async def remove_series_set(
     "/config/series/{series_id}/products",
     response_model=ProjectSeriesProductImportResponse,
 )
-async def import_series_products(
+def import_series_products(
     series_id: str,
     payload: ProjectSeriesProductImport,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -1078,7 +1134,7 @@ async def import_series_products(
     response_model=SeriesProductImportJobResponse,
     status_code=202,
 )
-async def upload_series_products(
+def upload_series_products(
     series_id: str,
     file: UploadFile = File(..., description="An .xlsx or .csv carrying a PRODUCT CODE column"),
     mode: str = Form("append"),
@@ -1125,7 +1181,7 @@ async def upload_series_products(
             )
 
         series = _series_or_404(db, series_id)
-        content = await file.read()
+        content = file.file.read()
         if not content:
             raise AppException(
                 status_code=422, message="That file is empty.", code="series_import_empty_file"
@@ -1285,7 +1341,7 @@ def _serialize_series(
 
 
 @router.get("/config/price-floors", response_model=ListResponse[PriceFloorRuleResponse])
-async def list_price_floors(
+def list_price_floors(
     _user: dict = Depends(require_permission(CONFIG_VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -1301,7 +1357,7 @@ async def list_price_floors(
     "/config/price-floors/effective",
     response_model=PriceFloorEffectiveResponse,
 )
-async def get_effective_price_floor(
+def get_effective_price_floor(
     product_id: Optional[str] = Query(None),
     category_id: Optional[str] = Query(None),
     _user: dict = Depends(require_permission(CONFIG_VIEW)),
@@ -1337,7 +1393,7 @@ async def get_effective_price_floor(
     response_model=PriceFloorRuleResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def upsert_price_floor(
+def upsert_price_floor(
     payload: PriceFloorRuleUpsert,
     current_user: dict = Depends(require_permission(CONFIG_EDIT)),
     db: Session = Depends(get_db),
@@ -1360,7 +1416,7 @@ async def upsert_price_floor(
 
 
 @router.delete("/config/price-floors/{rule_id}")
-async def delete_price_floor(
+def delete_price_floor(
     rule_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
     db: Session = Depends(get_db),

@@ -21,12 +21,13 @@ from app.schemas.order import (
     OrderLineCreate, OrderLineUpdate,
 )
 from app.utils.product_display import code_with_name
-from app.services import customer_identity
+from app.services import customer_identity, import_outcome_codes
 from app.services.error_handler import handle_not_found, handle_conflict, handle_unprocessable
 from app.services.import_log_service import ImportLogService
 from app.services.contact_brand_scope import product_in_scope_clauses
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
+from app.utils.multi_value import multi_values
 from app.services.company_scope import (
     DEFAULT_COMPANY_ID,
     build_company_predicate,
@@ -34,9 +35,12 @@ from app.services.company_scope import (
     pending_company_id,
     stamp_lookup_companies,
 )
+from sqlalchemy import inspect as _sa_inspect
+
 from app.services.embedding_change_listener import (
     suppress_embedding_events,
     bulk_enqueue_embedding_events,
+    embedded_fields_changed,
 )
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 from app.services.order_field_ownership import (
@@ -67,6 +71,35 @@ DATE_RELAX_LIMIT = 3
 # "New Order", does NOT count as delivered). Drives the `order_status`
 # outstanding/delivered bucket filter.
 DELIVERED_STATUS_CODES = ("delivered", "completed")
+
+
+def _excel_serial_to_datetime(value) -> Optional[datetime]:
+    """An Excel date serial (a date cell read without its format) as a datetime, or None
+    outside 2000-2099 (DO-IMPORT-DATE): a typed number such as ddmmyy 280826 is not a
+    date in the year 2668, so it stays refused rather than imported wrong."""
+    from openpyxl.utils.datetime import from_excel
+
+    if not 36526 <= value < 73051:  # 2000-01-01 .. 2099-12-31
+        return None
+    try:
+        converted = from_excel(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return converted if isinstance(converted, datetime) else None
+
+
+def _undated_flag(label: str, raw_date, existing: Optional[Order]) -> Optional[tuple[str, str]]:
+    """(outcome code, message) for an imported DO row whose date cell gave no date, or None
+    when nothing needs saying (a blank cell on a DO that keeps its stored date).
+    DO-IMPORT-DATE: the row is imported either way and a stored date is never cleared."""
+    kept = existing is not None and existing.order_date is not None
+    tail = "kept the stored DO date" if kept else "imported without a DO date (left out of reports until it has one)"
+    if raw_date is None or str(raw_date).strip() == "":
+        return None if kept else (import_outcome_codes.MISSING_DOC_DATE, f"{label}: no Date, {tail}")
+    return (
+        import_outcome_codes.INVALID_DOC_DATE,
+        f"{label}: Date '{str(raw_date).strip()}' is not a valid date (use DD/MM/YYYY), {tail}",
+    )
 
 
 def _delivered_status_ids(db) -> list:
@@ -258,7 +291,7 @@ def scope_product_filter(db: Session, value):
     scope = get_brand_scope(db)
     if not scope:
         return value
-    stmt = select(Product.id).where(brand_predicate(scope, Product.brand_id, Product.company_id))
+    stmt = select(Product.id).where(brand_predicate(scope, Product.brand_id, Product.company_id, Product.item_class_id))
     if has_product_filter(value):
         stmt = stmt.where(Product.id.in_(value))
     return stmt
@@ -481,6 +514,9 @@ def stamp_so_outstanding_rows(
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(Customer, _cust_on)
+            # AC-REMOVED-KEEP-CANCELLED: a line AutoCount removed that the ingest used to
+            # delete is kept now, but never counts (owner via crew, 27 Oct).
+            .filter(SalesOrderLine.removed_unreferenced.is_(False))
         )
         if customer_ids:
             q = q.filter(SalesOrder.customer_id.in_([str(c) for c in customer_ids]))
@@ -821,6 +857,20 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
         logger.warning("stamp_order_summary skipped: %s", exc)
 
 
+
+def resolve_order_status_ids(db, order_status_id):
+    """Order status ids for the `order_status_id` filter: one value or several (comma-joined or a
+    list), each an id or a status code/name, OR-ed. `None` is "no filter", `[]` is "matches no
+    status". Shared by the delivery-orders list and its export so they cannot disagree."""
+    status_ids = None
+    for value in multi_values(order_status_id) or []:
+        resolved = resolve_identifier(
+            db, value, OrderStatus, code_fields=("status_code", "status_name")
+        )
+        if resolved is not None:
+            status_ids = [*(status_ids or []), *resolved]
+    return status_ids
+
 class OrderService:
     """Service for order operations."""
     
@@ -836,7 +886,7 @@ class OrderService:
         product_query: Optional[str] = None,
         transporter_query: Optional[str] = None,
         customer_id: Optional[str] = None,
-        order_status_id: Optional[str] = None,
+        order_status_id: Optional[list[str] | str] = None,
         order_status: Optional[str] = None,
         has_order_lines: Optional[str] = None,
         has_actual_delivery_date: Optional[str] = None,
@@ -975,12 +1025,8 @@ class OrderService:
             filters.append(Order.customer_id.in_(customer_ids))
             _customer_scoped = True
 
-        status_ids = resolve_identifier(
-            self.db,
-            order_status_id,
-            OrderStatus,
-            code_fields=("status_code", "status_name"),
-        )
+        # Several statuses are OR-ed; each may be an id or a code/name (FILTER-MULTISELECT).
+        status_ids = resolve_order_status_ids(self.db, order_status_id)
         if status_ids is not None:
             if not status_ids:
                 if ids_only:
@@ -1446,6 +1492,7 @@ class OrderService:
         if not order:
             raise handle_not_found("Order", order_id)
         self._attach_remarks_cs_locked(order)
+        self._attach_sales_order_links(order)
         order.autocount_owned_fields = (
             sorted(AUTOCOUNT_OWNED_ORDER_COLUMNS) if is_autocount_owned(order) else []
         )
@@ -1467,6 +1514,45 @@ class OrderService:
             ).is_remarks_cs_locked(order)
         except Exception:
             order.remarks_cs_locked = False
+
+    def _attach_sales_order_links(self, order) -> None:
+        """Stamp the transient ``sales_order`` ref each DO line exposes (DO-SO-LINK-SURFACE).
+
+        Explicit AutoCount links only: the stored ``sales_order_line_id`` (its SO and line no),
+        else the SO numbered ``from_doc_no`` in the DO's own company, with no line. Never a
+        product or qty match. Two reads for the whole DO.
+        """
+        from app.models.order import SalesOrder, SalesOrderLine
+
+        lines = list(order.lines or [])
+        linked_ids = {str(ln.sales_order_line_id) for ln in lines if ln.sales_order_line_id}
+        by_line = {}
+        if linked_ids:
+            rows = (
+                self.db.query(SalesOrderLine.id, SalesOrderLine.line_no, SalesOrder.id, SalesOrder.so_number)
+                .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+                .filter(SalesOrderLine.id.in_(linked_ids), SalesOrder.company_id == order.company_id)
+                .all()
+            )
+            by_line = {str(lid): {"id": str(sid), "so_number": no, "line_no": line_no}
+                       for lid, line_no, sid, no in rows}
+        numbers = {
+            ln.from_doc_no for ln in lines
+            if ln.from_doc_no and str(ln.sales_order_line_id or "") not in by_line
+        }
+        by_number = {}
+        if numbers:
+            rows = (
+                self.db.query(SalesOrder.id, SalesOrder.so_number)
+                .filter(SalesOrder.so_number.in_(numbers), SalesOrder.company_id == order.company_id)
+                .all()
+            )
+            by_number = {no: {"id": str(sid), "so_number": no, "line_no": None} for sid, no in rows}
+        for line in lines:
+            ref = by_line.get(str(line.sales_order_line_id or ""))
+            if ref is None and line.from_doc_type in (None, "SO"):
+                ref = by_number.get(line.from_doc_no)
+            line.sales_order = ref
 
     # ------------------------------------------------------------------ #
     # Aggregation / analytics
@@ -2606,6 +2692,9 @@ class OrderService:
                 return None
             if isinstance(value, datetime):
                 return value
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                # The FE template upload reads cells with SheetJS: a date cell is a serial.
+                return _excel_serial_to_datetime(value)
             if isinstance(value, str):
                 # Try ISO format first
                 try:
@@ -2681,7 +2770,23 @@ class OrderService:
                     if duplicate:
                         errors.append(f"Row {idx}: Order Number '{mapped_data['order_number']}' already exists")
                         continue
-                
+
+                # DO-IMPORT-DATE: a row without a readable date still imports, never clears
+                # a stored date, and says so (AutoCount owns the date on its own DOs).
+                if mapped_data.get('order_date') is None:
+                    mapped_data.pop('order_date', None)
+                    if not (existing_order and is_autocount_owned(existing_order)):
+                        raw_date = next(
+                            (v for k, v in row_data.items()
+                             if column_mapping.get(k, k.lower()) == 'order_date'),
+                            None,
+                        )
+                        flag = _undated_flag(
+                            f"Row {idx}: Order {mapped_data['order_number']}", raw_date, existing_order
+                        )
+                        if flag:
+                            warnings.append(flag[1])
+
                 sent_keys = [k for k in mapped_data if k != 'order_number']
                 # Calculate total if not provided
                 if 'total_amount' not in mapped_data or not mapped_data['total_amount']:
@@ -2843,6 +2948,15 @@ class OrderService:
             return str(value).strip()
 
         master_rows_list = list(iter_sheet_rows(master_sheet, "Master"))
+        # DO-IMPORT-DATE: without the column no DO gets a date from this sheet; say it once.
+        if master_rows_list and "Date" not in {
+            normalize_header(cell.value) for cell in master_sheet[1]
+        }:
+            warnings.append({
+                "row": 1,
+                "warning": "Master sheet has no Date column: new delivery orders are imported without a DO date",
+                "data": None,
+            })
         tracking_rows_list = list(iter_sheet_rows(tracking_sheet, "Overall Tracking"))
         master_rows = len(master_rows_list)
         tracking_rows = len(tracking_rows_list)
@@ -2907,6 +3021,8 @@ class OrderService:
                 return value
             if isinstance(value, date):
                 return datetime.combine(value, dt_time.min)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return _excel_serial_to_datetime(value)
             if isinstance(value, str):
                 cleaned = value.strip()
                 for fmt in ["%d/%m/%Y", "%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"]:
@@ -2959,6 +3075,8 @@ class OrderService:
         working_weekdays = calendar_service.get_working_weekdays()
 
         mapped_master_rows = []
+        # Master row -> (outcome code, message) for a DO date the sheet did not give.
+        date_flags: dict[int, tuple[str, str]] = {}
         min_master_date = None
         max_master_date = None
         touched_orders: list[Order] = []
@@ -2989,6 +3107,18 @@ class OrderService:
                     continue
                 mapped["order_number"] = order_number
                 order_date_value = mapped.get("order_date")
+                # DO-IMPORT-DATE: manual DOs can come without a date (owner, 30 Oct), so a
+                # blank or unreadable Date never refuses the row. It never clears a stored
+                # date either (it used to write NULL over it), and a DO left undated is
+                # flagged; reports leave it out until someone fills the date.
+                if order_date_value is None:
+                    mapped.pop("order_date", None)
+                    known = existing_orders.get(order_number.lower())
+                    if known is None or not is_autocount_owned(known):
+                        flag = _undated_flag(order_number, row_data.get("Date"), known)
+                        if flag:
+                            date_flags[row_idx] = flag
+                            warnings.append({"row": row_idx, "warning": flag[1], "data": row_data})
                 if isinstance(order_date_value, (datetime, date)):
                     date_value = order_date_value.date() if isinstance(order_date_value, datetime) else order_date_value
                     min_master_date = date_value if min_master_date is None else min(min_master_date, date_value)
@@ -3072,9 +3202,11 @@ class OrderService:
                         existing_order.order_status_id = new_status_id
                     existing_order.updated_by = user_id
                     updated += 1
+                    date_flag = date_flags.get(row_idx)
                     outcome.updated(
                         row=row_idx,
-                        message=f"Order updated: {order_number}",
+                        **({"code": date_flag[0]} if date_flag else {}),
+                        message=date_flag[1] if date_flag else f"Order updated: {order_number}",
                         value=order_number,
                         identity={"sheet": "Master", "doc_no": order_number},
                         entity_type="order",
@@ -3098,9 +3230,11 @@ class OrderService:
                     order = Order(**mapped)
                     self.db.add(order)
                     created += 1
+                    date_flag = date_flags.get(row_idx)
                     outcome.success(
                         row=row_idx,
-                        message=f"Order created: {order_number}",
+                        **({"code": date_flag[0]} if date_flag else {}),
+                        message=date_flag[1] if date_flag else f"Order created: {order_number}",
                         value=order_number,
                         identity={"sheet": "Master", "doc_no": order_number},
                         entity_type="order",
@@ -3333,11 +3467,19 @@ class OrderService:
             }
 
         try:
+            # Only orders whose embedded fields changed are queued (EMBED-QUEUE-DEDUPE): the
+            # Master sheet re-imports the full order history every run, so "touched" is nearly
+            # every order. Decided before the flush, which clears attribute history. A change
+            # an earlier flush in this import wrote was queued by the listener at that flush.
+            changed_orders = [
+                o for o in touched_orders
+                if _sa_inspect(o).pending or embedded_fields_changed(o, "order")
+            ]
             with suppress_embedding_events("order"):
                 self.db.flush()
                 seen: set[str] = set()
                 touched_ids: list[str] = []
-                for o in touched_orders:
+                for o in changed_orders:
                     oid = getattr(o, "id", None)
                     if oid is None:
                         continue
@@ -3350,8 +3492,8 @@ class OrderService:
                     self.db, "order", touched_ids, event_type="order.updated"
                 )
                 logger.info(
-                    "Order tracking import: bulk-enqueued %s embedding events (touched=%s)",
-                    enqueued, len(touched_orders),
+                    "Order tracking import: bulk-enqueued %s embedding events (changed=%s, touched=%s)",
+                    enqueued, len(touched_ids), len(touched_orders),
                 )
                 self.db.commit()
             _import_commit_ok = True
@@ -3544,7 +3686,8 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
-        customer_group_id: Optional[str] = None,
+        customer_group_id: Optional[list[str] | str] = None,
+        status: Optional[str] = None,
     ):
         """Build the filtered + sorted customers query shared by ``list_customers``
         and ``neighbours`` so the two can never drift.
@@ -3558,8 +3701,15 @@ class CustomerService:
         if sales_agent_id is not None:
             q = q.filter(Customer.sales_agent_id == sales_agent_id)
 
-        if customer_group_id is not None:
-            q = q.filter(Customer.customer_group_id == customer_group_id)
+        if customer_group_id:
+            groups = [customer_group_id] if isinstance(customer_group_id, str) else customer_group_id
+            q = q.filter(Customer.customer_group_id.in_(groups))
+
+        # `active` / `inactive`; anything else (or nothing) is every customer.
+        if status == "active":
+            q = q.filter(Customer.is_active.is_(True))
+        elif status == "inactive":
+            q = q.filter(Customer.is_active.is_(False))
 
         if query:
             q = q.filter(
@@ -3584,7 +3734,8 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
-        customer_group_id: Optional[str] = None,
+        customer_group_id: Optional[list[str] | str] = None,
+        status: Optional[str] = None,
     ):
         """List customers with pagination, search, and sorting.
 
@@ -3596,6 +3747,7 @@ class CustomerService:
             sort_dir=sort_dir,
             sales_agent_id=sales_agent_id,
             customer_group_id=customer_group_id,
+            status=status,
         )
 
         total = q.count()
@@ -3781,9 +3933,11 @@ class OrderStatusService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_order_statuses(self, page: int = 1, limit: int = 50):
-        """List order statuses."""
+    def list_order_statuses(self, page: int = 1, limit: int = 50, is_final_status: Optional[bool] = None):
+        """List order statuses; `is_final_status` narrows the whole table (total and paging)."""
         q = self.db.query(OrderStatus).order_by(OrderStatus.sequence)
+        if is_final_status is not None:
+            q = q.filter(OrderStatus.is_final_status.is_(is_final_status))
         
         total = q.count()
         offset = (page - 1) * limit

@@ -6,6 +6,9 @@
  * The portal Purchase Request / Sponsorship Form layout (SubmissionForm.tsx): a Back button, the
  * paper form as one document card, an Items card with the product table, the footer fields in a
  * card, then Cancel / Save as draft / Submit. After submit the same cards render disabled.
+ *
+ * A salesperson's sample request on the CRM is this same form (PORTAL-P4-REQUESTS R3): every call
+ * and path goes through the injected client (`lib/submission-client`), the portal's own without one.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
@@ -24,9 +27,15 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { SampleRequestLines } from '@/components/common/SampleRequestLines';
 import { SampleRequestFooterFields } from '@/components/common/SampleRequestFooterFields';
 import {
+  SampleRequestPrefillNote,
+  SampleRequestQuotationPicker,
+} from '@/components/common/SampleRequestQuotationSource';
+import { useSampleRequestPrefill } from '@/hooks/useSampleRequestPrefill';
+import {
   EMPTY_FORM,
   blankLine,
   payloadFromState,
+  productSource,
   stateFromDetail,
   numberErrors,
   validate,
@@ -35,20 +44,18 @@ import {
 import { cn } from '@/lib/utils';
 import { SampleRequestError, type SampleRequestDetail } from '@/types/sampleRequest';
 import { portalBase } from '../lib/portal-paths';
-import { lookupProjects, type ProjectLookupItem } from '../lib/portal-client';
+import type { ProjectLookupItem } from '../lib/portal-client';
+import * as portalSampleRequest from '../lib/sample-request-service';
+import type { SampleRequestCustomerHit } from '../lib/sample-request-service';
 import {
-  cancelSampleRequest,
-  lookupSampleRequestCustomers,
-  type SampleRequestCustomerHit,
-  createSampleRequest,
-  downloadSampleRequestPdf,
-  getSampleRequest,
-  searchSampleRequestProducts,
-  submitSampleRequest,
-  updateSampleRequest,
-} from '../lib/sample-request-service';
+  clientEmbedded,
+  clientPaths,
+  clientService,
+  useSubmissionClient,
+} from '../lib/submission-client';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { AsyncCombobox } from './AsyncCombobox';
+import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
 
 function FormField({
   label,
@@ -75,20 +82,37 @@ function FormField({
 export default function SampleRequestForm({
   slug,
   requestId,
+  initialValues,
 }: {
   slug?: string;
   requestId?: string;
+  /** A new request's starting values: the CRM seeds a project's stage action; the portal never. */
+  initialValues?: Partial<FormState>;
 }) {
   const router = useRouter();
+  const client = useSubmissionClient();
+  const service = () => clientService(client, 'sampleRequest', portalSampleRequest);
+  const paths = clientPaths(client);
+  // Inside a CRM page its header carries the title and Back.
+  const embedded = clientEmbedded(client);
   const [request, setRequest] = useState<SampleRequestDetail | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(requestId));
-  const [state, setState] = useState<FormState>({ ...EMPTY_FORM, lines: [blankLine()] });
+  const [state, setState] = useState<FormState>(() => ({
+    ...EMPTY_FORM,
+    lines: [blankLine()],
+    ...initialValues,
+  }));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const backPath = `${portalBase(slug)}?type=sample_request`;
+  const backPath = paths
+    ? paths.home('sample_request')
+    : `${portalBase(slug)}?type=sample_request`;
+  const detailPath = (id: string) =>
+    paths ? paths.detail('sample_request', id) : `${portalBase(slug)}/sample_request/${id}`;
+  const shell = embedded ? 'space-y-4' : 'min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4';
   const set = useCallback(
     <K extends keyof FormState>(key: K, value: FormState[K]) =>
       setState((prev) => ({ ...prev, [key]: value })),
@@ -98,11 +122,35 @@ export default function SampleRequestForm({
     (next: Partial<FormState>) => setState((prev) => ({ ...prev, ...next })),
     [],
   );
+  // A request from a quotation offers only that quotation's products (SFQ-27).
+  const sourceDoc = state.quotation_document_id;
+  const sourceIssue = state.quotation_issue_id;
+  const searchProducts = useCallback(
+    (q: string) => {
+      const svc = clientService(client, 'sampleRequest', portalSampleRequest);
+      const source = productSource(sourceDoc, sourceIssue);
+      return source ? svc.searchSampleRequestProducts(q, source) : svc.searchSampleRequestProducts(q);
+    },
+    [client, sourceDoc, sourceIssue],
+  );
+  // A NEW request starts from its project's quotation (SAMPLE-FROM-QUOTE); a draft never refills.
+  const prefill = useSampleRequestPrefill({
+    enabled: !requestId,
+    projectId: state.project_id,
+    state,
+    patch,
+    fetchPrefill: (projectId, documentId) =>
+      clientService(client, 'sampleRequest', portalSampleRequest).getSampleRequestQuotationPrefill(
+        projectId,
+        documentId,
+      ),
+  });
 
   useEffect(() => {
     if (!requestId) return;
     let cancelled = false;
-    getSampleRequest(requestId)
+    clientService(client, 'sampleRequest', portalSampleRequest)
+      .getSampleRequest(requestId)
       .then((d) => {
         if (cancelled) return;
         setRequest(d);
@@ -118,14 +166,16 @@ export default function SampleRequestForm({
     return () => {
       cancelled = true;
     };
-  }, [requestId]);
+  }, [requestId, client]);
 
   const isDraft = !request || request.status === 'draft';
 
   const save = async (): Promise<{ id: string }> => {
     const body = payloadFromState(state);
     const id = request?.id ?? savedId;
-    const saved = id ? await updateSampleRequest(id, body) : await createSampleRequest(body);
+    const saved = id
+      ? await service().updateSampleRequest(id, body)
+      : await service().createSampleRequest(body);
     setSavedId(saved.id);
     return saved;
   };
@@ -148,7 +198,7 @@ export default function SampleRequestForm({
     try {
       const saved = await save();
       toast.success('Draft saved');
-      if (!requestId) router.replace(`${portalBase(slug)}/sample_request/${saved.id}`);
+      if (!requestId) router.replace(detailPath(saved.id));
     } catch (e) {
       explain(e, 'Failed to save the sample request');
     } finally {
@@ -164,7 +214,7 @@ export default function SampleRequestForm({
     setSaving(true);
     try {
       const saved = await save();
-      await submitSampleRequest(saved.id);
+      await service().submitSampleRequest(saved.id);
       toast.success('Sample request submitted');
       router.push(backPath);
     } catch (e) {
@@ -177,7 +227,7 @@ export default function SampleRequestForm({
   const handleCancel = async () => {
     if (!request) return;
     try {
-      setRequest(await cancelSampleRequest(request.id));
+      setRequest(await service().cancelSampleRequest(request.id));
       toast.success('Sample request cancelled');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to cancel the sample request');
@@ -186,7 +236,7 @@ export default function SampleRequestForm({
 
   if (loading) {
     return (
-      <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
+      <div className={shell}>
         <Skeleton className="h-8 w-40" />
         <Skeleton className="h-64 w-full" />
       </div>
@@ -200,42 +250,48 @@ export default function SampleRequestForm({
     : state.project_title;
 
   return (
-    <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <Button variant="ghost" size="sm" className="shrink-0" onClick={() => router.push(backPath)}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back
-        </Button>
-        {request && (
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="min-w-0 truncate text-sm text-muted-foreground">
-              {request.request_no}
-            </span>
-            {readOnly && (
-              <DetailActionsMenu ariaLabel="Sample request actions">
-                <DropdownMenuItem
-                  onSelect={() => {
-                    void downloadSampleRequestPdf(request.id, request.request_no).catch((e) =>
-                      toast.error(e instanceof Error ? e.message : 'Failed to download the PDF'),
-                    );
-                  }}
-                >
-                  <Download className="size-4" />
-                  <span>Print</span>
-                </DropdownMenuItem>
-                {canCancel && (
-                  <DropdownMenuItem variant="destructive" onSelect={() => void handleCancel()}>
-                    <XCircle className="size-4" />
-                    <span>Cancel request</span>
+    <div className={shell}>
+      {(!embedded || request) && (
+        <div className={`flex items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}>
+          {!embedded && (
+            <Button variant="ghost" size="sm" className="shrink-0" onClick={() => router.push(backPath)}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+          )}
+          {request && (
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="min-w-0 truncate text-sm text-muted-foreground">
+                {request.request_no}
+              </span>
+              {readOnly && (
+                <DetailActionsMenu ariaLabel="Sample request actions">
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      void service()
+                        .downloadSampleRequestPdf(request.id, request.request_no)
+                        .catch((e) =>
+                          toast.error(e instanceof Error ? e.message : 'Failed to download the PDF'),
+                        );
+                    }}
+                  >
+                    <Download className="size-4" />
+                    <span>Print</span>
                   </DropdownMenuItem>
-                )}
-              </DetailActionsMenu>
-            )}
-          </div>
-        )}
-      </div>
+                  {canCancel && (
+                    <DropdownMenuItem variant="destructive" onSelect={() => void handleCancel()}>
+                      <XCircle className="size-4" />
+                      <span>Cancel request</span>
+                    </DropdownMenuItem>
+                  )}
+                </DetailActionsMenu>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
-      {!request && <h1 className="text-lg font-semibold">New Sample Request</h1>}
+      {!request && !embedded && <h1 className="text-lg font-semibold">New Sample Request</h1>}
       {request?.created_at && (
         <p className="text-xs text-muted-foreground">
           Created {formatDateInMalaysia(request.created_at)}
@@ -274,7 +330,7 @@ export default function SampleRequestForm({
                       patch({ customer_id: '', customer_label: '', customer_name: v });
                     }
                   }}
-                  fetchOptions={(q) => lookupSampleRequestCustomers(q)}
+                  fetchOptions={(q) => service().lookupSampleRequestCustomers(q)}
                   optionValue={(o) => o.debtor_name}
                   optionLabel={(o) => o.debtor_name}
                   optionMeta={(o) => o.customer_code}
@@ -304,12 +360,12 @@ export default function SampleRequestForm({
                   onChange={(v, item) =>
                     patch({
                       project_id: v,
-                      project_label: item ? `${item.project_code} - ${item.title}` : '',
+                      project_label: item ? `${projectCodeLabel(item)} - ${item.title}` : '',
                     })
                   }
-                  fetchOptions={(q) => lookupProjects(q)}
+                  fetchOptions={(q) => client.lookupProjects(q)}
                   optionValue={(o) => o.id}
-                  optionLabel={(o) => `${o.project_code} - ${o.title}`}
+                  optionLabel={(o) => `${projectCodeLabel(o)} - ${o.title}`}
                   optionMeta={(o) => o.company_name ?? ''}
                   placeholder="Search your registered projects"
                 />
@@ -397,14 +453,25 @@ export default function SampleRequestForm({
           <CardTitle className="text-base">Items</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {request?.quotation_ref && (
+            <p className="text-sm text-muted-foreground">Quotation: {request.quotation_ref}</p>
+          )}
+          <SampleRequestQuotationPicker
+            documents={prefill.documents}
+            value={prefill.documentId ?? ''}
+            onPick={prefill.pickDocument}
+            disabled={readOnly}
+          />
           <SampleRequestLines
             value={state}
             onChange={patch}
-            search={searchSampleRequestProducts}
+            search={searchProducts}
+            listWhenEmpty={Boolean(sourceDoc)}
             captions={{ no: '#', item: 'Item code', qty: 'Quantity' }}
             errors={errors}
             disabled={readOnly}
           />
+          <SampleRequestPrefillNote note={prefill.note} />
           <Button
             type="button"
             variant="outline"

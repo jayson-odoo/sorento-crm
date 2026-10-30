@@ -62,12 +62,13 @@ from app.models.base import company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import ProductSupplier, Supplier
-from app.models.product import Brand, ItemType, Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, ItemClass, ItemType, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.models.user import SystemSetting
 from app.schemas.canonical_masters import (
     CanonicalBrand,
     CanonicalCustomer,
+    CanonicalItemClass,
     CanonicalProductCategory,
     CanonicalSalesAgent,
     CanonicalUnitOfMeasure,
@@ -351,6 +352,7 @@ _UNSET = object()
 _NOT_NULL_DEFAULTS: dict[str, dict[str, Any]] = {
     "product_categories": {"is_active": True},
     "brands": {"is_active": True},
+    "item_classes": {"is_active": True},
     "units_of_measure": {"is_active": True, "decimal_places": 0},
     "warehouses": {"is_active": True},
     "suppliers": {"is_active": True},
@@ -381,6 +383,12 @@ def _category_columns(payload: Any, db: Session, company_id: str, warnings: list
 
 def _brand_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     columns: dict[str, Any] = {"brand_code": payload.code, "brand_name": payload.name}
+    _present(payload, columns, "description", "is_active")
+    return columns
+
+
+def _item_class_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
+    columns: dict[str, Any] = {"item_class_code": payload.code, "item_class_name": payload.name}
     _present(payload, columns, "description", "is_active")
     return columns
 
@@ -483,6 +491,11 @@ def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list
     # warning `segment_unknown` rather than failing the whole customer over
     # one optional column - `market_segment_code` is a foreign key.
     if "market_segment_code" in payload.model_fields_set and payload.market_segment_code:
+        # SALES-UNIFIED 2.3: the raw AutoCount `Debtor.DebtorType` is kept whatever the fold
+        # below decides, so an unknown segment no longer loses the sales reports' debtor type.
+        raw_type = payload.market_segment_code.strip().upper()
+        if raw_type:
+            columns["autocount_debtor_type"] = raw_type
         canonical = customer_rules.fold_market_segment(db, payload.market_segment_code)
         if canonical is None:
             warnings.append("segment_unknown")
@@ -612,6 +625,20 @@ def _product_columns(
             warnings.append("item_type_created")
         columns["item_type_id"] = item_type_id
 
+    # ITEM-CLASS: AutoCount ItemClass, back-created like item type. Unlike item type a blank
+    # value CLEARS the link (crew ruling 29 Oct, security M1): the class narrows contact access,
+    # so a class AutoCount cleared must not linger. Absent = untouched.
+    if "item_class_code" in payload.model_fields_set:
+        if payload.item_class_code and payload.item_class_code.strip():
+            item_class_id, created = product_rules.ensure_reference(
+                db, ItemClass, payload.item_class_code, company_id, cache=ref_cache
+            )
+            if created:
+                warnings.append("item_class_created")
+            columns["item_class_id"] = item_class_id
+        else:
+            columns["item_class_id"] = None
+
     if "list_price" in payload.model_fields_set:
         columns["list_price"] = payload.list_price
     if "cost_price" in payload.model_fields_set:
@@ -686,6 +713,12 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
     # that placeholder. Default adoption path (D3): code only, no name rung -
     # adopting by name would silently rewrite a hand-made brand_code.
     "brands": EntitySpec("brands", CanonicalBrand, "brand_code", _brand_columns, Brand),
+    # ITEM-CLASS-MASTER (contract 2.11): the brands rule exactly, pushed before brands and
+    # products. Default adoption (`resolve_master_by_code`, case/whitespace insensitive) claims
+    # the code = name rows a product's `item_class_code` back-created.
+    "item_classes": EntitySpec(
+        "item_classes", CanonicalItemClass, "item_class_code", _item_class_columns, ItemClass
+    ),
     "units_of_measure": EntitySpec(
         "units_of_measure", CanonicalUnitOfMeasure, "uom_code", _uom_columns, UnitOfMeasure
     ),

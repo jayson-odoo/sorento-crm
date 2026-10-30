@@ -17,6 +17,13 @@ export interface LookupOption {
   keywords: LookupKeyword[];
   created_at: string;
   updated_at: string | null;
+  /** Alias sets only: the value names nothing among the set's targets any more. */
+  orphaned?: boolean | null;
+}
+
+export interface AliasTarget {
+  value: string;
+  label: string;
 }
 
 export interface LookupOptionFormData {
@@ -37,6 +44,8 @@ export interface LookupSet {
   is_active: boolean;
   option_count: number;
   binding_count: number;
+  /** The set's option values are picked from master records (alias sets). */
+  alias_set?: boolean;
   created_at: string;
   updated_at: string | null;
 }

@@ -9,6 +9,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -16,6 +17,12 @@ from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
 from app.database import Base
 import uuid
+
+
+# The poll's priority key: mcp_tool rows first. ix_embedding_queue_pending_poll_cov indexes this
+# exact expression, and the poll (task_scheduler._run_embedding_db_queue_fallback) orders by
+# this same text, so the planner matches the two. Change one, change both, plus a migration.
+EMBEDDING_QUEUE_POLL_PRIORITY = "CASE WHEN source_type = 'mcp_tool' THEN 0 ELSE 1 END"
 
 
 class EmbeddingQueue(Base):
@@ -43,6 +50,21 @@ class EmbeddingQueue(Base):
         Index("ix_embedding_queue_status_available_at", "status", "available_at"),
         Index("ix_embedding_queue_source", "source_type", "source_id"),
         Index("ix_embedding_queue_correlation_id", "correlation_id"),
+        # EMBED-QUEUE-DEDUPE: the poll's pick (pending, by priority then age) reads only this.
+        Index(
+            "ix_embedding_queue_pending_poll_cov",
+            text(f"({EMBEDDING_QUEUE_POLL_PRIORITY})"),
+            "created_at",
+            postgresql_include=["available_at", "id"],
+            postgresql_where=text("status = 'pending'"),
+        ),
+        # The "is a row already pending for this source?" check every enqueue makes.
+        Index(
+            "ix_embedding_queue_pending_source",
+            "source_type",
+            "source_id",
+            postgresql_where=text("status = 'pending'"),
+        ),
     )
 
 
@@ -119,6 +141,10 @@ class EmbeddingChunk(Base):
     __table_args__ = (
         Index("ix_embedding_chunks_source_current", "source_type", "source_id", "is_current"),
         Index("ix_embedding_chunks_model_current", "model_name", "model_version", "is_current"),
+        # EMBED-PAGE-PERF: index-only "missing documents" probe (app/services/embedding_indexes.py COVERAGE_INDEXES).
+        # The planner matches the predicate literally: a probe must filter bare `is_current`, not `is_current IS true`
+        # (`.is_(True)`), which is the predicate of uq_embedding_chunks_current instead.
+        Index("ix_embedding_chunks_current_model_doc", "model_name", "document_id", postgresql_where=text("is_current")),
         Index(
             "uq_embedding_chunks_current",
             "source_type",

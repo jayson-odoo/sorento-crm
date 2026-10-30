@@ -206,7 +206,7 @@ def _console(session_factory, monkeypatch, *, grants: list[str]) -> Console:
 
 @pytest.fixture
 def console(session_factory, monkeypatch):
-    return _console(session_factory, monkeypatch, grants=[GRANT])
+    return _console(session_factory, monkeypatch, grants=[GRANT, "sales_orders.outstanding"])
 
 
 @pytest.fixture
@@ -265,7 +265,7 @@ def test_an_unclear_basis_is_asked_never_delivered(console) -> None:
     """Owner ruling 4 Oct 2026 (was: an unclear basis ran delivered)."""
     text, calls = console.say(_rank(_e("Sorento", "brand"), basis="unclear"), "top 3 salesman for Sorento")
     assert calls == [], calls
-    assert text.strip() == "Delivered, ordered or outstanding?", text
+    assert text.strip() == "Invoiced, delivered, ordered or outstanding?", text
 
 
 def test_group_by_warehouse_is_location(console) -> None:
@@ -915,10 +915,13 @@ def test_the_lane_takes_measure_amount_from_the_parsers_measure_key(console) -> 
 
 def test_a_ranking_noun_entity_is_not_filtered_by_the_lane_it_is_the_parsers_to_omit(console) -> None:
     """Counterpart of the removed noun-drop: the lane does not special-case "salesman"; an
-    unknown sales_agent word is the plain unknown-word line (the new prompt never emits it)."""
+    unknown sales_agent word is the plain unknown word (the new prompt never emits it). REPORT-UNIFY owner Q4 (a),
+    27 Oct 2026: beside an applied filter (the brand) it is a "Not applied:" line and the ask runs on the rest; it
+    is the "I don't know" question only when it is the sole subject."""
     text, calls = console.say(_rank(_e("salesman", "sales_agent"), _e("Sorento", "brand")), "top 3 salesman for sorento")
-    assert calls == []
-    assert text.strip() == "I don't know 'salesman' as a sales agent.", text
+    (args,) = calls
+    assert args.get("brand_ids") and not args.get("sales_agent_ids"), args
+    assert "Not applied:" in text and "salesman" in text, text
 
 
 @pytest.mark.parametrize("body", ["top 3 salesman for sorento this year", "top 3 sales agents for sorento this year", OWNER_MESSAGE])
@@ -1554,7 +1557,7 @@ def test_c_a_category_named_by_its_own_name_still_resolves_alone(console) -> Non
 
 @pytest.mark.parametrize(
     "parser_basis, route_basis",
-    [("outstanding", "outstanding"), ("ordered", "ordered"), ("delivered", "delivered")],
+    [("outstanding", "outstanding"), ("ordered", "ordered"), ("delivered", "delivered"), ("invoiced", "invoiced")],
 )
 def test_d_the_parsers_basis_maps_onto_the_routes(console, parser_basis, route_basis) -> None:
     _text, calls = console.say(
@@ -1565,14 +1568,14 @@ def test_d_the_parsers_basis_maps_onto_the_routes(console, parser_basis, route_b
     assert args["group_by"] == "sales_agent" and args["brand_ids"] == [console.ids["brand"]], args
 
 
-@pytest.mark.parametrize("parser_basis", ["unclear", None, "invoiced"])
+@pytest.mark.parametrize("parser_basis", ["unclear", None])
 def test_d_a_basis_the_parser_did_not_settle_is_asked_never_delivered(console, parser_basis) -> None:
     """Owner ruling 4 Oct 2026 (was: unclear, null and an unknown word all ran delivered)."""
     text, calls = console.say(
         _rank(_e("Sorento", "brand"), basis=parser_basis, **THIS_YEAR), "top 3 salesman for sorento"
     )
     assert calls == [], (parser_basis, calls)
-    assert text.strip() == "Delivered, ordered or outstanding?", (parser_basis, text)
+    assert text.strip() == "Invoiced, delivered, ordered or outstanding?", (parser_basis, text)
 
 
 def test_d_a_basis_refine_to_outstanding_reruns_the_held_ranking(console) -> None:
@@ -1582,7 +1585,7 @@ def test_d_a_basis_refine_to_outstanding_reruns_the_held_ranking(console) -> Non
     assert args["basis"] == "outstanding", args
     assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
     assert args["brand_ids"] == [console.cabana], args
-    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args  # a refine keeps the period on screen
     assert args["measure"] == "amount", args
 
 
@@ -1594,11 +1597,19 @@ def test_d_a_refine_that_names_no_basis_keeps_the_held_outstanding_basis(console
     assert args["basis"] == "outstanding" and args["top_n"] == 5, args
 
 
-def test_d_an_unknown_basis_on_a_refine_leaves_the_held_basis(console) -> None:
+def test_d_an_unclear_basis_on_a_refine_leaves_the_held_basis(console) -> None:
+    _t1(console)
+    _text, calls = console.say(_refine(basis="unclear", top_n=5), "top 5")
+    (args,) = calls
+    assert args["basis"] == "delivered" and args["top_n"] == 5, args
+
+
+def test_d_an_invoiced_refine_reruns_the_held_ranking_on_invoiced(console) -> None:
+    """SALES-UNIFIED (owner ruling (b), 27 Oct 2026): invoiced is a basis of the report ask."""
     _t1(console)
     _text, calls = console.say(_refine(basis="invoiced", top_n=5), "invoiced top 5")
     (args,) = calls
-    assert args["basis"] == "delivered" and args["top_n"] == 5, args
+    assert args["basis"] == "invoiced" and args["top_n"] == 5, args
 
 
 # E ----------------------------------------------------------------------- #

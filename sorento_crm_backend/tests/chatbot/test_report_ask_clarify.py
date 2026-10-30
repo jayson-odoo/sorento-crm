@@ -2,7 +2,7 @@
 
 1. `crm_report_ask` / `sales_ranking`: when the ask names no metric the bot asks
    `By quantity or by amount?`; when it names no basis it asks
-   `Delivered, ordered or outstanding?`. Both are required fields of the same ask as the
+   `Invoiced, delivered, ordered or outstanding?`. Both are required fields of the same ask as the
    period and how-many, asked AFTER them, metric before basis. The metric is NOT asked when
    there is no ranking (a plain total, or a month trend: both qty and amount are shown); the
    basis is always asked when not given.
@@ -53,7 +53,7 @@ from tests.chatbot.test_report_ask_lane import (  # noqa: F401 - fixtures + help
 )
 
 METRIC_Q = "By quantity or by amount?"
-BASIS_Q = "Delivered, ordered or outstanding?"
+BASIS_Q = "Invoiced, delivered, ordered or outstanding?"
 TOP_SELLING = "crm_top_selling_report"
 SENTINEL_METRIC = "SENTINEL SHARED METRIC LINE"
 SENTINEL_BASIS = "SENTINEL SHARED BASIS LINE"

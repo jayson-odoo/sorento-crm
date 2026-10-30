@@ -29,6 +29,11 @@ PENDING_KINDS: tuple[str, ...] = (
 #: seam (`lanes.business.sales_analysis_company_reply`); any other pick re-asks it (`apply`).
 SALES_ANALYSIS_COMPANY_KIND = "sales_analysis_company"
 
+#: SALES-TARGET-CHAT slice 2: the read-back of an opportunity a salesperson is logging ("Reply YES
+#: to save."), a yes/no question armed and answered by `lanes/opportunity.py` alone; the payload
+#: carries the values to save. Any other ask drops it (the engine's opportunity seam).
+OPPORTUNITY_CONFIRM_KIND = "opportunity_confirm"
+
 # Stay alive, tracked by `answered_positions`, after their own pick.
 #
 # `tier_pick` (hand pass 9, D3, owner ruling 20 Sep 2026): main's fresh-typed picker
@@ -108,6 +113,34 @@ def ask(
         payload=dict(payload or {}),
         asked_at_turn=asked_at_turn,
     )
+
+
+#: The ranking fields a pick interrupting a ranking resumes (REPORT-SMART-L R1 review).
+_HELD_RANKING_KEYS = (
+    "group_by", "top_n", "measure", "basis", "rank_direction", "rank_by", "rank_group", "date_filter_start",
+    "date_filter_end",
+    # REPORT-UNIFY: a sales total or outstanding ask is this ask too; its channel, its kind (`capability_from`), the
+    # brand / agent / category / spec words and the comparison ride the pick like the rest.
+    "sales_channel", "capability_from", "report_breakdown", "self_reference", "compare_to", "report_ask_words",
+    "report_ask_spec",
+)
+
+
+def asked_report(verdict: dict[str, Any] | None) -> dict[str, Any]:
+    """The asking turn's own ask, as a roster pending's payload carries it, so the pick continues THAT ask: its
+    `status` (AC-1704's carry) and, for a ranking (`sales_ranking` / `top_selling`), the `ranking_ask` it interrupts
+    (`turn/apply._answer_pending` fills what the answering verdict leaves empty). Parser fields only. The ONE rule
+    for the gate's picker (`answer_bridge._offer_ask_payload`) and the narrower's roster (`turn/apply.py`)."""
+    verdict = verdict or {}
+    out: dict[str, Any] = {}
+    order_status = verdict.get("order_status")
+    if order_status:
+        out["status"] = order_status
+    if order_status in ("sales_ranking", "top_selling"):
+        held = {k: verdict[k] for k in _HELD_RANKING_KEYS if verdict.get(k) not in (None, "", [])}
+        if held:
+            out["ranking_ask"] = held
+    return out
 
 
 def top_selling_pick(

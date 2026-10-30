@@ -16,6 +16,7 @@ from fastapi import APIRouter, Body, Depends, Query, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_values
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.product import Product, ProductAttachment
@@ -619,9 +620,6 @@ def get_candidate_orders(
                      AND (CAST(:to_date AS date) IS NULL OR cr.delivery_date IS NULL
                           OR cr.delivery_date <= CAST(:to_date AS date))
                ) AS rows_in_range,
-               count(*) FILTER (
-                   WHERE NOT (cr.ack_state = ANY(:planned_ack_states))
-               ) AS rows_awaiting,
                -- created_at is stored naive UTC by every writer; a header raised 17 Sep
                -- 23:00 UTC is 18 Sep in Kuala Lumpur (app-wide convention, see
                -- reorder_run_service.py:460, models/project_so.py:881).
@@ -644,7 +642,6 @@ def get_candidate_orders(
     """), {
         "from_date": from_date, "to_date": to_date,
         "raised_from": raised_from, "raised_to": raised_to,
-        "planned_ack_states": list(demand.PLANNED_ACK_STATES),
         **co_params,
     }).mappings().all()
     return [
@@ -654,7 +651,6 @@ def get_candidate_orders(
             "customer_name": r["customer_name"],
             "rows_total": int(r["rows_total"] or 0),
             "rows_in_range": int(r["rows_in_range"] or 0),
-            "rows_awaiting": int(r["rows_awaiting"] or 0),
             "rows_raised_in_window": int(r["rows_raised_in_window"] or 0),
             "first_delivery": r["first_delivery"].isoformat() if r["first_delivery"] else None,
             "last_delivery": r["last_delivery"].isoformat() if r["last_delivery"] else None,
@@ -1171,7 +1167,7 @@ def list_recommendations(
     sort: Optional[str] = Query(None),
     dir: str = Query("asc"),
     query: Optional[str] = Query(None),
-    type: Optional[str] = Query(None),  # buy | covered | disposition | exception | needs_level
+    type: Optional[list[str]] = Query(None),  # buy | covered | disposition | exception | needs_level; several = any
     budget: Optional[float] = Query(None, ge=0),  # M4 - live funding what-if
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
@@ -1188,9 +1184,10 @@ def list_recommendations(
 
     where = ["rr.run_id = :rid"]
     params: dict[str, Any] = {"rid": run_id}
-    if type in ("buy", "covered", "disposition", "exception", "needs_level"):
-        where.append("rr.rec_type = :type")
-        params["type"] = type
+    rec_types = [t for t in (multi_values(type) or []) if t in ("buy", "covered", "disposition", "exception", "needs_level")]
+    if rec_types:
+        where.append("rr.rec_type = ANY(:types)")
+        params["types"] = rec_types
     if query:
         where.append("(p.product_code ILIKE :q OR p.product_name ILIKE :q)")
         params["q"] = f"%{query}%"

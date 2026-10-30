@@ -56,6 +56,12 @@ export const DROP_NEW = 'drop:new';
 export const DROP_CANCEL = 'drop:cancel';
 export const lineDropId = (lineId: string) => `line:${lineId}`;
 
+/**
+ * FULFIL-SO-REMARK (AC-9): the line ids a `Mockup` badge sits on, provided by the Confirm guide
+ * only when the chosen lines of the order mix mockup and actual lines. Empty everywhere else.
+ */
+export const MockupLinesContext = React.createContext<ReadonlySet<string>>(new Set());
+
 /** The id the focus helpers find a split's date input by. */
 export const dateInputId = (splitId: string) => `split-date-${splitId}`;
 
@@ -139,6 +145,20 @@ const withoutColumns = (dropped: ReadonlySet<string>) =>
 const READ_ONLY_COLUMNS = withoutColumns(READ_ONLY_DROPPED);
 /** OI-SPLIT-CONFIRM-POLISH: the edit sheet with no drag (the guided Confirm): no grip column. */
 const NO_DRAG_COLUMNS = withoutColumns(new Set(['grip']));
+/**
+ * PRODUCT-CHANGE-TALLY (owner, 28 Oct 2026): as the Order Inquiry email and its Excel print a
+ * product AutoCount swapped, ITEM CODE the old code and NEW ITEM CODE the new one beside it,
+ * the column there only when a line on the sheet was swapped.
+ */
+const withNewItemCode = (columns: typeof COLUMNS) =>
+  columns.flatMap((column) =>
+    column.key === 'item'
+      ? [column, { key: 'newItem', label: 'New item code', width: 112 }]
+      : [column],
+  );
+const COLUMNS_NEW_ITEM = withNewItemCode(COLUMNS);
+const READ_ONLY_COLUMNS_NEW_ITEM = withNewItemCode(READ_ONLY_COLUMNS);
+const NO_DRAG_COLUMNS_NEW_ITEM = withNewItemCode(NO_DRAG_COLUMNS);
 
 /**
  * Never resized: the grip and remove buttons, and REMARK, which takes whatever width the other
@@ -444,6 +464,8 @@ interface LineBlockProps {
   soDate: string;
   /** More than one location on the SO: the phone shows it under the item code. */
   multiLocation: boolean;
+  /** A line on the sheet was swapped to another product: the New item code column shows. */
+  newItemColumn: boolean;
   open: boolean;
   itemTop: boolean;
   flash: boolean;
@@ -463,6 +485,7 @@ const LineBlock = React.memo(function LineBlock({
   soNumber,
   soDate,
   multiLocation,
+  newItemColumn,
   open,
   itemTop,
   flash,
@@ -473,6 +496,7 @@ const LineBlock = React.memo(function LineBlock({
   handlers,
 }: LineBlockProps) {
   const no = line.lineNo ?? '';
+  const mockup = React.useContext(MockupLinesContext).has(line.lineId);
   // Read-only rows: a line AutoCount added (it only receives) or delivered in full (UAC A3).
   const delivered = Boolean(line.deliveredInFull);
   const added = isAddedLine(line);
@@ -519,13 +543,35 @@ const LineBlock = React.memo(function LineBlock({
           'max-md:z-[1]',
         )}
       >
-        <span className="font-semibold">{line.itemCode}</span>
+        <span className="font-semibold" data-testid={`item-code-${no}`}>
+          {line.wasItemCode || line.itemCode}
+        </span>
+        {mockup ? (
+          <Badge
+            variant="warning"
+            appearance="light"
+            size="sm"
+            className="ms-1.5"
+            data-testid="confirm-guide-mockup-badge"
+          >
+            Mockup
+          </Badge>
+        ) : null}
         {multiLocation ? (
           <span className="block text-2xs text-muted-foreground md:hidden">
             {line.location}
           </span>
         ) : null}
       </TableCell>
+      {newItemColumn ? (
+        <TableCell
+          rowSpan={span}
+          data-testid={`new-item-code-${no}`}
+          className={cn(baseCell, 'font-semibold')}
+        >
+          {line.wasItemCode ? line.itemCode : ''}
+        </TableCell>
+      ) : null}
       <TableCell rowSpan={span} className={cn(baseCell, DESKTOP_ONLY)}>
         {line.location}
       </TableCell>
@@ -997,12 +1043,15 @@ function DropRow({
   testId,
   over,
   destructive,
+  span,
   children,
 }: {
   id: string;
   testId: string;
   over: boolean;
   destructive?: boolean;
+  /** The sheet's column count (the New item code column adds one). */
+  span: number;
   children: React.ReactNode;
 }) {
   return (
@@ -1015,7 +1064,7 @@ function DropRow({
     >
       <TableRow className="border-0 hover:bg-transparent">
         <TableCell
-          colSpan={COLUMNS.length}
+          colSpan={span}
           className={cn(
             'h-9 border-b border-dashed border-muted-foreground/50 bg-muted/30 ps-3.5 text-start text-xs',
             destructive ? 'text-destructive' : 'text-muted-foreground',
@@ -1180,7 +1229,21 @@ export function LineSplitSheet({
     () => new Set(allLines.map((line) => line.location)).size > 1,
     [allLines],
   );
-  const columns = readOnly ? READ_ONLY_COLUMNS : canDrag ? COLUMNS : NO_DRAG_COLUMNS;
+  const newItemColumn = React.useMemo(
+    () => allLines.some((line) => Boolean(line.wasItemCode)),
+    [allLines],
+  );
+  const columns = newItemColumn
+    ? readOnly
+      ? READ_ONLY_COLUMNS_NEW_ITEM
+      : canDrag
+        ? COLUMNS_NEW_ITEM
+        : NO_DRAG_COLUMNS_NEW_ITEM
+    : readOnly
+      ? READ_ONLY_COLUMNS
+      : canDrag
+        ? COLUMNS
+        : NO_DRAG_COLUMNS;
   // OI-SPLIT-CONFIRM-POLISH: columns resize by dragging a header's edge, through TanStack's
   // column sizing and the DataGrid's own handle (`components/ui/data-grid-table.tsx`
   // `DataGridTableHeadRowCellResize`, the pattern every list page uses). Only widths are
@@ -1238,9 +1301,14 @@ export function LineSplitSheet({
         'table-fixed border-separate border-spacing-0 text-xs',
         resized
           ? 'min-w-(--sheet-min) max-md:min-w-(--sheet-min-phone)'
-          : readOnly
-            ? 'min-w-[1030px] max-md:min-w-[850px]'
-            : 'min-w-[1180px] max-md:min-w-[1000px]',
+          : // The New item code column (112px) widens the sheet rather than squeeze REMARK.
+            newItemColumn
+            ? readOnly
+              ? 'min-w-[1142px] max-md:min-w-[962px]'
+              : 'min-w-[1292px] max-md:min-w-[1112px]'
+            : readOnly
+              ? 'min-w-[1030px] max-md:min-w-[850px]'
+              : 'min-w-[1180px] max-md:min-w-[1000px]',
       )}
     >
       <TableHeader className="[&_tr]:border-0">
@@ -1289,6 +1357,7 @@ export function LineSplitSheet({
               soNumber={soNumber}
               soDate={soDate}
               multiLocation={multiLocation}
+              newItemColumn={newItemColumn}
               open={openLineIds.has(line.lineId)}
               itemTop={!prev || prev.itemCode !== line.itemCode}
               flash={flashLineId === line.lineId}
@@ -1304,6 +1373,7 @@ export function LineSplitSheet({
                   id={DROP_NEW}
                   testId="drop-new-date"
                   over={overTarget === DROP_NEW}
+                  span={columns.length}
                 >
                   <CirclePlus
                     aria-hidden
@@ -1315,6 +1385,7 @@ export function LineSplitSheet({
                   id={DROP_CANCEL}
                   testId="drop-cancel"
                   over={overTarget === DROP_CANCEL}
+                  span={columns.length}
                   destructive
                 >
                   Cancel this qty

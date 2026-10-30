@@ -6,9 +6,9 @@
  * shows the same fields in the same order.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Plus } from 'lucide-react';
+import { Loader2, LoaderCircleIcon, Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SampleRequestLines } from '@/components/common/SampleRequestLines';
 import { SampleRequestFooterFields } from '@/components/common/SampleRequestFooterFields';
+import {
+  SampleRequestPrefillNote,
+  SampleRequestQuotationPicker,
+} from '@/components/common/SampleRequestQuotationSource';
+import { useSampleRequestPrefill } from '@/hooks/useSampleRequestPrefill';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -28,6 +33,7 @@ import { SampleRequestError } from '@/types/sampleRequest';
 import {
   EMPTY_FORM,
   blankLine,
+  productSource,
   payloadFromState,
   stateFromDetail,
   numberErrors,
@@ -37,13 +43,21 @@ import {
 import { lookupCustomersForRequest } from '@/app/(protected)/procurement-management/purchase-requests/services/customerLookupService';
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
 import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
+import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { getProject } from '../../_shared/services/projectService';
+import { useProject } from '../../_shared/hooks/useProjects';
+import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import {
   useSampleRequestMutations,
   useSampleRequestQuery,
   useSampleRequestSwitches,
 } from '../hooks/useSampleRequests';
-import { searchSampleRequestProducts } from '../services/sampleRequestService';
+import {
+  getSampleRequestQuotationPrefill,
+  searchSampleRequestProducts,
+} from '../services/sampleRequestService';
 
 const BASE_PATH = '/project-sales/sample-requests';
 
@@ -79,15 +93,65 @@ const ReadValue = ({ children }: { children: ReactNode }) => (
   <p className="min-h-9 break-words py-2 text-sm">{children || '-'}</p>
 );
 
-export default function SampleRequestForm({
-  requestId,
-  projectId,
-}: {
+interface SampleRequestFormProps {
   /** Edit mode: the draft to change. */
   requestId?: string;
   /** New mode: a project to start from (the project tab's Create). */
   projectId?: string;
-}) {
+}
+
+/**
+ * A salesperson limited to their own sample requests (PORTAL-P4-REQUESTS R3, form parity) creates
+ * and edits in the portal's own form, through My Requests; everyone else the staff form, unchanged.
+ */
+export default function SampleRequestForm(props: SampleRequestFormProps) {
+  const { limited } = useRequestScope('sample_request');
+  if (limited) {
+    return props.requestId ? (
+      <MyRequestClientProvider>
+        <PortalSampleRequestForm requestId={props.requestId} />
+      </MyRequestClientProvider>
+    ) : (
+      <NewOwnSampleRequest projectId={props.projectId} />
+    );
+  }
+  return <StaffSampleRequestForm {...props} />;
+}
+
+/**
+ * A new one of their own. A project's stage action (`?project_id=`) starts it with that project
+ * (owner ruling (a)), seeded as the portal's own "Registered project" picker sets it when the
+ * project is picked (its onChange, `app/(auth)/portal/components/SampleRequestForm.tsx:334-339`):
+ * the id and the "code - title" label, no customer. The form waits for the project so the seed is
+ * there on first paint; a project they cannot read starts an empty form.
+ */
+function NewOwnSampleRequest({ projectId }: { projectId?: string }) {
+  const { data: project, isLoading } = useProject(projectId);
+  const initialValues = useMemo<Partial<FormState> | undefined>(
+    () =>
+      project
+        ? {
+            project_id: project.id,
+            project_label: `${projectCodeLabel(project)} - ${project.title}`,
+          }
+        : undefined,
+    [project],
+  );
+  if (projectId && isLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <LoaderCircleIcon className="size-6 animate-spin" />
+      </div>
+    );
+  }
+  return (
+    <MyRequestClientProvider>
+      <PortalSampleRequestForm initialValues={initialValues} />
+    </MyRequestClientProvider>
+  );
+}
+
+function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps) {
   const router = useRouter();
   const { create, update, submit } = useSampleRequestMutations();
   const existing = useSampleRequestQuery(requestId ?? null);
@@ -106,6 +170,25 @@ export default function SampleRequestForm({
     (next: Partial<FormState>) => setState((prev) => ({ ...prev, ...next })),
     [],
   );
+  // A request from a quotation offers only that quotation's products (SFQ-27).
+  const sourceDoc = state.quotation_document_id;
+  const sourceIssue = state.quotation_issue_id;
+  const searchProductsForRequest = useCallback(
+    (q: string) => {
+      const source = productSource(sourceDoc, sourceIssue);
+      return source ? searchSampleRequestProducts(q, source) : searchSampleRequestProducts(q);
+    },
+    [sourceDoc, sourceIssue],
+  );
+  // A NEW request starts from its project's quotation (SAMPLE-FROM-QUOTE, owner Q6 a); a draft
+  // never refills.
+  const prefill = useSampleRequestPrefill({
+    enabled: !requestId,
+    projectId: state.project_id,
+    state,
+    patch,
+    fetchPrefill: getSampleRequestQuotationPrefill,
+  });
 
   useEffect(() => {
     if (requestId && existing.data && !hydrated) {
@@ -281,6 +364,7 @@ export default function SampleRequestForm({
                 paginated
                 pageSize={25}
                 clearable
+                truncateTriggerLabel
                 placeholder="Search a project by code or title"
                 emptyMessage="No project matches that."
               />
@@ -369,13 +453,28 @@ export default function SampleRequestForm({
               Add row
             </Button>
           </div>
+          {prefill.documents.length > 1 && (
+            <div className="mb-3">
+              <SampleRequestQuotationPicker
+                documents={prefill.documents}
+                value={prefill.documentId ?? ''}
+                onPick={prefill.pickDocument}
+              />
+            </div>
+          )}
           <SampleRequestLines
             value={state}
             onChange={patch}
-            search={searchSampleRequestProducts}
+            search={searchProductsForRequest}
+            listWhenEmpty={Boolean(sourceDoc)}
             captions={{ no: 'No.', item: 'Item Code', qty: 'Qty' }}
             errors={errors}
           />
+          {prefill.note && (
+            <div className="mt-3">
+              <SampleRequestPrefillNote note={prefill.note} />
+            </div>
+          )}
 
           <div className="mt-8">
             <SampleRequestFooterFields state={state} set={set} errors={errors} />

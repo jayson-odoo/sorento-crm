@@ -131,9 +131,10 @@ def test_confirm_handover_still_sends_when_the_excel_cannot_be_stored(api, monke
     )
 
 
-def test_a_database_error_in_the_excel_still_sends_the_email(api, monkeypatch):
-    """Review B1: the render runs in a savepoint, so an SQL error inside it leaves the drain
-    session usable and the email still dispatches (and can still query)."""
+def test_a_failed_excel_render_still_sends_the_email(api, monkeypatch):
+    """Review B1, re-pinned (OI-EMAIL-PURCHASING-FOCUS, 26 Oct 2026): the workbook is now
+    written from the email's own lines and runs no SQL, so a render failure is a plain
+    exception. The email still dispatches, the drain session still queries, no workbook."""
     import sqlalchemy as sa
 
     _client, world = api
@@ -142,8 +143,8 @@ def test_a_database_error_in_the_excel_still_sends_the_email(api, monkeypatch):
     _enabled_handover(world)
     dispatched: list = []
 
-    def _export_fails(self, **_kw):
-        self.db.execute(sa.text("SELECT 1/0"))
+    def _render_fails(_lines):
+        raise RuntimeError("render failed")
 
     def _dispatch_queries(self, trigger_type, *, context, source_kind, source_id):
         self.db.execute(sa.text("SELECT 1"))  # the real dispatch reads the automations
@@ -151,8 +152,7 @@ def test_a_database_error_in_the_excel_still_sends_the_email(api, monkeypatch):
         return {"trigger_type": trigger_type, "fired": 0, "results": []}
 
     monkeypatch.setattr(
-        "app.services.order_inquiry_worklist_service.OrderInquiryWorklistService.export_xlsx",
-        _export_fails,
+        "app.services.order_inquiry_worklist_service.handover_xlsx", _render_fails
     )
     monkeypatch.setattr(
         "app.services.automation_service.AutomationService.dispatch_event", _dispatch_queries

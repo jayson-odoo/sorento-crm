@@ -227,11 +227,13 @@ def sweep(db: Session, *, notify: bool = True) -> Dict[str, int]:
     #
     # `evaluate` already answers "not on the ladder" for a decided project, so these rows fall
     # out through the normal cleared path with no special case.
-    projects: List[Project] = (
-        db.query(Project)
-        .filter(or_(Project.outcome == OUTCOME_OPEN, Project.stale_level > 0))
-        .all()
-    )
+    # A portal registration waiting for approval is nobody's pursuit yet, so it is not the
+    # sweep's business (PROJECT-REG-PORTAL R4).
+    from app.services.project_service import approved_projects
+
+    projects: List[Project] = approved_projects(
+        db.query(Project).filter(or_(Project.outcome == OUTCOME_OPEN, Project.stale_level > 0))
+    ).all()
     if not projects:
         return summary
 
@@ -303,6 +305,9 @@ def sweep(db: Session, *, notify: bool = True) -> Dict[str, int]:
 
 
 def _message(project: Project, level: int, result: Dict[str, Any]) -> Dict[str, str]:
+    from app.services.project_service import project_label
+
+    label = project_label(project)
     days = result.get("days") or 0
     if result.get("reason") == REASON_OVERDUE_TASK:
         why = f"its next action is {days} days overdue"
@@ -311,19 +316,19 @@ def _message(project: Project, level: int, result: Dict[str, Any]) -> Dict[str, 
 
     if level == LEVEL_NUDGE:
         return {
-            "title": f"{project.project_code} needs an update",
+            "title": f"{label} needs an update",
             "body": f"{project.title}: {why}. Log what happened, or set the next action.",
         }
     if level == LEVEL_WARN:
         return {
-            "title": f"{project.project_code} is falling behind",
+            "title": f"{label} is falling behind",
             "body": (
                 f"{project.title}: {why}. Your manager has been copied on this one. "
                 "Update it or hand it over."
             ),
         }
     return {
-        "title": f"{project.project_code} is unattended",
+        "title": f"{label} is unattended",
         "body": (
             f"{project.title}: {why}. It is now flagged to everyone as unattended, and a "
             "colleague can ask to take it over. Nothing has been reassigned -- a manager decides."
@@ -347,7 +352,7 @@ def _notify(db: Session, *, project: Project, level: int, result: Dict[str, Any]
 
         recipients = [project.owner_user_id] if project.owner_user_id else []
         if level >= LEVEL_WARN:
-            recipients.extend(management_user_ids(db))
+            recipients.extend(management_user_ids(db, project.company_id))
 
         sent = False
         for user_id in {r for r in recipients if r}:

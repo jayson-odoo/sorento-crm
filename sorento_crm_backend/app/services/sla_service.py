@@ -755,7 +755,7 @@ class ConversationSLATrackingService:
         query: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "desc",
-        assigned_to: Optional[str] = None,
+        assigned_to: Optional[list[str]] = None,
         tracking_ids: Optional[list[str]] = None,
         contact: Optional[str] = None,
         is_resolved: Optional[bool] = None,
@@ -830,15 +830,16 @@ class ConversationSLATrackingService:
                 )
             )
 
-        if assigned_to and assigned_to.strip():
-            assignee_val = assigned_to.strip()
+        if isinstance(assigned_to, str):
+            assigned_to = [assigned_to]
+        if assigned_to:
             # Only show trackings that have an assignee and that assignee matches (exclude unassigned)
             q = q.filter(ConversationSLATracking.assigned_to_id.isnot(None)).join(
                 User, ConversationSLATracking.assigned_to_id == User.id
             ).filter(
                 or_(
-                    User.respond_user_id == assignee_val,
-                    User.id == assignee_val,
+                    User.respond_user_id.in_(assigned_to),
+                    User.id.in_(assigned_to),
                 )
             )
 
@@ -857,7 +858,7 @@ class ConversationSLATrackingService:
         query: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "desc",
-        assigned_to: Optional[str] = None,
+        assigned_to: Optional[list[str]] = None,
         tracking_ids: Optional[list[str]] = None,
         scope: str = "conversation",
         contact: Optional[str] = None,
@@ -897,15 +898,16 @@ class ConversationSLATrackingService:
             if tracking_ids is not None:
                 q = q.filter(ConversationSLATracking.id.in_(tracking_ids))
 
-            if assigned_to and assigned_to.strip():
-                assignee_val = assigned_to.strip()
+            if isinstance(assigned_to, str):
+                assigned_to = [assigned_to]
+            if assigned_to:
                 # Only show trackings that have an assignee and that assignee matches (exclude unassigned)
                 q = q.filter(ConversationSLATracking.assigned_to_id.isnot(None)).join(
                     User, ConversationSLATracking.assigned_to_id == User.id
                 ).filter(
                     or_(
-                        User.respond_user_id == assignee_val,
-                        User.id == assignee_val,
+                        User.respond_user_id.in_(assigned_to),
+                        User.id.in_(assigned_to),
                     )
                 )
 
@@ -1531,8 +1533,8 @@ class ConversationSLATrackingService:
     def list_team_pending(
         self,
         user_id: str,
-        assignee: Optional[str] = None,
-        team: Optional[str] = None,
+        assignee: Optional[list[str]] = None,
+        team: Optional[list[str]] = None,
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
@@ -1551,22 +1553,39 @@ class ConversationSLATrackingService:
         from sqlalchemy.orm import joinedload
         from app.models.user import User
 
+        from app.models.access import Team
+
         visible_team_ids = self._visible_team_ids(user_id)
+        # Every team the caller can see, before any filter narrows the rows, so the Team filter's
+        # options do not shrink once a filter is on.
+        teams = (
+            [
+                {"id": str(t.id), "name": t.name}
+                for t in self.db.query(Team)
+                .filter(Team.id.in_(list(visible_team_ids)))
+                .order_by(Team.name)
+                .all()
+            ]
+            if visible_team_ids
+            else []
+        )
         member_ids = self._members_of_teams(visible_team_ids)
         member_ids.discard(str(user_id))  # exclude self
         if not member_ids:
-            return {"data": [], "total": 0, "page": page, "limit": limit}
+            return {"data": [], "total": 0, "page": page, "limit": limit, "teams": teams}
 
         # Optional team filter: restrict to members of that single team (must be in
         # the visible set, else it yields nothing).
         if team:
-            team_member_ids = self._members_of_teams([str(team)])
+            team = [team] if isinstance(team, str) else team
+            team_member_ids = self._members_of_teams([str(t) for t in team])
             member_ids = {m for m in member_ids if m in team_member_ids}
         # Optional assignee filter.
         if assignee:
-            member_ids = {m for m in member_ids if m == str(assignee)}
+            assignee = [assignee] if isinstance(assignee, str) else assignee
+            member_ids = {m for m in member_ids if m in {str(a) for a in assignee}}
         if not member_ids:
-            return {"data": [], "total": 0, "page": page, "limit": limit}
+            return {"data": [], "total": 0, "page": page, "limit": limit, "teams": teams}
 
         base = (
             self.db.query(ConversationSLATracking)
@@ -1656,7 +1675,7 @@ class ConversationSLATrackingService:
             start = max(0, (page - 1) * limit)
             data = data[start : start + limit]
 
-        return {"data": data, "total": total, "page": page, "limit": limit}
+        return {"data": data, "total": total, "page": page, "limit": limit, "teams": teams}
 
     def _push_respond_assignee(
         self, tracking: ConversationSLATracking, new_respond_user_id: Optional[str]
@@ -2199,6 +2218,10 @@ class ConversationSLATrackingService:
         for r in form_rows:
             cfg = cfg_by_key.get((str(r.source_entity_type), getattr(r, "team_set_code", None)))
             if cfg is None:
+                # Product media requests have no stage config (they run on the general-enquiries
+                # route), and their two actions are the row's own buttons.
+                if str(r.source_entity_type) in ("product_drawing", "product_photo"):
+                    out[str(r.id)] = "Resolve" if r.is_responded else "Respond"
                 continue
             if not bool(r.is_responded) and cfg.respond_event:
                 event = cfg.respond_event
@@ -2282,6 +2305,13 @@ class ConversationSLATrackingService:
             PurchaseRequestHeader.revision_no,
         )
         ticket_map = _num_map(Ticket.id, Ticket.ticket_number, ids_by_type.get("ticket") or set())
+        from app.models.product import Product
+
+        product_map = _num_map(
+            Product.id,
+            Product.product_code,
+            (ids_by_type.get("product_drawing") or set()) | (ids_by_type.get("product_photo") or set()),
+        )
 
         contact_map: dict[str, Optional[str]] = {}
         if contact_ids:
@@ -2308,6 +2338,8 @@ class ConversationSLATrackingService:
                 ref = pr_map.get(sid)
             elif et == "ticket" and sid:
                 ref = ticket_map.get(sid)
+            elif et in ("product_drawing", "product_photo") and sid:
+                ref = product_map.get(sid)
             elif r.respond_contact_id:
                 ref = contact_map.get(str(r.respond_contact_id))
             result[str(r.id)] = ref
@@ -5566,9 +5598,9 @@ class ConversationSLATrackingService:
         sort_field: Optional[str] = "event_at",
         sort_dir: Optional[str] = "desc",
         tracking_id: Optional[str] = None,
-        event_type: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-        assigned_to_id: Optional[str] = None,
+        event_type: Optional[list[str]] = None,
+        assigned_to: Optional[list[str]] = None,
+        assigned_to_id: Optional[list[str]] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
     ):
@@ -5585,11 +5617,11 @@ class ConversationSLATrackingService:
         if tracking_id:
             q = q.filter(ConversationSLAEventLog.sla_tracking_id == tracking_id)
         if event_type:
-            q = q.filter(ConversationSLAEventLog.event_type == event_type)
+            q = q.filter(ConversationSLAEventLog.event_type.in_(event_type))
         if assigned_to:
-            q = q.filter(ConversationSLAEventLog.assigned_to == assigned_to)
+            q = q.filter(ConversationSLAEventLog.assigned_to.in_(assigned_to))
         if assigned_to_id:
-            q = q.filter(ConversationSLAEventLog.assigned_to_id == assigned_to_id)
+            q = q.filter(ConversationSLAEventLog.assigned_to_id.in_(assigned_to_id))
         if date_from:
             try:
                 dt = datetime.fromisoformat(date_from.replace("Z", "+00:00"))

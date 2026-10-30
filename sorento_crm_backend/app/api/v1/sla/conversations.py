@@ -27,7 +27,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.api.v1._respond_chat_template_routes import TemplateMessageSendRequest
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import get_current_user, require_any_permission, require_permission
 from app.schemas.ticket_comment import TicketCommentCreate, TicketCommentResponse
 from app.services.conversation_inbox_service import (
     DEFAULT_LIMIT,
@@ -43,16 +43,56 @@ router = APIRouter()
 
 VIEW = "sla_management.conversations.view"
 REPLY = "sla_management.conversations.reply"
+VIEW_OWN = "sla_management.conversations.view_own"
+#: Reads take `view_own` too: a holder of only that sees the contacts of their own agents'
+#: customers, on every tab and every thread route (PORTAL-P2-ONLY-THEIRS, owner ruling QE).
+READ = [VIEW, VIEW_OWN]
+
+
+def _own_contact_ids(db: Session, current_user: dict):
+    """Subquery of the contacts they may see when they hold `view_own` alone, else ``None``."""
+    from app.services import own_scope
+
+    uid = str(current_user["id"])
+    if not own_scope.user_is_limited(db, uid, VIEW, VIEW_OWN):
+        return None
+    return own_scope.conversation_contact_ids(own_scope.me(db, uid))
+
+
+def _contact_in_scope(
+    contact_ref: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    _assert_own_contact(db, current_user, contact_ref)
+
+
+def _assert_own_contact(db: Session, current_user: dict, contact_ref: str) -> None:
+    """404 for a contact that is not one of theirs; reads and writes alike (owner ruling Q3a).
+    Says nothing for everyone else, so their behaviour is exactly as before."""
+    scope = _own_contact_ids(db, current_user)
+    if scope is None:
+        return
+    from app.models.access import RespondContact
+
+    contact = ConversationSLATrackingService(db).resolve_contact_by_ref(contact_ref)
+    if contact is None or (
+        db.query(RespondContact.id)
+        .filter(RespondContact.id == contact.id, RespondContact.id.in_(scope))
+        .first()
+        is None
+    ):
+        raise HTTPException(status_code=404, detail="Contact not found")
 
 
 @router.get("")
 @router.get("/")
 async def list_inbox_conversations(
     tab: str = Query(TAB_ALL, description="mine | mentioned | unassigned | all"),
-    q: Optional[str] = Query(None, description="Contact name or phone fragment"),
+    q: Optional[str] = Query(None, description="Contact name, phone or message text fragment"),
     cursor: Optional[str] = Query(None, description="Opaque keyset cursor from next_cursor"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """One keyset page of the inbox list (AC-N1).
@@ -72,6 +112,7 @@ async def list_inbox_conversations(
                 q=q,
                 cursor=cursor,
                 limit=limit,
+                contact_ids=_own_contact_ids(db, current_user),
             )
         )
     except HTTPException:
@@ -89,7 +130,8 @@ async def get_contact_thread_page(
         None, description="Message id to centre the window on (jump to a search match)"
     ),
     limit: int = Query(50, ge=1, le=200),
-    current_user: dict = Depends(require_permission(VIEW)),
+    _own: None = Depends(_contact_in_scope),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """One scroll-back window of a contact's thread (AC-N3).
@@ -124,7 +166,8 @@ async def search_contact_thread(
     contact_ref: str,
     q: str = Query("", description="Free text searched inside this contact's messages"),
     limit: int = Query(100, ge=1, le=200),
-    current_user: dict = Depends(require_permission(VIEW)),
+    _own: None = Depends(_contact_in_scope),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """In-thread message search for a contact (AC-N3), same shape as the
@@ -143,9 +186,10 @@ async def search_contact_thread(
 
 
 @router.get("/{contact_ref}/comments")
-async def list_contact_comments(
+def list_contact_comments(
     contact_ref: str,
-    current_user: dict = Depends(require_permission(VIEW)),
+    _own: None = Depends(_contact_in_scope),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Every internal note on this contact, oldest first (AC-N3).
@@ -161,7 +205,8 @@ async def list_contact_comments(
 @router.get("/{contact_ref}/window")
 async def get_contact_window(
     contact_ref: str,
-    current_user: dict = Depends(require_permission(VIEW)),
+    _own: None = Depends(_contact_in_scope),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Composer state for this contact: the 24h window plus the out-of-window
@@ -188,6 +233,7 @@ async def get_contact_window(
 async def send_contact_template_message(
     contact_ref: str,
     body: TemplateMessageSendRequest,
+    _own: None = Depends(_contact_in_scope),
     current_user: dict = Depends(require_permission(REPLY)),
     db: Session = Depends(get_db),
 ):
@@ -220,10 +266,11 @@ async def send_contact_template_message(
     response_model=TicketCommentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_contact_comment(
+def create_contact_comment(
     contact_ref: str,
     payload: TicketCommentCreate,
-    current_user: dict = Depends(require_permission(VIEW)),
+    _own: None = Depends(_contact_in_scope),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Write an internal note on this CONTACT (AC-N3).
@@ -249,7 +296,8 @@ async def create_contact_comment(
 async def proxy_contact_media(
     contact_ref: str,
     url: str = Query(..., description="Attachment URL on an allowlisted host"),
-    current_user: dict = Depends(require_permission(VIEW)),
+    _own: None = Depends(_contact_in_scope),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Viewer-scoped byte proxy for a thread attachment (AC-N4).
@@ -268,6 +316,7 @@ async def proxy_contact_media(
 async def reply_to_contact(
     contact_ref: str,
     request: Request,
+    _own: None = Depends(_contact_in_scope),
     current_user: dict = Depends(require_permission(REPLY)),
     db: Session = Depends(get_db),
 ):

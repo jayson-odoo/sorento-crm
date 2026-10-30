@@ -35,6 +35,8 @@ from app.schemas.sales import (
 from app.services.error_handler import AppException
 from app.services.sales import dealer_target_import, target_service
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.multi_value import multi_uuids, multi_values
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -72,23 +74,27 @@ def _load(db: Session, target_id: str):
 def list_targets(
     on: Optional[date] = Query(None),
     subject: Literal["agent", "team", "dealer"] = Query("team"),
-    sales_team_id: Optional[str] = Query(None),
+    sales_team_id: Optional[list[str]] = Query(None),
     query: Optional[str] = Query(None),
     #: Every target of the kind, one row each, whole-range figures (Targets > Teams / Agents).
     all: bool = Query(False),
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
+    # Several teams are OR-ed; `none` (agents in no team) is a pseudo-value beside real team ids.
+    picked = multi_values(sales_team_id) or []
+    team_ids = [
+        *(["none"] if "none" in picked else []),
+        *(multi_uuids([v for v in picked if v != "none"], "Team") or []),
+    ] or None
     try:
-        if sales_team_id and sales_team_id != "none":
-            validate_uuid_path(sales_team_id, resource="Sales Team")
         # A dealer has no "No target" rows: its tab is always the whole list.
         if all or subject == "dealer":
             return target_service.list_all_targets(
-                db, subject=subject, sales_team_id=sales_team_id, query=query
+                db, subject=subject, sales_team_id=team_ids, query=query
             )
         return target_service.list_targets(
-            db, on=on, subject=subject, sales_team_id=sales_team_id, query=query
+            db, on=on, subject=subject, sales_team_id=team_ids, query=query
         )
     except Exception as exc:
         _reraise(db, exc)
@@ -146,6 +152,7 @@ MAX_PICKS_BYTES = 512 * 1024
 
 
 @router.get("/import/template")
+@heavy
 def dealer_targets_template(
     year: Optional[int] = Query(None, ge=2000, le=2100),
     _user: dict = Depends(require_permission(EDIT)),
@@ -160,6 +167,7 @@ def dealer_targets_template(
 
 
 @router.post("/import", response_model=SalesTargetImportResult)
+@heavy
 def import_dealer_targets(
     file: UploadFile = File(...),
     picks: Optional[str] = Form(None),

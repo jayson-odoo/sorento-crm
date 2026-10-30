@@ -99,11 +99,7 @@ export function QualifyLeadDialog({
               />
             </div>
 
-            <ClashWarningPanel
-              candidates={candidates}
-              isLoading={preview.isFetching}
-              developerChosen={Boolean(developerPartyId)}
-            />
+            <ClashWarningPanel candidates={candidates} isLoading={preview.isFetching} />
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5 sm:col-span-2">
@@ -145,7 +141,7 @@ export function QualifyLeadDialog({
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="qualify-template">Template</Label>
+                <Label htmlFor="qualify-template">To-do list template</Label>
                 <SearchableSelect
                   id="qualify-template"
                   value={templateId}
@@ -158,7 +154,7 @@ export function QualifyLeadDialog({
                     value: template.id,
                     label: template.name,
                   }))}
-                  placeholder={typeId ? 'Select a template' : 'Pick a type first'}
+                  placeholder={typeId ? 'Select a to-do list template' : 'Pick a type first'}
                 />
               </div>
             </div>

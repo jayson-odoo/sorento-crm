@@ -20,7 +20,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[CountryResponse])
-async def get_countries(
+def get_countries(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -40,7 +40,7 @@ async def get_countries(
 
 
 @router.get("/select", response_model=List[CountrySelectItem])
-async def get_countries_select(
+def get_countries_select(
     query: Optional[str] = Query(None),
     # Any signed-in user (owner ruling 1 Oct 2026, never-stuck L10); an API key still
     # needs the slug. The list, detail and write routes keep their slugs.
@@ -62,7 +62,7 @@ async def get_countries_select(
 
 
 @router.get("/{country_id}", response_model=CountryResponse)
-async def get_country(
+def get_country(
     country_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.countries.view")),
     db: Session = Depends(get_db),
@@ -77,7 +77,7 @@ async def get_country(
 
 
 @router.post("/", response_model=CountryResponse, status_code=status.HTTP_201_CREATED)
-async def create_country(
+def create_country(
     data: CountryCreate,
     current_user: dict = Depends(require_permission("master_data.countries.add")),
     db: Session = Depends(get_db),
@@ -91,7 +91,7 @@ async def create_country(
 
 
 @router.put("/{country_id}", response_model=CountryResponse)
-async def update_country(
+def update_country(
     country_id: str,
     data: CountryUpdate,
     current_user: dict = Depends(require_permission("master_data.countries.edit")),
@@ -107,7 +107,7 @@ async def update_country(
 
 
 @router.delete("/{country_id}", status_code=status.HTTP_200_OK)
-async def delete_country(
+def delete_country(
     country_id: str,
     current_user: dict = Depends(require_permission("master_data.countries.delete")),
     db: Session = Depends(get_db),

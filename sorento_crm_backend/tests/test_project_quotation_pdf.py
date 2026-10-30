@@ -862,10 +862,17 @@ def test_the_counter_signature_prints_only_once_the_customer_has_accepted():
         )
         issued = _issue(db, document, owner)
 
-        assert "Accepted by" not in qpdf.build_issue_html(db, issued)
+        # QUOTE-SIGN-PAGE AC5.3: the customer column is always present (blank lines before
+        # acceptance), so "Accepted by" is no longer absent. What stays absent is the customer's
+        # ink and name.
+        unaccepted = qpdf.build_issue_html(db, issued)
+        assert "Accepted by" in unaccepted
+        assert f"{MARKER} Kelly Tan" not in unaccepted
+        assert unaccepted.count(customer_signature) == 1  # Sorento's only
 
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=issued,
             signer_name=f"{MARKER} Kelly Tan",
             mode="draw",
@@ -912,6 +919,7 @@ def test_where_the_customer_signed_prints_as_a_place_not_bare_numbers():
 
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=issued,
             signer_name=f"{MARKER} Kelly Tan",
             mode="draw",
@@ -1127,3 +1135,485 @@ def test_a_line_that_still_carries_a_typed_letter_keeps_it():
         html = qpdf.build_issue_html(db, issued)
 
         assert re.findall(r'<td class="item">([^<]*)</td>', html) == ["A", "2"]
+
+
+# ---------------------------------------------------- QUOTE-SIGN-PAGE: PDF contract
+
+
+def _one_line_issue(db, *, signatory=("SALES REP A", "+60100000001"), logo_url=None):
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_service as quotes
+
+    env = _setup(db)
+    owner = env["owner"]
+    product = _product(db, env["category"].id, env["uom"], description=f"{MARKER} WC")
+    document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+    document.signatory_name, document.signatory_phone = signatory
+    db.execute(
+        text("update companies set logo_url = :u where id = :i"),
+        {"u": logo_url, "i": str(document.company_id)},
+    )
+    db.flush()
+    scope = qdocs.add_scope(
+        db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+    )
+    quotes.upsert_line(
+        db,
+        version=quotes.current_version(db, scope.id),
+        actor_user_id=owner,
+        payload={"product_id": product.id, "unit_price": PRICED_RATE, "quantity": 1},
+    )
+    return document, _issue(db, document, owner)
+
+
+def _row(label: str, value: str) -> re.Pattern:
+    return re.compile(
+        rf"<th>\s*{re.escape(label)}\s*</th>\s*<td>\s*{re.escape(value)}\s*</td>"
+    )
+
+
+def test_the_pdf_shows_one_quotation_no_row_built_from_document_no_and_issue_no():
+    """AC2.1 / 2.2 / 2.3: also when the issue was stored with the old `(R1)` text."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        document, issue = _one_line_issue(db)
+        issue.our_ref_text = f"{document.document_no} (R{issue.issue_no})"
+        db.flush()
+
+        html = qpdf.build_issue_html(db, issue)
+
+        assert _row("Quotation No.", f"{document.document_no}-R{issue.issue_no}").search(html)
+        assert "Our Ref" not in html
+        assert "(R1)" not in html
+        assert "Revision" not in html
+
+
+def test_the_pdf_sales_contact_row_is_name_and_phone_name_only_or_absent():
+    """AC5.2."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        _document, issue = _one_line_issue(db, signatory=("SALES REP A", "+60100000001"))
+        assert _row("Sales contact", "SALES REP A, +60100000001").search(
+            qpdf.build_issue_html(db, issue)
+        )
+    with blank_session() as db:
+        _document, issue = _one_line_issue(db, signatory=("SALES REP A", None))
+        assert _row("Sales contact", "SALES REP A").search(qpdf.build_issue_html(db, issue))
+    with blank_session() as db:
+        document, issue = _one_line_issue(db, signatory=(None, None))
+        document.signatory_name = None
+        document.signatory_phone = None
+        db.flush()
+        assert "Sales contact" not in qpdf.build_issue_html(db, issue)
+
+
+def test_the_pdf_sign_off_is_two_columns_with_a_blank_customer_column_before_acceptance():
+    """AC5.3."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        _document, issue = _one_line_issue(db)
+        html = qpdf.build_issue_html(db, issue)
+
+        assert '<div class="signoff-row">' in html
+        assert '<div class="signoff-col sorento">' in html
+        assert '<div class="signoff-col customer">' in html
+        assert "For Sorento" in html
+        assert "Accepted by" in html
+        assert html.index("signoff-col sorento") < html.index("signoff-col customer")
+        assert html.count(SIGNATURE_DATA_URI) == 1
+
+
+def test_the_pdf_sign_off_prints_signer_name_and_date_once_accepted():
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        _document, issue = _one_line_issue(db)
+        qdocs.accept_issue(
+            db,
+            terms_accepted=True,
+            record=issue,
+            signer_name="CONTACT B",
+            mode="draw",
+            image_data_uri=SIGNATURE_DATA_URI,
+        )
+        html = qpdf.build_issue_html(db, issue)
+
+        customer_col = html[html.index("signoff-col customer") :]
+        assert "CONTACT B" in customer_col
+        assert "Date:" in customer_col
+        assert html.count(SIGNATURE_DATA_URI) == 2
+
+
+def test_the_pdf_file_name_is_built_from_document_no_and_issue_no():
+    """AC2.5. A stale stored text must not leak into the name."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        document, issue = _one_line_issue(db)
+        document.document_no = "PRJQ-2026-0003"
+        db.flush()
+
+        issue.our_ref_text = "PRJQ-2026-0003 (R1)"
+        assert qpdf.build_filename(issue) == "quotation-PRJQ-2026-0003-R1.pdf"
+        issue.our_ref_text = "STALE TEXT"
+        assert qpdf.build_filename(issue) == "quotation-PRJQ-2026-0003-R1.pdf"
+
+
+def test_the_letterhead_holds_the_logo_image_when_the_download_gives_one(monkeypatch):
+    """AC1.3."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        _document, issue = _one_line_issue(db, logo_url="https://cdn.example.com/logo.png")
+        seen = []
+        monkeypatch.setattr(
+            qpdf, "fetch_logo_data_uri", lambda url: seen.append(url) or SIGNATURE_DATA_URI
+        )
+
+        html = qpdf.build_issue_html(db, issue)
+
+        assert seen == ["https://cdn.example.com/logo.png"]
+        assert f'<img class="letterhead-logo" src="{SIGNATURE_DATA_URI}"' in html
+
+
+@pytest.mark.parametrize("logo_url", [None, "https://cdn.example.com/logo.png"])
+def test_the_letterhead_has_no_logo_when_unset_or_the_fetch_fails(monkeypatch, logo_url):
+    """AC1.4: name only, the PDF still builds."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        _document, issue = _one_line_issue(db, logo_url=logo_url)
+        monkeypatch.setattr(qpdf, "fetch_logo_data_uri", lambda url: None)
+
+        html = qpdf.build_issue_html(db, issue)
+
+        assert "letterhead-logo" not in html
+        assert "250.00" in html
+
+
+# ------------------------------------------------------------ fetch_logo_data_uri
+
+
+import httpx as _httpx_mod
+
+_REAL_HTTPX_CLIENT = _httpx_mod.AsyncClient
+
+
+class _Spy:
+    """Wraps the real httpx.AsyncClient onto a MockTransport and records every request."""
+
+    def __init__(self, monkeypatch, qpdf, handler):
+        import httpx
+
+        self.requests = []
+        self.client_kwargs = {}
+        real = _REAL_HTTPX_CLIENT
+
+        def routed(request):
+            self.requests.append(request)
+            return handler(request)
+
+        def factory(*args, **kwargs):
+            self.client_kwargs = dict(kwargs)
+            kwargs["transport"] = httpx.MockTransport(routed)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(qpdf.httpx, "AsyncClient", factory)
+
+        def no_sync_client(*args, **kwargs):
+            raise RuntimeError("the logo fetch must use httpx.AsyncClient (wall-clock limit)")
+
+        monkeypatch.setattr(qpdf.httpx, "Client", no_sync_client)
+        # Allow the https URL itself so only the behaviour under test is in play, no DNS.
+        monkeypatch.setattr(qpdf, "assert_safe_outbound_url", lambda url, **kw: url)
+
+
+def _png_response(content=b"\x89PNG-zzt", ctype="image/png", status=200, headers=None):
+    import httpx
+
+    return httpx.Response(
+        status, content=content, headers={"content-type": ctype, **(headers or {})}
+    )
+
+
+def _real_png(size=(40, 30)) -> bytes:
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", size, (200, 30, 30)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_fetch_logo_returns_a_reencoded_jpeg_data_uri_for_a_small_png(monkeypatch):
+    """S3: the bytes are re-encoded through Pillow, never passed through as served."""
+    from PIL import Image
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    spy = _Spy(monkeypatch, qpdf, lambda r: _png_response(content=_real_png()))
+    result = qpdf.fetch_logo_data_uri("https://cdn.example.com/logo.png")
+
+    assert result is not None and result.startswith("data:image/jpeg;base64,")
+    decoded = base64.b64decode(result.split(",", 1)[1])
+    assert Image.open(BytesIO(decoded)).format == "JPEG"
+    assert spy.client_kwargs.get("follow_redirects") is False
+    assert spy.client_kwargs.get("timeout") == 3
+
+
+@pytest.mark.parametrize("url", [None, ""])
+def test_fetch_logo_with_no_url_is_none_and_makes_no_request(monkeypatch, url):
+    from app.services import project_quotation_pdf_service as qpdf
+
+    spy = _Spy(monkeypatch, qpdf, lambda r: _png_response())
+    assert qpdf.fetch_logo_data_uri(url) is None
+    assert spy.requests == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://cdn.example.com/x.png", "https://127.0.0.1/x.png", "https://10.0.0.5/x.png"],
+)
+def test_fetch_logo_refused_by_the_url_guard_is_none_and_makes_no_request(monkeypatch, url):
+    from app.services import project_quotation_pdf_service as qpdf
+
+    import httpx
+
+    calls = []
+    monkeypatch.setattr(
+        qpdf.httpx,
+        "AsyncClient",
+        lambda *a, **k: calls.append(1)
+        or _REAL_HTTPX_CLIENT(
+            *a, transport=httpx.MockTransport(lambda r: _png_response()), **k
+        ),
+    )
+
+    assert qpdf.fetch_logo_data_uri(url) is None
+    assert calls == []
+
+
+def test_fetch_logo_non_2xx_and_redirect_are_none(monkeypatch):
+    import httpx
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    _Spy(monkeypatch, qpdf, lambda r: httpx.Response(404))
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+    _Spy(
+        monkeypatch,
+        qpdf,
+        lambda r: httpx.Response(302, headers={"location": "https://cdn.example.com/y.png"}),
+    )
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+
+def test_fetch_logo_non_image_content_type_is_none(monkeypatch):
+    from app.services import project_quotation_pdf_service as qpdf
+
+    _Spy(monkeypatch, qpdf, lambda r: _png_response(content=b"<html>", ctype="text/html"))
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+
+def _big_png() -> bytes:
+    """A REAL PNG over the 1 MB cap (random pixels do not compress), so only the byte cap can
+    refuse it: Pillow would happily decode it."""
+    import os
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.frombytes("RGB", (800, 800), os.urandom(800 * 800 * 3)).save(buffer, format="PNG")
+    data = buffer.getvalue()
+    assert len(data) > 1_048_576
+    return data
+
+
+def test_fetch_logo_over_one_megabyte_is_none_by_header_or_by_streamed_body(monkeypatch):
+    from app.services import project_quotation_pdf_service as qpdf
+
+    _Spy(
+        monkeypatch,
+        qpdf,
+        lambda r: _png_response(
+            content=_big_png(), headers={"content-length": str(1_048_576 + 1)}
+        ),
+    )
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+    _Spy(monkeypatch, qpdf, lambda r: _png_response(content=_big_png()))
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+
+def test_fetch_logo_never_raises_on_a_transport_error(monkeypatch):
+    import httpx
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    def boom(request):
+        raise httpx.ConnectError("zzt down")
+
+    _Spy(monkeypatch, qpdf, boom)
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+
+# ------------------------------------------------ fix round 1: hardening of the fetch
+
+
+@pytest.mark.parametrize("url", ["https://cdn..example.com/logo.png", "https://[abc/x.png"])
+def test_fetch_logo_with_a_malformed_url_is_none_and_never_raises(monkeypatch, url):
+    """B1: the guard or the client choking on a bad url must not escape."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    calls = []
+    monkeypatch.setattr(
+        qpdf.httpx, "AsyncClient", lambda *a, **k: calls.append(1) or _REAL_HTTPX_CLIENT(*a, **k)
+    )
+    assert qpdf.fetch_logo_data_uri(url) is None
+    assert calls == []
+
+
+@pytest.mark.parametrize("url", ["https://cdn..example.com/logo.png", "https://[abc/x.png"])
+def test_the_pdf_still_builds_when_the_company_logo_url_is_malformed(url):
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        _document, issue = _one_line_issue(db, logo_url=url)
+        html = qpdf.build_issue_html(db, issue)
+
+        assert "letterhead-logo" not in html
+        assert "250.00" in html
+
+
+def test_fetch_logo_streamed_body_over_the_cap_with_no_content_length_is_none(monkeypatch):
+    """B3: a chunked response declares no length, so only the running total can stop it."""
+    import httpx
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    big = _big_png()
+    seen = {}
+
+    async def pieces():
+        for i in range(0, len(big), 65536):
+            yield big[i : i + 65536]
+
+    def handler(request):
+        response = httpx.Response(
+            200, headers={"content-type": "image/png"}, content=pieces()
+        )
+        seen["declared"] = response.headers.get("content-length")
+        return response
+
+    _Spy(monkeypatch, qpdf, handler)
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+    assert seen["declared"] is None
+
+
+def test_fetch_logo_asks_for_identity_encoding(monkeypatch):
+    """S1: no compressed answer is ever requested."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    spy = _Spy(monkeypatch, qpdf, lambda r: _png_response(content=_real_png()))
+    qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png")
+
+    assert spy.requests and spy.requests[0].headers.get("accept-encoding") == "identity"
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "br"])
+def test_fetch_logo_with_a_content_encoded_response_is_none_even_when_small(monkeypatch, encoding):
+    """S1: a decompression bomb is refused before a byte is inflated."""
+    import gzip
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    body = gzip.compress(_real_png()) if encoding == "gzip" else b"zzt-br"
+    _Spy(
+        monkeypatch,
+        qpdf,
+        lambda r: _png_response(content=body, headers={"content-encoding": encoding}),
+    )
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+    import gzip as _gz
+
+    bomb = _gz.compress(b"\0" * (2 * 1_048_576))
+    _Spy(
+        monkeypatch,
+        qpdf,
+        lambda r: _png_response(content=bomb, headers={"content-encoding": "gzip"}),
+    )
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+
+
+def test_fetch_logo_gives_up_when_the_headers_never_arrive_in_time(monkeypatch):
+    """S2b: a wall-clock limit on the whole fetch, headers included."""
+    import asyncio
+    import time as _time
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    monkeypatch.setattr(qpdf, "LOGO_FETCH_TIMEOUT_SECONDS", 0.2)
+
+    async def slow_headers(request):
+        await asyncio.sleep(1)
+        return _png_response(content=_real_png())
+
+    _Spy(monkeypatch, qpdf, slow_headers)
+    started = _time.monotonic()
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+    assert _time.monotonic() - started < 0.8
+
+
+def test_fetch_logo_gives_up_when_the_body_drips_past_the_limit(monkeypatch):
+    import asyncio
+    import time as _time
+
+    import httpx
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    monkeypatch.setattr(qpdf, "LOGO_FETCH_TIMEOUT_SECONDS", 0.2)
+    png = _real_png()
+
+    async def dripping():
+        for index in range(0, len(png), 8):
+            await asyncio.sleep(0.15)
+            yield png[index : index + 8]
+
+    _Spy(
+        monkeypatch,
+        qpdf,
+        lambda r: httpx.Response(
+            200, headers={"content-type": "image/png"}, content=dripping()
+        ),
+    )
+    started = _time.monotonic()
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png") is None
+    assert _time.monotonic() - started < 0.8
+
+
+def test_fetch_logo_called_inside_a_running_event_loop_is_none_and_does_not_raise(monkeypatch):
+    import asyncio
+
+    from app.services import project_quotation_pdf_service as qpdf
+
+    _Spy(monkeypatch, qpdf, lambda r: _png_response(content=_real_png()))
+
+    async def inside_a_loop():
+        return qpdf.fetch_logo_data_uri("https://cdn.example.com/x.png")
+
+    assert asyncio.run(inside_a_loop()) is None
+
+
+@pytest.mark.parametrize("served_as", ["image/svg+xml", "image/png"])
+def test_fetch_logo_refuses_svg_whatever_it_is_served_as(monkeypatch, served_as):
+    """S3: content-type is the server's claim; only what Pillow can decode is embedded."""
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>1</script></svg>'
+    from app.services import project_quotation_pdf_service as qpdf
+
+    _Spy(monkeypatch, qpdf, lambda r: _png_response(content=svg, ctype=served_as))
+    assert qpdf.fetch_logo_data_uri("https://cdn.example.com/x.svg") is None

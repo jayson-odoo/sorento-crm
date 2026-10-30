@@ -5,7 +5,8 @@ autocount-brands-ingest; v2.4 adds products code-wins plus the deletions
 `codes` field, ingest-products-code-wins; v2.5 adds `stock_balances`, a push
 entity that upserts `stock.quantity_on_hand`, ingest-stock-balances-2-5; v2.6 adds
 `billing_documents`, AutoCount invoices, cash sales, credit and debit notes into
-`finance.billing_documents`, finance S0 #1309).
+`finance.billing_documents`, finance S0 #1309; v2.11 adds `item_classes`, AutoCount ItemClass
+as a master entity, ITEM-CLASS-MASTER).
 
 The ESB gates every new key it sends behind `sorento_contract_version = 2` on
 its consumer connection, so it needs one endpoint to ask Sorento what version
@@ -83,9 +84,15 @@ router = APIRouter()
 # an earlier "documented under shipping_orders too, since that is the family
 # it names" note here was wrong and has been removed.
 FIELDS_ADDED: dict[str, list[str]] = {
-    "products": ["is_discontinued", "remark", "brand_code", "item_type_code"],
+    "products": ["is_discontinued", "remark", "brand_code", "item_type_code", "item_class_code"],
     "customers": ["market_segment_code", "region", "sales_agent_code"],
-    "sales_orders": ["customer_segment", "customer_region"],
+    "sales_orders": [
+        "customer_segment",
+        "customer_region",
+        "ship_info",
+        "line_remark",
+        "section_heading",
+    ],
     "purchase_orders": [
         "is_shipping_order",
         "from_so_numbers",
@@ -159,6 +166,8 @@ FIELDS_ADDED: dict[str, list[str]] = {
     "cancel_purchase_orders_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
     "consignments_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
     "consignment_returns_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
+    # v2.11 (ITEM-CLASS-MASTER): a new master entity, the brands shape.
+    "item_classes": ["code", "name", "description", "is_active"],
 }
 
 # D24 (captain 2026-09-06): per-entity notes on a field's meaning that
@@ -342,6 +351,7 @@ WARNINGS: list[str] = sorted(
         "uom_created",
         "brand_created",
         "item_type_created",
+        "item_class_created",
         "segment_unknown",
         "lines.dropped",
         "lines.superseded",

@@ -14,6 +14,10 @@ import pytest
 # an app start-up here (a lifespan TestClient, or a real server a test spawns) would take
 # other xdist workers' queued rows; the inbox tests drive `inbox_queue.sweep()` themselves.
 os.environ["CHATBOT_INBOX_SWEEPER_ENABLED"] = "0"
+# A test process must not embed at app start (the start-up lookup warm calls the provider).
+os.environ["CHATBOT_LOOKUP_WARM_ENABLED"] = "0"
+# The lookup warm shares vectors through a file in the temp dir; the suite must not write the real one.
+os.environ["CHATBOT_LOOKUP_VECTOR_DIR"] = "off"
 
 
 # Holds the session-long advisory lock. Kept on a module global because the lock lives on the

@@ -68,6 +68,8 @@ class BrandBase(BaseModel):
     # "Customers can ask for this brand" (#1286, D3). False keeps a placeholder brand
     # (OTHERS, NO LOGO) out of what the chatbot offers and binds on a single word.
     is_searchable: bool = True
+    # BULK-CONTACT-ACCESS: the company whose dealers get this brand (NULL = a project brand).
+    dealer_company_id: Optional[str] = None
 
 
 class BrandCreate(BrandBase):
@@ -85,10 +87,12 @@ class BrandUpdate(BaseModel):
     flows_to_purchasing: Optional[bool] = None
     chatbot_weight: Optional[float] = Field(None, ge=0, le=9999)
     is_searchable: Optional[bool] = None
+    dealer_company_id: Optional[str] = None
 
 
 class BrandResponse(BrandBase):
     id: str
+    dealer_company_name: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     product_count: Optional[int] = None
@@ -162,6 +166,8 @@ class ProductBase(BaseModel):
     description: Optional[str] = None
     category_id: str
     brand_id: Optional[str] = None
+    # ITEM-CLASS: AutoCount Item Class (nullable; the products ingest or this form sets it).
+    item_class_id: Optional[str] = None
     base_uom_id: str
     item_type: Optional[str] = None
     # CRM-owned (PLAN D14): manual entry here, or a non-empty AutoCount sync
@@ -178,6 +184,7 @@ class ProductBase(BaseModel):
     warranty_months: Optional[int] = None
     has_serial_tracking: bool = False
     has_batch_tracking: bool = False
+    show_so_line_description: bool = False
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
     # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X and Y for
@@ -230,6 +237,7 @@ class ProductUpdate(BaseModel):
     description: Optional[str] = None
     category_id: Optional[str] = None
     brand_id: Optional[str] = None
+    item_class_id: Optional[str] = None
     base_uom_id: Optional[str] = None
     item_type: Optional[str] = None
     barcode: Optional[str] = Field(None, max_length=100)
@@ -244,6 +252,7 @@ class ProductUpdate(BaseModel):
     warranty_months: Optional[int] = None
     has_serial_tracking: Optional[bool] = None
     has_batch_tracking: Optional[bool] = None
+    show_so_line_description: Optional[bool] = None
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
     chatbot_max_qty: Optional[int] = Field(None, ge=0)
@@ -323,6 +332,15 @@ class BrandSimple(BaseModel):
     brand_code: str
     brand_name: str
     
+    class Config:
+        from_attributes = True
+
+
+class ItemClassSimple(BaseModel):
+    id: str
+    item_class_code: str
+    item_class_name: str
+
     class Config:
         from_attributes = True
 
@@ -434,6 +452,7 @@ class ProductResponse(ProductBase):
     updated_by: Optional[str] = None
     category: Optional[ProductCategorySimple] = None
     brand: Optional[BrandSimple] = None
+    item_class: Optional["ItemClassSimple"] = None
     base_uom: Optional[UnitOfMeasureSimple] = None
     # Map of `field_key` -> linked attachments. Populated only when an
     # attachment_field_links row exists for this product. Used by the

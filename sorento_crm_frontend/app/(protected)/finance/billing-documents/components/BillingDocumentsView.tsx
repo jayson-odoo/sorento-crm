@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -25,7 +25,8 @@ import { Container } from '@/components/common/container';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { useBillingAgentOptions, useBillingDocumentsQuery } from '../hooks/useBillingDocuments';
@@ -73,7 +74,13 @@ export default function BillingDocumentsView({ customerId }: { customerId?: stri
   const [documentTypes, setDocumentTypes] = useState<string[]>([]);
   const [status, setStatus] = useState('');
   const [pickedCustomerId, setPickedCustomerId] = useState('');
-  const [customerOption, setCustomerOption] = useState<SearchableSelectOption | undefined>();
+  // The names of the customers fetched so far, so a pick is named in the trigger (never an id).
+  const customerNames = useRef<Record<string, string>>({});
+  const fetchCustomers = useCallback(async (q: string) => {
+    const found = await searchBillingCustomerOptions(q);
+    for (const o of found) customerNames.current[o.value] = o.label;
+    return found;
+  }, []);
   const [agentCode, setAgentCode] = useState('');
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
@@ -97,7 +104,7 @@ export default function BillingDocumentsView({ customerId }: { customerId?: stri
   // Normalised so the record page's pager rebuilds the identical object from the URL (one cache key).
   const filters = {
     documentTypes: documentTypes.length ? (documentTypes as BillingDocumentType[]) : undefined,
-    status: (status as BillingDocumentStatus) || undefined,
+    status: status || undefined,
     customerId: effectiveCustomerId || undefined,
     agentCode: agentCode || undefined,
     dateFrom: dateFrom || undefined,
@@ -256,7 +263,6 @@ export default function BillingDocumentsView({ customerId }: { customerId?: stri
     setDocumentTypes([]);
     setStatus('');
     setPickedCustomerId('');
-    setCustomerOption(undefined);
     setAgentCode('');
     setDateFrom(null);
     setDateTo(null);
@@ -342,11 +348,11 @@ export default function BillingDocumentsView({ customerId }: { customerId?: stri
                 placeholder="Type"
                 triggerClassName="w-full sm:w-48"
               />
-              <SearchableSelect
+              <SearchableMultiSelect
                 id="billing-filter-status"
                 aria-label="Status"
-                value={status}
-                onChange={setStatus}
+                value={splitMulti(status)}
+                onChange={(v) => setStatus(joinMulti(v))}
                 options={STATUS_OPTIONS}
                 placeholder="Status"
                 clearable
@@ -354,23 +360,25 @@ export default function BillingDocumentsView({ customerId }: { customerId?: stri
               />
               {!embedded ? (
                 <>
-                  <SearchableSelect
+                  <SearchableMultiSelect
                     id="billing-filter-customer"
                     aria-label="Customer"
-                    value={pickedCustomerId}
-                    onChange={setPickedCustomerId}
-                    onOptionChange={(opt) => setCustomerOption(opt ?? undefined)}
-                    fetchOptions={searchBillingCustomerOptions}
-                    selectedOption={customerOption}
+                    value={splitMulti(pickedCustomerId)}
+                    onChange={(v) => setPickedCustomerId(joinMulti(v))}
+                    fetchOptions={fetchCustomers}
+                    selectedOptions={splitMulti(pickedCustomerId).map((id) => ({
+                      value: id,
+                      label: customerNames.current[id] ?? 'Selected customer',
+                    }))}
                     placeholder="Customer"
                     clearable
                     triggerClassName="w-full sm:w-52"
                   />
-                  <SearchableSelect
+                  <SearchableMultiSelect
                     id="billing-filter-agent"
                     aria-label="Agent"
-                    value={agentCode}
-                    onChange={setAgentCode}
+                    value={splitMulti(agentCode)}
+                    onChange={(v) => setAgentCode(joinMulti(v))}
                     options={agentOptions ?? []}
                     loadError={agentsFailed ? new Error('agents') : undefined}
                     onRetry={() => void refetchAgents()}

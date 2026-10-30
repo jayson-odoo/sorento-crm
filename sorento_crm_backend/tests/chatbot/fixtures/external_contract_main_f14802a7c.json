@@ -379,7 +379,12 @@
               "demand_qty",
               "business_query",
               "media_denied",
-              "ai_not_allowed"
+              "ai_not_allowed",
+              "log_opportunity",
+              "phone_ask",
+              "phone_linked",
+              "phone_ignored",
+              "phone_handoff"
             ],
             "type": "string"
           },

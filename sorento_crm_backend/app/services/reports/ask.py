@@ -17,14 +17,22 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.reports.datasets import chat_asks, chat_report_ask, sales_order_lines_ask
+from app.services.reports import spec_set
+from app.services.reports.datasets import (
+    billing_document_lines,
+    chat_asks,
+    chat_report_ask,
+    delivery_order_lines,
+    sales_order_lines_ask,
+    unpaid_documents,
+)
 from app.services.sales_report_delivered import _CHANNEL_CLASS, resolve_locations
 from app.services.sales_report_service import _money_edge, _qty
 
 #: The words a caller may group by and filter by. Every word is named the same as the column or
 #: param key behind it, so one list each serves every basis (a word that differs from its key
 #: earns a mapping then).
-DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month")
+DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month", "year")
 FILTERS = ("customer", "product", "brand", "category", "sales_agent", "customer_agent", "location", "channel")
 
 #: The datasets a caller may ask over; the first is the default (a call naming none is sales).
@@ -39,21 +47,44 @@ CHAT_MEASURES = ("asks", "failed", "failure_rate", "contacts")
 #: The dimensions that are a run of time: a trend lists every bucket, oldest first.
 CHAT_TRENDS = frozenset({"week", "month", "day"})
 
-#: Dataset -> basis -> entry. Sales: one entry per basis, every one over sales order lines.
-#: Chat: `asks` counts every ask, `turns` each message once.
+#: Dataset -> basis -> entry. Sales: `invoiced` (SALES-UNIFIED: the one sales definition, on the
+#: billing lines the Top selling items report reads, so the two cannot disagree) and one entry
+#: per order basis over sales order lines. Chat: `asks` counts every ask, `turns` each message once.
 CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
     "sales": {
-        basis: {
-            "definition": sales_order_lines_ask.DEFINITIONS[basis],
-            "label": label,
+        "invoiced": {
+            "definition": billing_document_lines.ASK_DEFINITION,
+            "label": "invoiced sales",
             "dimensions": DIMENSIONS,
             "filters": FILTERS,
-        }
-        for basis, label in (
-            ("delivered", "delivered sales"),
-            ("ordered", "ordered sales"),
-            ("outstanding", "outstanding orders"),
-        )
+        },
+        **{
+            basis: {
+                "definition": sales_order_lines_ask.DEFINITIONS[basis],
+                "label": label,
+                "dimensions": (*DIMENSIONS, "sales_order") if basis == "outstanding" else DIMENSIONS,
+                "filters": FILTERS,
+            }
+            for basis, label in (
+                ("delivered", "delivered sales"),
+                ("ordered", "ordered sales"),
+                ("outstanding", "outstanding orders"),
+            )
+        },
+        # REPORT-UNIFY: delivery order lines of DOs not yet delivered, and unpaid invoices (per document).
+        "pending_delivery": {
+            "definition": delivery_order_lines.PENDING_DEFINITION,
+            "label": "pending delivery",
+            # REPORT-OUTSTANDING-SUMMARY: "Reply 1 for the delivery order list." lists the figure's own DOs.
+            "dimensions": (*DIMENSIONS, "delivery_order"),
+            "filters": FILTERS,
+        },
+        "unpaid": {
+            "definition": unpaid_documents.DEFINITION,
+            "label": "unpaid invoices",
+            "dimensions": ("customer", "sales_agent", "month", "year"),
+            "filters": ("customer", "sales_agent", "customer_agent"),
+        },
     },
     "chat": {
         basis: {
@@ -66,8 +97,17 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
+#: The bases a caller may leave the period off (REPORT-UNIFY: absent = every date); both dates or neither.
+OPEN_BASES = frozenset({"outstanding", "pending_delivery", "unpaid"})
+#: The filter words a document-level basis (`unpaid`) cannot apply: a document has no product, place or channel.
+PER_DOCUMENT_FILTERS = ("product", "brand", "category", "spec", "location", "channel")
+#: `group_by=spec:<key>`: the prefix of a ranking by a product spec's value.
+SPEC_GROUP = "spec:"
+
 #: What a customer-scoped contact (a dealer) may group or filter by (PLAN section 0, Q1/Q2).
-DEALER_KEYS = frozenset({"product", "brand", "category", "month"})
+DEALER_KEYS = frozenset({"product", "brand", "category", "month", "year", "sales_order", "delivery_order"})
+#: REPORT-OUTSTANDING-SUMMARY item 1: what a dealer may also name or group by on undelivered orders and pending delivery.
+DEALER_OUTSTANDING_KEYS = frozenset({"location"})
 CHAT_DEALER_KEYS = frozenset({"topic", "subject", "product", "month"})
 
 GROUP_LABELS = {
@@ -79,6 +119,9 @@ GROUP_LABELS = {
     "location": "Location",
     "channel": "Channel",
     "month": "Month",
+    "year": "Year",
+    "sales_order": "Sales order",
+    "delivery_order": "Delivery order",
 }
 
 CHAT_GROUP_LABELS = {
@@ -108,7 +151,7 @@ CHAT_ITEM_AXES = frozenset({"product", "category", "brand"})
 
 #: The filter words' labels, as the route echoes them: the dimensions' own, plus the customer
 #: card link a drill down uses (REPORT-DRILLDOWN, owner 8 Oct 2026), named so the reply says it.
-FILTER_LABELS = {**GROUP_LABELS, "customer_agent": "Customers assigned to"}
+FILTER_LABELS = {**GROUP_LABELS, "customer_agent": "Customers assigned to", "spec": "Specification", "company": "Company"}
 
 NO_AGENT_KEY = sales_order_lines_ask.NO_AGENT_KEY
 
@@ -207,7 +250,7 @@ def _category_codes(db: Session, names: list[str], company_grants: Any) -> dict[
 
 
 #: The delivered dataset's raw channel values, as the ordered dataset already prints them.
-_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team"}
+_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team", "other": "Other"}
 
 MEASURES = ("amount", "qty")
 #: REPORT-SMART-1021: distinct counts, ranked by the count (ties by amount, then quantity).
@@ -228,6 +271,34 @@ def _empty(status: str = "ok", message: Optional[str] = None) -> dict[str, Any]:
     }
 
 
+def _params(
+    db: Session, entry: dict[str, Any], filters: dict[str, list[str]], warehouse_codes: list[str], policy: Any,
+    date_from: date, date_to: date,
+) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
+    """The engine params of a sales ask, or the body to answer with instead (a filter resolving to nothing is zero rows,
+    a refused location the refusal)."""
+    params: dict[str, Any] = {
+        "date_basis": "order_date",
+        "period": {"kind": "custom", "from": date_from.isoformat(), "to": date_to.isoformat()},
+    }
+    for word, values in filters.items():
+        if not values:
+            return params, _empty()
+        if word == "channel":
+            values = [_CHANNEL_CLASS[v] for v in values]
+        params[word] = list(values)
+
+    if "location" in entry["filters"]:  # a document-level basis has no location to cap
+        location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
+        if refusal is not None:
+            return params, _empty("refused", refusal)
+        if nothing:
+            return params, _empty()
+        if location_ids is not None:
+            params["location"] = location_ids
+    return params, None
+
+
 def run_ask(
     db: Session,
     *,
@@ -244,10 +315,12 @@ def run_ask(
     sort: str = "desc",
     top_n: Optional[int] = None,
     scope_customers: Optional[list[str]] = None,
+    also: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """The ranked rows, their cut and the whole set's total. `filters` maps a spec word to
     RESOLVED ids (channel: `dealer` / `project`); `warehouse_codes` are the raw codes named.
-    `company_grants` is the contact's own company ids (fail closed: none, no rows)."""
+    `company_grants` is the contact's own company ids (fail closed: none, no rows). `also`: more
+    summed measures of the definition, carried as whole numbers on every row and the total."""
     from app.schemas.report import ReportViewConfig
     from app.services.reports import engine
 
@@ -258,35 +331,20 @@ def run_ask(
         )
     entry = CATALOGUE["sales"][basis]
     definition = entry["definition"]
-
-    params: dict[str, Any] = {
-        "date_basis": "order_date",
-        "period": {"kind": "custom", "from": date_from.isoformat(), "to": date_to.isoformat()},
-    }
-    for word, values in filters.items():
-        if not values:
-            return _empty()
-        if word == "channel":
-            values = [_CHANNEL_CLASS[v] for v in values]
-        params[word] = list(values)
-
-    location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
-    if refusal is not None:
-        return _empty("refused", refusal)
-    if nothing:
-        return _empty()
-    if location_ids is not None:
-        params["location"] = location_ids
+    params, stop = _params(db, entry, filters, warehouse_codes, policy, date_from, date_to)
+    if stop is not None:
+        return stop
 
     # The engine refuses rows == cols, so the one-total shape groups by month and reads the
     # grand total only.
-    rows_key = group_by or "month"
+    by_spec = bool(group_by) and group_by.startswith(SPEC_GROUP)
+    rows_key = "product" if by_spec else (group_by or "month")
     counted = measure in COUNT_MEASURES
     view = ReportViewConfig.model_validate(
         {
             "params": params,
             "detail": {"columns": [], "order": []},
-            "pivot": {"rows": rows_key, "cols": "all", "measures": [*MEASURES, *((measure,) if counted else ())]},
+            "pivot": {"rows": rows_key, "cols": "all", "measures": [*MEASURES, *((measure,) if counted else ()), *also]},
         }
     )
     pivot = engine.run_summary(
@@ -298,6 +356,8 @@ def run_ask(
     body["total"] = {"qty": _qty(grand.get("qty")), "amount": _money_edge(grand.get("amount"))}
     if counted:
         body["total"]["count"] = int(Decimal(grand.get(measure) or 0))
+    for key in also:
+        body["total"][key] = _qty(grand.get(key))
     if not group_by:
         return body
 
@@ -309,6 +369,11 @@ def run_ask(
             continue
         name = _CHANNEL_NAMES.get(value, value) if group_by == "channel" else value
         ranked.append((name, qty, amount, Decimal(totals.get(measure) or 0) if counted else Decimal(0)))
+
+    if by_spec:
+        # A product ranking folded to the value each product holds (a count measure is refused by the route).
+        ids = _row_keys(db, "product", [r[0] for r in ranked], company_grants)
+        ranked = spec_set.fold_by_key(db, group_by[len(SPEC_GROUP):], ranked, ids)
 
     sign = -1 if sort == "desc" else 1
     order = {"amount": (2, 1), "qty": (1, 2)}.get(measure, (3, 2))
@@ -322,12 +387,136 @@ def run_ask(
             "rank": i, "name": name, "qty": _qty(qty), "amount": _money_edge(amount), "keys": keys.get(name, []),
             **({"count": int(count)} if counted else {}),
             **({"code": codes[name]} if codes.get(name) else {}),
+            **{key: _qty((pivot.row_totals.get(name) or {}).get(key)) for key in also},
         }
         for i, (name, qty, amount, count) in enumerate(shown, start=1)
     ]
     body["total_count"] = len(ranked)
     body["more"] = len(ranked) - len(shown)
     return body
+
+
+# ----------------------------------------------------------------------- summary (REPORT-OUTSTANDING-SUMMARY)
+
+#: Eval hard guard (REPORT-OUTSTANDING-SUMMARY): a document list is returned one page of this many at a time; equal to
+#: the presenter's `OUTSTANDING_GROUP_CAP` and the lane's `fetch.OUTSTANDING_GROUP_PAGE`.
+DOCUMENT_PAGE = 20
+#: REPORT-OUTSTANDING-SUMMARY item 7: each document list's line columns and its row's keys, as the pre-#1922
+#: outstanding report's `so_rows` / `do_rows` named them.
+DOCUMENT_LISTS: dict[str, dict[str, Any]] = {
+    "outstanding": {"number": "so_number", "column": "sales_order", "day": "order_day", "date": "order_date"},
+    "pending_delivery": {"number": "do_number", "column": "delivery_order", "day": "day", "date": "do_date"},
+}
+
+
+def document_rows(
+    db: Session, *, basis: str, filters: dict[str, list[str]], warehouse_codes: list[str], policy: Any,
+    company_grants: Any, date_from: date, date_to: date,
+) -> list[dict[str, Any]]:
+    """Item 7 (owner 29 Oct, as before #1922): every outstanding document behind the figure, one row each, its lines
+    rolled up (products and locations joined), latest first and undated last (owner R23, 13 Sep). The SAME definition,
+    filters and predicates as `run_ask` (the engine's own line statement), so the list is the figure's population."""
+    from app.services.reports import engine
+
+    shape, entry = DOCUMENT_LISTS[basis], CATALOGUE["sales"][basis]
+    params, stop = _params(db, entry, filters, warehouse_codes, policy, date_from, date_to)
+    if stop is not None:
+        return []
+    ctx = engine.resolve(db, entry["definition"], params, company_grants=frozenset(str(c) for c in company_grants or ()))
+    keys = [shape["column"], "customer", "product", "location", shape["day"], "qty", *SUMMARY_BASES[basis]["also"]]
+    columns = [ctx.dataset.column(k) for k in keys]
+    with engine._unscoped(ctx):  # the dataset owns its company arm, as `engine.run_summary` runs it (review S1)
+        lines = db.execute(engine._detail_statement(ctx, columns)).mappings().all()
+    docs: dict[str, dict[str, Any]] = {}
+    for row in lines:
+        open_qty = Decimal(row["qty"] or 0)
+        if open_qty <= 0:
+            continue  # nothing still owed on this line (pre-#1922: ordered minus delivered above 0)
+        doc = docs.setdefault(row[shape["column"]], {
+            "number": row[shape["column"]], "customer": row["customer"], "products": set(), "locations": set(),
+            "qty": Decimal(0), "ordered": Decimal(0), "day": row[shape["day"]],
+        })
+        doc["qty"] += open_qty
+        doc["ordered"] += Decimal(row.get("ordered_qty") or 0)
+        if row["product"]:
+            doc["products"].add(row["product"])
+        if row["location"]:
+            doc["locations"].add(row["location"])
+    out = []
+    for doc in docs.values():
+        qty = _qty(doc["qty"])
+        common = {
+            shape["number"]: doc["number"], "customer_name": doc["customer"],
+            "product_code": ", ".join(sorted(doc["products"])) or None,
+            "location": ", ".join(sorted(doc["locations"])) or None, shape["date"]: doc["day"],
+        }
+        if basis == "outstanding":
+            ordered = _qty(doc["ordered"])
+            out.append({**common, "ordered_qty": ordered, "transferred_qty": ordered - qty, "outstanding_qty": qty})
+        else:
+            out.append({**common, "do_qty": qty, "delivered_qty": 0, "pending_qty": qty})
+    out.sort(key=lambda r: (r[shape["date"]] or "", r[shape["number"]] or ""), reverse=True)
+    out.sort(key=lambda r: r[shape["date"]] is None)
+    return out
+
+
+#: The outstanding kinds that carry a summary (`report-outstanding-summary-behaviour-card.md`), and for each the
+#: grouping that counts its documents, the one that dates them, and the extra measures its lines print.
+SUMMARY_BASES: dict[str, dict[str, Any]] = {
+    "outstanding": {"documents": "sales_order", "day": "order_day", "also": ("ordered_qty",)},
+    "pending_delivery": {"documents": "delivery_order", "day": "day", "also": ()},
+}
+
+
+#: The groupings that list an outstanding figure's documents ("Reply 1 for the ... list."): never a summary.
+DOCUMENT_GROUPS = frozenset({"sales_order", "delivery_order"})
+#: The axes that are a run of time: their rows read oldest first, whatever the sort.
+TIME_AXES = frozenset({"month", "year"})
+
+
+def outstanding_summary(
+    db: Session, *, basis: str, axes: list[str], date_from: date, date_to: date, sort: str = "desc",
+    top_n: Optional[int] = None, **run: Any,
+) -> dict[str, Any]:
+    """The pre-#1922 outstanding summary, on this engine: the document count, the totals, the document date range and
+    one breakdown per axis in `axes` (by default location, then customer or product; the user's own axis instead when
+    one was named, owner 29 Oct; that axis keeps the ask's own `sort` and `top_n`, and a month or year axis reads oldest
+    first). Every figure is `run_ask` over the SAME definition and filters as the total, so the
+    summary cannot disagree with it. `run` is the total's own `run_ask` keywords, less the grouping."""
+    from app.services.reports import engine
+
+    shape = SUMMARY_BASES[basis]
+    also = shape["also"]
+    named_measure = run.pop("measure", None)
+    run = {**run, "basis": basis}
+
+    def grouped(group_by: str, *, measure: str = "qty", order: str = "desc", cut: Optional[int] = None) -> dict[str, Any]:
+        return run_ask(
+            db, group_by=group_by, date_from=date_from, date_to=date_to, top_n=cut, also=also, measure=measure,
+            sort=order, **run,
+        )
+
+    total = grouped(None)
+    # An SO with no date of its own is counted (its line's required date places it) but has no day to range over.
+    days = sorted(r["name"] for r in grouped(shape["day"])["rows"] if r["name"] != engine.BLANK_VALUE)
+    groups = []
+    for axis in axes:
+        if top_n is not None and axis not in TIME_AXES:
+            # The user's own axis: its ranking as asked (its measure, direction and count).
+            got = grouped(axis, measure=named_measure if named_measure in MEASURES else "qty", order=sort, cut=top_n)["rows"]
+        else:
+            got = grouped(axis)["rows"]
+        if axis in TIME_AXES:
+            got = sorted(got, key=lambda r: r["name"])
+        rows = [{"name": r["name"], "qty": r["qty"], "amount": r["amount"], **{k: r.get(k, 0) for k in also}} for r in got]
+        groups.append({"axis": axis, "label": GROUP_LABELS.get(axis, axis), "rows": rows})
+    return {
+        "documents": grouped(shape["documents"])["total_count"],
+        **{k: v for k, v in total["total"].items() if k in ("qty", "amount", *also)},
+        "date_first": days[0] if days else None,
+        "date_last": days[-1] if days else None,
+        "groups": groups,
+    }
 
 
 # ----------------------------------------------------------------------- compare (REPORT-SMART-1021)

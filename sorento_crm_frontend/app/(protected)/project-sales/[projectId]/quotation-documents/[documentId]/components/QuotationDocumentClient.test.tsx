@@ -16,6 +16,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -72,6 +73,8 @@ const reviseQuotationApproval = vi.fn();
 const moveQuotationApproval = vi.fn();
 const approveQuotationDocument = vi.fn();
 const rejectQuotationDocument = vi.fn();
+const issueQuotationDocument = vi.fn();
+const createQuotationSignLink = vi.fn();
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
@@ -142,6 +145,8 @@ vi.mock('../../../../_shared/services/quotationDocumentService', async (importOr
     moveQuotationApproval: (...args: unknown[]) => moveQuotationApproval(...args),
     approveQuotationDocument: (...args: unknown[]) => approveQuotationDocument(...args),
     rejectQuotationDocument: (...args: unknown[]) => rejectQuotationDocument(...args),
+    issueQuotationDocument: (...args: unknown[]) => issueQuotationDocument(...args),
+    createQuotationSignLink: (...args: unknown[]) => createQuotationSignLink(...args),
     queueQuotationIssuePdf: (...args: unknown[]) => queueQuotationIssuePdf(...args),
     queueQuotationIssueXlsx: (...args: unknown[]) => queueQuotationIssueXlsx(...args),
   };
@@ -1264,6 +1269,7 @@ function approvalGraph(sendLabel = 'Send for approval'): StatusGraph {
     { key: 'draft', label: 'Draft', sort_order: 0, is_initial: true },
     { key: 'rejected', label: 'Rejected', sort_order: 1, is_initial: false },
     { key: 'pending_approval', label: 'Pending Approval', sort_order: 2, is_initial: false },
+    { key: 'resubmitted', label: 'Appealed', sort_order: 2, is_initial: false },
     { key: 'approved', label: 'Approved', sort_order: 3, is_initial: false },
     { key: 'issued', label: 'Issued', sort_order: 4, is_initial: false },
   ];
@@ -1291,6 +1297,9 @@ function approvalGraph(sendLabel = 'Send for approval'): StatusGraph {
     ['rejected', 'draft', 'Back to draft', 0],
     ['approved', 'issued', 'Issued to the customer', 0],
     ['issued', 'pending_approval', 'Send for approval', 0],
+    ['draft', 'resubmitted', 'Appeal', 1],
+    ['resubmitted', 'approved', 'Approve', 0],
+    ['resubmitted', 'rejected', 'Reject', 1],
   ] as const;
   return {
     entity_type: 'quotation',
@@ -1397,7 +1406,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     );
   });
 
-  it('C3: a rejected quotation shows the reason and leads with Send for approval, with no Back to draft anywhere', async () => {
+  it('C3: a rejected quotation shows the reason and leads with Appeal, with no Back to draft anywhere', async () => {
     graphData = approvalGraph();
     getQuotationDocument.mockResolvedValue(
       belowFloor('rejected', {
@@ -1407,7 +1416,8 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     );
     renderScreen();
 
-    const send = await screen.findByRole('button', { name: 'Send for approval' });
+    // RESUBMITTED-STATUS: the label comes off the draft -> resubmitted edge.
+    const send = await screen.findByRole('button', { name: 'Appeal' });
     expect(screen.getByText(/Bring the WC suite back to RM 240\./)).toBeInTheDocument();
     expect(screen.queryByText(/Back to draft/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /Back to draft/i })).toBeNull();
@@ -1417,6 +1427,16 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     await waitFor(() =>
       expect(moveQuotationApproval).toHaveBeenCalledWith('p1', 'd1', 's-pending_approval'),
     );
+  });
+
+  it('a manager on a resubmitted quotation decides it like a pending one (RESUBMITTED-STATUS)', async () => {
+    granted = new Set(['projects.quotations.approve']);
+    graphData = approvalGraph();
+    getQuotationDocument.mockResolvedValue(belowFloor('resubmitted'));
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
   });
 
   it('E2: a manager on a pending quotation gets Approve (primary) and Reject (outline) in the header only', async () => {
@@ -1830,5 +1850,87 @@ describe('QuotationDocumentClient: fix round 2', () => {
 
     expect(await screen.findByTestId('deferred-countdown')).toBeInTheDocument();
     expect(createPendingAction).not.toHaveBeenCalled();
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// QUOTE-SEND-WHATSAPP (UAC section E): Send to Customer offers Email or WhatsApp.
+// ---------------------------------------------------------------------------------------------
+
+describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHATSAPP)', () => {
+  const sentIssue = {
+    id: 'i1',
+    document_id: 'd1',
+    issue_no: 1,
+    our_ref_text: 'SRT/Q/2026/0141 (R1)',
+    issued_at: '2026-10-30T02:00:00',
+    issued_by: 'u1',
+    issued_by_name: 'SALES REP A',
+    grand_total: '0.00',
+    scope_count: 0,
+  };
+
+  async function openSendMenu() {
+    const user = userEvent.setup();
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ signatory_signature: signature() }),
+    );
+    issueQuotationDocument.mockResolvedValue(sentIssue);
+    createQuotationSignLink.mockResolvedValue({
+      token: 'tok',
+      path: '/quotation-sign/tok',
+      expires_at: null,
+    });
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: 'Send to Customer R1' }));
+    return user;
+  }
+
+  it('E1: pressing the button sends nothing yet and offers Email and WhatsApp', async () => {
+    await openSendMenu();
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'WhatsApp' })).toBeInTheDocument();
+    expect(issueQuotationDocument).not.toHaveBeenCalled();
+  });
+
+  it('E1: closing the menu with Escape sends nothing', async () => {
+    const user = await openSendMenu();
+    await screen.findByRole('menu');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(issueQuotationDocument).not.toHaveBeenCalled();
+  });
+
+  it('E2: Email sends once and opens no WhatsApp prompt', async () => {
+    const user = await openSendMenu();
+    await user.click(await screen.findByRole('menuitem', { name: 'Email' }));
+    await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(issueQuotationDocument).toHaveBeenCalledWith('p1', 'd1');
+    expect(screen.queryByText('Send R1 via WhatsApp')).toBeNull();
+  });
+
+  it('E2: Email confirms with the sent-to-customer toast', async () => {
+    const user = await openSendMenu();
+    await user.click(await screen.findByRole('menuitem', { name: 'Email' }));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('Sent to the customer as SRT/Q/2026/0141 (R1)'),
+    );
+  });
+
+  it('E3: WhatsApp sends once, then opens the prompt for the returned revision', async () => {
+    const user = await openSendMenu();
+    await user.click(await screen.findByRole('menuitem', { name: 'WhatsApp' }));
+    await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Send R1 via WhatsApp')).toBeInTheDocument();
+  });
+
+  it('E4: a failed send opens no prompt', async () => {
+    const user = await openSendMenu();
+    issueQuotationDocument.mockRejectedValue(new Error('refused'));
+    await user.click(await screen.findByRole('menuitem', { name: 'WhatsApp' }));
+    await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(screen.queryByText('Send R1 via WhatsApp')).toBeNull();
   });
 });

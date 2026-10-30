@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[ComplaintRootCauseResponse])
-async def get_complaint_root_causes(
+def get_complaint_root_causes(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -37,7 +37,7 @@ async def get_complaint_root_causes(
 
 
 @router.get("/select", response_model=List[ComplaintRootCauseSimple])
-async def get_complaint_root_causes_select(
+def get_complaint_root_causes_select(
     query: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission_with_api_key("master_data.complaint_root_causes.view")),
     db: Session = Depends(get_db),
@@ -55,7 +55,7 @@ async def get_complaint_root_causes_select(
 
 
 @router.get("/{root_cause_id}", response_model=ComplaintRootCauseResponse)
-async def get_complaint_root_cause(
+def get_complaint_root_cause(
     root_cause_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.complaint_root_causes.view")),
     db: Session = Depends(get_db),
@@ -71,7 +71,7 @@ async def get_complaint_root_cause(
 
 
 @router.post("/", response_model=ComplaintRootCauseResponse, status_code=status.HTTP_201_CREATED)
-async def create_complaint_root_cause(
+def create_complaint_root_cause(
     payload: ComplaintRootCauseCreate,
     current_user: dict = Depends(require_permission("master_data.complaint_root_causes.add")),
     db: Session = Depends(get_db),
@@ -86,7 +86,7 @@ async def create_complaint_root_cause(
 
 
 @router.put("/{root_cause_id}", response_model=ComplaintRootCauseResponse)
-async def update_complaint_root_cause(
+def update_complaint_root_cause(
     root_cause_id: str,
     payload: ComplaintRootCauseUpdate,
     current_user: dict = Depends(require_permission("master_data.complaint_root_causes.edit")),
@@ -103,7 +103,7 @@ async def update_complaint_root_cause(
 
 
 @router.delete("/{root_cause_id}", status_code=status.HTTP_200_OK)
-async def delete_complaint_root_cause(
+def delete_complaint_root_cause(
     root_cause_id: str,
     current_user: dict = Depends(require_permission("master_data.complaint_root_causes.delete")),
     db: Session = Depends(get_db),

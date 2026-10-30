@@ -36,6 +36,7 @@ from app.api.v1 import (
     scm,
     connector,
     form_comments,
+    my_requests,
 )
 from app.api.v1.system import (
     modules_runtime,
@@ -44,6 +45,7 @@ from app.api.v1.system import (
     companies as system_companies,
 )
 from app.api.v1.assistant import record_context as assistant_record_context
+from app.api.v1.projects._own_scope import project_own_scope_guard
 from app.modules.runtime.guards import (
     require_any_module_enabled,
     require_module_enabled,
@@ -110,7 +112,11 @@ api_router.include_router(
     projects.router,
     prefix="/project-sales",
     tags=["project-sales"],
-    dependencies=[Depends(require_module_enabled_with_api_key("projects"))],
+    dependencies=[
+        Depends(require_module_enabled_with_api_key("projects")),
+        # "Only theirs" for a user holding projects.projects.view_own alone (PORTAL-P2).
+        Depends(project_own_scope_guard),
+    ],
 )
 api_router.include_router(
     sales.router,
@@ -284,6 +290,41 @@ api_router.include_router(
     prefix="/form-comments",
     tags=["form-comments"],
     dependencies=[Depends(require_any_module_enabled("procurement", "complaints", "projects"))],
+)
+# My Requests (PORTAL-P4-REQUESTS): a salesperson's own request forms through the portal's own
+# routes, signed in with the CRM session (my_requests.py). The kind's view_own is the real gate.
+# Sample requests, applications, opportunities and price tag requests first: their literal paths would otherwise be answered by the
+# generic `/submissions/{kind}` routes (D49, as on the portal).
+api_router.include_router(
+    my_requests.sample_request_router,
+    prefix="/my-requests",
+    tags=["my-requests"],
+    dependencies=[Depends(require_any_module_enabled("projects"))],
+)
+api_router.include_router(
+    my_requests.new_product_application_router,
+    prefix="/my-requests",
+    tags=["my-requests"],
+    dependencies=[Depends(require_any_module_enabled("procurement"))],
+)
+api_router.include_router(
+    my_requests.sales_opportunity_router,
+    prefix="/my-requests",
+    tags=["my-requests"],
+    dependencies=[Depends(require_any_module_enabled("sales"))],
+)
+api_router.include_router(
+    my_requests.price_tag_router,
+    prefix="/my-requests",
+    tags=["my-requests"],
+    dependencies=[Depends(require_any_module_enabled("dealer_kit"))],
+)
+# No router-wide module gate here: these routes serve forms of several modules, so the token
+# dependency gates each call on its own form's module (`my_requests._KIND_MODULES`).
+api_router.include_router(
+    my_requests.router,
+    prefix="/my-requests",
+    tags=["my-requests"],
 )
 
 # Activities & Notes - generic per-entity panel (consumed by tickets et al.).

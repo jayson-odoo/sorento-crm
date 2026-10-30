@@ -57,6 +57,9 @@ import {
   useUploadComplaintResponseAttachments,
 } from '../hooks/useComplaints';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
+import { useComplaintFulfilmentTabs } from './useComplaintFulfilmentTabs';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -73,6 +76,7 @@ import {
 } from '../services/complaintService';
 import { toast } from '@/lib/toast';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { isAwaitingReview } from '@/lib/submission-status';
 import { recordActionItems } from '@/components/common/recordActions';
 import { useComplaintActions } from '../actions';
 import ComplaintNotifiableFieldDialog from './ComplaintNotifiableFieldDialog';
@@ -96,7 +100,20 @@ interface ComplaintDetailProps {
 const statusPillClass = complaintStatusPillClass;
 const statusLabel = complaintStatusLabel;
 
-export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
+/**
+ * A salesperson limited to their own complaints (PORTAL-P4-REQUESTS R1, form parity) views theirs in
+ * the portal's own form, read-only exactly as the portal shows it, its fulfilment DOs in a tab of
+ * that form (L3); everyone else the staff detail, unchanged (every action, and the root cause /
+ * resolution / technical response edits).
+ */
+export default function ComplaintDetail(props: ComplaintDetailProps) {
+  const { limited } = useRequestScope('complaint');
+  const fulfilmentTabs = useComplaintFulfilmentTabs(props.complaintId);
+  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} extraTabs={fulfilmentTabs} />;
+  return <StaffComplaintDetail {...props} />;
+}
+
+function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const router = useRouter();
   const backHref = useBackToListHref('/complaint-management/complaints');
   // Edit carries the list state too: the edit screen has a pager of its own.
@@ -563,9 +580,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 is true and they render on their normal status+permission gates. */}
             {businessCtasEnabled && responseWritable && (
               <Button
-                // Submitted = the technical team's response is the next action, so make
-                // it the primary CTA; otherwise it's a secondary edit.
-                variant={complaint.status === 'submitted' ? 'primary' : 'outline'}
+                // Submitted / resubmitted = the technical team's response is the next
+                // action, so make it the primary CTA; otherwise it's a secondary edit.
+                variant={isAwaitingReview(complaint.status) ? 'primary' : 'outline'}
                 size="sm"
                 data-guide-target="complaint-management.complaints.tech-team.edit-response"
                 onClick={() => {
@@ -1216,7 +1233,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Project Title</p>
-              <p className="font-medium">{complaint.project_title || '-'}</p>
+              <p
+                className="line-clamp-2 break-words font-medium"
+                title={complaint.project_title || undefined}
+              >
+                {complaint.project_title || '-'}
+              </p>
               {/* AC-L3: the registered project, by CODE. Rendered as a link because the
                   first thing somebody wants after seeing it is the pursuit itself. */}
               {complaint.project_code && (

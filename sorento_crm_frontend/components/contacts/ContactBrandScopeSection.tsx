@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 
+import AllowedItemClassesPicker from '@/components/contacts/AllowedItemClassesPicker';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -12,29 +13,47 @@ import {
   useContactBrandScopeQuery,
 } from '@/hooks/useContactBrandScope';
 
+interface Draft {
+  brandIds: string[];
+  classCodes: string[];
+}
+
+const sameSet = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((id) => b.includes(id));
+
 /**
- * Contact Profile -> Brands. The brands the chatbot and MCP may tell this contact about;
- * empty means every brand. One wholesale Save, like the cards around it.
+ * Contact Profile -> Brands. The brands the chatbot and MCP may tell this contact about (empty
+ * = every brand) and, under them, the allowed item classes (empty = every class), the same
+ * picker the tag Access settings Brands row shows. One wholesale Save.
  */
 export default function ContactBrandScopeSection({ contactId }: { contactId: string }) {
   const { data, isLoading, isError, error } = useContactBrandScopeQuery(contactId);
   const brandsQuery = useBrandSelectQuery();
   const { save } = useContactBrandScopeMutations(contactId);
 
-  // null = untouched: the picker shows what the server holds until the first edit.
-  const [draft, setDraft] = useState<string[] | null>(null);
-  const saved = useMemo(() => data?.brand_ids ?? [], [data]);
+  // null = untouched: the pickers show what the server holds until the first edit.
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const saved = useMemo<Draft>(
+    () => ({ brandIds: data?.brand_ids ?? [], classCodes: data?.allowed_item_class_codes ?? [] }),
+    [data],
+  );
+  const current = draft ?? saved;
   const options = useMemo(
     () => (brandsQuery.data ?? []).map((b) => ({ value: b.id, label: b.brand_name })),
     [brandsQuery.data],
   );
+  const classOptions = useMemo(
+    () => (data?.item_class_options ?? []).map((o) => ({ value: o.code, label: o.name })),
+    [data],
+  );
   // A brand that no longer exists must not show as a raw id chip. Until the brand list loads
   // the saved ids are kept as they are, so Save never silently drops one.
   const known = useMemo(() => new Set(options.map((o) => o.value)), [options]);
-  const value = (draft ?? saved).filter((id) => !brandsQuery.data || known.has(id));
+  const value = current.brandIds.filter((id) => !brandsQuery.data || known.has(id));
 
   const isDirty =
-    draft !== null && (draft.length !== saved.length || draft.some((id) => !saved.includes(id)));
+    draft !== null &&
+    (!sameSet(value, saved.brandIds) || !sameSet(current.classCodes, saved.classCodes));
 
   if (isLoading) {
     return (
@@ -59,7 +78,7 @@ export default function ContactBrandScopeSection({ contactId }: { contactId: str
       <SearchableMultiSelect
         id="contact-brand-scope"
         value={value}
-        onChange={setDraft}
+        onChange={(brandIds) => setDraft({ brandIds, classCodes: current.classCodes })}
         options={options}
         placeholder="All brands"
         emptyMessage="No brands found"
@@ -68,15 +87,23 @@ export default function ContactBrandScopeSection({ contactId }: { contactId: str
         onRetry={() => brandsQuery.refetch()}
         disabled={save.isPending}
       />
+      <AllowedItemClassesPicker
+        id="contact-item-classes"
+        value={current.classCodes}
+        onChange={(classCodes) => setDraft({ brandIds: value, classCodes })}
+        options={classOptions}
+        disabled={save.isPending}
+      />
       <div>
         <Button
           type="button"
           size="sm"
           disabled={!isDirty || save.isPending}
           onClick={() =>
-            save.mutate(value, {
-              onSuccess: () => setDraft(null),
-            })
+            save.mutate(
+              { brandIds: value, allowedItemClassCodes: current.classCodes },
+              { onSuccess: () => setDraft(null) },
+            )
           }
         >
           Save

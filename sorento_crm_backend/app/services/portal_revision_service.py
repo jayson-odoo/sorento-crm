@@ -5,10 +5,9 @@ PLAN/UAC ``portal-submission-revisions``. The engine is generic on
 per-type fact lives in a :class:`RevisionAdapter`, and wiring a new form type is
 one adapter plus one ``portal_revision_configs`` row (UAC J3).
 
-Three adapters are registered and live from day one: ``stock_inquiry``,
-``purchase_request``, ``sponsorship_form``. ``complaint`` ships with a config row
-that is disabled, so turning it on later needs an adapter and a checkbox, never a
-migration.
+Adapters: ``stock_inquiry``, ``purchase_request``, ``sponsorship_form`` from day
+one, ``price_tag_request`` (R3-1) and ``complaint`` (PORTAL-P4-REQUESTS, owner Q6 a).
+Each type's ``portal_revision_configs`` row is the switch.
 
 Two counters, never collapsed (UAC C0):
 
@@ -32,6 +31,7 @@ from typing import Any, Callable, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.complaints import Complaint
 from app.models.portal import (
     PortalFormRevision,
     PortalRevisionConfig,
@@ -40,8 +40,10 @@ from app.models.portal import (
 )
 from app.models.price_tag import PriceTagRequest
 from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine, StockInquiry
+from app.services import portal_required_fields, submission_status
 from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_conflict, handle_not_found, handle_unprocessable
+from app.services.submission_status import APPEALED_LABEL
 
 logger = logging.getLogger(__name__)
 
@@ -620,11 +622,87 @@ _PTAG_ADAPTER = RevisionAdapter(
     },
 )
 
+def _complaint_status_for_stage(stage_code: str) -> str:
+    # `main` is the technical team's review (submitted -> responded -> approved);
+    # `customer_service` starts once the complaint is approved.
+    return {
+        "main": "submitted",
+        "customer_service": "approved",
+    }.get(stage_code, "submitted")
+
+
+# PORTAL-P4-REQUESTS (owner card v1.1 Q6 a): the per-form setting governs complaints too.
+_CX_ADAPTER = RevisionAdapter(
+    source_entity_type="complaint",
+    model=Complaint,
+    label="complaint",
+    number_attr="complaint_number",
+    snapshot_extra_fields=("complaint_number", "status"),
+    snapshot_form_fields=(
+        "delivery_order_number",
+        "complaint_date",
+        "customer_name",
+        "contact_person",
+        "contact_number",
+        "customer_address",
+        "customer_type",
+        "customer_type_others",
+        "product_code",
+        "product_type",
+        "quantity",
+        "within_warranty",
+        "defects_discovered",
+        "complaint_type",
+        "defect_description",
+        "salesperson",
+        "project_title",
+    ),
+    lookup_fields={
+        "customer_type": "complaints_customer_type",
+        "within_warranty": "complaints_within_warranty",
+        "defects_discovered": "complaints_defects_discovered",
+        "complaint_type": "complaints_complaint_type",
+    },
+    date_display_fields=("complaint_date",),
+    # The product lines re-derive the product_code / product_type / quantity columns,
+    # which the snapshot already carries, so the lines themselves are not snapshotted.
+    serialize_lines=None,
+    apply_lines=_apply_request_lines("complaint"),
+    # The submitter identity the complaint is owned and routed by. Neither is on the
+    # portal edit whitelist; frozen anyway so no payload can move the complaint.
+    frozen_on_revise=("contact_id", "space_id"),
+    # The technical team answered the superseded version.
+    invalidated_on_revise=("technical_team_response", "last_responded_by", "last_responded_at"),
+    status_for_stage=_complaint_status_for_stage,
+    terminal_statuses=("rejected", "voided", "closed", "processed_by_cs"),
+    field_labels={
+        "complaint_number": "Complaint number",
+        "delivery_order_number": "Delivery order number",
+        "complaint_date": "Complaint date",
+        "customer_name": "Customer name",
+        "contact_person": "Contact person",
+        "contact_number": "Contact number",
+        "customer_address": "Delivery address",
+        "customer_type": "Customer type",
+        "customer_type_others": "Customer type (other)",
+        "product_code": "Product code",
+        "product_type": "Product type",
+        "quantity": "Quantity",
+        "within_warranty": "Within warranty",
+        "defects_discovered": "Defects discovered",
+        "complaint_type": "Complaint type",
+        "defect_description": "Defect description",
+        "salesperson": "Salesperson",
+        "project_title": "Project title",
+    },
+)
+
 ADAPTERS: dict[str, RevisionAdapter] = {
     _SI_ADAPTER.source_entity_type: _SI_ADAPTER,
     _PR_ADAPTER.source_entity_type: _PR_ADAPTER,
     _SF_ADAPTER.source_entity_type: _SF_ADAPTER,
     _PTAG_ADAPTER.source_entity_type: _PTAG_ADAPTER,
+    _CX_ADAPTER.source_entity_type: _CX_ADAPTER,
 }
 
 
@@ -788,6 +866,10 @@ class PortalRevisionService:
 
         label = adapter.label
         status = (getattr(row, "status", None) or "").strip().lower()
+        if status == submission_status.RESUBMITTED:
+            # Resubmitted stands in for the type's review stage (RESUBMITTED-STATUS),
+            # which is where `status_for_stage` lands when no stage is named.
+            status = adapter.status_for_stage("")
         allowed_statuses = [
             str(s).strip().lower() for s in (config.allowed_statuses or []) if str(s).strip()
         ]
@@ -1598,6 +1680,12 @@ class PortalRevisionService:
         # `PortalService._require_sponsorship_unit_prices`.
         if source_entity_type == "sponsorship_form":
             portal._require_sponsorship_unit_prices(row)  # noqa: SLF001
+        # Same reasoning for the required fields (FORM-REQUIRED-SERVER), minus the frozen
+        # ones: a revise cannot set them, so a row created without one (staff / external
+        # create leave the requestor optional) would otherwise be refused for good.
+        portal_required_fields.require_complete(
+            source_entity_type, row, skip=adapter.frozen_on_revise
+        )
 
         # 6. Snapshot the stage output this revision invalidates, then clear it on the
         #    entity: an answer to the superseded version must never read as current
@@ -1998,7 +2086,7 @@ def _revision_label(row: PortalFormRevision) -> str:
     if row.kind == KIND_ORIGINAL:
         return "Original (reconstructed)" if row.is_reconstructed else "Original"
     if row.kind == KIND_RESUBMISSION:
-        return "Resubmitted"
+        return APPEALED_LABEL
     return f"Revision {row.revision_no}"
 
 

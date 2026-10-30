@@ -24,8 +24,10 @@ from app.models.access import RespondContact
 from app.models.impersonation import ContactImpersonationSession
 from app.models.portal import PortalToken
 from app.models.respond_workspace import RespondWorkspace
+from app.models.user import User
 from app.services.audit_service import log_audit
 from app.services.error_handler import handle_not_found
+from app.services.phone_signin_service import is_salesperson
 from app.services.portal_service import PORTAL_TOKEN_TTL, PortalService
 from app.services.user_service import UserPermissionService
 
@@ -50,6 +52,8 @@ class ContactImpersonationSessionResponse(BaseModel):
     started_at: datetime
     portal_url: str
     target_contact: TargetContactSummary
+    # The linked user's id when that user is an active salesperson (PORTAL-P3-ROLE-MENU), else null.
+    crm_user_id: Optional[str] = None
 
 
 def _ensure_admin(db: Session, real_user: dict) -> None:
@@ -84,11 +88,19 @@ def _resolve_contact_and_space(db: Session, contact_id: str) -> tuple[RespondCon
     return contact, workspace.space_id
 
 
+def salesperson_user_id_for_contact(db: Session, contact: RespondContact) -> Optional[str]:
+    for user in db.query(User).filter(User.respond_contact_id == contact.id).all():
+        if is_salesperson(db, user):
+            return str(user.id)
+    return None
+
+
 def _serialize(
     session_row: ContactImpersonationSession,
     contact: RespondContact,
     space_id: str,
     portal_url: str,
+    crm_user_id: Optional[str] = None,
 ) -> ContactImpersonationSessionResponse:
     name = contact.name or " ".join(
         filter(None, [contact.first_name, contact.last_name])
@@ -103,11 +115,12 @@ def _serialize(
             phone_number=contact.phone_number,
             space_id=space_id,
         ),
+        crm_user_id=crm_user_id,
     )
 
 
 @router.post("/start", response_model=ContactImpersonationSessionResponse)
-async def start_contact_impersonation(
+def start_contact_impersonation(
     body: StartContactImpersonationRequest,
     request: Request,
     real_user: dict = Depends(get_real_user),
@@ -193,25 +206,22 @@ async def start_contact_impersonation(
         else f"/portal?token={token_row.token}&impersonation=1"
     )
 
-    return _serialize(session_row, contact, space_id, portal_url)
-
-
-@router.post("/stop")
-async def stop_contact_impersonation(
-    request: Request,
-    real_user: dict = Depends(get_real_user),
-    db: Session = Depends(get_db),
-):
-    session_row = (
-        db.query(ContactImpersonationSession)
-        .filter(
-            ContactImpersonationSession.admin_user_id == real_user["id"],
-            ContactImpersonationSession.ended_at.is_(None),
-        )
-        .first()
+    return _serialize(
+        session_row, contact, space_id, portal_url, salesperson_user_id_for_contact(db, contact)
     )
-    if not session_row:
-        return {"ended": False}
+
+
+def end_contact_session(
+    db: Session,
+    session_row: ContactImpersonationSession,
+    admin_id: str,
+    ip: Optional[str],
+) -> None:
+    """End one contact-impersonation session, revoke its portal token and audit it.
+
+    Flushes only: the caller commits (the CRM impersonation stop ends a linked contact session
+    in the same transaction).
+    """
     session_row.ended_at = datetime.utcnow()
     token_row = (
         db.query(PortalToken)
@@ -226,21 +236,40 @@ async def stop_contact_impersonation(
         entity_type="contact_impersonation_session",
         entity_id=session_row.id,
         action="UPDATE",
-        user_id=real_user["id"],
+        user_id=admin_id,
         description="contact_impersonation_end",
         new_values={
-            "admin_user_id": real_user["id"],
+            "admin_user_id": admin_id,
             "target_contact_id": session_row.target_contact_id,
             "ended_at": session_row.ended_at.isoformat(),
         },
-        ip_address=request.client.host if request.client else None,
+        ip_address=ip,
     )
+
+
+@router.post("/stop")
+def stop_contact_impersonation(
+    request: Request,
+    real_user: dict = Depends(get_real_user),
+    db: Session = Depends(get_db),
+):
+    session_row = (
+        db.query(ContactImpersonationSession)
+        .filter(
+            ContactImpersonationSession.admin_user_id == real_user["id"],
+            ContactImpersonationSession.ended_at.is_(None),
+        )
+        .first()
+    )
+    if not session_row:
+        return {"ended": False}
+    end_contact_session(db, session_row, real_user["id"], request.client.host if request.client else None)
     db.commit()
     return {"ended": True, "session_id": session_row.id}
 
 
 @router.get("/current", response_model=Optional[ContactImpersonationSessionResponse])
-async def current_contact_impersonation(
+def current_contact_impersonation(
     request: Request,
     real_user: dict = Depends(get_real_user),
     db: Session = Depends(get_db),

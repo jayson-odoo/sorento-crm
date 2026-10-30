@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TagLayer, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { defaultPriceBadgeProps } from '@/lib/dealer-kit/tag-template-types';
+import { barcodeSvg, svgDataUrl } from '@/lib/dealer-kit/barcode';
 import TagSheetRenderer, { type ResolvedLineData } from './TagSheetRenderer';
 
 const TAG_ID = 'tag-1';
@@ -1090,24 +1091,23 @@ describe('barcode on the print page', () => {
     });
   }
 
-  it('draws the label plate: product-code strip and guard-split human-readable digits', () => {
-    render(
-      <TagSheetRenderer
-        doc={docWith([barcodeLayer()])}
-        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
-        assets={{}}
-        images={{}}
-      />,
-    );
+  /** The plate's one image, and the SVG markup inside its data: URL. */
+  function plate(container: HTMLElement): { img: HTMLImageElement | null; svg: string } {
+    const img = container.querySelector('img');
+    const src = img?.getAttribute('src') ?? '';
+    return { img, svg: src ? decodeURIComponent(src.slice(src.indexOf(',') + 1)) : '' };
+  }
 
-    expect(screen.getByText('SK-1234')).toBeInTheDocument();
-    // Guard-split: digit, group of 6, group of 6 - the same shape
-    // `humanReadableBarcode` pins in lib/dealer-kit/barcode.test.ts, so the
-    // print DOM cannot drift from the editor's own preview.
-    expect(screen.getByText('4 006381 333931')).toBeInTheDocument();
-  });
+  /** The text runs inside the plate's SVG, in document order. */
+  function svgTexts(svg: string): string[] {
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+    return Array.from(doc.querySelectorAll('text')).map((t) => t.textContent ?? '');
+  }
 
-  it('draws the bars themselves as a real data: URL image (jsdom canvas via the `canvas` package)', () => {
+  // PRICETAG-BARCODE-MATCH: the preview and the PDF print the SAME SVG the
+  // canvas draws (`barcodeSvg`), as one image filling the layer box, so the
+  // three surfaces cannot lay the barcode out differently.
+  it('prints the shared barcode SVG as one image filling the layer box', () => {
     const { container } = render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer()])}
@@ -1117,16 +1117,45 @@ describe('barcode on the print page', () => {
       />,
     );
 
-    // Only one <img> on this plate: the bars. `jsbarcode` throws in stock
-    // jsdom (no <canvas> 2d context); the `canvas` devDependency is what
-    // makes this assertion possible instead of a permanently-untested path.
-    const img = container.querySelector('img');
+    const { img, svg } = plate(container);
     expect(img).not.toBeNull();
-    expect(img?.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
+    expect(img?.getAttribute('src')).toBe(
+      svgDataUrl(
+        barcodeSvg({
+          value: VALID_EAN13,
+          code: 'SK-1234',
+          showCode: true,
+          widthMm: 40,
+          heightMm: 22,
+        })!,
+      ),
+    );
+    expect(img?.style.width).toBe('100%');
+    expect(img?.style.height).toBe('100%');
+    // Code above, digits split around the guards - all inside the SVG; no
+    // DOM strip or digit row of its own beside it.
+    expect(svgTexts(svg)[0]).toBe('SK-1234');
+    expect(svgTexts(svg).slice(1).join('')).toBe(VALID_EAN13);
+    expect(screen.queryByText('SK-1234')).not.toBeInTheDocument();
+    expect(screen.queryByText('4 006381 333931')).not.toBeInTheDocument();
   });
 
-  it('omits the product-code strip when show_code is off', () => {
-    render(
+  it('draws the plate as an SVG data: URL, not a raster bars image', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([barcodeLayer()])}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(container.querySelectorAll('img')).toHaveLength(1);
+    expect(plate(container).img?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
+  });
+
+  it('omits the product code when show_code is off', () => {
+    const { container } = render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer(false)])}
         resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
@@ -1135,12 +1164,13 @@ describe('barcode on the print page', () => {
       />,
     );
 
-    expect(screen.queryByText('SK-1234')).not.toBeInTheDocument();
-    expect(screen.getByText('4 006381 333931')).toBeInTheDocument();
+    const texts = svgTexts(plate(container).svg);
+    expect(texts).not.toContain('SK-1234');
+    expect(texts.join('')).toBe(VALID_EAN13);
   });
 
   it('prints a Code128 value plain, with no guard split', () => {
-    render(
+    const { container } = render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer()])}
         resolvedData={{ [TAG_ID]: resolved({ barcode: 'SKU-NOT-EAN' }) }}
@@ -1149,7 +1179,7 @@ describe('barcode on the print page', () => {
       />,
     );
 
-    expect(screen.getByText('SKU-NOT-EAN')).toBeInTheDocument();
+    expect(svgTexts(plate(container).svg)).toEqual(['SK-1234', 'SKU-NOT-EAN']);
   });
 
   it('draws nothing at all when the line carries no barcode (AC-S7-3)', () => {
@@ -1164,7 +1194,7 @@ describe('barcode on the print page', () => {
 
     // Not the editor's dashed placeholder - nothing, because a physical tag
     // has no business printing "no data yet" language.
-    expect(container.querySelector('[style*="border-radius"]')).toBeNull();
+    expect(container.querySelector('img')).toBeNull();
     expect(container.textContent).not.toContain('SK-1234');
   });
 
@@ -1178,7 +1208,7 @@ describe('barcode on the print page', () => {
       />,
     );
 
-    expect(container.querySelector('[style*="border-radius"]')).toBeNull();
+    expect(container.querySelector('img')).toBeNull();
   });
 
   // ---------------------------------------------------------------------------
@@ -1188,7 +1218,7 @@ describe('barcode on the print page', () => {
   // ---------------------------------------------------------------------------
 
   it('prints the override instead of the bound barcode (AC-S9-2)', () => {
-    render(
+    const { container } = render(
       <TagSheetRenderer
         doc={docWith([{ ...barcodeLayer(), text_override: '110000526' }])}
         resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
@@ -1198,12 +1228,11 @@ describe('barcode on the print page', () => {
     );
 
     // Code128 (non-EAN), so no guard split - plain override text.
-    expect(screen.getByText('110000526')).toBeInTheDocument();
-    expect(screen.queryByText('4 006381 333931')).not.toBeInTheDocument();
+    expect(svgTexts(plate(container).svg)).toEqual(['SK-1234', '110000526']);
   });
 
   it('prints the override even when the line carries no barcode of its own', () => {
-    render(
+    const { container } = render(
       <TagSheetRenderer
         doc={docWith([{ ...barcodeLayer(), text_override: VALID_EAN13 }])}
         resolvedData={{ [TAG_ID]: resolved({ barcode: null }) }}
@@ -1212,7 +1241,7 @@ describe('barcode on the print page', () => {
       />,
     );
 
-    expect(screen.getByText('4 006381 333931')).toBeInTheDocument();
+    expect(svgTexts(plate(container).svg).slice(1).join('')).toBe(VALID_EAN13);
   });
 
   it('an empty override draws nothing, never falling back to a real product barcode (S5)', () => {
@@ -1225,59 +1254,7 @@ describe('barcode on the print page', () => {
       />,
     );
 
-    expect(container.querySelector('[style*="border-radius"]')).toBeNull();
-    expect(screen.queryByText('4 006381 333931')).not.toBeInTheDocument();
-  });
-
-  it('sizes the code-strip and human-readable text in pt, proportional to the plate (AC-S7-4/6)', () => {
-    // A 40x22mm plate - the toolbar's default insert size. Against the BUG
-    // (`Math.max(6, strip * 0.6)}mm`) this reads as a 6mm floor (~17pt): a
-    // fixed, oversized font that does not move with the plate. The fix reads
-    // it in pt (`MM_TO_PT`), well under 17pt and different for a differently
-    // proportioned plate, which is what "proportional" asserts below.
-    render(
-      <TagSheetRenderer
-        doc={docWith([barcodeLayer()])}
-        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
-        assets={{}}
-        images={{}}
-      />,
-    );
-
-    const strip = screen.getByText('SK-1234');
-    const stripFontSize = strip.style.fontSize;
-    expect(stripFontSize).toMatch(/pt$/);
-    expect(parseFloat(stripFontSize)).toBeLessThan(17);
-
-    const human = screen.getByText('4 006381 333931');
-    const humanFontSize = human.style.fontSize;
-    expect(humanFontSize).toMatch(/pt$/);
-    expect(parseFloat(humanFontSize)).toBeLessThan(17);
-
-    // A taller plate at the same width grows the strip band, and the font
-    // with it - pinning that the size is DERIVED from the plate, not a
-    // constant every plate happens to clip to the same floor.
-    const { container: tallerContainer } = render(
-      <TagSheetRenderer
-        doc={docWith([
-          layer({
-            id: 'bc-tall',
-            type: 'barcode',
-            slot_binding: 'barcode',
-            width_mm: 40,
-            height_mm: 44,
-            props: { kind: 'barcode', show_code: true },
-          }),
-        ])}
-        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
-        assets={{}}
-        images={{}}
-      />,
-    );
-    const tallerStrip = tallerContainer.querySelectorAll('[style*="font-weight: 700"]')[0] as HTMLElement;
-    expect(parseFloat(tallerStrip.style.fontSize)).toBeGreaterThan(
-      parseFloat(stripFontSize),
-    );
+    expect(container.querySelector('img')).toBeNull();
   });
 });
 

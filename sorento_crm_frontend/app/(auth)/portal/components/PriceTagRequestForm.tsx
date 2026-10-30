@@ -4,9 +4,13 @@
  * Portal price tag request form - create / edit / view.
  *
  * Wired to real portal API via `price-tag-request-service.ts`.
+ *
+ * A salesperson's price tag request on the CRM is this same form (PORTAL-P4-REQUESTS R3): every
+ * call, path and delete goes through the injected client (`lib/submission-client`), the portal's
+ * own without one.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -17,7 +21,6 @@ import {
   FileText,
   History,
   Loader2,
-  MessageSquare,
   PencilLine,
   Plus,
   Trash2,
@@ -35,11 +38,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -61,41 +62,33 @@ import { portalBase, portalDuplicatePath } from '../lib/portal-paths';
 import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import type {
   PriceTagRequestDetail,
-  PriceTagRequestLine,
   PriceTagRequestLineInput,
   DebtorOption,
-  LinePartCandidate,
-  ProductComboOption,
   PriceMode,
   TagItemOption,
-  LinePricingResult,
-  LinePricingLineInput,
 } from '../lib/price-tag-request-service';
+import * as portalPriceTagRequest from '../lib/price-tag-request-service';
 import {
-  lookupDebtors,
-  lookupProductCombos,
-  lookupLinePricing,
-  lookupTagItems,
-  getRequest,
-  createRequest,
-  updateRequest,
-  deleteRequest,
-  submitRequest,
-  approveRequest,
-  requestChanges,
-  listReviewComments,
-  collectRequest,
-  downloadPriceTagPdf,
-  requestPriceTagExport,
-} from '../lib/price-tag-request-service';
-import DesignViewer from '@/components/dealer-kit/DesignViewer';
-import type { DesignDownload } from '@/components/dealer-kit/DesignLightbox';
+  clientDeletes,
+  clientEmbedded,
+  clientPaths,
+  clientService,
+  useSubmissionClient,
+} from '../lib/submission-client';
+import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
+import { PriceTagDesignReview } from '@/components/dealer-kit/PriceTagDesignReview';
+import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
+import { PriceTagLinesView } from '@/components/dealer-kit/PriceTagLinesView';
 import {
-  numberedPins,
-  type ChangeRequestPayload,
-  type DraftPin,
-  type ReviewComment,
-} from '@/lib/dealer-kit/review-comments';
+  usePriceTagLineEditor,
+  type PriceTagLineLookups,
+} from '@/hooks/usePriceTagLineEditor';
+import {
+  draftLinesPayload,
+  lineToDraft,
+  type DraftLine,
+} from '@/lib/dealer-kit/price-tag-draft-lines';
+import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
 import POCrossCheckViewer from './POCrossCheckViewer';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import {
@@ -103,332 +96,23 @@ import {
   type AIExtractApplyPayload,
 } from './AIExtractDialog';
 import type { AIExtractedProductLine } from '../lib/portal-client';
-import {
-  uploadAttachment,
-  getPriceTagDesign,
-  fetchMe,
-  fetchSubmissionNeighbours,
-  type PortalAttachment,
-  type PortalSubmissionNeighbours,
-} from '../lib/portal-client';
-import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
-import { cn } from '@/lib/utils';
-import { promotionOptionName } from '@/lib/dealer-kit/line-pricing-types';
-import { codeWithName, distinctName, sameDisplayText } from '@/lib/product-display';
+import type { PortalAttachment, PortalSubmissionNeighbours } from '../lib/portal-client';
+import { codeWithName } from '@/lib/product-display';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
  *  (D7/AC-S6-2), shown in the extract dialog's own result table. */
 type AIMatchStatus = 'loading' | 'matched_product' | 'matched_set' | 'not_found' | 'picked';
 
 // ---------------------------------------------------------------------------
-// Draft line (client-side, before persisting)
+// Sections. The draft line, its package rules and its payload live in
+// `lib/dealer-kit/price-tag-draft-lines.ts`, the read-only lines table in
+// `components/dealer-kit/PriceTagLinesView.tsx`, both shared with the CRM
+// request page (PORTAL-P4-REQUESTS S7b).
 // ---------------------------------------------------------------------------
 
 // D-P1: the four sections, top to bottom, on both the edit form and the
 // read-only view.
 type SectionKey = 'customer' | 'sales_order' | 'price' | 'need_by';
-
-/**
- * One part row under a draft line (D2).
- *
- * Resolved: `product_id` is set - a specific product goes on the tag. Open:
- * `product_id` is null and `candidates` holds the group's options, which is the
- * salesperson saying "any of these, you choose". `candidates` is kept on a
- * resolved row too, so clearing the select reopens the row (AC-S2-3).
- */
-interface DraftPart {
-  key: string;
-  product_id: string | null;
-  code: string;
-  name: string;
-  /** The choice group this row answers. Null on a fixed or hand-added part. */
-  role: string | null;
-  candidates: LinePartCandidate[];
-}
-
-interface DraftLine {
-  key: string; // client-side key for React
-  line_type: 'product' | 'product_set';
-  product_id: string | null;
-  product_set_id: string | null;
-  name: string;
-  code: string;
-  /** null while the field is empty; checked on Save / Submit. */
-  quantity: number | null;
-  included_accessories: string;
-  /** Free-text note on the line (D6). */
-  remarks: string;
-  guard_error: string | null;
-  /** The catalogue package this line is asked for as (D2). Null = none chosen. */
-  combo_id: string | null;
-  /** What the picked product is sold as. Answered by the combos lookup, which
-   *  runs once per product on the line - so an empty list before `combos_loaded`
-   *  means "not asked yet", not "no package". */
-  combos: ProductComboOption[];
-  combos_loaded: boolean;
-  /** The product's class is in the guarded list, so a missing package is worth
-   *  a warning. Answered by the same lookup. */
-  host_guarded: boolean;
-  parts: DraftPart[];
-  // ---- D1/D2/S1: line-level promotion and price (Phase 1, mocked pricing). ----
-  /** Null = no promotion chosen (either nothing covers this line yet, or the
-   *  salesperson explicitly cleared it - see `promotion_locked`). */
-  promotion_id: string | null;
-  /** Set the first time the salesperson interacts with the line's Promotion
-   *  select (pick OR clear), so the one-time auto pick (AC-S1-4) never
-   *  overwrites a deliberate choice, including "none" (AC-S1-7). */
-  promotion_locked: boolean;
-  /** A hand-typed selling price, only meaningful while `promotion_id` is
-   *  null (AC-S1-6). Mutually exclusive with `promotion_id` (AC-S1-7). */
-  manual_sell_price: number | null;
-  /** The last `lookupLinePricing` answer for this line's key, or null before
-   *  the first response lands. */
-  pricing: LinePricingResult | null;
-}
-
-let partKeySeq = 0;
-function newPartKey(): string {
-  partKeySeq += 1;
-  return `part-${Date.now()}-${partKeySeq}`;
-}
-
-/**
- * The part rows a combo fills in on pick (AC-S2-1): every fixed part as its own
- * resolved row, and ONE open row per choice group, in the order the group first
- * appears - so the package reads down the row the way the catalogue page lists it.
- */
-function partsFromCombo(combo: ProductComboOption): DraftPart[] {
-  const out: DraftPart[] = [];
-  const seen = new Set<string>();
-  for (const part of combo.parts) {
-    if (!part.choice_group) {
-      out.push({
-        key: newPartKey(),
-        product_id: part.product_id,
-        code: part.code,
-        name: part.name,
-        role: null,
-        candidates: [],
-      });
-      continue;
-    }
-    if (seen.has(part.choice_group)) continue;
-    seen.add(part.choice_group);
-    const candidates = combo.parts
-      .filter((p) => p.choice_group === part.choice_group)
-      .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name }));
-    // D17 (AC-S12-1): one candidate is not a choice - the group resolves on
-    // the spot, same as a fixed part. `candidates` is kept (not cleared) so
-    // the row still knows what it came from if it is ever removed and
-    // restored (D19), the same reason a genuinely open row keeps it.
-    const only = candidates.length === 1 ? candidates[0] : null;
-    out.push({
-      key: newPartKey(),
-      product_id: only?.product_id ?? null,
-      code: only?.code ?? '',
-      name: only?.name ?? '',
-      role: part.choice_group,
-      candidates,
-    });
-  }
-  return out;
-}
-
-/**
- * The package warning, computed exactly as the server computes it at submit
- * (D2) so the row says the same thing before and after. Submit is never refused
- * for a package reason - this only tells the salesperson what marketing will see.
- */
-function packageWarningFor(line: DraftLine): string | null {
-  if (line.line_type !== 'product' || !line.product_id) return null;
-  if (!line.combos_loaded || !line.host_guarded) return null;
-  if (!line.combo_id) {
-    return line.combos.length === 0 ? 'No package defined' : 'No package chosen';
-  }
-  const combo = line.combos.find((c) => c.combo_id === line.combo_id);
-  if (!combo) return null;
-  const missing: string[] = [];
-  for (const part of combo.parts) {
-    if (part.choice_group) continue;
-    if (!line.parts.some((row) => row.product_id === part.product_id)) {
-      missing.push(part.code);
-    }
-  }
-  const groups: string[] = [];
-  for (const part of combo.parts) {
-    if (part.choice_group && !groups.includes(part.choice_group)) {
-      groups.push(part.choice_group);
-    }
-  }
-  for (const group of groups) {
-    // Neither a resolved nor an open row answers this group.
-    if (!line.parts.some((row) => row.role === group)) missing.push(group);
-  }
-  return missing.length > 0 ? `Missing: ${missing.join(', ')}` : null;
-}
-
-/** AC-S1-2: an unresolved choice group prices as nothing, and the List price
- *  cell says so rather than silently under-counting. */
-function hasOpenGroup(line: DraftLine): boolean {
-  return line.parts.some((part) => !part.product_id && part.candidates.length > 0);
-}
-
-/** RM amounts round to whole ringgit everywhere on this form (mock pricing
- *  never produces sen). */
-function formatRM(value: number | null | undefined): string {
-  if (value == null) return '-';
-  return `RM ${value.toLocaleString('en-MY')}`;
-}
-
-/** AC-S1-10: a submitted line's List price, read straight off what the
- *  server resolved - shared between the desktop `<td>` column (no label -
- *  the header already names it) and the mobile stack under the Item cell
- *  (label kept there, no header to read it off). Never both at once, see
- *  `isMobile`. */
-function viewListPriceCell(line: PriceTagRequestLine, withLabel: boolean) {
-  return (
-    <div>
-      {withLabel && (
-        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-          List price
-        </div>
-      )}
-      <div className="text-sm font-medium whitespace-nowrap">
-        {formatRM(line.list_price)}
-      </div>
-    </div>
-  );
-}
-
-function viewPromotionCell(line: PriceTagRequestLine, withLabel: boolean) {
-  return (
-    <div>
-      {withLabel && (
-        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-          Promotion
-        </div>
-      )}
-      <div className="text-sm font-medium">
-        {line.promotion_name != null
-          ? promotionOptionName({
-              description: line.promotion_name,
-              expired_on: line.promotion_expired_on,
-            })
-          : line.sell_price_basis === 'manual'
-            ? 'Manual price'
-            : '-'}
-      </div>
-    </div>
-  );
-}
-
-function viewSellingPriceCell(line: PriceTagRequestLine, withLabel: boolean) {
-  return (
-    <div>
-      {withLabel && (
-        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-          Selling price
-        </div>
-      )}
-      <div className="text-sm font-medium whitespace-nowrap">
-        {formatRM(line.sell_price)}
-      </div>
-    </div>
-  );
-}
-
-/** AC-S1-8: "the cell's title reads which parts are at list" - the codes a
- *  promotion did not cover, resolved from the line's own part rows (plus the
- *  host itself, which a title never needs to name since the cell it sits in
- *  already says the line is not fully covered by naming what IS missing). */
-function partsAtListTitle(
-  line: DraftLine,
-  pricing: LinePricingResult | null | undefined,
-): string | undefined {
-  if (!pricing || pricing.parts_at_list.length === 0) return undefined;
-  const codes = pricing.parts_at_list
-    .map((productId) => line.parts.find((p) => p.product_id === productId)?.code)
-    .filter((code): code is string => !!code);
-  return codes.length > 0 ? `At list price: ${codes.join(', ')}` : undefined;
-}
-
-/**
- * A new row starts empty and TYPELESS in spirit: the Item picker decides whether
- * it is a product or a set (D47), so the dealer never has to. `product` is only
- * the placeholder until they pick, and an unpicked row blocks Submit either way.
- */
-function emptyDraftLine(): DraftLine {
-  return {
-    key: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    line_type: 'product',
-    product_id: null,
-    product_set_id: null,
-    name: '',
-    code: '',
-    quantity: 1,
-    included_accessories: '',
-    remarks: '',
-    guard_error: null,
-    combo_id: null,
-    combos: [],
-    combos_loaded: false,
-    host_guarded: false,
-    parts: [],
-    promotion_id: null,
-    promotion_locked: false,
-    manual_sell_price: null,
-    pricing: null,
-  };
-}
-
-/** The Item picker's option value: kind and id together, so one dropdown can
- *  answer for two tables without either half guessing which it got. */
-function itemValue(line: DraftLine): string {
-  if (line.line_type === 'product_set') {
-    return line.product_set_id ? `product_set:${line.product_set_id}` : '';
-  }
-  return line.product_id ? `product:${line.product_id}` : '';
-}
-
-function lineToDraft(line: PriceTagRequestLine): DraftLine {
-  return {
-    key: line.id,
-    line_type: line.line_type,
-    product_id: line.product_id,
-    product_set_id: line.product_set_id,
-    name: line.name,
-    code: line.code,
-    // show_promo_price is read-only server state, not form state: it is
-    // derived from the header's price_mode on every save (D5), so the draft
-    // never carries or resends it (review fix).
-    quantity: line.quantity,
-    included_accessories: line.included_accessories ?? '',
-    remarks: line.remarks ?? '',
-    guard_error: null,
-    combo_id: line.combo_id ?? null,
-    // Not on the line payload: the combos lookup answers both, once per product,
-    // from the effect below - which is also what re-arms the Package select and
-    // the warning on a draft reopened from the server (AC-S2-9).
-    combos: [],
-    combos_loaded: false,
-    host_guarded: false,
-    parts: (line.parts ?? []).map((part) => ({
-      key: part.id,
-      product_id: part.product_id,
-      code: part.code ?? '',
-      name: part.name ?? '',
-      role: part.role,
-      candidates: part.candidates ?? [],
-    })),
-    // D1 (Phase 2, not wired yet): a server that already carries these wins;
-    // a pre-migration server (Phase 1) leaves them null and the line waits
-    // for `lookupLinePricing`'s auto pick like a brand new line does.
-    promotion_id: line.promotion_id ?? null,
-    promotion_locked: line.promotion_id != null,
-    manual_sell_price: line.manual_sell_price ?? null,
-    pricing: null,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // What Submit says when something is missing (D48b)
@@ -494,6 +178,8 @@ function lineErrorToast(fields: string[], message: string): void {
 /** Bring the first complaint into view, after the render that drew it. */
 function scrollToFirstProblem(): void {
   setTimeout(() => {
+    // A test can tear jsdom down inside these 50 ms; never reach a document that is gone.
+    if (typeof document === 'undefined') return;
     const node = document.querySelector('[data-error-anchor]');
     node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
   }, 50);
@@ -528,6 +214,33 @@ interface Props {
 
 export function PriceTagRequestForm({ requestId, slug }: Props) {
   const router = useRouter();
+  const client = useSubmissionClient();
+  const service = () => clientService(client, 'priceTagRequest', portalPriceTagRequest);
+  const paths = clientPaths(client);
+  // Inside a CRM page its header carries Back; its deletes are parked (D7).
+  const embedded = clientEmbedded(client);
+  const deferredDeletes = clientDeletes(client);
+  const homePath = paths
+    ? paths.home('price_tag_request')
+    : `${portalBase(slug)}?type=price_tag_request`;
+  // The shared line editor's and proof review's reads (PORTAL-P4-REQUESTS S7b). Called
+  // through, never captured, so a module the tests replace is read at call time.
+  const lineLookups = useMemo<PriceTagLineLookups>(() => {
+    const svc = () => clientService(client, 'priceTagRequest', portalPriceTagRequest);
+    return {
+      lookupTagItems: (query) => svc().lookupTagItems(query),
+      lookupProductCombos: (productId) => svc().lookupProductCombos(productId),
+      lookupLinePricing: (mode, lines) => svc().lookupLinePricing(mode, lines),
+    };
+  }, [client]);
+  const designCalls = useMemo(
+    () => ({
+      loadDesign: (id: string) => client.getPriceTagDesign(id),
+      loadReviewComments: (id: string) =>
+        clientService(client, 'priceTagRequest', portalPriceTagRequest).listReviewComments(id),
+    }),
+    [client],
+  );
   const isNew = !requestId;
   // Owner ruling after #948: List price / Promotion / Selling price are real
   // table columns on desktop, not a `colSpan` sub-row. Below the existing
@@ -694,7 +407,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       return;
     }
     let cancelled = false;
-    fetchSubmissionNeighbours('price_tag_request', requestId)
+    client
+      .fetchSubmissionNeighbours('price_tag_request', requestId)
       .then((n) => {
         if (!cancelled) setNeighbours(n);
       })
@@ -704,7 +418,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [requestId]);
+  }, [requestId, client]);
 
   // ---- Sections (D-P1): Customer open by default, everything else opens
   // progressively as the form gains the value the next section needs. A rule
@@ -799,7 +513,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // to, so an EMPTY answer means "nobody has linked it" and is a state the form
     // has to explain (D46a). A FAILED call is a different thing and keeps the
     // toast, or the notice would blame the account for a network fault.
-    lookupDebtors()
+    clientService(client, 'priceTagRequest', portalPriceTagRequest)
+      .lookupDebtors()
       .then((d) => {
         setDebtors(d);
         setDebtorsLoaded(true);
@@ -811,7 +526,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // D1: promotions are no longer looked up for the whole request - each
     // line asks `lookupLinePricing` for the ones that cover IT (S1 effect
     // below).
-  }, []);
+  }, [client]);
 
   // D7 r3 (PLAN-portal-forms-market-segment): a `/new` page makes no request
   // of its own to check visibility - it reads `visible_form_types` off the
@@ -822,7 +537,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // so it is read on an existing draft too; the visibility check stays /new.
   useEffect(() => {
     let cancelled = false;
-    fetchMe()
+    client
+      .fetchMe()
       .then((c) => {
         if (cancelled) return;
         setAttachmentExtensions(c.attachment_allowed_extensions);
@@ -838,14 +554,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [isNew]);
+  }, [isNew, client]);
 
   // ---- Load existing request ----
   useEffect(() => {
     if (!requestId) return;
     let cancelled = false;
     setLoading(true);
-    getRequest(requestId)
+    clientService(client, 'priceTagRequest', portalPriceTagRequest)
+      .getRequest(requestId)
       .then((data) => {
         if (cancelled) return;
         if (!data) {
@@ -882,81 +599,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId]);
 
-  // ---- Line pricing, edit form (D1/D4/S1, mocked - `lookupLinePricing`'s
-  // own header documents the eventual real contract) ----
-  //
-  // One call for every priced line, keyed by the line's own client key. A
-  // set line, or a line with no product yet, asks nothing. Recomputes
-  // whenever a line's product, parts or chosen promotion change - captured
-  // as a signature string so an unrelated edit (quantity, remarks) does not
-  // refetch what would come back identical.
-  const linesRef = useRef<DraftLine[]>(lines);
-  useEffect(() => {
-    linesRef.current = lines;
-  }, [lines]);
-  const [linePricing, setLinePricing] = useState<Record<string, LinePricingResult>>({});
-  const pricingSignature = useMemo(
-    () =>
-      JSON.stringify(
-        lines.map((l) => [
-          l.key,
-          l.line_type,
-          l.product_id,
-          l.parts.map((p) => [p.product_id, p.candidates.map((c) => c.product_id)]),
-          l.promotion_id,
-        ]),
-      ),
-    [lines],
-  );
-  useEffect(() => {
-    const inputs: LinePricingLineInput[] = linesRef.current
-      .filter((l) => l.line_type === 'product' && l.product_id)
-      .map((l) => ({
-        key: l.key,
-        product_id: l.product_id,
-        part_product_ids: l.parts
-          .filter((p) => p.product_id)
-          .map((p) => p.product_id as string),
-        candidate_product_ids: l.parts.flatMap((p) =>
-          p.candidates.map((c) => c.product_id),
-        ),
-        promotion_id: l.promotion_id,
-      }));
-    if (inputs.length === 0) {
-      setLinePricing({});
-      return;
-    }
-    let cancelled = false;
-    lookupLinePricing(priceMode, inputs).then((results) => {
-      if (cancelled) return;
-      setLinePricing(Object.fromEntries(results.map((r) => [r.key, r])));
-      // D2 (AC-S1-4): pre-fill the line's promotion with the lowest-total
-      // covering one, but only once - a line the salesperson has already
-      // picked or explicitly cleared (`promotion_locked`) never gets
-      // overwritten, and a manual price already typed wins outright.
-      setLines((prev) =>
-        prev.map((l) => {
-          const result = results.find((r) => r.key === l.key);
-          if (
-            !result ||
-            l.promotion_locked ||
-            l.promotion_id ||
-            l.manual_sell_price != null ||
-            !result.auto_promotion_id
-          ) {
-            return l;
-          }
-          return { ...l, promotion_id: result.auto_promotion_id };
-        }),
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-    // `linesRef.current` is read fresh inside rather than closed over, so
-    // `lines` itself is deliberately not a dependency - `pricingSignature`
-    // already fires this whenever a pricing-relevant field changes.
-  }, [priceMode, pricingSignature]);
+  // ---- Lines: Item pick, packages and parts, line pricing (D1/D2/D4, S1/S2) ----
+  // Shared with the CRM request page (PORTAL-P4-REQUESTS S7b); the portal's own
+  // lookups go in, through the portal token.
+  const lineEditor = usePriceTagLineEditor({
+    lines,
+    setLines,
+    priceMode,
+    lookups: lineLookups,
+  });
 
   // ---- Duplicate (D-D1): `?from=<id>` copies header fields + lines into a
   // NEW draft. Attachments stay empty (Sales Order files are not copied);
@@ -967,7 +618,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     const fromId = new URL(window.location.href).searchParams.get('from');
     if (!fromId || !fromId.trim()) return;
     let cancelled = false;
-    getRequest(fromId.trim())
+    clientService(client, 'priceTagRequest', portalPriceTagRequest)
+      .getRequest(fromId.trim())
       .then((data) => {
         if (cancelled || !data) {
           if (!cancelled) toast.error('Could not copy that submission.');
@@ -1000,7 +652,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [isNew, openSectionOnce]);
+  }, [isNew, openSectionOnce, client]);
 
   // ---- Debtor options ----
   const debtorOptions = useMemo<SearchableSelectOption[]>(
@@ -1011,25 +663,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         description: d.code,
       })),
     [debtors],
-  );
-
-  // ---- Item options: sets and products in ONE list (D47) ----
-  // The label carries the word Set or Product, because the two look alike in a
-  // dropdown and picking the wrong one produces a different tag.
-  const fetchItemOptions = useCallback(
-    async (query: string): Promise<SearchableSelectOption[]> => {
-      const items = await lookupTagItems(query);
-      return items.map((i) => ({
-        value: `${i.kind}:${i.id}`,
-        label: i.name || i.code,
-        description: distinctName(i.code, i.name)
-          ? `${i.kind === 'product_set' ? 'Set' : 'Product'} - ${i.code}`
-          : i.kind === 'product_set'
-            ? 'Set'
-            : 'Product',
-      }));
-    },
-    [],
   );
 
   // ---- AI extract sales order lines (D7, D3 of the AI-extract-resolver
@@ -1196,318 +829,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [lines],
   );
 
-  // ---- Line management ----
-  const addLine = useCallback(() => {
-    setLines((prev) => [...prev, emptyDraftLine()]);
-  }, []);
-
-  const removeLine = useCallback((key: string) => {
-    setLines((prev) => prev.filter((l) => l.key !== key));
-  }, []);
-
-  const updateLine = useCallback(
-    (key: string, patch: Partial<DraftLine>) => {
-      setLines((prev) =>
-        prev.map((l) => (l.key === key ? { ...l, ...patch } : l)),
-      );
-    },
-    [],
-  );
-
-  // ---- Packages and parts (D2) ----
-
-  /** Which `<line key>:<product id>` pairs have already been asked about, so a
-   *  re-render mid-lookup does not fire the same call a second time. Cleared for
-   *  a line whenever its item changes - see `handleItemSelect`. */
-  const combosAskedRef = useRef<Set<string>>(new Set());
-
-  const forgetCombosAsked = useCallback((key: string) => {
-    for (const entry of Array.from(combosAskedRef.current)) {
-      if (entry.startsWith(`${key}:`)) combosAskedRef.current.delete(entry);
-    }
-  }, []);
-
-  /**
-   * What the picked product is sold as, asked once per product on a line.
-   *
-   * An effect rather than a call inside the Item picker, because the same answer
-   * is needed for a line that arrived from a reopened draft (AC-S2-9) or from
-   * the AI extract, neither of which goes through the picker.
-   *
-   * A single combo is applied on the spot (AC-S2-1) - but only on a line that
-   * has neither a package nor any parts yet, so reopening a draft whose parts
-   * were edited by hand does not quietly put the removed ones back.
-   */
-  useEffect(() => {
-    const pending = lines.filter(
-      (l) =>
-        l.line_type === 'product' &&
-        l.product_id &&
-        !l.combos_loaded &&
-        !combosAskedRef.current.has(`${l.key}:${l.product_id}`),
-    );
-    if (pending.length === 0) return;
-    for (const line of pending) {
-      const productId = line.product_id as string;
-      combosAskedRef.current.add(`${line.key}:${productId}`);
-      lookupProductCombos(productId)
-        .then((lookup) => {
-          setLines((prev) =>
-            prev.map((l) => {
-              if (l.key !== line.key || l.product_id !== productId) return l;
-              const autoApply =
-                !l.combo_id && l.parts.length === 0 && lookup.combos.length === 1;
-              return {
-                ...l,
-                combos_loaded: true,
-                combos: lookup.combos,
-                host_guarded: lookup.host_guarded,
-                ...(autoApply
-                  ? {
-                      combo_id: lookup.combos[0].combo_id,
-                      parts: partsFromCombo(lookup.combos[0]),
-                    }
-                  : {}),
-              };
-            }),
-          );
-        })
-        .catch(() => {
-          // A lookup that fails must not hold up the line: it offers no package
-          // and no warning, which is exactly a product that has none.
-          setLines((prev) =>
-            prev.map((l) =>
-              l.key === line.key && l.product_id === productId
-                ? { ...l, combos_loaded: true }
-                : l,
-            ),
-          );
-        });
-    }
-  }, [lines]);
-
-  /** The Package select on a line with two or more combos (AC-S2-2). Clearing it
-   *  takes the parts with it - they belonged to the package. */
-  const choosePackage = useCallback((key: string, comboId: string) => {
-    setLines((prev) =>
-      prev.map((l) => {
-        if (l.key !== key) return l;
-        const combo = l.combos.find((c) => c.combo_id === comboId);
-        return combo
-          ? { ...l, combo_id: combo.combo_id, parts: partsFromCombo(combo) }
-          : { ...l, combo_id: null, parts: [] };
-      }),
-    );
-  }, []);
-
-  /** The line's Promotion select (AC-S1-3..S1-7). Picking one clears any
-   *  manual price (they are mutually exclusive, D2); clearing it (empty
-   *  string, `SearchableSelect`'s own clear) restores the manual input,
-   *  empty. Either way the pick is now deliberate, so future pricing
-   *  answers never auto-fill over it again. */
-  const choosePromotion = useCallback((key: string, promotionId: string) => {
-    setLines((prev) =>
-      prev.map((l) =>
-        l.key === key
-          ? {
-              ...l,
-              promotion_id: promotionId || null,
-              promotion_locked: true,
-              manual_sell_price: null,
-            }
-          : l,
-      ),
-    );
-  }, []);
-
-  /** The "Type a price" input, only shown while the line has no promotion
-   *  (AC-S1-6). Empty clears it back to nothing typed. */
-  const setManualSellPrice = useCallback((key: string, value: number | null) => {
-    setLines((prev) =>
-      prev.map((l) => (l.key === key ? { ...l, manual_sell_price: value } : l)),
-    );
-  }, []);
-
-  /** Staged removal (AC-S2-4): the part row is unsaved form state, not a record,
-   *  so it goes on the click with no countdown and no confirm - the same way a
-   *  line row already does. */
-  const removePart = useCallback((key: string, partKeyToRemove: string) => {
-    setLines((prev) =>
-      prev.map((l) =>
-        l.key === key
-          ? { ...l, parts: l.parts.filter((part) => part.key !== partKeyToRemove) }
-          : l,
-      ),
-    );
-  }, []);
-
-  /** D19: put back exactly what a "Missing" warning names - the fixed parts
-   *  and choice groups the line's chosen combo has that it does not already
-   *  hold (resolved when the group has one candidate, open otherwise, same
-   *  as the initial pick). Rows the salesperson kept are untouched. */
-  const restoreParts = useCallback((key: string) => {
-    setLines((prev) =>
-      prev.map((l) => {
-        if (l.key !== key || !l.combo_id) return l;
-        const combo = l.combos.find((c) => c.combo_id === l.combo_id);
-        if (!combo) return l;
-        const missing = partsFromCombo(combo).filter((candidate) =>
-          candidate.role
-            ? !l.parts.some((row) => row.role === candidate.role)
-            : !l.parts.some((row) => row.product_id === candidate.product_id),
-        );
-        return missing.length > 0 ? { ...l, parts: [...l.parts, ...missing] } : l;
-      }),
-    );
-  }, []);
-
-  /** An open row's candidate select (AC-S2-3): picking resolves the row, clearing
-   *  reopens it, which is why `candidates` stays on the row either way. */
-  const resolvePart = useCallback(
-    (key: string, partKeyToResolve: string, productId: string) => {
-      setLines((prev) =>
-        prev.map((l) => {
-          if (l.key !== key) return l;
-          return {
-            ...l,
-            parts: l.parts.map((part) => {
-              if (part.key !== partKeyToResolve) return part;
-              const chosen = part.candidates.find(
-                (candidate) => candidate.product_id === productId,
-              );
-              return chosen
-                ? { ...part, product_id: chosen.product_id, code: chosen.code, name: chosen.name }
-                : { ...part, product_id: null, code: '', name: '' };
-            }),
-          };
-        }),
-      );
-    },
-    [],
-  );
-
-  /** A part added by hand, on any line, combo or not (AC-S2-4). */
-  const addPart = useCallback((key: string, option: SearchableSelectOption | null) => {
-    if (!option) return;
-    const [kind, id] = option.value.split(':');
-    if (kind !== 'product') return;
-    const code = (option.description ?? '').split(' - ').slice(1).join(' - ');
-    setLines((prev) =>
-      prev.map((l) => {
-        if (l.key !== key) return l;
-        if (l.parts.some((part) => part.product_id === id)) return l;
-        return {
-          ...l,
-          parts: [
-            ...l.parts,
-            {
-              key: newPartKey(),
-              product_id: id,
-              code,
-              name: option.label,
-              role: null,
-              candidates: [],
-            },
-          ],
-        };
-      }),
-    );
-  }, []);
-
-  /** The same catalogue lookup the Item picker uses, products only: a part is a
-   *  product, never a set. */
-  const fetchPartOptions = useCallback(
-    async (query: string): Promise<SearchableSelectOption[]> => {
-      const items = await lookupTagItems(query);
-      return items
-        .filter((i) => i.kind === 'product')
-        .map((i) => ({
-          value: `product:${i.id}`,
-          label: i.name || i.code,
-          description: distinctName(i.code, i.name) ? `Product - ${i.code}` : undefined,
-        }));
-    },
-    [],
-  );
-
-  // ---- One picker, both kinds (D47) ----
-  // The chosen option decides the line's type; the payload the server reads is
-  // unchanged, still line_type plus whichever of the two ids matches it.
-  const handleItemSelect = useCallback(
-    (key: string, option: SearchableSelectOption | null) => {
-      // The combos lookup remembers what it has already asked about, so the
-      // memory has to be forgotten the moment the row points somewhere else -
-      // otherwise re-picking a product this line held before left it
-      // `combos_loaded: false` forever, with no Package select, no parts and no
-      // warning (review round 2, S1).
-      forgetCombosAsked(key);
-      if (!option) {
-        updateLine(key, {
-          product_id: null,
-          product_set_id: null,
-          name: '',
-          code: '',
-          guard_error: null,
-          // The package belonged to the product that just went away.
-          combo_id: null,
-          combos: [],
-          combos_loaded: false,
-          host_guarded: false,
-          parts: [],
-          // So did any price basis - it was for the product that left.
-          promotion_id: null,
-          promotion_locked: false,
-          manual_sell_price: null,
-          pricing: null,
-        });
-        return;
-      }
-      const [kind, id] = option.value.split(':');
-      const isSet = kind === 'product_set';
-      const code = (option.description ?? '').split(' - ').slice(1).join(' - ');
-      // R3-7: refuse a product/set already on another line, inline - the
-      // same guard the backend now enforces (DUPLICATE_LINE), so a save
-      // never round-trips just to be told this.
-      const duplicate = lines.some(
-        (l) =>
-          l.key !== key &&
-          (isSet ? l.product_set_id === id : l.product_id === id),
-      );
-      if (duplicate) {
-        updateLine(key, {
-          guard_error: `${code || option.label} is already on this request.`,
-        });
-        return;
-      }
-      updateLine(key, {
-        line_type: isSet ? 'product_set' : 'product',
-        product_id: isSet ? null : id,
-        product_set_id: isSet ? id : null,
-        name: option.label,
-        // The description reads "Set - CODE" / "Product - CODE"; the code is what
-        // the row shows, so it is stored without the word in front of it.
-        code,
-        guard_error: null,
-        // A set is printed as one thing and carries no package (D2: a cabinet
-        // request never mixes set and combo on one line), so both kinds reset
-        // here and only a product goes on to ask what it is sold as - the effect
-        // below picks it up off `combos_loaded`.
-        combo_id: null,
-        combos: [],
-        combos_loaded: isSet,
-        host_guarded: false,
-        parts: [],
-        // A different product invalidates any promotion or manual price the
-        // old one carried - the pricing effect re-asks for the new one.
-        promotion_id: null,
-        promotion_locked: false,
-        manual_sell_price: null,
-        pricing: null,
-      });
-    },
-    [updateLine, lines],
-  );
-
   // ---- What there is to save, and what Submit still needs (D48) ----
 
   /** Save Draft asks for one thing only: that there is something to save. A
@@ -1521,33 +842,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     lines.length > 0 ||
     pendingFiles.length > 0;
 
-  /** AC-S2-8. `alternatives` is gone; `combo_id` and the part rows go in its
-   *  place, in display order. A resolved part sends its product, an open one
-   *  sends the candidate ids it is still choosing between. */
-  const payloadLines = (): PriceTagRequestLineInput[] =>
-    lines.map((l) => ({
-      line_type: l.line_type,
-      product_id: l.product_id,
-      product_set_id: l.product_set_id,
-      combo_id: l.combo_id,
-      quantity: l.quantity as number,
-      included_accessories: l.included_accessories || null,
-      remarks: l.remarks || null,
-      product_class: null,
-      parts: l.parts.map((part) => ({
-        product_id: part.product_id,
-        role: part.role,
-        candidates: part.product_id
-          ? []
-          : part.candidates.map((candidate) => candidate.product_id),
-      })),
-      // D1/D2 (S6): the line's own price basis - built here for create,
-      // update AND revise, the one function all three send through, so the
-      // server never sees a line missing what `choosePromotion`/
-      // `setManualSellPrice` already set on it.
-      promotion_id: l.promotion_id,
-      manual_sell_price: l.manual_sell_price,
-    }));
+  /** AC-S2-8: the shared payload builder, so the portal and the CRM request
+  *  page send the same line shape (`draftLinesPayload`). */
+  const payloadLines = (): PriceTagRequestLineInput[] => draftLinesPayload(lines);
 
   // AC-P10: a failed Submit opens the first offending section, top to bottom,
   // so the inline error it just set is visible rather than sitting inside a
@@ -1663,7 +960,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       const errors: string[] = [];
       for (const file of pendingFiles) {
         try {
-          const att = await uploadAttachment('price_tag_request', id, file);
+          const att = await client.uploadAttachment('price_tag_request', id, file);
           uploaded.push(att);
         } catch (e) {
           const msg = e instanceof Error ? e.message : 'unknown error';
@@ -1679,7 +976,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         );
       }
     },
-    [pendingFiles],
+    [pendingFiles, client],
   );
 
   /** A blank or invalid quantity / manual price stops the send; the rows say which. */
@@ -1717,12 +1014,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // but the attachment flush after it failed, which is why this checks
       // `effectiveId` (state) rather than only the `requestId` prop.
       const saved = effectiveId
-        ? await updateRequest(effectiveId, payload)
-        : await createRequest(payload);
+        ? await service().updateRequest(effectiveId, payload)
+        : await service().createRequest(payload);
       if (!effectiveId) setCreatedRequestId(saved.id);
       await flushPendingFiles(saved.id);
       toast.success('Draft saved');
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      router.push(homePath);
     } catch (e) {
       // S4 (code review): the same `line:<index>` -> row mapping Submit uses
       // (`applyFieldErrors`), so a reopened draft whose product lost its
@@ -1742,7 +1039,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numbersInvalid, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug, applyFieldErrors]);
+  }, [numbersInvalid, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, applyFieldErrors, client]);
 
   // ---- Revise (R3-1): sent through the portal revision engine, never the
   // retired post-submit PUT. A reason is required; the same zero-line/
@@ -1781,7 +1078,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // same call Save Draft / Submit already make, before the request the
       // policy will re-check moves on to its post-revision status.
       await flushPendingFiles(effectiveId);
-      const fresh = await getRequest(effectiveId);
+      const fresh = await service().getRequest(effectiveId);
       if (fresh) {
         setRequest(fresh);
         applyRequestFieldsFrom(fresh);
@@ -1798,7 +1095,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       toast.error(e instanceof Error ? e.message : 'Failed to send revision');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numbersInvalid, effectiveId, reviseReason, revise, debtorCode, debtors, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory]);
+  }, [numbersInvalid, effectiveId, reviseReason, revise, debtorCode, debtors, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory, client]);
 
   const handleCancelRevise = useCallback(async () => {
     setReviseMode(false);
@@ -1806,7 +1103,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setPendingFiles([]);
     if (!effectiveId) return;
     try {
-      const fresh = await getRequest(effectiveId);
+      const fresh = await clientService(client, 'priceTagRequest', portalPriceTagRequest).getRequest(
+        effectiveId,
+      );
       if (fresh) {
         setRequest(fresh);
         applyRequestFieldsFrom(fresh);
@@ -1816,23 +1115,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // above; a failed re-fetch leaves that in place rather than erroring
       // out of a Cancel, which is not a save the reader needs told about.
     }
-  }, [effectiveId, applyRequestFieldsFrom]);
+  }, [effectiveId, applyRequestFieldsFrom, client]);
 
   // ---- Delete draft ----
   const handleDeleteDraft = useCallback(async () => {
     if (!requestId) return;
     setDeleting(true);
     try {
-      await deleteRequest(requestId);
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).deleteRequest(requestId);
       toast.success('Draft deleted');
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      router.push(homePath);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to delete draft');
     } finally {
       setDeleting(false);
       setShowDeleteDialog(false);
     }
-  }, [requestId, router, slug]);
+  }, [requestId, router, homePath, client]);
 
   // ---- Submit (D48b: the button is live, the click explains itself) ----
   const handleSubmit = useCallback(async () => {
@@ -1873,13 +1172,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // attachment flush after it failed must update that row, not create a
       // second one.
       const created = effectiveId
-        ? await updateRequest(effectiveId, payload)
-        : await createRequest(payload);
+        ? await service().updateRequest(effectiveId, payload)
+        : await service().createRequest(payload);
       if (!effectiveId) setCreatedRequestId(created.id);
       await flushPendingFiles(created.id);
-      await submitRequest(created.id);
+      await service().submitRequest(created.id);
       toast.success('Request submitted');
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      router.push(homePath);
     } catch (e) {
       // A refusal that named a field or a row goes THERE, once: the summary then
       // says how many things need attention and nothing more, because the same
@@ -1901,35 +1200,36 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
     if (!requestId) return;
     try {
-      await approveRequest(requestId);
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).approveRequest(requestId);
       toast.success('Design approved');
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      router.push(homePath);
     } catch {
       toast.error('Failed to approve');
     }
-  }, [requestId, router, slug]);
+  }, [requestId, router, homePath, client]);
 
   // ---- Mark collected (r9 D8): the salesperson has the tags ----
   const handleCollect = useCallback(async () => {
     if (!requestId) return;
     setCollecting(true);
     try {
-      await collectRequest(requestId);
+      const calls = clientService(client, 'priceTagRequest', portalPriceTagRequest);
+      await calls.collectRequest(requestId);
       toast.success('Marked collected');
-      const data = await getRequest(requestId);
+      const data = await calls.getRequest(requestId);
       if (data) setRequest(data);
     } catch {
       toast.error('Failed to mark this collected');
     } finally {
       setCollecting(false);
     }
-  }, [requestId]);
+  }, [requestId, client]);
 
   // ---- Request changes (r9 D5) ----
   //
@@ -1939,13 +1239,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     async (payload: ChangeRequestPayload) => {
       if (!requestId) return;
       try {
-        await requestChanges(requestId, payload);
+        await clientService(client, 'priceTagRequest', portalPriceTagRequest).requestChanges(
+          requestId,
+          payload,
+        );
         toast.success(
           payload.comments.length === 1
             ? 'Change request sent'
             : `${payload.comments.length} change requests sent`,
         );
-        router.push(`${portalBase(slug)}?type=price_tag_request`);
+        router.push(homePath);
       } catch (error) {
         // Re-thrown, not swallowed: the Design section clears its pins on a
         // resolved promise, so a refused Send used to take the whole round
@@ -1958,7 +1261,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         throw error;
       }
     },
-    [requestId, router, slug],
+    [requestId, router, homePath, client],
   );
 
   // ---- Download PDF (D19): the request's latest completed tag sheet export.
@@ -1970,7 +1273,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     if (!requestId) return;
     setDownloadingPdf(true);
     try {
-      await downloadPriceTagPdf(requestId);
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).downloadPriceTagPdf(
+        requestId,
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to download the PDF');
     } finally {
@@ -1979,7 +1284,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // a failure still toasts, so nothing is lost by not leaving it open.
       setGearOpen(false);
     }
-  }, [requestId]);
+  }, [requestId, client]);
 
   const handleDownloadPdf = useCallback(async () => {
     if (!requestId) return;
@@ -1991,12 +1296,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // and let the poll below pick it up.
     setExportPending(true);
     try {
-      await requestPriceTagExport(requestId);
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).requestPriceTagExport(
+        requestId,
+      );
     } catch (e) {
       setExportPending(false);
       toast.error(e instanceof Error ? e.message : 'Failed to queue the PDF export');
     }
-  }, [requestId, exportStatus, streamDownload]);
+  }, [requestId, exportStatus, streamDownload, client]);
 
   // Poll every 5 s while an export is preparing; stream it the moment the
   // refetched request says ready, surface a toast on failed.
@@ -2009,7 +1316,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     if (!exportPreparing || !requestId) return;
     let cancelled = false;
     const timer = setInterval(() => {
-      getRequest(requestId)
+      clientService(client, 'priceTagRequest', portalPriceTagRequest)
+        .getRequest(requestId)
         .then((fresh) => {
           if (cancelled || !fresh) return;
           setRequest(fresh);
@@ -2032,7 +1340,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [exportPreparing, requestId, streamDownload]);
+  }, [exportPreparing, requestId, streamDownload, client]);
 
   // ---- Loading skeleton ----
   if (loading) {
@@ -2057,9 +1365,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </AlertIcon>
           <AlertTitle>{loadError}</AlertTitle>
         </Alert>
-        <Button variant="outline" onClick={() => router.push(portalBase(slug))}>
-          Back to your forms
-        </Button>
+        {/* Inside a CRM page its header carries Back. */}
+        {!embedded && (
+          <Button variant="outline" onClick={() => router.push(portalBase(slug))}>
+            Back to your forms
+          </Button>
+        )}
       </div>
     );
   }
@@ -2131,7 +1442,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             answers below it are the reference, not the headline. It shows for
             longer than the review actions do (D11/AC-S4-4). */}
         {showDesignPreview && (
-          <DesignSection
+          <PriceTagDesignReview
             request={request}
             reviewable={isProofReady}
             onApprove={handleApprove}
@@ -2141,6 +1452,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               pending: downloadingPdf,
               onDownload: () => void handleDownloadPdf(),
             }}
+            loadDesign={designCalls.loadDesign}
+            loadReviewComments={designCalls.loadReviewComments}
           />
         )}
 
@@ -2194,192 +1507,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 No lines.
               </p>
             ) : (
-              (() => {
-                const viewSelling = (request.price_mode ?? 'list') === 'selling';
-                const viewSpan = isMobile ? 4 : viewSelling ? 7 : 5;
-                return (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[520px] table-fixed text-sm">
-                      <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                        <tr>
-                          <th className="w-10 px-2 py-2 text-left">#</th>
-                          <th
-                            className={
-                              // Owner ruling on review: matches the edit
-                              // table's Item width per mode exactly, so
-                              // View and Edit share the layout - Item stays
-                              // the widest column in every mode.
-                              isMobile
-                                ? 'w-[46%] px-2 py-2 text-left'
-                                : viewSelling
-                                  ? 'w-[31%] px-2 py-2 text-left'
-                                  : 'w-[43%] px-2 py-2 text-left'
-                            }
-                          >
-                            Item
-                          </th>
-                          <th
-                            className={
-                              isMobile
-                                ? 'w-[12%] px-2 py-2 text-left'
-                                : viewSelling
-                                  ? 'w-[9%] px-2 py-2 text-left'
-                                  : 'w-[12%] px-2 py-2 text-left'
-                            }
-                          >
-                            Qty (tags)
-                          </th>
-                          {!isMobile && (
-                            <th
-                              className={
-                                viewSelling
-                                  ? 'w-[13%] px-2 py-2 text-left'
-                                  : 'w-[14%] px-2 py-2 text-left'
-                              }
-                            >
-                              List price
-                            </th>
-                          )}
-                          {!isMobile && viewSelling && (
-                            <>
-                              <th className="w-[14%] px-2 py-2 text-left">
-                                Promotion
-                              </th>
-                              <th className="w-[12%] px-2 py-2 text-left">
-                                Selling price
-                              </th>
-                            </>
-                          )}
-                          <th
-                            className={
-                              // No trailing action column here (nothing to
-                              // delete on a read-only line), so Remarks
-                              // absorbs the edit table's action-column share
-                              // too.
-                              isMobile
-                                ? 'w-[42%] px-2 py-2 text-left'
-                                : viewSelling
-                                  ? 'w-[21%] px-2 py-2 text-left'
-                                  : 'w-[31%] px-2 py-2 text-left'
-                            }
-                          >
-                            Remarks
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {request.lines.map((line, index) => {
-                          const hasPricing =
-                            line.line_type === 'product' && !!line.product_id;
-                          return (
-                            <Fragment key={line.id}>
-                              <tr className="border-t border-border align-top">
-                                <td className="px-2 py-2 text-muted-foreground">
-                                  {index + 1}
-                                </td>
-                                <td className="px-2 py-2">
-                                  <div
-                                    className="font-medium truncate"
-                                    title={line.name}
-                                  >
-                                    {line.name}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {line.line_type === 'product' ? 'Product' : 'Set'}
-                                    {line.code && !sameDisplayText(line.code, line.name) ? ` - ${line.code}` : ''}
-                                  </div>
-                                  {/* AC-S1-10/AC-S1-11: below the app's 992px
-                                      mobile breakpoint (useIsMobile), the same
-                                      fields stack here instead of living in
-                                      their own columns. */}
-                                  {isMobile && hasPricing && (
-                                    <div
-                                      data-testid="line-pricing-stack"
-                                      className="mt-2 flex flex-wrap items-center gap-4 border-l-2 border-border pl-3"
-                                    >
-                                      {viewListPriceCell(line, true)}
-                                      {viewSelling && viewPromotionCell(line, true)}
-                                      {viewSelling && viewSellingPriceCell(line, true)}
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="px-2 py-2">{line.quantity}</td>
-                                {!isMobile && (
-                                  <td className="px-2 py-2">
-                                    {hasPricing ? viewListPriceCell(line, false) : null}
-                                  </td>
-                                )}
-                                {!isMobile && viewSelling && (
-                                  <>
-                                    <td className="px-2 py-2">
-                                      {hasPricing ? viewPromotionCell(line, false) : null}
-                                    </td>
-                                    <td className="px-2 py-2">
-                                      {hasPricing ? viewSellingPriceCell(line, false) : null}
-                                    </td>
-                                  </>
-                                )}
-                                <td
-                                  className="px-2 py-2 text-muted-foreground truncate"
-                                  title={line.remarks ?? undefined}
-                                >
-                                  {line.remarks || '-'}
-                                </td>
-                              </tr>
-                              {/* The package under the line, exactly as it was asked
-                                  for (AC-S2-8): the parts that go on the tag, and each
-                                  group still left open. */}
-                              {(line.parts ?? []).map((part) => (
-                                <tr key={part.id} className="align-top">
-                                  <td colSpan={viewSpan} className="px-2 pb-2 pl-9">
-                                    <div className="border-l-2 border-border pl-3 text-sm">
-                                      {part.product_id ? (
-                                        <>
-                                          <span
-                                            className="truncate"
-                                            title={part.name ?? undefined}
-                                          >
-                                            {part.name || part.code}
-                                          </span>
-                                          <span className="text-xs text-muted-foreground">
-                                            {part.code && !sameDisplayText(part.code, part.name) ? ` - ${part.code}` : ''}
-                                            {part.role ? ` (${part.role})` : ''}
-                                          </span>
-                                        </>
-                                      ) : (
-                                        <span className="text-xs text-muted-foreground">
-                                          {part.role ? `${part.role}: ` : ''}
-                                          {part.candidates
-                                            .map((candidate) => candidate.code)
-                                            .join(' / ')}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                              {line.package_warning ? (
-                                <tr>
-                                  <td colSpan={viewSpan} className="px-2 pb-2 pl-9">
-                                    <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
-                                      <Badge variant="warning" appearance="light" size="sm">
-                                        Package warning
-                                      </Badge>
-                                      <span className="text-xs text-muted-foreground">
-                                        {line.package_warning}
-                                      </span>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ) : null}
-                            </Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })()
+              <PriceTagLinesView
+                lines={request.lines}
+                priceMode={request.price_mode ?? 'list'}
+                isMobile={isMobile}
+              />
             )}
           </div>
         </FormSection>
@@ -2459,14 +1591,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
     return (
       <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-          >
-            <ArrowLeft className="size-4 mr-1" /> Back
-          </Button>
+        <div className={`flex items-center gap-2 ${embedded ? 'justify-end' : 'justify-between'}`}>
+          {!embedded && (
+            <Button variant="ghost" size="sm" onClick={() => router.push(homePath)}>
+              <ArrowLeft className="size-4 mr-1" /> Back
+            </Button>
+          )}
           <div className="flex min-w-0 items-center gap-2">
             {/* R3-5/review round 3: the SAME one muted truncating line the
                 legacy kinds' header carries - doc number, revision status
@@ -2536,7 +1666,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 onSelect={(event) => {
                   event.preventDefault();
                   setGearOpen(false);
-                  router.push(portalDuplicatePath('price_tag_request', request.id, slug));
+                  router.push(
+                    paths
+                      ? paths.duplicate('price_tag_request', request.id)
+                      : portalDuplicatePath('price_tag_request', request.id, slug),
+                  );
                 }}
               >
                 <Copy className="size-4" />
@@ -2601,14 +1735,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         // revision where the gear's Revise item was, not a bare heading and
         // a second action row at the bottom of the page.
         <>
-          <div className="flex items-center justify-between gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-            >
-              <ArrowLeft className="size-4 mr-1" /> Back
-            </Button>
+          <div className={`flex items-center gap-2 ${embedded ? 'justify-end' : 'justify-between'}`}>
+            {!embedded && (
+              <Button variant="ghost" size="sm" onClick={() => router.push(homePath)}>
+                <ArrowLeft className="size-4 mr-1" /> Back
+              </Button>
+            )}
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={handleCancelRevise} disabled={revising}>
                 Cancel
@@ -2648,17 +1780,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </>
       ) : (
         <>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-          >
-            <ArrowLeft className="size-4 mr-1" /> Back
-          </Button>
+          {!embedded && (
+            <Button variant="ghost" size="sm" onClick={() => router.push(homePath)}>
+              <ArrowLeft className="size-4 mr-1" /> Back
+            </Button>
+          )}
 
-          <h1 className="text-lg font-semibold">
-            {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
-          </h1>
+          {/* A CRM page's own header already says "New Price Tag Request"; an edit keeps its
+              doc number here. */}
+          {!(embedded && isNew) && (
+            <h1 className="text-lg font-semibold">
+              {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
+            </h1>
+          )}
         </>
       )}
 
@@ -2739,103 +1873,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               No lines yet.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              {/* `table-fixed` on purpose: a product name can run to sixty
-                  characters, and with auto layout the Item column swallowed
-                  the whole width and pushed Qty and the rest off screen.
-                  Fixed columns let the picker's trigger truncate instead, and
-                  the min-width keeps every cell usable while the wrapper
-                  scrolls on a phone, which is the Purchase Request pattern. */}
-              <table className="w-full min-w-[560px] table-fixed text-sm">
-                <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    <th className="w-7 px-2 py-2 text-left">#</th>
-                    <th
-                      className={
-                        isMobile
-                          ? 'w-[46%] px-2 py-2 text-left'
-                          : priceMode === 'selling'
-                            ? 'w-[31%] px-2 py-2 text-left'
-                            : 'w-[43%] px-2 py-2 text-left'
-                      }
-                    >
-                      Item
-                    </th>
-                    <th
-                      className={
-                        // The min-width floor belongs on the header cell, not
-                        // the input: `table-fixed` sizes every column from the
-                        // FIRST row (this one), so a min-width on the `<td>`'s
-                        // own Input is never honoured once the column is
-                        // narrower than it.
-                        isMobile
-                          ? 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
-                          : priceMode === 'selling'
-                            ? 'w-[9%] min-w-[3.5rem] px-2 py-2 text-left'
-                            : 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
-                      }
-                    >
-                      Qty (tags)
-                    </th>
-                    {!isMobile && (
-                      <th
-                        className={
-                          priceMode === 'selling'
-                            ? 'w-[13%] px-2 py-2 text-left'
-                            : 'w-[14%] px-2 py-2 text-left'
-                        }
-                      >
-                        List price
-                      </th>
-                    )}
-                    {!isMobile && priceMode === 'selling' && (
-                      <>
-                        <th className="w-[14%] px-2 py-2 text-left">Promotion</th>
-                        <th className="w-[12%] px-2 py-2 text-left">Selling price</th>
-                      </>
-                    )}
-                    <th
-                      className={
-                        isMobile
-                          ? 'w-[35%] px-2 py-2 text-left'
-                          : priceMode === 'selling'
-                            ? 'w-[14%] px-2 py-2 text-left'
-                            : 'w-[24%] px-2 py-2 text-left'
-                      }
-                    >
-                      Remarks
-                    </th>
-                    {/* One 28px icon, not a fifth of the row. */}
-                    <th className="w-[7%] px-2 py-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((line, index) => (
-                    <LineRow
-                      key={line.key}
-                      line={line}
-                      index={index}
-                      priceMode={priceMode}
-                      isMobile={isMobile}
-                      pricing={linePricing[line.key] ?? null}
-                      fetchItemOptions={fetchItemOptions}
-                      fetchPartOptions={fetchPartOptions}
-                      onItemSelect={handleItemSelect}
-                      onUpdate={updateLine}
-                      onRemove={removeLine}
-                      onChoosePackage={choosePackage}
-                      onResolvePart={resolvePart}
-                      onRemovePart={removePart}
-                      onAddPart={addPart}
-                      onRestoreParts={restoreParts}
-                      onChoosePromotion={choosePromotion}
-                      onManualSellPriceChange={setManualSellPrice}
-                      showNumberErrors={showNumberErrors}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <PriceTagLinesTable
+              lines={lines}
+              priceMode={priceMode}
+              isMobile={isMobile}
+              editor={lineEditor}
+              showNumberErrors={showNumberErrors}
+            />
           )}
           {fieldErrors.lines && (
             <p
@@ -2845,7 +1889,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               {fieldErrors.lines}
             </p>
           )}
-          <Button size="sm" variant="outline" onClick={addLine}>
+          <Button size="sm" variant="outline" onClick={lineEditor.addLine}>
             <Plus className="size-3.5 mr-1" /> Add line
           </Button>
         </div>
@@ -2866,53 +1910,20 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         <div className="space-y-1.5">
           {/* No repeated "Price" label here - the section title already
               says it (review round 1). */}
-          <div
-            role="radiogroup"
-            aria-labelledby="price-section-title"
-            className="inline-flex items-center rounded-md border p-0.5"
-          >
-            <button
-              type="button"
-              role="radio"
-              aria-checked={priceMode === 'list'}
-              className={cn(
-                'rounded px-3 py-1.5 text-sm transition-colors',
-                priceMode === 'list'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-muted',
-              )}
-              onClick={() => {
-                setPriceModeChosen(true);
-                setPriceMode('list');
-                // Direct call (review round 2): `setPriceMode('list')` is a
-                // no-op on a fresh form (priceMode is already 'list'), so
-                // React bails out of re-rendering and the auto-open effect
-                // keyed on `priceMode` never reruns - Additional Information
-                // must still open on this click either way (AC-P8).
-                openSectionOnce('need_by');
-              }}
-            >
-              List price
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={priceMode === 'selling'}
-              className={cn(
-                'rounded px-3 py-1.5 text-sm transition-colors',
-                priceMode === 'selling'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-muted',
-              )}
-              onClick={() => {
-                setPriceModeChosen(true);
-                setPriceMode('selling');
-                openSectionOnce('need_by');
-              }}
-            >
-              Selling price
-            </button>
-          </div>
+          <PriceModeToggle
+            value={priceMode}
+            labelledBy="price-section-title"
+            onChange={(mode) => {
+              setPriceModeChosen(true);
+              setPriceMode(mode);
+              // Direct call (review round 2): `setPriceMode('list')` is a
+              // no-op on a fresh form (priceMode is already 'list'), so
+              // React bails out of re-rendering and the auto-open effect
+              // keyed on `priceMode` never reruns - Additional Information
+              // must still open on this click either way (AC-P8).
+              openSectionOnce('need_by');
+            }}
+          />
         </div>
       </FormSection>
 
@@ -3006,8 +2017,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           (a draft or a brand new form) keeps Save Draft / Submit. */}
       {!reviseMode && (
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-          {/* Delete sits apart from Save and Submit, and asks first. */}
-          {!isNew && isDraft && (
+          {/* Delete sits apart from Save and Submit, and asks first; on a CRM page it is parked
+              on the server instead (D7), a countdown with a Cancel. */}
+          {!isNew && isDraft && (deferredDeletes && requestId ? (
+            <div className="sm:mr-auto">
+              <deferredDeletes.DraftDelete
+                kind="price_tag_request"
+                submissionId={requestId}
+                disabled={saving || submitting}
+                onDeleted={() => router.push(homePath)}
+              />
+            </div>
+          ) : (
             <Button
               variant="outline"
               className="text-destructive sm:mr-auto"
@@ -3017,7 +2038,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               <Trash2 className="size-4 mr-1" />
               Delete Draft
             </Button>
-          )}
+          ))}
           <Button
             variant="outline"
             onClick={handleSaveDraft}
@@ -3056,494 +2077,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Line row
-// ---------------------------------------------------------------------------
-
-interface LineRowProps {
-  line: DraftLine;
-  index: number;
-  priceMode: PriceMode;
-  /** Below the mobile breakpoint, List price/Promotion/Selling price stack
-   *  under the Item cell instead of living in their own columns (AC-S1-11). */
-  isMobile: boolean;
-  /** S1/S2: this line's latest `lookupLinePricing` answer, or null before
-   *  the first one lands (no product yet, or still in flight). */
-  pricing: LinePricingResult | null;
-  fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
-  fetchPartOptions: (query: string) => Promise<SearchableSelectOption[]>;
-  onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
-  onUpdate: (key: string, patch: Partial<DraftLine>) => void;
-  onRemove: (key: string) => void;
-  onChoosePackage: (key: string, comboId: string) => void;
-  onResolvePart: (key: string, partKey: string, productId: string) => void;
-  onRemovePart: (key: string, partKey: string) => void;
-  onAddPart: (key: string, option: SearchableSelectOption | null) => void;
-  onRestoreParts: (key: string) => void;
-  onChoosePromotion: (key: string, promotionId: string) => void;
-  onManualSellPriceChange: (key: string, value: number | null) => void;
-  /** True once a Save / Submit found a bad number: rows then show their message. */
-  showNumberErrors: boolean;
-}
-
-/** AC-S2-1: "CODE  RM x" - x is the candidate's LIST price in List mode, or
- *  its price under the line's promotion (offer, else list) in Selling mode
- *  (F1, browser finding) - `pricing.candidates[]` carries both, and reading
- *  `sell_price` unconditionally showed the offer price in List mode too.
- *  Falls back to the bare code while pricing has not answered yet. */
-function candidateOptionLabel(
-  candidate: LinePartCandidate,
-  pricing: LinePricingResult | null,
-  priceMode: PriceMode,
-): string {
-  const price = pricing?.candidates.find((c) => c.product_id === candidate.product_id);
-  const code = candidate.code || candidate.name;
-  if (!price) return code;
-  const amount = priceMode === 'selling' ? price.sell_price : price.list_price;
-  return `${code}  ${formatRM(amount)}`;
-}
-
-/** One part row under a line: a fixed or hand-added product, or an open group. */
-function PartRow({
-  lineKey,
-  lineIndex,
-  part,
-  pricing,
-  priceMode,
-  colSpan,
-  onResolvePart,
-  onRemovePart,
-}: {
-  lineKey: string;
-  lineIndex: number;
-  part: DraftPart;
-  pricing: LinePricingResult | null;
-  priceMode: PriceMode;
-  /** Matches however many real columns the line's own row currently has
-   *  (isMobile/priceMode dependent - see `subRowSpan` in `LineRow`). */
-  colSpan: number;
-  onResolvePart: (key: string, partKey: string, productId: string) => void;
-  onRemovePart: (key: string, partKey: string) => void;
-}) {
-  // D17: a group with exactly one candidate resolves on the spot
-  // (`partsFromCombo`) and reads like a fixed part - no select, even though
-  // `candidates` still carries the one entry. A genuinely open row always
-  // has two or more.
-  const choosable = part.candidates.length > 1;
-  const label = part.role || part.code || part.name;
-  return (
-    <tr className="align-top">
-      <td colSpan={colSpan} className="px-2 pb-2 pl-9">
-        <div className="flex flex-col gap-1.5 border-l-2 border-border pl-3 sm:flex-row sm:items-start sm:gap-2">
-          <div className="min-w-0 flex-1">
-            {choosable ? (
-              <div className="space-y-1">
-                <SearchableSelect
-                  clearable
-                  truncateTriggerLabel
-                  value={part.product_id ?? ''}
-                  onChange={(value) => onResolvePart(lineKey, part.key, value)}
-                  options={part.candidates.map((candidate) => ({
-                    value: candidate.product_id,
-                    label: candidateOptionLabel(candidate, pricing, priceMode),
-                    description: candidate.code,
-                  }))}
-                  placeholder={`Not sure, any of ${part.candidates.length}`}
-                  emptyMessage="No options."
-                  size="sm"
-                />
-              </div>
-            ) : (
-              <div className="min-w-0">
-                <div className="truncate text-sm" title={part.name || part.code}>
-                  {part.name || part.code}
-                </div>
-                {!sameDisplayText(part.code, part.name) ? (
-                  <div className="text-xs text-muted-foreground">{part.code || '-'}</div>
-                ) : null}
-              </div>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {part.role ? (
-              <span className="text-xs text-muted-foreground">{part.role}</span>
-            ) : null}
-            {/* No confirm and no countdown: the part row is unsaved form state,
-                not a record (the staged-removals rule). */}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-destructive"
-              onClick={() => onRemovePart(lineKey, part.key)}
-              title="Remove part"
-              aria-label={`Remove part ${label} from line ${lineIndex + 1}`}
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
-          </div>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-/**
- * One row of the lines table, on the Purchase Request pattern in `SubmissionForm`:
- * a cell per field, a trash button, and horizontal scroll on a narrow screen.
- */
-function LineRow({
-  line,
-  index,
-  priceMode,
-  isMobile,
-  pricing,
-  fetchItemOptions,
-  fetchPartOptions,
-  onItemSelect,
-  onUpdate,
-  onRemove,
-  onChoosePackage,
-  onResolvePart,
-  onRemovePart,
-  onAddPart,
-  onRestoreParts,
-  onChoosePromotion,
-  onManualSellPriceChange,
-  showNumberErrors,
-}: LineRowProps) {
-  const isSet = line.line_type === 'product_set';
-  const warning = packageWarningFor(line);
-  // Only when there is a choice to make: one combo is applied on pick, and none
-  // leaves nothing to select.
-  const showPackage = !isSet && line.combos.length > 1;
-  // D4 (AC-S2-1..S2-3): "Add part" only once the combos lookup answered AND
-  // the product actually has at least one package - nothing to add a part
-  // TO otherwise. Existing part rows (a reopened draft) still render with
-  // their Remove regardless; this only gates the search below.
-  const showParts = !isSet && !!line.product_id && line.combos_loaded && line.combos.length > 0;
-  const picked = itemValue(line);
-  const selectedItem: SearchableSelectOption | undefined = picked
-    ? {
-        value: picked,
-        label: line.name || line.code,
-        description: distinctName(line.code, line.name)
-          ? `${isSet ? 'Set' : 'Product'}${line.code ? ` - ${line.code}` : ''}`
-          : isSet
-            ? 'Set'
-            : 'Product',
-      }
-    : undefined;
-
-  // ---- S1/S2: price cells (product lines only - a set is priced whole,
-  // no combo/promotion concept applies to it). ----
-  const showPricing = !isSet && !!line.product_id;
-  const promotionOptions: SearchableSelectOption[] = (pricing?.promotion_options ?? []).map(
-    (option) => ({
-      value: option.id,
-      label: `${promotionOptionName(option)} - ${formatRM(option.sell_price)}`,
-    }),
-  );
-  // The last open (unresolved) part row - AC-S2-3's copy sits under it,
-  // once per line.
-  const lastOpenPartKey = [...line.parts]
-    .reverse()
-    .find((part) => !part.product_id && part.candidates.length > 1)?.key;
-
-  // Owner ruling after #948: List price / Promotion / Selling price are real
-  // `<td>` columns on the line's own row (above the app's 992px mobile
-  // breakpoint, useIsMobile), not a `colSpan` sub-row - `subRowSpan` keeps
-  // the OTHER sub-rows (guard error, package, parts, warning) spanning the
-  // row's actual current column count instead of a stale hard-coded 5.
-  // Below the mobile breakpoint the row still has exactly the original 5
-  // columns, since the price fields move into the stack nested under the
-  // Item cell instead (AC-S1-11) - the two never render at once, so
-  // nothing duplicates in the DOM.
-  const subRowSpan = isMobile ? 5 : priceMode === 'selling' ? 8 : 6;
-
-  // Owner polish after #948: the desktop `<td>` already sits under a
-  // "List price"/"Promotion"/"Selling price" header, so its cell holds only
-  // the value/control - the label stays only on the mobile stack, which has
-  // no header to read it off. `withLabel` picks between the two; the amount
-  // is `whitespace-nowrap` so "RM 1,350" never breaks mid-string, and the
-  // "+ option" hint gets its own line rather than fighting it for room.
-  const renderListPriceCell = (withLabel: boolean) => (
-    <div>
-      {withLabel && (
-        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-          List price
-        </div>
-      )}
-      <div className="text-sm font-medium whitespace-nowrap">
-        {formatRM(pricing?.list_price)}
-      </div>
-      {hasOpenGroup(line) ? (
-        <div className="text-xs text-muted-foreground">+ option</div>
-      ) : null}
-    </div>
-  );
-
-  const renderPromotionCell = (withLabel: boolean) => (
-    <div>
-      <Label
-        className={
-          withLabel
-            ? 'text-2xs uppercase tracking-wide text-muted-foreground'
-            : 'sr-only'
-        }
-        htmlFor={`promotion-${line.key}`}
-      >
-        Promotion
-      </Label>
-      <SearchableSelect
-        id={`promotion-${line.key}`}
-        clearable
-        truncateTriggerLabel
-        value={line.promotion_id ?? ''}
-        onChange={(value) => onChoosePromotion(line.key, value)}
-        options={promotionOptions}
-        placeholder="No covering promotion"
-        emptyMessage="No promotion covers this line."
-        size="sm"
-      />
-    </div>
-  );
-
-  const renderSellingPriceCell = (withLabel: boolean) => (
-    <div>
-      {withLabel && (
-        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-          Selling price
-        </div>
-      )}
-      {line.promotion_id ? (
-        <div
-          className="text-sm font-medium whitespace-nowrap"
-          title={partsAtListTitle(line, pricing)}
-        >
-          {formatRM(pricing?.sell_price)}
-        </div>
-      ) : (
-        <NumberInput
-          inputMode="decimal"
-          // The server takes `gt=0` with 2 decimal places (`ManualSellPrice`),
-          // so 0 is a refusal, not a bound.
-          min={0.01}
-          step={0.01}
-          variant="sm"
-          className="w-full max-w-28"
-          value={line.manual_sell_price}
-          onValueChange={(v) => onManualSellPriceChange(line.key, v)}
-          error={
-            showNumberErrors
-              ? numberFieldError(line.manual_sell_price, { min: 0.01, optional: true })
-              : undefined
-          }
-          placeholder="Type a price"
-          aria-label={`Selling price for line ${index + 1}`}
-        />
-      )}
-    </div>
-  );
-
-  return (
-    <>
-      <tr className="border-t border-border align-top">
-        <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
-        <td className="px-2 py-2">
-          <SearchableSelect
-            value={picked}
-            onChange={() => {
-              /* the whole option is what carries the kind; see onOptionChange */
-            }}
-            onOptionChange={(option) => onItemSelect(line.key, option)}
-            fetchOptions={fetchItemOptions}
-            selectedOption={selectedItem}
-            clearable
-            wrapOptions
-            placeholder="Search a set or product..."
-            emptyMessage="No sets or products match."
-          />
-          {/* AC-S1-11: below the app's 992px mobile breakpoint (useIsMobile),
-              the same fields stack here instead of living in their own
-              columns - never both at once (isMobile picks exactly one), so
-              nothing in the row duplicates. */}
-          {isMobile && showPricing && (
-            <div
-              data-testid="line-pricing-stack"
-              className="mt-2 flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4"
-            >
-              <div className="min-w-[110px]">{renderListPriceCell(true)}</div>
-              {priceMode === 'selling' && (
-                <>
-                  <div className="min-w-[180px] flex-1 sm:max-w-[260px]">
-                    {renderPromotionCell(true)}
-                  </div>
-                  <div className="min-w-[110px]">{renderSellingPriceCell(true)}</div>
-                </>
-              )}
-            </div>
-          )}
-        </td>
-        <td className="px-2 py-2">
-          <NumberInput
-            inputMode="numeric"
-            min={1}
-            value={line.quantity}
-            onValueChange={(v) => onUpdate(line.key, { quantity: v })}
-            error={
-              showNumberErrors
-                ? numberFieldError(line.quantity, { min: 1, integer: true })
-                : undefined
-            }
-            aria-label={`Quantity for line ${index + 1}`}
-          />
-        </td>
-        {!isMobile && (
-          <td className="px-2 py-2">
-            {showPricing ? renderListPriceCell(false) : null}
-          </td>
-        )}
-        {!isMobile && priceMode === 'selling' && (
-          <>
-            <td className="px-2 py-2">
-              {showPricing ? renderPromotionCell(false) : null}
-            </td>
-            <td className="px-2 py-2">
-              {showPricing ? renderSellingPriceCell(false) : null}
-            </td>
-          </>
-        )}
-        <td className="px-2 py-2">
-          <Input
-            value={line.remarks}
-            onChange={(e) => onUpdate(line.key, { remarks: e.target.value })}
-            placeholder="Note for this line..."
-            aria-label={`Remarks for line ${index + 1}`}
-          />
-        </td>
-        <td className="px-2 py-2">
-          <div className="flex items-center justify-end gap-0.5">
-            {/* No confirm: the row is unsaved form state, not a record. */}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-destructive"
-              onClick={() => onRemove(line.key)}
-              title="Remove line"
-              aria-label={`Remove line ${index + 1}`}
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
-          </div>
-        </td>
-      </tr>
-      {line.guard_error && (
-        <tr>
-          <td colSpan={subRowSpan} className="px-2 pb-2">
-            <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
-              {line.guard_error}
-            </p>
-          </td>
-        </tr>
-      )}
-      {showPackage && (
-        <tr className="align-top">
-          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
-            <div className="border-l-2 border-border pl-3">
-              <SearchableSelect
-                clearable
-                truncateTriggerLabel
-                value={line.combo_id ?? ''}
-                onChange={(value) => onChoosePackage(line.key, value)}
-                options={line.combos.map((combo) => ({
-                  value: combo.combo_id,
-                  label: combo.name,
-                }))}
-                placeholder="Package"
-                emptyMessage="No packages."
-                size="sm"
-              />
-            </div>
-          </td>
-        </tr>
-      )}
-      {line.parts.map((part) => (
-        <Fragment key={part.key}>
-          <PartRow
-            lineKey={line.key}
-            lineIndex={index}
-            part={part}
-            pricing={pricing}
-            priceMode={priceMode}
-            colSpan={subRowSpan}
-            onResolvePart={onResolvePart}
-            onRemovePart={onRemovePart}
-          />
-          {/* AC-S2-3: once per line, under the LAST unresolved row. */}
-          {part.key === lastOpenPartKey && (
-            <tr>
-              <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
-                <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
-                  Marketing will prepare one tag per option.
-                </p>
-              </td>
-            </tr>
-          )}
-        </Fragment>
-      ))}
-      {showParts && (
-        <tr className="align-top">
-          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
-            <div className="border-l-2 border-border pl-3">
-              {/* The shared catalogue search, so a part missing from the package -
-                  or on a product that has none - can be named by hand (AC-S2-4).
-                  It holds no value of its own: picking adds a row and it returns
-                  to its placeholder, so there is nothing to clear. */}
-              <SearchableSelect
-                value=""
-                onChange={() => {
-                  /* the whole option carries the code; see onOptionChange */
-                }}
-                onOptionChange={(option) => onAddPart(line.key, option)}
-                fetchOptions={fetchPartOptions}
-                wrapOptions
-                placeholder="Add part"
-                emptyMessage="No products match."
-                size="sm"
-              />
-            </div>
-          </td>
-        </tr>
-      )}
-      {warning && (
-        <tr>
-          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
-            <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
-              <Badge variant="warning" appearance="light" size="sm">
-                Package warning
-              </Badge>
-              <span className="text-xs text-muted-foreground">{warning}</span>
-              {/* D19: put back exactly what is named missing above - only
-                  while there is a chosen package to restore it FROM. */}
-              {line.combo_id && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-1.5 text-2xs"
-                  onClick={() => onRestoreParts(line.key)}
-                >
-                  Restore
-                </Button>
-              )}
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
   );
 }
 
@@ -3602,269 +2135,6 @@ function AIMatchCell({
         clearable
       />
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Design (D11, r9 S1/D2-D3)
-// ---------------------------------------------------------------------------
-
-/**
- * Fetches the request's real tag sheet design and renders it through the
- * shared `DesignViewer` - the same `TagSheetRenderer` the CRM detail page and
- * the PDF export draw with, now fed the artwork and brand fonts as well, so
- * what the salesperson reviews here is what gets printed.
- *
- * First section on the page from `proof_ready` onward (D3): the design is what
- * the salesperson opened the request to look at, and everything above it was
- * scrolling past their own answers to reach it.
- */
-function DesignSection({
-  request,
-  reviewable,
-  onApprove,
-  onSend,
-  download,
-}: {
-  request: PriceTagRequestDetail;
-  /** The design is waiting on this reader: pins can be placed and sent. */
-  reviewable: boolean;
-  onApprove: () => void;
-  onSend: (payload: ChangeRequestPayload) => Promise<void>;
-  download: DesignDownload;
-}) {
-  const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [comments, setComments] = useState<ReviewComment[]>([]);
-  const [drafts, setDrafts] = useState<DraftPin[]>([]);
-  const [generalNote, setGeneralNote] = useState('');
-  const [sending, setSending] = useState(false);
-  /** The footer rail: scrolled into view once, when the FIRST pin lands, so
-   *  the salesperson sees `Send N change requests` appear without hunting
-   *  for it - a later pin lands where they already are and must not yank
-   *  the page again. */
-  const railRef = useRef<HTMLDivElement | null>(null);
-  const railScrolledRef = useRef(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    getPriceTagDesign(request.id)
-      .then((data) => {
-        if (!cancelled) setPayload(data);
-      })
-      .catch(() => {
-        if (!cancelled) setPayload(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [request.id]);
-
-  useEffect(() => {
-    let cancelled = false;
-    listReviewComments(request.id)
-      .then((rows) => {
-        if (!cancelled) setComments(rows);
-      })
-      .catch(() => {
-        // A design that will not tell us its history still has to render.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [request.id]);
-
-  useEffect(() => {
-    if (drafts.length > 0 && !railScrolledRef.current) {
-      railScrolledRef.current = true;
-      railRef.current?.scrollIntoView({ block: 'nearest' });
-    }
-  }, [drafts.length]);
-
-  const { commentNumbers, draftNumbers } = numberedPins(comments, drafts);
-  /**
-   * What a pin's rail entry calls the thing it points at, never an id.
-   *
-   * The line's code, plus the tag's own label when the line prints more than
-   * one ("SRT-1234 1b"): a line split into an option per basin shows two tags,
-   * and a pin on one of them has to say which.
-   */
-  const tagLabel = useCallback(
-    (tagId: string | null) => {
-      if (!tagId) return 'General';
-      for (const line of request.lines) {
-        const tags = line.tags ?? [];
-        const tag = tags.find((row) => row.id === tagId);
-        if (!tag) continue;
-        const code = line.code || line.name || 'Tag';
-        return tags.length > 1 ? `${code} ${tag.label}` : code;
-      }
-      return 'Tag';
-    },
-    [request.lines],
-  );
-
-  const send = useCallback(async () => {
-    if (drafts.length === 0 && !generalNote.trim()) return;
-    setSending(true);
-    try {
-      await onSend({
-        comments: drafts.map((draft) => ({
-          tag_id: draft.tag_id,
-          x: draft.x,
-          y: draft.y,
-          w: draft.w,
-          h: draft.h,
-          body: draft.body,
-        })),
-        note: generalNote.trim() || undefined,
-      });
-      // Only a round the server took is a round to forget.
-      setDrafts([]);
-      setGeneralNote('');
-    } catch {
-      // The caller has already said so; the pins stay exactly where they were.
-    } finally {
-      setSending(false);
-    }
-  }, [drafts, generalNote, onSend]);
-
-  // Earlier rounds stay on the design and render grey (D6/R2), so a second
-  // round is read against what the first one said without being mistaken for
-  // live work on this proof.
-  const review = {
-    comments,
-    drafts,
-    canPlace: reviewable,
-    currentRound: request.review_round,
-    onPlace: (pin: Omit<DraftPin, 'key'>) =>
-      setDrafts((current) => [
-        ...current,
-        { ...pin, key: `draft-${Date.now()}-${current.length}` },
-      ]),
-    onRemoveDraft: (key: string) =>
-      setDrafts((current) => current.filter((draft) => draft.key !== key)),
-  };
-
-  const sentThisDesign = comments.filter((comment) => comment.tag_id !== null);
-
-  const footer = reviewable ? (
-    <div ref={railRef} className="mt-3 space-y-3 border-t pt-3">
-      {drafts.length > 0 && (
-        <ul className="space-y-2">
-          {drafts.map((draft) => (
-            <li
-              key={draft.key}
-              className="flex items-start gap-2 rounded-md border p-2"
-            >
-              <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-2xs font-semibold text-white">
-                {draftNumbers.get(draft.key)}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
-                  {tagLabel(draft.tag_id)}
-                </p>
-                <p className="whitespace-pre-wrap text-xs">{draft.body}</p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={`Delete change request ${draftNumbers.get(draft.key)}`}
-                className="text-destructive hover:text-destructive"
-                onClick={() =>
-                  setDrafts((current) =>
-                    current.filter((row) => row.key !== draft.key),
-                  )
-                }
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div className="space-y-1.5">
-        <Label htmlFor="ptag-general-note" className="text-xs">
-          Anything else (optional)
-        </Label>
-        <Textarea
-          id="ptag-general-note"
-          rows={2}
-          value={generalNote}
-          onChange={(event) => setGeneralNote(event.target.value)}
-          placeholder="A note about the whole design"
-          className="text-sm"
-        />
-      </div>
-
-      {(drafts.length > 0 || generalNote.trim()) && (
-        <Button
-          className="w-full"
-          disabled={sending}
-          onClick={() => void send()}
-          data-testid="send-change-requests"
-        >
-          {sending ? (
-            <Loader2 className="size-4 mr-1 animate-spin" />
-          ) : (
-            <MessageSquare className="size-4 mr-1" />
-          )}
-          {drafts.length === 0
-            ? 'Send change request'
-            : drafts.length === 1
-              ? 'Send 1 change request'
-              : `Send ${drafts.length} change requests`}
-        </Button>
-      )}
-    </div>
-  ) : sentThisDesign.length > 0 ? (
-    <div className="mt-3 space-y-2 border-t pt-3">
-      {sentThisDesign.map((comment) => (
-        <div key={comment.id} className="flex items-start gap-2">
-          <span
-            className={cn(
-              'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-2xs font-semibold text-white',
-              comment.resolved_at ? 'bg-muted-foreground/60' : 'bg-primary',
-            )}
-          >
-            {commentNumbers.get(comment.id)}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
-              {tagLabel(comment.tag_id)}
-              {comment.resolved_at ? ' / Done' : ''}
-            </p>
-            <p className="whitespace-pre-wrap text-xs">{comment.body}</p>
-          </div>
-        </div>
-      ))}
-    </div>
-  ) : null;
-
-  return (
-    <DesignViewer
-      docNumber={request.doc_number ?? 'Design'}
-      payload={payload}
-      loading={loading}
-      emptyMessage="Design not available yet"
-      emptyHint="Marketing is still working on it."
-      download={download}
-      review={review}
-      footer={footer}
-      headerActions={
-        reviewable ? (
-          <Button size="sm" onClick={onApprove}>
-            <Check className="size-4 mr-1" />
-            Approve
-          </Button>
-        ) : undefined
-      }
-    />
   );
 }
 

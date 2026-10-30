@@ -155,6 +155,10 @@ def api():
         company_id = _sorento(db)
         project_seed_service.run(db, company_id=company_id)
         user_id = _user(db, f"{MARKER} Admin")
+        from ._sample_request_seed import make_customer
+
+        _REGISTER_CUSTOMER["id"] = make_customer(db, company_id).id
+        db.commit()
         client, originals = _client(db, user_id, FULL_PERMS)
         try:
             with company_scope(db, frozenset({company_id})):
@@ -163,24 +167,36 @@ def api():
             _restore(originals)
 
 
-def _register(client, **overrides):
-    payload = {"title": _title("Project")}
-    payload.update(overrides)
-    return client.post(f"{PROJECTS_BASE}/", json=payload)
+#: A register call needs a customer (PROJECT-REGISTER-V2 A5); the fixture seeds one.
+_REGISTER_CUSTOMER: dict = {}
 
 
 def _create_lead(client, **overrides):
-    payload = {"title": _title("Lead")}
+    # LEAD-GOVERNS-REGISTER B1: a lead carries a customer, so every test lead gets the
+    # fixture's customer unless a test names its own.
+    payload = {"title": _title("Lead"), "customer_id": _REGISTER_CUSTOMER["id"]}
     payload.update(overrides)
     return client.post(LEADS_BASE, json=payload)
+
+
+def _register(client, **overrides):
+    """Register a project (no lead: registration never links one, AC-L2/L4)."""
+    payload = {"title": _title("Project"), "customer_id": _REGISTER_CUSTOMER["id"]}
+    payload.update(overrides)
+    payload = {k: v for k, v in payload.items() if v is not None}  # None = leave the key out
+    return client.post(f"{PROJECTS_BASE}/", json=payload)
+
+
+def _register_without_lead(client, **overrides):
+    return _register(client, **overrides)
 
 
 # --------------------------------------------------------- register / update basics
 
 
-def test_register_with_a_lead_id_links_it_and_stamps_admin_ref(api):
-    """AC-PF051, AC-PF017: create carries `lead_id` and `admin_ref` through, and the
-    lead is marked exactly as Qualify marks it."""
+def test_register_with_a_lead_id_ignores_it_and_still_stamps_admin_ref(api):
+    """AC-L4 (flipped from AC-PF051): admin_ref is carried; the lead is neither linked nor
+    qualified."""
     client, db, _company_id, _user_id = api
     lead = _create_lead(client).json()
 
@@ -188,195 +204,32 @@ def test_register_with_a_lead_id_links_it_and_stamps_admin_ref(api):
 
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["lead_id"] == lead["id"]
-    assert body["lead_code"] == lead["lead_code"]
+    assert body["lead_id"] is None
     assert body["admin_ref"] == "PS26-0143"
 
     refreshed_lead = client.get(f"{LEADS_BASE}/{lead['id']}").json()
-    assert refreshed_lead["outcome"] == "qualified"
-    assert refreshed_lead["qualified_at"] is not None
-    assert refreshed_lead["status_id"] == project_lead_service._status_id_by_key(
-        db, "qualified"
-    )
+    assert refreshed_lead["outcome"] == "open"
+    assert refreshed_lead["qualified_at"] is None
 
 
-def test_update_links_a_lead_and_marks_it_qualified(api):
-    """AC-PF052."""
-    client, db, _company_id, _user_id = api
+def test_update_with_a_lead_id_ignores_it_ac_l5(api):
+    client, _db, _company_id, _user_id = api
     project = _register(client).json()
     lead = _create_lead(client).json()
 
-    response = client.put(
-        f"{PROJECTS_BASE}/{project['id']}", json={"lead_id": lead["id"]}
-    )
+    response = client.put(f"{PROJECTS_BASE}/{project['id']}", json={"lead_id": lead["id"]})
 
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["lead_id"] == lead["id"]
-    assert body["lead_code"] == lead["lead_code"]
-
+    assert response.json()["lead_id"] is None
     refreshed_lead = client.get(f"{LEADS_BASE}/{lead['id']}").json()
-    assert refreshed_lead["outcome"] == "qualified"
-    assert refreshed_lead["qualified_at"] is not None
-    assert refreshed_lead["status_id"] == project_lead_service._status_id_by_key(
-        db, "qualified"
-    )
+    assert refreshed_lead["outcome"] == "open"
+    assert refreshed_lead["qualified_at"] is None
 
 
 # ------------------------------------------------------------------------ refusals
 
 
-def test_linking_a_lead_another_project_already_carries_is_refused_on_update(api):
-    """AC-PF053: 409 lead_already_linked, naming the incumbent; the edited project's
-    own lead_id is left untouched."""
-    client, _db, _company_id, _user_id = api
-    lead = _create_lead(client).json()
-    incumbent = _register(client, lead_id=lead["id"]).json()
-
-    challenger = _register(client).json()
-
-    response = client.put(
-        f"{PROJECTS_BASE}/{challenger['id']}", json={"lead_id": lead["id"]}
-    )
-
-    assert response.status_code == 409, response.text
-    body = response.json()
-    assert body["code"] == "lead_already_linked"
-    assert incumbent["project_code"] in body["message"]
-
-    unchanged = client.get(f"{PROJECTS_BASE}/{challenger['id']}").json()
-    assert unchanged["lead_id"] is None
-
-
-def test_registering_with_an_already_linked_lead_is_refused_and_saves_nothing(api):
-    """AC-PF053, the create-time half: nothing is saved."""
-    client, _db, _company_id, _user_id = api
-    lead = _create_lead(client).json()
-    _incumbent = _register(client, lead_id=lead["id"]).json()
-
-    before = client.get(f"{PROJECTS_BASE}/", params={"limit": 100}).json()[
-        "pagination"
-    ]["total"]
-
-    response = _register(client, lead_id=lead["id"])
-
-    assert response.status_code == 409, response.text
-    assert response.json()["code"] == "lead_already_linked"
-
-    after = client.get(f"{PROJECTS_BASE}/", params={"limit": 100}).json()[
-        "pagination"
-    ]["total"]
-    assert after == before
-
-
-def test_linking_a_disqualified_lead_is_refused(api):
-    """AC-PF054: 422 lead_not_linkable."""
-    client, _db, _company_id, _user_id = api
-    lead = _create_lead(client).json()
-    disqualified = client.post(
-        f"{LEADS_BASE}/{lead['id']}/disqualify", json={"reason": "budget"}
-    )
-    assert disqualified.status_code == 200, disqualified.text
-
-    response = _register(client, lead_id=lead["id"])
-
-    assert response.status_code == 422, response.text
-    assert response.json()["code"] == "lead_not_linkable"
-
-
-def test_linking_a_lead_owned_by_somebody_else_is_refused_without_manage(api):
-    """AC-PF055: same lead right as Qualify -- owner or a manage holder."""
-    client, db, _company_id, _admin_id = api
-    owner_id = _user(db, f"{MARKER} Owner")
-    owner_client, _ = _client(db, owner_id, FULL_PERMS)
-    lead = _create_lead(owner_client).json()
-
-    outsider_id = _user(db, f"{MARKER} Outsider")
-    outsider_client, _ = _client(db, outsider_id, NO_MANAGE_PERMS)
-
-    response = _register(outsider_client, lead_id=lead["id"])
-
-    assert response.status_code == 403, response.text
-    assert response.json()["code"] == "lead_not_editable"
-
-
 # -------------------------------------------------------------- unlink / swap / noop
-
-
-def test_unlinking_a_lead_puts_it_back_to_open_when_no_project_carries_it(api):
-    """AC-PF056 (plan D6/Q1)."""
-    client, db, _company_id, _user_id = api
-    lead = _create_lead(client).json()
-    project = _register(client, lead_id=lead["id"]).json()
-    # Setup precondition, asserted explicitly: without it, an unwired `lead_id` on
-    # register would make the rest of this test pass vacuously (the project was never
-    # really linked, so "unlinking" it proves nothing).
-    assert project["lead_id"] == lead["id"], "setup: register must link the lead first"
-
-    response = client.put(f"{PROJECTS_BASE}/{project['id']}", json={"lead_id": None})
-
-    assert response.status_code == 200, response.text
-    assert response.json()["lead_id"] is None
-
-    reopened = client.get(f"{LEADS_BASE}/{lead['id']}").json()
-    assert reopened["outcome"] == "open"
-    assert reopened["qualified_at"] is None
-    assert reopened["status_id"] == project_lead_service._status_id_by_key(db, "new")
-
-
-def test_omitting_lead_id_on_update_leaves_the_link_untouched(api):
-    """The other half of AC-PF056's contract: omitted means no change, only an
-    EXPLICIT null unlinks."""
-    client, _db, _company_id, _user_id = api
-    lead = _create_lead(client).json()
-    project = _register(client, lead_id=lead["id"]).json()
-
-    response = client.put(
-        f"{PROJECTS_BASE}/{project['id']}", json={"location": "Cyberjaya"}
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["lead_id"] == lead["id"]
-
-
-def test_swapping_the_lead_unlinks_the_old_one_and_links_the_new_one(api):
-    """AC-PF057, in one save."""
-    client, _db, _company_id, _user_id = api
-    old_lead = _create_lead(client).json()
-    new_lead = _create_lead(client).json()
-    project = _register(client, lead_id=old_lead["id"]).json()
-
-    response = client.put(
-        f"{PROJECTS_BASE}/{project['id']}", json={"lead_id": new_lead["id"]}
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["lead_id"] == new_lead["id"]
-
-    old_refreshed = client.get(f"{LEADS_BASE}/{old_lead['id']}").json()
-    assert old_refreshed["outcome"] == "open"
-    assert old_refreshed["qualified_at"] is None
-
-    new_refreshed = client.get(f"{LEADS_BASE}/{new_lead['id']}").json()
-    assert new_refreshed["outcome"] == "qualified"
-    assert new_refreshed["qualified_at"] is not None
-
-
-def test_resaving_the_same_lead_id_is_a_noop_for_qualified_at(api):
-    """AC-PF058."""
-    client, _db, _company_id, _user_id = api
-    lead = _create_lead(client).json()
-    project = _register(client, lead_id=lead["id"]).json()
-    before = client.get(f"{LEADS_BASE}/{lead['id']}").json()["qualified_at"]
-    assert before is not None
-
-    response = client.put(
-        f"{PROJECTS_BASE}/{project['id']}", json={"lead_id": lead["id"]}
-    )
-
-    assert response.status_code == 200, response.text
-    after = client.get(f"{LEADS_BASE}/{lead['id']}").json()["qualified_at"]
-    assert after == before
 
 
 # ------------------------------------------------------------------------- qualify
@@ -509,7 +362,7 @@ def test_full_field_round_trip_on_update(api):
     assert response.status_code == 200, response.text
 
     fetched = client.get(f"{PROJECTS_BASE}/{project['id']}").json()
-    assert fetched["brand_ids"] == [brand.id]
+    assert "brand_ids" not in fetched  # brands are removed from the project API
     assert fetched["location"] == "Petaling Jaya"
     assert fetched["address"] == "Lot 1, Jalan Test"
     assert fetched["expected_delivery_from"] == "2027-01-01"
@@ -522,79 +375,3 @@ def test_full_field_round_trip_on_update(api):
 # ------------------------------------------------ review round (PR #1345, round 1)
 
 
-def test_unlinking_one_of_two_qualified_projects_leaves_the_lead_qualified(api):
-    """AC-PF056's "when no other project carries the lead": a lead Qualify turned into
-    two phases stays qualified while the second phase still carries it."""
-    client, db, _company_id, _user_id = api
-    lead = _create_lead(client).json()
-    first = client.post(
-        f"{LEADS_BASE}/{lead['id']}/qualify", json={"title": _title("Phase 1")}
-    ).json()
-    client.post(f"{LEADS_BASE}/{lead['id']}/qualify", json={"title": _title("Phase 2")})
-    before = client.get(f"{LEADS_BASE}/{lead['id']}").json()
-
-    response = client.put(f"{PROJECTS_BASE}/{first['id']}", json={"lead_id": None})
-
-    assert response.status_code == 200, response.text
-    assert response.json()["lead_id"] is None
-    after = client.get(f"{LEADS_BASE}/{lead['id']}").json()
-    assert after["outcome"] == "qualified"
-    assert after["qualified_at"] == before["qualified_at"]
-    assert after["status_id"] == project_lead_service._status_id_by_key(db, "qualified")
-
-
-def _project_carrying_admins_lead(api):
-    """A project owned by a non-manage salesperson, carrying a lead the ADMIN owns."""
-    client, db, _company_id, _admin_id = api
-    owner_id = _user(db, f"{MARKER} Owner")
-    db.commit()
-    lead = _create_lead(client).json()
-    project = _register(client, owner_user_id=owner_id, lead_id=lead["id"]).json()
-    assert project["lead_id"] == lead["id"], "setup: register must link the lead"
-    owner_client, _ = _client(db, owner_id, NO_MANAGE_PERMS)
-    return owner_client, project, lead
-
-
-def test_resaving_somebody_elses_lead_needs_no_right_on_that_lead(api):
-    """AC-PF058: the form sends lead_id on every save. The project's owner saving other
-    fields must not be asked for rights on a lead they do not own."""
-    owner_client, project, lead = _project_carrying_admins_lead(api)
-
-    response = owner_client.put(
-        f"{PROJECTS_BASE}/{project['id']}",
-        json={"location": "Puchong", "lead_id": lead["id"]},
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["location"] == "Puchong"
-    assert response.json()["lead_id"] == lead["id"]
-
-
-def test_unlinking_somebody_elses_lead_detaches_it_but_leaves_the_lead_qualified(api):
-    """AC-PF056b: reopening changes the LEAD, so it needs the lead right. A project
-    editor without it detaches the lead and leaves its state alone."""
-    client, db, _company_id, _admin_id = api
-    owner_client, project, lead = _project_carrying_admins_lead(api)
-
-    response = owner_client.put(
-        f"{PROJECTS_BASE}/{project['id']}", json={"lead_id": None}
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["lead_id"] is None
-    after = db.query(ProjectLead).filter(ProjectLead.id == lead["id"]).one()
-    db.refresh(after)
-    assert after.outcome == "qualified"
-    assert after.qualified_at is not None
-
-
-def test_a_malformed_lead_id_is_a_404_not_a_database_error(api):
-    """Security review L2: an unparseable id never reaches the UUID column."""
-    client, _db, _company_id, _user_id = api
-    project = _register(client).json()
-
-    response = client.put(
-        f"{PROJECTS_BASE}/{project['id']}", json={"lead_id": "not-a-uuid"}
-    )
-
-    assert response.status_code == 404, response.text

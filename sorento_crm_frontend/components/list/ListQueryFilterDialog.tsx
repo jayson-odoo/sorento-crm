@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Filter, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
@@ -20,6 +21,7 @@ import { toast } from '@/lib/toast';
 import { numberFieldError } from '@/lib/number-field';
 import { OrderFilterFieldSelect } from '@/components/list/OrderFilterFieldSelect';
 import {
+  fetchListQueryFieldOptions,
   fetchListQueryFields,
   type ListQueryFieldMeta,
   type ListQueryFilterGroup,
@@ -32,6 +34,7 @@ const OP_LABELS: Record<string, string> = {
   contains: 'Contains',
   starts_with: 'Starts with',
   in: 'In list',
+  not_in: 'Not in list',
   gt: 'Greater than',
   gte: 'Greater or equal',
   lt: 'Less than',
@@ -39,14 +42,28 @@ const OP_LABELS: Record<string, string> = {
   is_null: 'Is null / not null',
 };
 
-type Row = { id: string; field_key: string; op: string; valueRaw: string };
+type Row = { id: string; field_key: string; op: string; valueRaw: string; picked: string[] };
 
-function parseValue(field: ListQueryFieldMeta | undefined, op: string, raw: string): unknown {
+const MULTI_OPS = new Set(['in', 'not_in']);
+const SINGLE_OPS = new Set(['eq', 'ne']);
+
+/** A field with a pick list, under an operator that takes values from it. */
+function usesPickList(field: ListQueryFieldMeta | undefined, op: string): boolean {
+  return Boolean(field?.option_source) && (MULTI_OPS.has(op) || SINGLE_OPS.has(op));
+}
+
+function parseValue(
+  field: ListQueryFieldMeta | undefined,
+  op: string,
+  raw: string,
+  picked: string[] = [],
+): unknown {
   if (!field) return raw;
+  if (usesPickList(field, op)) return MULTI_OPS.has(op) ? picked : picked[0];
   if (op === 'is_null') {
     return raw === 'true';
   }
-  if (op === 'in') {
+  if (op === 'in' || op === 'not_in') {
     return raw
       .split(',')
       .map((s) => s.trim())
@@ -69,7 +86,7 @@ function buildGroup(rootOp: 'and' | 'or', rows: Row[], fields: ListQueryFieldMet
     return {
       field_key: r.field_key,
       op: r.op,
-      value: parseValue(f, r.op, r.valueRaw),
+      value: parseValue(f, r.op, r.valueRaw, r.picked),
     };
   });
   return { op: rootOp, children };
@@ -89,6 +106,7 @@ function rowsFromFilter(
               field_key: defaultField.field_key,
               op: defaultField.allowed_operators[0] || 'eq',
               valueRaw: '',
+              picked: [],
             },
           ]
         : [],
@@ -109,8 +127,119 @@ function rowsFromFilter(
           : Array.isArray(c.value)
             ? c.value.join(', ')
             : String(c.value),
+      picked:
+        c.value === undefined || c.value === null || c.value === ''
+          ? []
+          : (Array.isArray(c.value) ? c.value : [c.value]).map(String),
     })),
   };
+}
+
+/**
+ * The value control of a condition on a field that offers a pick list: several values (a paginated
+ * async multi-select) for `in` / `not_in`, one value (a select over the first page) for `eq` / `ne`.
+ * Labels of what is picked are remembered as pages load, so a saved condition reopens by name and an
+ * id is never shown.
+ */
+function PickListValue({
+  resourceKey,
+  field,
+  multi,
+  picked,
+  onChange,
+}: {
+  resourceKey: ListQueryResourceKey;
+  field: ListQueryFieldMeta;
+  multi: boolean;
+  picked: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const remember = useCallback((rows: { value: string; label: string }[]) => {
+    setLabels((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const r of rows) {
+        if (next[r.value] !== r.label) {
+          next[r.value] = r.label;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const fetchOptions = useCallback(
+    async (query: string, pageIndex: number) => {
+      const res = await fetchListQueryFieldOptions(resourceKey, field.field_key, {
+        query,
+        page: pageIndex + 1,
+      });
+      remember(res.data);
+      return res.data;
+    },
+    [resourceKey, field.field_key, remember],
+  );
+
+  const firstPage = useQuery({
+    queryKey: ['list-query-field-options', resourceKey, field.field_key],
+    queryFn: () => fetchListQueryFieldOptions(resourceKey, field.field_key, { page: 1 }),
+    enabled: !multi,
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    if (firstPage.data) remember(firstPage.data.data);
+  }, [firstPage.data, remember]);
+
+  // A saved value that is not on the first page reopens by name: walk the pages (bounded) until every
+  // picked value has a label, so an id is never shown.
+  const pickedKey = picked.join('\u0000');
+  useEffect(() => {
+    const missing = picked.filter((v) => labels[v] === undefined);
+    if (!missing.length) return;
+    let cancelled = false;
+    (async () => {
+      const found = new Set<string>();
+      for (let page = 1; page <= 20 && !cancelled; page += 1) {
+        const res = await fetchListQueryFieldOptions(resourceKey, field.field_key, { page }).catch(() => null);
+        if (!res || cancelled) return;
+        remember(res.data);
+        res.data.forEach((o) => found.add(o.value));
+        if (missing.every((v) => found.has(v)) || res.data.length === 0) return;
+        if (page * (res.pagination?.limit || 50) >= (res.pagination?.total ?? 0)) return;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedKey, resourceKey, field.field_key, remember]);
+
+  if (multi) {
+    return (
+      <SearchableMultiSelect
+        value={picked}
+        onChange={onChange}
+        fetchOptions={fetchOptions}
+        paginated
+        selectedOptions={picked.map((v) => ({ value: v, label: labels[v] ?? 'Selected' }))}
+        placeholder="Choose values"
+        clearable
+      />
+    );
+  }
+  return (
+    <SearchableSelect
+      value={picked[0] ?? ''}
+      onChange={(v) => onChange(v ? [v] : [])}
+      options={(firstPage.data?.data ?? []).map((o) => ({ value: o.value, label: o.label }))}
+      fetchOptions={fetchOptions}
+      paginated
+      selectedOption={picked[0] ? { value: picked[0], label: labels[picked[0]] ?? 'Selected' } : undefined}
+      placeholder="Choose a value"
+      clearable
+    />
+  );
 }
 
 export type ListQueryFilterDialogProps = {
@@ -166,6 +295,7 @@ export function ListQueryFilterDialog({
         field_key: defaultField.field_key,
         op: defaultField.allowed_operators[0] || 'eq',
         valueRaw: '',
+        picked: [],
       },
     ]);
   };
@@ -184,11 +314,22 @@ export function ListQueryFilterDialog({
     for (const r of rows) {
       const f = filterable.find((x) => x.field_key === r.field_key);
       if (!f) continue;
-      if (r.op !== 'is_null' && r.op !== 'in' && (r.valueRaw === '' || r.valueRaw === undefined)) {
+      if (usesPickList(f, r.op)) {
+        if (!r.picked.length && r.op !== 'in' && r.op !== 'not_in') {
+          toast.error(`Choose a value for ${f.label}`);
+          return;
+        }
+        if (!r.picked.length) {
+          toast.error(`Choose at least one value for ${f.label}`);
+          return;
+        }
+        continue;
+      }
+      if (r.op !== 'is_null' && r.op !== 'in' && r.op !== 'not_in' && (r.valueRaw === '' || r.valueRaw === undefined)) {
         toast.error(`Enter a value for ${f.label} (${r.op})`);
         return;
       }
-      if (f.data_type === 'number' && r.op !== 'is_null' && r.op !== 'in') {
+      if (f.data_type === 'number' && r.op !== 'is_null' && r.op !== 'in' && r.op !== 'not_in') {
         const problem = numberFieldError(r.valueRaw);
         if (problem) {
           setApplyTried(true);
@@ -196,7 +337,7 @@ export function ListQueryFilterDialog({
           return;
         }
       }
-      if (r.op === 'in' && !r.valueRaw.trim()) {
+      if ((r.op === 'in' || r.op === 'not_in') && !r.valueRaw.trim()) {
         toast.error(`Enter comma-separated values for ${f.label}`);
         return;
       }
@@ -265,6 +406,7 @@ export function ListQueryFilterDialog({
                                   field_key: v,
                                   op: nf.allowed_operators[0] || 'eq',
                                   valueRaw: '',
+                                  picked: [],
                                 });
                               }}
                             />
@@ -277,6 +419,7 @@ export function ListQueryFilterDialog({
                                   field_key: v,
                                   op: nf.allowed_operators[0] || 'eq',
                                   valueRaw: '',
+                                  picked: [],
                                 });
                               }}
                               options={filterable.map((fld) => ({
@@ -290,7 +433,12 @@ export function ListQueryFilterDialog({
                           <Label className="text-xs">Operator</Label>
                           <SearchableSelect
                             value={row.op}
-                            onChange={(v) => updateRow(row.id, { op: v })}
+                            onChange={(v) =>
+                              updateRow(row.id, {
+                                op: v,
+                                picked: MULTI_OPS.has(v) ? row.picked : row.picked.slice(0, 1),
+                              })
+                            }
                             options={ops.map((op) => ({ value: op, label: OP_LABELS[op] || op }))}
                           />
                         </div>
@@ -305,6 +453,14 @@ export function ListQueryFilterDialog({
                                 { value: 'false', label: 'Is not null' },
                               ]}
                             />
+                          ) : usesPickList(f, row.op) ? (
+                            <PickListValue
+                              resourceKey={resourceKey}
+                              field={f}
+                              multi={MULTI_OPS.has(row.op)}
+                              picked={row.picked}
+                              onChange={(next) => updateRow(row.id, { picked: next })}
+                            />
                           ) : f.data_type === 'boolean' && row.op === 'eq' ? (
                             <SearchableSelect
                               value={row.valueRaw || 'true'}
@@ -316,7 +472,7 @@ export function ListQueryFilterDialog({
                             />
                           ) : f.data_type === 'number' ? (
                             <NumberInput
-                              placeholder={row.op === 'in' ? 'a, b, c' : 'Value'}
+                              placeholder={row.op === 'in' || row.op === 'not_in' ? 'a, b, c' : 'Value'}
                               value={row.valueRaw}
                               error={
                                 applyTried && row.op !== 'in' && row.op !== 'is_null'
@@ -327,7 +483,7 @@ export function ListQueryFilterDialog({
                             />
                           ) : (
                             <Input
-                              placeholder={row.op === 'in' ? 'a, b, c' : 'Value'}
+                              placeholder={row.op === 'in' || row.op === 'not_in' ? 'a, b, c' : 'Value'}
                               value={row.valueRaw}
                               onChange={(e) => updateRow(row.id, { valueRaw: e.target.value })}
                               type={f.data_type === 'date' ? 'date' : 'text'}

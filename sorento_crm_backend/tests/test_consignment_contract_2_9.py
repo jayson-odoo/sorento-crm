@@ -11,7 +11,7 @@ def _contract(env) -> dict:
 
 
 def test_contract_version_is_2_10(env):
-    assert _contract(env)["version"] == "2.10"
+    assert _contract(env)["version"] == "2.11"
 
 
 def test_consignments_fields_added_lists_the_2_9_fields(env):

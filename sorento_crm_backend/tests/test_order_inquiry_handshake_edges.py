@@ -691,7 +691,7 @@ def test_the_summary_ack_facet_carries_all_four_keys_by_name(api):
 # ---------------------------------------------------------------------------
 
 
-def test_committed_v_and_the_plan_agree_only_on_acknowledged_and_changed(api):
+def test_committed_v_and_the_plan_agree_on_to_order_rows_and_drop_rejected(api):
     """Three rows at the SAME cell - awaiting, changed and rejected - so the view's own
     rule (drop rejected, keep awaiting) and the plan's narrower one (acknowledged and
     changed only) can be told apart in one assertion.
@@ -730,9 +730,9 @@ def test_committed_v_and_the_plan_agree_only_on_acknowledged_and_changed(api):
 
     # committed_v: everything still owed except the rejected row (awaiting + changed).
     assert _project_committed(world, planned=False) == Decimal("7") + Decimal("9")
-    # the plan's own SELECT: acknowledged + changed only - the awaiting row is nothing
-    # to buy against yet.
-    assert _project_committed(world, planned=True) == Decimal("9")
+    # the plan's own SELECT (OI-AUTO-CONFIRM Q4 = b): awaiting + changed, i.e. every To
+    # order row, so it now agrees with the view; a rejected row is dropped by both.
+    assert _project_committed(world, planned=True) == Decimal("7") + Decimal("9")
     # The count both readings disagree with - the row nobody has read AND the row CS
     # amended since (`changed`), the two states `ACK_ACKNOWLEDGEABLE` used to gate.
     assert awaiting_acknowledgement_rows(world.db) == before_awaiting + 2

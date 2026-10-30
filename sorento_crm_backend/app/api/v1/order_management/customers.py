@@ -17,27 +17,26 @@ from app.schemas.contact_customer import CustomerLinkedContactsResponse
 from app.services.user_service import UserPermissionService
 import uuid
 from app.services.error_handler import handle_internal_error, handle_not_found, handle_unprocessable
+from app.utils.multi_value import multi_uuids
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[CustomerResponse])
-async def get_customers(
+def get_customers(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
-    customer_group_id: Optional[str] = Query(None),
+    customer_group_id: Optional[list[str]] = Query(None),
+    status: Optional[str] = Query(None, description="active | inactive; omit for every customer"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get customers with pagination, search, and sorting."""
-    if customer_group_id is not None:
-        try:
-            uuid.UUID(customer_group_id)
-        except ValueError:
-            raise handle_unprocessable("Invalid customer group")
+    group_ids = multi_uuids(customer_group_id, "Customer group")
     try:
         service = CustomerService(db)
         result = service.list_customers(
@@ -46,7 +45,8 @@ async def get_customers(
             query=query,
             sort_field=sort or "created_at",
             sort_dir=dir or "desc",
-            customer_group_id=customer_group_id,
+            customer_group_id=group_ids,
+            status=status,
         )
         return result
     except Exception as e:
@@ -54,7 +54,8 @@ async def get_customers(
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
-async def import_customers(
+@heavy
+def import_customers(
     file: UploadFile = File(..., description="Excel file: customer (debtor) listing"),
     validate_only: bool = Query(
         False, description="If true, read the file and report what it would do. Writes nothing."
@@ -68,7 +69,7 @@ async def import_customers(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Excel file (.xlsx, .xls or .xlsm) required",
         )
-    file_data = await file.read()
+    file_data = file.file.read()
     if not file_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="The uploaded file is empty"
@@ -135,7 +136,7 @@ async def import_customers(
 
 
 @router.get("/{customer_id}", response_model=CustomerResponse)
-async def get_customer(
+def get_customer(
     customer_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -153,7 +154,7 @@ async def get_customer(
 
 
 @router.get("/{customer_id}/linked-contacts", response_model=CustomerLinkedContactsResponse)
-async def list_customer_linked_contacts(
+def list_customer_linked_contacts(
     customer_id: str,
     current_user: dict = Depends(require_permission("order_management.customers.view")),
     db: Session = Depends(get_db),
@@ -205,7 +206,7 @@ def update_customer_ask(
 
 
 @router.post("/", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
-async def create_customer(
+def create_customer(
     customer_data: CustomerCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -233,7 +234,7 @@ async def create_customer(
 
 
 @router.put("/{customer_id}", response_model=CustomerResponse)
-async def update_customer(
+def update_customer(
     customer_id: str,
     customer_data: CustomerUpdate,
     current_user: dict = Depends(get_current_user),
@@ -284,7 +285,7 @@ async def update_customer(
 
 
 @router.delete("/{customer_id}", status_code=status.HTTP_200_OK)
-async def delete_customer(
+def delete_customer(
     customer_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

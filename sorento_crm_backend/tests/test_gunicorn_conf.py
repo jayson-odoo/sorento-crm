@@ -64,6 +64,10 @@ def test_defaults_match_start_sh(monkeypatch):
     --bind "${API_HOST:-0.0.0.0}:${API_PORT:-8000}", --timeout 120,
     --keep-alive "${GUNICORN_KEEP_ALIVE:-75}", --access-logfile -, --error-logfile -,
     --log-level info.
+
+    Except the worker class: since CHAT-INBOX-QUEUE (#1848) it is
+    app.uvicorn_worker.InboxUvicornWorker, a UvicornWorker subclass that sets
+    timeout_graceful_shutdown (app/uvicorn_worker.py).
     """
     # workers: default 4
     monkeypatch.delenv("WORKERS", raising=False)
@@ -77,7 +81,7 @@ def test_defaults_match_start_sh(monkeypatch):
     monkeypatch.delenv("WORKERS", raising=False)
 
     module = _load_conf_module()
-    assert module.worker_class == "uvicorn.workers.UvicornWorker"
+    assert module.worker_class == "app.uvicorn_worker.InboxUvicornWorker"
     assert module.timeout == 120
 
     # keepalive: default 75
@@ -146,3 +150,47 @@ def test_post_fork_is_idempotent_per_call(monkeypatch):
     assert fake_engine.dispose.call_count == 2
     for call in fake_engine.dispose.call_args_list:
         assert call.kwargs.get("close") is False
+
+
+def test_pre_fork_freezes_the_preloaded_heap():
+    """BACKEND-MEMORY: the master moves every object it holds (the preloaded app) into the
+    permanent generation right before each fork, so a worker's garbage collector never walks
+    them. Measured on the app (28 Oct): one full collection in a forked child touched about
+    1.4 GB of pages shared with the master (87,217 faults, 1.67 s) and 32 faults after
+    gc.freeze(); every touched page is copied out of the preload into the worker."""
+    import gc
+
+    module = _load_conf_module()
+    gc.unfreeze()
+    try:
+        module.pre_fork(server=MagicMock(), worker=MagicMock())
+        assert gc.get_freeze_count() > 0
+    finally:
+        gc.unfreeze()
+
+
+# ---- BACKEND-MEM-2 S3: workers are recycled, staggered, and the count comes back after a recycle
+def test_workers_are_recycled_after_a_jittered_request_count(monkeypatch):
+    """A worker keeps the memory of its busiest moment until it exits (PLAN-backend-mem-2-30oct.md); at about 650
+    requests per worker per hour, 2000 + up to 500 recycles each every 2.5-4 h, never all at once."""
+    monkeypatch.delenv("GUNICORN_MAX_REQUESTS", raising=False)
+    monkeypatch.delenv("GUNICORN_MAX_REQUESTS_JITTER", raising=False)
+    module = _load_conf_module()
+    assert (module.max_requests, module.max_requests_jitter) == (2000, 500)
+    monkeypatch.setenv("GUNICORN_MAX_REQUESTS", "0")
+    monkeypatch.setenv("GUNICORN_MAX_REQUESTS_JITTER", "0")
+    module = _load_conf_module()
+    assert (module.max_requests, module.max_requests_jitter) == (0, 0)  # 0 = never recycled, gunicorn's own off
+
+
+def test_importing_pymupdf_starts_no_native_thread_pool_in_the_preloading_master():
+    """LOOKUP-WARM-STORM: PyMuPDF 2.0 builds an onnxruntime model at `import fitz` (app import, flyer_extraction).
+    Under preload_app that thread pool belongs to the master; a forked worker exiting (a max_requests recycle, TTOU,
+    a deploy stop) joined a thread it never had and hung until WORKER TIMEOUT, about 1 exit in 3 measured. The import
+    runs in a clean interpreter so no other test's imports count."""
+    import subprocess
+
+    probe = "import sys, fitz; print('onnxruntime' in sys.modules)"
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-1] == "False", "import fitz loaded onnxruntime: keep PyMuPDF below 2 (requirements.txt)"

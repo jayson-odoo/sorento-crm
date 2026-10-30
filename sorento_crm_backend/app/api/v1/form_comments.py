@@ -2,6 +2,7 @@
 
 GET|POST /form-comments/{kind}/{entity_id}. The kind's own view permission gates both verbs
 (there is no single slug that covers four kinds), and POST needs a staff session (no API key).
+A request form's `view_own` alone reads (never writes) the rows their own contact submitted (PORTAL-P4).
 Plan: documentation/plans/forms/PLAN-form-comments-09oct.md
 """
 from __future__ import annotations
@@ -16,7 +17,8 @@ from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
-from app.services.error_handler import handle_unprocessable
+from app.services import own_scope
+from app.services.error_handler import handle_not_found, handle_unprocessable
 from app.services.form_comment_service import FORM_COMMENT_KINDS, VIEW_PERMISSION, FormCommentService
 from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import validate_uuid_path
@@ -45,7 +47,7 @@ def _check_module(kind: str, user_id: str, db: Session) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Module not enabled: {module}")
 
 
-async def read_uploads(files: Optional[list[UploadFile]]) -> list:
+def read_uploads(files: Optional[list[UploadFile]]) -> list:
     """Files as (name, bytes, type). Count and size are checked BEFORE any part is read."""
     named = [f for f in (files or []) if f.filename]
     if len(named) > MAX_FILES:
@@ -53,17 +55,27 @@ async def read_uploads(files: Optional[list[UploadFile]]) -> list:
     for f in named:
         if f.size is not None and f.size > MAX_FILE_BYTES:
             raise handle_unprocessable("File is too large.")
-    return [(f.filename, await f.read(), f.content_type) for f in named]
+    return [(f.filename, f.file.read(), f.content_type) for f in named]
 
 
-def _authorize(kind: str, entity_id: str, current_user: dict, db: Session) -> str:
+def _authorize(kind: str, entity_id: str, current_user: dict, db: Session, *, write: bool = False) -> str:
     if kind not in FORM_COMMENT_KINDS:
         raise handle_unprocessable(f"Unsupported form type: {kind!r}.")
     slug = _VIEW_PERMISSION[kind]
-    if not UserPermissionService(db).check_user_has_permission(current_user["id"], slug):
+    perms = UserPermissionService(db)
+    if perms.check_user_has_permission(current_user["id"], slug):
+        _check_module(kind, current_user["id"], db)
+        return validate_uuid_path(entity_id, resource="Form")
+    # A request form's `view_own` alone READS the thread on their own row only (PORTAL-P4-REQUESTS).
+    # A staff comment WhatsApps the submitter, who is them: they write through /my-requests.
+    view_own = own_scope.REQUEST_KINDS.get(kind, (None, None))[1]
+    if write or not view_own or not perms.check_user_has_permission(current_user["id"], view_own):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission required: {slug}")
     _check_module(kind, current_user["id"], db)
-    return validate_uuid_path(entity_id, resource="Form")
+    eid = validate_uuid_path(entity_id, resource="Form")
+    if not own_scope.request_in_scope(db, kind, eid, own_scope.me(db, current_user["id"])):
+        raise handle_not_found("Form", eid)
+    return eid
 
 
 @router.get("/{kind}/{entity_id}")
@@ -79,7 +91,7 @@ def list_form_comments(
 
 
 @router.post("/{kind}/{entity_id}", status_code=status.HTTP_201_CREATED)
-async def add_form_comment(
+def add_form_comment(
     kind: str,
     entity_id: str,
     body: Annotated[str, Form()] = "",
@@ -88,11 +100,11 @@ async def add_form_comment(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    eid = _authorize(kind, entity_id, current_user, db)
+    eid = _authorize(kind, entity_id, current_user, db, write=True)
     user = db.query(User).filter(User.id == current_user["id"]).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    uploads = await read_uploads(files)
+    uploads = read_uploads(files)
     return FormCommentService(db).add_staff_comment(kind, eid, user, body, uploads, parent_id=parent_id or None)
 
 
@@ -109,6 +121,6 @@ def edit_form_comment(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    eid = _authorize(kind, entity_id, current_user, db)
+    eid = _authorize(kind, entity_id, current_user, db, write=True)
     svc = FormCommentService(db)
     return {"comment": svc.edit_comment(kind, eid, comment_id, svc.staff_viewer(current_user), payload.body)}

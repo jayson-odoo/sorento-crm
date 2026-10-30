@@ -266,7 +266,7 @@ class SalesOpportunity(CompanyScopedMixin, Base):
         CheckConstraint(
             "outcome IN ('open', 'won', 'lost')", name="ck_sales_opportunities_outcome"
         ),
-        CheckConstraint("source IN ('portal', 'crm')", name="ck_sales_opportunities_source"),
+        CheckConstraint("source IN ('portal', 'crm', 'chat')", name="ck_sales_opportunities_source"),
         Index(
             "uq_sales_opportunities_company_no", "company_id", "opportunity_no", unique=True
         ),
@@ -636,5 +636,89 @@ class SalesPointRatio(CompanyScopedMixin, Base):
     __table_args__ = (
         Index("uq_sales_point_ratios_company_from", "company_id", "effective_from", unique=True),
         CheckConstraint("rm_per_point > 0", name="ck_sales_point_ratios_positive"),
+        {"schema": SCHEMA},
+    )
+
+
+class SetApartCustomer(CompanyScopedMixin, Base):
+    """A customer whose sales the reports set apart from Dealer and Project team, for the
+    months it covers (SALES-UNIFIED 2.4, owner ruling Q3 (a)). Months are stored as their first
+    day; `to_month` NULL is open. No two rows of one customer overlap, checked in
+    `set_apart_service`, the only writer (the `team_members` rule)."""
+
+    __tablename__ = "set_apart_customers"
+    __audit_track__ = True
+    __audit_entity_type__ = "sales_set_apart_customers"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    customer_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    from_month = Column(Date, nullable=False)
+    to_month = Column(Date, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "to_month IS NULL OR to_month >= from_month",
+            name="ck_sales_set_apart_customers_months",
+        ),
+        Index("ix_sales_set_apart_customers_company_customer", "company_id", "customer_id"),
+        {"schema": SCHEMA},
+    )
+
+
+class SalesAgentClass(Base):
+    """An agent's demand class for a run of months (SALES-UNIFIED round 3, owner ruling Q6
+    (a)): `retail` (Dealer), `project` (Project team) or `other`. A sales order takes the
+    class in effect on its own date, so moving an agent re-decides only the months it covers.
+
+    `from_month` NULL is "from the beginning" (the agent's first class), `to_month` NULL is
+    open; both are first days of a month. One open row per agent, no two rows of one agent
+    overlap (checked in `agent_class_service`, the only writer). Not company-scoped: the agent
+    master it hangs on is a shared row (`sales_agents.company_id` NULL), and so is its class.
+    `sales_agents.demand_class` mirrors the open row for the readers that want "now".
+    """
+
+    __tablename__ = "agent_classes"
+    __audit_track__ = True
+    __audit_entity_type__ = "sales_agent_classes"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    sales_agent_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("sales_agents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    demand_class = Column(String(32), nullable=False)
+    from_month = Column(Date, nullable=True)
+    to_month = Column(Date, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "from_month IS NULL OR to_month IS NULL OR to_month >= from_month",
+            name="ck_sales_agent_classes_months",
+        ),
+        CheckConstraint(
+            "demand_class IN ('project', 'retail', 'other')",
+            name="ck_sales_agent_classes_class",
+        ),
+        Index(
+            "uq_sales_agent_classes_open",
+            "sales_agent_id",
+            unique=True,
+            postgresql_where=text("to_month IS NULL"),
+        ),
         {"schema": SCHEMA},
     )

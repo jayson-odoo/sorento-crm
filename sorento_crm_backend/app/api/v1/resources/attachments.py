@@ -25,6 +25,13 @@ from app.dependencies import (
 
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
 from app.services.attachment_company_service import AttachmentCompanyService
+from app.services.attachment_entity_access import (
+    PROJECT_ENTITY_TYPE,
+    assert_can_write_attachments,
+    assert_can_write_existing,
+    assert_can_write_target,
+    normalize_entity_type,
+)
 from app.services.storage_router import (
     PROVIDER_R2,
     normalize_provider,
@@ -43,6 +50,7 @@ from app.services.image_normalizer import ensure_rgb_image
 from app.services.image_thumbnailer import store_thumbnail
 from app.services.n8n_webhook_settings import get_n8n_attachment_webhook_url
 from app.utils.http import content_disposition
+from app.utils.multi_value import multi_uuids, multi_values
 from app.schemas.resources import (
     AttachmentCreate,
     AttachmentUpdate,
@@ -136,14 +144,24 @@ def _create_and_send_webhook(
     )
 
 
-def _find_filename_collision(db: Session, directory_id: Optional[str], display_name: str):
+def _find_filename_collision(
+    db: Session,
+    directory_id: Optional[str],
+    display_name: str,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+):
     """Return the live Attachment row colliding on (directory_id, lower(stored_filename)) or None.
 
     Scoped to the user-facing name (stored_filename) - that's what "a file with this name
     already exists in this folder" means to a user. Storage-key uniqueness is guaranteed
     separately by the uuid-segregated key, so this is a pure UX check.
+
+    With an entity given, only files on that same entity collide: project documents upload
+    with no folder, and a folder-only scope matched (and Replace overwrote) a same-named
+    file on any OTHER project.
     """
-    from sqlalchemy import func as _sa_func
+    from sqlalchemy import func as _sa_func, or_
     from app.models.resources import Attachment
 
     # "No folder" (directory_id NULL) is its own scope - two same-named files
@@ -153,21 +171,39 @@ def _find_filename_collision(db: Session, directory_id: Optional[str], display_n
         if not directory_id
         else Attachment.directory_id == directory_id
     )
-    return (
-        db.query(Attachment)
-        .filter(
-            scope,
-            _sa_func.lower(Attachment.stored_filename) == (display_name or "").lower(),
-            Attachment.is_deleted.is_(False),
-        )
-        .first()
+    q = db.query(Attachment).filter(
+        scope,
+        _sa_func.lower(Attachment.stored_filename) == (display_name or "").lower(),
+        Attachment.is_deleted.is_(False),
     )
+    normalized_entity_type = normalize_entity_type(entity_type)
+    if normalized_entity_type and entity_id:
+        q = q.filter(
+            Attachment.entity_type == normalized_entity_type,
+            Attachment.entity_id == str(entity_id),
+        )
+    else:
+        # A folderless project document is not "here" for a plain Files upload: matching it
+        # answered with another project's file id and name, and offered a Replace onto it.
+        q = q.filter(
+            or_(
+                Attachment.entity_type.is_(None),
+                Attachment.entity_type != PROJECT_ENTITY_TYPE,
+            )
+        )
+    return q.first()
 
 
-def _next_copy_name(db: Session, directory_id: Optional[str], display_name: str) -> str:
+def _next_copy_name(
+    db: Session,
+    directory_id: Optional[str],
+    display_name: str,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+) -> str:
     """Loop _suffix_copy_name until the candidate display name is free in the directory."""
     candidate = _suffix_copy_name(display_name)
-    while _find_filename_collision(db, directory_id, candidate) is not None:
+    while _find_filename_collision(db, directory_id, candidate, entity_type, entity_id) is not None:
         candidate = _suffix_copy_name(candidate)
     return candidate
 
@@ -243,7 +279,7 @@ def _stamp_company(data: dict, attachment, company_names: dict) -> None:
 
 
 @router.get("/", response_model=ListResponse[AttachmentResponse])
-async def get_attachments(
+def get_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
     query: Optional[str] = Query(None),
@@ -259,9 +295,9 @@ async def get_attachments(
     dir: Optional[str] = Query(None),
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
-    directory_id: Optional[str] = Query(None),
+    directory_id: Optional[list[str]] = Query(None),
     is_deleted: Optional[bool] = Query(None),
-    attachment_type_id: Optional[str] = Query(None),
+    attachment_type_id: Optional[list[str]] = Query(None),
     attachment_type_ids: Optional[List[str]] = Query(
         None,
         description="Canonical AttachmentType UUIDs (csv/JSON/repeated). Unions with `attachment_type_id`.",
@@ -282,13 +318,13 @@ async def get_attachments(
         None,
         description="Several mime types (csv/JSON/repeated). Unions with `mime_type`.",
     ),
-    uploaded_by: Optional[str] = Query(None),
+    uploaded_by: Optional[list[str]] = Query(None),
     uploaded_at_from: Optional[datetime] = Query(None),
     uploaded_at_to: Optional[datetime] = Query(None),
     access_levels: Optional[List[str]] = Query(None, description="Filter to attachments whose access_levels match these codes (see access_levels_match)."),
     access_levels_match: Optional[str] = Query("any", description="How to combine access_levels: 'any' (overlap, default), 'all' (contains every code), 'exact' (set equality)."),
     link_status: Optional[str] = Query(None, description="Filter by linkage: 'linked' (referenced by any product/promotion/form/packing-list/field link) or 'unlinked' (orphans)."),
-    storage_status: Optional[str] = Query(None, description="Filter by storage accessibility audit: 'accessible', 'missing' (broken/lost object), or 'unchecked'."),
+    storage_status: Optional[list[str]] = Query(None, description="Filter by storage accessibility audit: 'accessible', 'missing' (broken/lost object), or 'unchecked'."),
     direct_access_only: bool = Query(False, description="When true, restrict to attachment types flagged is_direct_access (dealer-downloadable documents)."),
     contact_id: Optional[str] = Query(
         None,
@@ -299,9 +335,9 @@ async def get_attachments(
         description="Respond.io workspace space_id. Disambiguates contact_id when the same respond_io_id exists in two workspaces.",
     ),
     resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
-    company: Optional[str] = Query(
+    company: Optional[list[str]] = Query(
         None,
-        description="'shared' for company_id IS NULL only; a company UUID for that company only; omitted keeps the default (shared + the caller's own companies).",
+        description="'shared' for company_id IS NULL only; a company UUID for that company only; several are OR-ed and only narrow the caller's own scope; omitted keeps the default (shared + the caller's own companies).",
     ),
     current_user: dict = Depends(require_any_permission_with_api_key(ATTACHMENT_CATALOGUE_READERS)),
     db: Session = Depends(get_db)
@@ -331,26 +367,26 @@ async def get_attachments(
             dir=dir or "desc",
             entity_type=entity_type,
             entity_id=entity_id,
-            directory_id=directory_id,
+            directory_id=multi_uuids(directory_id, "directory_id"),
             is_deleted=is_deleted,
-            attachment_type_id=attachment_type_id,
+            attachment_type_id=multi_uuids(attachment_type_id, "attachment_type_id"),
             attachment_type_ids=parse_uuid_list(attachment_type_ids, param_name="attachment_type_ids"),
             attachment_type_code=attachment_type_code,
             attachment_type_codes=normalize_list_query_param(attachment_type_codes),
             mime_type=mime_type,
             mime_types=normalize_list_query_param(mime_types),
-            uploaded_by=uploaded_by,
+            uploaded_by=multi_uuids(uploaded_by, "uploaded_by"),
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
             access_levels=access_levels,
             access_levels_match=access_levels_match,
             link_status=link_status,
-            storage_status=storage_status,
+            storage_status=multi_values(storage_status),
             entities=normalize_entities_query_param(entities),
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
             direct_access_only=direct_access_only,
             visible_attachment_type_ids=visible_type_ids(db, contact_id, space_id),
-            company=company,
+            company=multi_values(company),
             contact_regions=contact_regions,
         )
         # Enrich each attachment with uploaded_by_user for display.
@@ -388,9 +424,11 @@ async def get_attachments(
 
 
 @router.get("/collision-check")
-async def collision_check(
+def collision_check(
     filename: str = Query(..., description="Candidate display name (stored_filename) to test."),
     directory_id: Optional[str] = Query(None, description="Folder to check within; no folder → never collides."),
+    entity_type: Optional[str] = Query(None, description="With entity_id: only files on this entity collide."),
+    entity_id: Optional[str] = Query(None, description="With entity_type: only files on this entity collide."),
     current_user: dict = Depends(require_any_permission_with_api_key(ATTACHMENT_UPLOAD_READERS)),
     db: Session = Depends(get_db),
 ):
@@ -398,9 +436,10 @@ async def collision_check(
 
     Lets the upload UI prompt Replace / Create copy BEFORE handing the file to the
     background upload session (which otherwise can't surface a 409 interactively).
-    Same scope as the upload-time guard (`directory_id`, lower(`stored_filename`)).
+    Same scope as the upload-time guard (`directory_id`, lower(`stored_filename`), and the
+    entity when one is given).
     """
-    existing = _find_filename_collision(db, directory_id, filename)
+    existing = _find_filename_collision(db, directory_id, filename, entity_type, entity_id)
     if existing is None:
         return {"collides": False}
     return {
@@ -411,7 +450,7 @@ async def collision_check(
 
 
 @router.get("/drive", response_model=DriveListResponse)
-async def get_drive_contents(
+def get_drive_contents(
     directory_id: Optional[str] = Query(
         None, description="Folder to list (omit/null = drive root)."
     ),
@@ -431,19 +470,19 @@ async def get_drive_contents(
     is_deleted: Optional[bool] = Query(
         None, description="True = Trash (deleted folders + archived files)."
     ),
-    attachment_type_id: Optional[str] = Query(None),
+    attachment_type_id: Optional[list[str]] = Query(None),
     attachment_type_code: Optional[str] = Query(None),
-    uploaded_by: Optional[str] = Query(None),
+    uploaded_by: Optional[list[str]] = Query(None),
     uploaded_at_from: Optional[datetime] = Query(None),
     uploaded_at_to: Optional[datetime] = Query(None),
     access_levels: Optional[List[str]] = Query(None),
     access_levels_match: Optional[str] = Query("any"),
     link_status: Optional[str] = Query(None),
-    storage_status: Optional[str] = Query(None),
+    storage_status: Optional[list[str]] = Query(None),
     direct_access_only: bool = Query(False),
-    company: Optional[str] = Query(
+    company: Optional[list[str]] = Query(
         None,
-        description="'shared' for company_id IS NULL only (folders and files); a company UUID for that company only; omitted keeps the default.",
+        description="'shared' for company_id IS NULL only (folders and files); a company UUID for that company only; several are OR-ed; omitted keeps the default.",
     ),
     current_user: dict = Depends(require_any_permission_with_api_key(DRIVE_READERS)),
     db: Session = Depends(get_db),
@@ -467,16 +506,16 @@ async def get_drive_contents(
             page=page,
             limit=limit,
             is_deleted=is_deleted,
-            attachment_type_id=attachment_type_id,
+            attachment_type_id=multi_uuids(attachment_type_id, "attachment_type_id"),
             attachment_type_code=attachment_type_code,
-            uploaded_by=uploaded_by,
+            uploaded_by=multi_uuids(uploaded_by, "uploaded_by"),
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
             access_levels=access_levels,
             access_levels_match=access_levels_match,
             link_status=link_status,
-            company=company,
-            storage_status=storage_status,
+            company=multi_values(company),
+            storage_status=multi_values(storage_status),
             direct_access_only=direct_access_only,
         )
 
@@ -560,7 +599,7 @@ STOCK_LIST_TYPE_NAMES = ("Stock List", "Stock_List")
 
 
 @router.get("/current-stock-list", response_model=AttachmentResponse)
-async def get_current_stock_list(
+def get_current_stock_list(
     current_user: dict = Depends(require_any_permission_with_api_key(STOCK_LIST_READERS)),
     db: Session = Depends(get_db),
 ):
@@ -653,7 +692,7 @@ def _attachment_response_with_linked_entities(
 
 
 @router.delete("/links/{link_id}", status_code=status.HTTP_200_OK)
-async def delete_attachment_link(
+def delete_attachment_link(
     link_id: str,
     entity_type: str = Query(..., description="Entity type of the link, e.g. inbound_shipment"),
     current_user: dict = Depends(get_current_user),
@@ -682,7 +721,7 @@ async def delete_attachment_link(
 
 
 @router.get("/{attachment_id}", response_model=AttachmentResponse)
-async def get_attachment(
+def get_attachment(
     attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -700,7 +739,7 @@ async def get_attachment(
 
 
 @router.post("/{attachment_id}/link-packing-list", status_code=status.HTTP_200_OK)
-async def link_attachment_to_packing_list(
+def link_attachment_to_packing_list(
     attachment_id: str,
     body: LinkPackingListRequest,
     current_user: dict = Depends(get_current_user),
@@ -733,7 +772,7 @@ async def link_attachment_to_packing_list(
 
 
 @router.post("/{attachment_id}/unlink-packing-list", status_code=status.HTTP_200_OK)
-async def unlink_packing_list_from_attachment(
+def unlink_packing_list_from_attachment(
     attachment_id: str,
     body: LinkPackingListRequest,
     current_user: dict = Depends(get_current_user),
@@ -886,7 +925,10 @@ async def create_attachment(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="on_conflict must be one of 'copy', 'replace', or omitted.",
             )
-        collision = _find_filename_collision(db, directory_id, display_name)
+        # The project check runs before the collision lookup, so a 409 never tells a caller
+        # who may not write that project which file names it holds.
+        assert_can_write_target(db, entity_type, entity_id, current_user)
+        collision = _find_filename_collision(db, directory_id, display_name, entity_type, entity_id)
         existing_to_replace = None
         if collision is not None:
             if on_conflict_clean is None:
@@ -901,7 +943,7 @@ async def create_attachment(
                     },
                 )
             if on_conflict_clean == "copy":
-                display_name = _next_copy_name(db, directory_id, display_name)
+                display_name = _next_copy_name(db, directory_id, display_name, entity_type, entity_id)
             else:  # "replace"
                 existing_to_replace = collision
 
@@ -944,11 +986,19 @@ async def create_attachment(
         # 2. Otherwise, use attachment_type.type_name (sanitized for S3 path)
         # 3. Fallback to "general"
         if entity_type:
-            final_entity_type = entity_type.lower().replace(' ', '_')
+            final_entity_type = normalize_entity_type(entity_type) or "general"
         elif attachment_type:
             final_entity_type = attachment_type.type_name.lower().replace(' ', '_')
         else:
             final_entity_type = "general"
+
+        # Before any bytes reach storage: the entity the new row lands on, and the row a
+        # Replace would overwrite, both need the right to write them.
+        assert_can_write_target(db, final_entity_type, entity_id, current_user)
+        if existing_to_replace is not None:
+            assert_can_write_existing(
+                db, existing_to_replace.entity_type, existing_to_replace.entity_id, current_user
+            )
 
         # Construct storage key. Basename = immutable original_filename.
         # - promotion: already scoped by entity_id (unchanged).
@@ -1364,7 +1414,7 @@ async def bulk_import_attachments(
 
 
 @router.post("/bulk-download")
-async def bulk_download_attachments(
+def bulk_download_attachments(
     body: BulkDownloadRequest,
     current_user: dict = Depends(require_any_permission_with_api_key(DRIVE_READERS)),
     db: Session = Depends(get_db),
@@ -1471,7 +1521,7 @@ async def bulk_download_attachments(
 
 
 @router.put("/{attachment_id}", response_model=AttachmentResponse)
-async def update_attachment(
+def update_attachment(
     attachment_id: str,
     attachment_data: AttachmentUpdate,
     current_user: dict = Depends(get_current_user),
@@ -1481,6 +1531,17 @@ async def update_attachment(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
+        # Both ends of an edit: the entity the file is on now, and the one it is re-pointed to.
+        current = service.get_attachment(attachment_id)
+        assert_can_write_existing(db, current.entity_type, current.entity_id, current_user)
+        requested = attachment_data.model_dump(exclude_unset=True)
+        if "entity_type" in requested or "entity_id" in requested:
+            assert_can_write_target(
+                db,
+                requested.get("entity_type", current.entity_type),
+                requested.get("entity_id", current.entity_id),
+                current_user,
+            )
         attachment = service.update_attachment(attachment_id, attachment_data)
         # The bare ORM row serializes company_name as None; stamp it so the write
         # echo matches what the list and detail reads return.
@@ -1494,13 +1555,15 @@ async def update_attachment(
 
 
 @router.post("/bulk-move", response_model=AttachmentsBulkMoveResponse)
-async def bulk_move_attachments(
+def bulk_move_attachments(
     body: AttachmentsBulkMoveRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Move many attachments into the same target folder in one transaction (drag-drop multi-select)."""
     try:
+        # A moved file is under that folder's delete / restore cascade from then on.
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         updated = service.bulk_move(body.attachment_ids, body.directory_id)
         return AttachmentsBulkMoveResponse(updated=updated)
@@ -1511,7 +1574,7 @@ async def bulk_move_attachments(
 
 
 @router.get("/{attachment_id}/download")
-async def download_attachment(
+def download_attachment(
     attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -1547,7 +1610,7 @@ async def download_attachment(
 
 
 @router.get("/{attachment_id}/metadata", response_model=AttachmentResponse)
-async def get_attachment_metadata(
+def get_attachment_metadata(
     attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -1565,7 +1628,7 @@ async def get_attachment_metadata(
 
 
 @router.get("/{attachment_id}/preview-url")
-async def get_attachment_preview_url(
+def get_attachment_preview_url(
     attachment_id: str,
     variant: str = Query(
         "original",
@@ -1596,7 +1659,7 @@ async def get_attachment_preview_url(
 
 
 @router.delete("/{attachment_id}", status_code=status.HTTP_200_OK)
-async def delete_attachment(
+def delete_attachment(
     attachment_id: str,
     current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
@@ -1604,6 +1667,7 @@ async def delete_attachment(
     """Delete an attachment permanently (hard delete). Use archive for retention."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
+        assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
         result = service.delete_attachment(attachment_id, current_user["id"])
         return result
@@ -1614,14 +1678,17 @@ async def delete_attachment(
 
 
 @router.post("/{attachment_id}/archive", status_code=status.HTTP_200_OK)
-async def archive_attachment(
+def archive_attachment(
     attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
 ):
-    """Archive an attachment (soft delete). Data remains for retention. Use restore to unarchive."""
+    """Archive an attachment (soft delete). Data remains for retention. Use restore to unarchive.
+
+    Same slug as `POST /bulk-archive`: whoever may trash many files may trash one."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
+        assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
         result = service.archive_attachment(attachment_id, current_user["id"])
         return result
@@ -1632,14 +1699,15 @@ async def archive_attachment(
 
 
 @router.put("/{attachment_id}/restore", status_code=status.HTTP_200_OK)
-async def restore_attachment(
+def restore_attachment(
     attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
 ):
-    """Restore an archived attachment."""
+    """Restore an archived attachment. Takes the archive slug: restore undoes an archive."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
+        assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
         result = service.restore_attachment(attachment_id)
         return result
@@ -1650,13 +1718,14 @@ async def restore_attachment(
 
 
 @router.post("/bulk-archive", status_code=status.HTTP_200_OK)
-async def bulk_archive_attachments(
+def bulk_archive_attachments(
     body: AttachmentBulkDeleteRequest,
     current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
 ):
     """Archive multiple attachments (soft delete)."""
     try:
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         result = service.archive_attachments(body.attachment_ids, current_user["id"])
         return result
@@ -1667,13 +1736,14 @@ async def bulk_archive_attachments(
 
 
 @router.post("/bulk-delete", status_code=status.HTTP_200_OK)
-async def bulk_delete_attachments(
+def bulk_delete_attachments(
     body: AttachmentBulkDeleteRequest,
     current_user: dict = Depends(require_permission("resource.attachments.bulk_delete")),
     db: Session = Depends(get_db)
 ):
     """Mass delete attachments permanently (hard delete)."""
     try:
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         result = service.delete_attachments(body.attachment_ids, current_user["id"])
         return result
@@ -1684,7 +1754,7 @@ async def bulk_delete_attachments(
 
 
 @router.post("/reorder", status_code=status.HTTP_200_OK)
-async def reorder_attachments(
+def reorder_attachments(
     body: AttachmentReorderRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1705,7 +1775,7 @@ async def reorder_attachments(
     response_model=BulkAttachmentTypeResponse,
     status_code=status.HTTP_200_OK,
 )
-async def bulk_set_attachment_type(
+def bulk_set_attachment_type(
     body: BulkAttachmentTypeRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1714,6 +1784,7 @@ async def bulk_set_attachment_type(
 
     Same endpoint serves single-edit (one ID) and bulk-edit (many IDs)."""
     try:
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         return service.bulk_set_attachment_type(
             body.attachment_ids,
@@ -1730,7 +1801,7 @@ async def bulk_set_attachment_type(
     response_model=BulkCompanyResponse,
     status_code=status.HTTP_200_OK,
 )
-async def bulk_set_company(
+def bulk_set_company(
     body: BulkCompanyRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1744,6 +1815,7 @@ async def bulk_set_company(
     single-row Edit fallback, plus tests and n8n-style callers.
     """
     try:
+        assert_can_write_attachments(db, body.attachment_ids or [], current_user)
         service = AttachmentCompanyService(db)
         result = service.apply(
             attachment_ids=body.attachment_ids,
@@ -1759,7 +1831,7 @@ async def bulk_set_company(
 
 
 @router.post("/bulk-access-levels/preview", response_model=BulkAccessLevelsPreviewResponse)
-async def preview_bulk_access_levels(
+def preview_bulk_access_levels(
     body: BulkAccessLevelsPreviewRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1779,7 +1851,7 @@ async def preview_bulk_access_levels(
 
 
 @router.post("/bulk-access-levels/apply", response_model=BulkAccessLevelsApplyResponse)
-async def apply_bulk_access_levels(
+def apply_bulk_access_levels(
     body: BulkAccessLevelsApplyRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1788,6 +1860,7 @@ async def apply_bulk_access_levels(
     try:
         service = AttachmentService(db)
         aids = service.resolve_bulk_attachment_ids(body.attachment_ids, body.directory_id)
+        assert_can_write_attachments(db, aids, current_user)
         result = service.apply_bulk_access_levels(
             aids,
             body.access_levels,
@@ -1801,7 +1874,7 @@ async def apply_bulk_access_levels(
 
 
 @router.post("/{attachment_id}/resubmit", status_code=status.HTTP_200_OK)
-async def resubmit_attachment_webhook(
+def resubmit_attachment_webhook(
     attachment_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

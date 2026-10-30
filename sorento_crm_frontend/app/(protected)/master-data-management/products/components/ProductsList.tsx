@@ -23,6 +23,7 @@ import {
   MessageSquare,
   CloudDownload,
   Barcode,
+  ImagePlus,
 } from 'lucide-react';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -36,17 +37,21 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Label } from '@/components/ui/label';
 import { DateRangePicker, parseIsoDate } from '@/components/ui/date-range-picker';
 import { useProductFilters } from '../hooks/useProductFilters';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
+import { useItemClassSelectQuery } from '../../shared/hooks/use-item-class-select-query';
 import { CHAT_SEARCH_LABEL, chatSearchState, type ProductListItem } from '../types/product.types';
 import { bulkImportProducts, validateProductsImport } from '../services/productService';
 import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
 import { UploadCostPriceAction } from './UploadCostPriceAction';
 import { BarcodeImportDialog } from './BarcodeImportDialog';
+import { CatalogueUploadDialog } from './CatalogueUploadDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
@@ -139,6 +144,7 @@ const ProductsList = () => {
   } = useDebouncedSearch();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
+  const [selectedItemClass, setSelectedItemClass] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
   const [selectedVariantFilter, setSelectedVariantFilter] = useState<
     'base' | 'variant' | 'all'
@@ -151,6 +157,7 @@ const ProductsList = () => {
   const {
     setCategoryId,
     setBrandId,
+    setItemClassId,
     setStatus,
     setSearch,
     clearFilters,
@@ -182,6 +189,8 @@ const ProductsList = () => {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [barcodeImportOpen, setBarcodeImportOpen] = useState(false);
+  const [catalogueUploadOpen, setCatalogueUploadOpen] = useState(false);
+  const canExtractCataloguePhotos = useHasPermission('dealer_kit.page.edit');
   const canEditProducts = useHasPermission('master_data.products.edit');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
@@ -200,13 +209,12 @@ const ProductsList = () => {
       const category = state.filters.category_id ?? null;
       setSelectedCategory(category);
       setCategoryId(category ?? undefined);
-      // A multi-brand deep link (brand_id=a,b) has no single-select equivalent, so
-      // the dropdown stays on "All brands" while the param still filters the grid.
       const brand = state.filters.brand_id ?? null;
-      if (!brand || !brand.includes(',')) {
-        setSelectedBrand(brand);
-        setBrandId(brand ?? undefined);
-      }
+      setSelectedBrand(brand);
+      setBrandId(brand ?? undefined);
+      const itemClass = state.filters.item_class_id ?? null;
+      setSelectedItemClass(itemClass);
+      setItemClassId(itemClass ?? undefined);
       const status = state.filters.status ?? 'all';
       setSelectedStatus(status);
       setStatus(status === 'active' ? true : status === 'inactive' ? false : undefined);
@@ -231,6 +239,11 @@ const ProductsList = () => {
     error: brandsError,
     refetch: refetchBrands,
   } = useBrandSelectQuery();
+  const {
+    data: itemClasses,
+    error: itemClassesError,
+    refetch: refetchItemClasses,
+  } = useItemClassSelectQuery();
 
   // Deep link from a "products discontinued" notification - restrict the list to
   // exactly the products reported in that batch.
@@ -241,7 +254,7 @@ const ProductsList = () => {
     ? searchParams.get('brand_id') || undefined
     : undefined;
   const effectiveBrandId =
-    selectedBrand && selectedBrand !== 'all' ? selectedBrand : discontinuedBrandIds;
+    selectedBrand || discontinuedBrandIds;
 
   // The list query, built through the shared key + fetch so the detail page's
   // pager reads THIS cache entry instead of asking the server again.
@@ -251,9 +264,9 @@ const ProductsList = () => {
       pageSize: pagination.pageSize,
       sorting,
       searchQuery,
-      category_id:
-        selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
+      category_id: selectedCategory || undefined,
       brand_id: effectiveBrandId,
+      item_class_id: selectedItemClass || undefined,
       status: selectedStatus ?? 'all',
       variant_filter: selectedVariantFilter,
       discontinued_batch_id: discontinuedBatchId,
@@ -268,6 +281,7 @@ const ProductsList = () => {
       searchQuery,
       selectedCategory,
       effectiveBrandId,
+      selectedItemClass,
       selectedStatus,
       selectedVariantFilter,
       discontinuedBatchId,
@@ -287,15 +301,24 @@ const ProductsList = () => {
     retry: 1,
   });
 
-  const handleCategorySelection = (categoryId: string) => {
-    setSelectedCategory(categoryId);
-    setCategoryId(categoryId !== 'all' ? categoryId : undefined);
+  const handleCategorySelection = (ids: string[]) => {
+    const joined = joinMulti(ids);
+    setSelectedCategory(joined || null);
+    setCategoryId(joined || undefined);
     setPagination({ ...pagination, pageIndex: 0 });
   };
 
-  const handleBrandSelection = (brandId: string) => {
-    setSelectedBrand(brandId);
-    setBrandId(brandId !== 'all' ? brandId : undefined);
+  const handleBrandSelection = (ids: string[]) => {
+    const joined = joinMulti(ids);
+    setSelectedBrand(joined || null);
+    setBrandId(joined || undefined);
+    setPagination({ ...pagination, pageIndex: 0 });
+  };
+
+  const handleItemClassSelection = (ids: string[]) => {
+    const joined = joinMulti(ids);
+    setSelectedItemClass(joined || null);
+    setItemClassId(joined || undefined);
     setPagination({ ...pagination, pageIndex: 0 });
   };
 
@@ -326,6 +349,7 @@ const ProductsList = () => {
     clearFilters();
     setSelectedCategory(null);
     setSelectedBrand(null);
+    setSelectedItemClass(null);
     setSelectedStatus('all');
     setSelectedVariantFilter('all');
     setDiscontinuedFrom(null);
@@ -353,6 +377,7 @@ const ProductsList = () => {
       {
         category_id: listParams.category_id,
         brand_id: listParams.brand_id,
+        item_class_id: listParams.item_class_id,
         status:
           listParams.status && listParams.status !== 'all' ? listParams.status : undefined,
         variant_filter:
@@ -559,6 +584,34 @@ const ProductsList = () => {
         },
         meta: {
           headerTitle: 'Brand',
+          skeleton: <Skeleton className="w-28 h-7" />,
+        },
+        enableSorting: true,
+        enableHiding: true,
+      },
+      {
+        id: 'item_class',
+        accessorFn: (row) => row.item_class?.item_class_name ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Item Class"
+            visibility={true}
+            column={column}
+          />
+        ),
+        size: 150,
+        cell: ({ row }) => {
+          const className = row.original.item_class?.item_class_name;
+          return className ? (
+            <span className="block truncate" title={className}>
+              {className}
+            </span>
+          ) : (
+            '-'
+          );
+        },
+        meta: {
+          headerTitle: 'Item Class',
           skeleton: <Skeleton className="w-28 h-7" />,
         },
         enableSorting: true,
@@ -839,8 +892,9 @@ const ProductsList = () => {
   }, [searchQuery]);
 
   const simpleFiltersActiveCount =
-    (selectedCategory && selectedCategory !== 'all' ? 1 : 0) +
-    (selectedBrand && selectedBrand !== 'all' ? 1 : 0) +
+    (selectedCategory ? 1 : 0) +
+    (selectedBrand ? 1 : 0) +
+    (selectedItemClass ? 1 : 0) +
     (selectedStatus && selectedStatus !== 'all' ? 1 : 0) +
     (selectedVariantFilter && selectedVariantFilter !== 'all' ? 1 : 0) +
     (discontinuedFrom || discontinuedTo ? 1 : 0);
@@ -858,8 +912,8 @@ const ProductsList = () => {
   const getExportPayload = () => ({
     filter: advancedFilter ?? undefined,
     quick_search: searchQuery || undefined,
-    category_id: selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
-    brand_id: selectedBrand && selectedBrand !== 'all' ? selectedBrand : undefined,
+    category_id: selectedCategory || undefined,
+    brand_id: selectedBrand || undefined,
     product_status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
     discontinued_from: discontinuedFrom ?? undefined,
     discontinued_to: discontinuedTo ?? undefined,
@@ -915,33 +969,62 @@ const ProductsList = () => {
                 : undefined,
               content: (
                 <div className="space-y-3">
-                  <SearchableSelect
-                    value={selectedCategory || 'all'}
+                  <SearchableMultiSelect
+                    value={splitMulti(selectedCategory)}
                     onChange={handleCategorySelection}
                     placeholder="Category"
                     loadError={categoriesError}
                     onRetry={() => void refetchCategories()}
-                    options={[
-                      { value: 'all', label: 'All categories' },
-                      ...(categories ?? []).map((cat) => ({
-                        value: cat.id,
-                        label: cat.category_name,
-                      })),
-                    ]}
+                    options={(categories ?? []).map((cat) => ({
+                      value: cat.id,
+                      label: cat.category_name,
+                    }))}
+                    clearable
+                    renderTriggerLabel={(chosen) =>
+                      chosen.length ? (
+                        <span className="block truncate">{multiChipLabel('Category', idFilterLabels(chosen))}</span>
+                      ) : (
+                        <span className="text-muted-foreground">Category: any</span>
+                      )
+                    }
                   />
-                  <SearchableSelect
-                    value={selectedBrand || 'all'}
+                  <SearchableMultiSelect
+                    value={splitMulti(selectedBrand)}
                     onChange={handleBrandSelection}
                     placeholder="Brand"
                     loadError={brandsError}
                     onRetry={() => void refetchBrands()}
-                    options={[
-                      { value: 'all', label: 'All brands' },
-                      ...(brands ?? []).map((brand) => ({
-                        value: brand.id,
-                        label: brand.brand_name,
-                      })),
-                    ]}
+                    options={(brands ?? []).map((brand) => ({
+                      value: brand.id,
+                      label: brand.brand_name,
+                    }))}
+                    clearable
+                    renderTriggerLabel={(chosen) =>
+                      chosen.length ? (
+                        <span className="block truncate">{multiChipLabel('Brand', idFilterLabels(chosen))}</span>
+                      ) : (
+                        <span className="text-muted-foreground">Brand: any</span>
+                      )
+                    }
+                  />
+                  <SearchableMultiSelect
+                    value={splitMulti(selectedItemClass)}
+                    onChange={handleItemClassSelection}
+                    placeholder="Item Class"
+                    loadError={itemClassesError}
+                    onRetry={() => void refetchItemClasses()}
+                    options={(itemClasses ?? []).map((itemClass) => ({
+                      value: itemClass.id,
+                      label: itemClass.item_class_name,
+                    }))}
+                    clearable
+                    renderTriggerLabel={(chosen) =>
+                      chosen.length ? (
+                        <span className="block truncate">{multiChipLabel('Item Class', idFilterLabels(chosen))}</span>
+                      ) : (
+                        <span className="text-muted-foreground">Item Class: any</span>
+                      )
+                    }
                   />
                   <SearchableSelect
                     value={selectedStatus || 'all'}
@@ -1024,6 +1107,16 @@ const ProductsList = () => {
                     },
                   ]
                 : []),
+              ...(canExtractCataloguePhotos
+                ? [
+                    {
+                      key: 'extract-catalogue-photos',
+                      label: 'Extract photos from catalogue',
+                      icon: ImagePlus,
+                      onClick: () => setCatalogueUploadOpen(true),
+                    },
+                  ]
+                : []),
               ...(autocountPull.visible
                 ? [
                     {
@@ -1090,6 +1183,7 @@ const ProductsList = () => {
         accept=".xlsx,.xls"
       />
       <BarcodeImportDialog open={barcodeImportOpen} onOpenChange={setBarcodeImportOpen} />
+      <CatalogueUploadDialog open={catalogueUploadOpen} onOpenChange={setCatalogueUploadOpen} />
       <ListQueryFilterDialog
         resourceKey="products"
         open={advancedFilterDialogOpen}

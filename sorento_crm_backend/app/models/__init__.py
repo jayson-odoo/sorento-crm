@@ -41,6 +41,7 @@ from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, Co
 from app.models.ticket_comment import ConversationTicketComment
 from app.models.message_snippet import MessageSnippet
 from app.models.resources import Attachment, AttachmentType
+from app.models.catalogue_photos import CataloguePhoto, CataloguePhotoReading
 from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
 from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, ContactTag, respond_contact_tags, RespondContact, RespondContactCustomer, StockVisibilityPolicy, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
 from app.models.respond_workspace import RespondWorkspace
@@ -99,6 +100,7 @@ from app.models.ai_prompt import AIPromptVersion, AIPromptLabel
 from app.models.chat_history import ChatHistory
 from app.models.chat_thread_sync_state import ChatThreadSyncState
 from app.models.chatbot_turn import ChatbotTurn
+from app.models.chatbot_agent import AgentAction, AgentConversation
 from app.models.chat_facts import (
     ChatAskFact,
     ChatAskItem,

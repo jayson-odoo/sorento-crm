@@ -108,9 +108,35 @@ export interface ProjectTemplateBody {
   role_names?: string[];
 }
 
+/**
+ * A portal registration's approval state (PROJECT-REG-PORTAL R1). Null is a staff-registered
+ * project. A draft is never listed; pending and rejected ones have no code yet.
+ */
+export type ProjectApprovalState = 'draft' | 'pending' | 'resubmitted' | 'rejected' | 'approved';
+
+/** An approved project a pending registration may repeat (D8): a link, never a block. */
+export interface ProjectPossibleDuplicate {
+  project_id: string;
+  project_code: string | null;
+  title: string;
+}
+
+/** What the sales agent typed on the portal that has no home on a project (R7). */
+export interface ProjectRegistrationInfo {
+  sales_agent_name: string | null;
+  distributor_name: string | null;
+  customer_name: string | null;
+  your_ref: string | null;
+  type_of_building: string | null;
+  developer_name: string | null;
+  main_contractor_name: string | null;
+  architect_name: string | null;
+}
+
 export interface Project {
   id: string;
-  project_code: string;
+  /** Null until a portal registration is approved: render it with `projectCodeLabel`. */
+  project_code: string | null;
   title: string;
   outcome: ProjectOutcome;
   loss_reason?: string | null;
@@ -141,6 +167,9 @@ export interface Project {
   registered_company_name?: string | null;
   location?: string | null;
   address?: string | null;
+  /** Malaysian state (lookup set my_state) and mukim; both optional (PROJECT-REG-PORTAL D12). */
+  state?: string | null;
+  mukim?: string | null;
   architect_party_id?: string | null;
   architect_name?: string | null;
   main_contractor_party_id?: string | null;
@@ -149,8 +178,8 @@ export interface Project {
   launch_date?: string | null;
   expected_delivery_from?: string | null;
   expected_delivery_to?: string | null;
-  brands: string[];
-  brand_ids: string[];
+  /** The debtor code of `customer_id` (PROJECT-REGISTER-V2 A5); older projects have none. */
+  customer_code?: string | null;
 
   /**
    * Provenance (AC-O10). All null when the project was registered directly, which the
@@ -189,6 +218,15 @@ export interface Project {
   is_unattended: boolean;
   can_edit: boolean;
 
+  /** Portal registration (R1, R7). All null / empty on a staff-registered project. */
+  approval_state?: ProjectApprovalState | null;
+  reject_reason?: string | null;
+  submitted_at?: string | null;
+  decided_at?: string | null;
+  registration?: ProjectRegistrationInfo | null;
+  /** Filled on a pending project's detail only. */
+  possible_duplicates?: ProjectPossibleDuplicate[];
+
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -202,6 +240,8 @@ export interface ProjectRegisterBody {
   registered_company_name?: string | null;
   location?: string | null;
   address?: string | null;
+  state?: string | null;
+  mukim?: string | null;
   /** Filing reference, e.g. PS26-0143 (D7). Settable on create too, not edit-only. */
   admin_ref?: string | null;
   architect_party_id?: string | null;
@@ -210,7 +250,13 @@ export interface ProjectRegisterBody {
   launch_date?: string | null;
   expected_delivery_from?: string | null;
   expected_delivery_to?: string | null;
-  brand_ids?: string[];
+  /** Required on create; edit leaves it optional (PROJECT-REGISTER-V2 A4). */
+  customer_id?: string | null;
+  /**
+   * Only for a user holding `projects.registrations.submit` without edit: false saves a
+   * draft, true submits it for approval (PROJECT-REGISTER-V2 J1).
+   */
+  submit?: boolean;
   /** Which lead this project came from. `null` unlinks (D6); omit to leave alone. */
   lead_id?: string | null;
 }
@@ -226,13 +272,12 @@ export interface ClashCandidate {
   project_id: string;
   project_code: string;
   title: string;
-  outcome: ProjectOutcome;
+  outcome?: ProjectOutcome;
   status_label?: string | null;
   owner_user_id?: string | null;
   owner_name?: string | null;
   developer_name?: string | null;
   estimated_sales_value?: string | null;
-  brands: string[];
   last_activity_at?: string | null;
   similarity: number;
   blocks: boolean;
@@ -303,8 +348,12 @@ export interface ProjectListParams {
   owner_user_id?: string[];
   developer_party_id?: string[];
   type_id?: string[];
-  brand_id?: string[];
   only_critical?: boolean;
+  /** Portal registrations by approval state (pending, rejected, approved). */
+  /** One state, or several comma-joined (OR-ed); sent as repeated params. */
+  approval_state?: string;
+  /** Pickers: staff-registered and approved projects only. */
+  approved_only?: boolean;
   page?: number;
   limit?: number;
   sort?: string;
@@ -484,20 +533,9 @@ export interface ProjectLead {
   updated_at?: string | null;
 }
 
-/** Step 1 of the wizard when the informant has never bought anything. */
-export interface LeadNewCustomer {
-  customer_name: string;
-  customer_code?: string | null;
-  email?: string | null;
-  phone_number?: string | null;
-  registration_number?: string | null;
-  notes?: string | null;
-}
-
 export interface ProjectLeadBody {
   title: string;
   customer_id?: string | null;
-  new_customer?: LeadNewCustomer | null;
   developer_party_id?: string | null;
   source?: LeadSource | null;
   source_detail?: string | null;
@@ -518,7 +556,6 @@ export interface LeadQualifyBody {
   type_id?: string | null;
   template_id?: string | null;
   owner_user_id?: string | null;
-  brand_ids?: string[];
   details?: Record<string, unknown> | null;
 }
 
@@ -665,6 +702,8 @@ export interface QuotationLineImage {
   candidate_count: number;
   /** Those photographs, for the picker that sets the line's `image_attachment_id`. */
   candidates?: QuotationLineFileCandidate[];
+  /** The product's photo request; null when none was ever opened. */
+  escalation?: MediaEscalationState | null;
 }
 
 /** One image a line's photo or drawing could be: a signed thumbnail and the original. */
@@ -680,14 +719,37 @@ export interface QuotationLineFileCandidate {
  * issued id, `default` the product's first drawing by upload.
  */
 export interface QuotationLineDrawing {
-  state: 'chosen' | 'default' | 'no_drawings' | 'off_catalog';
+  /** `pdf`: the product's only drawing is a PDF (a link, never printed). */
+  state: 'chosen' | 'default' | 'pdf' | 'no_drawings' | 'off_catalog';
   url?: string | null;
   preview_url?: string | null;
   attachment_id?: string | null;
   filename?: string | null;
   candidate_count: number;
   candidates?: QuotationLineFileCandidate[];
+  /** The product's drawing request; null when none was ever opened. */
+  escalation?: MediaEscalationState | null;
 }
+
+/**
+ * A drawing request on a product. Task fields are null once it is resolved, which leaves only
+ * `last_resolved_at`. Datetimes are ISO strings.
+ */
+export interface MediaEscalationState {
+  tracking_id: string | null;
+  opened_at: string | null;
+  responded_at: string | null;
+  due_at: string | null;
+  requester_count: number | null;
+  last_resolved_at: string | null;
+}
+
+export interface MediaEscalationResult {
+  joined: boolean;
+  escalation: MediaEscalationState | null;
+}
+
+export type MediaKind = 'drawing' | 'photo';
 
 /** The photo and drawing cells for a product on a line not saved yet. */
 export interface QuotationLineImages {
@@ -800,6 +862,52 @@ export interface StagedQuotationLine {
   draft: Record<string, string>;
   /** Staged for removal: struck through on screen, and gone only once Save runs. */
   removed: boolean;
+}
+
+export type QuotationAmendmentField = 'quantity' | 'unit_price' | 'remove';
+export type QuotationAmendmentDecision = 'pending' | 'accepted' | 'rejected';
+
+/**
+ * One customer suggestion on one ISSUED line (QUOTE-CUSTOMER-AMEND): one field, decided on its
+ * own, so a quantity can be accepted and a price on the same line rejected. Money and quantities
+ * are decimal strings; `value_to` is null for a removal. The floor fields are staff-only.
+ */
+export interface QuotationAmendmentRow {
+  id: string;
+  line_id: string;
+  field: QuotationAmendmentField;
+  value_from: string | null;
+  value_to: string | null;
+  decision: QuotationAmendmentDecision;
+  decision_reason: string | null;
+  below_floor?: boolean;
+  floor_value?: string | null;
+}
+
+/** The request as the staff routes answer it. */
+export interface QuotationAmendmentRequest {
+  id: string;
+  status: 'open' | 'applied' | 'superseded';
+  submitted_at: string | null;
+  requester_name: string | null;
+  note: string | null;
+  applied_at: string | null;
+  rows: QuotationAmendmentRow[];
+  /** The issue's total, and the total with the accepted rows applied. */
+  total_issued: string;
+  total_after: string;
+  /**
+   * Touched scopes that already carry a hand-made draft. `version_id` is the ISSUED version the
+   * rows name (the review is decided there); `has_accepted` says whether Apply refuses today.
+   */
+  blocked_scopes: {
+    quotation_id: string;
+    scope_label: string;
+    version_id: string;
+    has_accepted: boolean;
+  }[];
+  /** Apply drafted a revision. */
+  revised: boolean;
 }
 
 export interface QuotationOutcomeBody {
@@ -1060,13 +1168,6 @@ export interface ProjectSample {
   salesperson_notes?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
-}
-
-export interface ProjectSampleBody {
-  quotation_version_id: string;
-  submitted_on?: string | null;
-  developer_feedback?: string | null;
-  salesperson_notes?: string | null;
 }
 
 export interface ProjectPurchaseOrder {

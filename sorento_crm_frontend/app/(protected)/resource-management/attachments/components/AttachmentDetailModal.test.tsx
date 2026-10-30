@@ -152,20 +152,33 @@ describe('AttachmentDetailModal - Linkages DataGrid', () => {
   });
 });
 
-describe('AttachmentDetailModal - permanent delete follows resource.attachments.delete', () => {
-  it('a trashed file offers Restore but no Permanently Delete without the permission', async () => {
+// ATTACH-PROJECT-WRITE: archive and restore take `resource.attachments.delete` server-side,
+// so Move to Trash, Restore and Permanently Delete all follow it.
+describe('AttachmentDetailModal - trash actions follow resource.attachments.delete', () => {
+  it('a trashed file offers neither Restore nor Permanently Delete without the permission', async () => {
     perm.canDelete = false;
     getAttachmentMetadata.mockResolvedValue(attachment({ is_deleted: true }));
     renderModal();
 
-    expect(await screen.findByRole('button', { name: 'Restore' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Download/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Permanently Delete/ })).not.toBeInTheDocument();
   });
 
-  it('a trashed file offers Permanently Delete with the permission', async () => {
+  it('a live file offers no Move to Trash without the permission', async () => {
+    perm.canDelete = false;
+    getAttachmentMetadata.mockResolvedValue(attachment({ is_deleted: false }));
+    renderModal();
+
+    expect(await screen.findByRole('button', { name: /Download/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Move to Trash/ })).not.toBeInTheDocument();
+  });
+
+  it('a trashed file offers Restore and Permanently Delete with the permission', async () => {
     getAttachmentMetadata.mockResolvedValue(attachment({ is_deleted: true }));
     renderModal();
 
     expect(await screen.findByRole('button', { name: /Permanently Delete/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeInTheDocument();
   });
 });

@@ -495,6 +495,8 @@ def _unambiguous_refs(db: Session, refs: set) -> set:
         str(ref)
         for (ref,) in db.query(SalesOrderLine.source_ref)
         .filter(SalesOrderLine.source_ref.in_(wanted))
+        # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+        .filter(SalesOrderLine.removed_unreferenced.is_(False))
         .group_by(SalesOrderLine.source_ref)
         .having(func.count(SalesOrderLine.id) == 1)
     }
@@ -3044,6 +3046,7 @@ def apply(
     raiser = _Raiser(db, actor, now, _matched_lines_by_order(plan))
     service = None
     linked: List[Any] = []
+    born_ids: List[str] = []
     raised = 0
     #: Mirrors touched by a repair this run, resynced once each (S5) after the loop -
     #: never inline, since a line's second dated row can still repair a sibling migrated
@@ -3194,6 +3197,7 @@ def apply(
                          identity=identity, value=row.so_number)
             continue
         raised += 1
+        born_ids.append(entry.id)
         if match.settle_decision_id:
             # 2.1(b) (AC-RB-11): the row's Now/Was is the decision's, not the sheet's own -
             # written AFTER the raise, over the ordinary fields `raise_row` just set.
@@ -3245,6 +3249,13 @@ def apply(
         # inquiry's bundles before reading the links, so calling it per row would redo that
         # derivation for the whole inquiry on every row of a sheet that names it.
         service.refresh_link_state(linked)
+
+    if born_ids:
+        # OI-AUTO-CONFIRM: a row born acknowledged by the sheet is done only if the rule
+        # says so (links, actioned, non-buy verb, used), like every other row.
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        ProjectOrderInquiryService(db).auto_confirm(born_ids)
 
     for mirror_id in repaired_mirrors:
         old_earliest, old_total_qty = before_repair.get(mirror_id, (None, None))

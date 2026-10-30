@@ -43,6 +43,10 @@ FORM_SLA_TYPES = (
     "price_tag_request",
     # SR-CORE: the detail page carries the SLA tab; no stage config ships, so it reads empty.
     "sample_request",
+    # Quotation line media requests: one task per product per kind, opened by the line's
+    # Escalate on the general-enquiries route (no form_sla_configs row).
+    "product_drawing",
+    "product_photo",
 )
 
 
@@ -118,7 +122,7 @@ def _working_due_naive(db: Session, start_dt: datetime, hours: float) -> datetim
 # The third flag says whether the table has the denormalized `revision_no` column,
 # so the number can be rendered at its revision (UAC N1/N5).
 _ENTITY_NUMBER_SOURCE: dict = {
-    "complaint": ("complaints", "complaint_number", False),
+    "complaint": ("complaints", "complaint_number", True),
     "stock_inquiry": ("stock_inquiries", "inquiry_number", True),
     "purchase_request": ("purchase_requests", "request_number", True),
     "sponsorship_form": ("purchase_requests", "request_number", True),
@@ -127,6 +131,8 @@ _ENTITY_NUMBER_SOURCE: dict = {
     # which tells the reader nothing about which request is late.
     "price_tag_request": ("price_tag_requests", "doc_number", True),
     "sample_request": ("projects.sample_requests", "request_no", False),
+    "product_drawing": ("products", "product_code", False),
+    "product_photo": ("products", "product_code", False),
 }
 
 
@@ -256,6 +262,8 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/dealer-kit/price-tag-requests/{source_entity_id}"
     if source_entity_type == "sample_request":
         return f"/project-sales/sample-requests/{source_entity_id}"
+    if source_entity_type in ("product_drawing", "product_photo"):
+        return f"/master-data-management/products/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
 
 
@@ -661,7 +669,9 @@ class FormSLAOrchestrator:
         )
         if not next_tier:
             raise FormEscalationBlocked("top_tier", f"SLA policy has no tier {actual_tier}; cannot escalate.")
-        assignee = agent_svc.get_next_assignee(agent_id, team_id)
+        # A task opened on the brand route keeps its brand through the tiers (None elsewhere).
+        brand_kwargs = {"brand_code": tracker.brand_code} if getattr(tracker, "brand_code", None) else {}
+        assignee = agent_svc.get_next_assignee(agent_id, team_id, **brand_kwargs)
         if not assignee:
             raise FormEscalationBlocked("no_assignee", f"No available assignee for tier {actual_tier}.")
 
@@ -1440,7 +1450,10 @@ class FormSLAOrchestrator:
         # Destination link mirroring the pending-tasks row click: routed form types open
         # their in-system record; others (e.g. ticket) open the ticket in the CRM.
         # _FE_RECORD_ROUTES must match MyPendingSLAWidget.ENTITY_ROUTES.
-        _FE_RECORD_ROUTES = {"stock_inquiry", "complaint", "purchase_request", "sponsorship_form"}
+        _FE_RECORD_ROUTES = {
+            "stock_inquiry", "complaint", "purchase_request", "sponsorship_form",
+            "product_drawing", "product_photo",
+        }
         if s_type in _FE_RECORD_ROUTES:
             form_url = full_link
         else:
