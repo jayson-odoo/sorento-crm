@@ -784,4 +784,30 @@ describe('RESERVE-REQ-PICK AC-RP-6: a frozen line already covered (Short 0) open
     const [, payload] = createReserveRequest.mock.calls[0] as [string, { rows: Array<{ row_id: string }> }];
     expect(payload.rows.map((r) => r.row_id).sort()).toEqual(['row-17a', 'row-17b', 'row-17c']);
   });
+
+  // Owner, 30 Oct (mock review): "I can tick it back right if I really want those covered
+  // to be requested".
+  it('the covered row can be ticked back, and is then sent with the others', async () => {
+    const request = await openRequest();
+    const table = await within(request).findByRole('table');
+    await within(table).findByText('07/10/2026');
+    const box = within(rowWith(table, '07/10/2026')).getByRole('checkbox');
+    expect(box).not.toBeChecked();
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+    expect(within(request).getByText('4 of 4 lines')).toBeInTheDocument();
+    fireEvent.click(within(request).getByRole('button', { name: /send request/i }));
+    await waitFor(() => expect(createReserveRequest).toHaveBeenCalledTimes(1));
+    const [, payload] = createReserveRequest.mock.calls[0] as [
+      string,
+      { rows: Array<{ row_id: string; qty_requested: number }> },
+    ];
+    expect(payload.rows.map((r) => r.row_id).sort()).toEqual([
+      'row-17a',
+      'row-17b',
+      'row-17c',
+      'row-17p',
+    ]);
+    expect(payload.rows.find((r) => r.row_id === 'row-17p')?.qty_requested).toBe(2);
+  });
 });
