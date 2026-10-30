@@ -1100,3 +1100,104 @@ describe('MyPendingSLAWidget product drawing rows', () => {
     expect(actionButtons(/^Respond$/i)).toHaveLength(1);
   });
 });
+
+// QUOTE-DRAWING-ESCALATE rework: a product_photo task is the same kind of row, labelled
+// "Product photo", linked to the same product page, with the same Respond then Resolve buttons.
+describe('MyPendingSLAWidget product photo rows', () => {
+  const photoItem: MyPendingSLAItem = {
+    id: 'pp1',
+    source_entity_type: 'product_photo',
+    source_entity_id: 'product-uuid',
+    is_form_sla: true,
+    reference: 'PRD-CCC-04',
+    respond_io_id: null,
+    next_action: 'Respond',
+    due_at: new Date(Date.now() + 3600_000).toISOString(),
+    due_at_resolution: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    active_due_at: new Date(Date.now() + 3600_000).toISOString(),
+    due_kind: 'respond',
+    is_responded: false,
+    current_tier: 1,
+    policy_name: 'Default',
+  } as unknown as MyPendingSLAItem;
+
+  beforeEach(() => {
+    getMyPendingSLA.mockReset();
+    getTeamPendingSLA.mockReset();
+    getVisibleUsers.mockReset();
+    getTakeoverState.mockReset();
+    push.mockReset();
+    searchParam = null;
+    extraParams = {};
+    deniedSlugs = new Set();
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    getVisibleUsers.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({});
+    actOnDrawingRequest.mockReset();
+    actOnDrawingRequest.mockResolvedValue(undefined);
+  });
+
+  it('titles the row "Product photo" with the product code as its reference', async () => {
+    getMyPendingSLA.mockResolvedValue([photoItem]);
+    renderWidget();
+
+    await waitFor(() => expect(screen.getByText('Product photo')).toBeInTheDocument());
+    expect(screen.getByText(/PRD-CCC-04/)).toBeInTheDocument();
+    expect(screen.queryByText('Product drawing')).not.toBeInTheDocument();
+  });
+
+  it('shows Respond until responded, then Resolve', async () => {
+    getMyPendingSLA.mockResolvedValue([photoItem]);
+    const first = renderWidget();
+    await screen.findByText('Product photo');
+    expect(getActionButton(/^Respond$/i)).toBeInTheDocument();
+    expect(hasActionButton(/^Resolve$/i)).toBe(false);
+    first.unmount();
+
+    getMyPendingSLA.mockResolvedValue([
+      { ...photoItem, is_responded: true, due_kind: 'resolve', next_action: 'Resolve' },
+    ]);
+    renderWidget();
+    await screen.findByText('Product photo');
+    expect(getActionButton(/^Resolve$/i)).toBeInTheDocument();
+    expect(hasActionButton(/^Respond$/i)).toBe(false);
+  });
+
+  it('clicking the row opens the product page', async () => {
+    getMyPendingSLA.mockResolvedValue([photoItem]);
+    renderWidget();
+
+    await screen.findByText('Product photo');
+    fireEvent.click(screen.getByText('Product photo'));
+    expect(push).toHaveBeenCalledWith('/master-data-management/products/product-uuid');
+  });
+
+  it('Respond and Resolve call the shared media action with the row id', async () => {
+    getMyPendingSLA.mockResolvedValue([photoItem]);
+    const first = renderWidget();
+    await screen.findByText('Product photo');
+    fireEvent.click(getActionButton(/^Respond$/i));
+    await waitFor(() => expect(actOnDrawingRequest).toHaveBeenCalledWith('pp1', 'respond'));
+    first.unmount();
+
+    getMyPendingSLA.mockResolvedValue([
+      { ...photoItem, is_responded: true, due_kind: 'resolve', next_action: 'Resolve' },
+    ]);
+    renderWidget();
+    await screen.findByText('Product photo');
+    fireEvent.click(getActionButton(/^Resolve$/i));
+    await waitFor(() => expect(actOnDrawingRequest).toHaveBeenCalledWith('pp1', 'resolve'));
+  });
+
+  it('a photo row and a drawing row sit side by side with their own labels', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      photoItem,
+      { ...photoItem, id: 'pd9', source_entity_type: 'product_drawing', reference: 'PRD-CCC-05' },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Product photo');
+    expect(screen.getByText('Product drawing')).toBeInTheDocument();
+    expect(actionButtons(/^Respond$/i)).toHaveLength(2);
+  });
+});

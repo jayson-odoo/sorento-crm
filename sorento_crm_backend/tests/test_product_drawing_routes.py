@@ -1,18 +1,20 @@
-"""QUOTE-DRAWING-ESCALATE Phase 2 red tests: the three routes.
+"""QUOTE-DRAWING-ESCALATE rework red tests: the three routes, for both kinds.
 
-- ``POST /api/v1/project-sales/quotation-versions/{version_id}/lines/{line_id}/drawing-escalation``
-  (``projects.projects.view`` or ``view_own``; the own-scope guard anchors on ``version_id``)
-- ``POST /api/v1/sla-management/form-sla-tracking/{tracking_id}/drawing-respond``
-- ``POST /api/v1/sla-management/form-sla-tracking/{tracking_id}/drawing-resolve``
-  (``get_current_user`` plus the existing SLA actor rule)
+- ``POST /api/v1/project-sales/quotation-versions/{version_id}/lines/{line_id}/media-escalation``
+  body ``{"kind": "drawing" | "photo"}`` (``projects.projects.view`` or ``view_own``; the
+  own-scope guard anchors on ``version_id``). Replaces ``media-escalation``.
+- ``POST /api/v1/sla-management/form-sla-tracking/{tracking_id}/media-respond``
+- ``POST /api/v1/sla-management/form-sla-tracking/{tracking_id}/media-resolve``
+  (``get_current_user`` plus the existing SLA actor rule; resolve also needs
+  ``sla_management.conversation_sla_tracking.resolve``). Both kinds.
 
 Written BEFORE the routes exist, so every case is red until the coder adds them. Happy path,
 auth denial, 404 and 409 for each, plus the own-scope pin. Postgres only, via ``blank_session``;
 the chain (quotation, team, step, assignee) is seeded in ``test_product_drawing_request``.
 
 The path ids are plain strings checked with ``validate_uuid_path`` in this router family, so a
-malformed id answers 404 (the convention of the sibling line routes), not 422: the route takes
-no body and no query, so there is nothing for FastAPI to refuse with a 422.
+malformed id answers 404 (the convention of the sibling line routes). The body is validated: a
+missing or unknown ``kind`` is a 422.
 """
 from __future__ import annotations
 
@@ -40,7 +42,7 @@ from .test_product_drawing_request import (
     sent,  # noqa: F401  (a pytest fixture: nothing leaves the process)
     trackers_for,
 )
-from .test_product_drawing_request import _drawing
+from .test_product_drawing_request import _drawing, _photo
 from .test_project_quotation_images import _setup, _user
 
 BASE = "/api/v1/project-sales"
@@ -49,7 +51,7 @@ VIEW = "projects.projects.view"
 VIEW_OWN = "projects.projects.view_own"
 EDIT = "projects.projects.edit"
 RESOLVE = "sla_management.conversation_sla_tracking.resolve"
-ESCALATE_PATH = "/quotation-versions/{version_id}/lines/{line_id}/drawing-escalation"
+ESCALATE_PATH = "/quotation-versions/{version_id}/lines/{line_id}/media-escalation"
 
 
 def _uid() -> str:
@@ -57,7 +59,7 @@ def _uid() -> str:
 
 
 def _url(version_id, line_id) -> str:
-    return f"{BASE}/quotation-versions/{version_id}/lines/{line_id}/drawing-escalation"
+    return f"{BASE}/quotation-versions/{version_id}/lines/{line_id}/media-escalation"
 
 
 @pytest.fixture
@@ -99,7 +101,7 @@ def _assert_registered(path_suffix: str) -> None:
 def test_escalate_opens_a_task_and_answers_joined_false_with_the_state(scene):
     s = scene
     with acting(s["db"], s["owner"], {VIEW}) as client:
-        response = client.post(_url(s["version"].id, s["line"].id))
+        response = client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
 
     assert response.status_code in (200, 201), response.text
     body = response.json()
@@ -112,8 +114,8 @@ def test_escalate_opens_a_task_and_answers_joined_false_with_the_state(scene):
 def test_a_second_click_answers_joined_true_and_opens_nothing_new(scene):
     s = scene
     with acting(s["db"], s["owner"], {VIEW}) as client:
-        client.post(_url(s["version"].id, s["line"].id))
-        again = client.post(_url(s["version"].id, s["line"].id))
+        client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
+        again = client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
 
     assert again.status_code in (200, 201), again.text
     assert again.json()["joined"] is True
@@ -124,9 +126,9 @@ def test_a_second_click_answers_joined_true_and_opens_nothing_new(scene):
 def test_a_second_person_joins_and_is_counted_over_http(scene):
     s = scene
     with acting(s["db"], s["owner"], {VIEW}) as client:
-        client.post(_url(s["version"].id, s["line"].id))
+        client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
     with acting(s["db"], s["stranger"], {VIEW}) as client:
-        joined = client.post(_url(s["version"].id, s["line"].id))
+        joined = client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
 
     assert joined.status_code in (200, 201), joined.text
     assert joined.json()["joined"] is True
@@ -137,7 +139,7 @@ def test_a_second_person_joins_and_is_counted_over_http(scene):
 def test_the_line_read_then_carries_the_escalation_state(scene):
     s = scene
     with acting(s["db"], s["owner"], {VIEW}) as client:
-        client.post(_url(s["version"].id, s["line"].id))
+        client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
         lines = client.get(f"{BASE}/quotation-versions/{s['version'].id}/lines")
 
     assert lines.status_code == 200, lines.text
@@ -152,20 +154,20 @@ def test_the_line_read_then_carries_the_escalation_state(scene):
 def test_view_alone_opens_it(scene):
     s = scene
     with acting(s["db"], s["stranger"], {VIEW}) as client:
-        assert client.post(_url(s["version"].id, s["line"].id)).status_code in (200, 201)
+        assert client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"}).status_code in (200, 201)
 
 
 def test_view_own_opens_it_for_the_owner_of_the_project(scene):
     s = scene
     with acting(s["db"], s["owner"], {VIEW_OWN}) as client:
-        assert client.post(_url(s["version"].id, s["line"].id)).status_code in (200, 201)
+        assert client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"}).status_code in (200, 201)
 
 
 def test_view_own_is_a_404_for_a_quotation_outside_their_own_projects(scene):
     s = scene
-    _assert_registered("/drawing-escalation")
+    _assert_registered("/media-escalation")
     with acting(s["db"], s["stranger"], {VIEW_OWN}) as client:
-        response = client.post(_url(s["version"].id, s["line"].id))
+        response = client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
 
     assert response.status_code == 404, response.text
     assert trackers_for(s["db"], s["product"].id) == []
@@ -175,7 +177,7 @@ def test_view_own_is_a_404_for_a_quotation_outside_their_own_projects(scene):
 def test_without_view_or_view_own_it_is_a_403_and_creates_nothing(scene, held):
     s = scene
     with acting(s["db"], s["owner"], held) as client:
-        response = client.post(_url(s["version"].id, s["line"].id))
+        response = client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
 
     assert response.status_code == 403, response.text
     assert trackers_for(s["db"], s["product"].id) == []
@@ -188,7 +190,7 @@ def test_it_needs_a_signed_in_user(scene):
 
     s = scene
     app.dependency_overrides.clear()
-    response = TestClient(app).post(_url(s["version"].id, s["line"].id))
+    response = TestClient(app).post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
 
     assert response.status_code in (401, 403), response.text
     assert trackers_for(s["db"], s["product"].id) == []
@@ -199,19 +201,19 @@ def test_it_needs_a_signed_in_user(scene):
 
 def test_a_line_that_is_not_on_this_version_is_a_404(scene):
     s = scene
-    _assert_registered("/drawing-escalation")
+    _assert_registered("/media-escalation")
     with acting(s["db"], s["owner"], {VIEW}) as client:
-        assert client.post(_url(s["version"].id, _uid())).status_code == 404
-        assert client.post(_url(_uid(), s["line"].id)).status_code == 404
+        assert client.post(_url(s["version"].id, _uid()), json={"kind": "drawing"}).status_code == 404
+        assert client.post(_url(_uid(), s["line"].id), json={"kind": "drawing"}).status_code == 404
     assert trackers_for(s["db"], s["product"].id) == []
 
 
 def test_a_malformed_id_is_a_404_not_a_server_error(scene):
     s = scene
-    _assert_registered("/drawing-escalation")
+    _assert_registered("/media-escalation")
     with acting(s["db"], s["owner"], {VIEW}) as client:
-        assert client.post(_url("not-a-uuid", s["line"].id)).status_code == 404
-        assert client.post(_url(s["version"].id, "not-a-uuid")).status_code == 404
+        assert client.post(_url("not-a-uuid", s["line"].id), json={"kind": "drawing"}).status_code == 404
+        assert client.post(_url(s["version"].id, "not-a-uuid"), json={"kind": "drawing"}).status_code == 404
 
 
 def test_a_product_with_a_drawing_is_a_409_with_its_code(scene):
@@ -219,25 +221,27 @@ def test_a_product_with_a_drawing_is_a_409_with_its_code(scene):
     _drawing(s["db"], s["env"], s["product"], "d.pdf", mime="application/pdf")
     s["db"].commit()
     with acting(s["db"], s["owner"], {VIEW}) as client:
-        response = client.post(_url(s["version"].id, s["line"].id))
+        response = client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
 
     assert response.status_code == 409, response.text
     assert response.json()["code"] == "product_has_drawing"
     assert trackers_for(s["db"], s["product"].id) == []
 
 
-def test_no_configured_step_is_a_409_with_the_plain_message(scene):
+def test_a_missing_marketing_team_is_a_409_with_the_plain_message(scene):
     s = scene
-    from app.models.sla import FormSLAConfig
+    from app.models.chatbot_policy import ChatbotDomain
 
-    s["db"].query(FormSLAConfig).filter(FormSLAConfig.source_entity_type == SOURCE).delete()
+    s["db"].query(ChatbotDomain).filter(ChatbotDomain.name == "product_attachment").delete()
     s["db"].commit()
     with acting(s["db"], s["owner"], {VIEW}) as client:
-        response = client.post(_url(s["version"].id, s["line"].id))
+        response = client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
 
     assert response.status_code == 409, response.text
-    assert response.json()["code"] == "drawing_requests_not_set_up"
-    assert "No team is set up for drawing requests" in response.text
+    assert response.json()["code"] == "marketing_team_not_set_up"
+    assert "The marketing product team has no members for this company" in response.text
+    assert s["team"]["team_set_code"] not in response.text
+    assert s["team"]["agent_id"] not in response.text
     assert trackers_for(s["db"], s["product"].id) == []
 
 
@@ -260,7 +264,7 @@ def test_the_route_exists_takes_view_or_view_own_and_the_guard_lets_a_limited_us
     from app.api.v1.projects import _own_scope
 
     routes = _route()
-    assert len(routes) == 1, "POST .../lines/{line_id}/drawing-escalation is not registered"
+    assert len(routes) == 1, "POST .../lines/{line_id}/media-escalation is not registered"
     assert {VIEW, VIEW_OWN} <= _gate_slugs(routes[0])
     assert _own_scope.classify("POST", routes[0].path_format) is not None, (
         "the own-scope guard refuses it: line_id must be a trusted nested name under the "
@@ -270,7 +274,7 @@ def test_the_route_exists_takes_view_or_view_own_and_the_guard_lets_a_limited_us
 
 def test_the_route_is_pinned_in_the_allowed_routes_file():
     pinned = (Path(__file__).parent / "portal_p2_allowed_routes.txt").read_text().split("\n")
-    assert "POST /quotation-versions/{version_id}/lines/{line_id}/drawing-escalation" in pinned
+    assert "POST /quotation-versions/{version_id}/lines/{line_id}/media-escalation" in pinned
 
 
 # ------------------------------------------------------------------ respond and resolve
@@ -279,7 +283,7 @@ def test_the_route_is_pinned_in_the_allowed_routes_file():
 def _open_task(s):
     """Escalate once as the owner and return the tracker."""
     with acting(s["db"], s["owner"], {VIEW}) as client:
-        client.post(_url(s["version"].id, s["line"].id))
+        client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
     (tracker,) = trackers_for(s["db"], s["product"].id)
     return tracker
 
@@ -288,7 +292,7 @@ def test_the_assignee_responds_and_the_task_reads_responded(scene):
     s = scene
     tracker = _open_task(s)
     with acting(s["db"], s["team"]["assignee"], set()) as client:
-        response = client.post(f"{SLA_BASE}/{tracker.id}/drawing-respond")
+        response = client.post(f"{SLA_BASE}/{tracker.id}/media-respond")
 
     assert response.status_code == 200, response.text
     s["db"].refresh(tracker)
@@ -299,14 +303,14 @@ def test_the_assignee_resolves_and_every_requester_is_told_once(scene):
     s = scene
     tracker = _open_task(s)
     with acting(s["db"], s["stranger"], {VIEW}) as client:
-        client.post(_url(s["version"].id, s["line"].id))
+        client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
     with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
-        response = client.post(f"{SLA_BASE}/{tracker.id}/drawing-resolve")
+        response = client.post(f"{SLA_BASE}/{tracker.id}/media-resolve")
 
     assert response.status_code == 200, response.text
     s["db"].refresh(tracker)
     assert tracker.is_resolved is True
-    title = f"Drawing request for {s['product'].product_code} resolved"
+    title = f"Product drawing request for {s['product'].product_code} resolved"
     for requester in (s["owner"], s["stranger"]):
         told = [n for n in notes_for(s["db"], requester) if n.title == title]
         assert len(told) == 1, requester
@@ -316,7 +320,7 @@ def test_the_assignee_resolves_and_every_requester_is_told_once(scene):
 def test_someone_who_is_not_the_assignee_gets_404_and_the_task_stays_open(scene):
     s = scene
     tracker = _open_task(s)
-    for action in ("drawing-respond", "drawing-resolve"):
+    for action in ("media-respond", "media-resolve"):
         with acting(s["db"], s["stranger"], {VIEW, RESOLVE}) as client:
             response = client.post(f"{SLA_BASE}/{tracker.id}/{action}")
         assert response.status_code in (400, 404), (action, response.text)
@@ -324,7 +328,7 @@ def test_someone_who_is_not_the_assignee_gets_404_and_the_task_stays_open(scene)
     assert tracker.is_responded is False and tracker.is_resolved is False
 
 
-@pytest.mark.parametrize("action", ["drawing-respond", "drawing-resolve"])
+@pytest.mark.parametrize("action", ["media-respond", "media-resolve"])
 def test_an_unknown_tracker_is_a_404(scene, action):
     s = scene
     _assert_registered(f"/{action}")
@@ -332,7 +336,7 @@ def test_an_unknown_tracker_is_a_404(scene, action):
         assert client.post(f"{SLA_BASE}/{_uid()}/{action}").status_code == 404
 
 
-@pytest.mark.parametrize("action", ["drawing-respond", "drawing-resolve"])
+@pytest.mark.parametrize("action", ["media-respond", "media-resolve"])
 def test_a_task_of_another_type_is_a_409(scene, action):
     from datetime import datetime, timedelta
 
@@ -366,14 +370,14 @@ def test_resolve_needs_the_sla_resolve_permission_even_for_the_assignee(scene):
     s = scene
     tracker = _open_task(s)
     with acting(s["db"], s["team"]["assignee"], set()) as client:
-        response = client.post(f"{SLA_BASE}/{tracker.id}/drawing-resolve")
+        response = client.post(f"{SLA_BASE}/{tracker.id}/media-resolve")
 
     assert response.status_code == 403, response.text
     s["db"].refresh(tracker)
     assert tracker.is_resolved is False
 
 
-@pytest.mark.parametrize("action", ["drawing-respond", "drawing-resolve"])
+@pytest.mark.parametrize("action", ["media-respond", "media-resolve"])
 def test_respond_and_resolve_need_a_signed_in_user(scene, action):
     from fastapi.testclient import TestClient
 
@@ -401,3 +405,197 @@ def test_the_hand_off_notice_rows_exist_for_the_task_the_route_opened(scene):
     assert len(notes) == 1
     assert isinstance(notes[0], Notification)
     assert "in_app" in channels(s["db"], notes[0])
+
+
+# =============================================================================================
+# REWORK: the same routes for the photo kind, and the body check.
+# =============================================================================================
+
+KINDS = ["drawing", "photo"]
+LABELS = {"drawing": "Product drawing", "photo": "Product photo"}
+
+
+def _post(client, s, kind):
+    return client.post(_url(s["version"].id, s["line"].id), json={"kind": kind})
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_escalate_opens_a_task_of_the_kind_and_joins_on_a_second_click(scene, kind):
+    s = scene
+    with acting(s["db"], s["owner"], {VIEW}) as client:
+        first = _post(client, s, kind)
+        again = _post(client, s, kind)
+
+    assert first.status_code in (200, 201), first.text
+    assert first.json()["joined"] is False
+    assert first.json()["escalation"]["requester_count"] == 1
+    assert again.status_code in (200, 201), again.text
+    assert again.json()["joined"] is True
+    assert len(trackers_for(s["db"], s["product"].id, kind)) == 1
+    other = "photo" if kind == "drawing" else "drawing"
+    assert trackers_for(s["db"], s["product"].id, other) == []
+
+
+def test_a_drawing_and_a_photo_click_open_two_tasks_over_http(scene):
+    s = scene
+    with acting(s["db"], s["owner"], {VIEW}) as client:
+        drawing = _post(client, s, "drawing")
+        photo = _post(client, s, "photo")
+
+    assert drawing.json()["joined"] is False and photo.json()["joined"] is False
+    assert drawing.json()["escalation"]["tracking_id"] != photo.json()["escalation"]["tracking_id"]
+
+
+def test_the_line_read_carries_each_kinds_escalation_on_its_own_cell(scene):
+    s = scene
+    with acting(s["db"], s["owner"], {VIEW}) as client:
+        _post(client, s, "photo")
+        lines = client.get(f"{BASE}/quotation-versions/{s['version'].id}/lines")
+
+    assert lines.status_code == 200, lines.text
+    row = next(r for r in lines.json()["data"] if r["id"] == str(s["line"].id))
+    assert row["product_image"]["state"] == "no_photos"
+    assert row["product_image"]["escalation"]["requester_count"] == 1
+    assert row["technical_drawing"]["escalation"] is None
+
+
+@pytest.mark.parametrize("body", [None, {}, {"kind": "datasheet"}, {"kind": None}, {"kind": 3}])
+def test_a_missing_or_unknown_kind_is_a_422_and_creates_nothing(scene, body):
+    s = scene
+    _assert_registered("/media-escalation")
+    with acting(s["db"], s["owner"], {VIEW}) as client:
+        response = client.post(_url(s["version"].id, s["line"].id), json=body)
+
+    assert response.status_code == 422, response.text
+    assert trackers_for(s["db"], s["product"].id, "drawing") == []
+    assert trackers_for(s["db"], s["product"].id, "photo") == []
+
+
+def test_the_retired_drawing_escalation_route_is_gone(scene):
+    s = scene
+    with acting(s["db"], s["owner"], {VIEW}) as client:
+        response = client.post(
+            f"{BASE}/quotation-versions/{s['version'].id}/lines/{s['line'].id}/drawing-escalation",
+            json={"kind": "drawing"},
+        )
+    assert response.status_code in (404, 405), response.text
+
+
+@pytest.mark.parametrize("old", ["drawing-respond", "drawing-resolve"])
+def test_the_retired_drawing_respond_and_resolve_routes_are_gone(scene, old):
+    s = scene
+    tracker = _open_task(s)
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        response = client.post(f"{SLA_BASE}/{tracker.id}/{old}")
+    assert response.status_code in (404, 405), response.text
+    s["db"].refresh(tracker)
+    assert tracker.is_responded is False and tracker.is_resolved is False
+
+
+def test_a_product_with_a_photo_is_a_409_product_has_photo(scene):
+    s = scene
+    _photo(s["db"], s["env"], s["product"], "p1.jpg")
+    s["db"].commit()
+    with acting(s["db"], s["owner"], {VIEW}) as client:
+        response = _post(client, s, "photo")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "product_has_photo"
+    assert trackers_for(s["db"], s["product"].id, "photo") == []
+
+
+def test_a_photo_does_not_stop_a_drawing_escalation_over_http(scene):
+    s = scene
+    _photo(s["db"], s["env"], s["product"], "p1.jpg")
+    s["db"].commit()
+    with acting(s["db"], s["owner"], {VIEW}) as client:
+        response = _post(client, s, "drawing")
+
+    assert response.status_code in (200, 201), response.text
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_view_own_is_a_404_for_a_quotation_outside_their_own_projects_for_both_kinds(scene, kind):
+    s = scene
+    _assert_registered("/media-escalation")
+    with acting(s["db"], s["stranger"], {VIEW_OWN}) as client:
+        response = _post(client, s, kind)
+
+    assert response.status_code == 404, response.text
+    assert trackers_for(s["db"], s["product"].id, kind) == []
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("held", [set(), {EDIT}])
+def test_without_view_or_view_own_both_kinds_are_a_403(scene, held, kind):
+    s = scene
+    with acting(s["db"], s["owner"], held) as client:
+        response = _post(client, s, kind)
+
+    assert response.status_code == 403, response.text
+    assert trackers_for(s["db"], s["product"].id, kind) == []
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_missing_marketing_team_is_a_409_for_both_kinds(scene, kind):
+    from app.models.access import AgentTeam
+
+    s = scene
+    s["db"].query(AgentTeam).filter(AgentTeam.agent_id == s["team"]["agent_id"]).delete()
+    s["db"].commit()
+    with acting(s["db"], s["owner"], {VIEW}) as client:
+        response = _post(client, s, kind)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "marketing_team_not_set_up"
+    assert trackers_for(s["db"], s["product"].id, kind) == []
+
+
+def _open_media_task(s, kind):
+    with acting(s["db"], s["owner"], {VIEW}) as client:
+        _post(client, s, kind)
+    (tracker,) = trackers_for(s["db"], s["product"].id, kind)
+    return tracker
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_the_assignee_responds_and_resolves_either_kind_and_requesters_are_told(scene, kind):
+    s = scene
+    tracker = _open_media_task(s, kind)
+    with acting(s["db"], s["team"]["assignee"], set()) as client:
+        responded = client.post(f"{SLA_BASE}/{tracker.id}/media-respond")
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        resolved = client.post(f"{SLA_BASE}/{tracker.id}/media-resolve")
+
+    assert responded.status_code == 200, responded.text
+    assert resolved.status_code == 200, resolved.text
+    s["db"].refresh(tracker)
+    assert tracker.is_responded is True and tracker.is_resolved is True
+    title = f"{LABELS[kind]} request for {s['product'].product_code} resolved"
+    told = [n for n in notes_for(s["db"], s["owner"]) if n.title == title]
+    assert len(told) == 1 and "in_app" in channels(s["db"], told[0])
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_media_resolve_needs_the_sla_resolve_permission_even_for_the_assignee(scene, kind):
+    s = scene
+    tracker = _open_media_task(s, kind)
+    with acting(s["db"], s["team"]["assignee"], set()) as client:
+        response = client.post(f"{SLA_BASE}/{tracker.id}/media-resolve")
+
+    assert response.status_code == 403, response.text
+    s["db"].refresh(tracker)
+    assert tracker.is_resolved is False
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("action", ["media-respond", "media-resolve"])
+def test_a_stranger_cannot_act_on_either_kind(scene, kind, action):
+    s = scene
+    tracker = _open_media_task(s, kind)
+    with acting(s["db"], s["stranger"], {VIEW, RESOLVE}) as client:
+        response = client.post(f"{SLA_BASE}/{tracker.id}/{action}")
+
+    assert response.status_code in (400, 404), response.text
+    s["db"].refresh(tracker)
+    assert tracker.is_responded is False and tracker.is_resolved is False

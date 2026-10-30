@@ -195,7 +195,7 @@ describe('QuotationLineFileCell, drawing cell: no drawing, escalate', () => {
     expect(screen.getByRole('button', { name: /Escalate missing drawing for/i })).toBeInTheDocument();
   });
 
-  it('one click posts to the line drawing-escalation endpoint, with no dialog in between', async () => {
+  it('one click posts the drawing kind to the line media-escalation endpoint, with no dialog in between', async () => {
     apiFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -208,9 +208,10 @@ describe('QuotationLineFileCell, drawing cell: no drawing, escalate', () => {
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
     const [url, init] = apiFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toMatch(
-      /\/quotation-versions\/version-1\/lines\/line-1\/drawing-escalation$/,
+      /\/quotation-versions\/version-1\/lines\/line-1\/media-escalation$/,
     );
     expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ kind: 'drawing' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
   });
@@ -238,8 +239,8 @@ describe('QuotationLineFileCell, drawing cell: no drawing, escalate', () => {
     apiFetch.mockResolvedValue(
       new Response(
         JSON.stringify({
-          detail: 'No team is set up for drawing requests',
-          code: 'drawing_requests_not_set_up',
+          detail: 'The marketing product team has no members for this company',
+          code: 'marketing_team_not_set_up',
         }),
         { status: 409, headers: { 'content-type': 'application/json' } },
       ),
@@ -249,7 +250,7 @@ describe('QuotationLineFileCell, drawing cell: no drawing, escalate', () => {
     fireEvent.click(escalateButton() as HTMLElement);
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
-    expect(String(toastError.mock.calls[0][0])).toContain('No team is set up for drawing requests');
+    expect(String(toastError.mock.calls[0][0])).toContain('The marketing product team has no members for this company');
     await waitFor(() => expect(escalateButton()).toBeEnabled());
   });
 
@@ -293,7 +294,7 @@ describe('QuotationLineFileCell, drawing cell: already escalated', () => {
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
-  it('clicking the Escalated tile joins: it posts the drawing-escalation route, disabled while in flight', async () => {
+  it('clicking the Escalated tile joins: it posts the media-escalation route, disabled while in flight', async () => {
     let release: (value: unknown) => void = () => {};
     apiFetch.mockReturnValue(new Promise((resolve) => { release = resolve; }));
     renderCell(line(drawing({ escalation: escalation() })));
@@ -306,8 +307,9 @@ describe('QuotationLineFileCell, drawing cell: already escalated', () => {
     fireEvent.click(tile());
     expect(apiFetch).toHaveBeenCalledTimes(1);
     const [url, init] = apiFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toMatch(/\/quotation-versions\/version-1\/lines\/line-1\/drawing-escalation$/);
+    expect(url).toMatch(/\/quotation-versions\/version-1\/lines\/line-1\/media-escalation$/);
     expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ kind: 'drawing' });
     release({ ok: true, status: 200, json: async () => ({ joined: true, escalation: escalation() }) });
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Already escalated: added you to the request'));
   });
@@ -409,6 +411,248 @@ describe('QuotationLineFileCell, drawing cell: nothing to escalate', () => {
 
   it('an unsaved line (no server row yet) renders nothing at all', () => {
     const { container } = renderCell(null);
+    expect(container).toBeEmptyDOMElement();
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// REWORK (owner hand test 30 Oct): the Photo column escalates too. Same tile, same states, on
+// `no_photos` only; `not_chosen` keeps today's photo behaviour; the request names kind "photo".
+// ---------------------------------------------------------------------------------------------
+
+function photo(overrides: Record<string, unknown> = {}) {
+  return {
+    state: 'no_photos',
+    url: null,
+    preview_url: null,
+    attachment_id: null,
+    filename: null,
+    candidate_count: 0,
+    candidates: [],
+    escalation: null,
+    ...overrides,
+  };
+}
+
+function photoLine(product_image: Record<string, unknown>, overrides: Partial<QuotationLine> = {}) {
+  return {
+    ...line(drawing({ state: 'default', url: 'https://cdn.test/d.png', attachment_id: 'att-d' })),
+    product_image,
+    ...overrides,
+  } as unknown as QuotationLine;
+}
+
+function renderPhotoCell(l: QuotationLine | null, editable = false) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <QuotationLineFileCell
+        kind="photo"
+        line={l}
+        label="PRD-CCC-03"
+        pickedId=""
+        editable={editable}
+        onPick={() => {}}
+        onPreview={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+const photoEscalateButton = () =>
+  screen.queryByRole('button', { name: /Escalate missing photo for PRD-CCC-03/i });
+const photoJoinButton = () =>
+  screen.queryByRole('button', { name: 'Join the photo request for PRD-CCC-03' });
+
+describe('QuotationLineFileCell, photo cell: no photo at all, escalate', () => {
+  it('a saved catalogue line with no photo offers Escalate, hover names the product', () => {
+    renderPhotoCell(photoLine(photo()));
+
+    const button = photoEscalateButton();
+    expect(button).toBeInTheDocument();
+    expect(button).toHaveTextContent('Escalate');
+    expect(button).toHaveAttribute('title', 'Ask for a photo of PRD-CCC-03');
+    expect(button).toBeEnabled();
+    // The drawing flow's wording must not leak into the photo column.
+    expect(screen.queryByRole('button', { name: /missing drawing/i })).not.toBeInTheDocument();
+  });
+
+  it('one click posts the photo kind to the line media-escalation endpoint, no dialog', async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ joined: false, escalation: escalation() }),
+    });
+    renderPhotoCell(photoLine(photo()));
+
+    fireEvent.click(photoEscalateButton() as HTMLElement);
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+    const [url, init] = apiFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/quotation-versions\/version-1\/lines\/line-1\/media-escalation$/);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ kind: 'photo' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+
+  it('is disabled and busy while the request is in flight, one request only', async () => {
+    let release: (value: unknown) => void = () => {};
+    apiFetch.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    renderPhotoCell(photoLine(photo()));
+
+    fireEvent.click(photoEscalateButton() as HTMLElement);
+
+    await waitFor(() => expect(photoEscalateButton()).toBeDisabled());
+    expect(photoEscalateButton()).toHaveAttribute('aria-busy', 'true');
+    fireEvent.click(photoEscalateButton() as HTMLElement);
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    release({ ok: true, status: 200, json: async () => ({ joined: false, escalation: escalation() }) });
+  });
+
+  it('a refused escalate toasts the server message and returns to Escalate', async () => {
+    apiFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: 'The marketing product team has no members for this company',
+          code: 'marketing_team_not_set_up',
+        }),
+        { status: 409, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    renderPhotoCell(photoLine(photo()));
+
+    fireEvent.click(photoEscalateButton() as HTMLElement);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(String(toastError.mock.calls[0][0])).toContain('The marketing product team has no members');
+    await waitFor(() => expect(photoEscalateButton()).toBeEnabled());
+  });
+
+  it('resolved without a photo reads Escalate again, hover says when', () => {
+    renderPhotoCell(
+      photoLine(
+        photo({
+          escalation: escalation({
+            tracking_id: null,
+            opened_at: null,
+            due_at: null,
+            requester_count: 0,
+            last_resolved_at: '2026-10-30T06:00:00.000Z',
+          }),
+        }),
+      ),
+    );
+
+    const button = photoEscalateButton();
+    expect(button).toBeInTheDocument();
+    expect(button?.getAttribute('title') ?? '').toMatch(/Last request resolved 30 Oct/);
+    expect(button?.getAttribute('title') ?? '').toMatch(/no photo on file/);
+  });
+});
+
+describe('QuotationLineFileCell, photo cell: already escalated', () => {
+  it('shows "Escalated <date>", people and due date, as a Join button', () => {
+    renderPhotoCell(photoLine(photo({ escalation: escalation() })));
+
+    expect(screen.getByText(/Escalated/).textContent).toMatch(/29 Oct/);
+    expect(photoEscalateButton()).not.toBeInTheDocument();
+    const hover = screen.getByTitle(/Escalated/);
+    expect(hover.getAttribute('title')).toMatch(/by 2 people/);
+    expect(hover.getAttribute('title')).toMatch(/Due /);
+    expect(photoJoinButton()).toBeEnabled();
+  });
+
+  it('clicking the Escalated tile joins: posts the photo kind, disabled while in flight', async () => {
+    let release: (value: unknown) => void = () => {};
+    apiFetch.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    renderPhotoCell(photoLine(photo({ escalation: escalation() })));
+
+    fireEvent.click(photoJoinButton() as HTMLElement);
+
+    await waitFor(() => expect(photoJoinButton()).toBeDisabled());
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = apiFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/lines\/line-1\/media-escalation$/);
+    expect(JSON.parse(String(init.body))).toEqual({ kind: 'photo' });
+    release({ ok: true, status: 200, json: async () => ({ joined: true, escalation: escalation() }) });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Already escalated: added you to the request'));
+  });
+
+  it('reads "Replied <date>" once the team responded, and still joins', () => {
+    renderPhotoCell(photoLine(photo({ escalation: escalation({ responded_at: RESPONDED }) })));
+
+    expect(screen.getByText(/Replied/).textContent).toMatch(/29 Oct/);
+    expect(screen.getByTitle(/Responded/).getAttribute('title')).toMatch(/Responded 29 Oct/);
+    expect(photoJoinButton()).toBeEnabled();
+  });
+
+  it('an open DRAWING request does not colour the photo cell: each kind reads its own escalation', () => {
+    renderPhotoCell(
+      photoLine(photo(), {
+        technical_drawing: drawing({ escalation: escalation() }),
+      }),
+    );
+
+    expect(photoEscalateButton()).toBeInTheDocument();
+    expect(screen.queryByText(/Escalated/)).not.toBeInTheDocument();
+  });
+
+  it('colour follows the deadline: red when overdue', () => {
+    renderPhotoCell(
+      photoLine(photo({ escalation: escalation({ due_at: new Date(Date.now() - HOUR).toISOString() }) })),
+    );
+    expect(classesAround(screen.getByText(/Escalated/))).toMatch(/destructive|red-/);
+  });
+});
+
+describe('QuotationLineFileCell, photo cell: no Escalate where a photo exists or cannot', () => {
+  it('not_chosen (photographs exist, none picked) keeps today photo cell and offers no Escalate', () => {
+    renderPhotoCell(
+      photoLine(photo({ state: 'not_chosen', candidate_count: 2, candidates: [] })),
+    );
+
+    expect(photoEscalateButton()).not.toBeInTheDocument();
+    expect(photoJoinButton()).not.toBeInTheDocument();
+    expect(screen.queryByText(/Escalated|Replied/)).not.toBeInTheDocument();
+  });
+
+  it('not_chosen with a stale escalation on the payload still shows no flag', () => {
+    renderPhotoCell(
+      photoLine(photo({ state: 'not_chosen', candidate_count: 1, escalation: escalation() })),
+    );
+    expect(screen.queryByText(/Escalated/)).not.toBeInTheDocument();
+    expect(photoJoinButton()).not.toBeInTheDocument();
+  });
+
+  it('a chosen photo shows the thumbnail and no Escalate', () => {
+    renderPhotoCell(
+      photoLine(
+        photo({
+          state: 'chosen',
+          url: 'https://cdn.test/signed/p.png',
+          preview_url: 'https://cdn.test/signed/p.png',
+          attachment_id: 'att-p',
+          filename: 'p.png',
+          candidate_count: 1,
+        }),
+      ),
+    );
+    expect(photoEscalateButton()).not.toBeInTheDocument();
+  });
+
+  it('off_catalog reads a dash and offers nothing', () => {
+    renderPhotoCell(
+      photoLine(photo({ state: 'off_catalog' }), { product_id: null, product_code: null }),
+    );
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('an unsaved line renders nothing and calls nothing', () => {
+    const { container } = renderPhotoCell(null);
     expect(container).toBeEmptyDOMElement();
     expect(apiFetch).not.toHaveBeenCalled();
   });
