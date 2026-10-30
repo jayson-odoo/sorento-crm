@@ -70,6 +70,31 @@ def _uid() -> str:
     return str(uuid.uuid4())
 
 
+def _legacy_line_without_product(db, scope):
+    """A line with neither product nor set, written straight to the table.
+
+    QUOTE-NO-FREE-TEXT (#2020) refuses such a line on every service write path, so it can no
+    longer be built through `upsert_line`. The column stays nullable with no DB constraint
+    (#2020 shipped no migration) and `products.id` cascades SET NULL, so a legacy or
+    raw-written row can still reach `escalate`, and its `line_has_no_product` guard still
+    protects it.
+    """
+    from app.models.projects import ProjectQuotationLine
+    from app.services import project_quotation_service as quotes
+
+    version = quotes.current_version(db, scope.id)
+    line = ProjectQuotationLine(
+        version_id=version.id,
+        description_snapshot="zzt typed description",
+        unit_price=250,
+        quantity=4,
+        line_total=1000,
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
 def _svc():
     """Imported lazily so a missing module fails each test with ImportError, not collection."""
     from app.services import product_drawing_request_service as pdr
@@ -694,7 +719,7 @@ def test_an_off_catalogue_line_is_refused_and_nothing_is_created(db, env):
 
     seed_drawing_team(db)
     _document, scope = _scope(db, env)
-    line = _priced_line(db, env, scope)  # no product: a typed description
+    line = _legacy_line_without_product(db, scope)
     version = quotes.current_version(db, scope.id)
     db.commit()
     caller = _user(db, "zzt Sales One")
@@ -702,7 +727,7 @@ def test_an_off_catalogue_line_is_refused_and_nothing_is_created(db, env):
     with pytest.raises(AppException) as refused:
         _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller), kind="drawing")
 
-    assert refused.value.status_code in (404, 409)
+    assert (refused.value.status_code, refused.value.code) == (409, "line_has_no_product")
     assert (
         db.query(ConversationSLATracking)
         .filter(ConversationSLATracking.source_entity_type == SOURCE)
@@ -1779,14 +1804,14 @@ def test_an_off_catalogue_line_is_refused_for_a_photo_too(db, env):
 
     seed_drawing_team(db)
     _document, scope = _scope(db, env)
-    line = _priced_line(db, env, scope)  # no product: a typed description
+    line = _legacy_line_without_product(db, scope)
     version = quotes.current_version(db, scope.id)
     db.commit()
 
     with pytest.raises(AppException) as refused:
         esc(db, version, line, _user(db, "zzt Sales One"), "photo")
 
-    assert refused.value.status_code in (404, 409)
+    assert (refused.value.status_code, refused.value.code) == (409, "line_has_no_product")
     assert (
         db.query(ConversationSLATracking)
         .filter(ConversationSLATracking.source_entity_type.in_(list(SOURCES.values())))
