@@ -82,8 +82,26 @@ describe('DataGridListToolbar: the primary action stays on the filter row', () =
     const { container } = render(<Harness toolbarProps={toolbarProps} />);
     const row = rowOf(container);
     expect(row).toHaveClass('flex-row');
-    expect(row).toHaveClass('flex-wrap');
+    // Owner Q3 a (a25895124) supersedes the earlier `flex-wrap` pin: below sm the row must NOT wrap.
+    expect(row).toHaveClass('flex-nowrap');
+    expect(row).toHaveClass('sm:flex-wrap');
+    expect(row).not.toHaveClass('flex-wrap');
     expect(row).not.toHaveClass('flex-col');
+  });
+
+  it('left cluster shrinks, right cluster (primary action) never shrinks, search flexes below sm only', () => {
+    const { container } = render(<Harness toolbarProps={toolbarProps} />);
+    const row = rowOf(container);
+    const [left, right] = Array.from(row.children) as HTMLElement[];
+    expect(left).toHaveClass('min-w-0');
+    expect(left).toHaveClass('flex-1');
+    expect(right).toHaveClass('shrink-0');
+    expect(right.contains(screen.getByRole('button', { name: 'Create thing' }))).toBe(true);
+    expect(left.contains(screen.getByRole('button', { name: 'Filters' }))).toBe(true);
+    const search = container.querySelector('[data-slot="data-grid-list-toolbar-search"]');
+    expect(search).toHaveClass('min-w-0');
+    expect(search).toHaveClass('flex-1');
+    expect(search).toHaveClass('sm:flex-initial');
   });
 
   it('Filters and the primary action are in that one row', () => {
