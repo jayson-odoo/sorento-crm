@@ -82,14 +82,13 @@ export function MediaEscalation({
         : responded
           ? 'border-primary text-primary'
           : chipClass(msLeft);
-    const people = open.requester_count ?? 0;
     const hover = responded
       ? `Responded ${whenShort(open.responded_at as string)}` +
         (open.due_at ? `. Due ${whenShort(open.due_at)}.` : '.')
-      : `Escalated ${when(open.opened_at as string, true)} by ${people} ${people === 1 ? 'person' : 'people'}` +
+      : `Escalated ${when(open.opened_at as string, true)}` +
         (open.due_at ? `. Due ${whenShort(open.due_at)}.` : '.');
-    // The tile joins the open request (the server records each person once), so a later
-    // salesperson on any quotation with this product is added as a requester.
+    // The state is the viewer's own request (one requester per ticket), so the tile joins it:
+    // this quotation is added to their "Waiting on this".
     const joinLabel = `Join the ${kind} request for ${driver ?? code ?? 'this product'}`;
     return (
       <button

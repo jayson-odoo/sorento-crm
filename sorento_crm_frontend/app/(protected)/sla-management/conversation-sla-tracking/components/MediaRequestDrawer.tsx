@@ -47,6 +47,7 @@ import { useReassignSLATracking } from '../hooks/useTeamPendingSLA';
 import { actOnDrawingRequest } from '../services/conversationSLATrackingService';
 import ExtendDueDialog from './ExtendDueDialog';
 import ReassignDialog from './ReassignDialog';
+import TicketConversationPanel from './TicketConversationPanel';
 import TicketSlaChips from './TicketSlaChips';
 
 export interface MediaRequestDrawerProps {
@@ -56,7 +57,7 @@ export interface MediaRequestDrawerProps {
   onOpenChange: (open: boolean) => void;
   /** After a resolve, so the worklist can drop the row. */
   onResolved?: () => void;
-  /** After a respond, so the row's chips and button follow. */
+  /** After a respond or a reply, so the row's chips and button follow. */
   onSent?: () => void;
   onReassigned?: () => void;
 }
@@ -66,8 +67,10 @@ const NOUN = { drawing: 'Product drawing', photo: 'Product photo' } as const;
 /**
  * The side panel of a product drawing or photo task, the media mode of the chat ticket panel:
  * the same sheet shell, header actions (Reassign, Respond, Resolve ticket with its confirm,
- * overflow Extend) and SLA chips, with the task's own body in place of the thread. The file is
- * uploaded elsewhere (Resources), so the panel only links there.
+ * overflow Extend) and SLA chips, with the task's own facts above. The file is uploaded
+ * elsewhere (Resources), so the panel only links there. A task on the requester's WhatsApp
+ * contact mounts the chat ticket's conversation panel below the facts and has no Respond
+ * button: the first reply is the Respond.
  */
 export default function MediaRequestDrawer({
   ticketId,
@@ -92,6 +95,7 @@ export default function MediaRequestDrawer({
   const query = useMediaRequest(open ? ticketId : null);
   const request = query.data;
   const isResolved = !!request?.is_resolved;
+  const hasConversation = !!request?.has_conversation;
   const code = request?.product_code ?? '';
   const title = request
     ? `${NOUN[request.kind]} · ${code}`
@@ -120,6 +124,12 @@ export default function MediaRequestDrawer({
   };
 
   const showExtend = canExtend && !isResolved && !!request?.due_at_resolution;
+
+  // A reply stamps Respond server-side: re-read the facts (chips) and tell the worklist.
+  const onReplied = () => {
+    void query.refetch();
+    onSent?.();
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -165,7 +175,7 @@ export default function MediaRequestDrawer({
                   Reassign
                 </Button>
               )}
-              {request && !request.is_responded && !isResolved && (
+              {request && !hasConversation && !request.is_responded && !isResolved && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -318,30 +328,17 @@ export default function MediaRequestDrawer({
                 )}
               </section>
 
-              <section aria-labelledby="media-followers-heading">
-                <h3
-                  id="media-followers-heading"
-                  className="text-sm font-medium"
-                >
-                  Following
-                </h3>
-                {request.followers.length === 0 ? (
-                  <div data-testid="media-followers-empty" className="mt-1">
-                    <p className="text-sm text-muted-foreground">
-                      Nobody is following
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Everyone who escalates is told when it is resolved.
-                    </p>
-                  </div>
-                ) : (
-                  <ul className="mt-1 space-y-0.5 text-sm">
-                    {request.followers.map((name, index) => (
-                      <li key={`${name}-${index}`}>{name}</li>
-                    ))}
-                  </ul>
-                )}
-              </section>
+              {hasConversation && (
+                // Same flex chain as the chat drawer: the thread takes what the facts leave and
+                // the composer stays on screen at 375 and 1280.
+                <TicketConversationPanel
+                  ticketId={ticketId}
+                  enabled={open}
+                  className="min-h-40 flex-1"
+                  maxHeightClass="min-h-0 flex-1"
+                  onSent={onReplied}
+                />
+              )}
             </>
           ) : null}
         </SheetBody>
@@ -382,7 +379,7 @@ export default function MediaRequestDrawer({
             <AlertDialogHeader>
               <AlertDialogTitle>Mark as resolved</AlertDialogTitle>
               <AlertDialogDescription>
-                This stops the SLA clock and tells everyone who escalated it.
+                This stops the SLA clock and tells the salesperson who escalated it.
                 This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>

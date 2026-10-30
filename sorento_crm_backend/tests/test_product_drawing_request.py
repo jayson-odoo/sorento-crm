@@ -527,7 +527,7 @@ def test_a_hung_holder_cannot_block_an_escalation_forever_it_answers_busy_and_le
     caller = _user(db, "zzt Sales One")
     db.commit()  # the busy answer rolls the session back, so the seeds must be committed
     monkeypatch.setattr(_svc(), "LOCK_TIMEOUT_SECONDS", 1)
-    key = {"k": f"product_drawing:{product.id}"}
+    key = {"k": f"product_drawing:{product.id}:{caller}"}
     holder = base_engine.connect()
     holder.execute(text("SELECT pg_advisory_lock(hashtext(:k))"), key)
     try:
@@ -1825,7 +1825,7 @@ def test_the_photo_lock_key_is_per_kind_and_product(db, env, monkeypatch):
     db.commit()
     monkeypatch.setattr(_svc(), "LOCK_TIMEOUT_SECONDS", 3)
     holder = base_engine.connect()
-    key = {"k": f"product_drawing:{product.id}"}
+    key = {"k": f"product_drawing:{product.id}:{caller}"}
     holder.execute(text("SELECT pg_advisory_lock(hashtext(:k))"), key)
     try:
         started = time.monotonic()

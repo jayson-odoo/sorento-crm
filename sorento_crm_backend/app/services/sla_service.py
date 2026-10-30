@@ -6055,10 +6055,13 @@ class ConversationSLATrackingService:
         stranger. Same rule and same shape as ``get_ticket_detail`` and
         ``TicketCommentService._tracking_in_scope``.
         """
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
-        if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        if not tracking or (
+            getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES
+            and not is_media_conversation(tracking)
+        ):
             raise handle_not_found("Conversation SLA tracking", tracking_id)
         if not self.can_user_act_on_tracking(viewer_user_id, tracking):
             raise handle_not_found("Conversation SLA tracking", tracking_id)
@@ -6296,7 +6299,7 @@ class ConversationSLATrackingService:
       - already responded -> ``mark_ticket_responded`` no-ops (only the FIRST
           reply stops the clock).
         """
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         # Direct query, not get_tracking(): a stale queued job naming a deleted
         # row must be a no-op, not a 404 that fails the RQ job.
@@ -6307,7 +6310,9 @@ class ConversationSLATrackingService:
         )
         if not tracking:
             return None
-        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES and not is_media_conversation(
+            tracking
+        ):
             return None
         if expect_respond_io_id:
             actual = self._respond_io_identifier_for_tracking(tracking)
@@ -6555,10 +6560,13 @@ class ConversationSLATrackingService:
         ``handle_not_found`` both for a missing tracking and for a viewer
         outside its visibility scope (never leaks existence via a 403).
         """
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
-        if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        if not tracking or (
+            getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES
+            and not is_media_conversation(tracking)
+        ):
             raise handle_not_found("Conversation SLA tracking", tracking_id)
         if not self.can_user_act_on_tracking(viewer_user_id, tracking):
             raise handle_not_found("Conversation SLA tracking", tracking_id)
@@ -6718,12 +6726,14 @@ class ConversationSLATrackingService:
         (not implemented yet - tracked separately from this fix).
         """
         from app.services.crm_chat_outbound_webhook import notify_human_ticket_send
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
         if not tracking:
             raise handle_not_found("Conversation SLA tracking", tracking_id)
-        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES and not is_media_conversation(
+            tracking
+        ):
             raise handle_validation_error(
                 "This is a form-SLA stage; reply from the form record's chat panel instead."
             )

@@ -222,7 +222,8 @@ export interface MediaRequestDetail {
   escalated_at: string | null;
   extension_count: number;
   quotations: { quotation_id: string; project_id: string; label: string; href: string }[];
-  followers: string[];
+  /** The task rides on the requester's WhatsApp contact: the panel shows the conversation. */
+  has_conversation: boolean;
 }
 
 export async function getMediaRequest(id: string): Promise<MediaRequestDetail> {

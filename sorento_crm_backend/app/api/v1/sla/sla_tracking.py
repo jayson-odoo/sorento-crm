@@ -2257,12 +2257,14 @@ async def get_sla_tracking_conversation(
     from starlette.concurrency import run_in_threadpool
 
     try:
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         service = ConversationSLATrackingService(db)
         tracking = service.get_tracking(str(tracking_id), load_event_logs=False)
         source_type = getattr(tracking, "source_entity_type", None)
-        if source_type in FORM_SLA_TYPES:
+        # A drawing or photo request on the requester's contact is read like a ticket (assignee
+        # or manager), not through the form tracker's readers.
+        if source_type in FORM_SLA_TYPES and not is_media_conversation(tracking):
             _require_tracker_reader(db, current_user, source_type)
         elif not service.can_user_act_on_tracking(current_user["id"], tracking):
             raise handle_not_found("Conversation SLA tracking", str(tracking_id))

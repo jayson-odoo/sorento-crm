@@ -574,6 +574,66 @@ def send_ticket_resolved_message(tracking_id: str) -> dict:
     )
 
 
+def send_media_request_ack(contact_id: str, text: str) -> dict:
+    """Worker-side: acknowledge a salesperson's new drawing or photo request on their WhatsApp
+    (PLAN-quote-media-chat-30oct B3). One message per new ticket, never on a join.
+
+    The contact is a staff member, so the send rides the staff notification use case
+    (``sla_assignment``): in-window the text as written, out-of-window its approved template
+    with the text as ``message``. Not mirrored to n8n: it is the CRM speaking, not a human
+    answer, and must not take the bot off the conversation.
+    """
+    from app.database import SessionLocal
+    from app.models.access import RespondContact
+    from app.models.sla import ConversationSLATracking
+    from app.services.form_sla_service import MEDIA_REQUEST_TYPES
+
+    db = SessionLocal()
+    try:
+        contact = db.query(RespondContact).filter(RespondContact.id == str(contact_id)).first()
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip()
+        if not identifier:
+            return {"business_id": str(contact_id), "status": "skipped", "reason": "no_respond_contact"}
+        # The outbox row hangs off the ticket it acknowledges: the contact's newest media
+        # request, committed before this job was queued.
+        ticket_id = (
+            db.query(ConversationSLATracking.id)
+            .filter(
+                ConversationSLATracking.respond_contact_id == str(contact_id),
+                ConversationSLATracking.source_entity_type.in_(MEDIA_REQUEST_TYPES),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .limit(1)
+            .scalar()
+        )
+        if ticket_id is None:
+            return {"business_id": str(contact_id), "status": "skipped", "reason": "no_media_request"}
+        contact_name = (
+            getattr(contact, "name", None)
+            or " ".join(
+                filter(None, [getattr(contact, "first_name", None), getattr(contact, "last_name", None)])
+            )
+            or getattr(contact, "phone_number", None)
+            or "there"
+        )
+    finally:
+        db.close()
+
+    return _send_and_log(
+        use_case="sla_assignment",
+        business_table="conversation_sla_tracking",
+        business_id=str(ticket_id),
+        identifier=identifier,
+        message_text=text,
+        respond_user_id="",
+        crm_sender_user_id=None,
+        space_id=None,
+        sla_entity_type="",
+        extra_context_vars={"contact_name": contact_name, "message": text},
+        emit_outbound_webhook=False,
+    )
+
+
 def _resolve_respond_io_id(db, tracking) -> Optional[str]:
     """The contact's Respond.io id (respond_io_id), never the internal
     respond_contact_id. None when the tracking has no resolvable contact."""
