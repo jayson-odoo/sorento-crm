@@ -63,7 +63,13 @@ export function AgentModelCard({ name, canEdit }: { name: string; canEdit: boole
         model: model || null,
         reasoning_effort: effort,
       });
-      toast.success(model ? `${name} now runs on ${model}` : `${name} back on the default model`);
+      toast.success(
+        model
+          ? `${name} now runs on ${model}`
+          : row?.model
+            ? `${name} back on the default model`
+            : `${name} saved`,
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to set the model');
     }

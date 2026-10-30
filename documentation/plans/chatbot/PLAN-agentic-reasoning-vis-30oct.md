@@ -63,3 +63,15 @@ has no provider key. The hand test reads the console's `Tokens: X in, Y out` lin
 - `GET /agent/conversation` does not filter by the operator who ran the turn (already true for replies
   and steps since #2009); any holder of the console permission sees another operator's reasoning for
   the same contact.
+
+## Round 2 (owner, 31 Oct 00:35: "low effort for agent, how do I set reasoning effort")
+
+- The agent defaults to reasoning effort `low` (`loop.DEFAULT_EFFORT`) when its label sets none; an effort on
+  the label still wins.
+- Why the owner could not set it: nothing wrote `ai_prompt_labels.reasoning_effort` (the column was read at
+  runtime only), and dev has no `chatbot_agent` production label (the prompt seed ran before the key
+  existed), so even the model save answered 404. Fix: the Runs on card has a clearable Reasoning effort
+  select (POST prompts/{name}/model `reasoning_effort`, left out = unchanged), and a key with no
+  production label gets one on a version of its built-in text, the text the agent already reads.
+- Token cost low vs none: not measurable in the cloud sandbox (no provider key); measured by the owner hand
+  test (laneboard/scripts/2022.md, Tokens line A vs B).
