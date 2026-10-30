@@ -30,6 +30,7 @@ function row(over: Partial<ConversationInboxItem> = {}): ConversationInboxItem {
     open_ticket_count: 2,
     my_open_ticket_count: 1,
     my_open_ticket_id: 'tkt-1',
+    match: null,
     ...over,
   };
 }
@@ -194,5 +195,64 @@ describe('ConversationListPane (AC-N1)', () => {
     expect(screen.getByTestId('inbox-error')).toHaveTextContent('Failed to load conversations');
     fireEvent.click(screen.getByRole('button', { name: /Try again/i }));
     expect(refetch).toHaveBeenCalled();
+  });
+
+  describe('message-text search (CONVO-SEARCH-MESSAGES)', () => {
+    const matched = row({
+      match: {
+        message_id: 'msg-77',
+        sent_at: new Date(Date.now() - 3 * 3_600_000).toISOString().replace('Z', ''),
+        direction: 'outgoing',
+        snippet: '…boleh hantar quotation sofa esok',
+      },
+    });
+
+    it('says the box searches messages too', () => {
+      renderPane();
+      expect(screen.getByTestId('inbox-search')).toHaveAttribute(
+        'placeholder',
+        'Search name, phone or message',
+      );
+    });
+
+    it('a message match shows the matched snippet, term marked, instead of the last message', async () => {
+      inboxQuery.mockReturnValue(
+        queryState({ data: { pages: [{ items: [matched], next_cursor: null, has_more: false }] } }),
+      );
+      renderPane();
+      fireEvent.change(screen.getByTestId('inbox-search'), { target: { value: 'sofa' } });
+      act(() => {
+        vi.advanceTimersByTime(350);
+      });
+      await waitFor(() => {
+        const marks = screen.getByTestId('inbox-match-10025531').querySelectorAll('mark');
+        expect(marks).toHaveLength(1);
+        expect(marks[0]).toHaveTextContent('sofa');
+      });
+      expect(screen.getByTestId('inbox-match-10025531')).toHaveTextContent(
+        '…boleh hantar quotation sofa esok',
+      );
+      expect(screen.queryByText('Yes please send the quote')).toBeNull();
+      // The time and direction are the MATCHED message's.
+      expect(screen.getByText('3 hours ago')).toBeDefined();
+      expect(screen.getByLabelText('Matched message was outgoing')).toBeDefined();
+    });
+
+    it('clicking a matched row hands over the search term so the thread can jump to it', async () => {
+      inboxQuery.mockReturnValue(
+        queryState({ data: { pages: [{ items: [matched], next_cursor: null, has_more: false }] } }),
+      );
+      const { onSelect } = renderPane();
+      fireEvent.change(screen.getByTestId('inbox-search'), { target: { value: 'sofa' } });
+      act(() => {
+        vi.advanceTimersByTime(350);
+      });
+      await waitFor(() => expect(inboxQuery).toHaveBeenLastCalledWith('mine', 'sofa'));
+      fireEvent.click(screen.getByTestId('inbox-row-10025531'));
+      expect(onSelect).toHaveBeenCalledWith(
+        expect.objectContaining({ match: expect.objectContaining({ message_id: 'msg-77' }) }),
+        'sofa',
+      );
+    });
   });
 });

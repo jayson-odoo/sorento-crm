@@ -33,6 +33,11 @@ import { useQueryClient } from '@tanstack/react-query';
 
 interface ConversationThreadPaneProps {
   contact: ConversationInboxItem | null;
+  /**
+   * The list search that produced this pick. When a MESSAGE matched
+   * (`contact.match`), the thread opens on that message with the term marked.
+   */
+  searchTerm?: string;
   /** False hides the composer's Reply mode entirely (read-only viewer). */
   canReply: boolean;
   /** Mobile only: returns to the list. */
@@ -51,6 +56,7 @@ interface ConversationThreadPaneProps {
  */
 export default function ConversationThreadPane({
   contact,
+  searchTerm = '',
   canReply,
   onBack,
   className,
@@ -111,6 +117,19 @@ export default function ConversationThreadPane({
     enabled: !!contactRef,
     resetKey: contactRef,
   });
+
+  // CONVO-SEARCH-MESSAGES: a row found by a message opens on that message. Runs
+  // after the thread hook's own reset for the new contact, so the jump lands in
+  // the fresh conversation rather than being wiped by it.
+  const matchMessageId = contact?.match?.message_id ?? null;
+  const matchTerm = matchMessageId ? searchTerm.trim() : '';
+  const { jumpToMessage } = thread;
+  useEffect(() => {
+    if (matchMessageId) jumpToMessage(matchMessageId);
+    // Keyed on the contact too: the same message id never belongs to two
+    // contacts, but a re-pick of the same row must not re-jump on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contactRef, matchMessageId]);
 
   // A different contact is a different conversation: never carry the composer
   // mode across.
@@ -202,7 +221,7 @@ export default function ConversationThreadPane({
             hasMoreNewer={thread.hasMoreNewer}
             isLoadingNewer={thread.isLoadingNewer}
             searchController={thread.search}
-            highlightTerm={thread.highlightTerm}
+            highlightTerm={thread.highlightTerm || matchTerm}
             focusMessageId={thread.focusMessageId}
             focusNonce={thread.focusNonce}
             comments={commentsQuery.data ?? []}

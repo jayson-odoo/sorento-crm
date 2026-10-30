@@ -18,6 +18,7 @@ const replyMutateAsync = vi.fn();
 const templateMutateAsync = vi.fn();
 const mediaProxy = vi.fn();
 const commentMutateAsync = vi.fn();
+const loadPage = vi.fn();
 
 vi.mock('../hooks/useConversationsInbox', () => ({
   THREAD_POLL_MS: 10_000,
@@ -27,13 +28,7 @@ vi.mock('../hooks/useConversationsInbox', () => ({
   useContactComments: (...a: unknown[]) => contactComments(...a),
   useContactWindow: (...a: unknown[]) => contactWindow(...a),
   useContactThreadLoaders: () => ({
-    loadPage: vi.fn().mockResolvedValue({
-      items: [],
-      has_more_older: false,
-      has_more_newer: false,
-      oldest_message_id: null,
-      newest_message_id: null,
-    }),
+    loadPage,
     searchMessages: vi.fn().mockResolvedValue([]),
   }),
   useContactMediaProxy: () => mediaProxy,
@@ -69,6 +64,8 @@ interface ChatListStubProps {
   comments?: unknown[];
   mediaProxy?: (url: string) => Promise<Response>;
   onJumpToMessage?: (messageId: string) => void;
+  highlightTerm?: string;
+  focusMessageId?: string | null;
 }
 
 vi.mock('@/components/common/RespondChatList', () => ({
@@ -78,9 +75,13 @@ vi.mock('@/components/common/RespondChatList', () => ({
     comments = [],
     mediaProxy: proxy,
     onJumpToMessage,
+    highlightTerm,
+    focusMessageId,
   }: ChatListStubProps) => (
     <div
       data-testid="chat-list"
+      data-highlight-term={highlightTerm ?? ''}
+      data-focus-message-id={focusMessageId ?? ''}
       data-contact={contactName ?? ''}
       data-notes={comments.length}
       data-has-media-proxy={proxy ? 'yes' : 'no'}
@@ -203,6 +204,7 @@ function contact(over: Partial<ConversationInboxItem> = {}): ConversationInboxIt
     open_ticket_count: 1,
     my_open_ticket_count: 1,
     my_open_ticket_id: 'tkt-1',
+    match: null,
     ...over,
   };
 }
@@ -219,6 +221,13 @@ function queryState(over: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  loadPage.mockReset().mockResolvedValue({
+    items: [],
+    has_more_older: false,
+    has_more_newer: false,
+    oldest_message_id: null,
+    newest_message_id: null,
+  });
   contactThread.mockReset().mockReturnValue(queryState());
   contactComments.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false });
   contactWindow.mockReset().mockReturnValue({
@@ -482,5 +491,34 @@ describe('ConversationThreadPane', () => {
     expect(back.getAttribute('class') ?? '').toContain('lg:hidden');
     fireEvent.click(back);
     expect(onBack).toHaveBeenCalled();
+  });
+
+  it('CONVO-SEARCH-MESSAGES: opens a message match on that message, term marked', async () => {
+    render(
+      <ConversationThreadPane
+        contact={contact({
+          match: {
+            message_id: 'msg-77',
+            sent_at: '2026-08-10T09:00:00',
+            direction: 'incoming',
+            snippet: 'harga sofa',
+          },
+        })}
+        searchTerm="sofa"
+        canReply
+      />,
+    );
+    await waitFor(() =>
+      expect(loadPage).toHaveBeenCalledWith(expect.objectContaining({ around: 'msg-77' })),
+    );
+    const list = screen.getByTestId('chat-list');
+    expect(list).toHaveAttribute('data-focus-message-id', 'msg-77');
+    expect(list).toHaveAttribute('data-highlight-term', 'sofa');
+  });
+
+  it('CONVO-SEARCH-MESSAGES: a name match opens on the live tail as before', () => {
+    render(<ConversationThreadPane contact={contact()} searchTerm="aisyah" canReply />);
+    expect(loadPage).not.toHaveBeenCalledWith(expect.objectContaining({ around: expect.anything() }));
+    expect(screen.getByTestId('chat-list')).toHaveAttribute('data-highlight-term', '');
   });
 });
