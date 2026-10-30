@@ -1,8 +1,9 @@
 """SEC-MCP-AUTH (UAC AUTH-7, SCOPE-4): the CRM's MCP client sends the bearer token, and only the
 staff AI assistant marks its calls `X-MCP-Scope: staff`.
 
-`MCPRuntimeClient` is the only in-repo MCP caller (AI assistant, chatbot business lane, ideate
-lane), so the token is set there once. No database: the transport is an httpx MockTransport.
+`MCPRuntimeClient` is the only in-repo MCP caller (AI assistant, chatbot business lane, ideate,
+opportunity lane, agent loop), so the token is set there once. No database: the transport is an
+httpx MockTransport.
 """
 from __future__ import annotations
 
@@ -113,8 +114,9 @@ def test_agent_loop_catalogue_fetch_sends_the_bearer_token(monkeypatch, seen):
 
 
 def test_agent_loop_tool_call_sends_the_bearer_token_and_the_contact(monkeypatch, seen):
-    """The loop's production builder is `services._mcp_call(db, timeout_seconds=...)`; the
-    agent's tool runner puts the turn's contact and space into the arguments."""
+    """The loop's production builder is `services._mcp_call(db, timeout_seconds=...)`. That the
+    agent's tool runner fills contact_id/space_id from the turn is pinned in
+    tests/chatbot/agent/test_agent_tools.py; here they must reach the wire with the bearer."""
     import inspect as _inspect
 
     from app.services.chatbot.agent import loop
