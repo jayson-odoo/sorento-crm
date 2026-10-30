@@ -851,7 +851,9 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         started = clock()
         try:
             result = send(
-                messages, tools=tools, reasoning_effort=effort, model=model, timeout=timeout,
+                messages, tools=tools, model=model, timeout=timeout,
+                # The summary of older turns is a side call: it neither thinks nor shows thoughts.
+                reasoning_effort=None if kind == "compaction" else effort,
                 include_thoughts=kind != "compaction",
             )
         except Exception as exc:  # noqa: BLE001 - detail is logged, the user sees a fixed reason

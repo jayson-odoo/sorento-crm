@@ -10,6 +10,11 @@ import { usePromptKeys, useSetAgentModel } from '../../hooks/useAIAssistantPromp
 import { MODEL_OPTIONS, PROVIDER_OPTIONS } from '@/lib/ai/modelOptions';
 import { useProviderModels } from '@/hooks/useProviderModels';
 
+// The prompt keys whose calls read the label's reasoning effort (agent_reasoning_effort callers).
+const EFFORT_KEYS = new Set(['chatbot_agent', 'chatbot_semantic_parser', 'agent_system']);
+// What an empty effort means, where the caller has its own default (agent/loop.py DEFAULT_EFFORT).
+const EFFORT_DEFAULTS: Record<string, string> = { chatbot_agent: 'Default (low)' };
+
 const EFFORT_OPTIONS = [
   { value: 'none', label: 'None' },
   { value: 'minimal', label: 'Minimal' },
@@ -61,7 +66,8 @@ export function AgentModelCard({ name, canEdit }: { name: string; canEdit: boole
       await setModel.mutateAsync({
         provider: provider || null,
         model: model || null,
-        reasoning_effort: effort,
+        // Only when it changed, so a model save never touches an effort set elsewhere.
+        ...(effort !== (row?.reasoning_effort ?? '') ? { reasoning_effort: effort } : {}),
       });
       toast.success(
         model
@@ -117,20 +123,22 @@ export function AgentModelCard({ name, canEdit }: { name: string; canEdit: boole
             disabled={!canEdit}
           />
         </div>
-        <div>
-          <label className="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">
-            Reasoning effort
-          </label>
-          <SearchableSelect
-            aria-label="Reasoning effort"
-            value={effort}
-            onChange={setEffort}
-            options={EFFORT_OPTIONS}
-            placeholder="Default"
-            clearable
-            disabled={!canEdit}
-          />
-        </div>
+        {EFFORT_KEYS.has(name) ? (
+          <div>
+            <label className="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">
+              Reasoning effort
+            </label>
+            <SearchableSelect
+              aria-label="Reasoning effort"
+              value={effort}
+              onChange={setEffort}
+              options={EFFORT_OPTIONS}
+              placeholder={EFFORT_DEFAULTS[name] ?? 'Default'}
+              clearable
+              disabled={!canEdit}
+            />
+          </div>
+        ) : null}
         <p className="text-xs text-muted-foreground">
           {row?.model
             ? 'Clear both fields to put this agent back on the global assistant model.'
@@ -143,7 +151,7 @@ export function AgentModelCard({ name, canEdit }: { name: string; canEdit: boole
             onClick={save}
             disabled={!dirty || setModel.isPending}
           >
-            {setModel.isPending ? 'Saving…' : 'Save model'}
+            {setModel.isPending ? 'Saving…' : 'Save'}
           </Button>
         ) : null}
       </CardContent>

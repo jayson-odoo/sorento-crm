@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { AgentModelCard } from './AgentModelCard';
 
 /**
@@ -26,6 +26,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     options?: { value: string; label: string }[];
     clearable?: boolean;
     disabled?: boolean;
+    placeholder?: string;
     'aria-label'?: string;
   }) => (
     <select
@@ -35,7 +36,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       disabled={props.disabled}
       onChange={(e) => props.onChange(e.target.value)}
     >
-      <option value="">Default</option>
+      <option value="">{props.placeholder ?? 'Default'}</option>
       {(props.options ?? []).map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}
@@ -45,9 +46,9 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
-function keys(effort: string | null) {
+function keys(effort: string | null, name = 'chatbot_agent') {
   usePromptKeys.mockReturnValue({
-    data: [{ name: 'chatbot_agent', provider: null, model: null, reasoning_effort: effort }],
+    data: [{ name, provider: null, model: null, reasoning_effort: effort }],
   });
 }
 
@@ -83,6 +84,33 @@ describe('the Runs on card sets the reasoning effort', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Reasoning effort' }), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     expect(mutateAsync).toHaveBeenCalledWith({ provider: null, model: null, reasoning_effort: '' });
+  });
+
+  it("says the agent's default is low", () => {
+    keys(null);
+    render(<AgentModelCard name="chatbot_agent" canEdit />);
+    expect(screen.getByRole('option', { name: 'Default (low)' })).toBeInTheDocument();
+  });
+
+  it('leaves the effort out when only the model changed', async () => {
+    keys('low');
+    render(<AgentModelCard name="chatbot_agent" canEdit />);
+    fireEvent.change(screen.getByPlaceholderText('or type a model name'), { target: { value: 'gemini-3.5-flash' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(mutateAsync).toHaveBeenCalledWith({ provider: null, model: 'gemini-3.5-flash' });
+  });
+
+  it.each(['chatbot_semantic_parser', 'agent_system'])('is offered on %s, which reads it', (name) => {
+    keys(null, name);
+    render(<AgentModelCard name={name} canEdit />);
+    const select = screen.getByRole('combobox', { name: 'Reasoning effort' });
+    expect(within(select).getByRole('option', { name: 'Default' })).toBeInTheDocument();
+  });
+
+  it('is not offered on a prompt that never reads it', () => {
+    keys(null, 'chatbot_reply_greeting');
+    render(<AgentModelCard name="chatbot_reply_greeting" canEdit />);
+    expect(screen.queryByRole('combobox', { name: 'Reasoning effort' })).toBeNull();
   });
 
   it('is read-only without the edit permission', () => {
