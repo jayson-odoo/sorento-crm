@@ -22,6 +22,7 @@ import { providerModelLabel } from '@/lib/ai/modelOptions';
 import type { ProviderModel } from '@/components/common/ProviderModelSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { ProviderModelSelect } from '@/components/common/ProviderModelSelect';
+import AllowedItemClassesPicker from '@/components/contacts/AllowedItemClassesPicker';
 import {
   useSaveTagSettings,
   useSettingsCatalog,
@@ -47,7 +48,7 @@ type Sections = readonly string[];
 
 const GROUPS: { id: string; title: string; sections: Sections }[] = [
   { id: 'access_types', title: 'Access types', sections: ['access_types'] },
-  { id: 'brands', title: 'Brands', sections: ['brands'] },
+  { id: 'brands', title: 'Brands', sections: ['brands', 'item_classes'] },
   { id: 'companies', title: 'Companies', sections: ['companies'] },
   {
     id: 'market_segments',
@@ -381,6 +382,14 @@ function GroupBody({
               placeholder="Select brands"
             />
           ) : null}
+          {/* TAG-BRAND-CLASS: the contact card's picker, with All brands on or off; empty = not set. */}
+          <AllowedItemClassesPicker
+            id="tag-item-classes"
+            value={Array.isArray(s.item_classes) ? (s.item_classes as string[]) : []}
+            onChange={(codes) => set('item_classes', codes.length ? codes : undefined)}
+            options={catalog.item_classes ?? []}
+            editing={editing}
+          />
         </div>
       );
     }
