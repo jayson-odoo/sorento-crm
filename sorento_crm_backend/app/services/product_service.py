@@ -1470,6 +1470,8 @@ class ProductService:
         ex_children: List[str] = []
         for pid in product_ids:
             ex_children.extend(self._variant_child_ids(pid))
+        for pid in product_ids:
+            self._reject_if_on_quotation(pid)
         deleted_set = set(product_ids)
         deleted = self.db.query(Product).filter(Product.id.in_(product_ids)).delete(
             synchronize_session=False

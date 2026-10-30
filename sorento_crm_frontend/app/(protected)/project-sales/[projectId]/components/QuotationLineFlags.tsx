@@ -45,15 +45,18 @@ function useLineFacts(quotationId: string | null, line: QuotationLine | null, dr
       product_set_id: setId || undefined,
       unit_price: price || undefined,
     },
-    !pristine && quotationId !== null,
+    !pristine && quotationId !== null && Boolean(productId || setId),
   );
 
   const belowFloor = pristine
     ? line.is_below_floor
     : Boolean(verdict.data?.is_below_floor);
-  const nonStandard = pristine
-    ? line.is_non_standard
-    : Boolean(verdict.data?.is_non_standard);
+  const nonStandard =
+    !productId && !setId
+      ? false
+      : pristine
+        ? line.is_non_standard
+        : Boolean(verdict.data?.is_non_standard);
   const floor = pristine
     ? describeFloor(line)
     : describeVerdictFloor(verdict.data ?? null);

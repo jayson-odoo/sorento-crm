@@ -686,9 +686,8 @@ def _apply_guardrails(
     """
     was_below = bool(line.is_below_floor)
 
-    # Off-catalog is ALWAYS non-standard (AC-E5), series or no series: "we quoted
-    # something that is not in our catalogue" is the case the alert exists for, and a
-    # project that never nominated a series must not silently excuse it.
+    # A product outside the series is non-standard; a set is judged by its own series row.
+    # No line is saved without a product or set, so a missing product only means a bare call.
     if line.product_set_id:
         # A set is standard only by its own `series_sets` row; its floor is the series row, else
         # the company default alone (Q4 b).
@@ -884,6 +883,18 @@ def _write_line(
         if payload.get("product_set_id")
         else None
     )
+    # Same for a product: resolved through the company-scoped session before anything is added.
+    named_product = (
+        db.query(Product).filter(Product.id == str(payload["product_id"])).first()
+        if payload.get("product_id")
+        else None
+    )
+    if payload.get("product_id") and named_product is None:
+        raise AppException(
+            status_code=404,
+            message="That product was not found.",
+            code="product_not_found",
+        )
     if payload.get("product_set_id") and named_set is None:
         raise AppException(
             status_code=404,
@@ -964,7 +975,8 @@ def _write_line(
         line.quantity = Decimal("1")
 
     product = (
-        db.query(Product).filter(Product.id == line.product_id).first()
+        named_product
+        or db.query(Product).filter(Product.id == line.product_id).first()
         if line.product_id
         else None
     )

@@ -271,10 +271,6 @@ def seed(db: Session) -> dict:
                     company_id=SORENTO_COMPANY_ID,
                     version_id=version.id,
                     product_id=str(product.id),
-                    # The snapshot carries the code even when the catalogue does not
-                    # have it. That unresolved line is the real state of the item
-                    # master and the sales order draft should say so, not inherit a
-                    # silently invented product.
                     product_code_snapshot=code or None,
                     description_snapshot=line["description"],
                     unit_price=price,

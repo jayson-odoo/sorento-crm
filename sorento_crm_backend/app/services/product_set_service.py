@@ -120,7 +120,7 @@ from app.models.marketing import PromotionProduct  # noqa: E402
 from app.models.product import Product, ProductAttachment  # noqa: E402
 from app.models.product_set import ProductSet, ProductSetMember  # noqa: E402
 from app.services.company_scope import get_company_scope, resolve_write_company_id  # noqa: E402
-from app.services.error_handler import AppException  # noqa: E402
+from app.services.error_handler import AppException, handle_conflict  # noqa: E402
 
 
 class _ListPage:
@@ -338,10 +338,8 @@ class ProductSetService:
             .first()
         )
         if row is not None:
-            raise AppException(
-                status_code=409,
-                message=f"This product set is on quotation {row[0]}, so it cannot be deleted.",
-                code="product_set_on_quotation",
+            raise handle_conflict(
+                f"This product set is on quotation {row[0]}, so it cannot be deleted."
             )
 
     # ---------------------------------------------------------------- internals

@@ -473,6 +473,7 @@ function ProductCell({ row: tableRow }: CellContext<GridRow, unknown>) {
     isUntouched(staged.draft) && !grid.visited.has(row.key)
       ? undefined
       : lineErrors(staged.draft).product;
+  const productErrorId = `${row.key}-product-error`;
   return (
     <div className="min-w-0 space-y-1">
       {editable ? (
@@ -491,6 +492,8 @@ function ProductCell({ row: tableRow }: CellContext<GridRow, unknown>) {
           selectedOption={grid.resolveProduct(staged.line, staged.draft)}
           renderOption={renderLineOption}
           placeholder="Pick a product"
+          aria-invalid={productError ? true : undefined}
+          aria-describedby={productError ? productErrorId : undefined}
           emptyMessage="No matches"
         />
       ) : (
@@ -508,7 +511,9 @@ function ProductCell({ row: tableRow }: CellContext<GridRow, unknown>) {
       )}
       {editable && staged.draft.product_set_id ? <SetBadge /> : null}
       {editable && productError && (
-        <p className="text-xs text-destructive">{productError}</p>
+        <p id={productErrorId} className="whitespace-normal break-words text-xs text-destructive">
+          {productError}
+        </p>
       )}
       <LineFlags
         quotationId={grid.quotationId}
