@@ -1,6 +1,6 @@
 'use client';
 
-import { use } from 'react';
+import { Suspense, use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft } from 'lucide-react';
@@ -33,12 +33,15 @@ export default function EditComplaintPage({
       </Container>
 
       <Container>
-        <ComplaintForm
-          complaintId={id}
-          onSuccess={() => {
-            router.push(`/complaint-management/complaints/${id}`);
-          }}
-        />
+        {/* A salesperson's own form reads ?revise= (useSearchParams). */}
+        <Suspense fallback={null}>
+          <ComplaintForm
+            complaintId={id}
+            onSuccess={() => {
+              router.push(`/complaint-management/complaints/${id}`);
+            }}
+          />
+        </Suspense>
       </Container>
     </>
   );

@@ -729,6 +729,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     <BackToList
       listPath="/dealer-kit/price-tag-requests"
       label="Back to price tag requests"
+      hideForLimited="price_tag_request"
     />
   );
 
@@ -1113,7 +1114,16 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                   const option = linePricing[line.id]?.promotion_options.find(
                                     (o) => o.id === promoId,
                                   );
-                                  return option ? promotionOptionName(option) : '-';
+                                  if (option) return promotionOptionName(option);
+                                  // PAR-3: a saved promotion today's options no longer carry
+                                  // (it ended) reads as the portal shows it, from the line.
+                                  if (promoId && promoId === line.promotion_id && line.promotion_name != null) {
+                                    return promotionOptionName({
+                                      description: line.promotion_name,
+                                      expired_on: line.promotion_expired_on,
+                                    });
+                                  }
+                                  return '-';
                                 })()}
                               </p>
                             )}

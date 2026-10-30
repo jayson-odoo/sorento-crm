@@ -171,7 +171,7 @@ const IN_GRID_SUBTREE_SITES = new Map<string, string>([
  */
 const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
   [
-    'app/(protected)/complaint-management/complaints/components/ComplaintFulfilmentOrdersSection.tsx:91',
+    'app/(protected)/complaint-management/complaints/components/ComplaintFulfilmentOrdersSection.tsx:93',
     'NESTED GRID: the items popover opens from a CELL of this section\'s own grid. It names scrollerMaxHeight="16rem", so the nested default leaves it alone and it keeps its sticky header inside that window',
   ],
   [
@@ -223,11 +223,11 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'The DataGridTable of the same grid, not a second one',
   ],
   [
-    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:322',
+    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:372',
     "G6 (PLAN-oi-request-cs-reserve.md section 6d): one row per selected line, in a dialog opened as a sibling of the OI Lines tab (Request CS to reserve). Already scrollerMaxHeight={false}. Round 4 review (24 Sep, AC-RS-89): line moved - the inert outer overflow-x-auto wrapper is gone and columnsDraggable: false was added.",
   ],
   [
-    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:334',
+    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:384',
     'The DataGridTable of the same grid, not a second one',
   ],
   [

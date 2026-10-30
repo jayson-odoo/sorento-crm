@@ -92,6 +92,8 @@ class RespondContactResponse(RespondContactBase):
     chatbot_skip_period_questions: bool = False
     # PHOTO-SEND-CAP: send files as short links instead of attachments (default off).
     chatbot_files_as_links: bool = False
+    # AGENTIC-P1: explicit entry to the read-only agent. Default off.
+    chatbot_agent_enabled: bool = False
     # CONTACT-BULK-ACCESS (UAC A2.1): `chatbot_profile.tier` flattened, and whether the
     # contact holds the `purchase_orders.cost` reveal (filled by the list only; null on detail).
     chatbot_tier: Optional[str] = None
@@ -342,6 +344,12 @@ class UserUpdate(BaseModel):
         return normalize_msisdn(v)
 
 
+class SalespersonMeOut(BaseModel):
+    portal_kinds: List[str] = []
+    portal_slug: str
+    contact_id: Optional[str] = None
+
+
 class UserResponse(UserBase):
     id: str
     # Optional on the way out (identity S0): one phone-only user must not break the
@@ -366,6 +374,8 @@ class UserResponse(UserBase):
     # user. Populated by every manual UserResponse builder (see users.py) - the
     # field is not an ORM attribute, so inheritance alone would never fill it.
     product_discontinued_scopes: List[ProductDiscontinuedScopeOut] = []
+    # PORTAL-P3-ROLE-MENU: set only for a salesperson (see is_salesperson), else null.
+    salesperson: Optional[SalespersonMeOut] = None
     # The Sign-in section's five fields (S3 1.7). Populated by
     # `app.services.user_contact_link.sign_in_summary` in BOTH manual dict
     # builders (`get_user`, `get_current_user_profile`) - like the scopes above,

@@ -79,7 +79,7 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   };
 });
 
-const granted = new Set(['projects.projects.edit', 'projects.registrations.submit']);
+const granted = new Set(['projects.projects.edit', 'projects.registrations.submit', 'projects.projects.view']);
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => granted.has(slug),
   useHasAnyPermission: (slugs: string[]) => slugs.some((s) => granted.has(s)),

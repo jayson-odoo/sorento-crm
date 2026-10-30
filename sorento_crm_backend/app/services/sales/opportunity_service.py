@@ -11,7 +11,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Iterable, List, Optional, Union
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact
@@ -626,10 +626,30 @@ def list_opportunities(
         "expected_amount": SalesOpportunity.expected_amount,
         "title": SalesOpportunity.title,
         "opportunity_no": SalesOpportunity.opportunity_no,
+        # Every column of the list sorts (PORTAL-P4-REQUESTS P4-23), each by what it shows: the
+        # customer's name or the prospect's, the agent's code, the stage in pipeline order.
+        "customer": func.coalesce(
+            select(Customer.customer_name)
+            .where(Customer.id == SalesOpportunity.customer_id)
+            .scalar_subquery(),
+            SalesOpportunity.prospect_name,
+        ),
+        "agent": select(SalesAgent.sales_agent)
+        .where(SalesAgent.id == SalesOpportunity.sales_agent_id)
+        .scalar_subquery(),
+        "stage_label": select(Status.sort_order)
+        .where(Status.id == SalesOpportunity.status_id)
+        .scalar_subquery(),
+        "source": SalesOpportunity.source,
     }
     sort_col = sort_columns.get(sort, SalesOpportunity.created_at)
     order = sort_col.desc() if dir == "desc" else sort_col.asc()
-    rows = q.order_by(order).offset((page - 1) * limit).limit(limit).all()
+    rows = (
+        q.order_by(order, SalesOpportunity.id.asc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
     return rows, total
 
 

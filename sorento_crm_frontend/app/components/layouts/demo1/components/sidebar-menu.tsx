@@ -2,7 +2,7 @@
 
 import { JSX, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
 import { MENU_SIDEBAR } from '@/config/menu.config';
 import { injectPublishedWorkflowForms } from '@/config/workflow-forms-dynamic-menu';
@@ -14,6 +14,7 @@ import { collectMenuPaths, matchesMenuPath } from '@/lib/menu-path-match';
 import { usePermissions, useHasAnyPermission } from '@/hooks/usePermissions';
 import { WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS } from '@/config/workflow-forms-dynamic-menu';
 import { useTenantModules } from '@/hooks/useTenantModules';
+import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 import {
   AccordionMenu,
@@ -32,12 +33,19 @@ import { MenuItemPinButton } from './menu-item-pin-button';
 
 export function SidebarMenu() {
   const pathname = usePathname();
+  const currentType = useSearchParams()?.get('type') ?? null;
   // The EFFECTIVE user's flag: the impersonation target's while viewing as, else the
   // session's (MENU-PERM-GATE). The permission set below is already the target's, the
   // backend answers /users/me/permissions for the impersonated user.
   const isSuperadmin = useEffectiveIsSuperadmin();
   const { permissionSet, isLoading } = usePermissions();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
+  const { salesperson: salespersonProfile } = useAccountProfileForHeader();
+  const portalKinds = salespersonProfile?.portalKinds;
+  const salesperson = useMemo(
+    () => (portalKinds ? { portalKinds } : null),
+    [portalKinds],
+  );
   // A viewport prefetch of ~100 sidebar links is why every menu item carried
   // `prefetch={false}`; hover is the middle ground (M4 list latency).
   const prefetchOnce = usePrefetchOnce();
@@ -62,6 +70,7 @@ export function SidebarMenu() {
       isLoading,
       enabledModuleKeys,
       modulesLoading,
+      salesperson,
     });
   }, [
     permissionSet,
@@ -70,6 +79,7 @@ export function SidebarMenu() {
     modulesLoading,
     menuWithPublishedForms,
     isSuperadmin,
+    salesperson,
   ]);
 
   // Every path the visible menu can highlight, so a match can be tested against its rivals.
@@ -77,8 +87,21 @@ export function SidebarMenu() {
 
   // Memoize matchPath to prevent unnecessary re-renders
   const matchPath = useCallback(
-    (path: string): boolean => matchesMenuPath(path, pathname, menuPaths),
-    [pathname, menuPaths],
+    (path: string): boolean => {
+      // A MY REQUESTS entry (`/my-requests?type=X`) is active only for its own `type`.
+      const q = path.indexOf('?');
+      if (q !== -1) {
+        const wanted = new URLSearchParams(path.slice(q + 1)).get('type');
+        const base = path.slice(0, q);
+        if (wanted === null) return false;
+        if (pathname === base) return wanted === currentType;
+        // A form page (`/my-requests/<kind>/new` or `/<id>`) keeps its own kind highlighted.
+        if (pathname.startsWith(`${base}/`)) return pathname.slice(base.length + 1).split('/')[0] === wanted;
+        return false;
+      }
+      return matchesMenuPath(path, pathname, menuPaths);
+    },
+    [pathname, currentType, menuPaths],
   );
 
   // Global classNames for consistent styling
@@ -101,8 +124,11 @@ export function SidebarMenu() {
     indicator: '',
   };
 
-  const buildMenu = (items: MenuConfig): JSX.Element[] => {
-    return items.map((item: MenuItem, index: number) => {
+  // `offset` keeps index-derived values unique across the two halves rendered below:
+  // both share one single-type accordion, so a repeated `root-N` opens two groups at once.
+  const buildMenu = (items: MenuConfig, offset = 0): JSX.Element[] => {
+    return items.map((item: MenuItem, i: number) => {
+      const index = offset + i;
       if (item.heading) {
         return buildMenuHeading(item, index);
       } else if (item.disabled) {
@@ -305,7 +331,7 @@ export function SidebarMenu() {
       >
         {buildMenu(menuBefore)}
         <QuickAccessBlock />
-        {buildMenu(menuAfter)}
+        {buildMenu(menuAfter, menuBefore.length)}
       </AccordionMenu>
     </div>
   );

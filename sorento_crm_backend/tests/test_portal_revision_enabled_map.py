@@ -110,15 +110,13 @@ def test_a_disabled_type_is_false_while_its_siblings_stay_true(client):
     assert types["sponsorship_form"] is True
 
 
-def test_a_type_with_no_adapter_is_false_however_its_row_reads(client):
-    """`complaint` ships an enabled-able config row but no revision adapter, and
-    `resolve_policy` fails closed on it. The map has to agree, or the office gets
-    a tab whose contact-side action can never exist."""
+def test_complaint_follows_its_row_now_that_it_has_an_adapter(client):
+    """Owner Q6 a: complaint has a revision adapter, so the map reads its row like any other type."""
     c, db = client
     seed_system_settings(db)
     seed_config(db, "complaint", is_enabled=True)
 
-    assert _types(c.get(URL))["complaint"] is False
+    assert _types(c.get(URL))["complaint"] is True
 
 
 def test_a_zero_cap_reads_as_off(client):

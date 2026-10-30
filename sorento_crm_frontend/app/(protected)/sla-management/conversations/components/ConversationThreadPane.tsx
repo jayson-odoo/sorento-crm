@@ -33,6 +33,11 @@ import { useQueryClient } from '@tanstack/react-query';
 
 interface ConversationThreadPaneProps {
   contact: ConversationInboxItem | null;
+  /**
+   * The list search that produced this pick. When a MESSAGE matched
+   * (`contact.match`), the thread opens on that message with the term marked.
+   */
+  searchTerm?: string;
   /** False hides the composer's Reply mode entirely (read-only viewer). */
   canReply: boolean;
   /** Mobile only: returns to the list. */
@@ -51,6 +56,7 @@ interface ConversationThreadPaneProps {
  */
 export default function ConversationThreadPane({
   contact,
+  searchTerm = '',
   canReply,
   onBack,
   className,
@@ -111,6 +117,24 @@ export default function ConversationThreadPane({
     enabled: !!contactRef,
     resetKey: contactRef,
   });
+
+  // CONVO-SEARCH-MESSAGES: a row found by a message opens on that message. Runs
+  // after the thread hook's own reset for the new contact, so the jump lands in
+  // the fresh conversation rather than being wiped by it.
+  const matchMessageId = contact?.match?.message_id ?? null;
+  const matchTerm = matchMessageId ? searchTerm.trim() : '';
+  const { jumpToMessage } = thread;
+  // The list's anchor on the match. Released once the reader leaves it (jump
+  // to latest, or a send): while it is set the list never pins to the tail,
+  // so their own reply and new messages would stop following.
+  const [anchorId, setAnchorId] = useState<string | null>(matchMessageId);
+  useEffect(() => {
+    setAnchorId(matchMessageId);
+    if (matchMessageId) jumpToMessage(matchMessageId);
+    // Keyed on the contact too: the same message id never belongs to two
+    // contacts, but a re-pick of the same row must not re-jump on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contactRef, matchMessageId]);
 
   // A different contact is a different conversation: never carry the composer
   // mode across.
@@ -196,13 +220,21 @@ export default function ConversationThreadPane({
             isLoadingOlder={thread.isLoadingOlder}
             atConversationStart={thread.atConversationStart}
             isDetached={thread.isDetached}
-            onJumpToLatest={thread.jumpToLatest}
+            onJumpToLatest={() => {
+              setAnchorId(null);
+              thread.jumpToLatest();
+            }}
             newerUnseenCount={thread.newerUnseenCount}
             onLoadNewer={thread.loadNewer}
             hasMoreNewer={thread.hasMoreNewer}
             isLoadingNewer={thread.isLoadingNewer}
             searchController={thread.search}
-            highlightTerm={thread.highlightTerm}
+            highlightTerm={thread.highlightTerm || matchTerm}
+            // The drawer's enquiry anchor, reused for the search match: it
+            // holds the list off its first pin-to-bottom, which otherwise won
+            // the race against the jump on a cold first open (browser pass).
+            highlightMessageId={anchorId}
+            highlightLabel="Matches your search"
             focusMessageId={thread.focusMessageId}
             focusNonce={thread.focusNonce}
             comments={commentsQuery.data ?? []}
@@ -288,7 +320,11 @@ export default function ConversationThreadPane({
             closed: windowQuery.data ? !windowQuery.data.window.open : false,
             template: windowQuery.data?.chat_template ?? null,
           }}
-          templateSendAdapter={(input) => templateMutation.mutateAsync(input)}
+          templateSendAdapter={async (input) => {
+            const result = await templateMutation.mutateAsync(input);
+            setAnchorId(null);
+            return result;
+          }}
           snippetsEnabled
           snippetTrackingId={snippetTicketId}
           emojiEnabled
@@ -297,6 +333,7 @@ export default function ConversationThreadPane({
               text: payload.text,
               files: payload.files,
             });
+            setAnchorId(null);
             // AC-N2: a stamped send answered one of the sender's own enquiries
             // and stopped its clock. Said quietly - an unstamped send still
             // reached the contact, so it is information, not a failure.

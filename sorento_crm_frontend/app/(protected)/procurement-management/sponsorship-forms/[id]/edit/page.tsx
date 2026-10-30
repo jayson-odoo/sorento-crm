@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -41,12 +42,15 @@ async function EditSponsorshipFormWrapper({
         }
       />
       <div className="mt-6">
-        <PurchaseRequestForm
-          requestId={id}
-          defaultRequestType="sponsorship_form"
-          expectedRequestType="sponsorship_form"
-          successRedirectUrl={`/procurement-management/sponsorship-forms/${id}`}
-        />
+        {/* A salesperson's own form reads ?from= / ?revise= (useSearchParams). */}
+        <Suspense fallback={null}>
+          <PurchaseRequestForm
+            requestId={id}
+            defaultRequestType="sponsorship_form"
+            expectedRequestType="sponsorship_form"
+            successRedirectUrl={`/procurement-management/sponsorship-forms/${id}`}
+          />
+        </Suspense>
       </div>
     </>
   );

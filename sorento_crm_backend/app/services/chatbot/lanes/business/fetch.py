@@ -3197,6 +3197,75 @@ def _file_rows(e: dict[str, Any], *, links: bool) -> dict[str, Any]:
     return {**e, "items": out}
 
 
+def drop_restricted_fields(envelope: dict, granted: set[str], axis: str | None = None) -> None:
+    """Drop, in place, every field the envelope marks restricted that `granted` does not hold.
+
+    The one place a restricted field is dropped for a contact: `output_structurer` (today's
+    chatbot) and the agent's tool dispatch both call it. `axis` is the group-by axis of the
+    ask, if any; a restricted axis is answered flat.
+    """
+    e = envelope
+    restricted = e.get("restricted_fields")
+    if not (isinstance(restricted, dict) and restricted):
+        return
+
+    def _keep_field(f: Any) -> bool:
+        """Keep, drop, or SWAP. A restricted field that carries `granted_value` is
+        a plain field with a granted suffix (D1, the compact stock block's
+        "*Total:* 51 (O/S: 36)"): under the grant its value becomes the granted one,
+        without it the plain value stays and the suffix never reaches the reader.
+        A restricted field with no `granted_value` is dropped whole, as before."""
+        if not _has_key(f):
+            return True
+        perm = restricted.get(jsc.js_string(f["key"]))
+        if perm is None:
+            return True
+        has_granted_value = isinstance(f, dict) and "granted_value" in f
+        if perm in granted:
+            if has_granted_value:
+                f["value"] = f.pop("granted_value")
+            return True
+        if has_granted_value:
+            f.pop("granted_value", None)
+            return True
+        return False
+
+    def _filter_rows(rows: Any) -> None:
+        for row in rows or []:
+            if jsc.truthy(row) and isinstance(jsc.get(row, "fields"), list):
+                row["fields"] = [f for f in row["fields"] if _keep_field(f)]
+
+    _filter_rows(e.get("items"))
+    _filter_rows(e.get("summary_items"))
+    # A3/A5's GROUPED shape carries the same rows a second time, and the first
+    # cut of this rule filtered `items` only - so `group_by=product` on a PO
+    # question rendered every supplier a dealer must never see, and
+    # `group_by=supplier` printed the restricted value as the SECTION HEADING,
+    # where no field filter could ever reach it. Both are closed here: every
+    # group's rows go through the same `_keep_field`, and the AXIS itself is
+    # refused below when the grant is not held.
+    for grp in e.get("groups") or []:
+        if not (jsc.truthy(grp) and isinstance(grp, dict)):
+            continue
+        _filter_rows(grp.get("items"))
+        _filter_rows(grp.get("summary_items"))
+
+    # THE HEADING IS NOT A FIELD. A group's `label` is the axis value itself, so a
+    # restricted axis leaks by being grouped ON, whatever the rows carry. The answer
+    # is to drop the grouping and answer FLAT rather than to redact the headings:
+    # "Supplier A / Supplier B" with the names blanked still tells the dealer how many
+    # suppliers there are and which rows share one, and an ungrouped list is the
+    # honest answer to a question we may not break down.
+    # The axis NAME and the restricted FIELD KEY are the same word by construction:
+    # a tool may only group on an axis it renders as a field, and `group_by=supplier`
+    # groups on the `supplier` field the presenter marked restricted. So the lookup
+    # is the same `restricted` map, with no second table to keep in step.
+    axis_perm = restricted.get(axis) if axis else None
+    if axis_perm is not None and axis_perm not in granted:
+        e["groups"] = []
+        e["group_by_dropped"] = axis
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -3263,63 +3332,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if isinstance(restricted, dict) and restricted:
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
-
-        def _keep_field(f: Any) -> bool:
-            """Keep, drop, or SWAP. A restricted field that carries `granted_value` is
-            a plain field with a granted suffix (D1, the compact stock block's
-            "*Total:* 51 (O/S: 36)"): under the grant its value becomes the granted one,
-            without it the plain value stays and the suffix never reaches the reader.
-            A restricted field with no `granted_value` is dropped whole, as before."""
-            if not _has_key(f):
-                return True
-            perm = restricted.get(jsc.js_string(f["key"]))
-            if perm is None:
-                return True
-            has_granted_value = isinstance(f, dict) and "granted_value" in f
-            if perm in granted:
-                if has_granted_value:
-                    f["value"] = f.pop("granted_value")
-                return True
-            if has_granted_value:
-                f.pop("granted_value", None)
-                return True
-            return False
-
-        def _filter_rows(rows: Any) -> None:
-            for row in rows or []:
-                if jsc.truthy(row) and isinstance(jsc.get(row, "fields"), list):
-                    row["fields"] = [f for f in row["fields"] if _keep_field(f)]
-
-        _filter_rows(e.get("items"))
-        _filter_rows(e.get("summary_items"))
-        # A3/A5's GROUPED shape carries the same rows a second time, and the first
-        # cut of this rule filtered `items` only - so `group_by=product` on a PO
-        # question rendered every supplier a dealer must never see, and
-        # `group_by=supplier` printed the restricted value as the SECTION HEADING,
-        # where no field filter could ever reach it. Both are closed here: every
-        # group's rows go through the same `_keep_field`, and the AXIS itself is
-        # refused below when the grant is not held.
-        for grp in e.get("groups") or []:
-            if not (jsc.truthy(grp) and isinstance(grp, dict)):
-                continue
-            _filter_rows(grp.get("items"))
-            _filter_rows(grp.get("summary_items"))
-
-        # THE HEADING IS NOT A FIELD. A group's `label` is the axis value itself, so a
-        # restricted axis leaks by being grouped ON, whatever the rows carry. The answer
-        # is to drop the grouping and answer FLAT rather than to redact the headings:
-        # "Supplier A / Supplier B" with the names blanked still tells the dealer how many
-        # suppliers there are and which rows share one, and an ungrouped list is the
-        # honest answer to a question we may not break down.
-        # The axis NAME and the restricted FIELD KEY are the same word by construction:
-        # a tool may only group on an axis it renders as a field, and `group_by=supplier`
-        # groups on the `supplier` field the presenter marked restricted. So the lookup
-        # is the same `restricted` map, with no second table to keep in step.
-        axis = group_axis(ctx)
-        axis_perm = restricted.get(axis) if axis else None
-        if axis_perm is not None and axis_perm not in granted:
-            e["groups"] = []
-            e["group_by_dropped"] = axis
+        drop_restricted_fields(e, granted, group_axis(ctx))
 
     if ctx.get("set_by_code") and not e.get("groups"):
         _group_set_rows(e, ctx["set_by_code"])
