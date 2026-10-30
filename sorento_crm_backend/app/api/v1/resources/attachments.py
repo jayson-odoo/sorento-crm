@@ -25,6 +25,13 @@ from app.dependencies import (
 
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
 from app.services.attachment_company_service import AttachmentCompanyService
+from app.services.attachment_entity_access import (
+    PROJECT_ENTITY_TYPE,
+    assert_can_write_attachments,
+    assert_can_write_existing,
+    assert_can_write_target,
+    normalize_entity_type,
+)
 from app.services.storage_router import (
     PROVIDER_R2,
     normalize_provider,
@@ -137,52 +144,6 @@ def _create_and_send_webhook(
     )
 
 
-def _normalize_entity_type(entity_type: Optional[str]) -> Optional[str]:
-    """The entity_type exactly as upload stores it (lowercased, spaces to underscores)."""
-    cleaned = (entity_type or "").strip().lower().replace(" ", "_")
-    return cleaned or None
-
-
-def _assert_can_write_entity(
-    db: Session, entity_type: Optional[str], entity_id: Optional[str], current_user: dict
-) -> None:
-    """A file on a project is project work: writing it takes the project edit right.
-
-    Same rule `project_service.change_status` runs (`assert_can_edit_project`), not the
-    stricter `assert_can_write_project`: a pending registration still takes its documents
-    so the approver can fix it up before Approve (R8). Every other entity type is
-    unchanged here. ATTACH-PROJECT-WRITE.
-    """
-    if _normalize_entity_type(entity_type) != "project" or not entity_id:
-        return
-    from app.api.v1.projects._common import permission_slugs
-    from app.services import project_service
-
-    validate_uuid_path(str(entity_id), resource="Project")
-    project = project_service.get_project_or_404(db, str(entity_id), current_user["id"])
-    project_service.assert_can_edit_project(
-        db, project, current_user["id"], permission_slugs(db, current_user["id"])
-    )
-
-
-def _assert_can_write_attachments(db: Session, attachment_ids, current_user: dict) -> None:
-    """The entity check for every existing row a write touches; unknown ids pass through
-    so the service still answers them with its own 404 / skip."""
-    from app.models.resources import Attachment
-
-    ids = [str(i) for i in (attachment_ids or []) if i]
-    if not ids:
-        return
-    rows = (
-        db.query(Attachment.entity_type, Attachment.entity_id)
-        .filter(Attachment.id.in_(ids))
-        .distinct()
-        .all()
-    )
-    for entity_type, entity_id in rows:
-        _assert_can_write_entity(db, entity_type, entity_id, current_user)
-
-
 def _find_filename_collision(
     db: Session,
     directory_id: Optional[str],
@@ -200,7 +161,7 @@ def _find_filename_collision(
     with no folder, and a folder-only scope matched (and Replace overwrote) a same-named
     file on any OTHER project.
     """
-    from sqlalchemy import func as _sa_func
+    from sqlalchemy import func as _sa_func, or_
     from app.models.resources import Attachment
 
     # "No folder" (directory_id NULL) is its own scope - two same-named files
@@ -215,11 +176,20 @@ def _find_filename_collision(
         _sa_func.lower(Attachment.stored_filename) == (display_name or "").lower(),
         Attachment.is_deleted.is_(False),
     )
-    normalized_entity_type = _normalize_entity_type(entity_type)
+    normalized_entity_type = normalize_entity_type(entity_type)
     if normalized_entity_type and entity_id:
         q = q.filter(
             Attachment.entity_type == normalized_entity_type,
             Attachment.entity_id == str(entity_id),
+        )
+    else:
+        # A folderless project document is not "here" for a plain Files upload: matching it
+        # answered with another project's file id and name, and offered a Replace onto it.
+        q = q.filter(
+            or_(
+                Attachment.entity_type.is_(None),
+                Attachment.entity_type != PROJECT_ENTITY_TYPE,
+            )
         )
     return q.first()
 
@@ -1021,9 +991,9 @@ async def create_attachment(
 
         # Before any bytes reach storage: the entity the new row lands on, and the row a
         # Replace would overwrite, both need the right to write them.
-        _assert_can_write_entity(db, final_entity_type, entity_id, current_user)
+        assert_can_write_target(db, final_entity_type, entity_id, current_user)
         if existing_to_replace is not None:
-            _assert_can_write_entity(
+            assert_can_write_existing(
                 db, existing_to_replace.entity_type, existing_to_replace.entity_id, current_user
             )
 
@@ -1560,10 +1530,10 @@ def update_attachment(
         service = AttachmentService(db)
         # Both ends of an edit: the entity the file is on now, and the one it is re-pointed to.
         current = service.get_attachment(attachment_id)
-        _assert_can_write_entity(db, current.entity_type, current.entity_id, current_user)
+        assert_can_write_existing(db, current.entity_type, current.entity_id, current_user)
         requested = attachment_data.model_dump(exclude_unset=True)
         if "entity_type" in requested or "entity_id" in requested:
-            _assert_can_write_entity(
+            assert_can_write_target(
                 db,
                 requested.get("entity_type", current.entity_type),
                 requested.get("entity_id", current.entity_id),
@@ -1589,6 +1559,8 @@ def bulk_move_attachments(
 ):
     """Move many attachments into the same target folder in one transaction (drag-drop multi-select)."""
     try:
+        # A moved file is under that folder's delete / restore cascade from then on.
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         updated = service.bulk_move(body.attachment_ids, body.directory_id)
         return AttachmentsBulkMoveResponse(updated=updated)
@@ -1692,7 +1664,7 @@ def delete_attachment(
     """Delete an attachment permanently (hard delete). Use archive for retention."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
-        _assert_can_write_attachments(db, [attachment_id], current_user)
+        assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
         result = service.delete_attachment(attachment_id, current_user["id"])
         return result
@@ -1713,7 +1685,7 @@ def archive_attachment(
     Same slug as `POST /bulk-archive`: whoever may trash many files may trash one."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
-        _assert_can_write_attachments(db, [attachment_id], current_user)
+        assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
         result = service.archive_attachment(attachment_id, current_user["id"])
         return result
@@ -1732,7 +1704,7 @@ def restore_attachment(
     """Restore an archived attachment. Takes the archive slug: restore undoes an archive."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
-        _assert_can_write_attachments(db, [attachment_id], current_user)
+        assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
         result = service.restore_attachment(attachment_id)
         return result
@@ -1750,7 +1722,7 @@ def bulk_archive_attachments(
 ):
     """Archive multiple attachments (soft delete)."""
     try:
-        _assert_can_write_attachments(db, body.attachment_ids, current_user)
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         result = service.archive_attachments(body.attachment_ids, current_user["id"])
         return result
@@ -1768,7 +1740,7 @@ def bulk_delete_attachments(
 ):
     """Mass delete attachments permanently (hard delete)."""
     try:
-        _assert_can_write_attachments(db, body.attachment_ids, current_user)
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         result = service.delete_attachments(body.attachment_ids, current_user["id"])
         return result
@@ -1809,6 +1781,7 @@ def bulk_set_attachment_type(
 
     Same endpoint serves single-edit (one ID) and bulk-edit (many IDs)."""
     try:
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         return service.bulk_set_attachment_type(
             body.attachment_ids,
@@ -1839,6 +1812,7 @@ def bulk_set_company(
     single-row Edit fallback, plus tests and n8n-style callers.
     """
     try:
+        assert_can_write_attachments(db, body.attachment_ids or [], current_user)
         service = AttachmentCompanyService(db)
         result = service.apply(
             attachment_ids=body.attachment_ids,
@@ -1883,6 +1857,7 @@ def apply_bulk_access_levels(
     try:
         service = AttachmentService(db)
         aids = service.resolve_bulk_attachment_ids(body.attachment_ids, body.directory_id)
+        assert_can_write_attachments(db, aids, current_user)
         result = service.apply_bulk_access_levels(
             aids,
             body.access_levels,

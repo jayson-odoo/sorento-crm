@@ -37,6 +37,7 @@ from app.services.user_service import UserPermissionService
 from tests._pg_fixture import blank_session, unique_code
 
 BASE = "/api/v1/resource-management/attachments"
+DIRS = "/api/v1/resource-management/directories"
 UPLOAD = "resource.attachments.upload"
 DELETE = "resource.attachments.delete"
 BULK_DELETE = "resource.attachments.bulk_delete"
@@ -176,7 +177,23 @@ def _upload(world, project: Project, name: str | None = None, **form):
     )
 
 
-def _seed_file(db, project: Project | None, name: str | None = None, *, archived=False) -> str:
+def _folder(db, *, deleted: bool = False) -> str:
+    from app.models.resources import AttachmentDirectory
+
+    row = AttachmentDirectory(
+        id=str(uuid.uuid4()),
+        name=unique_code("apw-folder")[:40],
+        company_id=DEFAULT_COMPANY_ID,
+        is_deleted=deleted,
+    )
+    db.add(row)
+    db.flush()
+    return row.id
+
+
+def _seed_file(
+    db, project: Project | None, name: str | None = None, *, archived=False, directory_id=None
+) -> str:
     name = name or f"{unique_code('spec')}.pdf"
     att = Attachment(
         id=str(uuid.uuid4()),
@@ -188,6 +205,7 @@ def _seed_file(db, project: Project | None, name: str | None = None, *, archived
         entity_type="project" if project is not None else None,
         entity_id=str(project.id) if project is not None else None,
         is_deleted=archived,
+        directory_id=directory_id,
     )
     db.add(att)
     db.flush()
@@ -486,18 +504,112 @@ def test_replace_on_the_same_project_still_replaces(db, world):
     assert _row(db, mine).file_hash != "original-bytes"
 
 
-def test_replace_without_an_entity_cannot_overwrite_another_projects_file(db, world):
-    """A folderless upload with no entity still collides on the folderless project file;
-    replacing it is a write to that project and needs the edit right."""
+def test_a_plain_files_upload_does_not_collide_with_a_project_document(db, world):
+    """Security review S1: with no entity and no folder, a folderless project document used to
+    collide, which answered with another project's file id and name and offered a Replace."""
     _as(world, "siti")
     name = f"{unique_code('shared')}.pdf"
     theirs = _seed_file(db, world["project_a"], name)
 
+    check = world["client"].get(f"{BASE}/collision-check", params={"filename": name})
     res = world["client"].post(
         f"{BASE}/",
         data={"attachment_type_id": world["type_id"], "on_conflict": "replace"},
         files={"file": (name, b"%PDF-1.4 apw", "application/pdf")},
     )
 
-    assert res.status_code == 403, res.text
+    assert check.status_code == 200 and check.json()["collides"] is False, check.text
+    assert res.status_code == 201, res.text
+    assert res.json()["id"] != theirs
     assert _row(db, theirs).file_hash == "original-bytes"
+
+
+def test_replace_without_an_entity_never_overwrites_a_project_file_in_a_folder(db, world):
+    """A project file filed into a folder is not "here" for a plain upload either, so Replace
+    makes a new file and the project's file keeps its bytes."""
+    _as(world, "siti")
+    folder = _folder(db)
+    name = f"{unique_code('shared')}.pdf"
+    theirs = _seed_file(db, world["project_a"], name, directory_id=folder)
+
+    res = world["client"].post(
+        f"{BASE}/",
+        data={"attachment_type_id": world["type_id"], "on_conflict": "replace", "directory_id": folder},
+        files={"file": (name, b"%PDF-1.4 apw", "application/pdf")},
+    )
+
+    assert res.status_code == 201, res.text
+    assert res.json()["id"] != theirs
+    assert _row(db, theirs).file_hash == "original-bytes"
+
+
+# ------------------------------------------------------- moves, folders, other bulk writes
+
+
+def test_an_outsider_cannot_bulk_move_another_projects_file_into_their_folder(db, world):
+    """Security review B1, step 1: a moved file falls under that folder's trash cascade."""
+    _as(world, "siti")
+    folder = _folder(db)
+    theirs = _seed_file(db, world["project_a"])
+
+    res = world["client"].post(
+        f"{BASE}/bulk-move", json={"attachment_ids": [theirs], "directory_id": folder}
+    )
+
+    assert res.status_code == 403, res.text
+    assert _row(db, theirs).directory_id is None
+
+
+@pytest.mark.parametrize("archived", [False, True])
+def test_a_folder_cascade_cannot_reach_another_projects_file(db, world, archived):
+    """Security review B1, step 2: folder delete, restore and permanent delete all cascade into
+    files, so a folder holding another salesperson's project file is refused whole."""
+    _as(world, "siti")
+    folder = _folder(db, deleted=archived)
+    theirs = _seed_file(db, world["project_a"], directory_id=folder, archived=archived)
+
+    if archived:
+        restored = world["client"].post(f"{DIRS}/{folder}/restore")
+        purged = world["client"].post(f"{DIRS}/{folder}/permanent-delete")
+        assert restored.status_code == 403, restored.text
+        assert purged.status_code == 403, purged.text
+        assert _row(db, theirs) is not None and _row(db, theirs).is_deleted is True
+    else:
+        trashed = world["client"].delete(f"{DIRS}/{folder}")
+        assert trashed.status_code == 403, trashed.text
+        assert _row(db, theirs).is_deleted is False
+
+
+def test_the_owner_can_trash_a_folder_holding_their_project_file(db, world):
+    _as(world, "ali")
+    folder = _folder(db)
+    mine = _seed_file(db, world["project_a"], directory_id=folder)
+
+    res = world["client"].delete(f"{DIRS}/{folder}")
+
+    assert res.status_code == 200, res.text
+    assert _row(db, mine).is_deleted is True
+
+
+def test_an_outsider_cannot_retype_another_projects_file(db, world):
+    _as(world, "siti")
+    theirs = _seed_file(db, world["project_a"])
+
+    res = world["client"].post(
+        f"{BASE}/bulk-attachment-type",
+        json={"attachment_ids": [theirs], "attachment_type_id": world["type_id"]},
+    )
+
+    assert res.status_code == 403, res.text
+
+
+def test_a_file_on_a_project_that_no_longer_exists_is_not_locked(db, world):
+    """Security review S2: an existing row on a missing project has no project rule left to
+    apply; it must not 404 every delete, archive or edit of it."""
+    _as(world, "siti")
+    orphan = _seed_file(db, Project(id=str(uuid.uuid4())))
+
+    res = world["client"].post(f"{BASE}/{orphan}/archive")
+
+    assert res.status_code == 200, res.text
+    assert _row(db, orphan).is_deleted is True
