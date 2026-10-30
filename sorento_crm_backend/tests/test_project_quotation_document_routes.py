@@ -1114,6 +1114,108 @@ def test_the_document_tells_the_client_whether_it_has_been_signed(api):
     assert listed["is_signed"] is True
 
 
+# ------------------------------------------------- QUOTE-SEND-WHATSAPP (AC-F1, F2, F4)
+
+
+def _whatsapp_events(db, project_id: str) -> list:
+    from app.models.activities import ActivityEvent
+
+    return (
+        db.query(ActivityEvent)
+        .filter(
+            ActivityEvent.entity_type == "project",
+            ActivityEvent.entity_id == str(project_id),
+            ActivityEvent.system_template == "quotation_whatsapp_opened",
+        )
+        .all()
+    )
+
+
+def test_opening_whatsapp_writes_one_activity_line_naming_the_ref_and_the_user(api):
+    """AC-F1: the salesperson pressing Open WhatsApp leaves one line on the project feed."""
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+    assert _whatsapp_events(db, project.id) == []
+
+    response = client.post(f"{root}/{document['id']}/issues/{issue['id']}/whatsapp-opened")
+    assert response.status_code == 204, response.text
+
+    events = _whatsapp_events(db, project.id)
+    assert len(events) == 1
+    event = events[0]
+    assert event.body_text == (
+        f"Quotation {issue['our_ref_text']} link opened in WhatsApp by {MARKER} Baser"
+    )
+    payload = event.system_payload
+    assert payload["document_id"] == document["id"]
+    assert payload["issue_id"] == issue["id"]
+    assert payload["issue_no"] == issue["issue_no"]
+
+
+def test_opening_whatsapp_does_not_clear_the_unattended_clock(api):
+    """AC-F2: the line is not a meaningful template, so the project's clock stays put."""
+    from datetime import datetime
+
+    from app.models.projects import Project
+
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+
+    old = datetime(2026, 1, 5, 9, 0, 0)
+    db.query(Project).filter(Project.id == project.id).update(
+        {"last_meaningful_activity_at": old, "stale_level": 3}
+    )
+    db.commit()
+
+    response = client.post(f"{root}/{document['id']}/issues/{issue['id']}/whatsapp-opened")
+    assert response.status_code == 204, response.text
+
+    db.expire_all()
+    row = db.query(Project).filter(Project.id == project.id).first()
+    assert row.last_meaningful_activity_at == old
+    assert row.stale_level == 3
+
+
+def test_someone_who_may_not_edit_cannot_log_a_whatsapp_open(api):
+    """AC-F4: the same edit right as the sign-link route; nothing is written on refusal."""
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+
+    with _without_permission(EDIT):
+        refused = client.post(f"{root}/{document['id']}/issues/{issue['id']}/whatsapp-opened")
+    assert refused.status_code == 403, refused.text
+    assert _whatsapp_events(db, project.id) == []
+
+
+def test_an_issue_of_another_document_cannot_be_logged_through_this_one(api):
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+    other = _create_document(client, project.id)
+
+    stranger = client.post(f"{root}/{other['id']}/issues/{issue['id']}/whatsapp-opened")
+    assert stranger.status_code == 404, stranger.text
+    assert stranger.json()["code"] == "quotation_issue_not_found"
+    unknown = client.post(f"{root}/{document['id']}/issues/{_uid()}/whatsapp-opened")
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["code"] == "quotation_issue_not_found"
+    assert _whatsapp_events(db, project.id) == []
+
+
+def test_malformed_ids_on_the_whatsapp_log_route_are_answered_not_crashed(api):
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+
+    for bad in ("not-a-uuid", "123"):
+        for url in (
+            f"{root}/{bad}/issues/{issue['id']}/whatsapp-opened",
+            f"{root}/{document['id']}/issues/{bad}/whatsapp-opened",
+        ):
+            response = client.post(url)
+            assert 400 <= response.status_code < 500, (
+                f"{url} produced {response.status_code}: {response.text}"
+            )
+
+
 @pytest.mark.parametrize("kind", ["pdf", "xlsx"])
 def test_the_pending_download_is_named_from_document_no_and_issue_no(api, monkeypatch, kind):
     """AC2.6: same Quotation No. as the sign page, also for an old `(R1)` stored text."""
