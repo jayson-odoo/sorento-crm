@@ -94,14 +94,14 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                   Ask to join
                 </Button>
                 <Button type="button" size="sm" variant="ghost" onClick={() => setRequesting('dispute')}>
-                  Register interest
+                  Register as secondary lead
                 </Button>
               </div>
             </div>
           )}
 
           <div>
-            <p className="text-xs text-muted-foreground">Interested</p>
+            <p className="text-xs text-muted-foreground">Secondary leads</p>
             {interested.length === 0 ? (
               <p className="text-sm text-muted-foreground">-</p>
             ) : (
@@ -206,7 +206,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                         {request.status}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
-                        {request.kind === 'dispute' ? 'Interest' : 'Join'} by{' '}
+                        {request.kind === 'dispute' ? 'Secondary lead' : 'Join'} by{' '}
                         {request.requester_name ?? 'someone'}
                         {request.decided_by_name ? ` · decided by ${request.decided_by_name}` : ''}
                       </span>
@@ -256,7 +256,7 @@ function RequestDialog({
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
           <DialogTitle>
-            {isJoin ? 'Ask to join this project' : `Register interest in ${projectCodeLabel(project)}`}
+            {isJoin ? 'Ask to join this project' : `Register as secondary lead on ${projectCodeLabel(project)}`}
           </DialogTitle>
           <DialogDescription>
             {isJoin
@@ -297,7 +297,7 @@ function RequestDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!reason.trim() || request.isPending}>
-              {isJoin ? 'Send request' : 'Register interest'}
+              {isJoin ? 'Send request' : 'Register as secondary lead'}
             </Button>
           </DialogFooter>
         </form>

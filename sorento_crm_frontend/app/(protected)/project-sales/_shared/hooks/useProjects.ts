@@ -497,7 +497,7 @@ export function useTakeoverMutations(projectId: string) {
       toast.success(
         created.kind === 'join'
           ? 'Request sent to the project owner'
-          : 'Interest registered',
+          : 'Registered as secondary lead',
       );
     },
     onError: (error: Error) => toast.error(error.message),

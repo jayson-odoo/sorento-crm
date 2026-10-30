@@ -260,7 +260,7 @@ export function ProjectForm(props: ProjectFormProps) {
   const canSubmit =
     title.trim().length > 0 && !leadMissing && !customerMissing && !wouldBlock && !pending;
   const canSaveDraft = title.trim().length > 0 && !pending;
-  // The top blocking candidate: the footer's one primary becomes Register interest (D2).
+  // The top blocking candidate: the footer's one primary becomes Register as secondary lead (D2).
   const blocker =
     mode === 'create' && wouldBlock ? candidates.find((candidate) => candidate.blocks) : undefined;
 
@@ -810,7 +810,7 @@ export function ProjectForm(props: ProjectFormProps) {
           </Button>
           {blocker ? (
             <Button type="button" onClick={() => setInterestTarget(blocker)}>
-              Register interest in {blocker.project_code}
+              Register as secondary lead on {blocker.project_code}
             </Button>
           ) : submitOnly ? (
             <>
@@ -902,7 +902,7 @@ function RegisterInterestDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92dvh] w-full max-w-lg overflow-hidden" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>Register interest in {candidate.project_code}</DialogTitle>
+          <DialogTitle>Register as secondary lead on {candidate.project_code}</DialogTitle>
         </DialogHeader>
 
         <form
@@ -920,7 +920,7 @@ function RegisterInterestDialog({
             if (canViewProject) {
               router.push(`/project-sales/${candidate.project_id}`);
             } else {
-              toast.success(`Interest registered in ${candidate.project_code}`);
+              toast.success(`Registered as secondary lead on ${candidate.project_code}`);
               router.push('/project-sales/pipeline');
             }
           }}
@@ -946,7 +946,7 @@ function RegisterInterestDialog({
             </Button>
             <Button type="submit" disabled={!reason.trim() || request.isPending}>
               {request.isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-              Register interest
+              Register as secondary lead
             </Button>
           </DialogFooter>
         </form>
