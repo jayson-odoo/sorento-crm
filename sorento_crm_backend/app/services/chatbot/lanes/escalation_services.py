@@ -225,23 +225,6 @@ def _product_refs(products: Any) -> tuple[set[str], set[str]]:
     return uuids, codes
 
 
-def _company_brand(name: Any, code: Any) -> str | None:
-    """The brand a company's name stands for, or None (fix round 4).
-
-    The Mocha company sells only the MOCHA brand, and its rows carry no brand row, so
-    the company is the brand. The incumbent Sorento company is not: it carries several
-    brands (SORENTO, MOCHA), so a Sorento row without a brand row names none, as before.
-    Keyed off `escalation.CO_ALIASES`, the lane's own company vocabulary.
-    """
-    from app.services.chatbot.lanes.escalation import CO_ALIASES
-
-    keys = {str(v).strip().lower() for v in (name, code) if v}
-    for brand, aliases in CO_ALIASES.items():
-        if brand != "sorento" and keys & {brand, *aliases}:
-            return brand
-    return None
-
-
 def focus_product_origin(db: Any, products: Any) -> dict[str, Any]:
     """`{brand, company, not_found}` for the product(s) the conversation is about (#865).
 
@@ -255,21 +238,18 @@ def focus_product_origin(db: Any, products: Any) -> dict[str, Any]:
     product in Sorento goes to the Mocha brand member, whichever company the customer is
     talking to): a code is looked for in the contact's own company first, and only a code
     found nowhere there is looked for across every company. A row's brand is its brand
-    row, else the brand its company stands for (`_company_brand`). This read is for
-    routing only; stock, prices and orders keep the turn's company scope, and so does this
-    session once the read is done. `company` names where the rows were found and
+    row, else the brand its company stands for (`product_origin_service.company_brand`).
+    This read is for routing only; stock, prices and orders keep the turn's company scope,
+    and so does this session once the read is done. `company` names where the rows were found and
     `not_found` lists the codes no company holds.
     """
     empty: dict[str, Any] = {"brand": None, "company": None, "not_found": []}
     uuids, codes = _product_refs(products)
     if not uuids and not codes:
         return empty
-    from sqlalchemy import func
-
     from app.models.base import company_scope
-    from app.models.company import Company
-    from app.models.product import Brand, Product
     from app.services.entity_resolver import _prefix_probe_product, _probe_product
+    from app.services.product_origin_service import product_origin
 
     def find(code: str) -> set[str]:
         hits = _probe_product(db, [code]).get(code) or _prefix_probe_product(db, code)
@@ -294,29 +274,8 @@ def focus_product_origin(db: Any, products: Any) -> dict[str, Any]:
             uuids.update(found)
         if not uuids:
             return {**empty, "not_found": not_found}
-        with company_scope(db, None):
-            rows = (
-                db.query(func.lower(Brand.brand_code), Company.name, Company.code)
-                .select_from(Product)
-                .outerjoin(Brand, Brand.id == Product.brand_id)
-                .join(Company, Company.id == Product.company_id)
-                .filter(Product.id.in_(sorted(uuids)))
-                .distinct()
-                .all()
-            )
-    brands = sorted(
-        {
-            str(brand).strip() if brand and str(brand).strip() else _company_brand(name, company_code)
-            for brand, name, company_code in rows
-        }
-        - {None}
-    )
-    companies = sorted({str(name) for _brand, name, _code in rows if name})
-    return {
-        "brand": brands[0] if len(brands) == 1 else None,
-        "company": " and ".join(companies) or None,
-        "not_found": not_found,
-    }
+        origin = product_origin(db, uuids)
+    return {**origin, "not_found": not_found}
 
 
 def focus_product_brand(db: Any, products: Any) -> str | None:

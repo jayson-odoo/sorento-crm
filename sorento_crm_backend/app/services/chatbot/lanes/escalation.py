@@ -69,14 +69,9 @@ ESCALATION_TEAMS: tuple[str, ...] = (
     "it_admin",
 )
 
-# `escalation-context`'s own STOPGAP mirror of the parser fork's map. The real source is
-# the CRM `companies.code` column threaded through the resolver; kept byte-identical here
-# and in `head/output_exchange.CO_ALIASES` until that lands.
-CO_ALIASES: dict[str, list[str]] = {
-    "sorento": ["sorento", "srt"],
-    "mocha": ["mocha", "mch"],
-    "cabana": ["cabana", "cbn"],
-}
+# `escalation-context`'s own STOPGAP mirror of the parser fork's map, defined in core
+# (`product_origin_service`) because the quotation drawing request routes by it too.
+from app.services.product_origin_service import CO_ALIASES  # noqa: E402,F401
 
 # The ONE customer message an out-of-scope handover sends (WA-MSG-TRIM, owner 3 Oct 2026).
 # It replaces the old pair, `sorento-sub-respond-sendmsg-respond-routed-to-pic2`'s "Please

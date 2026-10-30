@@ -12,9 +12,9 @@ The route under test
 - assignee: the tier-1 team of that team set in the PRODUCT'S company, then
   `AccessAgentService.get_next_assignee(agent_id, team_id, brand_code=<product brand>)`;
 - policy: the `AgentTeam.policy_id` binding (`resolve_policy_id_for`);
-- brand: `focus_product_origin(db, [{"uuid": product_id, "hint": "product"}])["brand"]` (it
-  reads focus ENTRIES, dicts; a bare id string is ignored and answers None), kept on the tracker (`brand_code`)
-  and passed again when the overdue scan escalates a tier.
+- brand: `product_origin(db, [product_id])["brand"]` (`product_origin_service`, the core half of the
+  bot's `focus_product_origin`), kept on the tracker (`brand_code`) and passed again when the overdue
+  scan escalates a tier.
 No `form_sla_configs` row exists in any test here, and one is never needed.
 
 Service contract these tests pin (new in the rework)
