@@ -23,6 +23,8 @@ class SampleRequestWrite(BaseModel):
     customer_name: Optional[str] = Field(None, max_length=255)
     project_id: Optional[str] = None
     project_title: Optional[str] = Field(None, max_length=255)
+    quotation_document_id: Optional[str] = None
+    quotation_issue_id: Optional[str] = None
     scope_note: Optional[str] = Field(None, max_length=255)
     delivery_date: Optional[Date] = None
     delivery_mode: Optional[Literal["driver", "self_deliver", "self_collect"]] = None

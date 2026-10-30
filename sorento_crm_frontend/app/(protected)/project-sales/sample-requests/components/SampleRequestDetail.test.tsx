@@ -148,6 +148,13 @@ describe('SampleRequestDetail', () => {
     expect(screen.getByText('Request Delivery Date')).toBeTruthy();
   });
 
+  it('SFQ-26: shows the quotation the lines came from, when one is recorded', () => {
+    state.data = detail({ quotation_ref: 'Q-0001 (R2)' } as Partial<Detail>);
+    render(<Page />);
+    expect(screen.getByText('Quotation')).toBeTruthy();
+    expect(screen.getByText('Q-0001 (R2)')).toBeTruthy();
+  });
+
   it('expands a line into the stock grid for its product', () => {
     render(<Page />);
     expect(screen.queryByTestId('stock-grid')).toBeNull();
