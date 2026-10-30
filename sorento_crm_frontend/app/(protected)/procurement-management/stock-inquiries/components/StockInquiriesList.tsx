@@ -36,6 +36,7 @@ import { useListingViewPreferences } from '@/lib/listing-column-preferences/useL
 import { useStockInquiries } from '../hooks/useStockInquiries';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockInquiry } from '../types/stockInquiry.types';
@@ -69,7 +70,17 @@ const LIMITED_STATUS_LABELS: Record<string, string> = {
   ...STOCK_INQUIRY_STATUS_LABELS,
 };
 
+/**
+ * A salesperson limited to their own stock inquiries gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function StockInquiriesList() {
+  const { limited } = useRequestScope('stock_inquiry');
+  if (limited) return <MyRequestPortalList kind="stock_inquiry" />;
+  return <StaffStockInquiriesList />;
+}
+
+function StaffStockInquiriesList() {
   const router = useRouter();
   const pathname = usePathname();
   // A salesperson sees only their own rows (the server narrows the list): Create needs
@@ -455,7 +466,7 @@ export default function StockInquiriesList() {
       }
     >
       <Plus />
-      Create Stock Inquiry
+      Create
     </Button>
   );
 

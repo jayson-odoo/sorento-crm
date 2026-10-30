@@ -165,19 +165,27 @@ export const myRequestsFetch = async (input: string, init?: RequestInit): Promis
   return apiFetch(toMyRequests(input), init);
 };
 
-/** The staff pages a salesperson's own request lives on (`MY_REQUEST_STAFF_PAGES`). */
+/** The staff pages a salesperson's own request lives on (`MY_REQUEST_STAFF_PAGES`). An opportunity
+ *  has no `/new` page: its list's Create opens the Log opportunity modal there. */
 export const myRequestsPaths: SubmissionPaths = {
   home: (kind: PortalLandingKind) => myRequestStaffPath(kind) ?? '/',
+  new: (kind: PortalLandingKind) =>
+    kind === 'sales_opportunity'
+      ? (myRequestStaffPath(kind) ?? '/')
+      : `${myRequestStaffPath(kind) ?? ''}/new`,
   detail: (kind: PortalLandingKind, id: string) =>
     `${myRequestStaffPath(kind) ?? ''}/${encodeURIComponent(id)}`,
   duplicate: (kind: PortalLandingKind, id: string) =>
     `${myRequestStaffPath(kind) ?? ''}/new?from=${encodeURIComponent(id)}`,
+  revise: (kind: PortalLandingKind, id: string) =>
+    `${myRequestStaffPath(kind) ?? ''}/${encodeURIComponent(id)}?revise=1`,
 };
 
 /** portal-client, function for function, over `/api/v1/my-requests`, plus the three kinds' own
  *  services. A fresh one per form: its lookup sets are cached per client. */
 export const createMyRequestsSubmissionApi = (): SubmissionClient => ({
   fetchMe,
+  fetchSubmissions: (kind, q) => myRequests.fetchSubmissions(asKind(kind), q),
   fetchSubmission: (kind, id) => myRequests.fetchSubmission(asKind(kind), id),
   fetchSubmissionNeighbours,
   fetchRequestorOptions: myRequests.fetchRequestorOptions,

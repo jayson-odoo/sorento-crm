@@ -42,6 +42,7 @@ import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { AUTO_UPDATE_STATUSES } from '@/lib/dealer-kit/product-data-changes';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import {
   listPriceTagRequests,
   claimPriceTagRequest,
@@ -66,7 +67,17 @@ const DRAFT_OPTION = { value: 'draft', label: 'Draft' };
 /** A saved, unsent request keeps status `new`; `portal_draft_at` is what makes it a draft. */
 const displayStatus = (row: PriceTagRequestSummary) => (row.portal_draft_at ? 'draft' : row.status);
 
+/**
+ * A salesperson limited to their own price tag requests gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function PriceTagRequestsList() {
+  const { limited } = useRequestScope('price_tag_request');
+  if (limited) return <MyRequestPortalList kind="price_tag_request" />;
+  return <StaffPriceTagRequestsList />;
+}
+
+function StaffPriceTagRequestsList() {
   const { limited } = useRequestScope('price_tag_request');
   const canCreate = useHasPermission('dealer_kit.price_tag_requests.create');
   const statusOptions = limited ? [DRAFT_OPTION, ...STATUS_OPTIONS] : STATUS_OPTIONS;

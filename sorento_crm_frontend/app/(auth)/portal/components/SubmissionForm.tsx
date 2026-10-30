@@ -80,6 +80,7 @@ import {
 import {
   clientDeletes,
   clientEmbedded,
+  clientExtraTabs,
   clientPaths,
   useSubmissionClient,
   useSubmissionFetchBytes,
@@ -1816,7 +1817,10 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
   const commentsCount = commentsThread.comments.filter(
     (c) => c.kind !== 'response' && !c.deleted,
   ).length;
-  const tabbed = revisionsTabbed || commentsTabbed;
+  // Tabs the client adds after these (a CRM complaint's fulfilment DOs, L3), on a saved form only.
+  // The portal's client adds none.
+  const extraTabs = submissionId ? clientExtraTabs(client) : [];
+  const tabbed = revisionsTabbed || commentsTabbed || extraTabs.length > 0;
 
   const detailsContent = (
     <>
@@ -2491,6 +2495,11 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
                 <span>Revisions</span>
               </TabsTrigger>
             )}
+            {extraTabs.map((tab) => (
+              <TabsTrigger key={tab.value} value={tab.value}>
+                <span>{tab.label}</span>
+              </TabsTrigger>
+            ))}
           </TabsList>
           <TabsContent value="details" className="m-0 space-y-4">
             {detailsContent}
@@ -2512,6 +2521,11 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
               {revisionHistoryCard}
             </TabsContent>
           )}
+          {extraTabs.map((tab) => (
+            <TabsContent key={tab.value} value={tab.value} className="m-0">
+              {tab.content}
+            </TabsContent>
+          ))}
         </Tabs>
       ) : (
         <>

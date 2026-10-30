@@ -80,7 +80,6 @@ import { recordActionItems } from '@/components/common/recordActions';
 import { useComplaintActions } from '../actions';
 import ComplaintNotifiableFieldDialog from './ComplaintNotifiableFieldDialog';
 import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
-import ComplaintFulfilmentOrdersSection from './ComplaintFulfilmentOrdersSection';
 import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
 import { complaintsPagerQuery } from '../hooks/useComplaints';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
@@ -102,19 +101,13 @@ const statusLabel = complaintStatusLabel;
 
 /**
  * A salesperson limited to their own complaints (PORTAL-P4-REQUESTS R1, form parity) views theirs in
- * the portal's own form, read-only exactly as the portal shows it; everyone else the staff detail,
- * unchanged (every action, and the root cause / resolution / technical response edits).
+ * the portal's own form, read-only exactly as the portal shows it, its fulfilment DOs in a tab of
+ * that form (L3); everyone else the staff detail, unchanged (every action, and the root cause /
+ * resolution / technical response edits).
  */
 export default function ComplaintDetail(props: ComplaintDetailProps) {
   const { limited } = useRequestScope('complaint');
-  if (limited) {
-    return (
-      <div className="space-y-6">
-        <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} />
-        <ComplaintFulfilmentOrdersSection complaintId={props.complaintId} readOnly />
-      </div>
-    );
-  }
+  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} />;
   return <StaffComplaintDetail {...props} />;
 }
 

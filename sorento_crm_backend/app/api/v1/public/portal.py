@@ -951,18 +951,6 @@ def _require_own_price_tag_request(
         _require_editable(row, db)
 
 
-@router.get("/submissions")
-def portal_list_submissions(
-    type: str = Query(...),
-    q: Optional[str] = Query(None, description="Free-text search across all fields"),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    return {
-        "items": PortalService(db).list_submissions(token, _check_kind(type, db, token), q=q),
-    }
-
-
 class RevisionPolicyBlock(BaseModel):
     """Everything the portal needs to render (or not render) the Revise action.
 
@@ -1405,6 +1393,19 @@ def register_submission_routes(router: APIRouter, token_dependency: Callable[...
         token's own contact even when unsegmented, so nobody is ever blocked from
         submitting on their own behalf."""
         return PortalService(db).list_requestor_options(token, q=q)
+
+
+    @router.get("/submissions")
+    def portal_list_submissions(
+        type: str = Query(...),
+        q: Optional[str] = Query(None, description="Free-text search across all fields"),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """The contact's own rows of one form (``type``), the list page of both surfaces."""
+        return {
+            "items": PortalService(db).list_submissions(token, _check_kind(type, db, token), q=q),
+        }
 
 
     @router.get("/submissions/{kind}/{submission_id}")

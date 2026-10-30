@@ -30,6 +30,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { formatCurrency, formatDate } from '@/lib/helpers';
 import { getSalesOpportunityCustomerOptions } from '../services/salesOpportunityService';
@@ -46,13 +47,39 @@ import SalesOpportunityModal from './SalesOpportunityModal';
  *
  * DataGrid with fixed layout and resizable columns: number, title, customer or prospect,
  * agent, stage `Badge`, amount, close date, Source (Portal/CRM). `rowHref` to the detail
- * page; `Log opportunity` is the header's one primary action, gated on
+ * page; `Create` (the Log opportunity modal) is the header's one primary action, gated on
  * `sales.opportunities.add`. Filters (Stage, Agent, Customer, close date range), sorting on every
  * column and paging are server-side - `manualPagination`, `recordCount` from the API's own total.
  */
 const SOURCE_LABEL: Record<string, string> = { portal: 'Portal', crm: 'CRM', chat: 'Chat' };
 
+/**
+ * A salesperson limited to their own opportunities gets the portal's own list body, through My
+ * Requests (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a), its Create opening the Log opportunity
+ * modal; everyone else the staff view below, unchanged.
+ */
 export default function SalesOpportunitiesView() {
+  const { limited } = useRequestScope('sales_opportunity');
+  if (limited) return <OwnSalesOpportunitiesView />;
+  return <StaffSalesOpportunitiesView />;
+}
+
+function OwnSalesOpportunitiesView() {
+  const [modalOpen, setModalOpen] = useState(false);
+  return (
+    <>
+      <Container>
+        <PageHeader title="Opportunities" />
+      </Container>
+      <Container>
+        <MyRequestPortalList kind="sales_opportunity" onCreate={() => setModalOpen(true)} />
+      </Container>
+      <SalesOpportunityModal open={modalOpen} onOpenChange={setModalOpen} />
+    </>
+  );
+}
+
+function StaffSalesOpportunitiesView() {
   const canAdd = useHasPermission('sales.opportunities.add');
   // A salesperson limited to their own opportunities picks no agent (PORTAL-P4-REQUESTS S6).
   const { limited } = useRequestScope('sales_opportunity');
@@ -120,7 +147,7 @@ export default function SalesOpportunitiesView() {
   const addButton = (
     <Button variant="primary" onClick={() => setModalOpen(true)}>
       <Plus className="size-4" />
-      Log opportunity
+      Create
     </Button>
   );
 

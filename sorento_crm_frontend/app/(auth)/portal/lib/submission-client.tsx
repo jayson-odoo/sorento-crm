@@ -15,6 +15,9 @@
  * The kinds with pages of their own (Sample Request, New Product Application, Sales Opportunity,
  * Price Tag Request; R3) read their own service the same way, through `clientService`: absent, the
  * portal's module.
+ *
+ * The list body (`SubmissionList`, L2) reads its rows and its links the same way, so a salesperson's
+ * CRM list page renders the portal's own list of one kind.
  */
 import { createContext, useContext, type ComponentType, type ReactNode } from 'react';
 import type { AttachmentPreviewItem } from '@/components/common/AttachmentPreviewModal';
@@ -30,6 +33,7 @@ import type { SampleRequestService } from './sample-request-service';
 export type SubmissionApi = Pick<
   typeof portalClient,
   | 'fetchMe'
+  | 'fetchSubmissions'
   | 'fetchSubmission'
   | 'fetchSubmissionNeighbours'
   | 'fetchRequestorOptions'
@@ -57,12 +61,23 @@ export type SubmissionApi = Pick<
   | 'getPriceTagDesign'
 >;
 
-/** Where the form's own links and redirects go. Absent: the portal's paths. */
+/** Where the form's and the list's own links and redirects go. Absent: the portal's paths. */
 export interface SubmissionPaths {
   /** The list of this kind: Back, Cancel, and after a save, submit or delete. */
   home: (kind: PortalLandingKind) => string;
+  /** A new form of this kind: the list's Create. */
+  new: (kind: PortalLandingKind) => string;
   detail: (kind: PortalLandingKind, id: string) => string;
   duplicate: (kind: PortalLandingKind, id: string) => string;
+  /** The detail with the revise composer open: the list preview's Revise. */
+  revise: (kind: PortalLandingKind, id: string) => string;
+}
+
+/** A tab of a saved form beyond Details / Comments / Revisions, given by the client. */
+export interface SubmissionExtraTab {
+  value: string;
+  label: string;
+  content: ReactNode;
 }
 
 /** A draft's delete, rendered in place of the portal's confirm-and-delete button. */
@@ -96,6 +111,8 @@ export interface SubmissionClient extends SubmissionApi {
   /** Inside a CRM page: its header carries Back, so the form shows no Back of its own, and the
    *  prev / next chevrons sit inline instead of on the window's edges. */
   embedded?: boolean;
+  /** Tabs a saved form shows after its own (a CRM complaint's fulfilment DOs). Absent: none. */
+  extraTabs?: SubmissionExtraTab[];
   /** The services of the kinds with pages of their own. Absent: the portal's own modules. */
   sampleRequest?: SampleRequestService;
   newProductApplication?: NewProductApplicationService;
@@ -129,7 +146,7 @@ export function useSubmissionClient(): SubmissionClient {
 }
 
 /** An optional member, read with `in`: a mocked portal-client throws on a missing key. */
-function extra<K extends 'paths' | 'deletes' | 'embedded' | KindServiceKey>(
+function extra<K extends 'paths' | 'deletes' | 'embedded' | 'extraTabs' | KindServiceKey>(
   client: SubmissionClient,
   key: K,
 ): SubmissionClient[K] | undefined {
@@ -146,6 +163,10 @@ export function clientDeletes(client: SubmissionClient): SubmissionClient['delet
 
 export function clientEmbedded(client: SubmissionClient): boolean {
   return extra(client, 'embedded') === true;
+}
+
+export function clientExtraTabs(client: SubmissionClient): SubmissionExtraTab[] {
+  return extra(client, 'extraTabs') ?? [];
 }
 
 /** A kind's service: the client's, or `portal` (that kind's own module). Call it where the call is

@@ -11,9 +11,13 @@
  * `MyRequestClientProvider` is that client on its own, for the kinds with portal pages of their
  * own (Sample Request, New Product Application, Sales Opportunity, Price Tag Request; R3): the CRM
  * page wraps the portal's component in it.
+ *
+ * A saved complaint gets one tab the portal does not have (L3, owner a25895124 Q2 a): its
+ * fulfilment DOs, read-only, after Details / Comments / Revisions (`extraTabs`).
  */
 
 import { useMemo, type ReactNode } from 'react';
+import ComplaintFulfilmentOrdersSection from '@/app/(protected)/complaint-management/complaints/components/ComplaintFulfilmentOrdersSection';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -26,6 +30,7 @@ import {
   type AttachmentRemoveProps,
   type DraftDeleteProps,
   type SubmissionClient,
+  type SubmissionExtraTab,
 } from '@/app/(auth)/portal/lib/submission-client';
 import { createMyRequestsSubmissionApi, myRequestsPaths } from '@/services/myRequestsSubmissionClient';
 import type { MyRequestKind } from '@/services/myRequestsService';
@@ -143,8 +148,15 @@ function refreshingService<T extends object>(qc: QueryClient, list: string, serv
 }
 
 /** The portal component under it talks to My Requests, on the CRM's paths, with D7 deletes. Its
- *  writes refresh the CRM list of their kind (those lists never go stale on their own). */
-export function MyRequestClientProvider({ children }: { children: ReactNode }) {
+ *  writes refresh the CRM list of their kind (those lists never go stale on their own).
+ *  `extraTabs`: the form's tabs beyond its own; pass a memoised array (it rebuilds the client). */
+export function MyRequestClientProvider({
+  children,
+  extraTabs,
+}: {
+  children: ReactNode;
+  extraTabs?: SubmissionExtraTab[];
+}) {
   const qc = useQueryClient();
   // One client per form: its lookup sets are cached per client, never shared with the portal's.
   const client = useMemo<SubmissionClient>(() => {
@@ -170,8 +182,9 @@ export function MyRequestClientProvider({ children }: { children: ReactNode }) {
       paths: myRequestsPaths,
       deletes: { DraftDelete, AttachmentRemove },
       embedded: true,
+      ...(extraTabs ? { extraTabs } : {}),
     };
-  }, [qc]);
+  }, [qc, extraTabs]);
   return <SubmissionClientProvider client={client}>{children}</SubmissionClientProvider>;
 }
 
@@ -186,8 +199,21 @@ export default function MyRequestPortalForm({
   /** A new request's starting values (a project's stage action seeds its project). */
   initialValues?: SubmissionInitialValues;
 }) {
+  const extraTabs = useMemo<SubmissionExtraTab[] | undefined>(
+    () =>
+      kind === 'complaint' && submissionId
+        ? [
+            {
+              value: 'fulfilment-dos',
+              label: 'Fulfilment DOs',
+              content: <ComplaintFulfilmentOrdersSection complaintId={submissionId} readOnly />,
+            },
+          ]
+        : undefined,
+    [kind, submissionId],
+  );
   return (
-    <MyRequestClientProvider>
+    <MyRequestClientProvider extraTabs={extraTabs}>
       <SubmissionForm
         kind={kind}
         submissionId={submissionId}

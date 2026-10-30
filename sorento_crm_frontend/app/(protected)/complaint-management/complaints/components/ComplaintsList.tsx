@@ -47,6 +47,7 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 
 const STATUS_OPTIONS = [
   { value: 'new', label: 'New' },
@@ -61,7 +62,17 @@ const STATUS_OPTIONS = [
 /** A user limited to their own rows (PORTAL-P4-REQUESTS) also filters by their drafts. */
 const LIMITED_STATUS_OPTIONS = [{ value: 'draft', label: 'Draft' }, ...STATUS_OPTIONS];
 
+/**
+ * A salesperson limited to their own complaints gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function ComplaintsList() {
+  const { limited } = useRequestScope('complaint');
+  if (limited) return <MyRequestPortalList kind="complaint" />;
+  return <StaffComplaintsList />;
+}
+
+function StaffComplaintsList() {
   const router = useRouter();
   // A salesperson sees only their own rows (the server narrows the list): Create needs
   // `.add`, and there is no bulk Delete, row Delete or PDF (the portal's action set).
@@ -411,7 +422,7 @@ export default function ComplaintsList() {
       }
     >
       <Plus />
-      Create Complaint
+      Create
     </Button>
   );
 

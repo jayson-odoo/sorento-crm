@@ -481,8 +481,9 @@ export function DataGridListToolbar<TData extends object>({
       >
         {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
             other past the viewport edge instead of stacking, so Quick filters and
-            Group by went out of reach. */}
-        <div className="flex w-full flex-col flex-wrap gap-3 sm:flex-row sm:items-center sm:justify-between">
+            Group by went out of reach. A wrapping ROW at every width, never a column on
+            phones, so the primary action stays on the filter row when it fits. */}
+        <div className="flex w-full flex-row flex-wrap items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
           {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
           {showBulkStrip ? (
             <div className="flex flex-wrap items-center gap-2">

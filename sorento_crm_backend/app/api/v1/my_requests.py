@@ -24,7 +24,8 @@ Who may call it (fails closed, before the portal code runs):
   naming no form needs one of the forms it could reach.
 
 An upload is gated on its multipart ``kind``, the one it writes to; a query ``kind`` naming
-another form answers 422.
+another form answers 422. The list (``GET /submissions?type=``, L1) is gated on its ``type``, as a
+path's form is.
 
 Sample requests, new product applications and opportunities (S4, S5, S6) have their own portal
 routers (``register_sample_request_routes``, ``register_new_product_application_routes``,
@@ -90,6 +91,8 @@ from app.services.uuid_path_param import validate_uuid_path
 
 PREFIX = "/api/v1/my-requests"
 _CREATE = ("POST", "/submissions/{kind}")
+#: The list of one form's own rows, which names its form in the query ``type`` (L1).
+_LIST = ("GET", "/submissions")
 _UPLOAD = ("POST", "/attachments")
 #: The generic attachment routes, and the own-router kinds whose files they carry (S5).
 _ATTACHMENT_ROUTES = frozenset(
@@ -174,7 +177,8 @@ def _norm(kind) -> Optional[str]:
 
 
 async def _kind_of(request: Request, route: tuple[str, str]) -> Optional[str]:
-    """The form a call is about: the path, the attachment list's query, the upload's form.
+    """The form a call is about: the path, the attachment list's query, the list's ``type``, the
+    upload's form.
 
     An upload writes to its FORM ``kind`` (``portal_upload_attachment``), so that is the one
     gated; a query ``kind`` naming another form is refused, never gated in its place."""
@@ -188,6 +192,8 @@ async def _kind_of(request: Request, route: tuple[str, str]) -> Optional[str]:
                 code="VALIDATION_ERROR",
             )
         return kind
+    if route == _LIST:
+        return _norm(request.query_params.get("type"))
     return _norm(request.path_params.get("kind") or request.query_params.get("kind"))
 
 

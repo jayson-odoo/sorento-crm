@@ -1,5 +1,7 @@
 'use client';
 
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -66,7 +68,17 @@ const truncated = (value: string | null | undefined) => (
   </span>
 );
 
+/**
+ * A salesperson limited to their own new product applications gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function NewProductApplicationsList() {
+  const { limited } = useRequestScope('new_product_application');
+  if (limited) return <MyRequestPortalList kind="new_product_application" />;
+  return <StaffNewProductApplicationsList />;
+}
+
+function StaffNewProductApplicationsList() {
   const router = useRouter();
   const canCreate = useHasPermission(
     'procurement.new_product_applications.create',
@@ -387,7 +399,7 @@ export default function NewProductApplicationsList() {
               canCreate ? (
                 <Button onClick={() => router.push(`${BASE_PATH}/new`)}>
                   <Plus />
-                  New
+                  Create
                 </Button>
               ) : undefined
             }

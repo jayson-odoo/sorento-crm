@@ -18,6 +18,7 @@ import type {
   PortalRevisionEntry,
   PortalRevisionPolicy,
   PortalSubmissionDetail,
+  PortalSubmissionSummary,
   RequestorOption,
 } from '@/app/(auth)/portal/lib/portal-client';
 
@@ -64,6 +65,17 @@ export interface MyRequestDetail extends PortalSubmissionDetail {
   revision?: PortalRevisionPolicy;
   revision_draft?: PortalRevisionDraft | null;
   [key: string]: unknown;
+}
+
+/** Their own rows of one form, the portal list's own (`GET /submissions?type=&q=`). */
+export async function fetchSubmissions(kind: MyRequestKind, q?: string): Promise<PortalSubmissionSummary[]> {
+  const usp = new URLSearchParams({ type: kind });
+  if (q && q.trim()) usp.set('q', q.trim());
+  const data = await unwrap<{ items: PortalSubmissionSummary[] }>(
+    await apiFetch(`${BASE}/submissions?${usp.toString()}`),
+    'Failed to load submissions.',
+  );
+  return data.items ?? [];
 }
 
 export async function fetchSubmission(kind: MyRequestKind, id: string): Promise<MyRequestDetail> {

@@ -1,5 +1,7 @@
 'use client';
 
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
@@ -59,7 +61,17 @@ export function deliveryText(row: Pick<SampleRequestRow, 'delivery_date'>) {
   return row.delivery_date ? formatDateInMalaysia(row.delivery_date) : '-';
 }
 
+/**
+ * A salesperson limited to their own sample requests gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function SampleRequestsList() {
+  const { limited } = useRequestScope('sample_request');
+  if (limited) return <MyRequestPortalList kind="sample_request" />;
+  return <StaffSampleRequestsList />;
+}
+
+function StaffSampleRequestsList() {
   const router = useRouter();
   const canCreate = useHasPermission('projects.sample_requests.create');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
