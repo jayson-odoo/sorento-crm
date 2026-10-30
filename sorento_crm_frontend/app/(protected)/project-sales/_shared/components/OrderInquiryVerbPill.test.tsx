@@ -106,6 +106,12 @@ describe('OrderInquiryLineStatePill (PLAN-oi-no-double-count-25sep.md S0, G7 / O
     rerender(<OrderInquiryLineStatePill state="raised" />);
     expect(screen.getByText(STATE_LABEL.raised)).toBeInTheDocument();
   });
+
+  it('AC-AC-18: a line still owed reads "To order", never "To confirm"', () => {
+    render(<OrderInquiryLineStatePill state="to_confirm" />);
+    expect(screen.getByText('To order')).toBeInTheDocument();
+    expect(screen.queryByText('To confirm')).not.toBeInTheDocument();
+  });
 });
 
 /**

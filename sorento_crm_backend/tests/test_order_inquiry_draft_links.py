@@ -246,7 +246,8 @@ def test_the_row_carries_its_own_link_and_no_column_on_the_link(api):
 
     assert not hasattr(link, "status"), "a link state column is exactly what R1 refused"
     world.db.refresh(row)
-    assert row.ack_state == ACK_AWAITING
+    # OI-AUTO-CONFIRM: wholly covered by a live link, so the system marks the row Done.
+    assert row.ack_state == ACK_ACKNOWLEDGED
 
 
 # ---------------------------------------------------------------------------
@@ -324,14 +325,15 @@ def test_two_rows_are_never_drafted_onto_the_same_units(api):
 # ---------------------------------------------------------------------------
 
 
-def test_the_plan_still_ignores_a_to_confirm_rows_remainder(api):
-    """A draft is not a decision, and the plan counts acknowledged and changed rows only."""
+def test_the_plan_still_counts_a_to_order_rows_remainder_despite_a_draft(api):
+    """A draft is not a decision: the row stays To order and the plan (Q4 = b) counts its
+    whole uncovered qty, the suggestion notwithstanding."""
     _client, world = api
     _open_po_line(world, qty=50)
 
     _raise_one_row(api)
 
-    assert _project_committed(world, planned=True) == Decimal("0")
+    assert _project_committed(world, planned=True) == Decimal("10")
 
 
 # ---------------------------------------------------------------------------

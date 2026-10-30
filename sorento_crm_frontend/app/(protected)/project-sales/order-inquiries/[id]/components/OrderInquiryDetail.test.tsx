@@ -379,12 +379,10 @@ describe('Confirm label / disabled follow the ticked scope (AC-DP-05, S5)', () =
     expect([...sent].sort()).toEqual(['row-a', 'row-b']);
   });
 
-  // PR #1266 fix round W1 (owner, 26 Sep 2026: "i just realized after we click confirm,
-  // at the line level can't really see it is confirmed, can we have an icon here to show
-  // it is confirmed?"). Confirm already invalidates the header lines query
-  // (`useOrderInquiry.ts`'s `invalidate()`), so the refetched row is what should carry
-  // the mark - no page reload involved.
-  it("W1: the line's check appears right after Confirm, without a reload", async () => {
+  // PR #1266 fix round W1 asked for a per-line check after Confirm; the owner and lead
+  // later removed the Confirmed column (OI-AUTO-CONFIRM browser pass), so the line carries
+  // no confirmed mark. Confirm still sends the ticked row and the lines refetch.
+  it("W1: Confirm sends the ticked row and the line shows no Confirmed column", async () => {
     const rowAwaiting = {
       ...LINKED_LINE,
       id: 'row-w1',
@@ -406,13 +404,14 @@ describe('Confirm label / disabled follow the ticked scope (AC-DP-05, S5)', () =
 
     renderDetail('oi-1');
     await screen.findByRole('button', { name: 'Confirm' });
-    expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
 
     fireEvent.click(await screen.findByLabelText('Select ZZT-W1'));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm (1)' }));
 
-    const mark = await screen.findByTestId('line-confirmed-mark');
-    expect(mark.getAttribute('aria-label')).toContain('Confirmed by Aisyah');
+    await waitFor(() => expect(acknowledgeRowsSpy).toHaveBeenCalled());
+    const sent = (acknowledgeRowsSpy.mock.calls.at(-1) as unknown[])[0] as string[];
+    expect(sent).toEqual(['row-w1']);
+    expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
   });
 
   it('is disabled on a Completed header with nothing ticked', async () => {

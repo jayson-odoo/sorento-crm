@@ -1294,7 +1294,7 @@ def _form_leg_row(db, *, item_code, stock_location, qty, delivery_date, so_line_
         "INSERT INTO projects.order_inquiry_rows (id, company_id, order_inquiry_id, "
         "so_line_id, item_code, qty, verb, stock_location, state, ack_state, "
         "delivery_date, redirected_to_pool, bundled_qty, created_at) "
-        "VALUES (:i, :c, :inq, :sl, :item, :qty, 'ORDER', :loc, 'raised', 'acknowledged', "
+        "VALUES (:i, :c, :inq, :sl, :item, :qty, 'ORDER', :loc, 'raised', 'awaiting', "
         ":dd, false, :bundled, now())"
     ), {"i": row_id, "c": SORENTO_COMPANY_ID, "inq": inquiry_id, "sl": so_line_id,
         "item": item_code, "qty": qty, "loc": stock_location, "dd": delivery_date,

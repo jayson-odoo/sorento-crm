@@ -82,7 +82,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import text
 
-from app.models.project_so import ACK_ACKNOWLEDGED
+from app.models.project_so import ACK_AWAITING
 from app.services.scm import reorder_engine as eng
 from app.services.scm import demand
 from app.services.scm import reorder_run_service as svc
@@ -455,7 +455,7 @@ def test_ac_f4_confirmed_reserve_decision_reduces_bought_qty(scm_app):
     u = _seed_single_member(db, on_hand=702)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 493,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=100)
 
@@ -601,7 +601,7 @@ def test_ac_f4_confirmed_reserve_decision_reduces_bought_qty_on_the_pool_path(sc
     u = _seed_pool(db, on_hand_root=326, on_hand_child=376)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["root_wid"], "qty": 493,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["root_wid"], qty=100)
 
@@ -618,7 +618,7 @@ def test_ac_f4_confirmed_reserve_decision_reduces_bought_qty_on_the_product_grai
     u = _seed_product_grain(db, on_hand=702, level=100)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 493,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=100)
 
@@ -637,7 +637,7 @@ def test_ac_f4_confirmed_reserve_decision_reduces_bought_qty_on_a_project_run(sc
     u = _seed_single_member(db, on_hand=702)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 493,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=100)
 
@@ -666,7 +666,7 @@ def test_retail_net_is_not_lowered_by_an_oversized_reserve(scm_app):
     u = _seed_single_member(db, on_hand=100)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=100)
 
@@ -694,7 +694,7 @@ def _reduction_world(db, source_type):
     u = _seed_single_member(db, on_hand=100)
     so = _project_so_with_lines(db, lines=[
         {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     _add_reserve_claim(
         db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=15, source_type=source_type,

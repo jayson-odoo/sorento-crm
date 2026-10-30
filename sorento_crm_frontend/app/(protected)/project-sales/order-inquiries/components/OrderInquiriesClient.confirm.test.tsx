@@ -382,7 +382,7 @@ describe('AC-CF-5: Confirm (N) is the primary press', () => {
     expect(primary).toBeDisabled();
     expect(primary).toHaveAttribute(
       'title',
-      'Tick rows still to confirm, or Select all matching.',
+      expect.stringMatching(/^Tick rows to mark Done/),
     );
 
     // "Upload purchase orders" is a menuitem in Actions, never a top-level button.
@@ -557,6 +557,9 @@ describe('AC-CF-12: the To confirm tile', () => {
     expect(
       screen.getByTestId('order-inquiry-strip-to-confirm-count'),
     ).toHaveTextContent('3');
+    // AC-AC-18: the quick chip reads To order.
+    expect(screen.getByTestId('order-inquiry-strip-to-confirm')).toHaveTextContent('To order');
+    expect(screen.getByTestId('order-inquiry-strip-to-confirm')).not.toHaveTextContent('To confirm');
 
     fireEvent.click(screen.getByTestId('order-inquiry-strip-to-confirm'));
 
@@ -898,7 +901,7 @@ describe('Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, owner 18 Se
         'row-changed-uc',
       ]),
     );
-    expect(toast.success).toHaveBeenCalledWith('2 rows back to To confirm');
+    expect(toast.success).toHaveBeenCalledWith('2 rows back to To order');
   });
 
   it('is not offered at all without the acknowledge grant', async () => {
@@ -936,7 +939,7 @@ describe('Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, owner 18 Se
     fireEvent.click(screen.getByRole('menuitem', { name: 'Unconfirm (1)' }));
 
     await waitFor(() => expect(unacknowledgeOrderInquiryRows).toHaveBeenCalled());
-    expect(toast.warning).toHaveBeenCalledWith('1 row back to To confirm, 1 skipped');
+    expect(toast.warning).toHaveBeenCalledWith('1 row back to To order, 1 skipped');
     expect(toast.success).not.toHaveBeenCalled();
   });
 });

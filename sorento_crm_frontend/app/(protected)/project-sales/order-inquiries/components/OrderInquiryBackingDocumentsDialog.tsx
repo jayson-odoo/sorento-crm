@@ -106,6 +106,9 @@ export function OrderInquiryBackingDocumentsDialog({
                       <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-2xs font-medium uppercase text-muted-foreground">
                         {link.kind}
                       </span>
+                      {link.kind === 'reserve' ? (
+                        <span className="text-xs font-medium">{link.document}</span>
+                      ) : (
                       <OrderInquiryDocumentLink
                         kind={link.kind}
                         document={link.document}
@@ -119,6 +122,7 @@ export function OrderInquiryBackingDocumentsDialog({
                         // lightbox - `spo_allocation_id` is already on the wire.
                         spoLineId={link.spo_allocation_id}
                       />
+                      )}
                       {/* S5, R-E: never a real link - the SAME "via" tag the cell itself
                           shows, so the lightbox and the cell can never disagree. */}
                       {/* LINKAGE-UNIFY U3: the line, and the same state pills the chip draws,

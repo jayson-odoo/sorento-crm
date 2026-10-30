@@ -46,7 +46,7 @@ export function SoLineLinksBody({ links }: { links: SalesOrderLineLink[] }) {
           // S5, R-E: never a real link - the derived SPO's own allocation, read off the
           // row's own PO link, same as the worklist's `via PO` mark beside its number.
           const viaSuffix = link.derived ? <span className="text-muted-foreground"> via PO</span> : null;
-          if (!link.purchase_order_id) {
+          if (!link.purchase_order_id || link.kind === 'reserve') {
             return (
               <>
                 {textCell(withLabel)}
