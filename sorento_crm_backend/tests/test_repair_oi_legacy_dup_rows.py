@@ -39,6 +39,8 @@ from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiryLink,
+    OrderInquiryReserveRequest,
+    OrderInquiryReserveRequestRow,
     OrderInquiryRow,
     ProjectSalesOrderLine,
 )
@@ -323,6 +325,99 @@ def test_ac_6b_a_linked_copy_is_held():
         assert result["restated"] == 0
         db.refresh(copy)
         assert copy.qty == Decimal("2")
+
+
+def test_ac_6c_a_copy_sharing_its_line_with_another_live_row_is_held():
+    """Review blocker (PR #1996): restating would put a second full instruction on the line."""
+    with _world() as (db, w):
+        _sibling, copy, apr_line = _m9713ss(db, w)
+        other = OrderInquiryRow(
+            id=_uid(), company_id=w["company_id"], order_inquiry_id=w["inquiry"].id,
+            so_line_id=apr_line.id, item_code=w["item"], qty=Decimal("24"), delivery_date=APR,
+            verb=IV_ORDER, state=INQUIRY_RAISED, ack_state=ACK_ACKNOWLEDGED,
+        )
+        db.add(other)
+        db.commit()
+
+        found = _found(db, w)
+        result = _run(db, w, apply=True, expect=0)
+        db.commit()
+
+        assert [(f.row_id, f.verdict) for f in found] == [(str(copy.id), "line carries other rows")]
+        assert result["restated"] == 0
+        db.refresh(copy)
+        assert copy.qty == Decimal("2")
+
+
+def test_ac_6d_two_copies_on_one_line_are_both_held():
+    """Review blocker (PR #1996): a tab stating the row three times puts copies 2 and 3 on
+    the same line, and both match the one skipped row. Restating both would put 52 on a
+    26 line."""
+    with _world() as (db, w):
+        oct_line = _line(db, w, 2, OCT)
+        apr_line = _line(db, w, 26, APR)
+        job = _job(db, w, filename="JAN - DEC 2026 ORDERabc.xlsx", at=T0)
+        _created(db, w, job, oct_line, sheet="OCT 26", sheet_row=630, qty=2, due=OCT)
+        a = _created(db, w, job, apr_line, sheet="OCT 26", sheet_row=662, qty=2, due=OCT)
+        b = _created(db, w, job, apr_line, sheet="OCT 26", sheet_row=694, qty=2, due=OCT)
+        later = _job(db, w, filename="JAN - DEC ORDER 2027.xlsx", at=T0 + timedelta(minutes=4))
+        _skipped(db, w, later, sheet="APR 27", sheet_row=166, qty=26, due=APR)
+        db.commit()
+
+        found = _found(db, w)
+        result = _run(db, w, apply=True, expect=0)
+        db.commit()
+
+        assert sorted((f.row_id, f.verdict) for f in found) == sorted(
+            [(str(a.id), "line carries other rows"), (str(b.id), "line carries other rows")]
+        )
+        assert result["restated"] == 0
+
+
+def test_ac_6e_a_copy_edited_since_import_is_held():
+    """The prod M3155 shape: someone already changed the copy's qty after the import."""
+    with _world() as (db, w):
+        _sibling, copy, _line_ = _m9713ss(db, w)
+        copy.qty = Decimal("3")
+        db.commit()
+
+        found = _found(db, w)
+
+        assert [(f.row_id, f.verdict) for f in found] == [(str(copy.id), "edited since import")]
+
+
+def test_ac_6f_a_copy_named_on_a_reserve_request_is_held():
+    with _world() as (db, w):
+        _sibling, copy, _line_ = _m9713ss(db, w)
+        request = OrderInquiryReserveRequest(
+            id=_uid(), company_id=w["company_id"], order_inquiry_id=w["inquiry"].id, ordinal=1,
+        )
+        db.add(request)
+        db.flush()
+        db.add(OrderInquiryReserveRequestRow(
+            id=_uid(), company_id=w["company_id"], request_id=request.id, row_id=copy.id,
+            qty_requested=Decimal("2"),
+        ))
+        db.commit()
+
+        found = _found(db, w)
+
+        assert [(f.row_id, f.verdict) for f in found] == [(str(copy.id), "reserve request")]
+
+
+def test_ac_6g_a_copy_other_rows_are_bundled_with_is_held():
+    with _world() as (db, w):
+        _sibling, copy, _line_ = _m9713ss(db, w)
+        db.add(OrderInquiryRow(
+            id=_uid(), company_id=w["company_id"], order_inquiry_id=w["inquiry"].id,
+            item_code="ZZT-COMPANION", qty=Decimal("2"), verb=IV_ORDER, state=INQUIRY_RAISED,
+            ack_state=ACK_ACKNOWLEDGED, bundled_qty=Decimal("2"), bundled_with_row_id=copy.id,
+        ))
+        db.commit()
+
+        found = _found(db, w)
+
+        assert [(f.row_id, f.verdict) for f in found] == [(str(copy.id), "bundled")]
 
 
 def test_ac_7_dry_run_writes_nothing():
