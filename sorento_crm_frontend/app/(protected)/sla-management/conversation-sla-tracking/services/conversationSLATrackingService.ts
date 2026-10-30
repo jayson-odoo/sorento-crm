@@ -186,12 +186,12 @@ export async function resolveConversationSLATracking(id: string): Promise<void> 
   }
 }
 
-/** The assignee's Respond or Resolve on a product drawing task (the one form-SLA type with buttons). */
+/** The assignee's Respond or Resolve on a product drawing or photo task (the form-SLA types with buttons). */
 export async function actOnDrawingRequest(
   id: string,
   action: 'respond' | 'resolve',
 ): Promise<void> {
-  const response = await apiFetch(`/api/v1/sla-management/form-sla-tracking/${id}/drawing-${action}`, {
+  const response = await apiFetch(`/api/v1/sla-management/form-sla-tracking/${id}/media-${action}`, {
     method: 'POST',
   });
   if (!response.ok) {

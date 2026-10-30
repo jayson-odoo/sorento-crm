@@ -86,6 +86,7 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
   purchase_request: { base: '/procurement-management/purchase-requests', label: 'Purchase request' },
   sponsorship_form: { base: '/procurement-management/purchase-requests', label: 'Sponsorship form' },
   product_drawing: { base: '/master-data-management/products', label: 'Product drawing' },
+  product_photo: { base: '/master-data-management/products', label: 'Product photo' },
 };
 
 type AnyTask = MyPendingSLAItem | TeamPendingItem;
@@ -759,7 +760,8 @@ export default function MyPendingSLAWidget() {
                 )
               )}
               {!isTeam &&
-                item.source_entity_type === 'product_drawing' &&
+                (item.source_entity_type === 'product_drawing' ||
+                  item.source_entity_type === 'product_photo') &&
                 (!mineItem.is_responded || canResolve) && (
                 <Button
                   size="sm"

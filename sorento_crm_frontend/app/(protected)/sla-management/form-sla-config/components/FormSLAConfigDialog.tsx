@@ -126,7 +126,6 @@ const FORM_TYPES: FormSLASourceType[] = [
   'sponsorship_form',
   'complaint',
   'price_tag_request',
-  'product_drawing',
 ];
 
 const NONE_VALUE = '__none__';
@@ -286,13 +285,7 @@ export default function FormSLAConfigDialog({
             <Label>Form type</Label>
             <SearchableSelect
               value={sourceType}
-              onChange={(v) => {
-                setSourceType(v as FormSLASourceType);
-                // The team the WhatsApp bot already routes product-document asks to.
-                if (!existing && v === 'product_drawing' && !teamSetCode.trim()) {
-                  setTeamSetCode('marketing_product');
-                }
-              }}
+              onChange={(v) => setSourceType(v as FormSLASourceType)}
               disabled={!!existing}
               options={FORM_TYPES.map((t) => ({
                 value: t,

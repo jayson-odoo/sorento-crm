@@ -36,7 +36,7 @@ import {
   deletePriceFloor,
   deleteQuotation,
   deleteQuotationLine,
-  escalateLineDrawing,
+  escalateLineMedia,
   deleteSeries,
   getEffectivePriceFloor,
   getSeriesPricedRows,
@@ -135,6 +135,7 @@ import type {
   ProjectQuotationBody,
   ProjectSeriesBody,
   QuotationLineBody,
+  MediaKind,
   QuotationLineBulkItem,
   QuotationOutcomeBody,
   SeriesProductImportBody,
@@ -1234,14 +1235,14 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
 }
 
 /**
- * Escalate a line's missing drawing. The request belongs to the PRODUCT, so every quotation that
+ * Escalate a line's missing drawing or photo. The request belongs to the PRODUCT, so every quotation that
  * lists it shows the new state: the prefix key refetches every open lines table, not just this
  * version's.
  */
-export function useEscalateDrawing(versionId: string) {
+export function useEscalateMedia(versionId: string, kind: MediaKind) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (lineId: string) => escalateLineDrawing(versionId, lineId),
+    mutationFn: (lineId: string) => escalateLineMedia(versionId, lineId, kind),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'lines'] });
       toast.success(

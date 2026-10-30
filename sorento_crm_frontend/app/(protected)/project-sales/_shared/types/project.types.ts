@@ -702,6 +702,8 @@ export interface QuotationLineImage {
   candidate_count: number;
   /** Those photographs, for the picker that sets the line's `image_attachment_id`. */
   candidates?: QuotationLineFileCandidate[];
+  /** The product's photo request; null when none was ever opened. */
+  escalation?: MediaEscalationState | null;
 }
 
 /** One image a line's photo or drawing could be: a signed thumbnail and the original. */
@@ -726,14 +728,14 @@ export interface QuotationLineDrawing {
   candidate_count: number;
   candidates?: QuotationLineFileCandidate[];
   /** The product's drawing request; null when none was ever opened. */
-  escalation?: DrawingEscalationState | null;
+  escalation?: MediaEscalationState | null;
 }
 
 /**
  * A drawing request on a product. Task fields are null once it is resolved, which leaves only
  * `last_resolved_at`. Datetimes are ISO strings.
  */
-export interface DrawingEscalationState {
+export interface MediaEscalationState {
   tracking_id: string | null;
   opened_at: string | null;
   responded_at: string | null;
@@ -742,10 +744,12 @@ export interface DrawingEscalationState {
   last_resolved_at: string | null;
 }
 
-export interface DrawingEscalationResult {
+export interface MediaEscalationResult {
   joined: boolean;
-  escalation: DrawingEscalationState | null;
+  escalation: MediaEscalationState | null;
 }
+
+export type MediaKind = 'drawing' | 'photo';
 
 /** The photo and drawing cells for a product on a line not saved yet. */
 export interface QuotationLineImages {

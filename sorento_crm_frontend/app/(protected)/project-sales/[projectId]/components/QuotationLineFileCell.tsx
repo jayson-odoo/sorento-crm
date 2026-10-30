@@ -13,7 +13,7 @@ import type {
   QuotationLine,
   QuotationLineFileCandidate,
 } from '../../_shared/types/project.types';
-import { DrawingEscalation } from './DrawingEscalation';
+import { MediaEscalation } from './MediaEscalation';
 import { QuotationLinePhoto } from './QuotationLinePhoto';
 
 export type LineFileKind = 'photo' | 'drawing';
@@ -137,6 +137,13 @@ export function QuotationLineFileCell({
   ) : null;
 
   if (!canPick) {
+    if (
+      kind === 'photo' &&
+      !thumbnail &&
+      line.product_image?.state === 'no_photos'
+    ) {
+      return <MediaEscalation kind="photo" line={line} code={code} />;
+    }
     if (kind === 'photo' && !thumbnail) {
       // Today's empty states: no product, nobody chose among several, nothing on file.
       return <QuotationLinePhoto line={line} />;
@@ -163,7 +170,7 @@ export function QuotationLineFileCell({
       );
     }
     if (kind === 'drawing' && state === 'no_drawings') {
-      return <DrawingEscalation line={line} code={code} />;
+      return <MediaEscalation kind="drawing" line={line} code={code} />;
     }
     return (
       <span className="block text-2xs leading-tight text-muted-foreground">

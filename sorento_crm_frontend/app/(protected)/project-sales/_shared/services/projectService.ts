@@ -3,7 +3,8 @@ import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   ClashPreview,
-  DrawingEscalationResult,
+  MediaKind,
+  MediaEscalationResult,
   Project,
   ProjectCollaborator,
   ProjectListParams,
@@ -993,17 +994,18 @@ export async function updateQuotationLine(
   return response.json();
 }
 
-/** Ask the configured team for the drawing of this line's product, or join the open request. */
-export async function escalateLineDrawing(
+/** Ask the marketing product team for the drawing or photo of this line's product, or join the open request. */
+export async function escalateLineMedia(
   versionId: string,
   lineId: string,
-): Promise<DrawingEscalationResult> {
+  kind: MediaKind,
+): Promise<MediaEscalationResult> {
   const response = await apiFetch(
-    `${BASE}/quotation-versions/${versionId}/lines/${lineId}/drawing-escalation`,
-    { method: 'POST' },
+    `${BASE}/quotation-versions/${versionId}/lines/${lineId}/media-escalation`,
+    { method: 'POST', body: JSON.stringify({ kind }) },
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to escalate the drawing'));
+    throw new Error(await extractApiError(response, 'Failed to escalate the request'));
   return response.json();
 }
 

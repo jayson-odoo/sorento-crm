@@ -8,8 +8,11 @@ import {
   AT_RISK_MS,
   chipClass,
 } from '@/app/(protected)/sla-management/conversation-sla-tracking/components/TicketSlaChips';
-import { useEscalateDrawing } from '../../_shared/hooks/useProjects';
-import type { QuotationLine } from '../../_shared/types/project.types';
+import { useEscalateMedia } from '../../_shared/hooks/useProjects';
+import type {
+  MediaKind,
+  QuotationLine,
+} from '../../_shared/types/project.types';
 
 const TZ = 'Asia/Kuala_Lumpur';
 
@@ -46,19 +49,23 @@ function whenShort(value: string): string {
 }
 
 /**
- * The Drawing cell of a saved catalogue line whose product has no drawing: Escalate, or the state
+ * The Drawing or Photo cell of a saved catalogue line whose product has none: Escalate, or the state
  * of the request already open for that product. The tile styling follows the "Choose" picker
  * trigger beside it; the colour of an open request follows the SLA chips' deadline rule.
  */
-export function DrawingEscalation({
+export function MediaEscalation({
+  kind,
   line,
   code,
 }: {
+  kind: MediaKind;
   line: QuotationLine;
   code: string | null;
 }) {
-  const escalate = useEscalateDrawing(line.version_id);
-  const state = line.technical_drawing?.escalation ?? null;
+  const escalate = useEscalateMedia(line.version_id, kind);
+  const state =
+    (kind === 'photo' ? line.product_image : line.technical_drawing)
+      ?.escalation ?? null;
   const open = state?.tracking_id && state.opened_at ? state : null;
   const driver =
     line.set_parts?.find((part) => part.is_driver)?.product_code ?? null;
@@ -83,7 +90,7 @@ export function DrawingEscalation({
         (open.due_at ? `. Due ${whenShort(open.due_at)}.` : '.');
     // The tile joins the open request (the server records each person once), so a later
     // salesperson on any quotation with this product is added as a requester.
-    const joinLabel = `Join the drawing request for ${driver ?? code ?? 'this product'}`;
+    const joinLabel = `Join the ${kind} request for ${driver ?? code ?? 'this product'}`;
     return (
       <button
         type="button"
@@ -111,16 +118,16 @@ export function DrawingEscalation({
 
   const lastResolved = state?.last_resolved_at ?? null;
   const name = driver ?? code ?? 'this product';
-  const ask = `Ask for a drawing of ${name}`;
+  const ask = `Ask for a ${kind} of ${name}`;
   return (
     <button
       type="button"
-      aria-label={`Escalate missing drawing for ${name}`}
+      aria-label={`Escalate missing ${kind} for ${name}`}
       aria-busy={escalate.isPending}
       disabled={escalate.isPending}
       title={
         lastResolved
-          ? `Last request resolved ${when(lastResolved, false)}, no drawing on file. ${ask}`
+          ? `Last request resolved ${when(lastResolved, false)}, no ${kind} on file. ${ask}`
           : ask
       }
       onClick={() => escalate.mutate(line.id)}
