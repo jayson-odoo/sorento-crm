@@ -20,8 +20,7 @@ from sqlalchemy import text
 
 _SQL = text(
     """
-    SELECT o.id, o.company_id, o.order_number, o.order_type, o.created_at, o.created_time,
-           o.estimated_delivery_date, o.actual_delivery_date, o.is_cancelled,
+    SELECT o.id, o.company_id, o.order_number, o.order_type, o.created_at, o.actual_delivery_date, o.is_cancelled,
            o.doc_key IS NOT NULL AS from_autocount,
            (SELECT count(*) FROM order_lines ol WHERE ol.order_id = o.id) AS line_count
     FROM orders o
@@ -45,7 +44,7 @@ def main() -> int:
         print("No undated delivery orders.")
         return 0
     print(
-        "order_number | type | created_at | delivery_date | lines | cancelled | autocount | company_id"
+        "order_number | type | created_at | actual_delivery | lines | cancelled | autocount | company_id"
     )
     for r in rows:
         print(
@@ -54,7 +53,7 @@ def main() -> int:
             f"{'yes' if r['is_cancelled'] else 'no'} | {'yes' if r['from_autocount'] else 'no'} | "
             f"{r['company_id']}"
         )
-    print(f"\n{len(rows)} undated delivery order(s). Decide per row: delete, or fill its DO date.")
+    print(f"\n{len(rows)} undated delivery order(s). They stay out of reports until their DO date is filled.")
     return 0
 
 

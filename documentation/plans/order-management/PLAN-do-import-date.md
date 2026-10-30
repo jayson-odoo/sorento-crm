@@ -32,7 +32,8 @@ had the same gap, and `OrderUpdate` with `order_date: null` cleared the date.
    the row's outcome code is `missing_doc_date` "No document date" or `invalid_doc_date`
    "Unreadable document date"); an unreadable date on a DO that keeps its stored date is flagged
    too; a blank on a dated DO says nothing (nothing lost). A Master sheet with no Date column
-   imports with one warning. AutoCount-owned DOs: the sheet Date is ignored, as before. Excel
+   imports with one sheet-level warning (each new DO is still flagged by name).
+   AutoCount-owned DOs: the sheet Date is ignored, as before. Excel
    date serials (2000-2099) parse in both import parsers; any other number counts as unreadable.
 2. JSON bulk import: same rule, warnings in its `warnings` list.
 3. API: `OrderCreate.order_date` stays optional; `OrderUpdate` treats `order_date: null` as
@@ -49,6 +50,13 @@ The undated-DO exclusion in the delivered-sales / pending-delivery dataset
 (`app/services/reports/datasets/delivery_order_lines.py` `_fixed_filters`) is now the intended
 behaviour, not dead code: keep it. No NOT NULL on `orders.order_date` (manual DOs may be undated).
 A "No DO date" filter on the DO list is possible later if the report script is not enough.
+
+Found in review, pre-existing, not regressions:
+- The DO edit form fills an empty date with today (`sorento_crm_frontend/app/(protected)/order-management/orders/components/OrderForm.tsx`
+  `order_date` default), so saving an undated DO stamps a made-up date and puts it into reports.
+  Fix: leave the date empty on edit and let the form save without one (FE lane, browser check).
+- The tracking sheet keeps an undated DO that has a delivery date at status "new" with no
+  delivery days (`import_excel_tracking`, Overall Tracking branch), because both need the DO date.
 
 ## Tests
 

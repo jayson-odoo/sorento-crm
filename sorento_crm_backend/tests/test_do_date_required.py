@@ -120,8 +120,12 @@ def test_import_unreadable_date_keeps_existing_do_date_and_says_so(db):
     db.add(Order(order_number=number, order_date=date(2026, 7, 1)))
     db.commit()
 
-    result = OrderService(db).import_excel_tracking(_workbook([[number, "31/13/2026", "DO"]]), USER)
+    outcome = ImportOutcome(None)
+    result = OrderService(db).import_excel_tracking(
+        _workbook([[number, "31/13/2026", "DO"]]), USER, outcome=outcome
+    )
 
+    assert oc.INVALID_DOC_DATE in _successful_codes(outcome)
     assert (
         f"{number}: Date '31/13/2026' is not a valid date (use DD/MM/YYYY), kept the stored DO date"
     ) in _warnings(result)
@@ -340,7 +344,7 @@ def test_import_tracking_row_of_undated_master_row_still_applies(db):
     assert order.actual_delivery_date == date(2026, 10, 30)
 
 
-def test_import_master_sheet_without_date_column_imports_with_one_warning(db):
+def test_import_master_sheet_without_date_column_imports_with_a_sheet_warning(db):
     number = unique_code("DO")
     result = OrderService(db).import_excel_tracking(
         _sheet(["Doc. No.", "Type"], [[number, "DO"]]), USER
@@ -349,6 +353,7 @@ def test_import_master_sheet_without_date_column_imports_with_one_warning(db):
     assert (
         "Master sheet has no Date column: new delivery orders are imported without a DO date"
     ) in _warnings(result)
+    assert f"{number}: no Date, {UNDATED}" in _warnings(result), "each undated DO is still named"
     assert _order(db, number).order_date is None
 
 
@@ -415,3 +420,15 @@ def test_import_empty_master_tab_still_applies_tracking(db):
     order = _order(db, number)
     db.refresh(order)
     assert order.actual_delivery_date == date(2026, 7, 5)
+
+
+def test_import_unreadable_date_on_autocount_do_says_nothing(db):
+    """AutoCount owns the date on its own DOs: the sheet's cell is not read, so not flagged."""
+    number = unique_code("DO")
+    db.add(Order(order_number=number, order_date=date(2026, 7, 1), doc_key=990003))
+    db.commit()
+    result = OrderService(db).import_excel_tracking(_workbook([[number, "soon", "DO"]]), USER)
+    assert not _row_errors(result) and not _warnings(result), result
+    order = _order(db, number)
+    db.refresh(order)
+    assert order.order_date == date(2026, 7, 1)
