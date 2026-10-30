@@ -329,9 +329,184 @@ describe('a quantity below 1 cannot be sent', () => {
   );
 });
 
-// ------------------------------------------------------------------ 5 and 6
+// ------------------------------------------------------------------ placement (owner round 1)
 
-describe('the summary and Send', () => {
+describe('where "Suggest changes" lives', () => {
+  it('is ONE button in the header of the Quotation card, and not in the Accepted by card', async () => {
+    await open();
+    const buttons = await screen.findAllByRole('button', { name: 'Suggest changes' });
+    expect(buttons).toHaveLength(1);
+    const button = buttons[0];
+
+    // The Quotation card: the nearest ancestor of its title that also holds the sections.
+    const title = screen.getByRole('heading', { name: 'Quotation' });
+    const header = title.parentElement as HTMLElement;
+    expect(header).toContainElement(button);
+
+    let quotationCard: HTMLElement | null = title.parentElement;
+    while (quotationCard && !within(quotationCard).queryByText(/Sanitary ware/)) {
+      quotationCard = quotationCard.parentElement;
+    }
+    expect(quotationCard).not.toBeNull();
+    expect(quotationCard).toContainElement(button);
+
+    // The sign card holds the name box; the button is neither in it nor in its row.
+    const signTitle = screen.getByRole('heading', { name: 'Accepted by' });
+    let signCard: HTMLElement | null = signTitle.parentElement;
+    while (signCard && !within(signCard).queryByLabelText('Your name')) {
+      signCard = signCard.parentElement;
+    }
+    expect(signCard).not.toBeNull();
+    expect(signCard).not.toContainElement(button);
+    expect(screen.queryByText('Not ready to sign this?')).toBeNull();
+  });
+});
+
+// ------------------------------------------------------------------ the bar
+
+describe('the suggestion bar', () => {
+  it('holds only Discard and Send suggestions: no count and no before/after total', async () => {
+    await suggesting();
+    type('Quantity on line 1', '110');
+    type('Unit rate on line 14', '150.00');
+
+    const send = screen.getByRole('button', { name: 'Send suggestions' });
+    const discard = screen.getByRole('button', { name: 'Discard' });
+    expect(send).toBeInTheDocument();
+    expect(discard).toBeInTheDocument();
+
+    expect(screen.queryByText(/Your suggestions/)).toBeNull();
+    const text = document.body.textContent ?? '';
+    expect(text).not.toMatch(/\d+ lines?\s*Total/);
+    expect(text).not.toMatch(/RM\s*[\d,]+\.\d\d\s*(→|->)\s*RM\s*[\d,]+\.\d\d/);
+
+    // The bar is one row holding exactly those two controls.
+    const bar = send.parentElement as HTMLElement;
+    expect(bar).toContainElement(discard);
+    expect(within(bar).getAllByRole('button')).toHaveLength(2);
+    // Discard first, Send at the right end.
+    expect(
+      discard.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});
+
+// ------------------------------------------------------------------ every money figure shows its change
+
+describe('every money figure shows the change, with "quoted X" beneath', () => {
+  const QUOTED = /quoted/i;
+
+  /** One section, two lines: 3 x 360.00 = 1,080.00 and 2 x 100.00 = 200.00. Total 1,280.00. */
+  function smallPage(): QuotationSignPage {
+    return page({
+      scopes: [
+        {
+          scope_label: 'Sanitary ware',
+          scope_total: '1280.00',
+          lines: [
+            line('m-1', '1', {
+              description: 'Fake WC',
+              quantity: '3',
+              unit_price: '360.00',
+              amount: '1080.00',
+            }),
+            line('m-2', '2', {
+              description: 'Fake basin',
+              quantity: '2',
+              unit_price: '100.00',
+              amount: '200.00',
+            }),
+          ],
+        },
+      ],
+      grand_total: '1280.00',
+    });
+  }
+
+  async function small() {
+    getQuotationSignPage.mockResolvedValue(smallPage());
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Suggest changes' }));
+    await screen.findByLabelText('Quantity on line 1');
+  }
+
+  const amountCell = (item: string) => {
+    const cells = tr(item).querySelectorAll('td');
+    // Amount is the last data cell before the icon column.
+    return cells[cells.length - 2] as HTMLElement;
+  };
+  const sectionHeader = () =>
+    screen.getByRole('button', { name: /Sanitary ware/ }) as HTMLElement;
+  const grandTotalRow = () =>
+    screen.getByText(/total amount/i).parentElement as HTMLElement;
+
+  it('shows no "quoted" anywhere before anything is changed', async () => {
+    await small();
+    expect(amountCell('1').textContent).not.toMatch(QUOTED);
+    expect(sectionHeader().textContent).not.toMatch(QUOTED);
+    expect(grandTotalRow().textContent).not.toMatch(QUOTED);
+  });
+
+  it('a quantity change moves the line Amount, the section subtotal and the grand total', async () => {
+    await small();
+    type('Quantity on line 1', '6');
+
+    // 6 x 360.00 = 2,160.00 (was 1,080.00)
+    expect(amountCell('1').textContent).toMatch(/RM\s*2,160\.00/);
+    expect(amountCell('1').textContent).toMatch(/quoted\s*RM\s*1,080\.00/);
+    // 2,160.00 + 200.00 = 2,360.00 (was 1,280.00)
+    expect(sectionHeader().textContent).toMatch(/RM\s*2,360\.00/);
+    expect(sectionHeader().textContent).toMatch(/quoted\s*RM\s*1,280\.00/);
+    expect(grandTotalRow().textContent).toMatch(/RM\s*2,360\.00/);
+    expect(grandTotalRow().textContent).toMatch(/quoted\s*RM\s*1,280\.00/);
+
+    // The line nobody touched shows no "quoted".
+    expect(amountCell('2').textContent).not.toMatch(QUOTED);
+    expect(amountCell('2').textContent).toMatch(/RM\s*200\.00/);
+  });
+
+  it('a price change works the same way', async () => {
+    await small();
+    type('Unit rate on line 2', '150.00');
+
+    // 2 x 150.00 = 300.00 (was 200.00); section and total 1,380.00 (was 1,280.00)
+    expect(amountCell('2').textContent).toMatch(/RM\s*300\.00/);
+    expect(amountCell('2').textContent).toMatch(/quoted\s*RM\s*200\.00/);
+    expect(sectionHeader().textContent).toMatch(/RM\s*1,380\.00/);
+    expect(sectionHeader().textContent).toMatch(/quoted\s*RM\s*1,280\.00/);
+    expect(grandTotalRow().textContent).toMatch(/RM\s*1,380\.00/);
+    expect(grandTotalRow().textContent).toMatch(/quoted\s*RM\s*1,280\.00/);
+    expect(amountCell('1').textContent).not.toMatch(QUOTED);
+  });
+
+  it('a removed line drops out of the subtotal and total, and keeps its own struck-through row', async () => {
+    await small();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove line 2' }));
+
+    // 1,280.00 - 200.00 = 1,080.00
+    expect(sectionHeader().textContent).toMatch(/RM\s*1,080\.00/);
+    expect(sectionHeader().textContent).toMatch(/quoted\s*RM\s*1,280\.00/);
+    expect(grandTotalRow().textContent).toMatch(/RM\s*1,080\.00/);
+    expect(grandTotalRow().textContent).toMatch(/quoted\s*RM\s*1,280\.00/);
+
+    // Its own cell is not given a new value: the row stays, struck through, as quoted.
+    const row = tr('2');
+    expect(
+      row.className.includes('line-through') || row.querySelector('.line-through, s, del') !== null,
+    ).toBe(true);
+    expect(amountCell('2').textContent).toMatch(/RM\s*200\.00/);
+    expect(amountCell('2').textContent).not.toMatch(QUOTED);
+
+    // Restoring puts every figure back, and the "quoted" text goes with it.
+    fireEvent.click(screen.getByRole('button', { name: 'Restore line 2' }));
+    expect(sectionHeader().textContent).not.toMatch(QUOTED);
+    expect(grandTotalRow().textContent).not.toMatch(QUOTED);
+  });
+});
+
+// ------------------------------------------------------------------ Send, and the confirm step
+
+describe('Send suggestions opens a confirm step that holds the note', () => {
   async function theWorkedExample() {
     await suggesting();
     type('Quantity on line 1', '110');
@@ -342,28 +517,41 @@ describe('the summary and Send', () => {
     // Edited, then staged for removal: only the removal counts.
     type('Quantity on line 40', '5');
     fireEvent.click(screen.getByRole('button', { name: 'Remove line 40' }));
-    fireEvent.change(screen.getByLabelText('Anything else (optional)'), {
-      target: { value: 'Please deliver the WCs in two batches.' },
-    });
   }
 
-  it('shows the number of changed lines and the total before and after, on "Send suggestions"', async () => {
+  /** The confirm step's own final button is named "Send" (the bar's is "Send suggestions"). */
+  async function confirmStep() {
+    fireEvent.click(screen.getByRole('button', { name: 'Send suggestions' }));
+    const dialog = await screen.findByRole('dialog');
+    return {
+      dialog,
+      note: within(dialog).getByLabelText('Anything else (optional)'),
+      send: within(dialog).getByRole('button', { name: 'Send' }),
+      cancel: within(dialog).getByRole('button', { name: 'Cancel' }),
+    };
+  }
+
+  it('has no note box on the page, and nothing is sent, until Send suggestions is clicked', async () => {
     await theWorkedExample();
-    const text = document.body.textContent ?? '';
-    expect(text).toMatch(/3 lines/);
-    // 41,800.00 (110 x 380) + 0 + 18,000.00 (120 x 150) = 59,800.00; the removed line drops out.
-    expect(text).toMatch(/67,450\.00\s*(→|->)\s*(RM\s*)?59,800\.00/);
-    expect(screen.getByRole('button', { name: 'Send suggestions' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Anything else (optional)')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send suggestions' }));
+    await screen.findByRole('dialog');
+    await act(async () => {});
+    expect(submitAmendmentRequest).not.toHaveBeenCalled();
   });
 
-  it('sends ONLY the changed lines and fields, a removal as remove:true, plus the note', async () => {
+  it('sends ONLY the changed lines and fields, a removal as remove:true, with the note, on the final Send', async () => {
     await theWorkedExample();
-    fireEvent.click(screen.getByRole('button', { name: 'Send suggestions' }));
+    const { note, send } = await confirmStep();
+    fireEvent.change(note, { target: { value: 'Please deliver the WCs in two batches.' } });
+    fireEvent.click(send);
     await waitFor(() => expect(submitAmendmentRequest).toHaveBeenCalledTimes(1));
 
     const [token, body] = submitAmendmentRequest.mock.calls[0];
     expect(token).toBe('tok-123');
-    expect(body.requester_name).toBe('Buyer A');
+    expect(body.requester_name).toBe('Kelly');
     expect(body.note).toBe('Please deliver the WCs in two batches.');
     expect(body.lines).toHaveLength(3);
     expect(requestQuotationChanges).not.toHaveBeenCalled();
@@ -390,12 +578,28 @@ describe('the summary and Send', () => {
     expect(by('line-5')).toBeUndefined();
   });
 
-  it('sends a null note when the box is empty', async () => {
+  it('sends a null note when the box is left empty', async () => {
     await suggesting();
     type('Unit rate on line 14', '150.00');
-    fireEvent.click(screen.getByRole('button', { name: 'Send suggestions' }));
+    const { send } = await confirmStep();
+    fireEvent.click(send);
     await waitFor(() => expect(submitAmendmentRequest).toHaveBeenCalledTimes(1));
     expect(submitAmendmentRequest.mock.calls[0][1].note ?? null).toBeNull();
+  });
+
+  it('Cancel closes the confirm step, keeps the edits and sends nothing', async () => {
+    await theWorkedExample();
+    const { note, cancel } = await confirmStep();
+    fireEvent.change(note, { target: { value: 'Never mind.' } });
+    fireEvent.click(cancel);
+    await act(async () => {});
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(submitAmendmentRequest).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Quantity on line 1')).toHaveValue(
+      screen.getByLabelText('Quantity on line 1').getAttribute('type') === 'number' ? 110 : '110',
+    );
+    expect(screen.getByRole('button', { name: 'Send suggestions' })).toBeInTheDocument();
   });
 });
 
