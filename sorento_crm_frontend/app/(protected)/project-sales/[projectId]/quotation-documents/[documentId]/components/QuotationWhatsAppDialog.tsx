@@ -60,6 +60,11 @@ export function QuotationWhatsAppDialog({
     <Dialog open={Boolean(issue)} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
         {shown && (
+          <DialogHeader>
+            <DialogTitle>{`Send R${shown.issue_no} via WhatsApp`}</DialogTitle>
+          </DialogHeader>
+        )}
+        {shown && (
           <WhatsAppBody
             projectId={projectId}
             document={document}
@@ -124,9 +129,6 @@ function WhatsAppBody({
 
   return (
     <>
-      <DialogHeader>
-        <DialogTitle>{`Send R${issue.issue_no} via WhatsApp`}</DialogTitle>
-      </DialogHeader>
       <div className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="quotation-whatsapp-to">To</Label>
