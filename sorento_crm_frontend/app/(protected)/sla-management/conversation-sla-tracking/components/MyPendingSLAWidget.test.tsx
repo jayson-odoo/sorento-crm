@@ -18,6 +18,7 @@ const reassignSLATracking = vi.fn();
 const getTakeoverState = vi.fn();
 const cancelTakeover = vi.fn();
 const rejectTakeover = vi.fn();
+const actOnDrawingRequest = vi.fn();
 
 vi.mock('../services/conversationSLATrackingService', () => ({
   getMyPendingSLA: (...a: unknown[]) => getMyPendingSLA(...a),
@@ -30,6 +31,7 @@ vi.mock('../services/conversationSLATrackingService', () => ({
   getTakeoverState: (...a: unknown[]) => getTakeoverState(...a),
   cancelTakeover: (...a: unknown[]) => cancelTakeover(...a),
   rejectTakeover: (...a: unknown[]) => rejectTakeover(...a),
+  actOnDrawingRequest: (...a: unknown[]) => actOnDrawingRequest(...a),
 }));
 
 const push = vi.fn();
@@ -75,13 +77,15 @@ vi.mock('./InterventionTicketDrawer', () => ({
     ticketId,
     open,
     onSent,
+    variant,
   }: {
     ticketId: string | null;
     open: boolean;
     onSent?: () => void;
+    variant?: string;
   }) =>
     open ? (
-      <div data-testid="ticket-drawer" data-ticket-id={ticketId ?? ''}>
+      <div data-testid="ticket-drawer" data-ticket-id={ticketId ?? ''} data-variant={variant ?? 'enquiry'}>
         <button data-testid="drawer-sent" onClick={() => onSent?.()}>
           sent
         </button>
@@ -947,5 +951,282 @@ describe('MyPendingSLAWidget deadline urgency', () => {
 
     const chip = await screen.findByTestId('sla-extended-chip');
     expect(chip).toHaveTextContent('Extended ×2');
+  });
+});
+
+// QUOTE-DRAWING-ESCALATE (N1): a product_drawing task is a form-SLA row that, unlike every other
+// form row, carries its own Respond then Resolve buttons, because nothing on a product page
+// emits the stage's respond/resolve events. Red until the widget knows the type.
+describe('MyPendingSLAWidget product drawing rows', () => {
+  const drawingItem: MyPendingSLAItem = {
+    id: 'pd1',
+    source_entity_type: 'product_drawing',
+    source_entity_id: 'product-uuid',
+    is_form_sla: true,
+    reference: 'PRD-CCC-03',
+    respond_io_id: null,
+    next_action: 'Respond',
+    due_at: new Date(Date.now() + 3600_000).toISOString(),
+    due_at_resolution: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    active_due_at: new Date(Date.now() + 3600_000).toISOString(),
+    due_kind: 'respond',
+    is_responded: false,
+    current_tier: 1,
+    policy_name: 'Default',
+  } as MyPendingSLAItem;
+
+  beforeEach(() => {
+    getMyPendingSLA.mockReset();
+    getTeamPendingSLA.mockReset();
+    getVisibleUsers.mockReset();
+    getTakeoverState.mockReset();
+    push.mockReset();
+    searchParam = null;
+    extraParams = {};
+    deniedSlugs = new Set();
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    getVisibleUsers.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({});
+  });
+
+  it('titles the row "Product drawing" with the product code as its reference', async () => {
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await waitFor(() => expect(screen.getByText('Product drawing')).toBeInTheDocument());
+    expect(screen.getByText(/PRD-CCC-03/)).toBeInTheDocument();
+    expect(screen.getByText(/Tier 1/)).toBeInTheDocument();
+  });
+
+  it('shows Respond (and not Resolve) until the task has been responded to', async () => {
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    expect(getActionButton(/^Respond$/i)).toBeInTheDocument();
+    expect(hasActionButton(/^Resolve$/i)).toBe(false);
+  });
+
+  it('shows Resolve (and not Respond) once responded', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      {
+        ...drawingItem,
+        is_responded: true,
+        due_kind: 'resolve',
+        next_action: 'Resolve',
+        active_due_at: drawingItem.due_at_resolution,
+      },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    expect(getActionButton(/^Resolve$/i)).toBeInTheDocument();
+    expect(hasActionButton(/^Respond$/i)).toBe(false);
+  });
+
+  it('the previous row-click-to-product-page behaviour is replaced by the side panel', async () => {
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    fireEvent.click(screen.getByText('Product drawing'));
+    expect(push).not.toHaveBeenCalledWith('/master-data-management/products/product-uuid');
+  });
+
+  it('clicking Respond opens the side panel in media mode and acts inline on nothing', async () => {
+    actOnDrawingRequest.mockReset();
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    fireEvent.click(getActionButton(/^Respond$/i));
+
+    const drawer = await screen.findByTestId('ticket-drawer');
+    expect(drawer).toHaveAttribute('data-ticket-id', 'pd1');
+    expect(drawer).toHaveAttribute('data-variant', 'media');
+    expect(actOnDrawingRequest).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('clicking Resolve on a responded row opens the side panel in media mode', async () => {
+    actOnDrawingRequest.mockReset();
+    getMyPendingSLA.mockResolvedValue([
+      { ...drawingItem, is_responded: true, due_kind: 'resolve', next_action: 'Resolve' },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    fireEvent.click(getActionButton(/^Resolve$/i));
+
+    const drawer = await screen.findByTestId('ticket-drawer');
+    expect(drawer).toHaveAttribute('data-variant', 'media');
+    expect(actOnDrawingRequest).not.toHaveBeenCalled();
+  });
+
+  it('clicking the row itself opens the side panel, not the product page', async () => {
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    fireEvent.click(screen.getByText('Product drawing'));
+
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute('data-variant', 'media');
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('an enquiry row still opens the chat drawer', async () => {
+    getMyPendingSLA.mockResolvedValue([convoItem]);
+    renderWidget();
+
+    await screen.findByText('Enquiry');
+    fireEvent.click(screen.getByText('Enquiry'));
+
+    const drawers = screen.queryAllByTestId('ticket-drawer');
+    for (const drawer of drawers) expect(drawer).toHaveAttribute('data-variant', 'enquiry');
+  });
+
+  it('hides Resolve on a responded drawing row when the viewer lacks the resolve permission', async () => {
+    deniedSlugs = new Set(['sla_management.conversation_sla_tracking.resolve']);
+    getMyPendingSLA.mockResolvedValue([
+      { ...drawingItem, is_responded: true, due_kind: 'resolve', next_action: 'Resolve' },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    expect(hasActionButton(/^Resolve$/i)).toBe(false);
+  });
+
+  it('keeps Respond for a viewer without the resolve permission (the route needs none)', async () => {
+    deniedSlugs = new Set(['sla_management.conversation_sla_tracking.resolve']);
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    expect(getActionButton(/^Respond$/i)).toBeInTheDocument();
+  });
+
+  it('every other form row still shows neither Respond nor Resolve', async () => {
+    getMyPendingSLA.mockResolvedValue([formItem, drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    await screen.findByText('Product drawing');
+    // Exactly one Respond: the drawing row's. The purchase request row has none.
+    expect(actionButtons(/^Respond$/i)).toHaveLength(1);
+    expect(hasActionButton(/^Resolve$/i)).toBe(false);
+  });
+
+  it('a conversation row keeps its own Resolve and gains no Respond', async () => {
+    getMyPendingSLA.mockResolvedValue([convoItem, drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Enquiry');
+    await screen.findByText('Product drawing');
+    expect(actionButtons(/^Resolve$/i)).toHaveLength(1);
+    expect(actionButtons(/^Respond$/i)).toHaveLength(1);
+  });
+});
+
+// QUOTE-DRAWING-ESCALATE rework: a product_photo task is the same kind of row, labelled
+// "Product photo", linked to the same product page, with the same Respond then Resolve buttons.
+describe('MyPendingSLAWidget product photo rows', () => {
+  const photoItem: MyPendingSLAItem = {
+    id: 'pp1',
+    source_entity_type: 'product_photo',
+    source_entity_id: 'product-uuid',
+    is_form_sla: true,
+    reference: 'PRD-CCC-04',
+    respond_io_id: null,
+    next_action: 'Respond',
+    due_at: new Date(Date.now() + 3600_000).toISOString(),
+    due_at_resolution: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    active_due_at: new Date(Date.now() + 3600_000).toISOString(),
+    due_kind: 'respond',
+    is_responded: false,
+    current_tier: 1,
+    policy_name: 'Default',
+  } as unknown as MyPendingSLAItem;
+
+  beforeEach(() => {
+    getMyPendingSLA.mockReset();
+    getTeamPendingSLA.mockReset();
+    getVisibleUsers.mockReset();
+    getTakeoverState.mockReset();
+    push.mockReset();
+    searchParam = null;
+    extraParams = {};
+    deniedSlugs = new Set();
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    getVisibleUsers.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({});
+    actOnDrawingRequest.mockReset();
+    actOnDrawingRequest.mockResolvedValue(undefined);
+  });
+
+  it('titles the row "Product photo" with the product code as its reference', async () => {
+    getMyPendingSLA.mockResolvedValue([photoItem]);
+    renderWidget();
+
+    await waitFor(() => expect(screen.getByText('Product photo')).toBeInTheDocument());
+    expect(screen.getByText(/PRD-CCC-04/)).toBeInTheDocument();
+    expect(screen.queryByText('Product drawing')).not.toBeInTheDocument();
+  });
+
+  it('shows Respond until responded, then Resolve', async () => {
+    getMyPendingSLA.mockResolvedValue([photoItem]);
+    const first = renderWidget();
+    await screen.findByText('Product photo');
+    expect(getActionButton(/^Respond$/i)).toBeInTheDocument();
+    expect(hasActionButton(/^Resolve$/i)).toBe(false);
+    first.unmount();
+
+    getMyPendingSLA.mockResolvedValue([
+      { ...photoItem, is_responded: true, due_kind: 'resolve', next_action: 'Resolve' },
+    ]);
+    renderWidget();
+    await screen.findByText('Product photo');
+    expect(getActionButton(/^Resolve$/i)).toBeInTheDocument();
+    expect(hasActionButton(/^Respond$/i)).toBe(false);
+  });
+
+  it('clicking the row opens the side panel in media mode', async () => {
+    getMyPendingSLA.mockResolvedValue([photoItem]);
+    renderWidget();
+
+    await screen.findByText('Product photo');
+    fireEvent.click(screen.getByText('Product photo'));
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute('data-variant', 'media');
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('Respond and Resolve open the side panel in media mode for the row', async () => {
+    getMyPendingSLA.mockResolvedValue([photoItem]);
+    const first = renderWidget();
+    await screen.findByText('Product photo');
+    fireEvent.click(getActionButton(/^Respond$/i));
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute('data-ticket-id', 'pp1');
+    expect(screen.getByTestId('ticket-drawer')).toHaveAttribute('data-variant', 'media');
+    first.unmount();
+
+    getMyPendingSLA.mockResolvedValue([
+      { ...photoItem, is_responded: true, due_kind: 'resolve', next_action: 'Resolve' },
+    ]);
+    renderWidget();
+    await screen.findByText('Product photo');
+    fireEvent.click(getActionButton(/^Resolve$/i));
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute('data-variant', 'media');
+    expect(actOnDrawingRequest).not.toHaveBeenCalled();
+  });
+
+  it('a photo row and a drawing row sit side by side with their own labels', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      photoItem,
+      { ...photoItem, id: 'pd9', source_entity_type: 'product_drawing', reference: 'PRD-CCC-05' },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Product photo');
+    expect(screen.getByText('Product drawing')).toBeInTheDocument();
+    expect(actionButtons(/^Respond$/i)).toHaveLength(2);
   });
 });

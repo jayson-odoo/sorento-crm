@@ -13,6 +13,7 @@ from app.dependencies import (
 )
 
 from app.services.marketing_service import PromotionService, PromotionProductService, validated_attachment_states
+from app.services.user_service import UserPermissionService
 from app.services.query_normalizer import strip_domain_stopwords
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.marketing import (
@@ -32,6 +33,8 @@ from app.services.error_handler import handle_internal_error
 from app.utils.multi_value import multi_values
 
 router = APIRouter()
+
+PRODUCTS_EDIT = "master_data.products.edit"
 
 
 # Who reads the promotions list (LIST-API-PERMS): the Promotions page, and the Dealer Kit
@@ -646,6 +649,31 @@ def create_promotion_product_nested(
     except Exception as e:
         raise handle_internal_error(str(e))
 
+def _guard_product_list_price_edit(
+    db: Session,
+    user_id: str,
+    service: PromotionProductService,
+    promotion_id: str,
+    line_id: str,
+    update_data: PromotionProductUpdate,
+) -> None:
+    """A line's `list_price` is the product master's, so changing it needs
+    `master_data.products.edit`. The price editor always sends it back, so an
+    unchanged value never triggers this (same rule as `guard_chatbot_limits_edit`)."""
+    new_price = update_data.list_price
+    if new_price is None:
+        return
+    line = service.get_promotion_line(promotion_id, line_id)
+    stored = line.product.list_price if line.product is not None else None
+    if stored is not None and new_price == stored:
+        return
+    if not UserPermissionService(db).check_user_has_permission(user_id, PRODUCTS_EDIT):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission required: {PRODUCTS_EDIT}",
+        )
+
+
 @nested_promotion_products_router.put("/{line_id}", response_model=PromotionProductResponse)
 def update_promotion_product_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
@@ -667,6 +695,7 @@ def update_promotion_product_nested(
         if not patch:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
         update_data = PromotionProductUpdate(**patch)
+        _guard_product_list_price_edit(db, current_user["id"], service, promotion_id, line_id, update_data)
         product = service.update_promotion_product(promotion_id, line_id, update_data)
         if product is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion product not found.")

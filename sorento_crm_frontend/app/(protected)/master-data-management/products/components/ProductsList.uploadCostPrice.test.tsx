@@ -16,7 +16,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 
 const toolbar = vi.hoisted(() => ({
-  props: null as null | { primaryAction?: ReactNode; secondaryActions?: ToolbarAction[] },
+  props: null as null | {
+    primaryAction?: ReactNode;
+    secondaryActions?: ToolbarAction[];
+    bulkActions?: ToolbarAction[];
+  },
 }));
 const perms = vi.hoisted(() => ({ granted: new Set<string>() }));
 const dialog = vi.hoisted(() => ({ lastProps: null as null | { open: boolean; onUploaded?: () => void } }));
@@ -31,7 +35,11 @@ vi.mock('@/components/ui/data-grid', () => ({
 vi.mock('@/components/ui/data-grid-table', () => ({ DataGridTable: () => null }));
 vi.mock('@/components/ui/data-grid-pagination', () => ({ DataGridPagination: () => null }));
 vi.mock('@/components/ui/data-grid-list-toolbar', () => ({
-  DataGridListToolbar: (props: { primaryAction?: ReactNode; secondaryActions?: ToolbarAction[] }) => {
+  DataGridListToolbar: (props: {
+    primaryAction?: ReactNode;
+    secondaryActions?: ToolbarAction[];
+    bulkActions?: ToolbarAction[];
+  }) => {
     toolbar.props = props;
     return <div data-testid="toolbar-primary">{props.primaryAction}</div>;
   },
@@ -101,6 +109,7 @@ afterEach(() => cleanup());
 
 describe('ProductsList header: Upload cost price, Create product under Actions', () => {
   it('lists Create product in the Actions menu items, opening the create page as before', () => {
+    perms.granted = new Set(['master_data.products.add']);
     renderList();
     const items = toolbar.props?.secondaryActions ?? [];
     const create = items.find((a) => a.label === 'Create product');
@@ -111,10 +120,32 @@ describe('ProductsList header: Upload cost price, Create product under Actions',
     expect(nav.router.push).toHaveBeenCalledWith('/master-data-management/products/new');
   });
 
-  it('keeps Create product ungated, as it was (it had no client gate before)', () => {
+  it('hides Create product, Import and Download template without their permissions', () => {
     perms.granted = new Set();
     renderList();
-    expect(toolbar.props?.secondaryActions?.some((a) => a.label === 'Create product')).toBe(true);
+    const labels = (toolbar.props?.secondaryActions ?? []).map((a) => a.label);
+    expect(labels).not.toContain('Create product');
+    expect(labels).not.toContain('Import');
+    expect(labels).not.toContain('Download template');
+  });
+
+  it('shows Import and Download template with master_data.products.import', () => {
+    perms.granted = new Set(['master_data.products.import']);
+    renderList();
+    const labels = (toolbar.props?.secondaryActions ?? []).map((a) => a.label);
+    expect(labels).toContain('Import');
+    expect(labels).toContain('Download template');
+    expect(labels).not.toContain('Create product');
+  });
+
+  it('shows bulk Chat search only with products.edit and bulk Delete only with products.delete', () => {
+    renderList();
+    expect((toolbar.props?.bulkActions ?? []).map((a) => a.key)).toEqual([]);
+
+    cleanup();
+    perms.granted = new Set(['master_data.products.edit', 'master_data.products.delete']);
+    renderList();
+    expect((toolbar.props?.bulkActions ?? []).map((a) => a.key)).toEqual(['chat-search', 'delete']);
   });
 
   it('puts Upload cost price in the primary spot for a user with the upload permission', () => {

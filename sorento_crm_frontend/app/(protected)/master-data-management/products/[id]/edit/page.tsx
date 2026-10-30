@@ -9,6 +9,7 @@ import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import ProductForm from '../../components/ProductForm';
 import { useProduct } from '../../hooks/useProducts';
+import RequireAccess from '@/app/components/common/RequireAccess';
 
 export default function EditProductPage({
   params,
@@ -16,6 +17,14 @@ export default function EditProductPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  return (
+    <RequireAccess permission="master_data.products.edit">
+      <EditProductPageBody id={id} />
+    </RequireAccess>
+  );
+}
+
+function EditProductPageBody({ id }: { id: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: product } = useProduct(id);

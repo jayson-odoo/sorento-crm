@@ -186,6 +186,53 @@ export async function resolveConversationSLATracking(id: string): Promise<void> 
   }
 }
 
+/** The assignee's Respond or Resolve on a product drawing or photo task (the form-SLA types with buttons). */
+export async function actOnDrawingRequest(
+  id: string,
+  action: 'respond' | 'resolve',
+): Promise<void> {
+  const response = await apiFetch(`/api/v1/sla-management/form-sla-tracking/${id}/media-${action}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, `Failed to ${action} the drawing request`));
+  }
+}
+
+/** What the side panel shows for one product drawing or photo task. Datetimes are aware ISO strings. */
+export interface MediaRequestDetail {
+  tracking_id: string;
+  kind: 'drawing' | 'photo';
+  product_id: string;
+  product_code: string | null;
+  product_name: string | null;
+  product_href: string;
+  resources_href: string;
+  assignee_name: string | null;
+  assignee_team_id: string | null;
+  is_assignee: boolean;
+  can_resolve: boolean;
+  is_responded: boolean;
+  responded_at: string | null;
+  is_resolved: boolean;
+  resolved_at: string | null;
+  due_at: string;
+  due_at_resolution: string | null;
+  current_tier: number;
+  escalated_at: string | null;
+  extension_count: number;
+  quotations: { quotation_id: string; project_id: string; label: string; href: string }[];
+  followers: string[];
+}
+
+export async function getMediaRequest(id: string): Promise<MediaRequestDetail> {
+  const response = await apiFetch(`/api/v1/sla-management/form-sla-tracking/${id}/media-request`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load this request'));
+  }
+  return response.json();
+}
+
 /**
  * Manually escalate a conversation SLA tracking row to the next tier with a reason.
  * Stored as "manual: <reason>"; reassigns + notifies per policy. Capped at tier 3.

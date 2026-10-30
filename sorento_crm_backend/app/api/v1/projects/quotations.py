@@ -29,6 +29,8 @@ from app.schemas.projects import (
     PriceFloorEffectiveResponse,
     PriceFloorRuleResponse,
     PriceFloorRuleUpsert,
+    DrawingEscalationResponse,
+    MediaEscalationRequest,
     ProjectQuotationCreate,
     ProjectQuotationLineBulkWrite,
     ProjectQuotationLineCreate,
@@ -625,6 +627,33 @@ def delete_line(
         svc.delete_line(db, version=version, line=line)
         db.commit()
         return {"success": True}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/quotation-versions/{version_id}/lines/{line_id}/media-escalation",
+    response_model=DrawingEscalationResponse,
+)
+def escalate_line_media(
+    version_id: str,
+    line_id: str,
+    payload: MediaEscalationRequest,
+    current_user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """Ask the marketing product team for the drawing or the photo of this line's product (one
+    open request per kind and product: a second click joins it). Escalating changes no quotation data, so anyone who can
+    open the quotation may."""
+    from app.services import product_drawing_request_service as drawing_requests
+
+    try:
+        validate_uuid_path(version_id, resource="Quotation version")
+        validate_uuid_path(line_id, resource="Line")
+        return drawing_requests.escalate(
+            db, version_id=version_id, line_id=line_id, user=current_user, kind=payload.kind
+        )
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { FileText } from 'lucide-react';
 import {
   Popover,
   PopoverContent,
@@ -12,6 +13,7 @@ import type {
   QuotationLine,
   QuotationLineFileCandidate,
 } from '../../_shared/types/project.types';
+import { MediaEscalation } from './MediaEscalation';
 import { QuotationLinePhoto } from './QuotationLinePhoto';
 
 export type LineFileKind = 'photo' | 'drawing';
@@ -63,7 +65,9 @@ export function resolveLineFile(
   if (!cell?.url || !cell.attachment_id) return null;
   if (pickedId && pickedId !== cell.attachment_id) return null;
   const shownState =
-    kind === 'photo' ? cell.state === 'chosen' : cell.state !== 'off_catalog';
+    kind === 'photo'
+      ? cell.state === 'chosen'
+      : cell.state !== 'off_catalog' && cell.state !== 'pdf';
   if (!shownState) return null;
   return {
     attachmentId: cell.attachment_id,
@@ -96,6 +100,7 @@ export function QuotationLineFileCell({
   label,
   pickedId,
   editable,
+  canEscalate,
   onPick,
   onPreview,
 }: {
@@ -104,6 +109,9 @@ export function QuotationLineFileCell({
   label: string;
   pickedId: string;
   editable: boolean;
+  /** The cell describes a SAVED line's own product, so a missing file can be escalated. A row
+   *  added or re-pointed in this session has no saved line to ask for yet (owner hand test). */
+  canEscalate: boolean;
   onPick: (attachmentId: string) => void;
   onPreview: (shown: LineFileShown) => void;
 }) {
@@ -133,6 +141,14 @@ export function QuotationLineFileCell({
   ) : null;
 
   if (!canPick) {
+    if (
+      canEscalate &&
+      kind === 'photo' &&
+      !thumbnail &&
+      line.product_image?.state === 'no_photos'
+    ) {
+      return <MediaEscalation kind="photo" line={line} code={code} />;
+    }
     if (kind === 'photo' && !thumbnail) {
       // Today's empty states: no product, nobody chose among several, nothing on file.
       return <QuotationLinePhoto line={line} />;
@@ -143,9 +159,30 @@ export function QuotationLineFileCell({
       return <span className="relative block w-full">{thumbnail}</span>;
     }
     const state = line.technical_drawing?.state;
+    if (kind === 'drawing' && state === 'pdf' && line.technical_drawing?.url) {
+      const file = line.technical_drawing.filename;
+      return (
+        <a
+          href={line.technical_drawing.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`${file ?? 'Drawing'}, opens in a new tab`}
+          className="flex aspect-square max-h-48 w-full flex-col items-center justify-center gap-0.5 rounded border border-border bg-muted/40 text-2xs leading-tight font-semibold text-foreground"
+        >
+          <FileText className="size-4" aria-hidden="true" />
+          PDF
+        </a>
+      );
+    }
+    if (kind === 'drawing' && state === 'no_drawings') {
+      if (canEscalate) return <MediaEscalation kind="drawing" line={line} code={code} />;
+      return (
+        <span className="block text-2xs leading-tight text-muted-foreground">no drawing</span>
+      );
+    }
     return (
       <span className="block text-2xs leading-tight text-muted-foreground">
-        {state === 'no_drawings' ? 'no drawing' : '-'}
+        -
       </span>
     );
   }

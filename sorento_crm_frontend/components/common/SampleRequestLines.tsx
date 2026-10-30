@@ -23,6 +23,9 @@ export interface SampleRequestLinesProps {
   value: Pick<FormState, 'lines' | 'board_mounting' | 'board_label'>;
   onChange: (patch: Partial<Pick<FormState, 'lines' | 'board_mounting' | 'board_label'>>) => void;
   search: (q: string) => Promise<SampleRequestProductHit[]>;
+  /** Ask the search even with an empty box: a request from a quotation lists that quotation's
+   * products on tap (SFQ-27), where the whole catalogue is searched only by typing. */
+  listWhenEmpty?: boolean;
   /** Column captions differ between the staff page and the portal. */
   captions: { no: string; item: string; qty: string };
   errors?: Record<string, string>;
@@ -33,6 +36,7 @@ export function SampleRequestLines({
   value,
   onChange,
   search,
+  listWhenEmpty = false,
   captions,
   errors = {},
   disabled,
@@ -42,12 +46,12 @@ export function SampleRequestLines({
 
   const fetchProducts = useCallback(
     async (q: string) => {
-      if (!q.trim()) return [];
+      if (!q.trim() && !listWhenEmpty) return [];
       const hits = await search(q);
       setMissed(hits.length === 0 ? q.trim() : '');
       return hits;
     },
-    [search],
+    [search, listWhenEmpty],
   );
 
   const patchLine = (key: string, patch: Partial<DraftLine>) =>

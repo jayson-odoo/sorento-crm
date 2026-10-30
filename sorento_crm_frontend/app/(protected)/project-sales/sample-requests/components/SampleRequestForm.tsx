@@ -20,6 +20,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SampleRequestLines } from '@/components/common/SampleRequestLines';
 import { SampleRequestFooterFields } from '@/components/common/SampleRequestFooterFields';
+import {
+  SampleRequestPrefillNote,
+  SampleRequestQuotationPicker,
+} from '@/components/common/SampleRequestQuotationSource';
+import { useSampleRequestPrefill } from '@/hooks/useSampleRequestPrefill';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -28,6 +33,7 @@ import { SampleRequestError } from '@/types/sampleRequest';
 import {
   EMPTY_FORM,
   blankLine,
+  productSource,
   payloadFromState,
   stateFromDetail,
   numberErrors,
@@ -48,7 +54,10 @@ import {
   useSampleRequestQuery,
   useSampleRequestSwitches,
 } from '../hooks/useSampleRequests';
-import { searchSampleRequestProducts } from '../services/sampleRequestService';
+import {
+  getSampleRequestQuotationPrefill,
+  searchSampleRequestProducts,
+} from '../services/sampleRequestService';
 
 const BASE_PATH = '/project-sales/sample-requests';
 
@@ -161,6 +170,25 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
     (next: Partial<FormState>) => setState((prev) => ({ ...prev, ...next })),
     [],
   );
+  // A request from a quotation offers only that quotation's products (SFQ-27).
+  const sourceDoc = state.quotation_document_id;
+  const sourceIssue = state.quotation_issue_id;
+  const searchProductsForRequest = useCallback(
+    (q: string) => {
+      const source = productSource(sourceDoc, sourceIssue);
+      return source ? searchSampleRequestProducts(q, source) : searchSampleRequestProducts(q);
+    },
+    [sourceDoc, sourceIssue],
+  );
+  // A NEW request starts from its project's quotation (SAMPLE-FROM-QUOTE, owner Q6 a); a draft
+  // never refills.
+  const prefill = useSampleRequestPrefill({
+    enabled: !requestId,
+    projectId: state.project_id,
+    state,
+    patch,
+    fetchPrefill: getSampleRequestQuotationPrefill,
+  });
 
   useEffect(() => {
     if (requestId && existing.data && !hydrated) {
@@ -425,13 +453,28 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
               Add row
             </Button>
           </div>
+          {prefill.documents.length > 1 && (
+            <div className="mb-3">
+              <SampleRequestQuotationPicker
+                documents={prefill.documents}
+                value={prefill.documentId ?? ''}
+                onPick={prefill.pickDocument}
+              />
+            </div>
+          )}
           <SampleRequestLines
             value={state}
             onChange={patch}
-            search={searchSampleRequestProducts}
+            search={searchProductsForRequest}
+            listWhenEmpty={Boolean(sourceDoc)}
             captions={{ no: 'No.', item: 'Item Code', qty: 'Qty' }}
             errors={errors}
           />
+          {prefill.note && (
+            <div className="mt-3">
+              <SampleRequestPrefillNote note={prefill.note} />
+            </div>
+          )}
 
           <div className="mt-8">
             <SampleRequestFooterFields state={state} set={set} errors={errors} />
