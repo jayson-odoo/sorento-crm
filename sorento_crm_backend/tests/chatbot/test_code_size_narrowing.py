@@ -26,6 +26,8 @@ TRAP = {
     "SH-NEW-200": 200, "SH-NEW-P": 180, "SH-P": 180, "SH-PP": 250, "SH-UF": 250,
 }
 
+P_TRAP_SUFFIXES = {"SH-P", "SH-NEW-P", "SH-PP"}
+
 
 def _code(suffix: str) -> str:
     return f"{HEAD}-{suffix}"
@@ -52,7 +54,7 @@ def _set_values(world, code: str, values: dict) -> None:
 def srt(world):
     for suffix, length in TRAP.items():
         world.product(_code(suffix), f"SORENTO WATER CLOSET {suffix}", stock=1)
-        _set_values(world, _code(suffix), {"trap_length": length, "trap_type": "p_trap" if "P" in suffix.split("-")[-1:] and suffix.endswith("P") else "s_trap"})
+        _set_values(world, _code(suffix), {"trap_length": length, "trap_type": "p_trap" if suffix in P_TRAP_SUFFIXES else "s_trap"})
     return world
 
 
