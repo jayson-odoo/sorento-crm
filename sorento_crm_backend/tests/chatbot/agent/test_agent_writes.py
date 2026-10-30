@@ -270,11 +270,11 @@ def action_id_from(messages) -> str:
 # ------------------------------------------------------------------ 1. exposure
 
 
-def test_01_the_registry_holds_exactly_the_one_write_and_the_in_process_reads():
+def test_01_the_registry_holds_exactly_the_registered_writes_and_the_in_process_reads():
     """AC12: nothing outside the registered write tools exists."""
     from app.services.chatbot.agent import writes
 
-    assert set(writes.WRITES) == {UPDATE}
+    assert set(writes.WRITES) == {UPDATE, "crm_opportunity_create", "crm_opportunity_update", "crm_contact_access_update"}
     assert {LIST, "crm_agent_actions_recent"} <= set(writes.USER_READS)
     definition = writes.WRITES[UPDATE]
     assert definition.name == UPDATE
