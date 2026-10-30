@@ -1,4 +1,11 @@
-# CARD: PS-REGISTER-CHECK-FIRST v1.2 (30 Oct 2026)
+# CARD: PS-REGISTER-CHECK-FIRST v1.3 (30 Oct 2026)
+
+**Owner mock v2 notes (30 Oct 09:54), drawn in mock v3:** (1) the Check shows only Clash or No clash: non-blocking
+"similar" rows are not shown (rule 3 now reads "No clash"); the server's `find_clashes` and its thresholds are
+unchanged. (2) Secondary leads on the Access panel become a table (`components/common/PanelDataGrid.tsx`). (3) "Don't
+need to choose type, any document uploaded will do": **Q-C is now (b)**. No Requirements kind, no seed, no Kind select;
+the Registered -> Spec In gate passes when the project has ANY live document (rules 11-13 below are superseded where
+they name the kind). V1-V3 (tabs) re-asked.
 
 **Owner answers (30 Oct ~00:30): Q-A (a), Q-B (a), Q-C (a), Q-D (a), Q-E (a).** Mock notes (00:32) drive mock v2:
 the register form becomes a progressive wizard like Create lead (`FE/leads/components/LeadWizardDialog.tsx:189,350-383`):

@@ -42,10 +42,10 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 .fs{border:1px solid var(--border);border-radius:12px;margin-bottom:10px}.fs .fh{padding:10px 16px;font-weight:600;font-size:13.5px;display:flex;justify-content:space-between}.fs .fh i{font-style:normal;color:var(--muted-fg);font-weight:400}.fs .fb{padding:12px 16px;border-top:1px solid var(--border)}
 .pbox{width:375px;border:1px solid var(--input);border-radius:16px;overflow:hidden;background:#fff;padding:12px 16px}.pbox .g2{grid-template-columns:1fr}
 .dg{width:100%;table-layout:fixed}.dg th{font-size:12px;color:var(--muted-fg);font-weight:500}.dg td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pbox{max-width:100%}.pbox .cmain{min-width:0;overflow:hidden}.pbox .ct{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#reuse td code{word-break:break-all}#reuse table{table-layout:fixed}#reuse th:first-child{width:32%}.wst{margin:4px 0 14px}.wrow{display:flex;align-items:center;max-width:240px}.wc{width:24px;height:24px;border-radius:50%;border:1px solid var(--input);display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted-fg);flex:none;background:#fff}.wc.on{border-color:var(--primary);color:var(--primary);font-weight:600}.wc.done{background:var(--primary);border-color:var(--primary);color:#fff}.wl{flex:1;height:1px;background:var(--input);margin:0 6px}.wl.done{background:var(--primary)}.wcap{font-size:12.5px;font-weight:500;margin-top:6px}.wfoot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 0 2px;border-top:1px solid var(--border);margin-top:6px}.wfoot{flex-wrap:wrap}.wfoot .wr{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}.wfoot.col{flex-direction:column;align-items:stretch}.wfoot.col .btn{justify-content:center}</style></head>
+.pbox{max-width:100%}.pbox .cmain{min-width:0;overflow:hidden}.pbox .ct{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#reuse td code{word-break:break-all}#reuse table{table-layout:fixed}#reuse th:first-child{width:32%}.wst{margin:4px 0 14px}.wrow{display:flex;align-items:center;max-width:240px}.wc{width:24px;height:24px;border-radius:50%;border:1px solid var(--input);display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted-fg);flex:none;background:#fff}.wc.on{border-color:var(--primary);color:var(--primary);font-weight:600}.wc.done{background:var(--primary);border-color:var(--primary);color:#fff}.wl{flex:1;height:1px;background:var(--input);margin:0 6px}.wl.done{background:var(--primary)}.wcap{font-size:12.5px;font-weight:500;margin-top:6px}.wfoot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 0 2px;border-top:1px solid var(--border);margin-top:6px}.wfoot{flex-wrap:wrap}.wfoot .wr{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}.wfoot.col{flex-direction:column;align-items:stretch}.wfoot.col .btn{justify-content:center}.clash1{display:flex;gap:8px;align-items:center;border:1px solid #fecaca;background:#fef2f2;border-radius:8px;padding:9px 12px;font-size:13px;min-width:0}.clash1 b{color:var(--destructive);white-space:nowrap}.clash1 .ct{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gridw{border:1px solid var(--border);border-radius:8px;overflow:auto}.gridw table{table-layout:fixed;min-width:640px}.gridw td,.gridw th{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pager{display:flex;justify-content:space-between;font-size:12px;color:var(--muted-fg);padding:6px 10px}</style></head>
 <body><div class="doc">
-<h1>Register: check first</h1><div class="ver">mock v2</div>
-<p class="gcap">v2 (owner notes 30 Oct 00:32): the register form is a progressive wizard like Create lead (same step strip, Back on the left, Cancel and the forward action bottom right); Check is step 1's own bottom-right action, and Register exists only on step 2 Details after a passing Check; project tabs reordered, Samples tab removed (C0). Card answers A-E all (a). Masked data: roles for people, placeholder township and developer.</p>
+<h1>Register: check first</h1><div class="ver">mock v3</div>
+<p class="gcap">v3 (owner notes 30 Oct 09:54): the Check says only Clash or No clash (no similar list); secondary leads are a table; any uploaded document meets the Spec In gate (no Requirements kind). v2 (owner notes 30 Oct 00:32): the register form is a progressive wizard like Create lead (same step strip, Back on the left, Cancel and the forward action bottom right); Check is step 1's own bottom-right action, and Register exists only on step 2 Details after a passing Check; project tabs reordered, Samples tab removed (C0). Card answers A-E all (a). Masked data: roles for people, placeholder township and developer.</p>
 <div class="nav"><a href="#a">A. Register wizard</a><a href="#b">B. Secondary lead</a><a href="#c0">C0. Project tabs</a><a href="#c">C. Requirements gate</a><a href="#reuse">Reuses</a></div>
 
 <section id="a"><h2>A. Register a project (create only)</h2>
@@ -67,30 +67,28 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 <div class="fs"><div class="fb" style="border-top:0"><div class="g2">
 <div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">Restroom refurbishment, Sekolah Contoh</div></div>
 <div class="fld full"><label>Developer</label><div class="sel ph">Search developers</div></div>
-<div class="fullc"><span class="pill grn">No existing project matches this title.</span></div>
+<div class="fullc"><span class="pill grn">No clash</span></div>
 </div></div></div>
 <div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Next</span></span></div>
 </div>
 
-<div class="gcap">A3. Check passed, similar only (no row blocks): rows in today's muted style, Next as in A2.</div>
+<div class="gcap">A3. A title close to another developer's project, or below the clash threshold: still just "No clash". No similar list.</div>
 <div class="mock pg">
 <div class="fs"><div class="fb" style="border-top:0"><div class="g2">
 <div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">DSTH phase 3 Taman Contoh</div></div>
 <div class="fld full"><label>Developer</label><div class="sel">Developer Lain Sdn. Bhd.</div></div>
-<div class="fullc" style="border:1px solid var(--border);border-radius:8px;padding:10px 12px"><div class="ch" style="color:var(--muted-fg)">Similar project:</div>
-<div class="crow"><div class="cmain"><span class="code">PRJ-000002</span>100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH<div class="meta">Developer Contoh Berhad &middot; Sales A &middot; Spec In</div></div></div></div>
+<div class="fullc"><span class="pill grn">No clash</span></div>
 </div></div></div>
 <div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Next</span></span></div>
 </div>
 
-<div class="gcap">A4. Match: Next never appears; the bottom-right action is the one way on. Editing the title or developer turns it back into Check.</div>
+<div class="gcap">A4. Clash (a blocking match): one line, code and title only. Next never appears; the bottom-right action is the one way on. Editing the title or developer turns it back into Check.</div>
 <div class="mock pg">
 <div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
 <div class="fs"><div class="fb" style="border-top:0"><div class="g2">
 <div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
 <div class="fld full"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
-<div class="fullc clash"><div class="ch" style="color:var(--destructive)">&#9888; Project already registered:</div>
-<div class="crow"><div class="cmain"><span class="code">PRJ-000002</span>100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH<div class="meta">Developer Contoh Berhad &middot; Sales A &middot; Spec In</div></div></div></div>
+<div class="fullc clash1"><b>&#9888; Clash:</b><span class="code">PRJ-000002</span><span class="ct">100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</span></div>
 </div></div></div>
 <div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Register as secondary lead on PRJ-000002</span></span></div>
 </div>
@@ -140,20 +138,21 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 <div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
 <div class="fld" style="margin-bottom:10px"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
 <div class="fld" style="margin-bottom:10px"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
-<div class="clash"><div class="ch" style="color:var(--destructive)">&#9888; Project already registered:</div>
-<div class="crow"><div class="cmain"><span class="code">PRJ-000002</span><span class="ct">100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</span></div></div></div>
+<div class="clash1"><b>&#9888; Clash:</b><span class="code">PRJ-000002</span><span class="ct">100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</span></div>
 <div class="wfoot col"><span class="btn pri lg">Register as secondary lead on PRJ-000002</span><span class="btn lg">Cancel</span><span class="btn lg dis">Back</span></div>
 </div>
 </section>
 <section id="b"><h2>B. Where management sees secondary leads</h2>
-<div class="gcap">B1. Project page, Access panel: "Interested" becomes "Secondary leads". Reassign and Dismiss unchanged; "Ask to join" unchanged.</div>
+<div class="gcap">B1. Project page, Access panel: secondary leads as a table (the panel list, <code>PanelDataGrid</code>), newest first; decided rows keep their status. "Ask to join" requests and their past decisions stay as today.</div>
 <div class="mock pg">
 <div class="card"><div class="hd">Access</div><div class="bd">
 <div class="kv"><span>Owner</span>Sales A</div>
 <div class="grp">Secondary leads</div>
-<div class="ir"><div class="il"><b>Sales B</b><div class="meta">29 Oct &middot; "Dealer at Taman Contoh asked for a quote on 27 Oct; the site office named us for the bathrooms."</div></div><div class="acts"><span class="btn sm">Reassign to Sales B</span><span class="btn sm ghost">Dismiss</span></div></div>
-<div class="grp">Past decisions</div>
-<div class="ir"><div class="il">Secondary lead by Sales C <span class="pill gry">Dismissed</span><div class="meta">12 Oct</div></div></div>
+<div class="gridw"><table><colgroup><col style="width:16%"><col style="width:11%"><col style="width:35%"><col style="width:14%"><col style="width:24%"></colgroup>
+<tr><th>Salesperson</th><th>Date</th><th>How they found it</th><th>Status</th><th></th></tr>
+<tr><td>Sales B</td><td>29 Oct</td><td title="Dealer at Taman Contoh asked for a quote on 27 Oct; the site office named us for the bathrooms.">Dealer at Taman Contoh asked for a quote on 27 Oct; the site office named us for the bathrooms.</td><td><span class="pill amb">Pending</span></td><td><span class="btn sm">Reassign to Sales B</span> <span class="btn sm ghost">Dismiss</span></td></tr>
+<tr><td>Sales C</td><td>12 Oct</td><td title="Architect mentioned it at a site visit.">Architect mentioned it at a site visit.</td><td><span class="pill gry">Dismissed</span></td><td class="meta">by Manager, 14 Oct</td></tr>
+</table><div class="pager"><span>1 - 2 of 2</span><span>Rows per page 10</span></div></div>
 </div></div>
 </div>
 <div class="gcap">B2. Notification and email subject (both read the same line).</div>
@@ -169,7 +168,7 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 <tr><td>PO</td><td>The project's purchase orders (today's top half of Orders); a PO's schedule and sales orders stay on the PO's own page.</td></tr>
 <tr><td>SO</td><td>Every sales order of the project (question V2; today's Orders shows only the ones without a PO).</td></tr>
 <tr><td>Samples (removed)</td><td>The samples table and its Record a sample dialog are used nowhere else. Old links to it open Samples Request. Stored sample rows are not deleted.</td></tr></table></div>
-<div class="gcap">Open for you (tabs only; recommendation first): V1 Stakeholders, Tasks, Activity: (a) keep them after SO / (b) remove them. V2 SO tab: (a) all the project's sales orders / (b) only those without a PO, as today. V3 labels: (a) your words as written (Quotation, Samples Request, Sponsorship Form, PO, SO) / (b) today's (Quotations, Sample requests, Sponsorships). Rec (a) for all three.</div>
+<div class="gcap">Asked again, not yet answered (tabs only; recommendation first): V1 Stakeholders, Tasks, Activity: (a) keep them after SO / (b) remove them. V2 SO tab: (a) all the project's sales orders / (b) only those without a PO, as today. V3 labels: (a) your words as written (Quotation, Samples Request, Sponsorship Form, PO, SO) / (b) today's (Quotations, Sample requests, Sponsorships). Rec (a) for all three.</div>
 </section>
 
 <section id="c"><h2>C. Requirements before Spec In</h2>
@@ -179,34 +178,27 @@ table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{b
 <div class="tabs"><span>Overview</span><span class="on">Documents</span><span>Quotation</span><span>Samples Request</span><span>Sponsorship Form</span><span>PO</span><span>SO</span></div>
 <div class="mo empty" style="border:1px dashed var(--input);border-radius:8px"><b style="color:var(--foreground)">No documents yet</b><small>Requirements and other project files appear here.</small></div>
 </div>
-<div class="gcap">C2. Click "Spec In" with no Requirements file: a small dialog, drop zone preset to Requirements, one button does both.</div>
+<div class="gcap">C2. Click "Spec In" with no document on the project: a small dialog with a drop zone, one button uploads and moves.</div>
 <div class="mock dialogbg"><div class="dialog"><div class="dh">Requirements needed</div><div class="db">
-<p style="margin:0 0 10px;font-size:13px">Upload the requirements document before moving this project to Spec In.</p>
+<p style="margin:0 0 10px;font-size:13px">Upload the requirements document before moving this project to Spec In. Any file will do.</p>
 <div class="dz"><span class="btn sm">Choose files</span><span class="meta">or drop them here &middot; PDF, photo or screenshot, up to 50 MB</span></div>
-<div class="pv"><div class="pt">PDF</div><div class="pn">Bandar Contoh showroom brief.pdf<div class="meta">Requirements</div></div><span class="btn sm ghost">Remove</span></div>
+<div class="pv"><div class="pt">PDF</div><div class="pn">Bandar Contoh showroom brief.pdf<div class="meta">2.1 MB</div></div><span class="btn sm ghost">Remove</span></div>
 </div><div class="df"><span class="btn">Cancel</span><span class="btn pri">Upload and move to Spec In</span></div></div></div>
-<div class="gcap">C3. Documents tab upload: a Kind select (Project Document default). The list shows each file's kind.</div>
-<div class="mock dialogbg"><div class="dialog"><div class="dh">Upload documents</div><div class="db">
-<div class="fld" style="margin-bottom:10px"><label>Kind</label><div class="sel">Requirements</div></div>
-<div class="dz"><span class="btn sm">Choose files</span><span class="meta">or drop them here &middot; up to 50 MB each</span></div>
-</div><div class="df"><span class="btn">Cancel</span><span class="btn pri">Upload</span></div></div></div>
-<div class="mock" style="padding:8px"><table class="dg"><tr><th style="width:46%">File</th><th style="width:22%">Kind</th><th>Uploaded by</th><th>Date</th></tr>
-<tr><td title="Bandar Contoh showroom brief.pdf">Bandar Contoh showroom brief.pdf</td><td>Requirements</td><td>Sales A</td><td>29 Oct</td></tr>
-<tr><td title="Site photo 1.jpg">Site photo 1.jpg</td><td>Project Document</td><td>Sales A</td><td>29 Oct</td></tr></table></div>
+<div class="gcap">C3. The Documents tab upload is unchanged (no Kind select); a file uploaded there also meets the gate.</div>
 <div class="gcap">C4. If the move is sent anyway (another tab, the API), the server answers with the same sentence as an error toast and the project stays in Registered.</div>
 <div class="mock pg"><span class="pill rej">Upload the requirements document before moving this project to Spec In.</span></div>
 </section>
 
 <section id="reuse"><h2>Reuses</h2><table><tr><th>Element</th><th>Existing</th></tr>
-<tr><td>Step strip (A1-A8)</td><td><code>sorento_crm_frontend/components/common/WizardSteps.tsx</code>, as Create lead uses it (<code>sorento_crm_frontend/app/(protected)/project-sales/leads/components/LeadWizardDialog.tsx:189</code>)</td></tr><tr><td>Footer: Back left, Cancel + forward action right, stacked on a phone</td><td><code>LeadWizardDialog.tsx:350-383</code> (<code>DialogFooter</code> <code>flex-col sm:flex-row sm:justify-between</code>)</td></tr>
+<tr><td>Step strip (A1-A7)</td><td><code>sorento_crm_frontend/components/common/WizardSteps.tsx</code></td></tr>
 <tr><td>Form sections</td><td><code>sorento_crm_frontend/components/common/FormSection.tsx</code>, open state <code>sorento_crm_frontend/app/(protected)/project-sales/_shared/components/ProjectForm.tsx:192-196</code></td></tr>
 <tr><td>Title, developer, AI extract, Check</td><td><code>ProjectForm.tsx:428-548</code> (Check <code>:454-464</code>, AI extract <code>:465-468</code>)</td></tr>
-<tr><td>Match / similar rows</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/pipeline/components/ClashWarningPanel.tsx:39-59</code></td></tr>
+<tr><td>Clash line (blocking rows only)</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/pipeline/components/ClashWarningPanel.tsx:39-59</code> (its blocking branch)</td></tr>
 <tr><td>Step 2 sections</td><td><code>ProjectForm.tsx:550-719</code> (Details), <code>:721-805</code> (Lead, customer and salesperson)</td></tr>
 <tr><td>Secondary lead button + dialog</td><td><code>ProjectForm.tsx:811-814</code>, <code>RegisterInterestDialog</code> <code>:883-956</code></td></tr>
-<tr><td>Access panel</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectAccessPanel.tsx:97-141,209,259-300</code>; <code>ReassignProjectDialog.tsx</code></td></tr>
+<tr><td>Secondary leads table (B1)</td><td><code>sorento_crm_frontend/components/common/PanelDataGrid.tsx</code> (the system list inside a detail tab; a raw <code>components/ui/table</code> is barred by <code>components/ui/raw-table.inventory.test.ts</code>); status pill <code>Badge</code></td></tr><tr><td>Access panel</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectAccessPanel.tsx:97-141,209,259-300</code>; <code>ReassignProjectDialog.tsx</code></td></tr>
 <tr><td>Notification line</td><td><code>sorento_crm_backend/app/services/project_notify_service.py:207-209</code></td></tr>
 <tr><td>Stage button</td><td><code>[projectId]/components/ProjectStatusAction.tsx:122-140</code>, header <code>ProjectDetailClient.tsx:388-392</code></td></tr>
-<tr><td>Upload dialog + drop zone</td><td><code>ProjectDocumentsPanel</code> <code>UploadDialog</code> (<code>FileDropzone</code>, 50 MB), type lookup <code>_shared/services/projectDocumentService.ts:72-90</code></td></tr>
-<tr><td>Project tabs (C0)</td><td><code>TABS</code> <code>sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectDetailClient.tsx:96-109</code>, legacy tab redirect <code>:114,123-128</code>; Orders body <code>:536-539</code> (<code>PurchaseOrdersPanel</code>, <code>SalesOrdersPanel withoutPurchaseOrder</code>); removed <code>SamplesPanel.tsx</code>, <code>SampleDialog.tsx</code></td></tr><tr><td>Dialog shell</td><td><code>sorento_crm_frontend/components/ui/dialog</code></td></tr></table></section>
+<tr><td>Drop zone + upload (C2)</td><td><code>ProjectDocumentsPanel</code> <code>UploadDialog</code> (<code>FileDropzone</code>, 50 MB) and its upload service <code>_shared/services/projectDocumentService.ts:72-125</code> (Project Document type, unchanged)</td></tr>
+<tr><td>Dialog shell</td><td><code>sorento_crm_frontend/components/ui/dialog</code></td></tr></table></section>
 </div></body></html>
