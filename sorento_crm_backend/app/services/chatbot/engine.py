@@ -11980,6 +11980,10 @@ def _question_offered(
                 "team": jsc.get(row, "team"),
                 # CHATBOT-FAIL-TRIAGE AC-7c: a topic option names its own pair's agent.
                 "agent": jsc.get(row, "agent") or jsc.get(routing, "suggested_agent"),
+                # Review round 4: and only THAT agent is the pair a pick accepts
+                # (`turn/apply._answer_offer` -> `plan.trace.agent`); the routing agent
+                # above may be the code default fill and never draws first.
+                "pair_agent": jsc.get(row, "agent") or None,
                 "brand_code": jsc.get(values.get("gate"), "routing_brand"),
             }
         if kind == "company":

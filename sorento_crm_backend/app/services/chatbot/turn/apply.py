@@ -385,7 +385,10 @@ def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Tra
     # the escalation lane routes by - the picked option's when the roster offered
     # several, the offer's own when it was a single-team yes/no.
     trace.team = option_payload.get("team") or pending.team
-    trace.agent = option_payload.get("agent") or pending.payload.get("agent")
+    # Review round 4: only an option's OWN pair agent (the topic question's, `pair_agent`)
+    # is accepted; an offer's stored `agent` is the minting turn's routing agent, often
+    # the code default, and never draws ahead of the team's map agents.
+    trace.agent = option_payload.get("pair_agent")
     # AC-1700: a POSITION over a `member_offer` names that SPECIFIC member -
     # `option["uuid"]` (a real `users.id`), never `option.payload.respond_user_id`
     # (hand pass 12 Phase 3 finding P2: `escalation_context` and
@@ -1024,7 +1027,6 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             # customer who said yes got nothing.
             trace.lane = "escalation"
             trace.team = pending.team
-            trace.agent = pending.payload.get("agent")
             return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
 
