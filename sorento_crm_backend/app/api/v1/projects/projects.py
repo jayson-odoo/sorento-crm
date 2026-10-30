@@ -411,17 +411,7 @@ def register_project(
 
         from app.services import project_registration_service as registrations
 
-        from app.services import project_lead_service as leads
-
-        registrations.require_lead(payload.lead_id)
-        lead = leads.lead_for_registration(
-            db,
-            payload.lead_id,
-            actor_user_id=current_user["id"],
-            own_leads_only=False,
-            permissions=permissions,
-        )
-        customer_id = leads.customer_from_lead(lead, payload.customer_id)
+        customer_id = payload.customer_id
         registrations.require_customer(customer_id)
         svc.check_company_refs(db, company_id, {"customer_id": customer_id})
 
@@ -449,15 +439,6 @@ def register_project(
             template_id=payload.template_id,
             owner_user_id=owner,
             details=details,
-        )
-        # Same transaction as the registration: a refused link rolls the project
-        # back with it, so no project is left without the lead it was meant to carry.
-        leads.set_project_lead(
-            db,
-            project,
-            payload.lead_id,
-            actor_user_id=current_user["id"],
-            permissions=permissions,
         )
         db.commit()
         db.refresh(project)

@@ -201,6 +201,15 @@ beforeEach(() => {
 });
 
 describe('AmendmentReviewClient', () => {
+  it('a sales order that cannot load offers a way back to the SO tab', async () => {
+    getProjectSalesOrder.mockRejectedValue(new Error('gone'));
+    renderReview();
+    expect(await screen.findByRole('link', { name: 'Back to orders' })).toHaveAttribute(
+      'href',
+      '/project-sales/p1?tab=sales-orders',
+    );
+  });
+
   it('labels two uploads of the same document by their upload time, not just the revision label', async () => {
     listScheduleVersions.mockResolvedValue([
       {

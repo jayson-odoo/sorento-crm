@@ -335,14 +335,14 @@ describe.each([
     expect(calls.filter((c) => c.url.includes('/submit'))).toHaveLength(0);
   });
 
-  it('shows the Lead field, not required (LEAD-GOVERNS-REGISTER)', () => {
+  it('AC-L1 shows no Lead field; the Customer picker is editable and Save changes is enabled', () => {
     const { container } = renderForm({
       mode: 'edit',
       project: editProject({ approval_state: state, owner_user_id: 'u-me' } as never),
     });
-    expect(screen.getByLabelText(/^Lead/)).toBeInTheDocument();
-    const label = container.querySelector('label[for="project-lead"]');
-    expect(label?.textContent).not.toContain('*');
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(container.querySelector('label[for="project-lead"]')).toBeNull();
+    expect(screen.getByLabelText(/^Customer/)).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
   });
 });

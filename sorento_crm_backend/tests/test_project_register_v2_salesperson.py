@@ -301,14 +301,16 @@ def test_j3b_edit_is_offered_only_on_a_draft_or_a_rejected_registration(v2):
     assert as_user(v2, v2.sub_a).get(f"{STAFF}/{waiting}").json()["can_edit"] is True
 
 
-def test_j3c_a_lead_id_that_is_not_the_submit_only_users_own_is_a_404(v2):
-    """LEAD-GOVERNS-REGISTER E6 replaces "a submit-only user's lead_id is not linked": the
-    submit-only path now takes a lead, but only one of the caller's own."""
+def test_j3c_a_lead_id_from_a_submit_only_user_is_ignored(v2):
+    """AC-L4 (flipped from E6 "only the caller's own lead"): any lead_id is ignored."""
+    from ._lead_governs_register_support import project_of, reload_lead
+
     lead = as_user(v2, v2.owner).post(
         "/api/v1/project-sales/leads",
         json={"title": title("Lead"), "customer_id": v2.customer.id},
     )
     assert lead.status_code in (200, 201), lead.text
     res = save_draft(v2, v2.sub_a, lead_id=lead.json()["id"])
-    assert res.status_code == 404, res.text
-    assert res.json()["code"] == "lead_not_found"
+    assert res.status_code == 201, res.text
+    assert project_of(v2, res.json()["id"]).lead_id is None
+    assert reload_lead(v2, lead.json()["id"]).outcome == "open"
