@@ -172,6 +172,11 @@ class SystemSettingUpdate(BaseModel):
     # The chatbot report engine's cap (lane REPORT-RATE-LIMIT-CONFIG). 0 = no limit.
     report_ask_rate_limit: Optional[int] = Field(None, ge=0, le=1000)
     report_ask_rate_window_minutes: Optional[int] = Field(None, ge=1, le=1440)
+    # AGENTIC-P1: budgets for one agent turn.
+    chatbot_agent_max_rounds: Optional[int] = Field(None, ge=1, le=30)
+    chatbot_agent_max_seconds: Optional[int] = Field(None, ge=5, le=300)
+    chatbot_agent_max_input_tokens: Optional[int] = Field(None, ge=10000, le=2000000)
+    chatbot_agent_compact_tokens: Optional[int] = Field(None, ge=5000, le=500000)
     chatbot_stock_denial_enabled: Optional[bool] = None
     # PLAN-local-buy-routing-toggle.md: local-supplier Buy routing is a switch, off
     # by default. Off means the rule does not run at all (no pill, every Buy raises).
@@ -474,6 +479,10 @@ def get_settings(
                 "low_stock_sync_wait_seconds": getattr(settings, "low_stock_sync_wait_seconds", 40) if settings else None,
                 "report_ask_rate_limit": getattr(settings, "report_ask_rate_limit", 10) if settings else None,
                 "report_ask_rate_window_minutes": getattr(settings, "report_ask_rate_window_minutes", 10) if settings else None,
+                "chatbot_agent_max_rounds": getattr(settings, "chatbot_agent_max_rounds", 8) if settings else None,
+                "chatbot_agent_max_seconds": getattr(settings, "chatbot_agent_max_seconds", 45) if settings else None,
+                "chatbot_agent_max_input_tokens": getattr(settings, "chatbot_agent_max_input_tokens", 150000) if settings else None,
+                "chatbot_agent_compact_tokens": getattr(settings, "chatbot_agent_compact_tokens", 40000) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
                 # PLAN-local-buy-routing-toggle.md: BOTH manual builders, or the setting
                 # never reaches the General settings screen at all.

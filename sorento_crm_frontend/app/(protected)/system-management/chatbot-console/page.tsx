@@ -2,7 +2,8 @@ import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import RequireAccess from '@/app/components/common/RequireAccess';
-import ChatbotConsole, { CHATBOT_CONSOLE_VIEW_PERMISSION } from './components/ChatbotConsole';
+import { CHATBOT_CONSOLE_VIEW_PERMISSION } from './components/ChatbotConsole';
+import ChatbotConsoleTabs from './components/ChatbotConsoleTabs';
 
 export const metadata: Metadata = {
   title: 'Chatbot Console',
@@ -20,7 +21,7 @@ export default async function ChatbotConsolePage() {
         {/* Sidebar entry is permission-gated, but a deep link is not - without the
             guard a denied user lands on a console whose every call 403s. */}
         <RequireAccess permission={CHATBOT_CONSOLE_VIEW_PERMISSION}>
-          <ChatbotConsole />
+          <ChatbotConsoleTabs />
         </RequireAccess>
       </Container>
     </>

@@ -57,6 +57,13 @@ from app.schemas.chat_topic_audit import (
     VerdictRequest,
 )
 from app.schemas.chatbot_turn import (
+    AgentConversationNewRequest,
+    AgentConversationNewResponse,
+    AgentConversationResponse,
+    AgentConversationToolCall,
+    AgentConversationTurn,
+    AgentTurnRequest,
+    AgentTurnResponse,
     ChatbotTurnDetailResponse,
     ChatbotTurnListResponse,
     ChatbotTurnResponse,
@@ -67,6 +74,9 @@ from app.schemas.chatbot_turn import (
     FailedContactListResponse,
     RetryTurnResponse,
 )
+from app.services.chatbot.agent import memory as agent_memory
+from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
+from app.services.chatbot.agent.loop import AgentBusy, run_agent_turn
 from app.services.chatbot import console_service
 from app.services.chatbot.analytics import topic_audit
 from app.services.chatbot.contracts import TURN_STAGES
@@ -684,6 +694,116 @@ def console_turn(
         actions=result.actions,
         message_id=result.message_id,
     )
+
+
+# --------------------------------------------------------------------------- #
+# AGENTIC-P1: the read-only agent behind the console's Agent mode. Same grant as
+# `/console/turn`; reads only, nothing reaches WhatsApp.
+# --------------------------------------------------------------------------- #
+
+
+@router.post("/agent/turn", response_model=AgentTurnResponse)
+def agent_turn(
+    payload: AgentTurnRequest,
+    user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """One turn of the agent for a contact whose Agent switch is on and which has a linked
+    active user. A refusal is a 409 carrying the reason; a second turn for the same contact
+    while one runs is a 409 agent_busy."""
+    from app.services import rate_limit
+
+    # Each turn can spend a dozen model calls: limited per operator (fail-open without Redis).
+    if not rate_limit.hit("agent_turn", str(user["id"]), limit=30, window_seconds=600).allowed:
+        raise AppException(
+            status_code=429,
+            message="Too many agent messages, wait a few minutes.",
+            code="agent_turn_rate_limited",
+        )
+    try:
+        result = run_agent_turn(
+            db,
+            contact_respond_id=payload.contact_respond_id,
+            text=payload.text,
+            operator_user_id=user.get("id"),
+        )
+    except AgentRefused as exc:
+        raise _agent_refused(exc)
+    except AgentBusy:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "agent_busy"})
+    return AgentTurnResponse(
+        turn_id=result.turn_id,
+        conversation_id=result.conversation_id,
+        reply_text=result.reply_text,
+        status=result.status,
+        limit_hit=result.limit_hit,
+        rounds=result.rounds,
+        usage=result.usage,
+        tool_calls=result.tool_calls,
+        steps=agent_memory.steps_for_turn(db, result.turn_id),
+    )
+
+
+def _agent_refused(exc: AgentRefused) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": "agent_refused", "reason": exc.reason},
+    )
+
+
+@router.get("/agent/conversation", response_model=AgentConversationResponse)
+def agent_conversation(
+    contact_respond_id: str = Query(..., min_length=1, max_length=64),
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The contact's current conversation. Read only: the row is made by the first turn."""
+    try:
+        ctx = build_context(db, contact_respond_id)
+    except AgentRefused as exc:
+        raise _agent_refused(exc)
+    conv = agent_memory.latest_conversation(db, contact_respond_id)
+    if conv is None or not agent_memory.belongs_to(conv, ctx.user_id, grants_hash(ctx)):
+        return AgentConversationResponse(conversation_id=None, turns=[])
+    turns = []
+    for row in agent_memory.conversation_turns(db, conv):
+        envelope = row.envelope if isinstance(row.envelope, dict) else {}
+        response = row.response if isinstance(row.response, dict) else {}
+        digest = [d for d in (response.get("tool_digest") or []) if isinstance(d, dict)]
+        turns.append(
+            AgentConversationTurn(
+                turn_id=str(row.id),
+                text=str(envelope.get("text") or ""),
+                reply_text=str(response.get("reply_text") or ""),
+                status=row.status,
+                created_at=row.created_at,
+                rounds=response.get("rounds"),
+                limit_hit=response.get("limit_hit"),
+                tool_calls=[
+                    AgentConversationToolCall(name=str(d.get("name") or ""), status=str(d.get("status") or ""))
+                    for d in digest
+                ],
+                steps=agent_memory.steps_from_trace(row.trace),
+            )
+        )
+    return AgentConversationResponse(conversation_id=str(conv.id), turns=turns)
+
+
+@router.post("/agent/conversation/new", response_model=AgentConversationNewResponse)
+def agent_conversation_new(
+    payload: AgentConversationNewRequest,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    try:
+        ctx = build_context(db, payload.contact_respond_id)
+    except AgentRefused as exc:
+        raise _agent_refused(exc)
+    conv = agent_memory.new_conversation(
+        db, payload.contact_respond_id, user_id=ctx.user_id, grants_hash=grants_hash(ctx)
+    )
+    db.commit()
+    return AgentConversationNewResponse(conversation_id=str(conv.id))
 
 
 class ParserTryRequest(BaseModel):

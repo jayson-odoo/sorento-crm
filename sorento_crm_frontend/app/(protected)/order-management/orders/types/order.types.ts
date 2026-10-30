@@ -100,7 +100,8 @@ export interface SalesOrderLinkRef {
 
 export interface OrderFormData {
   order_number: string;
-  order_date: Date;
+  // undefined = leave unchanged (an undated DO stays undated until a person fills it).
+  order_date?: Date;
   // null = explicitly clear the date on update (undefined = leave unchanged).
   estimated_delivery_date?: Date | null;
   actual_delivery_date?: Date | null;

@@ -187,7 +187,7 @@ def test_customer_acceptance_records_the_proxied_client_ip(monkeypatch):
         raise _Stop()
 
     monkeypatch.setattr(route.svc, "accept_issue", _accept)
-    payload = type("P", (), {"signer_name": "S", "mode": "typed", "image_data_uri": None, "gps_lat": None, "gps_lng": None})()
+    payload = type("P", (), {"signer_name": "S", "mode": "typed", "image_data_uri": None, "gps_lat": None, "gps_lng": None, "terms_accepted": True})()
     with pytest.raises(_Stop):
         route.accept_quotation("t", payload, _req(PROXY, "6.6.6.6, 203.0.113.7"), _Db())
     assert seen["ip_address"] == "203.0.113.7"

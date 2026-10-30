@@ -76,6 +76,10 @@ function settings(overrides: Partial<ChatbotMediaSettings> = {}): ChatbotMediaSe
     low_stock_sync_wait_seconds: 40,
     report_ask_rate_limit: 10,
     report_ask_rate_window_minutes: 10,
+    chatbot_agent_max_rounds: 8,
+    chatbot_agent_max_seconds: 45,
+    chatbot_agent_max_input_tokens: 150000,
+    chatbot_agent_compact_tokens: 40000,
     ...overrides,
   };
 }
@@ -788,5 +792,42 @@ describe('ChatbotMediaSettingsPage PO and delivery schedule reading', () => {
 
     await waitFor(() => expect(modelField('document-ai-model').text).toHaveValue(''));
     expect(modelField('media-image-model').text).toHaveValue('gemini-3.5-flash');
+  });
+});
+
+describe('ChatbotMediaSettingsPage - agent budgets', () => {
+  const field = (id: string) => document.getElementById(id) as HTMLInputElement;
+
+  it('seeds the four budgets and saves edits', () => {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockQuery.mockReturnValue({
+      data: settings({ chatbot_agent_max_rounds: 5 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    expect(screen.getByText('Agent budgets')).toBeInTheDocument();
+    expect(field('agent-max-rounds').value).toBe('5');
+    expect(field('agent-max-seconds').value).toBe('45');
+    expect(field('agent-max-input-tokens').value).toBe('150000');
+    expect(field('agent-compact-tokens').value).toBe('40000');
+
+    fireEvent.change(field('agent-max-rounds'), { target: { value: '12' } });
+    fireEvent.click(saveButton());
+    expect(mutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ chatbot_agent_max_rounds: 12 }),
+      expect.anything(),
+    );
+  });
+
+  it('refuses a value outside the backend range', () => {
+    mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+    mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderWithClient();
+
+    fireEvent.change(field('agent-max-rounds'), { target: { value: '31' } });
+    expect(screen.getByText('Enter a whole number between 1 and 30.')).toBeInTheDocument();
   });
 });
