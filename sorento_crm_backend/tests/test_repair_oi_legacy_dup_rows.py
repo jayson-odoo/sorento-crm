@@ -436,6 +436,31 @@ def test_ac_6g_a_copy_other_rows_are_bundled_with_is_held():
         assert [(f.row_id, f.verdict) for f in found] == [(str(copy.id), "bundled")]
 
 
+def test_ac_6h_owner_ruling_a_the_m3155_shape_is_held_and_its_date_not_restated():
+    """Owner ruling (a), 30 Oct: every held row stays as it is, including the prod M3155
+    shape - placed, qty already set to the line's, reserved against a link, only the date
+    still the sheet's. The script reports it and writes nothing to it."""
+    with _world() as (db, w):
+        _sibling, copy, _line_ = _m9713ss(db, w, copy_state=INQUIRY_PLACED)
+        copy.qty = Decimal("26")
+        po_line = _po_line(db, w["company_id"], w["po"], w["product"], w["warehouse"], qty_ordered="26")
+        db.add(OrderInquiryLink(
+            id=_uid(), company_id=w["company_id"], row_id=copy.id, po_line_id=po_line.id,
+            document="Reserved @ BRW", qty=Decimal("26"),
+        ))
+        db.commit()
+
+        found = _found(db, w)
+        result = _run(db, w, apply=True, expect=0)
+        db.commit()
+
+        assert [(f.row_id, f.verdict) for f in found] == [(str(copy.id), "linked")]
+        assert (result["found"], result["restate"], result["held"], result["restated"]) == (1, 0, 1, 0)
+        db.refresh(copy)
+        assert (copy.qty, copy.delivery_date, copy.state) == (Decimal("26"), OCT, INQUIRY_PLACED)
+        assert copy.previous_qty is None and copy.previous_delivery_date is None
+
+
 def test_ac_7_dry_run_writes_nothing():
     with _world() as (db, w):
         _sibling, copy, _line_ = _m9713ss(db, w)
