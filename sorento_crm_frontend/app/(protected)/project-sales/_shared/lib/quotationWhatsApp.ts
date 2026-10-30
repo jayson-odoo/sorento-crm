@@ -1,13 +1,17 @@
 import type { QuotationDocument, QuotationIssue } from '../services/quotationDocumentService';
 
 /**
- * One phone number as wa.me digits: digits only, a leading `00` dropped, a single leading `0`
- * read as Malaysian local (`60`).
+ * One phone number as wa.me digits: digits only, a leading `00` dropped, a leading `0` (or `600`)
+ * and a bare mobile read as Malaysian (`60`).
  */
 export function toWaDigits(raw: string): string {
   const digits = raw.replace(/\D/g, '');
   if (digits.startsWith('00')) return digits.slice(2);
+  // "+60 012-...": the country code typed together with the trunk 0.
+  if (digits.startsWith('600')) return `60${digits.slice(3)}`;
   if (digits.startsWith('0')) return `60${digits.slice(1)}`;
+  // A mobile typed without its trunk 0 ("12-000 0001").
+  if (/^1\d{8,9}$/.test(digits)) return `60${digits}`;
   return digits;
 }
 

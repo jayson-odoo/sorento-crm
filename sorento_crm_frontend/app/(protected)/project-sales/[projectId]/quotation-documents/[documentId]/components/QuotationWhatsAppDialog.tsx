@@ -13,6 +13,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { toast } from '@/lib/toast';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { waMeUrl } from '@/lib/wa-me';
 import { useQuotationDocumentMutations } from '../../../../_shared/hooks/useQuotationDocuments';
@@ -49,14 +50,19 @@ export function QuotationWhatsAppDialog({
   issue: QuotationIssue | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  // The last issue stays on screen while the close animation runs; Radix unmounts the body (and
+  // its state) once the exit finishes, so a reopen starts from the template again.
+  const lastIssue = React.useRef<QuotationIssue | null>(null);
+  if (issue) lastIssue.current = issue;
+  const shown = issue ?? lastIssue.current;
   return (
     <Dialog open={Boolean(issue)} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
-        {issue && (
+        {shown && (
           <WhatsAppBody
             projectId={projectId}
             document={document}
-            issue={issue}
+            issue={shown}
             onClose={() => onOpenChange(false)}
           />
         )}
@@ -85,18 +91,18 @@ function WhatsAppBody({
     return digits ? `+${digits}` : '';
   });
   const [edited, setEdited] = React.useState<string | null>(null);
+  const messageRef = React.useRef<HTMLTextAreaElement>(null);
+  const mintedFor = React.useRef<string | null>(null);
 
-  // `mutate` is stable enough for a one-shot: the server reuses a valid token, so a second mint
-  // (dev double-mount) hands back the same link.
-  const { mutate: mint } = mutations.signLink;
+  // One open mints once: StrictMode runs the effect twice, a new issue mints again.
+  const { mutateAsync: mint } = mutations.signLink;
   React.useEffect(() => {
-    mint(
-      { id: document.id, issueId: issue.id },
-      {
-        // The server returns a relative path; the origin is whichever one this screen runs on.
-        onSuccess: (result) => setLink(`${window.location.origin}${result.path}`),
-        onError: () => setFailed(true),
-      },
+    if (mintedFor.current === issue.id) return;
+    mintedFor.current = issue.id;
+    mint({ id: document.id, issueId: issue.id }).then(
+      // The server returns a relative path; the origin is whichever one this screen runs on.
+      (result) => setLink(`${window.location.origin}${result.path}`),
+      () => setFailed(true),
     );
   }, [mint, document.id, issue.id]);
 
@@ -108,7 +114,7 @@ function WhatsAppBody({
           numberLabel: quotationNumberLabel(document, issue),
           subject: document.subject_title,
           link,
-          signatory: document.signatory_name,
+          signatory: document.signatory_name?.trim() || document.signatory_signature?.signer_name?.trim(),
         })
       : '');
   const ready = link !== null;
@@ -133,6 +139,7 @@ function WhatsAppBody({
           <Label htmlFor="quotation-whatsapp-message">Message</Label>
           <Textarea
             id="quotation-whatsapp-message"
+            ref={messageRef}
             rows={9}
             value={message}
             disabled={!ready}
@@ -145,7 +152,7 @@ function WhatsAppBody({
           </p>
         )}
       </div>
-      <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+      <DialogFooter className="gap-2 sm:gap-0">
         <Button type="button" variant="ghost" onClick={onClose}>
           Close
         </Button>
@@ -154,7 +161,15 @@ function WhatsAppBody({
           variant="outline"
           disabled={!ready}
           onClick={async () => {
-            if (link) await copyToClipboard(link);
+            if (!link || (await copyToClipboard(link))) return;
+            // Clipboard refused: select the link in the message so Ctrl/Cmd+C finishes the job.
+            const box = messageRef.current;
+            const start = box ? box.value.indexOf(link) : -1;
+            if (box) {
+              box.focus();
+              if (start >= 0) box.setSelectionRange(start, start + link.length);
+            }
+            toast.error('Press Ctrl/Cmd+C to copy the selected link');
           }}
         >
           {isCopied ? (
