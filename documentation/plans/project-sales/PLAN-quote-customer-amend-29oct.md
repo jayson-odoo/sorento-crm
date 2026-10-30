@@ -1,6 +1,6 @@
 # PLAN: Customer amendment requests on the quotation link (QUOTE-CUSTOMER-AMEND)
 
-Status: Plan - owner answered Q1-Q5 (30 Oct ~00:30); card v3 + mock v2 with the owner's layout notes (`documentation/mockups/QUOTE-CUSTOMER-AMEND/index.html`) filed for approval on PR #1984. Build after the owner approves the mock AND QUOTE-SIGN-PAGE merges. Track: full (migration + new public write path, security review mandatory).
+Status: Plan - owner answered Q1-Q5 (30 Oct ~00:30); card v4 + mock v3 with the owner's notes on mock v2 (30 Oct 09:52) (`documentation/mockups/QUOTE-CUSTOMER-AMEND/index.html`) filed for approval on PR #1984. Build after the owner approves the mock AND QUOTE-SIGN-PAGE merges. Track: full (migration + new public write path, security review mandatory).
 
 Source: owner team meeting 29 Oct 15:40 (Project Sales module); owner answer Q3 29 Oct 22:45 (an accepted amendment produces the next revision under the QUOTE-SIGN-PAGE numbering); owner answers to this card's Q1-Q5, 30 Oct ~00:30 (see Decisions).
 
@@ -24,19 +24,19 @@ the outcome on the same link.
 - Below-minimum: every line write stores `is_below_floor` via `_apply_guardrails` (project_quotation_service.py:622); the gate is at ISSUE (`assert_issuable` `app/services/project_quotation_approval_service.py:195`, called from `issue` document_service.py:538). `revise` refuses while a document is pending approval or approved (`assert_scope_unlocked` project_quotation_service.py:206).
 - The salesperson sends the link by hand; the system sends nothing to the customer (`create_quotation_sign_link` `app/api/v1/projects/quotation_documents.py:609`).
 - Staff notification pattern: `notify_quotation_changes_requested` `app/services/project_notify_service.py:465` (project owner, else management; deduped).
-- Per-line Accept/Decline UI: `AmendmentDeltaTable` `sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/AmendmentDeltaTable.tsx:63` (Decision column :359-441). Its row type `AmendmentDeltaRow` is SO-shaped (`so_line_id`, `verb`, `field`), so it takes a new mode/prop, not a fork.
+- Per-line Accept/Decline UI: `AmendmentDeltaTable` `sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/AmendmentDeltaTable.tsx:63` (Decision column :359-441). Considered and NOT used (owner, mock v2 note 2): the suggestions are decided on the quotation's own line grid instead.
 
 ### Rules (owner-approved answers applied)
 
 1. **Where.** Only on the sign page of an issue that is (a) on a valid link, (b) not accepted, (c) the LATEST issue of its document. A superseded issue's page shows "This quotation has been replaced by Quotation No. PRJQ-...-R{n}" (the full QUOTE-SIGN-PAGE label, never a bare "R{n}") and offers neither edit nor sign (new: closes today's gap where an old revision can still be signed).
 2. **What the customer can change.** Quantity and unit price, per line, or a staged removal of the line (Q2). Description, product code, brand, spec, band label, item number: read-only, and the request payload has no field for them (the server cannot be asked to write one).
    - Quantity: 1 to 9,999,999.99, two decimals (the `quantity` column, models/projects.py:1561). 0 is refused (422); qty 0 does NOT mean remove (Q2).
-   - Removal: a delete icon on each line STAGES a removal suggestion, the same way the quotation editor stages a line delete (`InlineLineTable.tsx:1067-1090`: Trash2 "Remove {line}" strikes the row through and makes its cells read-only; Undo2 "Restore {line}" takes it back). Nothing is sent until Send. A line staged for removal carries no qty/price change. The icon pair is lifted out of `InlineLineTable` into one shared toggle used by both screens, so the two cannot drift.
+   - Removal: a delete icon on each line STAGES a removal suggestion, the same way the quotation editor stages a line delete (`QuotationLinesGrid.tsx` `ActionsCell`: Trash2 "Remove {line}" :687-697 strikes the row through and makes its cells read-only; Undo2 "Restore {line}" :628-640 takes it back). Nothing is sent until Send. A line staged for removal carries no qty/price change.
    - Unit price: greater than 0, at most 9,999,999,999.99 (Numeric(12,2)). Only on lines that carry a price (unit price above 0, or rate-only). Zero-priced companion lines (the cistern, seat cover and connector under a priced WC) show their price as read-only: their money sits on the parent.
    - A line counts as changed only if it is staged for removal or its qty or price differs from what was issued; unchanged lines are not stored.
 3. **One request.** One submit = the changed lines + an optional note (Q5). At least one changed line or a note, else 422. The lines must belong to the versions this issue carried (`quotation_issue_scopes`), else 422 without saying which ids exist.
 4. **One open request per issue.** While a request is open the page shows it read-only ("With your salesperson since 30 Oct, 14:05") and a second submit is 409. Once answered, a new request is allowed only on the NEXT revision (it has its own link).
-5. **Staff side.** The quotation document page gets a "Customer request" panel: per-line diff (issued value, requested value, change; a staged removal is one "Remove line" row), a below-minimum badge on any requested price under the line's stored floor, Accept/Reject per line, optional reason on Reject, and the customer's note. "Apply" is enabled once every line has a decision.
+5. **Staff side (owner, mock v2 note 2).** No new tab and no separate table. The quotation's own line grid on its Lines tab (`QuotationLinesGrid`, view-mode columns #, Photo, Drawing, Product, Description, Brand, Qty, UOM, Rate (RM), Total (RM), :801-958) gets a review mode: each suggestion sits in the cell it concerns (Qty, Rate), quoted value struck through above the suggested one, Accept / Reject right under it in the same cell, and a Reject's reason field opens there too. A suggested removal sits in the row-actions column, where the editor's own Remove icon lives. A suggested price below the minimum shows the grid's existing `MinimumPriceFlag` under the price (`RateCell`, :528-531). One summary row above the grid holds the customer's note, the counts, the totals and Apply; Apply is enabled once every suggestion has a decision.
 6. **Apply.** Each scope with at least one accepted row is revised (`revise`, project_quotation_service.py:371) and the accepted qty/price are written through the existing line writer, so the floor flags recompute exactly as for a hand edit. Rejected rows carry over unchanged. An accepted removal deletes the line from the new version; a rejected removal keeps it as issued. The result is a DRAFT revision (Q3); below-minimum lines stop it issuing until the existing approval passes (`assert_issuable`). Nothing goes out automatically.
 7. **Customer told.** The original link (still valid) shows the outcome per line: accepted / not accepted + reason, and "Your salesperson will send the revised quotation". The new revision's link is sent the usual way. No new outbound channel.
 8. **Salesperson notified** (Q4 = a AND b), one notice per request, through `project_notify_service._send` (:122) with the same recipients rule as today's free-text request (project owner, else management, :491): in-app project alert, email (`send_email` defaults on, :132) and WhatsApp (`send_whatsapp=True` + `_whatsapp_for`, the precedent the approval alerts already use, :384 and :447). No new provider. WhatsApp reaches a recipient only when they have `notify_whatsapp` on and a resolvable Respond contact (`notification_service.create_with_channel_preferences`); otherwise that one channel is skipped and the other two still go.
@@ -95,8 +95,13 @@ The other shapes the brief asks for (a multi-section issue where only the touche
 
 Owner layout notes on mock v1 (30 Oct 00:30), applied in mock v2:
 
-1. "the decision needs to be at proximity to where the customer suggest changes": Accept / Reject sits inline beside each quoted -> suggested value (and a Reject's reason field opens in the same place), not in a far-right Decision column. `AmendmentDeltaTable` gets this as its quotation mode's placement.
-2. "i need the quotation to be more cleanly designed and less information fatigue": only changed lines are open, unchanged lines fold into one row; three columns on the staff side (line, item, suggestion and decision), four on the customer side; ONE summary row (number of suggestions, total before -> after) is the only place totals appear; even row spacing, no grid lines.
+1. "the decision needs to be at proximity to where the customer suggest changes": Accept / Reject sits beside each quoted -> suggested value (and a Reject's reason field opens in the same place), not in a far-right Decision column.
+2. "i need the quotation to be more cleanly designed and less information fatigue": only changed lines are open, unchanged lines fold into one row; three columns on the staff side (line, item, suggestion and decision), four on the customer side; ONE summary row (number of suggestions, total before -> after) is the only place totals appear; even row spacing.
+
+Owner notes on mock v2 (30 Oct 09:52), applied in mock v3:
+
+1. "the columns supposed to be same as the current quotation view, our current quotation view got put item code and uom at the bottom of description meh?" No, it does not: on the CRM Lines tab the item code is its own Product column before Description (`QuotationLinesGrid.tsx` `ProductCell` :305) and UOM is its own column after Qty (:904-916); the Description cell shows only the description (:360-366). The customer sign page has Product code as its own column and no UOM column (`QuotationSignScopes.tsx:64-72`). Mock v2 invented "code + UOM under the description"; mock v3 uses each view's own columns unchanged (the sign page's nine on the customer side, plus one narrow delete column; the Lines grid's ten on the staff side), and the sign page keeps its in-card sideways scroll at 375 instead of v2's line cards.
+2. "should reuse our quotaiton line and put the button at the correspodning column and row, don't invent a new tab caleld custoemr suggestion": rule 5. `AmendmentDeltaTable` is not used.
 
 ## Storage (proposed, migration)
 
@@ -110,11 +115,11 @@ Owner layout notes on mock v1 (30 Oct 00:30), applied in mock v2:
 | Element | Repo path |
 |---|---|
 | Customer edit mode on lines | `sorento_crm_frontend/app/(auth)/quotation-sign/[token]/components/QuotationSignScopes.tsx` (adds an edit mode to `ScopeTable`) |
-| Staged remove / restore icon | lifted from `.../project-sales/_shared/components/InlineLineTable.tsx:1067-1090` into one shared toggle, used by `InlineLineTable` and `ScopeTable` |
+| Staged remove / restore icon | same Trash2 / Undo2 pair and strike-through as `.../project-sales/[projectId]/components/QuotationLinesGrid.tsx` `ActionsCell` (:619-697) |
 | Notify (in-app + email + WhatsApp) | `app/services/project_notify_service.py`, new `notify_quotation_amendment_requested` beside `notify_quotation_changes_requested` (:465) |
 | Submit, note, open-request and outcome states | `.../quotation-sign/[token]/components/QuotationSignClient.tsx` (replaces the Request changes block :280-330) |
-| Staff per-line diff + Accept/Reject | `.../project-sales/[projectId]/components/AmendmentDeltaTable.tsx`, new quotation mode (row shape: line, field qty/price/removal, from, to) with the decision INLINE beside each change (owner note 1) |
-| Staff panel | `.../quotation-documents/[documentId]/components/QuotationChangesRequestedPanel.tsx` (grows into the request panel) |
+| Staff suggestion + Accept/Reject in its own cell | `.../project-sales/[projectId]/components/QuotationLinesGrid.tsx`, a review mode on `QtyCell` :433, `RateCell` :516, `ActionsCell` :619 (no new tab, no new table) |
+| Staff summary row + Apply | `.../quotation-documents/[documentId]/components/QuotationScopesTab.tsx` (the Lines tab), above the grid while a request is open |
 | Below-minimum badge + approval | `QuotationApprovalPanel.tsx` + `Badge` |
 | BE public route | `app/api/v1/public/quotation_sign.py` |
 | BE service | `app/services/project_quotation_document_service.py` (new functions beside `request_changes`) |
