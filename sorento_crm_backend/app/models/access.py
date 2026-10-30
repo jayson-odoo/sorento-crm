@@ -350,6 +350,8 @@ class RespondContact(Base):
     chatbot_files_as_links = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     # AGENTIC-P1: explicit entry to the read-only agent (console Agent mode). Default OFF.
     chatbot_agent_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # AGENTIC-P2: this contact's own daily cap on agent turns. NULL = the global value, 0 = no cap.
+    chatbot_agent_daily_turns = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)

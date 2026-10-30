@@ -22,6 +22,7 @@ class AIAssistantConfigUpdate(BaseModel):
     openai_api_key: Optional[str] = Field(
         None, description="Optional replacement OpenAI key (dedicated slot)"
     )
+    jev_api_key: Optional[str] = Field(None, description="Optional replacement Jev key (chatbot router)")
     enabled_tools: list[str] = Field(default_factory=list)
     rag_enabled: bool = True
     is_enabled: bool = True
@@ -39,6 +40,7 @@ class AIAssistantConfigResponse(BaseModel):
     anthropic_api_key_masked: Optional[str] = None
     gemini_api_key_masked: Optional[str] = None
     openai_api_key_masked: Optional[str] = None
+    jev_api_key_masked: Optional[str] = None
     enabled_tools: list[str]
     rag_enabled: bool
     is_enabled: bool

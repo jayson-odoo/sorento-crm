@@ -1072,6 +1072,18 @@ def _chatbot_agent_fallback() -> str:
     )
 
 
+def _chatbot_router_fallback() -> str:
+    """The Jev router's instructions (AGENTIC-P2). No dashes in the copy: the model mirrors it."""
+    return (
+        "You route one staff message to one of two assistants. The state holds the new message and "
+        "up to three earlier exchanges, each with who answered it (last answered by: agent or bot). "
+        "Messages may be in English, Malay or Chinese, or mixed. Pick chat when the message is a "
+        "single lookup or a simple question, and agent when it needs several reads combined, a "
+        "comparison, a reason, an analysis, or a change to a record. A short follow up belongs to "
+        "whoever answered the last exchange, unless it asks for something new."
+    )
+
+
 def _chatbot_clarifier_fallback() -> str:
     """System prompt for the WhatsApp chatbot's clarifier (`chatbot_clarifier`).
 
@@ -1304,6 +1316,14 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_chatbot_agent_fallback,
+    ),
+    "chatbot_router": PromptKeySpec(
+        name="chatbot_router",
+        role="Chatbot router - Jev instructions that pick the bot or the agent (console Auto mode)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_chatbot_router_fallback,
     ),
     "synthesizer": PromptKeySpec(
         name="synthesizer",

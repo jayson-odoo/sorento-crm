@@ -270,6 +270,27 @@ class AgentTurnResponse(BaseModel):
     pending_action: AgentPendingAction | None = None
 
 
+class AutoTurnRequest(AgentTurnRequest):
+    pass
+
+
+class AutoRoute(BaseModel):
+    """Which side answered an Auto turn and why (AGENTIC-P2)."""
+
+    route: Literal["chat", "agent"]
+    score: float | None = None
+    reason: str
+    provider: str | None = None
+    ms: int = 0
+    tokens_in: int = 0
+
+
+class AutoTurnResponse(BaseModel):
+    route: AutoRoute
+    # The chosen side's own turn: a console turn for `chat`, an agent turn for `agent`.
+    turn: ConsoleTurnResponse | AgentTurnResponse
+
+
 class AgentConversationToolCall(BaseModel):
     name: str
     status: str

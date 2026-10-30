@@ -54,6 +54,10 @@ class AIAssistantConfig(Base):
     openai_api_key_ciphertext: Mapped[str | None] = mapped_column(
         EncryptedText("ai_assistant_configs.openai_api_key_ciphertext"), nullable=True
     )
+    # Dedicated Jev (TypeSafe AI) key for the chatbot router (AGENTIC-P2); env JEV_API_KEY is the fallback.
+    jev_api_key_ciphertext: Mapped[str | None] = mapped_column(
+        EncryptedText("ai_assistant_configs.jev_api_key_ciphertext"), nullable=True
+    )
     enabled_tools: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default="[]")
     rag_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
