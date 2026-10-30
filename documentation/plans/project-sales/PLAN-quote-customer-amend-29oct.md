@@ -1,6 +1,6 @@
 # PLAN: Customer amendment requests on the quotation link (QUOTE-CUSTOMER-AMEND)
 
-Status: Plan - owner answered Q1-Q5 (30 Oct ~00:30); card v4 + mock v3 with the owner's notes on mock v2 (30 Oct 09:52) (`documentation/mockups/QUOTE-CUSTOMER-AMEND/index.html`) filed for approval on PR #1984. Build after the owner approves the mock AND QUOTE-SIGN-PAGE merges. Track: full (migration + new public write path, security review mandatory).
+Status: Build, Phase 2 (red-first tests) - mock v3 approved by the owner (30 Oct 10:28). BE + staff-grid tests now; sign-page code and its FE tests after QUOTE-SIGN-PAGE (#1987) merges. Track: full (migration + new public write path, security review mandatory).
 
 Source: owner team meeting 29 Oct 15:40 (Project Sales module); owner answer Q3 29 Oct 22:45 (an accepted amendment produces the next revision under the QUOTE-SIGN-PAGE numbering); owner answers to this card's Q1-Q5, 30 Oct ~00:30 (see Decisions).
 
@@ -103,12 +103,43 @@ Owner notes on mock v2 (30 Oct 09:52), applied in mock v3:
 1. "the columns supposed to be same as the current quotation view, our current quotation view got put item code and uom at the bottom of description meh?" No, it does not: on the CRM Lines tab the item code is its own Product column before Description (`QuotationLinesGrid.tsx` `ProductCell` :305) and UOM is its own column after Qty (:904-916); the Description cell shows only the description (:360-366). The customer sign page has Product code as its own column and no UOM column (`QuotationSignScopes.tsx:64-72`). Mock v2 invented "code + UOM under the description"; mock v3 uses each view's own columns unchanged (the sign page's nine on the customer side, plus one narrow delete column; the Lines grid's ten on the staff side), and the sign page keeps its in-card sideways scroll at 375 instead of v2's line cards.
 2. "should reuse our quotaiton line and put the button at the correspodning column and row, don't invent a new tab caleld custoemr suggestion": rule 5. `AmendmentDeltaTable` is not used.
 
-## Storage (proposed, migration)
+## Storage (migration)
 
-- `projects.quotation_amendment_requests`: id, company_id, issue_id (FK, cascade), requester_name, note, status (`open` / `applied` / `superseded`), submitted_at, ip_address, applied_at, applied_by, created/updated.
-  Partial unique index: one `open` per issue_id.
-- `projects.quotation_amendment_request_lines`: id, company_id, request_id (FK, cascade), line_id (FK to the ISSUED version's line), is_removal (bool; when true qty_to/price_to are null), qty_from, qty_to (CHECK qty_to >= 1), price_from, price_to, decision (`pending` / `accepted` / `rejected`), decision_reason, decided_by, decided_at.
-- The three `changes_requested_*` columns stay (history) and keep being written for the note, so the existing panel and activity feed keep working.
+- `projects.quotation_amendment_requests`: id, company_id, issue_id (FK quotation_issues, cascade), status (`open` / `applied` / `superseded`), requester_name (200), note (text), ip_address (64), submitted_at, applied_at, applied_by (FK users, set null), created_at, updated_at.
+  Partial unique index: one `open` per issue_id. `CompanyScopedMixin`, audited.
+- `projects.quotation_amendment_request_rows`: id, company_id, request_id (FK, cascade), line_id (FK quotation_lines of the ISSUED version, cascade), field (`quantity` / `unit_price` / `remove`), value_from Numeric(12,2) null, value_to Numeric(12,2) null (null for `remove`), decision (`pending` / `accepted` / `rejected`, default pending), decision_reason (500), decided_by (FK users, set null), decided_at.
+  Unique (request_id, line_id, field). One row per field, so the salesperson can accept the quantity and reject the price of the same line.
+- The three `changes_requested_*` columns stay and are still written from the note, so the existing panel and activity history keep working.
+
+## API contract
+
+Public (`app/api/v1/public/quotation_sign.py`, token only):
+
+- `POST /api/v1/public/quotation-sign/{token}/amendment-request`
+  body `{ "requester_name": str|null (<=200), "note": str|null (<=4000), "lines": [ { "line_id": str, "quantity": "110.00"|null, "unit_price": "380.00"|null, "remove": bool } ] (<=500) }`
+  -> 200 the sign page. Errors per UAC AC-QCA-02..12.
+- `POST /{token}/accept` -> 409 `quotation_amendment_open` while a request is open; 409 `quotation_superseded` on a superseded issue.
+- Sign page payload adds: `lines[].id`, `amendment_request` (null or `{id, status, submitted_at, requester_name, note, rows: [{id, line_id, field, value_from, value_to, decision, decision_reason}]}`), `superseded_by_ref` (null or the later issue's `our_ref_text`), `can_sign` (bool), `sign_blocked_reason` (null | `amendment_open` | `amendment_applied` | `superseded` | `accepted`).
+
+Service (`app/services/quotation_amendment_service.py`, new module):
+
+- `submit_request(db, *, record, lines, note, requester_name, ip_address) -> QuotationAmendmentRequest`
+- `open_request(db, issue_id) -> Optional[QuotationAmendmentRequest]`
+- `latest_request_for_document(db, document) -> Optional[QuotationAmendmentRequest]`
+- `decide_row(db, *, request, row_id, decision, reason, actor_user_id) -> QuotationAmendmentRequestRow`
+- `apply_request(db, *, request, actor_user_id) -> List[ProjectQuotationVersion]` (the new draft versions)
+- `serialize_request(db, request) -> dict` (rows carry `below_floor` and `floor_value` on `unit_price` rows for staff)
+- `close_open_requests_superseded_by(db, document, new_issue)` called from `issue()`.
+
+Staff (`app/api/v1/projects/quotation_documents.py`, `require_permission(EDIT)`, `_editable_project`):
+
+- `GET /projects/{project_id}/quotation-documents/{document_id}/amendment-request` -> the serialized open or latest request of the latest issue, or `null`.
+- `PUT /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/rows/{row_id}` body `{ "decision": "accepted"|"rejected"|"pending", "reason": str|null }` -> the serialized request.
+- `POST /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/apply` -> `{ "request": {...}, "version_ids": [...] }`.
+
+FE (staff): `QuotationLinesGrid` gains an optional prop
+`review?: { rows: QuotationAmendmentRow[]; onDecide: (rowId: string, decision: 'accepted' | 'rejected' | 'pending', reason?: string) => void; disabled?: boolean }`
+with `QuotationAmendmentRow = { id, line_id, field: 'quantity' | 'unit_price' | 'remove', value_from: string | null, value_to: string | null, decision, decision_reason: string | null, below_floor?: boolean, floor_value?: string | null }` in `_shared/types/project.types.ts`.
 
 ## Component map (to be confirmed against QUOTE-SIGN-PAGE once it merges)
 
