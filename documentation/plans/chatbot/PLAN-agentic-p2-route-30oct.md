@@ -133,8 +133,9 @@ wasted-agent <= 10%, p95 <= 1.5 s. Jev failing MS or ZH -> stop, one ask with th
 
 Frozen criteria v2, held-out staff rows n=120: Jev @0.7 agree 92%, missed-agent 15%, wasted-agent 5%, p95 389 ms,
 ~USD 0.03 per 1,000; Flash-Lite agree 91%, missed 5%, wasted 11%, p95 1,262 ms, ~USD 0.20 per 1,000; parser as
-router misses every agent ask. No language failure (Jev staff EN 91% / MS 90% / ZH 94%). Pass-bar decision filed
-with crew (missed-agent above the proposed 10%).
+router misses every agent ask. No language failure (Jev staff EN 91% / MS 90% / ZH 94%). Missed-agent is above the
+proposed 10% bar; owner 31 Oct 00:35 "yeap okay can ship jev": ship Jev with default min score 0.7 (a live
+setting in Agent budgets; a miss means today's bot answers).
 
 ## Not in this lane
 

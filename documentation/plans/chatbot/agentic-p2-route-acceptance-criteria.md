@@ -61,3 +61,6 @@ Plan: `PLAN-agentic-p2-route-30oct.md`. Each item is testable; ids are cited by 
 - **E2** Table for Jev, parser-as-router and Flash-Lite: agreement, missed-agent, wasted-agent, per language,
   p50/p95 latency, cost per 1,000. Pass: missed-agent <= 10%, wasted-agent <= 10%, Jev p95 <= 1.5 s.
 - **E3** Jev below the bar on MS or ZH -> lane stops and files one ask with the numbers.
+
+E2 outcome (31 Oct): Jev met wasted-agent and latency, missed-agent 15% on staff rows; owner accepted it
+(00:35, "yeap okay can ship jev", default min score 0.7). E3: no language failure.
