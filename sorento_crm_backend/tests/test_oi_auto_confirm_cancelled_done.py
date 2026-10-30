@@ -23,7 +23,17 @@ from ._pg_fixture import blank_session
 from .test_oi_auto_confirm import _header_row, header_api  # noqa: F401  (fixture)
 from .test_oi_auto_confirm_review1 import _cancelled_line_row, _flag_cancelled_line
 from .test_oi_auto_confirm_review2 import _po_linked_row
-from .test_oi_cancelled_line_used_confirm import _inquiry, _line_chain, _oi_row
+from .test_oi_cancelled_line_used_confirm import (  # noqa: F401  (db, env are fixtures)
+    _cancel_via_so_edit,
+    _create_then_prep_push,
+    _inquiry,
+    _line_chain,
+    _mirror_for_ingest_line,
+    _oi_row,
+    _so_edit_chain,
+    db,
+    env,
+)
 from .test_order_inquiry_kinds import _product, _sorento, _uid
 
 OLD_STAMP = datetime(2026, 1, 2, 3, 4, 5)
@@ -116,3 +126,55 @@ def test_ac_ac_10e_the_backfill_makes_a_linked_cancelled_line_row_done():
         db.refresh(row)
         assert row.ack_state == ACK_ACKNOWLEDGED
         assert row.acknowledged_by is None
+
+
+# A newly cancelled line makes EVERY live row on it done, awaiting and changed included.
+_TO_ORDER = [("awaiting", None), ("changed", datetime(2026, 1, 1))]
+
+
+@pytest.mark.parametrize("row_ack,pre_changed_at", _TO_ORDER)
+def test_ac_ac_10e_so_edit_cancel_makes_an_awaiting_or_changed_row_done(
+    db, row_ack, pre_changed_at
+):
+    from app.models.order import SalesOrderLine
+    from app.models.project_so import INQUIRY_RAISED, OrderInquiryRow
+
+    so, _product, line, row = _so_edit_chain(
+        db, row_state=INQUIRY_RAISED, row_ack=row_ack, changed_at=pre_changed_at
+    )
+    for key in PENDING_KEYS:
+        db.info.pop(key, None)
+
+    _cancel_via_so_edit(db, so)
+
+    db.expire_all()
+    assert db.get(SalesOrderLine, line.id).line_status == "cancelled"
+    row = db.get(OrderInquiryRow, row.id)
+    assert row.ack_state == ACK_ACKNOWLEDGED, row.ack_state
+    assert row.acknowledged_by is None
+    assert row.changed_at == pre_changed_at, "the cancel stamps no changed_at"
+    for key in PENDING_KEYS:
+        assert not db.info.get(key), f"the cancel queued {key} for purchasing"
+
+
+@pytest.mark.parametrize("row_ack,pre_changed_at", _TO_ORDER)
+def test_ac_ac_10e_autocount_cancel_makes_an_awaiting_or_changed_row_done(
+    env, row_ack, pre_changed_at
+):
+    from app.models.project_so import OrderInquiryRow
+    from .test_ingest_documents import INGEST_SO
+
+    record, header, line, product_id = _create_then_prep_push(env)
+    _mirror, row = _mirror_for_ingest_line(
+        env, header["id"], line["id"], product_id, row_ack=row_ack, changed_at=pre_changed_at,
+    )
+
+    res = env.post(INGEST_SO, [dict(record, status="cancelled")])
+    assert res.status_code == 200, res.text
+
+    env.db.expire_all()
+    assert env.so_lines(header["id"])[0]["line_status"] == "cancelled"
+    row = env.db.get(OrderInquiryRow, row.id)
+    assert row.ack_state == ACK_ACKNOWLEDGED, row.ack_state
+    assert row.acknowledged_by is None
+    assert row.changed_at == pre_changed_at, "the cancel stamps no changed_at"
