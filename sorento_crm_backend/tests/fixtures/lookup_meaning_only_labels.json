@@ -1,0 +1,2974 @@
+{
+ "model": "gemini-embedding-001",
+ "dims": 1536,
+ "about": "Meaning-only label set for the lookup floors re-check (LOOKUP-EMBED-CENTRAL AC-LEC-25). Generic catalogue words only. kind: pos = the phrase names the gold row(s) (a row is gold when one of its texts equals a gold text); neg = names no row of the list; excluded = doubtful, never scored. Vectors: cached gemini-embedding-001, unit, float16, in lookup_meaning_only_vectors.npz.",
+ "rows": [
+  {
+   "list": "category",
+   "label": "ACCOUNT",
+   "texts": [
+    "ACCOUNT"
+   ],
+   "key": "cat-001"
+  },
+  {
+   "list": "category",
+   "label": "BATHTUB",
+   "texts": [
+    "BATHTUB"
+   ],
+   "key": "cat-002"
+  },
+  {
+   "list": "category",
+   "label": "Bathroom Accessory",
+   "texts": [
+    "Bathroom Accessory",
+    "bathroom accessory",
+    "towel rail",
+    "towel bar",
+    "soap holder",
+    "paper holder",
+    "robe hook"
+   ],
+   "key": "cat-003"
+  },
+  {
+   "list": "category",
+   "label": "Tap",
+   "texts": [
+    "Tap",
+    "tap",
+    "faucet",
+    "mixer",
+    "paip",
+    "kepala paip",
+    "water tap"
+   ],
+   "key": "cat-004"
+  },
+  {
+   "list": "category",
+   "label": "Bathtub and Jacuzzi",
+   "texts": [
+    "Bathtub and Jacuzzi",
+    "bathtub",
+    "bath tub",
+    "jacuzzi",
+    "tub",
+    "shower screen"
+   ],
+   "key": "cat-005"
+  },
+  {
+   "list": "category",
+   "label": "Shower",
+   "texts": [
+    "Shower",
+    "shower",
+    "shower head",
+    "rain shower",
+    "hand shower",
+    "pancuran"
+   ],
+   "key": "cat-006"
+  },
+  {
+   "list": "category",
+   "label": "Wash Basin",
+   "texts": [
+    "Wash Basin",
+    "wash basin",
+    "basin",
+    "washbasin",
+    "sink basin",
+    "besen",
+    "water basin"
+   ],
+   "key": "cat-007"
+  },
+  {
+   "list": "category",
+   "label": "Water Closet",
+   "texts": [
+    "Water Closet",
+    "water closet",
+    "wc",
+    "toilet",
+    "toilet bowl",
+    "closet",
+    "tandas"
+   ],
+   "key": "cat-008"
+  },
+  {
+   "list": "category",
+   "label": "Bathroom Accessory",
+   "texts": [
+    "Bathroom Accessory",
+    "bathroom accessory",
+    "towel rail",
+    "towel bar",
+    "soap holder",
+    "paper holder",
+    "robe hook"
+   ],
+   "key": "cat-009"
+  },
+  {
+   "list": "category",
+   "label": "Cloth Hanger",
+   "texts": [
+    "Cloth Hanger",
+    "cloth hanger",
+    "clothes hanger",
+    "hanger",
+    "penyidai"
+   ],
+   "key": "cat-010"
+  },
+  {
+   "list": "category",
+   "label": "Bathroom Furniture",
+   "texts": [
+    "Bathroom Furniture",
+    "cabinet",
+    "mirror",
+    "vanity",
+    "bathroom cabinet",
+    "kabinet"
+   ],
+   "key": "cat-011"
+  },
+  {
+   "list": "category",
+   "label": "Flexible Hose",
+   "texts": [
+    "Flexible Hose",
+    "flexible hose",
+    "hose",
+    "shower tube",
+    "hos"
+   ],
+   "key": "cat-012"
+  },
+  {
+   "list": "category",
+   "label": "Tap",
+   "texts": [
+    "Tap",
+    "tap",
+    "faucet",
+    "mixer",
+    "paip",
+    "kepala paip",
+    "water tap"
+   ],
+   "key": "cat-013"
+  },
+  {
+   "list": "category",
+   "label": "Bathtub and Jacuzzi",
+   "texts": [
+    "Bathtub and Jacuzzi",
+    "bathtub",
+    "bath tub",
+    "jacuzzi",
+    "tub",
+    "shower screen"
+   ],
+   "key": "cat-014"
+  },
+  {
+   "list": "category",
+   "label": "Kitchen Sink",
+   "texts": [
+    "Kitchen Sink",
+    "kitchen sink",
+    "sink",
+    "sinki",
+    "dapur"
+   ],
+   "key": "cat-015"
+  },
+  {
+   "list": "category",
+   "label": "Shower",
+   "texts": [
+    "Shower",
+    "shower",
+    "shower head",
+    "rain shower",
+    "hand shower",
+    "pancuran"
+   ],
+   "key": "cat-016"
+  },
+  {
+   "list": "category",
+   "label": "Wash Basin",
+   "texts": [
+    "Wash Basin",
+    "wash basin",
+    "basin",
+    "washbasin",
+    "sink basin",
+    "besen",
+    "water basin"
+   ],
+   "key": "cat-017"
+  },
+  {
+   "list": "category",
+   "label": "Water Closet",
+   "texts": [
+    "Water Closet",
+    "water closet",
+    "wc",
+    "toilet",
+    "toilet bowl",
+    "closet",
+    "tandas"
+   ],
+   "key": "cat-018"
+  },
+  {
+   "list": "category",
+   "label": "DISPLAY",
+   "texts": [
+    "DISPLAY"
+   ],
+   "key": "cat-019"
+  },
+  {
+   "list": "category",
+   "label": "DUSTBIN",
+   "texts": [
+    "DUSTBIN"
+   ],
+   "key": "cat-020"
+  },
+  {
+   "list": "category",
+   "label": "FAN",
+   "texts": [
+    "FAN"
+   ],
+   "key": "cat-021"
+  },
+  {
+   "list": "category",
+   "label": "FURNITUR",
+   "texts": [
+    "FURNITUR"
+   ],
+   "key": "cat-022"
+  },
+  {
+   "list": "category",
+   "label": "Bathroom Furniture",
+   "texts": [
+    "Bathroom Furniture",
+    "cabinet",
+    "mirror",
+    "vanity",
+    "bathroom cabinet",
+    "kabinet"
+   ],
+   "key": "cat-023"
+  },
+  {
+   "list": "category",
+   "label": "Wash Basin",
+   "texts": [
+    "Wash Basin",
+    "wash basin",
+    "basin",
+    "washbasin",
+    "sink basin",
+    "besen",
+    "water basin"
+   ],
+   "key": "cat-024"
+  },
+  {
+   "list": "category",
+   "label": "Water Closet",
+   "texts": [
+    "Water Closet",
+    "water closet",
+    "wc",
+    "toilet",
+    "toilet bowl",
+    "closet",
+    "tandas"
+   ],
+   "key": "cat-025"
+  },
+  {
+   "list": "category",
+   "label": "JACUZZI",
+   "texts": [
+    "JACUZZI"
+   ],
+   "key": "cat-026"
+  },
+  {
+   "list": "category",
+   "label": "LABOUR",
+   "texts": [
+    "LABOUR"
+   ],
+   "key": "cat-027"
+  },
+  {
+   "list": "category",
+   "label": "Bathroom Accessory",
+   "texts": [
+    "Bathroom Accessory",
+    "bathroom accessory",
+    "towel rail",
+    "towel bar",
+    "soap holder",
+    "paper holder",
+    "robe hook"
+   ],
+   "key": "cat-028"
+  },
+  {
+   "list": "category",
+   "label": "Tap",
+   "texts": [
+    "Tap",
+    "tap",
+    "faucet",
+    "mixer",
+    "paip",
+    "kepala paip",
+    "water tap"
+   ],
+   "key": "cat-029"
+  },
+  {
+   "list": "category",
+   "label": "Bathtub and Jacuzzi",
+   "texts": [
+    "Bathtub and Jacuzzi",
+    "bathtub",
+    "bath tub",
+    "jacuzzi",
+    "tub",
+    "shower screen"
+   ],
+   "key": "cat-030"
+  },
+  {
+   "list": "category",
+   "label": "Kitchen Sink",
+   "texts": [
+    "Kitchen Sink",
+    "kitchen sink",
+    "sink",
+    "sinki",
+    "dapur"
+   ],
+   "key": "cat-031"
+  },
+  {
+   "list": "category",
+   "label": "Shower",
+   "texts": [
+    "Shower",
+    "shower",
+    "shower head",
+    "rain shower",
+    "hand shower",
+    "pancuran"
+   ],
+   "key": "cat-032"
+  },
+  {
+   "list": "category",
+   "label": "Wash Basin",
+   "texts": [
+    "Wash Basin",
+    "wash basin",
+    "basin",
+    "washbasin",
+    "sink basin",
+    "besen",
+    "water basin"
+   ],
+   "key": "cat-033"
+  },
+  {
+   "list": "category",
+   "label": "Water Closet",
+   "texts": [
+    "Water Closet",
+    "water closet",
+    "wc",
+    "toilet",
+    "toilet bowl",
+    "closet",
+    "tandas"
+   ],
+   "key": "cat-034"
+  },
+  {
+   "list": "category",
+   "label": "MISC",
+   "texts": [
+    "MISC"
+   ],
+   "key": "cat-035"
+  },
+  {
+   "list": "category",
+   "label": "PALLET",
+   "texts": [
+    "PALLET"
+   ],
+   "key": "cat-036"
+  },
+  {
+   "list": "category",
+   "label": "PUMP",
+   "texts": [
+    "PUMP"
+   ],
+   "key": "cat-037"
+  },
+  {
+   "list": "category",
+   "label": "REJECT",
+   "texts": [
+    "REJECT"
+   ],
+   "key": "cat-038"
+  },
+  {
+   "list": "category",
+   "label": "SAMPLE",
+   "texts": [
+    "SAMPLE"
+   ],
+   "key": "cat-039"
+  },
+  {
+   "list": "category",
+   "label": "Bathroom Accessory",
+   "texts": [
+    "Bathroom Accessory",
+    "bathroom accessory",
+    "towel rail",
+    "towel bar",
+    "soap holder",
+    "paper holder",
+    "robe hook"
+   ],
+   "key": "cat-040"
+  },
+  {
+   "list": "category",
+   "label": "Cloth Hanger",
+   "texts": [
+    "Cloth Hanger",
+    "cloth hanger",
+    "clothes hanger",
+    "hanger",
+    "penyidai"
+   ],
+   "key": "cat-041"
+  },
+  {
+   "list": "category",
+   "label": "Bathroom Furniture",
+   "texts": [
+    "Bathroom Furniture",
+    "cabinet",
+    "mirror",
+    "vanity",
+    "bathroom cabinet",
+    "kabinet"
+   ],
+   "key": "cat-042"
+  },
+  {
+   "list": "category",
+   "label": "Tap",
+   "texts": [
+    "Tap",
+    "tap",
+    "faucet",
+    "mixer",
+    "paip",
+    "kepala paip",
+    "water tap"
+   ],
+   "key": "cat-043"
+  },
+  {
+   "list": "category",
+   "label": "Kitchen Sink",
+   "texts": [
+    "Kitchen Sink",
+    "kitchen sink",
+    "sink",
+    "sinki",
+    "dapur"
+   ],
+   "key": "cat-044"
+  },
+  {
+   "list": "category",
+   "label": "Bathtub and Jacuzzi",
+   "texts": [
+    "Bathtub and Jacuzzi",
+    "bathtub",
+    "bath tub",
+    "jacuzzi",
+    "tub",
+    "shower screen"
+   ],
+   "key": "cat-045"
+  },
+  {
+   "list": "category",
+   "label": "Kitchen Sink",
+   "texts": [
+    "Kitchen Sink",
+    "kitchen sink",
+    "sink",
+    "sinki",
+    "dapur"
+   ],
+   "key": "cat-046"
+  },
+  {
+   "list": "category",
+   "label": "Shower",
+   "texts": [
+    "Shower",
+    "shower",
+    "shower head",
+    "rain shower",
+    "hand shower",
+    "pancuran"
+   ],
+   "key": "cat-047"
+  },
+  {
+   "list": "category",
+   "label": "Urinal",
+   "texts": [
+    "Urinal",
+    "urinal",
+    "urinary"
+   ],
+   "key": "cat-048"
+  },
+  {
+   "list": "category",
+   "label": "Wash Basin",
+   "texts": [
+    "Wash Basin",
+    "wash basin",
+    "basin",
+    "washbasin",
+    "sink basin",
+    "besen",
+    "water basin"
+   ],
+   "key": "cat-049"
+  },
+  {
+   "list": "category",
+   "label": "Water Closet",
+   "texts": [
+    "Water Closet",
+    "water closet",
+    "wc",
+    "toilet",
+    "toilet bowl",
+    "closet",
+    "tandas"
+   ],
+   "key": "cat-050"
+  },
+  {
+   "list": "category",
+   "label": "TRANSPOR",
+   "texts": [
+    "TRANSPOR"
+   ],
+   "key": "cat-051"
+  },
+  {
+   "list": "category",
+   "label": "Angle valve",
+   "texts": [
+    "Angle valve"
+   ],
+   "key": "cat-052"
+  },
+  {
+   "list": "category",
+   "label": "Art basin",
+   "texts": [
+    "Art basin"
+   ],
+   "key": "cat-053"
+  },
+  {
+   "list": "category",
+   "label": "Basin tap",
+   "texts": [
+    "Basin tap"
+   ],
+   "key": "cat-054"
+  },
+  {
+   "list": "category",
+   "label": "Bib tap",
+   "texts": [
+    "Bib tap"
+   ],
+   "key": "cat-055"
+  },
+  {
+   "list": "category",
+   "label": "Bidet",
+   "texts": [
+    "Bidet"
+   ],
+   "key": "cat-056"
+  },
+  {
+   "list": "category",
+   "label": "Bottle trap",
+   "texts": [
+    "Bottle trap"
+   ],
+   "key": "cat-057"
+  },
+  {
+   "list": "category",
+   "label": "Cistern",
+   "texts": [
+    "Cistern"
+   ],
+   "key": "cat-058"
+  },
+  {
+   "list": "category",
+   "label": "Close coupled",
+   "texts": [
+    "Close coupled"
+   ],
+   "key": "cat-059"
+  },
+  {
+   "list": "category",
+   "label": "Corner basket",
+   "texts": [
+    "Corner basket"
+   ],
+   "key": "cat-060"
+  },
+  {
+   "list": "category",
+   "label": "Drain pipe",
+   "texts": [
+    "Drain pipe"
+   ],
+   "key": "cat-061"
+  },
+  {
+   "list": "category",
+   "label": "Flexible hose",
+   "texts": [
+    "Flexible hose"
+   ],
+   "key": "cat-062"
+  },
+  {
+   "list": "category",
+   "label": "Floor grating",
+   "texts": [
+    "Floor grating"
+   ],
+   "key": "cat-063"
+  },
+  {
+   "list": "category",
+   "label": "Floor trap",
+   "texts": [
+    "Floor trap"
+   ],
+   "key": "cat-064"
+  },
+  {
+   "list": "category",
+   "label": "Flush valve",
+   "texts": [
+    "Flush valve"
+   ],
+   "key": "cat-065"
+  },
+  {
+   "list": "category",
+   "label": "Grab bar",
+   "texts": [
+    "Grab bar"
+   ],
+   "key": "cat-066"
+  },
+  {
+   "list": "category",
+   "label": "Hand shower",
+   "texts": [
+    "Hand shower"
+   ],
+   "key": "cat-067"
+  },
+  {
+   "list": "category",
+   "label": "Handrail",
+   "texts": [
+    "Handrail"
+   ],
+   "key": "cat-068"
+  },
+  {
+   "list": "category",
+   "label": "Hinge",
+   "texts": [
+    "Hinge"
+   ],
+   "key": "cat-069"
+  },
+  {
+   "list": "category",
+   "label": "Hook bar",
+   "texts": [
+    "Hook bar"
+   ],
+   "key": "cat-070"
+  },
+  {
+   "list": "category",
+   "label": "Kitchen tap",
+   "texts": [
+    "Kitchen tap"
+   ],
+   "key": "cat-071"
+  },
+  {
+   "list": "category",
+   "label": "Mirror",
+   "texts": [
+    "Mirror"
+   ],
+   "key": "cat-072"
+  },
+  {
+   "list": "category",
+   "label": "Mirror cabinet",
+   "texts": [
+    "Mirror cabinet"
+   ],
+   "key": "cat-073"
+  },
+  {
+   "list": "category",
+   "label": "Mixer tap",
+   "texts": [
+    "Mixer tap"
+   ],
+   "key": "cat-074"
+  },
+  {
+   "list": "category",
+   "label": "One piece",
+   "texts": [
+    "One piece"
+   ],
+   "key": "cat-075"
+  },
+  {
+   "list": "category",
+   "label": "Paper holder",
+   "texts": [
+    "Paper holder"
+   ],
+   "key": "cat-076"
+  },
+  {
+   "list": "category",
+   "label": "Pop up waste",
+   "texts": [
+    "Pop up waste"
+   ],
+   "key": "cat-077"
+  },
+  {
+   "list": "category",
+   "label": "Rain shower",
+   "texts": [
+    "Rain shower"
+   ],
+   "key": "cat-078"
+  },
+  {
+   "list": "category",
+   "label": "Robe hook",
+   "texts": [
+    "Robe hook"
+   ],
+   "key": "cat-079"
+  },
+  {
+   "list": "category",
+   "label": "Shower head",
+   "texts": [
+    "Shower head"
+   ],
+   "key": "cat-080"
+  },
+  {
+   "list": "category",
+   "label": "Shower seat",
+   "texts": [
+    "Shower seat"
+   ],
+   "key": "cat-081"
+  },
+  {
+   "list": "category",
+   "label": "Shower set",
+   "texts": [
+    "Shower set"
+   ],
+   "key": "cat-082"
+  },
+  {
+   "list": "category",
+   "label": "Shower tap",
+   "texts": [
+    "Shower tap"
+   ],
+   "key": "cat-083"
+  },
+  {
+   "list": "category",
+   "label": "Soap dispenser",
+   "texts": [
+    "Soap dispenser"
+   ],
+   "key": "cat-084"
+  },
+  {
+   "list": "category",
+   "label": "Squatting pan",
+   "texts": [
+    "Squatting pan"
+   ],
+   "key": "cat-085"
+  },
+  {
+   "list": "category",
+   "label": "Stop cock",
+   "texts": [
+    "Stop cock"
+   ],
+   "key": "cat-086"
+  },
+  {
+   "list": "category",
+   "label": "Toilet brush",
+   "texts": [
+    "Toilet brush"
+   ],
+   "key": "cat-087"
+  },
+  {
+   "list": "category",
+   "label": "Toilet seat",
+   "texts": [
+    "Toilet seat"
+   ],
+   "key": "cat-088"
+  },
+  {
+   "list": "category",
+   "label": "Towel bar",
+   "texts": [
+    "Towel bar"
+   ],
+   "key": "cat-089"
+  },
+  {
+   "list": "category",
+   "label": "Towel ring",
+   "texts": [
+    "Towel ring"
+   ],
+   "key": "cat-090"
+  },
+  {
+   "list": "category",
+   "label": "Towel shelf",
+   "texts": [
+    "Towel shelf"
+   ],
+   "key": "cat-091"
+  },
+  {
+   "list": "category",
+   "label": "Tumbler",
+   "texts": [
+    "Tumbler"
+   ],
+   "key": "cat-092"
+  },
+  {
+   "list": "category",
+   "label": "Urinal",
+   "texts": [
+    "Urinal"
+   ],
+   "key": "cat-093"
+  },
+  {
+   "list": "category",
+   "label": "Water pump",
+   "texts": [
+    "Water pump"
+   ],
+   "key": "cat-094"
+  },
+  {
+   "list": "category",
+   "label": "Bathroom Accessory",
+   "texts": [
+    "Bathroom Accessory"
+   ],
+   "key": "cat-095"
+  },
+  {
+   "list": "category",
+   "label": "Bathroom Furniture",
+   "texts": [
+    "Bathroom Furniture"
+   ],
+   "key": "cat-096"
+  },
+  {
+   "list": "category",
+   "label": "Bathtub and Jacuzzi",
+   "texts": [
+    "Bathtub and Jacuzzi"
+   ],
+   "key": "cat-097"
+  },
+  {
+   "list": "category",
+   "label": "Cloth Hanger",
+   "texts": [
+    "Cloth Hanger"
+   ],
+   "key": "cat-098"
+  },
+  {
+   "list": "category",
+   "label": "Kitchen Sink",
+   "texts": [
+    "Kitchen Sink",
+    "sinki dapur",
+    "厨房水槽"
+   ],
+   "key": "cat-099"
+  },
+  {
+   "list": "category",
+   "label": "Shower",
+   "texts": [
+    "Shower"
+   ],
+   "key": "cat-100"
+  },
+  {
+   "list": "category",
+   "label": "Tap",
+   "texts": [
+    "Tap"
+   ],
+   "key": "cat-101"
+  },
+  {
+   "list": "category",
+   "label": "Wash Basin",
+   "texts": [
+    "Wash Basin"
+   ],
+   "key": "cat-102"
+  },
+  {
+   "list": "category",
+   "label": "Water Closet",
+   "texts": [
+    "Water Closet",
+    "tandas",
+    "mangkuk tandas",
+    "马桶"
+   ],
+   "key": "cat-103"
+  },
+  {
+   "list": "file_type",
+   "label": "Combo Image",
+   "texts": [
+    "Combo Image",
+    "combo_image"
+   ],
+   "key": "fil-104"
+  },
+  {
+   "list": "file_type",
+   "label": "Complaint Document",
+   "texts": [
+    "Complaint Document",
+    "complaint_document",
+    "Supporting documents for complaints"
+   ],
+   "key": "fil-105"
+  },
+  {
+   "list": "file_type",
+   "label": "GRN",
+   "texts": [
+    "GRN",
+    "Goods Receiving Note"
+   ],
+   "key": "fil-106"
+  },
+  {
+   "list": "file_type",
+   "label": "Installation Guide",
+   "texts": [
+    "Installation Guide",
+    "installation_guide",
+    "Installation Manual",
+    "installation manual"
+   ],
+   "key": "fil-107"
+  },
+  {
+   "list": "file_type",
+   "label": "Product Photos",
+   "texts": [
+    "Product Photos",
+    "product_photos",
+    "Photo",
+    "Image",
+    "Pictures by Marketing",
+    "does it look",
+    "how does it look",
+    "how it looks",
+    "look like",
+    "see it",
+    "show me"
+   ],
+   "key": "fil-108"
+  },
+  {
+   "list": "file_type",
+   "label": "Product Videos",
+   "texts": [
+    "Product Videos",
+    "product_videos",
+    "Product Videos by Marketing"
+   ],
+   "key": "fil-109"
+  },
+  {
+   "list": "file_type",
+   "label": "Shipment Line",
+   "texts": [
+    "Shipment Line",
+    "shipment_line"
+   ],
+   "key": "fil-110"
+  },
+  {
+   "list": "file_type",
+   "label": "Technical Specifications",
+   "texts": [
+    "Technical Specifications",
+    "technical_specifications",
+    "Drawing by Marketing"
+   ],
+   "key": "fil-111"
+  },
+  {
+   "list": "file_type",
+   "label": "Certification",
+   "texts": [
+    "Certification",
+    "certification",
+    "Cert",
+    "Certificate",
+    "Watermark Cert",
+    "WCM",
+    "PPS",
+    "Ikram by Purchasing"
+   ],
+   "key": "fil-112"
+  },
+  {
+   "list": "brand",
+   "label": "BRAVAT (BRAVAT)",
+   "texts": [
+    "BRAVAT"
+   ],
+   "key": "bra-113"
+  },
+  {
+   "list": "brand",
+   "label": "CABANA (CABANA)",
+   "texts": [
+    "CABANA"
+   ],
+   "key": "bra-114"
+  },
+  {
+   "list": "brand",
+   "label": "ELLECI (ELLECI)",
+   "texts": [
+    "ELLECI"
+   ],
+   "key": "bra-115"
+  },
+  {
+   "list": "brand",
+   "label": "IBORN (IBORN)",
+   "texts": [
+    "IBORN"
+   ],
+   "key": "bra-116"
+  },
+  {
+   "list": "brand",
+   "label": "INFINITY (INFINITY)",
+   "texts": [
+    "INFINITY"
+   ],
+   "key": "bra-117"
+  },
+  {
+   "list": "brand",
+   "label": "JOHNSON SUISSE (JOHNSON SUISSE)",
+   "texts": [
+    "JOHNSON SUISSE"
+   ],
+   "key": "bra-118"
+  },
+  {
+   "list": "brand",
+   "label": "MOCHA (MOCHA)",
+   "texts": [
+    "MOCHA"
+   ],
+   "key": "bra-119"
+  },
+  {
+   "list": "brand",
+   "label": "NO LOGO (NO LOGO)",
+   "texts": [
+    "NO LOGO"
+   ],
+   "key": "bra-120"
+  },
+  {
+   "list": "brand",
+   "label": "OTHERS (OTHERS)",
+   "texts": [
+    "OTHERS"
+   ],
+   "key": "bra-121"
+  },
+  {
+   "list": "brand",
+   "label": "SORENTO (SRT)",
+   "texts": [
+    "SORENTO",
+    "SRT"
+   ],
+   "key": "bra-122"
+  },
+  {
+   "list": "brand",
+   "label": "TP ENTERPRISE (TP ENTERPRISE)",
+   "texts": [
+    "TP ENTERPRISE"
+   ],
+   "key": "bra-123"
+  },
+  {
+   "list": "brand",
+   "label": "WDI (WDI)",
+   "texts": [
+    "WDI"
+   ],
+   "key": "bra-124"
+  },
+  {
+   "list": "sales_channel",
+   "label": "dealer",
+   "texts": [
+    "dealer"
+   ],
+   "key": "sal-125"
+  },
+  {
+   "list": "sales_channel",
+   "label": "project",
+   "texts": [
+    "project"
+   ],
+   "key": "sal-126"
+  }
+ ],
+ "entries": [
+  {
+   "list": "category",
+   "phrase": "cwc",
+   "kind": "pos",
+   "gold": [
+    "Water Closet"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "baby wc",
+   "kind": "pos",
+   "gold": [
+    "Water Closet"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "children wc",
+   "kind": "pos",
+   "gold": [
+    "Water Closet"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "basin mixer",
+   "kind": "pos",
+   "gold": [
+    "Basin tap",
+    "Mixer tap",
+    "Tap"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "bathtub with massage jets",
+   "kind": "pos",
+   "gold": [
+    "Bathtub and Jacuzzi",
+    "BATHTUB",
+    "JACUZZI"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "brush holder",
+   "kind": "pos",
+   "gold": [
+    "Bathroom Accessory",
+    "Toilet brush"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "coat hook",
+   "kind": "pos",
+   "gold": [
+    "Robe hook",
+    "Bathroom Accessory",
+    "Hook bar"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "connector hose",
+   "kind": "pos",
+   "gold": [
+    "Flexible hose",
+    "Flexible Hose"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "corner rack",
+   "kind": "pos",
+   "gold": [
+    "Corner basket"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "corner valve",
+   "kind": "pos",
+   "gold": [
+    "Angle valve"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "floor drain",
+   "kind": "pos",
+   "gold": [
+    "Floor trap",
+    "Floor grating"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "flush tank",
+   "kind": "pos",
+   "gold": [
+    "Cistern"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "garden tap",
+   "kind": "pos",
+   "gold": [
+    "Tap",
+    "Bib tap"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "handbidet nozzle spray",
+   "kind": "pos",
+   "gold": [
+    "Bidet"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "hose bib",
+   "kind": "pos",
+   "gold": [
+    "Bib tap"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "hot and cold tap",
+   "kind": "pos",
+   "gold": [
+    "Tap",
+    "Mixer tap"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "isolating valve",
+   "kind": "pos",
+   "gold": [
+    "Angle valve",
+    "Stop cock"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "jet spray",
+   "kind": "pos",
+   "gold": [
+    "Bidet"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "paip dapur",
+   "kind": "pos",
+   "gold": [
+    "Kitchen tap",
+    "Tap"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "penyangkut tuala",
+   "kind": "pos",
+   "gold": [
+    "Towel bar",
+    "Towel ring",
+    "Bathroom Accessory"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "pressure pump",
+   "kind": "pos",
+   "gold": [
+    "Water pump",
+    "PUMP"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "rubbish bin",
+   "kind": "pos",
+   "gold": [
+    "DUSTBIN"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "waste bin",
+   "kind": "pos",
+   "gold": [
+    "DUSTBIN"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "tong sampah",
+   "kind": "pos",
+   "gold": [
+    "DUSTBIN"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "safety bar",
+   "kind": "pos",
+   "gold": [
+    "Grab bar"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "safety rail",
+   "kind": "pos",
+   "gold": [
+    "Handrail",
+    "Grab bar"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "toilet safety rail",
+   "kind": "pos",
+   "gold": [
+    "Grab bar",
+    "Handrail"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "seat and cover",
+   "kind": "pos",
+   "gold": [
+    "Toilet seat"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "wc seat",
+   "kind": "pos",
+   "gold": [
+    "Toilet seat"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "wc brush",
+   "kind": "pos",
+   "gold": [
+    "Toilet brush"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "shattaf",
+   "kind": "pos",
+   "gold": [
+    "Bidet"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "shower mixer",
+   "kind": "pos",
+   "gold": [
+    "Shower tap",
+    "Mixer tap",
+    "Shower"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "single piece",
+   "kind": "pos",
+   "gold": [
+    "One piece"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "sink tap",
+   "kind": "pos",
+   "gold": [
+    "Kitchen tap",
+    "Basin tap",
+    "Tap"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "soap dish",
+   "kind": "pos",
+   "gold": [
+    "Bathroom Accessory"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "spa bath",
+   "kind": "pos",
+   "gold": [
+    "Bathtub and Jacuzzi",
+    "JACUZZI",
+    "BATHTUB"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "stop valve",
+   "kind": "pos",
+   "gold": [
+    "Stop cock"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "tissue holder",
+   "kind": "pos",
+   "gold": [
+    "Paper holder"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "toilet roll holder",
+   "kind": "pos",
+   "gold": [
+    "Paper holder"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "toothbrush holder",
+   "kind": "pos",
+   "gold": [
+    "Bathroom Accessory"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "waste pipe",
+   "kind": "pos",
+   "gold": [
+    "Drain pipe"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "whirlpool",
+   "kind": "pos",
+   "gold": [
+    "Bathtub and Jacuzzi",
+    "JACUZZI",
+    "BATHTUB"
+   ]
+  },
+  {
+   "list": "category",
+   "phrase": "extension pipe",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "bath seat",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "foldable seat",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "corner shelf",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "waste cover",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "p-trap",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "jamban cangkung",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "bathroom",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "racking",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "ceramic product",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "water closer",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "span",
+   "kind": "excluded",
+   "note": "doubtful which row it names"
+  },
+  {
+   "list": "category",
+   "phrase": "catalogue",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "catalog",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "catolog",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "promotion",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "promo",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "flyer",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "promotion flyer",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "color",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "size",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "material",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "dimension",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "file",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "form",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "company",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "hot sale",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "hot sale product",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "master list",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "master file",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "sales channel",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "high resolution photo",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "black color",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "nanograin texture",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "rough-in distance",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "children",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "baby",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "lighting",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "tile",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "product",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "sale person",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "drawing",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "drawings",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "technical drawing",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "certificate",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "cert",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "focus item",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "image",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "picture",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "photo",
+   "kind": "neg"
+  },
+  {
+   "list": "category",
+   "phrase": "photos",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "high resolution photo",
+   "kind": "pos",
+   "gold": [
+    "Product Photos"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "techincal drawings",
+   "kind": "pos",
+   "gold": [
+    "Technical Specifications"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "photo",
+   "kind": "pos",
+   "gold": [
+    "Product Photos"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "photos",
+   "kind": "pos",
+   "gold": [
+    "Product Photos"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "picture",
+   "kind": "pos",
+   "gold": [
+    "Product Photos"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "image",
+   "kind": "pos",
+   "gold": [
+    "Product Photos"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "drawing",
+   "kind": "pos",
+   "gold": [
+    "Technical Specifications"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "drawings",
+   "kind": "pos",
+   "gold": [
+    "Technical Specifications"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "technical drawing",
+   "kind": "pos",
+   "gold": [
+    "Technical Specifications"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "cert",
+   "kind": "pos",
+   "gold": [
+    "Certification"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "certificate",
+   "kind": "pos",
+   "gold": [
+    "Certification"
+   ]
+  },
+  {
+   "list": "file_type",
+   "phrase": "catalog",
+   "kind": "excluded",
+   "note": "a document kind the list has no row for; left out rather than guessed"
+  },
+  {
+   "list": "file_type",
+   "phrase": "catalogue",
+   "kind": "excluded",
+   "note": "a document kind the list has no row for; left out rather than guessed"
+  },
+  {
+   "list": "file_type",
+   "phrase": "catolog",
+   "kind": "excluded",
+   "note": "a document kind the list has no row for; left out rather than guessed"
+  },
+  {
+   "list": "file_type",
+   "phrase": "flyer",
+   "kind": "excluded",
+   "note": "a document kind the list has no row for; left out rather than guessed"
+  },
+  {
+   "list": "file_type",
+   "phrase": "promotion flyer",
+   "kind": "excluded",
+   "note": "a document kind the list has no row for; left out rather than guessed"
+  },
+  {
+   "list": "file_type",
+   "phrase": "master file",
+   "kind": "excluded",
+   "note": "a document kind the list has no row for; left out rather than guessed"
+  },
+  {
+   "list": "file_type",
+   "phrase": "file",
+   "kind": "excluded",
+   "note": "a document kind the list has no row for; left out rather than guessed"
+  },
+  {
+   "list": "file_type",
+   "phrase": "form",
+   "kind": "excluded",
+   "note": "a document kind the list has no row for; left out rather than guessed"
+  },
+  {
+   "list": "file_type",
+   "phrase": "cwc",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "baby wc",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "children wc",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "basin mixer",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "bathtub with massage jets",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "brush holder",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "coat hook",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "connector hose",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "corner rack",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "corner valve",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "floor drain",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "flush tank",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "garden tap",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "handbidet nozzle spray",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "hose bib",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "hot and cold tap",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "isolating valve",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "jet spray",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "paip dapur",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "penyangkut tuala",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "pressure pump",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "rubbish bin",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "waste bin",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "tong sampah",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "safety bar",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "safety rail",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "toilet safety rail",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "seat and cover",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "wc seat",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "wc brush",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "shattaf",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "shower mixer",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "single piece",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "sink tap",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "soap dish",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "spa bath",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "stop valve",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "tissue holder",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "toilet roll holder",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "toothbrush holder",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "waste pipe",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "whirlpool",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "promotion",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "promo",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "size",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "material",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "dimension",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "company",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "hot sale",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "sales channel",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "tile",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "product",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "lighting",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "children",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "baby",
+   "kind": "neg"
+  },
+  {
+   "list": "file_type",
+   "phrase": "sale person",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "cabana",
+   "kind": "pos",
+   "gold": [
+    "CABANA"
+   ]
+  },
+  {
+   "list": "brand",
+   "phrase": "mocha",
+   "kind": "pos",
+   "gold": [
+    "MOCHA"
+   ]
+  },
+  {
+   "list": "brand",
+   "phrase": "bravat",
+   "kind": "pos",
+   "gold": [
+    "BRAVAT"
+   ]
+  },
+  {
+   "list": "brand",
+   "phrase": "sorento",
+   "kind": "pos",
+   "gold": [
+    "SORENTO"
+   ]
+  },
+  {
+   "list": "brand",
+   "phrase": "srt",
+   "kind": "pos",
+   "gold": [
+    "SRT"
+   ]
+  },
+  {
+   "list": "brand",
+   "phrase": "teesorento",
+   "kind": "excluded",
+   "note": "could be a supplier or customer name; left out"
+  },
+  {
+   "list": "brand",
+   "phrase": "xns",
+   "kind": "excluded",
+   "note": "could be a supplier or customer name; left out"
+  },
+  {
+   "list": "brand",
+   "phrase": "bathpro",
+   "kind": "excluded",
+   "note": "could be a supplier or customer name; left out"
+  },
+  {
+   "list": "brand",
+   "phrase": "micasa",
+   "kind": "excluded",
+   "note": "could be a supplier or customer name; left out"
+  },
+  {
+   "list": "brand",
+   "phrase": "cwc",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "baby wc",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "children wc",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "basin mixer",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "bathtub with massage jets",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "brush holder",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "coat hook",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "connector hose",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "corner rack",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "corner valve",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "floor drain",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "flush tank",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "garden tap",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "handbidet nozzle spray",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "hose bib",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "hot and cold tap",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "isolating valve",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "jet spray",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "paip dapur",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "penyangkut tuala",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "pressure pump",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "rubbish bin",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "waste bin",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "tong sampah",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "safety bar",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "safety rail",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "toilet safety rail",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "seat and cover",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "wc seat",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "wc brush",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "shattaf",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "shower mixer",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "single piece",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "sink tap",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "soap dish",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "spa bath",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "stop valve",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "tissue holder",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "toilet roll holder",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "toothbrush holder",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "waste pipe",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "whirlpool",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "catalogue",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "catalog",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "promotion",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "promo",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "flyer",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "size",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "material",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "dimension",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "company",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "hot sale",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "sales channel",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "tile",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "product",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "lighting",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "children",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "baby",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "sale person",
+   "kind": "neg"
+  },
+  {
+   "list": "brand",
+   "phrase": "form",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "Dealer",
+   "kind": "pos",
+   "gold": [
+    "dealer"
+   ]
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "Sorento",
+   "kind": "excluded",
+   "note": "a company word, not a channel"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "sorento",
+   "kind": "excluded",
+   "note": "a company word, not a channel"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "cwc",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "baby wc",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "children wc",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "basin mixer",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "bathtub with massage jets",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "brush holder",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "coat hook",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "connector hose",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "corner rack",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "corner valve",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "floor drain",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "flush tank",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "garden tap",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "handbidet nozzle spray",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "hose bib",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "hot and cold tap",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "isolating valve",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "jet spray",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "paip dapur",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "penyangkut tuala",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "pressure pump",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "rubbish bin",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "waste bin",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "tong sampah",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "safety bar",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "safety rail",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "toilet safety rail",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "seat and cover",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "wc seat",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "wc brush",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "shattaf",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "shower mixer",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "single piece",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "sink tap",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "soap dish",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "spa bath",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "stop valve",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "tissue holder",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "toilet roll holder",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "toothbrush holder",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "waste pipe",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "whirlpool",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "catalogue",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "catalog",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "promotion",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "promo",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "flyer",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "size",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "material",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "dimension",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "company",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "hot sale",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "sales channel",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "tile",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "product",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "lighting",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "children",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "baby",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "sale person",
+   "kind": "neg"
+  },
+  {
+   "list": "sales_channel",
+   "phrase": "form",
+   "kind": "neg"
+  }
+ ]
+}

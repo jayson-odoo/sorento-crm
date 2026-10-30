@@ -1630,6 +1630,32 @@ jobs:
           fi
           echo "files=$run" >> "$GITHUB_OUTPUT"
 
+      # FORMS-REGRESSION (owner, 30 Oct 2026: three forms regressions reached main
+      # through PRs that ran only their own changed tests). A PR that touches the
+      # forms lifecycle code (the form services, routes and models, the SLA,
+      # form-action, handling-lock, revision, outbox and Respond send paths, or the
+      # chains themselves) runs every forms chain below, whatever the import
+      # selection picked. The diff is main's head against the merged tree, the
+      # change this gate tests. A step of the PR gate, not a job: the PR runs one
+      # job (CI-COST round 2). Release runs get the chains from release_core.txt.
+      - name: Detect a forms lifecycle change
+        id: forms
+        if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
+        env:
+          MAIN: ${{ steps.merge.outputs.main }}
+        run: |
+          FORMS_RE='^(sorento_crm_backend/(app/(api/v1/(procurement|complaints|sla|public|projects|dealer_kit)/|services/(procurement_service|complaints?_[a-z_]+|portal_[a-z_]+|form_[a-z_]+|handling_lock_service|sla_[a-z_]+|submission_status|revision_fence|response_gate|price_tag_[a-z_]+|sample_request_service|project_registration_service|respond_messaging_service|respond_identifier|integration_service|notification_service|queue_service|user_service|coverage_subscription_service|crm_chat_outbound_webhook)\.py$|services/dealer_kit/|schemas/(procurement|complaints|sla|portal|price_tag|sample_request|projects)[a-z_]*\.py$|models/(procurement|complaints|sla|portal|price_tag|sample_request|projects|access|integration|user)\.py$|tasks/respond_io_tasks\.py$)|tests/(test_forms_chain_[a-z_]+|_forms_chain_support|_project_registration_support|_sample_request_seed|_portal_grant|_pg_fixture|conftest|test_form_handling_lock_routes|test_sla_due_escalations|test_complaint_status_guard)\.py$)|\.github/workflows/deploy\.yml$)'
+          files=$(git diff --name-only --no-renames "$MAIN" HEAD)
+          # Here-string, not a pipe: see flag() in job `changes`.
+          hits=$(grep -E "$FORMS_RE" <<< "$files" || true)
+          if [ -n "$hits" ]; then
+            echo "forms lifecycle paths changed, the forms chains run:"; printf '%s\n' "$hits" | sed 's/^/  /'
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no forms lifecycle path changed"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Python
         if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true'
         uses: actions/setup-python@v5
@@ -1670,7 +1696,7 @@ jobs:
         run: python -m pytest -q -p no:cacheprovider tests/test_lessons_learnt_regressions.py
 
       - name: Relax Postgres durability for the test run
-        if: steps.select.outputs.files != ''
+        if: steps.select.outputs.files != '' || steps.forms.outputs.run == 'true'
         run: |
           PSQL="psql $DATABASE_URL -v ON_ERROR_STOP=1"
           $PSQL -c "ALTER SYSTEM SET fsync = off" \
@@ -1687,7 +1713,7 @@ jobs:
                 -c "SHOW max_locks_per_transaction"
 
       - name: Bootstrap the database
-        if: steps.select.outputs.files != ''
+        if: steps.select.outputs.files != '' || steps.forms.outputs.run == 'true'
         working-directory: sorento_crm_backend
         run: python -m scripts.bootstrap_env
 
@@ -1726,6 +1752,23 @@ jobs:
           done
           [ -z "$migrations" ] || run -p no:xdist --durations=10 $migrations
           exit "$rc"
+
+      # The forms chains (see "Detect a forms lifecycle change"), minus any file
+      # the step above already ran. About 90 tests, under 3 minutes under xdist.
+      - name: Run the forms lifecycle chains (executing gate)
+        if: steps.forms.outputs.run == 'true'
+        working-directory: sorento_crm_backend
+        env:
+          FILES: ${{ steps.select.outputs.files }}
+          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
+        run: |
+          chains=""
+          for f in tests/test_forms_chain_*.py tests/test_form_handling_lock_routes.py \
+                   tests/test_sla_due_escalations.py tests/test_complaint_status_guard.py; do
+            case " $FILES " in *" $f "*) echo "already ran: $f" ;; *) chains="$chains $f" ;; esac
+          done
+          [ -n "$chains" ] || { echo "every forms chain already ran above"; exit 0; }
+          python -m pytest -q -p no:cacheprovider -n "$XDIST_WORKERS" --dist load --max-worker-restart 0 -p tests._xdist_crash_guard --durations=10 $chains
 
       # validate-mcp's checks without the image: the package in this Python,
       # its real entrypoint's imports, then its test suite.

@@ -21,7 +21,7 @@ from app.services.embedding_service import EmbeddingReadService
 router = APIRouter()
 
 
-def _embed_query(query: str) -> list[float]:
+def _embed_query(query: str, model: str | None = None, db: Session | None = None) -> list[float]:
     from app.services import llm_cassette
 
     if llm_cassette.mode() == "replay":
@@ -29,15 +29,13 @@ def _embed_query(query: str) -> list[float]:
         from app.services.embedding_worker import _embed_text_chunks
 
         return _embed_text_chunks([query])[0]
-    if not settings.openai_api_key:
+    from app.services.embedding_settings import embed_search_texts, provider_for_model
+
+    model = model or settings.embedding_model_name
+    # The key that matters is the search model's provider's: a gemini search model needs no OpenAI key.
+    if provider_for_model(model) == "openai" and not settings.openai_api_key:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Embedding provider not configured")
-    headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
-    payload = {"model": settings.embedding_model_name, "input": query}
-    with httpx.Client(timeout=20) as client:
-        response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-    vector = data.get("data", [{}])[0].get("embedding")
+    vector = embed_search_texts([query], model, timeout=20, db=db)[0]
     if not vector:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Embedding provider returned empty vector")
     return vector
@@ -53,7 +51,13 @@ def semantic_search(
     if not query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
 
-    query_embedding = _embed_query(query)
+    from app.services.embedding_settings import RECORD_KEEP_SET, records_search_model
+
+    search_model = records_search_model(db)
+    if body.source_type and body.source_type not in RECORD_KEEP_SET:
+        # Nothing is searchable there: answer before spending an embedding on the query.
+        return EmbeddingSearchResponse(data=[], model=search_model, dimensions=settings.embedding_dimensions)
+    query_embedding = _embed_query(query, search_model, db)
     rows = EmbeddingReadService(db).search_current(
         query_embedding,
         top_k=body.top_k,
@@ -80,7 +84,7 @@ def semantic_search(
     ]
     return EmbeddingSearchResponse(
         data=data,
-        model=settings.embedding_model_name,
+        model=search_model,
         dimensions=settings.embedding_dimensions,
     )
 
@@ -91,20 +95,5 @@ def tool_search(
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
-    query = (body.query or "").strip()
-    if not query:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
-    query_embedding = _embed_query(query)
-    rows = EmbeddingReadService(db).search_tool_candidates(
-        query_embedding,
-        query=query,
-        top_k=body.top_k,
-        include_planned=body.include_planned,
-        category=body.category,
-        implementation_status=body.implementation_status,
-    )
-    return ToolRagSearchResponse(
-        data=[ToolRagResultItem(**r) for r in rows],
-        model=settings.embedding_model_name,
-        dimensions=settings.embedding_dimensions,
-    )
+    # Tool vectors are retired (the keep set holds records only): nothing to embed, nothing to rank.
+    return ToolRagSearchResponse(data=[], model=settings.embedding_model_name, dimensions=settings.embedding_dimensions)
