@@ -1,6 +1,6 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Plan, behaviour card v3 (owner answers 30 Oct + dashboard note folded in) filed, waiting on owner approval
+Status: Build (card + mock v3 approved by the owner 30 Oct 10:00, N1-N4 = recommendations)
 (M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
 table, no migration)
 
@@ -97,9 +97,29 @@ Escalate on every line without a drawing.
    two buttons for this type (hidden for form rows today, :704-740).
 8. **Adding a drawing does not close the task.** It notifies the assignee in-app ("Drawing added
    for <code>, resolve the request when done").
-9. **Resolving notifies every requester** in-app: "Drawing request for <code> resolved", linking
-   to the quotation they escalated from. No WhatsApp, no email. The cell then shows the drawing
-   if one is on file, else "no drawing" with Escalate again (open question N2).
+9. **Resolving notifies every requester**: "Drawing request for <code> resolved", linking to the
+   quotation they escalated from. The cell then shows the drawing if one is on file, else
+   "no drawing" with Escalate again (N2).
+10. **WhatsApp and email keep working at every hand-off between departments** (owner, 30 Oct
+    10:00). Every notice below goes through `NotificationService.create_with_channel_preferences`
+    with `send_email=True, send_whatsapp=True`, the same call every form-SLA assignment uses
+    (`form_sla_service.py:1408-1550`): in-app always, email and WhatsApp each gated by the
+    recipient's own per-event toggle and a linked WhatsApp contact, delivered by the existing
+    worker. No new channel, no new toggle.
+
+    | Hand-off | From -> to | Notice | Toggles (user columns) | WhatsApp use case |
+    |---|---|---|---|---|
+    | H1 escalate opens the task | sales -> drawing team (assignee) | "New SLA assignment: <code>" (existing `_notify_assignee` "assigned") | `notify_*_on_assignment` | `sla_assignment` |
+    | H2 overdue / manual tier escalation | drawing team tier n -> tier n+1 | "SLA escalated to you" (existing "escalated") | `notify_*_on_escalation` | `sla_escalation` |
+    | H3 drawing linked while open | catalogue -> assignee | "Drawing added for <code>, resolve when done" | `notify_*_on_assignment` | `sla_assignment` |
+    | H4 resolve | drawing team -> every requester | "Drawing request for <code> resolved" | `notify_*_on_assignment` | `sla_assignment` |
+
+    Extend, take-over and coverage already notify through their own paths and are unchanged.
+    The notice text carries the product code and an absolute link, so an out-of-window template
+    that maps `message` reads correctly. Tests assert the email and WhatsApp delivery rows are
+    created at H1-H4 (never a real send).
+11. **Minimal UI** (owner, 30 Oct 10:00): exactly the states in mock v3. No new banner, badge,
+    dialog, step or page; the cell tile and the dashboard row reuse existing components.
 
 ### Examples from dev data (crew, 29 Oct; 20 Oct prod restore, read-only; counts and codes only)
 
@@ -153,7 +173,9 @@ PDF counts as a drawing: counting PDFs would clear under 2% of the gap. Catalogu
   code; naming the conversation agent in a form-SLA stage reclassifies it as a form-SLA agent
   (`form_sla_service.py:49-66`) and changes its tier-1 routing. Stated in the hand-test setup.
 
-### Open questions (v2, at most 4)
+### Questions (answered)
+
+Answered 30 Oct 10:00: N1-N4 all (a).
 
 **N1. Where does the assignee press Respond and Resolve?** (a) on the task's row in the dashboard's "My pending tasks",
 the same two buttons a conversation ticket has there today (`MyPendingSLAWidget.tsx:704-740`),
@@ -172,6 +194,80 @@ page into the PDF/Excel quotation (lane becomes L). **Recommendation: (a)**.
 **N4. Who may escalate** (Q7, "every line"). (a) anyone who can open the quotation (`view` or
 `view_own`); (b) only `projects.projects.edit`. **Recommendation: (a)**, escalating changes no
 quotation data.
+
+## Phase 2 contract (build)
+
+### Backend
+
+- `FORM_SLA_TYPES` (`form_sla_service.py:33`) and the schema list (`schemas/sla.py:650`) gain
+  `"product_drawing"`. `_ENTITY_NUMBER_SOURCE` gains `"product_drawing": ("products",
+  "product_code", False)`; `_form_detail_link` gains
+  `/master-data-management/products/{id}`; `_FE_RECORD_ROUTES` in `_notify_assignee` gains
+  `product_drawing`. `sla_service._resolve_my_pending_references` maps `product_drawing` rows to
+  the product code.
+- New `app/services/product_drawing_request_service.py`:
+  - `SOURCE_TYPE = "product_drawing"`; events `escalate` (start), `respond`, `resolve`.
+  - `has_drawing(db, product_id) -> bool`: a non-deleted attachment typed "Technical
+    Specifications" linked to the product whose mime is `image/*` or `application/pdf`.
+  - `escalate(db, *, version_id, line_id, user) -> dict`: line loaded under its version (404
+    otherwise); product = `line_product_id(line)` (404/409 when none: off-catalogue);
+    `has_drawing` -> 409 `product_has_drawing`; lock the product row `FOR UPDATE`; open tracker
+    for (`product_drawing`, product) -> join; else the active config whose `start_event` has
+    `escalate` (none -> 409 `drawing_requests_not_set_up`, "No team is set up for drawing
+    requests") and `FormSLAOrchestrator._start_for_config` (errors surface, never swallowed);
+    record the requester as an event-log row `event_type="requester"`,
+    `triggered_by_id=<user id>`, `reason="quotation_version:<version_id>"`, once per user per
+    tracker. Returns `{"joined": bool, "escalation": <state>}`.
+  - `escalation_states(db, product_ids) -> {product_id: state | None}` in O(1) queries:
+    `{tracking_id, opened_at, responded_at, due_at, requester_count, last_resolved_at}` for an
+    open tracker; for none, `{... all null, last_resolved_at}` when a resolved one exists, else
+    None.
+  - `respond(db, tracking_id, user)` / `resolve(...)`: tracker must be `product_drawing` (else
+    409); actor rule = `ConversationSLATrackingService.can_user_act_on_tracking` /
+    `can_user_resolve_tracking` (404 / 400 as the existing resolve route answers,
+    `api/v1/sla/sla_tracking.py:1393-1420`); emit `respond` / `resolve` through
+    `emit_form_event`; on resolve notify every requester (H4) once.
+  - `notify_drawing_linked(db, product_id)`: open tracker -> H3 to its assignee. Called from
+    `product_service` after a product attachment is created or its type changes, when the file
+    counts as a drawing.
+- Quotation line cell (`project_quotation_image_service.line_images`): a product with no
+  drawing image but a drawing PDF reads `state: "pdf"` with the PDF's signed `url` and
+  `filename` (never stamped at issue, never printed). Every drawing cell carries `escalation`
+  (the state above, or null).
+- Routes:
+  - `POST /api/v1/project-sales/quotation-versions/{version_id}/lines/{line_id}/drawing-escalation`,
+    `require_any_permission([view, view_own])`; added to `tests/portal_p2_allowed_routes.txt`
+    (the own-scope guard anchors on `version_id`, `line_id` is already a trusted nested name).
+  - `POST /api/v1/sla-management/form-sla-tracking/{tracking_id}/drawing-respond` and
+    `/drawing-resolve`, `get_current_user` + the actor rule above.
+
+### Frontend
+
+- `QuotationLineDrawing` gains `state: 'pdf'` and `escalation`.
+- `QuotationLineFileCell` read-only branch: `pdf` -> PDF tile (new tab); `no_drawings` on a saved
+  catalogue line -> `DrawingEscalation` (Escalate / escalating / Escalated / Responded, colour by
+  `chipClass` exported from `TicketSlaChips`). Hover text per mock v3.
+- `projectService` + `useEscalateDrawing` (invalidate the quotation lines query; toast via
+  `extractApiError`).
+- `MyPendingSLAWidget`: `ENTITY_ROUTES.product_drawing` (label "Product drawing", base
+  `/master-data-management/products`); for `product_drawing` rows a Respond button until
+  responded, then Resolve. `SLAKpiDashboardContent` route mirror too.
+- `FormSLAConfigDialog` + `formSLAService`: type "Product drawing", events
+  `escalate, respond, resolve`, team set pre-filled `marketing_product` on a new step.
+
+### Test list (red first)
+
+BE: has_drawing (image yes, PDF yes, deleted no, other type no); escalate creates one tracker with
+the configured team's assignee; second user joins (no second tracker, requester_count 2); same
+user twice counted once; concurrent escalates one tracker; product with a drawing 409; no config
+409 and nothing created; off-catalogue 409/404; foreign version/line 404; no view permission 403;
+own-scope route pinned; H1 delivery rows email + whatsapp created when toggles on and a contact
+is linked, none when off; H3 on linking a drawing image AND a PDF with an open task, task stays
+open; H4 every requester once on resolve; respond then resolve flips the row state; resolve by a
+non-assignee refused; line read carries `escalation` and `pdf`; my-pending row reference = product
+code and is_form_sla true; overdue scan escalates a product_drawing tracker (H2 rows).
+FE: cell states (Escalate, escalating, Escalated, Responded, PDF tile, thumbnail, off-catalogue
+blank, unsaved blank); widget Respond/Resolve on a product_drawing row only.
 
 ## Mock
 

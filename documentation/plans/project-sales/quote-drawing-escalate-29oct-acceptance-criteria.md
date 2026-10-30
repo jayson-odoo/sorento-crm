@@ -36,10 +36,9 @@ escalated it is told.
   with Respond, then Resolve; responding and resolving run through the step's configured events. Overdue escalation,
   extend and take-over work as for any form-SLA task. The row opens the product page.
 - **AC-7 Adding a drawing does not resolve.** Linking a drawing (image or PDF) to a product with an
-  open task leaves the task open and sends the assignee one in-app notification.
+  open task leaves the task open and sends the assignee one notification.
 - **AC-8 Resolve tells the requesters.** Resolving sends every requester one in-app notification
-  "Drawing request for <product code> resolved", linking to the quotation they escalated from. No
-  WhatsApp, no email. If the product still has no drawing, the cell shows Escalate again and a new
+  "Drawing request for <product code> resolved", linking to the quotation they escalated from. If the product still has no drawing, the cell shows Escalate again and a new
   click opens a new task.
 - **AC-9 Not set up.** With no active `product_drawing` step, Escalate returns 409 "No team is set
   up for drawing requests" and creates nothing. Escalating a product that has a drawing returns
@@ -50,3 +49,11 @@ escalated it is told.
 - **AC-11 Setup.** SLA Management > Form SLA config offers type "Product drawing" with events
   escalate, respond, resolve; choosing it on a new step pre-fills team set `marketing_product`,
   editable.
+- **AC-12 WhatsApp and email at every hand-off** (owner, 30 Oct 10:00). Opening the task (to the
+  assignee), each tier escalation (to the new assignee), a drawing linked while open (to the
+  assignee) and resolve (to every requester) each create in-app, email and WhatsApp deliveries
+  through the existing notification service, email and WhatsApp gated by the recipient's
+  per-event toggles (`notify_*_on_assignment`, `notify_*_on_escalation`) and a linked WhatsApp
+  contact. Tests assert the delivery rows; no test sends a message.
+- **AC-13 Minimal UI** (owner, 30 Oct 10:00). Only the states in mock v3; no new banner, badge,
+  dialog, step or page.
