@@ -467,7 +467,7 @@ def test_a_table_with_an_open_drawing_request_stays_inside_the_same_query_ceilin
             line = _priced_line(db, env, scope, product)
             if index < 5:
                 drawing_requests.escalate(
-                    db, version_id=version.id, line_id=line.id, user=actor(env["owner"])
+                    db, version_id=version.id, line_id=line.id, user=actor(env["owner"]), kind="drawing"
                 )
         lines = quotes.list_lines(db, version.id)
         db.flush()

@@ -3385,15 +3385,18 @@ class ProductAttachmentService:
         ).filter(ProductAttachment.id == product_attachment.id).first()
     
     def _notify_if_drawing(self, link) -> None:
-        """Tell the assignee of an open drawing request that a drawing was linked (best-effort).
+        """Tell the assignee of an open drawing or photo request that a matching file was linked (best-effort).
 
         Create path only: a later edit of an attachment's type does not come through here.
         """
         try:
             from app.services import product_drawing_request_service as drawing_requests
 
-            if drawing_requests.attachment_is_drawing(self.db, link.attachment_id):
+            kind = drawing_requests.attachment_kind(self.db, link.attachment_id)
+            if kind == "drawing":
                 drawing_requests.notify_drawing_linked(self.db, link.product_id)
+            elif kind == "photo":
+                drawing_requests.notify_photo_linked(self.db, link.product_id)
         except Exception:
             try:
                 self.db.rollback()

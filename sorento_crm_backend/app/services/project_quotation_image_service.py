@@ -185,7 +185,9 @@ def line_images(
     from app.services import product_drawing_request_service as drawing_requests
 
     pdfs = _drawing_pdfs(db, product_ids)
-    escalations = drawing_requests.escalation_states(db, product_ids)
+    escalations = drawing_requests.escalation_states_by_kind(db, product_ids)
+    drawing_escalations = escalations["drawing"]
+    photo_escalations = escalations["photo"]
 
     cells: Dict[str, Dict[str, Any]] = {}
     for line in lines:
@@ -232,7 +234,11 @@ def line_images(
             drawing_cell["url"] = drawing_cell["preview_url"] or drawing_cell["url"]
         else:
             drawing_cell = _cell(NO_DRAWINGS, None, [])
-        drawing_cell["escalation"] = escalations.get(str(pid)) if pid else None
+        drawing_cell["escalation"] = drawing_escalations.get(str(pid)) if pid else None
+        # The photo cell carries the PHOTO request; off-catalogue lines have no product to ask for.
+        photo_cell["escalation"] = (
+            photo_escalations.get(str(pid)) if pid and photo_cell.get("state") != images.OFF_CATALOG else None
+        )
 
         if not pickable:
             for cell in (photo_cell, drawing_cell):

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
@@ -1409,6 +1409,18 @@ class QuotationLineFileCandidate(BaseModel):
     preview_url: Optional[str] = None
 
 
+class QuotationLineEscalationResponse(BaseModel):
+    """A drawing request on the line's product. Task fields are null once it is resolved, leaving
+    only when it was last resolved."""
+
+    tracking_id: Optional[str] = None
+    opened_at: Optional[datetime] = None
+    responded_at: Optional[datetime] = None
+    due_at: Optional[datetime] = None
+    requester_count: Optional[int] = None
+    last_resolved_at: Optional[datetime] = None
+
+
 class QuotationLineImageResponse(BaseModel):
     """The picture cell for one line (S21).
 
@@ -1436,18 +1448,8 @@ class QuotationLineImageResponse(BaseModel):
     candidate_count: int = 0
     #: The product's photos, for the picker that writes `image_attachment_id`.
     candidates: List[QuotationLineFileCandidate] = Field(default_factory=list)
-
-
-class QuotationLineEscalationResponse(BaseModel):
-    """A drawing request on the line's product. Task fields are null once it is resolved, leaving
-    only when it was last resolved."""
-
-    tracking_id: Optional[str] = None
-    opened_at: Optional[datetime] = None
-    responded_at: Optional[datetime] = None
-    due_at: Optional[datetime] = None
-    requester_count: Optional[int] = None
-    last_resolved_at: Optional[datetime] = None
+    #: The product's photo request (kind `photo`), or null when none was ever opened.
+    escalation: Optional[QuotationLineEscalationResponse] = None
 
 
 class QuotationLineDrawingResponse(BaseModel):
@@ -1469,6 +1471,12 @@ class QuotationLineDrawingResponse(BaseModel):
     candidates: List[QuotationLineFileCandidate] = Field(default_factory=list)
     #: The product's drawing request, or null when none was ever opened.
     escalation: Optional[QuotationLineEscalationResponse] = None
+
+
+class MediaEscalationRequest(BaseModel):
+    """Which missing file the salesperson is asking the marketing product team for."""
+
+    kind: Literal["drawing", "photo"]
 
 
 class DrawingEscalationResponse(BaseModel):

@@ -278,26 +278,26 @@ def _drawing_action(db: Session, action, tracking_id: str, current_user: dict) -
     }
 
 
-@router.post("/{tracking_id}/drawing-respond")
-def respond_drawing_request(
+@router.post("/{tracking_id}/media-respond")
+def respond_media_request(
     tracking_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """The assignee's Respond on a product drawing task (My pending tasks)."""
+    """The assignee's Respond on a product drawing or photo task (My pending tasks)."""
     from app.services import product_drawing_request_service as drawing_requests
 
     return _drawing_action(db, drawing_requests.respond, tracking_id, current_user)
 
 
-@router.post("/{tracking_id}/drawing-resolve")
-def resolve_drawing_request(
+@router.post("/{tracking_id}/media-resolve")
+def resolve_media_request(
     tracking_id: str,
     current_user: dict = Depends(get_current_user),
     _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.resolve")),
     db: Session = Depends(get_db),
 ):
-    """The assignee's Resolve on a product drawing task; tells every requester."""
+    """The assignee's Resolve on a product drawing or photo task; tells every requester."""
     from app.services import product_drawing_request_service as drawing_requests
 
     return _drawing_action(db, drawing_requests.resolve, tracking_id, current_user)
