@@ -1075,7 +1075,7 @@ def assert_not_superseded(db: Session, record: ProjectQuotationIssue) -> None:
     if newer is not None:
         raise AppException(
             status_code=409,
-            message=f"This quotation has been replaced by {newer.our_ref_text}.",
+            message=f"This quotation has been replaced by Quotation No. {newer.our_ref_text}.",
             code="quotation_superseded",
         )
 

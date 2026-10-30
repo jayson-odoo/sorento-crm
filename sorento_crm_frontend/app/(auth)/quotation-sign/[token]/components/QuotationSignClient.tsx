@@ -1,7 +1,15 @@
 'use client';
 
 import * as React from 'react';
-import { AlertCircle, CheckCircle2, Info, Link2Off, MessageSquareText } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Info,
+  Link2Off,
+  MessageSquareText,
+  Replace,
+  Send,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -17,7 +25,23 @@ import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { sanitizedHtml } from '@/lib/sanitize';
 import { useQuotationSignMutations, useQuotationSignPage } from '../../hooks/useQuotationSign';
 import { QuotationSignError, type QuotationSignPage } from '../../services/quotationSignService';
-import { QuotationSignScopes } from './QuotationSignScopes';
+import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
+import { QuotationSignScopes, type QuotationSignSuggest } from './QuotationSignScopes';
+import {
+  editOf,
+  hasErrors,
+  suggestionBody,
+  suggestionSummary,
+  type LineEdits,
+} from './quotationSuggest';
+
+/** Why Sign is off while suggested changes wait for an answer (owner decision Q1 a). */
+const AMENDMENT_OPEN_SENTENCE = 'You can sign once Sorento has answered your suggestions.';
+
+/** "Quotation No. X", whether or not the ref already carries the label. */
+function quotationLabel(ref: string): string {
+  return /^quotation no\./i.test(ref.trim()) ? ref.trim() : `Quotation No. ${ref.trim()}`;
+}
 
 function text(value: string | null | undefined): string {
   return value?.trim() ? value : '-';
@@ -160,13 +184,26 @@ function ProsePanel({ title, html, empty }: { title: string; html: string | null
  * Acceptance is checked FIRST because both fields can be set: a customer who asked for changes
  * and then signed has accepted, and that is what the page must say.
  */
-function CustomerSignature({ page, token }: { page: QuotationSignPage; token: string }) {
-  const { accept, requestChanges } = useQuotationSignMutations(token);
-  const [signerName, setSignerName] = React.useState(page.attn_name ?? '');
-  const [asking, setAsking] = React.useState(false);
-  const [note, setNote] = React.useState('');
+function CustomerSignature({
+  page,
+  token,
+  signerName,
+  onSignerName,
+  onSuggest,
+}: {
+  page: QuotationSignPage;
+  token: string;
+  signerName: string;
+  onSignerName: (name: string) => void;
+  /** Opens suggest mode; null while it is already open. */
+  onSuggest: (() => void) | null;
+}) {
+  const { accept } = useQuotationSignMutations(token);
   const named = signerName.trim().length > 0;
-  const hasTerms = Boolean(page.terms?.trim());
+  // An open request: the pad stays visible but locked, with its one reason, and the terms tick
+  // is hidden because ticking it could not enable anything.
+  const waiting = page.sign_blocked_reason === 'amendment_open';
+  const hasTerms = Boolean(page.terms?.trim()) && !waiting;
   const [ticked, setTicked] = React.useState(false);
   // Set once the customer taps Sign and accept (or the locked pad) before it is ready: the hint
   // then turns to the warning colour until everything is in.
@@ -175,9 +212,6 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
   const tickRef = React.useRef<HTMLButtonElement | null>(null);
   const padRef = React.useRef<HTMLDivElement | null>(null);
   const termsOk = !hasTerms || ticked;
-  // Trimmed, so a box holding three spaces is still empty. An empty request is not a request:
-  // the backend refuses it, and the button that would send it is never live.
-  const written = note.trim().length > 0;
 
   if (page.is_accepted) {
     return (
@@ -219,12 +253,58 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
     );
   }
 
+  // A newer revision replaced this one: nothing here can be signed or suggested any more.
+  if (page.sign_blocked_reason === 'superseded' && page.superseded_by_ref) {
+    return (
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="min-w-0 break-words text-sm">Replaced</CardTitle>
+          <Badge variant="secondary" appearance="light">
+            <Replace className="size-3.5" aria-hidden />
+            Replaced
+          </Badge>
+        </CardHeader>
+        <CardContent className="py-5">
+          <p className="min-w-0 break-words text-sm">
+            {`This quotation has been replaced by ${quotationLabel(page.superseded_by_ref)}.`}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Answered: the outcome is in the table's cells; this says so once, and what happens next.
+  if (page.sign_blocked_reason === 'amendment_applied' && page.amendment_request) {
+    const rows = page.amendment_request.rows;
+    const yes = rows.filter((row) => row.decision === 'accepted').length;
+    const no = rows.length - yes;
+    return (
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="min-w-0 break-words text-sm">Your suggestions</CardTitle>
+          <Badge variant="info" appearance="light">
+            <MessageSquareText className="size-3.5" aria-hidden />
+            Answered
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-2 py-5">
+          <p className="min-w-0 break-words text-sm font-medium">
+            {`Sorento answered: ${yes} accepted, ${no} not accepted.`}
+          </p>
+          <p className="min-w-0 break-words text-sm text-muted-foreground">
+            Your salesperson will send the revised quotation for signing.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   /**
-   * The other settled outcome. A form still sitting here is how somebody sends the same message
-   * four times, so the request replaces it - and the words are quoted back, because the one thing
-   * a customer who has just objected to a price needs is proof that it arrived.
+   * The older free-text request, for an issue that carries one and no suggested changes. A form
+   * still sitting here is how somebody sends the same message four times, so the request replaces
+   * it - and the words are quoted back as proof that it arrived.
    */
-  if (page.is_changes_requested) {
+  if (page.is_changes_requested && !page.amendment_request) {
     return (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -255,6 +335,8 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
 
   /** The first step still missing, named for the hint and the element to bring into view. */
   function hintFor(hasContent: boolean): string | null {
+    // Checked first, and alone: the two disabled reasons never show together.
+    if (waiting) return AMENDMENT_OPEN_SENTENCE;
     if (!named) {
       return hasTerms
         ? 'Type your name and tick the terms box to accept.'
@@ -265,18 +347,11 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
   }
 
   function showMissingStep() {
+    if (waiting) return;
     setNudged(true);
     const target = !named ? nameRef.current : !termsOk ? tickRef.current : padRef.current;
     target?.scrollIntoView?.({ block: 'center' });
     if (!named || !termsOk) target?.focus();
-  }
-
-  function sendRequest() {
-    if (!written) return;
-    requestChanges.mutate({
-      note: note.trim(),
-      requester_name: signerName.trim() || null,
-    });
   }
 
   return (
@@ -285,9 +360,20 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
         <CardTitle className="min-w-0 break-words text-sm">Accepted by</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 py-5">
-        <p className="min-w-0 break-words text-sm text-muted-foreground">
-          Signing below accepts this quotation.
-        </p>
+        {waiting && page.amendment_request ? (
+          <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+            <p className="font-medium">Your suggestions are with Sorento</p>
+            {page.amendment_request.submitted_at && (
+              <p className="text-muted-foreground">
+                {`Sent ${formatDateTimeInMalaysia(page.amendment_request.submitted_at)}.`}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="min-w-0 break-words text-sm text-muted-foreground">
+            Signing below accepts this quotation.
+          </p>
+        )}
 
         <div className="space-y-1.5">
           <Label htmlFor="quotation-sign-name">Your name</Label>
@@ -298,7 +384,7 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
             autoComplete="name"
             placeholder="As it should read on the quotation"
             disabled={accept.isPending}
-            onChange={(event) => setSignerName(event.target.value)}
+            onChange={(event) => onSignerName(event.target.value)}
           />
         </div>
 
@@ -329,7 +415,7 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
             typedNameDefault={signerName}
             // Locked until there is a name to put beside the ink. The pad owns its own Apply
             // button, so gating it here is the only way to keep the two in the right order.
-            disabled={!named || !termsOk || accept.isPending}
+            disabled={waiting || !named || !termsOk || accept.isPending}
             onNotReadyAttempt={showMissingStep}
             renderFooterHint={({ hasContent, hintId }) => {
               const hint = hintFor(hasContent);
@@ -372,69 +458,84 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
 
         {/* The second answer, beside the first rather than hidden below the fold. Stacked at
             375px: a full-width button next to a sentence on one row clips both on a phone. */}
-        <div
-          data-testid="quotation-sign-actions"
-          className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between"
-        >
-          <p className="min-w-0 break-words text-sm text-muted-foreground">
-            Not ready to sign this?
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full sm:w-auto"
-            disabled={accept.isPending || requestChanges.isPending}
-            onClick={() => setAsking((open) => !open)}
+        {!waiting && onSuggest && (
+          <div
+            data-testid="quotation-sign-actions"
+            className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between"
           >
-            Request changes
-          </Button>
-        </div>
-
-        {asking && (
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="quotation-changes-note">What needs to change</Label>
-              <Textarea
-                id="quotation-changes-note"
-                rows={4}
-                value={note}
-                placeholder="e.g. the townhouse rate is above our budget"
-                disabled={requestChanges.isPending}
-                onChange={(event) => setNote(event.target.value)}
-              />
-              {!written && (
-                <p className="text-xs text-muted-foreground">
-                  Tell us what to change before sending.
-                </p>
-              )}
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Button
-                type="button"
-                className="w-full sm:w-auto"
-                disabled={!written || requestChanges.isPending}
-                onClick={sendRequest}
-              >
-                Send request
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full sm:w-auto"
-                disabled={requestChanges.isPending}
-                onClick={() => {
-                  setAsking(false);
-                  setNote('');
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
-            {requestChanges.isPending && (
-              <p className="text-sm text-muted-foreground">Sending your request...</p>
-            )}
+            <p className="min-w-0 break-words text-sm text-muted-foreground">
+              Not ready to sign this?
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              disabled={accept.isPending}
+              onClick={onSuggest}
+            >
+              Suggest changes
+            </Button>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Suggest mode's one summary row: how many lines changed, the total before and after, Discard
+ * and Send. Stacked on a phone so nothing clips at 375px.
+ */
+function SuggestSummary({
+  lines,
+  before,
+  after,
+  canSend,
+  sending,
+  onSend,
+  onDiscard,
+}: {
+  lines: number;
+  before: string;
+  after: string;
+  canSend: boolean;
+  sending: boolean;
+  onSend: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:gap-6">
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">Your suggestions</p>
+          <p className="text-sm font-medium">{lines === 1 ? '1 line' : `${lines} lines`}</p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">Total</p>
+          <p className="break-words text-sm font-medium tabular-nums">
+            {`${formatMyrExact(before)} → ${formatMyrExact(after)}`}
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 sm:ms-auto sm:flex-row">
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full sm:w-auto"
+            disabled={sending}
+            onClick={onDiscard}
+          >
+            Discard
+          </Button>
+          <Button
+            type="button"
+            className="w-full sm:w-auto"
+            disabled={!canSend || sending}
+            onClick={onSend}
+          >
+            <Send className="size-4" aria-hidden />
+            Send suggestions
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
@@ -518,7 +619,47 @@ export function QuotationSignClient({ token }: { token: string }) {
     );
   }
 
-  const page = query.data;
+  return <SignPageBody page={query.data} token={token} />;
+}
+
+/**
+ * The loaded page. Its own component so the name and the suggest-mode state can start from the
+ * page itself: the name the customer types travels with a signature and with suggestions alike.
+ */
+function SignPageBody({ page, token }: { page: QuotationSignPage; token: string }) {
+  const { submitAmendment } = useQuotationSignMutations(token);
+  const [signerName, setSignerName] = React.useState(page.attn_name ?? '');
+  const [suggesting, setSuggesting] = React.useState(false);
+  const [edits, setEdits] = React.useState<LineEdits>({});
+  const [note, setNote] = React.useState('');
+
+  const discard = React.useCallback(() => {
+    setSuggesting(false);
+    setEdits({});
+    setNote('');
+  }, []);
+
+  const sending = submitAmendment.isPending;
+  const suggest = React.useMemo<QuotationSignSuggest>(
+    () => ({
+      edits,
+      disabled: sending,
+      onEdit: (line, patch) =>
+        setEdits((previous) => ({
+          ...previous,
+          [line.id]: { ...editOf(previous, line), ...patch },
+        })),
+      onToggleRemove: (line) =>
+        setEdits((previous) => {
+          const current = editOf(previous, line);
+          return { ...previous, [line.id]: { ...current, remove: !current.remove } };
+        }),
+    }),
+    [edits, sending],
+  );
+  const summary = suggestionSummary(page.scopes, edits, page.grand_total);
+  const canSend = !hasErrors(page.scopes, edits) && (summary.lines > 0 || note.trim() !== '');
+
   const preparedBy = firstName(
     page.sorento_signature?.signer_name,
     page.signatory_name,
@@ -535,7 +676,43 @@ export function QuotationSignClient({ token }: { token: string }) {
         empty="No cover letter was included with this quotation."
       />
 
-      <QuotationSignScopes scopes={page.scopes} grandTotal={page.grand_total} />
+      {suggesting && (
+        <SuggestSummary
+          lines={summary.lines}
+          before={page.grand_total}
+          after={summary.after}
+          canSend={canSend}
+          sending={sending}
+          onDiscard={discard}
+          onSend={() => {
+            if (!canSend) return;
+            submitAmendment.mutate(suggestionBody(page.scopes, edits, note, signerName), {
+              onSuccess: discard,
+            });
+          }}
+        />
+      )}
+
+      <QuotationSignScopes
+        scopes={page.scopes}
+        grandTotal={page.grand_total}
+        suggest={suggesting ? suggest : undefined}
+        amendment={page.amendment_request}
+      />
+
+      {suggesting && (
+        <div className="max-w-xl space-y-1.5">
+          <Label htmlFor="quotation-suggest-note">Anything else (optional)</Label>
+          <Textarea
+            id="quotation-suggest-note"
+            rows={2}
+            value={note}
+            maxLength={4000}
+            disabled={sending}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </div>
+      )}
 
       <ProsePanel
         title="Terms and conditions"
@@ -564,7 +741,13 @@ export function QuotationSignClient({ token }: { token: string }) {
         </Card>
 
         <div className="min-w-0">
-          <CustomerSignature page={page} token={token} />
+          <CustomerSignature
+            page={page}
+            token={token}
+            signerName={signerName}
+            onSignerName={setSignerName}
+            onSuggest={suggesting ? null : () => setSuggesting(true)}
+          />
         </div>
       </div>
     </PageShell>

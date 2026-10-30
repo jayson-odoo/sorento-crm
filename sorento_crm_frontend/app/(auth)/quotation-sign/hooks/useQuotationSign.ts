@@ -7,7 +7,9 @@ import {
   getQuotationSignPage,
   QuotationSignError,
   requestQuotationChanges,
+  submitAmendmentRequest,
   type QuotationSignAcceptBody,
+  type QuotationSignAmendmentBody,
   type QuotationSignChangesBody,
   type QuotationSignPage,
 } from '../services/quotationSignService';
@@ -62,5 +64,24 @@ export function useQuotationSignMutations(token: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { accept, requestChanges };
+  /**
+   * The customer's suggested changes, answered with the page like the other two. A 409 means the
+   * page moved on under a stale tab (a newer revision, or a request already open), so the page is
+   * read again to show what it now is.
+   */
+  const submitAmendment = useMutation({
+    mutationFn: (body: QuotationSignAmendmentBody) => submitAmendmentRequest(token, body),
+    onSuccess: (page: QuotationSignPage) => {
+      queryClient.setQueryData(quotationSignPageKey(token), page);
+      toast.success('Thank you. Your suggestions have been sent to Sorento.');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+      if (error instanceof QuotationSignError && error.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: quotationSignPageKey(token) });
+      }
+    },
+  });
+
+  return { accept, requestChanges, submitAmendment };
 }
