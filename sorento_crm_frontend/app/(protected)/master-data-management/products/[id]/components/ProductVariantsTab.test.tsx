@@ -32,6 +32,11 @@ const { setParentMutate, unlinkMutate, resetMutate, setFamilyMutate, resetFamily
     resetFamilyMutate: vi.fn(),
   }));
 
+const perms = vi.hoisted(() => ({ canEdit: true }));
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => slug === 'master_data.products.edit' && perms.canEdit,
+}));
+
 vi.mock('../../hooks/useProducts', () => ({
   useSetVariantParent: () => ({ mutate: setParentMutate, isPending: false }),
   useUnlinkVariant: () => ({ mutate: unlinkMutate, isPending: false }),
@@ -89,6 +94,7 @@ const CHILDREN: ProductVariantRef[] = [
 const PRODUCT_ID = 'p-me';
 
 beforeEach(() => {
+  perms.canEdit = true;
   setParentMutate.mockReset();
   unlinkMutate.mockReset();
   resetMutate.mockReset();
@@ -108,6 +114,34 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('ProductVariantsTab - states', () => {
+  it('without master_data.products.edit: shows the links read-only, no write buttons', () => {
+    perms.canEdit = false;
+    render(
+      <ProductVariantsTab
+        productId={PRODUCT_ID}
+        productCode="SRTKT71SS-BL"
+        variantOf={PARENT}
+        variants={CHILDREN}
+        variantLinkManual
+        familyCode="SRTKT71"
+        familyCodeManual
+      />,
+    );
+
+    expect(screen.getByText('SRTKT71SS')).toBeInTheDocument();
+    expect(screen.getByText('SRTKT71')).toBeInTheDocument();
+    for (const name of [
+      /add variant/i,
+      /^unlink$/i,
+      /reset to auto/i,
+      /set parent|change parent/i,
+      /^edit$/i,
+      /remove variant/i,
+    ]) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+  });
+
   it('base product: shows an "Add variant" CTA, no Unlink / Manual badge / Reset', () => {
     render(
       <ProductVariantsTab

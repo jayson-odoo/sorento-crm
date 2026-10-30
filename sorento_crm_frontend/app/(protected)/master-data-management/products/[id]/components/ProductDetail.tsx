@@ -80,6 +80,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const { data: product, isLoading } = useProduct(productId);
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
   const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
+  const canEditProduct = useHasPermission('master_data.products.edit');
 
   // Tab badge counts - same hooks the tab content components use, so React
   // Query dedupes the request when the user opens the tab.
@@ -181,16 +182,18 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           pendingAction={pending}
           gearLabel="Product options"
           primary={
-            <Button
-              onClick={() =>
-                router.push(
-                  `${navigationBasePath}/${productId}/edit${navigationQueryString ? `?${navigationQueryString}` : ''}`,
-                )
-              }
-            >
-              <Edit className="size-4" />
-              Edit
-            </Button>
+            canEditProduct ? (
+              <Button
+                onClick={() =>
+                  router.push(
+                    `${navigationBasePath}/${productId}/edit${navigationQueryString ? `?${navigationQueryString}` : ''}`,
+                  )
+                }
+              >
+                <Edit className="size-4" />
+                Edit
+              </Button>
+            ) : undefined
           }
         />
       </div>
