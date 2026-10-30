@@ -480,6 +480,9 @@ def _visible_to_reader(db: Session, row: Optional[SlaFormAction]) -> bool:
         row_scope = frozenset(resolve_user_grant_ids(db, str(row.requested_by_id)))
     else:
         return False
+    # Compares the requester's scope with the reader's, not the record's own company. Only
+    # `contact_customer_link.unlink` parks under a widened scope today, and a contact
+    # belongs to no one company; a new multi-company park path must revisit this.
     return isinstance(row_scope, frozenset) and bool(row_scope & reader)
 
 
@@ -573,7 +576,9 @@ def create_pending_action(
             _commit_if_due(service, existing)
             existing = service.pending_for(body.entity_type, body.entity_id)
             if existing is not None:
-                if existing.action_key == body.action_key:
+                # Another company's countdown is never echoed back (its id and timing are
+                # what `/current` hides): it answers like any other action in the way.
+                if existing.action_key == body.action_key and _visible_to_reader(db, existing):
                     # A double click parks one action, not two, and answers with the
                     # countdown already running (S6-01).
                     return {
