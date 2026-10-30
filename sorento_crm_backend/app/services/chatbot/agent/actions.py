@@ -17,13 +17,11 @@ from sqlalchemy import update
 from app.models.chatbot_agent import AgentAction
 from app.services.chatbot.agent import writes
 from app.services.chatbot.agent.access import AgentRefused, build_context
-from app.services.chatbot.agent.tools import _permitted
 
 logger = logging.getLogger(__name__)
 
 ACTION_TTL_MINUTES = 10
 MAX_STEPS = 20
-_COMPARED_ALWAYS = ("updated_at",)
 
 
 class ActionRefused(Exception):
@@ -103,17 +101,19 @@ def _recheck(db, ctx, step: dict) -> str | None:
     definition = writes.WRITES.get(step["tool"])
     if definition is None:
         return "This change is no longer available."
-    if not _permitted(db, ctx.user_id, definition.user_permission):
+    if not writes.holds(db, ctx.user_id, definition.user_permission):
         return "You no longer have permission for this change."
     try:
         now = writes.run_as_user(
             db, ctx, lambda user: definition.read_before(db, user, step["args"]), tool_name=step["tool"]
         )
     except Exception as exc:  # noqa: BLE001
-        return writes.error_text(exc)
+        text = writes.error_text(exc)
+        # A rule that now refuses (nothing left to change, a field no longer valid) means it moved on.
+        return f"This changed since it was proposed: {text}" if getattr(exc, "status_code", 0) == 422 else text
     before = step.get("before") or {}
-    for field in [*step["args"], *_COMPARED_ALWAYS]:
-        if field in before and now.get(field) != before.get(field):
+    for field in before:
+        if now.get(field) != before[field]:
             return f"The {field.replace('_', ' ')} changed since this was proposed."
     return None
 
