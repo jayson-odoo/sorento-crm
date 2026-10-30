@@ -41,6 +41,9 @@ questions V1-V3 = (a). BE = `sorento_crm_backend/app`, FE = `sorento_crm_fronten
 - AC-S2. Submitting an existing draft (`crm_submit`, `:818`) whose title + developer block -> the same 409; the draft
   stays a draft.
 - AC-S3. Save draft (submit=false) with a blocking title still saves (Q-E: drafts stay free).
+- AC-S5. The 409 a user WITHOUT `projects.projects.view` gets names the project (code, title) but never the holder's
+  name (the clash preview already hides owner fields from them, `BE/api/v1/projects/projects.py:131-136`); staff keep
+  today's message. (Reviewer blocker, 30 Oct.)
 - AC-S4. A similar but not blocking match (below the block threshold, or another developer) does not refuse submit.
 
 ## R. "Register interest" reads "Register as secondary lead" (BE + FE)
@@ -59,7 +62,8 @@ questions V1-V3 = (a). BE = `sorento_crm_backend/app`, FE = `sorento_crm_fronten
   "Secondary leads" using `components/common/PanelDataGrid.tsx` (fixed layout, resizable columns, long text truncated
   with `title`): columns Salesperson, Date, How they found it, Status (Badge: Pending / Reassigned / Dismissed), and
   for pending rows to a holder of `projects.projects.manage` the actions "Reassign to <name>" and "Dismiss". Ask-to-join
-  requests ("Open requests") and their past decisions keep today's rendering.
+  requests ("Open requests") and their past decisions keep today's rendering. The table sits inside the Access card
+  (mock B1). Badges: Pending amber, Reassigned green, Dismissed grey.
 - AC-R5. No user-visible "interest" string remains in ProjectForm, ProjectAccessPanel, useProjects toasts or the
   notification service.
 
@@ -81,7 +85,9 @@ questions V1-V3 = (a). BE = `sorento_crm_backend/app`, FE = `sorento_crm_fronten
 - AC-W8. AI extract on step 1 fills title and developer and keeps the other extracted values for step 2.
 - AC-W9. Edit mode: no wizard and no step strip; every section shows; Check runs as today but shows the same
   Clash / No clash result (no similar rows).
-- AC-W10. Usable at 375 px and 1280 px; at 375 the footer stacks like Create lead.
+- AC-W10. Usable at 375 px and 1280 px; at 375 the footer stacks like Create lead (Back, Cancel, forward action).
+- AC-W11. A blocking clash found by the re-check at Register on step 2 shows the same "Clash: <code> <title>" line
+  with the "Register as secondary lead on <code>" action.
 
 ## T. Project tabs (FE; mock C0, V1-V3 = (a))
 
@@ -90,4 +96,5 @@ questions V1-V3 = (a). BE = `sorento_crm_backend/app`, FE = `sorento_crm_fronten
 - AC-T2. PO tab = `PurchaseOrdersPanel`; SO tab = `SalesOrdersPanel` showing every sales order of the project (no
   `withoutPurchaseOrder`).
 - AC-T3. Samples tab removed with `SamplesPanel.tsx` and `SampleDialog.tsx`; `?tab=samples` opens Samples Request;
-  `?tab=orders` (and the legacy `pos`, `schedules`, `sales-orders`) opens PO. Stored samples and BE endpoints untouched.
+  `?tab=orders` (and the legacy `pos`, `schedules`) opens PO; the SO tab's id is `sales-orders`, so `?tab=sales-orders`
+  opens SO, and the sales order pages' "back to project" links use it. Stored samples and BE endpoints untouched.
