@@ -39,6 +39,8 @@ export interface DriveBulkActionState {
   isTrashView: boolean;
   isResubmitting: boolean;
   canRestore: boolean;
+  /** `resource.attachments.delete`, which restore takes server-side; without it no Restore. */
+  canDelete: boolean;
 }
 
 const FILE_ONLY_DISABLED_REASON = 'Not available when a folder is selected.';
@@ -51,12 +53,16 @@ export function buildDriveBulkActions(
 
   if (state.isTrashView) {
     return [
-      {
-        key: 'bulk-restore',
-        label: 'Restore selected',
-        disabled: !state.canRestore,
-        onClick: handlers.onRestore,
-      },
+      ...(state.canDelete
+        ? [
+            {
+              key: 'bulk-restore',
+              label: 'Restore selected',
+              disabled: !state.canRestore,
+              onClick: handlers.onRestore,
+            },
+          ]
+        : []),
       {
         key: 'bulk-permanent-delete',
         label: 'Delete selected',

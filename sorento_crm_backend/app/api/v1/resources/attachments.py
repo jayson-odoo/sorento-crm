@@ -137,12 +137,68 @@ def _create_and_send_webhook(
     )
 
 
-def _find_filename_collision(db: Session, directory_id: Optional[str], display_name: str):
+def _normalize_entity_type(entity_type: Optional[str]) -> Optional[str]:
+    """The entity_type exactly as upload stores it (lowercased, spaces to underscores)."""
+    cleaned = (entity_type or "").strip().lower().replace(" ", "_")
+    return cleaned or None
+
+
+def _assert_can_write_entity(
+    db: Session, entity_type: Optional[str], entity_id: Optional[str], current_user: dict
+) -> None:
+    """A file on a project is project work: writing it takes the project edit right.
+
+    Same rule `project_service.change_status` runs (`assert_can_edit_project`), not the
+    stricter `assert_can_write_project`: a pending registration still takes its documents
+    so the approver can fix it up before Approve (R8). Every other entity type is
+    unchanged here. ATTACH-PROJECT-WRITE.
+    """
+    if _normalize_entity_type(entity_type) != "project" or not entity_id:
+        return
+    from app.api.v1.projects._common import permission_slugs
+    from app.services import project_service
+
+    validate_uuid_path(str(entity_id), resource="Project")
+    project = project_service.get_project_or_404(db, str(entity_id), current_user["id"])
+    project_service.assert_can_edit_project(
+        db, project, current_user["id"], permission_slugs(db, current_user["id"])
+    )
+
+
+def _assert_can_write_attachments(db: Session, attachment_ids, current_user: dict) -> None:
+    """The entity check for every existing row a write touches; unknown ids pass through
+    so the service still answers them with its own 404 / skip."""
+    from app.models.resources import Attachment
+
+    ids = [str(i) for i in (attachment_ids or []) if i]
+    if not ids:
+        return
+    rows = (
+        db.query(Attachment.entity_type, Attachment.entity_id)
+        .filter(Attachment.id.in_(ids))
+        .distinct()
+        .all()
+    )
+    for entity_type, entity_id in rows:
+        _assert_can_write_entity(db, entity_type, entity_id, current_user)
+
+
+def _find_filename_collision(
+    db: Session,
+    directory_id: Optional[str],
+    display_name: str,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+):
     """Return the live Attachment row colliding on (directory_id, lower(stored_filename)) or None.
 
     Scoped to the user-facing name (stored_filename) - that's what "a file with this name
     already exists in this folder" means to a user. Storage-key uniqueness is guaranteed
     separately by the uuid-segregated key, so this is a pure UX check.
+
+    With an entity given, only files on that same entity collide: project documents upload
+    with no folder, and a folder-only scope matched (and Replace overwrote) a same-named
+    file on any OTHER project.
     """
     from sqlalchemy import func as _sa_func
     from app.models.resources import Attachment
@@ -154,21 +210,30 @@ def _find_filename_collision(db: Session, directory_id: Optional[str], display_n
         if not directory_id
         else Attachment.directory_id == directory_id
     )
-    return (
-        db.query(Attachment)
-        .filter(
-            scope,
-            _sa_func.lower(Attachment.stored_filename) == (display_name or "").lower(),
-            Attachment.is_deleted.is_(False),
-        )
-        .first()
+    q = db.query(Attachment).filter(
+        scope,
+        _sa_func.lower(Attachment.stored_filename) == (display_name or "").lower(),
+        Attachment.is_deleted.is_(False),
     )
+    normalized_entity_type = _normalize_entity_type(entity_type)
+    if normalized_entity_type and entity_id:
+        q = q.filter(
+            Attachment.entity_type == normalized_entity_type,
+            Attachment.entity_id == str(entity_id),
+        )
+    return q.first()
 
 
-def _next_copy_name(db: Session, directory_id: Optional[str], display_name: str) -> str:
+def _next_copy_name(
+    db: Session,
+    directory_id: Optional[str],
+    display_name: str,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+) -> str:
     """Loop _suffix_copy_name until the candidate display name is free in the directory."""
     candidate = _suffix_copy_name(display_name)
-    while _find_filename_collision(db, directory_id, candidate) is not None:
+    while _find_filename_collision(db, directory_id, candidate, entity_type, entity_id) is not None:
         candidate = _suffix_copy_name(candidate)
     return candidate
 
@@ -392,6 +457,8 @@ def get_attachments(
 def collision_check(
     filename: str = Query(..., description="Candidate display name (stored_filename) to test."),
     directory_id: Optional[str] = Query(None, description="Folder to check within; no folder → never collides."),
+    entity_type: Optional[str] = Query(None, description="With entity_id: only files on this entity collide."),
+    entity_id: Optional[str] = Query(None, description="With entity_type: only files on this entity collide."),
     current_user: dict = Depends(require_any_permission_with_api_key(ATTACHMENT_UPLOAD_READERS)),
     db: Session = Depends(get_db),
 ):
@@ -399,9 +466,10 @@ def collision_check(
 
     Lets the upload UI prompt Replace / Create copy BEFORE handing the file to the
     background upload session (which otherwise can't surface a 409 interactively).
-    Same scope as the upload-time guard (`directory_id`, lower(`stored_filename`)).
+    Same scope as the upload-time guard (`directory_id`, lower(`stored_filename`), and the
+    entity when one is given).
     """
-    existing = _find_filename_collision(db, directory_id, filename)
+    existing = _find_filename_collision(db, directory_id, filename, entity_type, entity_id)
     if existing is None:
         return {"collides": False}
     return {
@@ -887,7 +955,7 @@ async def create_attachment(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="on_conflict must be one of 'copy', 'replace', or omitted.",
             )
-        collision = _find_filename_collision(db, directory_id, display_name)
+        collision = _find_filename_collision(db, directory_id, display_name, entity_type, entity_id)
         existing_to_replace = None
         if collision is not None:
             if on_conflict_clean is None:
@@ -902,7 +970,7 @@ async def create_attachment(
                     },
                 )
             if on_conflict_clean == "copy":
-                display_name = _next_copy_name(db, directory_id, display_name)
+                display_name = _next_copy_name(db, directory_id, display_name, entity_type, entity_id)
             else:  # "replace"
                 existing_to_replace = collision
 
@@ -950,6 +1018,14 @@ async def create_attachment(
             final_entity_type = attachment_type.type_name.lower().replace(' ', '_')
         else:
             final_entity_type = "general"
+
+        # Before any bytes reach storage: the entity the new row lands on, and the row a
+        # Replace would overwrite, both need the right to write them.
+        _assert_can_write_entity(db, final_entity_type, entity_id, current_user)
+        if existing_to_replace is not None:
+            _assert_can_write_entity(
+                db, existing_to_replace.entity_type, existing_to_replace.entity_id, current_user
+            )
 
         # Construct storage key. Basename = immutable original_filename.
         # - promotion: already scoped by entity_id (unchanged).
@@ -1482,6 +1558,17 @@ def update_attachment(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
+        # Both ends of an edit: the entity the file is on now, and the one it is re-pointed to.
+        current = service.get_attachment(attachment_id)
+        _assert_can_write_entity(db, current.entity_type, current.entity_id, current_user)
+        requested = attachment_data.model_dump(exclude_unset=True)
+        if "entity_type" in requested or "entity_id" in requested:
+            _assert_can_write_entity(
+                db,
+                requested.get("entity_type", current.entity_type),
+                requested.get("entity_id", current.entity_id),
+                current_user,
+            )
         attachment = service.update_attachment(attachment_id, attachment_data)
         # The bare ORM row serializes company_name as None; stamp it so the write
         # echo matches what the list and detail reads return.
@@ -1605,6 +1692,7 @@ def delete_attachment(
     """Delete an attachment permanently (hard delete). Use archive for retention."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
+        _assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
         result = service.delete_attachment(attachment_id, current_user["id"])
         return result
@@ -1617,12 +1705,15 @@ def delete_attachment(
 @router.post("/{attachment_id}/archive", status_code=status.HTTP_200_OK)
 def archive_attachment(
     attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
 ):
-    """Archive an attachment (soft delete). Data remains for retention. Use restore to unarchive."""
+    """Archive an attachment (soft delete). Data remains for retention. Use restore to unarchive.
+
+    Same slug as `POST /bulk-archive`: whoever may trash many files may trash one."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
+        _assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
         result = service.archive_attachment(attachment_id, current_user["id"])
         return result
@@ -1635,12 +1726,13 @@ def archive_attachment(
 @router.put("/{attachment_id}/restore", status_code=status.HTTP_200_OK)
 def restore_attachment(
     attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
 ):
-    """Restore an archived attachment."""
+    """Restore an archived attachment. Takes the archive slug: restore undoes an archive."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
+        _assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
         result = service.restore_attachment(attachment_id)
         return result
@@ -1658,6 +1750,7 @@ def bulk_archive_attachments(
 ):
     """Archive multiple attachments (soft delete)."""
     try:
+        _assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         result = service.archive_attachments(body.attachment_ids, current_user["id"])
         return result
@@ -1675,6 +1768,7 @@ def bulk_delete_attachments(
 ):
     """Mass delete attachments permanently (hard delete)."""
     try:
+        _assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
         result = service.delete_attachments(body.attachment_ids, current_user["id"])
         return result
