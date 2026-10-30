@@ -86,6 +86,8 @@ export interface SignaturePadProps {
   onNotReadyAttempt?: () => void;
   /** Opt-in. Rendered beside the commit button; told whether anything is drawn or typed yet. */
   renderFooterHint?: (state: { hasContent: boolean; hintId: string }) => React.ReactNode;
+  /** Opt-in. Leaves the "GPS location" row out of both the capture and the read-only view. */
+  hideLocation?: boolean;
   /** Set false to skip the geolocation prompt entirely (e.g. an internal desk signature). */
   requestGeolocation?: boolean;
   className?: string;
@@ -181,6 +183,7 @@ export function SignaturePad({
   extraMetadata,
   onNotReadyAttempt,
   renderFooterHint,
+  hideLocation = false,
   requestGeolocation = true,
   className,
 }: SignaturePadProps) {
@@ -406,10 +409,12 @@ export function SignaturePad({
   const metadata = (
     <div className="grid gap-3 sm:grid-cols-2">
       <MetaRow label="Signed at" value={value?.signedAt ? formatDateTimeInMalaysia(value.signedAt) : null} />
-      <MetaRow
-        label="GPS location"
-        value={formatCoordinate(value?.gpsLat ?? null, value?.gpsLng ?? null, value?.gpsPlace)}
-      />
+      {!hideLocation && (
+        <MetaRow
+          label="GPS location"
+          value={formatCoordinate(value?.gpsLat ?? null, value?.gpsLng ?? null, value?.gpsPlace)}
+        />
+      )}
       {extraMetadata?.map((row) => (
         <MetaRow key={row.label} label={row.label} value={row.value} />
       ))}
@@ -534,14 +539,16 @@ export function SignaturePad({
         {/* The place name once it resolves, the coordinates until then, and the coordinates for
             good if the lookup fails. The browser never derives the name itself: it asks the same
             table the PDF renders from, so the two cannot describe different places. */}
-        <MetaRow
-          label="GPS location"
-          value={
-            nearestPlace
-              ? `near ${nearestPlace}`
-              : formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)
-          }
-        />
+        {!hideLocation && (
+          <MetaRow
+            label="GPS location"
+            value={
+              nearestPlace
+                ? `near ${nearestPlace}`
+                : formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)
+            }
+          />
+        )}
       </CardContent>
 
       <CardFooter

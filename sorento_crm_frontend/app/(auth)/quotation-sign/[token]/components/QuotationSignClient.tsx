@@ -31,6 +31,14 @@ function addressLines(address: string | null): string[] {
     .filter((line) => line.length > 0);
 }
 
+/** The first non-blank name, trimmed; null when every candidate is blank. */
+function firstName(...names: Array<string | null | undefined>): string | null {
+  for (const name of names) {
+    if (name?.trim()) return name.trim();
+  }
+  return null;
+}
+
 /** The refs and the parties, in the order they sit on the printed quotation. */
 function Letterhead({ page }: { page: QuotationSignPage }) {
   const lines = addressLines(page.recipient_address);
@@ -175,7 +183,9 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
     return (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="min-w-0 break-words text-sm">Your signature</CardTitle>
+          <CardTitle className="min-w-0 break-words text-sm">
+            {['Accepted by', page.customer_signature?.signer_name?.trim()].filter(Boolean).join(' ')}
+          </CardTitle>
           <Badge variant="success" appearance="light">
             <CheckCircle2 className="size-3.5" aria-hidden />
             Accepted
@@ -191,6 +201,8 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
             readOnly
             onChange={() => {}}
             value={signatureValueFrom(page.customer_signature)}
+            hideLocation
+            requestGeolocation={false}
             // The signer's own name heads their signature. Falls back to a label rather than to
             // `-`: a card titled "-" reads as a fault, and this one is not a data field.
             label={
@@ -270,7 +282,7 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="min-w-0 break-words text-sm">Accept this quotation</CardTitle>
+        <CardTitle className="min-w-0 break-words text-sm">Accepted by</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 py-5">
         <p className="min-w-0 break-words text-sm text-muted-foreground">
@@ -311,6 +323,8 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
         <div ref={padRef}>
           <SignaturePad
             label="Sign here"
+            hideLocation
+            requestGeolocation={false}
             commitLabel="Sign and accept"
             typedNameDefault={signerName}
             // Locked until there is a name to put beside the ink. The pad owns its own Apply
@@ -343,8 +357,9 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
                 image_data_uri: value.dataUrl,
                 // Stringified rather than sent as JSON numbers: the column is NUMERIC(10,7) and a
                 // float round-trip is a needless chance to move the coordinate.
-                gps_lat: value.gpsLat === null ? null : String(value.gpsLat),
-                gps_lng: value.gpsLng === null ? null : String(value.gpsLng),
+                // The sign page never asks for location.
+                gps_lat: null,
+                gps_lng: null,
                 terms_accepted: ticked,
               });
             }}
@@ -504,6 +519,11 @@ export function QuotationSignClient({ token }: { token: string }) {
   }
 
   const page = query.data;
+  const preparedBy = firstName(
+    page.sorento_signature?.signer_name,
+    page.signatory_name,
+    page.sender_name,
+  );
 
   return (
     <PageShell testId="quotation-sign-page">
@@ -527,14 +547,18 @@ export function QuotationSignClient({ token }: { token: string }) {
       <div className="grid items-start gap-4 md:grid-cols-2">
         <Card className="min-w-0">
           <CardHeader>
-            <CardTitle className="min-w-0 break-words text-sm">Signed for Sorento</CardTitle>
+            <CardTitle className="min-w-0 break-words text-sm">
+              {['Prepared by', preparedBy].filter(Boolean).join(' ')}
+            </CardTitle>
           </CardHeader>
           <CardContent className="py-5">
             <SignaturePad
               readOnly
               onChange={() => {}}
               value={signatureValueFrom(page.sorento_signature)}
-              label={text(page.sorento_signature?.signer_name ?? page.signatory_name)}
+              hideLocation
+              requestGeolocation={false}
+              label={preparedBy ?? 'Signature'}
             />
           </CardContent>
         </Card>

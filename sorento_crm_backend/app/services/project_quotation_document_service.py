@@ -968,11 +968,17 @@ def sign_as_sorento(
     Kept on the document rather than demanded at issue time so the signing and the issuing are
     separate acts: a person signs once and can then issue, which is the order the journey has.
     """
+    from app.models.user import User
+
+    signer_name = (payload.get("signer_name") or "").strip() or (document.signatory_name or "").strip()
+    if not signer_name:
+        user = db.query(User).filter(User.id == actor_user_id).first()
+        signer_name = ((user.name if user else None) or "").strip()
     signature = record_signature(
         db,
         company_id=document.company_id,
         owner_kind="user",
-        signer_name=payload.get("signer_name") or document.signatory_name,
+        signer_name=signer_name or None,
         mode=payload.get("mode") or "draw",
         image_data_uri=payload.get("image_data_uri"),
         user_id=actor_user_id,
