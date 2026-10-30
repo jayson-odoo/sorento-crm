@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
+import { ChevronDown, ExternalLink, Loader2, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -50,6 +50,7 @@ export default function AIAssistantSettingsForm() {
   // Dedicated TypeSafe (Jev) key - the console router's classifier. The stored key never comes
   // back, so the field stays blank and only the masked tail shows as the placeholder.
   const [typesafeKeyInput, setTypesafeKeyInput] = useState('');
+  const [typesafeKeyClear, setTypesafeKeyClear] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState('');
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
@@ -92,6 +93,7 @@ export default function AIAssistantSettingsForm() {
     setOpenaiKeyInput(data.openai_api_key_masked || '');
     setOpenaiKeyEdited(false);
     setTypesafeKeyInput('');
+    setTypesafeKeyClear(false);
   }, [data]);
 
   const filteredTools = useMemo(() => {
@@ -294,13 +296,35 @@ export default function AIAssistantSettingsForm() {
 
       <div className="space-y-2">
         <Label>TypeSafe (Jev) API key</Label>
-        <Input
-          type="password"
-          autoComplete="off"
-          value={typesafeKeyInput}
-          onChange={(e) => setTypesafeKeyInput(e.target.value)}
-          placeholder={data?.typesafe_api_key_masked || 'Not set'}
-        />
+        <div className="relative">
+          <Input
+            type="password"
+            autoComplete="off"
+            value={typesafeKeyInput}
+            onChange={(e) => {
+              setTypesafeKeyInput(e.target.value);
+              setTypesafeKeyClear(false);
+            }}
+            placeholder={typesafeKeyClear ? 'Not set' : data?.typesafe_api_key_masked || 'Not set'}
+            className="pe-9"
+          />
+          {data?.typesafe_api_key_masked && !typesafeKeyClear ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              mode="icon"
+              aria-label="Clear TypeSafe (Jev) API key"
+              className="absolute end-1 top-1/2 size-6 -translate-y-1/2"
+              onClick={() => {
+                setTypesafeKeyInput('');
+                setTypesafeKeyClear(true);
+              }}
+            >
+              <X className="size-4 opacity-60" />
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -409,6 +433,7 @@ export default function AIAssistantSettingsForm() {
               gemini_api_key: geminiKeyEdited ? geminiKeyInput.trim() || undefined : undefined,
               openai_api_key: openaiKeyEdited ? openaiKeyInput.trim() || undefined : undefined,
               typesafe_api_key: typesafeKeyInput.trim() || undefined,
+              typesafe_api_key_clear: typesafeKeyClear && !typesafeKeyInput.trim() ? true : undefined,
               enabled_tools: enabledTools,
               rag_enabled: ragEnabled,
               is_enabled: isEnabled,
@@ -425,6 +450,7 @@ export default function AIAssistantSettingsForm() {
                 setOpenaiKeyInput(saved.openai_api_key_masked || '');
                 setOpenaiKeyEdited(false);
                 setTypesafeKeyInput('');
+                setTypesafeKeyClear(false);
               },
               onError: (e: Error) => toast.error(e.message),
             },

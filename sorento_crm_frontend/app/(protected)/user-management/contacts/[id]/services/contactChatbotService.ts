@@ -79,6 +79,8 @@ export interface ContactChatbotProfile {
   agent_enabled: boolean;
   /** AGENTIC-P2-ROUTE: agent turns per day for this contact (`chatbot_agent_daily_turns`); null = the global setting. */
   chatbot_agent_daily_turns?: number | null;
+  /** Read-only: the system setting a blank cap falls back to. */
+  chatbot_agent_daily_turns_global?: number | null;
   /** MODEL-PER-CONTACT (read side): the effective model and its source. Never sent back. */
   chatbot_llm?: ChatbotLlm | null;
 }
@@ -192,6 +194,7 @@ function profileFromContact(contact: {
   chatbot_files_as_links?: boolean;
   chatbot_agent_enabled?: boolean;
   chatbot_agent_daily_turns?: number | null;
+  chatbot_agent_daily_turns_global?: number | null;
   chatbot_llm?: ChatbotLlm | null;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
@@ -212,6 +215,7 @@ function profileFromContact(contact: {
     files_as_links: Boolean(contact.chatbot_files_as_links),
     agent_enabled: Boolean(contact.chatbot_agent_enabled),
     chatbot_agent_daily_turns: contact.chatbot_agent_daily_turns ?? null,
+    chatbot_agent_daily_turns_global: contact.chatbot_agent_daily_turns_global ?? null,
     chatbot_llm: contact.chatbot_llm ?? null,
   };
 }

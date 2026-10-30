@@ -82,6 +82,16 @@ def parse_respond_contact_payload(payload: dict) -> dict:
     return out
 
 
+def _global_agent_daily_turns(db: Optional[Session]) -> Optional[int]:
+    """The system setting a contact with a blank agent cap falls back to; None without a session."""
+    if db is None:
+        return None
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting.chatbot_agent_daily_turns).first()
+    return int(row[0]) if row is not None else 50
+
+
 class ContactService:
     """Service for respond contact operations."""
     
@@ -1102,6 +1112,7 @@ class ContactService:
             # AGENTIC-P1: the per-contact switch for the read-only agent, default OFF.
             "chatbot_agent_enabled": bool(getattr(contact, "chatbot_agent_enabled", False)),
             "chatbot_agent_daily_turns": getattr(contact, "chatbot_agent_daily_turns", None),
+            "chatbot_agent_daily_turns_global": _global_agent_daily_turns(db),
             # CONTACT-BRAND-SCOPE: listed by hand like every field above. The list endpoint
             # fills it for a whole page in one query; here, one contact when a session is given.
             "brands": brands,

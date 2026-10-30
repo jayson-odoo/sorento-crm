@@ -482,7 +482,7 @@ def run_console_turn(
     D14 deviation it carries.
     """
     if media is not None:
-        return _run_console_media_turn(
+        result = _run_console_media_turn(
             db,
             contact_respond_id=contact_respond_id,
             caption=text,
@@ -492,6 +492,11 @@ def run_console_turn(
             media=media,
             reply_to=reply_to,
         )
+        # Media always stays on the bot: record that, with no Jev call.
+        media_route = RouteDecision("chat", "media")
+        result.route = media_route.as_response()
+        _stamp_route(db, result.turn_id, media_route)
+        return result
 
     # AGENTIC-P2-ROUTE: the router picks the side once per text turn. Media stayed on the bot above.
     decision = decide_route(
@@ -582,8 +587,12 @@ def _run_agent_side(
     failed agent says so in the reply."""
     from app.services.chatbot.agent import memory as agent_memory
 
-    if operator_user_id:
-        enforce_agent_rate_limit(operator_user_id)
+    if not operator_user_id:
+        # No operator, no rate-limit identity and no audit actor: the agent does not run, and the bot does not stand in.
+        return ConsoleTurnResult(
+            route=decision.as_response(), reply_text=AGENT_FAILED_REPLY, quick_replies=[], send_messages=[], trace_summary={}
+        )
+    enforce_agent_rate_limit(operator_user_id)
     try:
         result = run_agent_turn(
             db, contact_respond_id=contact_respond_id, text=text, operator_user_id=operator_user_id

@@ -25,6 +25,7 @@ class AIAssistantConfigUpdate(BaseModel):
     typesafe_api_key: Optional[str] = Field(
         None, description="Optional replacement TypeSafe (Jev) key (console router)"
     )
+    typesafe_api_key_clear: bool = Field(False, description="True removes the stored TypeSafe (Jev) key")
     enabled_tools: list[str] = Field(default_factory=list)
     rag_enabled: bool = True
     is_enabled: bool = True

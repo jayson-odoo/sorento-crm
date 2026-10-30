@@ -73,6 +73,8 @@ export interface RespondContact {
   chatbot_agent_enabled?: boolean;
   /** AGENTIC-P2-ROUTE: this contact's own agent turns per day; null reads as the global setting. */
   chatbot_agent_daily_turns?: number | null;
+  /** Read-only: the system setting a blank cap falls back to. */
+  chatbot_agent_daily_turns_global?: number | null;
   /** MODEL-PER-CONTACT: the effective model and where it came from (detail reads only). */
   chatbot_llm?: ChatbotLlm | null;
   /** Identity S3: the user this contact is linked to, if any (list rows). Null

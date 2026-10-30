@@ -29,6 +29,7 @@ export interface AIAssistantConfigUpdatePayload {
   gemini_api_key?: string | null;
   openai_api_key?: string | null;
   typesafe_api_key?: string | null;
+  typesafe_api_key_clear?: boolean;
   enabled_tools: string[];
   rag_enabled: boolean;
   is_enabled: boolean;

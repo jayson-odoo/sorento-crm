@@ -467,6 +467,8 @@ class AIAssistantConfigService:
             row.openai_api_key_ciphertext = data.openai_api_key.strip()
         if data.typesafe_api_key is not None and data.typesafe_api_key.strip():
             row.typesafe_api_key_ciphertext = data.typesafe_api_key.strip()
+        elif data.typesafe_api_key_clear:
+            row.typesafe_api_key_ciphertext = None
         self.db.commit()
         self.db.refresh(row)
         return row

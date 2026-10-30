@@ -38,6 +38,8 @@ DEFAULT_DAILY_CAP = 50
 #: Exchanges sent to Jev as context, and how much of a bot reply.
 RECENT_EXCHANGES = 3
 REPLY_CHARS = 300
+#: Longer (or empty) messages never go to Jev.
+MAX_TEXT_CHARS = 4000
 
 
 @dataclass
@@ -75,6 +77,9 @@ def decide_route(
     cap = _daily_cap(contact, settings)
     if cap > 0 and _agent_turns_today(db, contact_respond_id) >= cap:
         return RouteDecision("chat", "daily_cap")
+
+    if not text.strip() or len(text.strip()) > MAX_TEXT_CHARS:
+        return RouteDecision("chat", "text_length")
 
     config = db.query(AIAssistantConfig).first()
     api_key = resolve_typesafe_key(config)
@@ -204,7 +209,7 @@ def _state(db, contact_respond_id: str, text: str) -> dict[str, Any]:
         exchanges.append(
             {
                 "user": _user_text(envelope),
-                "reply": reply if by_agent else reply[:REPLY_CHARS],
+                "reply": reply[:REPLY_CHARS],
                 "answered_by": "agent" if by_agent else "bot",
             }
         )

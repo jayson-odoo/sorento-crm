@@ -96,6 +96,8 @@ class RespondContactResponse(RespondContactBase):
     chatbot_agent_enabled: bool = False
     # AGENTIC-P2-ROUTE: the contact's own agent turns per day; null = the global setting.
     chatbot_agent_daily_turns: Optional[int] = None
+    # Read-only: the system setting a blank cap falls back to (detail and chatbot save only).
+    chatbot_agent_daily_turns_global: Optional[int] = None
     # CONTACT-BULK-ACCESS (UAC A2.1): `chatbot_profile.tier` flattened, and whether the
     # contact holds the `purchase_orders.cost` reveal (filled by the list only; null on detail).
     chatbot_tier: Optional[str] = None

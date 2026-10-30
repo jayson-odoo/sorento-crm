@@ -6,6 +6,7 @@ names it (`JevError.kind`). The key is sent as a bearer header and never logged.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,23 +52,45 @@ def classify(
         "state": state,
         "questions": {"route": {"type": "choice", "instructions": instructions, "criteria": criteria}},
     }
+    # Every failure is named OUTSIDE its except block, so the raised error carries no cause or
+    # context: the request holds the key, and a chained error could show it.
+    failure: str | None = None
+    answer: JevAnswer | None = None
     try:
         response = httpx.post(
             JEV_URL, json=body, headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout_s
         )
+        if response.status_code == 429:
+            failure = "rate_limited"
+        elif response.status_code >= 400:
+            failure = f"http_{response.status_code}"
+        else:
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+            answer = _parse(data, model)
+            failure = None if answer is not None else "malformed"
     except httpx.TimeoutException:
-        raise JevError("timeout") from None
-    except httpx.HTTPError:
-        raise JevError("transport") from None
-    if response.status_code == 429:
-        raise JevError("rate_limited")
-    if response.status_code >= 400:
-        raise JevError(f"http_{response.status_code}")
+        failure = "timeout"
+    except Exception:  # noqa: BLE001 - transport errors, an unencodable key: never echo the cause
+        failure = "transport"
+    if failure is not None or answer is None:
+        raise JevError(failure or "malformed")
+    return answer
+
+
+def _parse(data: Any, model: str) -> JevAnswer | None:
+    """The answer, or None when the body is not the shape (or the confidence not a number in 0..1)."""
     try:
-        data = response.json()
         route = data["answers"]["route"]
         choice = str(route["choice"])
-        confidence = float(route["confidence"])
+        confidence = route["confidence"]
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+            return None
+        confidence = float(confidence)
+        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            return None
         probabilities = {str(k): float(v) for k, v in (route.get("probabilities") or {}).items()}
         usage = data.get("usage") or {}
         return JevAnswer(
@@ -79,4 +102,4 @@ def classify(
             model=data.get("model") or model,
         )
     except (ValueError, KeyError, TypeError, AttributeError):
-        raise JevError("malformed") from None
+        return None

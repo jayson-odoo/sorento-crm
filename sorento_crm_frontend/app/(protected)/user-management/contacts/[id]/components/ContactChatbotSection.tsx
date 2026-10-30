@@ -107,10 +107,12 @@ const TIER_OPTIONS = [
 /** This contact's own agent turns per day: blank uses the global setting, 0 is no cap. Saves on blur. */
 function AgentDailyCapField({
   value,
+  globalValue,
   disabled,
   onCommit,
 }: {
   value: number | null;
+  globalValue: number | null;
   disabled?: boolean;
   onCommit: (next: number | null) => void;
 }) {
@@ -141,6 +143,7 @@ function AgentDailyCapField({
           id="contact-chatbot-agent-daily-turns"
           inputMode="numeric"
           min={0}
+          placeholder={globalValue === null ? undefined : String(globalValue)}
           value={draft}
           disabled={disabled}
           className="pe-9"
@@ -391,6 +394,7 @@ function ChatbotSettingsCard({
           />
           <AgentDailyCapField
             value={profile.chatbot_agent_daily_turns ?? null}
+            globalValue={profile.chatbot_agent_daily_turns_global ?? null}
             disabled={save.isPending || saveEscalation.isPending || saveAiAllowed.isPending}
             onCommit={(next) => save.mutate({ ...profile, chatbot_agent_daily_turns: next })}
           />
