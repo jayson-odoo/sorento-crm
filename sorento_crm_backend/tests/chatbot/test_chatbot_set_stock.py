@@ -269,35 +269,77 @@ def test_a_word_inside_a_set_code_is_no_set_hit():
 
 # ---------------------------------------------------------------- every intent (owner, card v4 Q1 (a))
 
-#: The domains that accept product entities besides stock and product info (`gate.ALLOWED`), each
-#: with the intent the parser emits for it: ETA, photos and files, orders and delivery, promotions.
-_OTHER_PRODUCT_DOMAINS = [
-    ("incoming", "check_incoming"),
-    ("product_attachment", "check_product_attachment"),
-    ("order", "check_order"),
-    ("promotion", "check_promotion"),
-]
 
-
-def _ids_sent(calls) -> set[str]:
-    """Every product id any tool received, whatever its parameter name."""
-    out: set[str] = set()
-    for _name, args in calls:
-        for key, value in (args or {}).items():
-            if key.endswith("product_ids") and isinstance(value, list):
-                out.update(str(v) for v in value)
-    return out
-
-
-@pytest.mark.parametrize("domain, intent", _OTHER_PRODUCT_DOMAINS)
-def test_every_product_ask_expands_a_set_to_its_parts(domain, intent, session_factory, seeded, stub_access, monkeypatch):
-    """Owner hand test, 30 Oct: "srtwc8826 eta" answered the seat cover only. Any ask that takes
-    products (ETA, photos, delivery, promotion) runs on every part of every set the code names."""
+def test_an_eta_ask_for_a_catalogue_code_runs_on_every_part(session_factory, seeded, stub_access, monkeypatch):
+    """Owner hand test, 30 Oct: "srtwc8826 eta" answered `SRTWC8826-SC: ETA ...`, the seat cover
+    only. ETA (a domain where the gate decides the picker) runs on every part of both sets."""
     ids = _seed(session_factory, SETS_8826)
 
     _text, calls = _run(
-        session_factory, stub_access, monkeypatch, text=f"srtwc8826 {domain}", raw=STEM_8826.lower(), canonical=None,
-        domain=domain, intent=intent, code_lookup=False,
+        session_factory, stub_access, monkeypatch, text="srtwc8826 eta", raw=STEM_8826.lower(), canonical=None,
+        domain="incoming", intent="check_incoming", code_lookup=False,
     )
 
-    assert {ids[c] for c in _codes(SETS_8826)} <= _ids_sent(calls), (domain, sorted(_ids_sent(calls)), calls)
+    incoming = {
+        pid for name, args in calls if name == "crm_incoming_stock_list" for pid in (args.get("product_ids") or [])
+    }
+    assert {ids[c] for c in _codes(SETS_8826)} <= incoming, (sorted(incoming), calls)
+
+
+def _gate_payload(*, visible: bool = True) -> tuple[dict[str, Any], dict[str, str]]:
+    """The AND-mode resolver answer for "srtwc8826": the seat cover (its code holds the word)
+    and the two sets, with their members, as `entity_resolver._product_set_entities` writes them."""
+    import uuid as _uuid
+
+    ids = {c: str(_uuid.uuid4()) for c in _codes(SETS_8826)}
+    rows: list[dict[str, Any]] = [
+        {"uuid": ids["ZZSTWC8826-SC"], "entity_type": "product", "canonical_code": "ZZSTWC8826-SC", "match_tier": "and"},
+    ]
+    set_ids = []
+    for set_code, members in SETS_8826.items():
+        set_id = str(_uuid.uuid4())
+        set_ids.append(set_id)
+        rows.append({
+            "uuid": set_id, "entity_type": "product_set", "canonical_code": set_code, "match_tier": "and",
+            "display": {"members": [{"product_code": c, "uuid": ids[c], "quantity": 1.0} for c in members]},
+        })
+    payload = {"tokens": [STEM_8826.lower()], "intersection": rows, "visible_set_ids": set_ids if visible else []}
+    return payload, ids
+
+
+def _product_domains() -> list[str]:
+    from app.services.chatbot.lanes.business.gate import ALLOWED
+
+    return sorted(d for d, kinds in ALLOWED.items() if "product" in kinds)
+
+
+def test_the_set_rule_covers_every_domain_that_takes_products():
+    """No list of its own: the matrix decides (owner, card v4 Q1 (a))."""
+    assert {"incoming", "product_attachment", "order", "sales", "promotion", "inventory", "master_products"} <= set(
+        _product_domains()
+    )
+
+
+@pytest.mark.parametrize("domain", _product_domains())
+def test_every_product_domain_answers_a_set_as_all_its_parts(domain):
+    from app.services.chatbot.lanes.business.gate import run_gate
+
+    payload, ids = _gate_payload()
+
+    out = run_gate(dict(payload), parser={"domain_hint": domain, "entities": []}, resolver=payload)
+
+    got = {e.get("uuid") for e in out.get("compatible_entities") or []}
+    assert set(ids.values()) <= got, (domain, out.get("gate_reason"), out.get("gate_clarification"))
+    assert "product set" not in str(out.get("gate_clarification") or ""), out.get("gate_clarification")
+
+
+@pytest.mark.parametrize("domain", ["incoming", "product_attachment", "order"])
+def test_a_set_the_contact_may_not_see_is_never_expanded(domain):
+    from app.services.chatbot.lanes.business.gate import run_gate
+
+    payload, ids = _gate_payload(visible=False)
+
+    out = run_gate(dict(payload), parser={"domain_hint": domain, "entities": []}, resolver=payload)
+
+    got = {e.get("uuid") for e in out.get("compatible_entities") or []}
+    assert not got & {ids["ZZSTWCX8826-P"], ids["ZZSTWCX8826-S"], ids["ZZSTWCY8826"]}, (domain, got)
