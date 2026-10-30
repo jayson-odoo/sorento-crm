@@ -8,12 +8,12 @@
 Additive and defaulted; guarded so a re-run is harmless.
 
 Revision ID: p2r_0001_jev_router
-Revises: oiac_0001_ack_override
+Revises: qca1_0001_amendment_requests
 """
 from alembic import op
 
 revision = "p2r_0001_jev_router"
-down_revision = "oiac_0001_ack_override"
+down_revision = "qca1_0001_amendment_requests"
 branch_labels = None
 depends_on = None
 
