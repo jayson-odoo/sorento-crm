@@ -132,7 +132,7 @@ export function MediaEscalation({
       }
       onClick={() => escalate.mutate(line.id)}
       className={cn(
-        'flex aspect-square max-h-48 w-full flex-col items-center justify-center gap-0.5 rounded border border-dashed border-primary bg-primary/5 p-0.5 text-center text-2xs leading-tight text-primary',
+        'flex aspect-square max-h-48 w-full flex-col items-center justify-center gap-0.5 rounded border border-dashed border-primary bg-primary/5 p-0.5 text-center text-2xs leading-tight tracking-tighter text-primary',
         escalate.isPending && 'cursor-progress opacity-60',
       )}
     >

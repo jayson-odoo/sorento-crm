@@ -836,8 +836,8 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     accessorFn: (row) => row.staged.draft.image_attachment_id,
     header: 'Photo',
     cell: PhotoCell,
-    size: 44,
-    minSize: 40,
+    size: 56,
+    minSize: 56,
     meta: {
       headerTitle: 'Photo',
       headerClassName: TIGHT,

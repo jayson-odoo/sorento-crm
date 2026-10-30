@@ -239,7 +239,7 @@ describe('QuotationLineFileCell, drawing cell: no drawing, escalate', () => {
     apiFetch.mockResolvedValue(
       new Response(
         JSON.stringify({
-          detail: 'The marketing product team has no members for this company',
+          detail: 'The marketing product team is not set up for this company',
           code: 'marketing_team_not_set_up',
         }),
         { status: 409, headers: { 'content-type': 'application/json' } },
@@ -250,7 +250,7 @@ describe('QuotationLineFileCell, drawing cell: no drawing, escalate', () => {
     fireEvent.click(escalateButton() as HTMLElement);
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
-    expect(String(toastError.mock.calls[0][0])).toContain('The marketing product team has no members for this company');
+    expect(String(toastError.mock.calls[0][0])).toContain('The marketing product team is not set up for this company');
     await waitFor(() => expect(escalateButton()).toBeEnabled());
   });
 
@@ -517,7 +517,7 @@ describe('QuotationLineFileCell, photo cell: no photo at all, escalate', () => {
     apiFetch.mockResolvedValue(
       new Response(
         JSON.stringify({
-          detail: 'The marketing product team has no members for this company',
+          detail: 'The marketing product team is not set up for this company',
           code: 'marketing_team_not_set_up',
         }),
         { status: 409, headers: { 'content-type': 'application/json' } },
@@ -528,7 +528,7 @@ describe('QuotationLineFileCell, photo cell: no photo at all, escalate', () => {
     fireEvent.click(photoEscalateButton() as HTMLElement);
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
-    expect(String(toastError.mock.calls[0][0])).toContain('The marketing product team has no members');
+    expect(String(toastError.mock.calls[0][0])).toContain('The marketing product team is not set up');
     await waitFor(() => expect(photoEscalateButton()).toBeEnabled());
   });
 

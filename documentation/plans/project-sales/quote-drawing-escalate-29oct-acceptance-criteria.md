@@ -6,7 +6,7 @@ the owner answers N1-N4; written against their recommendations.
 ## Journey
 
 A salesperson looking at a quotation sees a line whose product has no technical drawing. They
-click Escalate on that line. The team configured for drawing requests gets one SLA task for that
+click Escalate on that line. The general-enquiries marketing product team gets one SLA task for that
 product with a deadline. The salesperson sees "Escalated <date>" on the line. The team responds,
 uploads the drawing on the product and resolves the task the normal SLA way, and everyone who
 escalated it is told.
@@ -37,15 +37,15 @@ escalated it is told.
   coloured by the governing deadline (neutral, amber under 4h, red overdue).
 - **AC-6 Normal SLA flow.** The task appears on the home Dashboards page, "My pending tasks" (My
   Pending tab for the assignee, My Team tab for their lead), as "Product drawing . <product code>"
-  with Respond, then Resolve; responding and resolving run through the step's configured events. Overdue escalation,
+  with Respond, then Resolve; responding and resolving update the task directly (no configured events). Overdue escalation,
   extend and take-over work as for any form-SLA task. The row opens the product page.
 - **AC-7 Adding a drawing does not resolve.** Linking a drawing (image or PDF) to a product with an
   open task leaves the task open and sends the assignee one notification.
 - **AC-8 Resolve tells the requesters.** Resolving sends every requester one in-app notification
-  "Drawing request for <product code> resolved", linking to the quotation they escalated from. If the product still has no drawing, the cell shows Escalate again and a new
+  "Product drawing request for <product code> resolved" (or "Product photo request for <product code> resolved"), linking to the quotation they escalated from. If the product still has no drawing, the cell shows Escalate again and a new
   click opens a new task.
 - **AC-9 Not routable.** When the route has a missing piece (agent, domain row, team, member,
-  policy, tier), Escalate returns 409 "The marketing product team has no members for this
+  policy, tier), Escalate returns 409 "The marketing product team is not set up for this
   company" and creates nothing; the detail is only in the log. Escalating a product that has a
   drawing (drawing kind) or any photo (photo kind) returns 409 and creates nothing.
 - **AC-10 Permission.** The escalate endpoint returns 403 without view or view_own, and 404 for a
