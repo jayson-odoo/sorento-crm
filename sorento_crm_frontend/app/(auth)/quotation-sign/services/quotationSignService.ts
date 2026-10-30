@@ -7,7 +7,12 @@ import { extractApiError } from '@/lib/api-client';
  *
  *   GET  /api/v1/public/quotation-sign/{token}                  -> QuotationSignPage
  *   POST /api/v1/public/quotation-sign/{token}/accept           -> QuotationSignPage (same shape)
- *   POST /api/v1/public/quotation-sign/{token}/request-changes  -> QuotationSignPage (same shape)
+ *   (`/request-changes`, the older free-text request, stays on the backend; this page no longer
+ *   sends it.)
+ *   POST /api/v1/public/quotation-sign/{token}/amendment-request -> QuotationSignPage (same shape)
+ *
+ * `amendment-request` carries the customer's suggested quantities and prices (QUOTE-CUSTOMER-AMEND).
+ * While one is open the issue cannot be signed (`accept` answers 409 `quotation_amendment_open`).
  *
  * Both decisions answer with the whole page, so the browser settles on the new state without a
  * second fetch. `request-changes` answers 409 on a quotation that is already accepted: the
@@ -84,6 +89,8 @@ export type QuotationSignSignature = {
 };
 
 export type QuotationSignLine = {
+  /** The issued line's id: what a suggested change names, and nothing else. */
+  id: string;
   item_label: string | null;
   description: string | null;
   technical_spec: string | null;
@@ -135,6 +142,48 @@ export type QuotationSignPage = {
   changes_requested_note: string | null;
   changes_requested_by_name: string | null;
   is_changes_requested: boolean;
+  /** The customer's suggested changes on this issue, or null when none were sent. */
+  amendment_request: QuotationSignAmendment | null;
+  /** The later revision's `Quotation No.` when this one was replaced, else null. */
+  superseded_by_ref: string | null;
+  can_sign: boolean;
+  /** The one reason Sign is off, or null when the issue can be signed. */
+  sign_blocked_reason: 'accepted' | 'superseded' | 'amendment_open' | 'amendment_applied' | null;
+};
+
+export type QuotationSignAmendmentRow = {
+  id: string;
+  line_id: string;
+  field: 'quantity' | 'unit_price' | 'remove';
+  value_from: string | null;
+  /** Null for a removal. */
+  value_to: string | null;
+  decision: 'pending' | 'accepted' | 'rejected';
+  decision_reason: string | null;
+};
+
+export type QuotationSignAmendment = {
+  id: string;
+  status: 'open' | 'applied' | 'superseded';
+  submitted_at: string | null;
+  requester_name: string | null;
+  note: string | null;
+  rows: QuotationSignAmendmentRow[];
+};
+
+/**
+ * One suggestion submit. Only changed lines go; quantity and price are decimal STRINGS (null when
+ * that field is unchanged), and a removal carries neither.
+ */
+export type QuotationSignAmendmentBody = {
+  requester_name: string | null;
+  note: string | null;
+  lines: Array<{
+    line_id: string;
+    quantity: string | null;
+    unit_price: string | null;
+    remove: boolean;
+  }>;
 };
 
 export type QuotationSignAcceptBody = {
@@ -159,13 +208,6 @@ export async function getQuotationSignPage(token: string): Promise<QuotationSign
   return response.json();
 }
 
-export type QuotationSignChangesBody = {
-  /** Required. The backend refuses a blank one, and so does the form. */
-  note: string;
-  /** No signature is captured on a request, so this is the only name it can carry. */
-  requester_name: string | null;
-};
-
 export async function acceptQuotation(
   token: string,
   body: QuotationSignAcceptBody,
@@ -184,18 +226,18 @@ export async function acceptQuotation(
   return response.json();
 }
 
-export async function requestQuotationChanges(
+export async function submitAmendmentRequest(
   token: string,
-  body: QuotationSignChangesBody,
+  body: QuotationSignAmendmentBody,
 ): Promise<QuotationSignPage> {
-  const response = await fetch(signUrl(`/${encodeURIComponent(token)}/request-changes`), {
+  const response = await fetch(signUrl(`/${encodeURIComponent(token)}/amendment-request`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!response.ok) {
     throw new QuotationSignError(
-      await extractApiError(response, 'Your request could not be sent.'),
+      await extractApiError(response, 'Your suggestions could not be sent.'),
       response.status,
     );
   }

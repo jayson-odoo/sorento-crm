@@ -44,6 +44,10 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
   return {
     our_ref: 'PRJQ-2026-0003-R1',
     issue_no: 1,
+    amendment_request: null,
+    superseded_by_ref: null,
+    can_sign: true,
+    sign_blocked_reason: null,
     sender_logo_url: null,
     signatory_phone: null,
     doc_date: '2026-02-26',
@@ -61,6 +65,7 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
         scope_total: '235000.00',
         lines: [
           {
+            id: 'line-1',
             item_label: '1',
             description: 'Water closet',
             technical_spec: 'Rimless, 4/2.6L',
@@ -74,6 +79,7 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
             amount: '102000.00',
           },
           {
+            id: 'line-2',
             item_label: '2',
             description: 'Alternate basin mixer',
             technical_spec: null,
@@ -149,6 +155,7 @@ describe('QuotationSignClient reading the quotation', () => {
             scope_total: '102000.00',
             lines: [
               {
+                id: 'line-3',
                 item_label: '1',
                 description: 'Close coupled pedestal',
                 technical_spec: null,
@@ -162,6 +169,7 @@ describe('QuotationSignClient reading the quotation', () => {
                 amount: '273161.70',
               },
               {
+                id: 'line-4',
                 item_label: '2',
                 description: 'Cistern only, no separate charge',
                 technical_spec: null,
@@ -327,60 +335,11 @@ describe('QuotationSignClient requesting changes', () => {
     changes_requested_by_name: 'Kelly Tan',
   });
 
-  it('offers the request beside Accept, not instead of it', async () => {
-    getQuotationSignPage.mockResolvedValue(page());
-    renderPage();
-
-    expect(await screen.findByRole('button', { name: 'Sign and accept' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Request changes' })).toBeInTheDocument();
-  });
-
-  it('refuses to send an empty request', async () => {
-    // An empty box tells the salesperson nothing, and a stamped request with no words behind it
-    // would settle this page on an outcome nobody can act on.
-    getQuotationSignPage.mockResolvedValue(page());
-    renderPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Request changes' }));
-
-    const send = screen.getByRole('button', { name: 'Send request' });
-    expect(send).toBeDisabled();
-
-    fireEvent.change(screen.getByRole('textbox', { name: 'What needs to change' }), {
-      target: { value: '   ' },
-    });
-    expect(send).toBeDisabled();
-    expect(requestQuotationChanges).not.toHaveBeenCalled();
-
-    fireEvent.change(screen.getByRole('textbox', { name: 'What needs to change' }), {
-      target: { value: FEEDBACK },
-    });
-    expect(send).toBeEnabled();
-  });
-
-  it('settles the page on the request without fetching it again', async () => {
-    getQuotationSignPage.mockResolvedValue(page());
-    requestQuotationChanges.mockResolvedValue(requested);
-    renderPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Request changes' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'What needs to change' }), {
-      target: { value: FEEDBACK },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
-
-    await waitFor(() =>
-      expect(requestQuotationChanges).toHaveBeenCalledWith('tok-123', {
-        note: FEEDBACK,
-        requester_name: 'Kelly',
-      }),
-    );
-
-    // The response IS the page, written straight into the cache: no spinner in the one moment
-    // the customer needs confirmation, and no second GET.
-    expect(await screen.findByText('Changes requested')).toBeInTheDocument();
-    expect(getQuotationSignPage).toHaveBeenCalledTimes(1);
-  });
+  // The free-text form these specs once drove ("Request changes" / "What needs to change" /
+  // "Send request") is gone: owner Q5 (30 Oct) folded it into the per-line suggestions as their
+  // optional note. Offering the action beside Accept, refusing an empty send and settling the
+  // page on the answer are pinned for the replacement in QuotationSignAmend.test.tsx. What stays
+  // here is how a request already on record (sent before the change) still reads.
 
   it('reads as a settled outcome afterwards, with the words quoted back', async () => {
     getQuotationSignPage.mockResolvedValue(requested);
@@ -423,15 +382,8 @@ describe('QuotationSignClient requesting changes', () => {
     expect(screen.queryByRole('button', { name: 'Send request' })).not.toBeInTheDocument();
   });
 
-  it('stacks the two actions on a phone and sets them side by side above it', async () => {
-    // 375px: `justify-between` on one row puts a full-width pad next to a button and clips both.
-    getQuotationSignPage.mockResolvedValue(page());
-    renderPage();
-
-    const actions = await screen.findByTestId('quotation-sign-actions');
-    expect(actions.className).toContain('flex-col');
-    expect(actions.className).toContain('sm:flex-row');
-  });
+  // The "Not ready to sign this?" row this pinned is gone: the owner's hand test (30 Oct) moved
+  // "Suggest changes" into the Quotation card's header (QuotationSignAmend.test.tsx).
 });
 
 describe('QuotationSignClient dead link', () => {
@@ -472,6 +424,7 @@ function scopeOf(label: string, total: string, descriptions: string[]) {
     scope_label: label,
     scope_total: total,
     lines: descriptions.map((description, index) => ({
+      id: `line-${index}`,
       item_label: String(index + 1),
       description,
       technical_spec: null,
