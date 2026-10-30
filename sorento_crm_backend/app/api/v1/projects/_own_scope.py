@@ -135,7 +135,15 @@ _ANCHORS: Dict[Tuple[str, str], object] = {
 #: trusted under another.
 _NESTED: Dict[str, frozenset] = {
     "projects": frozenset(
-        {"task_id", "stakeholder_id", "document_id", "issue_id", "quotation_id", "request_id"}
+        {
+            "task_id",
+            "stakeholder_id",
+            "document_id",
+            "issue_id",
+            "quotation_id",
+            "request_id",
+            "row_id",
+        }
     ),
     "quotation-versions": frozenset({"line_id"}),
     "purchase-orders": frozenset({"line_id", "finding_id"}),
