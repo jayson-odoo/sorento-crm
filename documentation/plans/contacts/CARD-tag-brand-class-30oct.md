@@ -1,6 +1,6 @@
 # CARD - TAG-BRAND-CLASS: item classes on the tag Access settings, with or without All brands
 
-Status: Plan (behaviour card, waiting on owner answers; no code). Lane TAG-BRAND-CLASS.
+Status: Plan (owner answered Q1-Q5 30 Oct ~11:50; mock `tag-brand-class-mock.html` awaiting his OK; no code). Lane TAG-BRAND-CLASS.
 Track: full (new column + migration, contact access rule changes).
 
 ## Owner ask (30 Oct ~11:35)
@@ -89,3 +89,34 @@ companies, to walk through B5.
   apply. **Recommend (a):** every other tag section works this way and the preview shows it.
 - **Q5 Reach:** (a) same surfaces as brand scope today (B4); (b) also the portal product
   pickers. **Recommend (a):** the portal is not brand-scoped today; extending it is its own lane.
+
+## Owner answers (30 Oct ~11:45 and ~11:50)
+
+- **Q1 (b)** an ALLOW list of item classes that also works with All brands on. The side effect
+  (no-class products and future classes are hidden unless allowed) is accepted: the owner manages
+  it per tag and re-applies to the tag's holders.
+- **Q2 (a)** one flat list under Brands, shown with All brands on or off, and it reaches
+  brandless products (every Mocha-company product has no brand on dev).
+- **Q3 (b)** remove the per-brand include picker from #1972 (no contact on dev uses it).
+- **Q4 (a)** the existing apply model (preview, then the tags' value overwrites the contact).
+- **Q5 (a)** the same surfaces as brand scope today.
+
+## Decisions for the build (proposed in the mock, pending the owner's OK)
+
+- **D1 Storage.** `respond_contacts.allowed_item_class_codes` TEXT[] (NULL = every class), and
+  the tag setting `item_classes: [code]` inside the Brands section. Codes, not ids: AutoCount
+  ItemClass is flat and the same code (DIY) lives in both books, so one option per code covers
+  both companies. A reserved code `__none__` stands for "No class".
+- **D2 Rule.** A product passes when its brand passes the brand rule (unchanged) AND, if the
+  contact has a class list, its class code is in the list (no class passes only when "No class"
+  is in the list). Not per company: the list applies in every company, branded or not.
+- **D3 No class.** "No class" is the first option and is ticked for you when the first class is
+  picked (it can be unticked). Why: almost every AutoCount item has no class today.
+- **D4 New classes** are hidden until ticked (that is what an allow list means).
+- **D5 Tag merge.** Across a contact's tags the class lists INTERSECT, as Brands do; an empty
+  result is a conflict that is written by neither (`_m_regions`). Unset is neutral.
+- **D6 Retire #1972's per-brand picker** and `brand_class_ids` (column dropped in the migration;
+  the scope tokens `<brand>/<class>` go with it), the contact card loses its per-brand rows,
+  and access copy carries the new column instead.
+- **D7 One shared FE block** "Brands + Allowed item classes", used by the contact Brands card and
+  the tag Access settings Brands row.
