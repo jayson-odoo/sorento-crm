@@ -1,6 +1,6 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Build: rework final fix round (owner hand-test note 30 Oct 13:40, answers 13:50: 1a 2a 3a); standard track, no migration. The rework section below supersedes the Phase 2 contract where they differ.
+Status: Review READY on the rework (reviewer READY, security CLEAN, browser pass 1280/375), waiting on CI and the owner hand test; standard track, no migration, no setup.
 (M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
 table, no migration)
 
