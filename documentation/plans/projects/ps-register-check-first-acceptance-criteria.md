@@ -114,6 +114,8 @@ questions V1-V3 = (a). BE = `sorento_crm_backend/app`, FE = `sorento_crm_fronten
 - AC-L4. Registering never links or changes a lead: no `projects.lead_id` is set, and no lead's outcome / qualified_at /
   status changes, even if a `lead_id` is sent (it is ignored). Leads qualify only through the lead page's Qualify.
 - AC-L5. Editing an existing project that already has a lead keeps that link untouched (the form no longer sends
-  `lead_id`); its customer is the editable picker.
+  `lead_id`); its customer is the editable picker. An edit (PUT) that does send `lead_id` ignores it, like register:
+  the link, the lead and its customer stay as they were, and the project's customer is the one sent (no
+  customer-from-lead rule, no `project_customer_not_lead_customer` refusal).
 - AC-L6. Unchanged: the lead pages and their Qualify, the Check, the Spec In document gate, secondary leads, AI extract
   (it does not fill Customer).
