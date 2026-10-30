@@ -77,8 +77,8 @@ YEAR = {"date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31"}
 SEP = {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
 OCT = {"date_filter_start": "2026-10-01", "date_filter_end": "2026-10-31"}
 NO_DATES = {"date_filter_start": None, "date_filter_end": None}
-KIND_WORDS = ("undelivered orders", "pending delivery", "unpaid invoices")
-KIND_QUESTION = "Undelivered orders, pending delivery or unpaid invoices?"
+KIND_WORDS = ("undelivered orders", "pending delivery")  # owner 29 Oct: unpaid is named, never offered
+KIND_QUESTION = "Undelivered orders or pending delivery?"
 MEASURE_Q = "By quantity or by amount?"
 BASIS_LABELS = {
     "delivered": "delivered sales", "ordered": "ordered sales", "outstanding": "outstanding orders",
@@ -271,7 +271,7 @@ def test_ac_ru_12_a_sales_report_by_any_axis_the_old_tool_could_not_draw_is_repo
 # ================================================================ AC-RU-11: outstanding is never defaulted
 
 
-def test_ac_ru_11_an_outstanding_ask_naming_no_kind_asks_the_three_kinds_and_runs_nothing(bot) -> None:
+def test_ac_ru_11_an_outstanding_ask_naming_no_kind_asks_the_two_kinds_and_runs_nothing(bot) -> None:
     """AC-RU-11 / P7, P12, R: order_status outstanding with a customer and no kind: no tool call, the kinds asked."""
     text, calls = bot.say(
         _status("outstanding", _customer(bot), basis=None, **NO_DATES), "outstanding for zzt rank customer"
@@ -283,19 +283,19 @@ def test_ac_ru_11_an_outstanding_ask_naming_no_kind_asks_the_three_kinds_and_run
 
 
 def test_ac_ru_11_the_kind_question_is_the_owners_wording(bot) -> None:
-    """AC-RU-11: the question reads "Undelivered orders, pending delivery or unpaid invoices?"."""
+    """AC-RU-11: the question reads "Undelivered orders or pending delivery?"."""
     text, calls = bot.say(_status("outstanding", _customer(bot), basis=None, **NO_DATES), "outstanding")
     assert calls == [] and KIND_QUESTION in text, text
 
 
-def test_ac_ru_11_the_kind_is_folded_into_the_one_question_with_the_measure_of_a_ranking(bot) -> None:
-    """AC-RU-11: a ranking that also lacks its measure gets ONE reply asking both (the plan's folded question)."""
+def test_ac_ru_11_an_outstanding_ranking_asks_the_kind_alone(bot) -> None:
+    """AC-RU-11 as amended by the owner 29 Oct (item 4, as before #1922): the kind is asked, never the measure."""
     text, calls = bot.say(
         _status("outstanding", group_by="customer", top_n=5, measure=None, basis=None, **NO_DATES),
         "top 5 customers outstanding",
     )
     assert calls == [], calls
-    assert KIND_QUESTION in text and MEASURE_Q in text, text
+    assert KIND_QUESTION in text and MEASURE_Q not in text, text
 
 
 def test_ac_ru_11_the_reply_naming_the_kind_runs_the_first_ask_with_its_filters_kept(bot) -> None:
@@ -344,7 +344,7 @@ def test_p12_dealers_outstanding_for_a_product_is_report_ask_by_customer(bot) ->
     )
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding" and args["group_by"] == "customer", args
-    assert args["product_code"] == PRODUCT_CODE, args
+    assert args["product_ids"] == [bot.ids["product"]] and "product_code" not in args, args  # item 8: the exact row
 
 
 def test_ac_ru_11_an_outstanding_period_the_message_names_is_sent(bot) -> None:

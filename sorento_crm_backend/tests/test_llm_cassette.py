@@ -246,14 +246,28 @@ class TestReplay:
         assert _chat(provider).content == '{"ok": true}'
 
     def test_embeddings_replay_too(self, monkeypatch, cassette_dir):
+        from app.services import embedding_client
+
+        calls: list[list[str]] = []
+        explode = {"on": False}
+
+        def fake_embed_texts(texts, provider, model, **_kw):
+            calls.append(list(texts))
+            if explode["on"]:
+                raise AssertionError("a live call was made")
+            return [[0.25, 0.5] for _ in texts]
+
+        monkeypatch.setattr(embedding_client, "embed_texts", fake_embed_texts)
+        provider = OpenAIProvider(SECRET, default_model="gpt-fake")
         monkeypatch.setenv("LLM_CASSETTE_MODE", "record")
-        assert _provider(monkeypatch, _Client()).embed("hello") == [0.25, 0.5]
+        assert provider.embed("hello") == [0.25, 0.5]
         monkeypatch.setenv("LLM_CASSETTE_MODE", "replay")
-        live = _Client(explode=True)
-        assert _provider(monkeypatch, live).embed("hello") == [0.25, 0.5]
+        explode["on"] = True
+        calls.clear()
+        assert provider.embed("hello") == [0.25, 0.5]
         with pytest.raises(llm_cassette.CassetteMiss):
-            _provider(monkeypatch, live).embed("a different text")
-        assert live.embed_calls == []
+            provider.embed("a different text")
+        assert calls == []
 
 
 class TestKey:

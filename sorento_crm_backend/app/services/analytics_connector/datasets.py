@@ -82,7 +82,7 @@ CATALOG: dict[str, Dataset] = {
             Col("text", "text", "Message text"),
             Col("reply_to_text", "text", "Text of the message this one quotes"),
             Col("chatbot_turn_id", "text", "Bot turn that produced an outgoing message"),
-            Col("delivery_status", "text", "sent, delivered, read, failed", groupable=True),
+            Col("delivery_status", "text", "pending, sent, delivered, read, failed, not_sent", groupable=True),
         ),
     ),
     "contacts": Dataset(

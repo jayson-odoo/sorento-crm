@@ -145,7 +145,7 @@ describe('TemplateChecklistPanel', () => {
   it('warns that an empty checklist means a project starts with no next action', async () => {
     renderPanel();
 
-    expect(await screen.findByText(/This template has no checklist/i)).toBeInTheDocument();
+    expect(await screen.findByText(/This to-do list template has no checklist/i)).toBeInTheDocument();
     expect(screen.getByText(/its next action stays empty/i)).toBeInTheDocument();
   });
 

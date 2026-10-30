@@ -9,6 +9,7 @@ import type {
   LookupBinding,
   LookupEligibility,
   LookupResolveResponse,
+  AliasTarget,
 } from '../types/lookup.types';
 
 const BASE = '/api/v1/master-data/lookup-sets';
@@ -43,6 +44,14 @@ export async function updateLookupSet(id: string, data: Partial<LookupSetFormDat
     body: JSON.stringify(data),
   });
   if (!r.ok) throw new Error(await extractApiError(r, 'Failed to update lookup set'));
+  return r.json();
+}
+
+// Alias targets: what the options of an alias set may name
+
+export async function getAliasTargets(setId: string): Promise<AliasTarget[]> {
+  const r = await apiFetch(`${BASE}/${setId}/alias-targets`);
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load alias targets'));
   return r.json();
 }
 

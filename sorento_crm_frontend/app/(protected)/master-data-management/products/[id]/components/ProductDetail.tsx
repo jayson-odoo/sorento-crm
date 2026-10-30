@@ -216,6 +216,12 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 </p>
               </div>
               <div>
+                <p className="text-sm text-muted-foreground">Item Class</p>
+                <p className="font-medium">
+                  {product.item_class?.item_class_name || '-'}
+                </p>
+              </div>
+              <div>
                 <p className="text-sm text-muted-foreground">List Price</p>
                 <p className="font-medium text-lg">
                   {new Intl.NumberFormat('en-US', {
@@ -363,6 +369,10 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                       <div>
                         <p className="text-muted-foreground">Brand</p>
                         <p className="font-medium">{product.brand?.brand_code ?? product.brand?.brand_name ?? '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Item Class</p>
+                        <p className="font-medium">{product.item_class?.item_class_name ?? '-'}</p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Barcode</p>

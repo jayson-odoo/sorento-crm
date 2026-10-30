@@ -98,6 +98,12 @@ _READ_COLUMNS: dict[str, dict[str, str]] = {
         "description": "description",
         "is_active": "is_active",
     },
+    "item_classes": {
+        "code": "item_class_code",
+        "name": "item_class_name",
+        "description": "description",
+        "is_active": "is_active",
+    },
 }
 
 

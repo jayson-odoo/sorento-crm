@@ -766,7 +766,7 @@ def sales_figure_decision(
     db: Any, contact_respond_id: Any, space_id: Any, *, order_status: str, granted: bool,
     parse_output: dict[str, Any] | None = None,
 ) -> str:
-    """`granted`, `salesperson_book` or `not_granted` for a sales figure ask. The ONE rule
+    """`granted`, `salesperson_book`, `pending_delivery_open` or `not_granted` for a sales figure ask. The ONE rule
     (`contact_asker.may_ask_sales_ranking`) applies only to a verdict that runs on the report-ask
     tool (`sales_ranking`, the parser's `top_selling` label included); every other sales figure ask
     (sales report, the sales analysis tool) needs the grant, as before. The contact is the one the
@@ -776,6 +776,7 @@ def sales_figure_decision(
     if order_status == "top_selling" and isinstance(parse_output, dict):
         # REPORT-SMART-L R1: a top_selling verdict that skipped `by_capability` is the sales ranking it becomes.
         parse_output, order_status = report_ask.from_top_selling(parse_output), report_ask.ASK_NAME
+    routed = parse_output if isinstance(parse_output, dict) else {}
     if order_status in report_ask.SALES_STATUSES:
         # Owner 28 Oct 08:40: a sales total passes like a ranking, but only when the verdict WILL run on the report ask
         # (`by_capability` reroutes it); the Yearly comparison and the other sales analysis files do not.
@@ -790,6 +791,18 @@ def sales_figure_decision(
         db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
     )
     decision = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=False)[0]
+    if (
+        decision == "not_granted"
+        and (
+            # An undelivered-orders ask too: it is answered with pending delivery and the SO line (eval rpt-030, D13).
+            (routed.get("capability_from") == "outstanding" and routed.get("basis") in (None, "pending_delivery", "outstanding"))
+            or report_ask.list_pick_kind(routed) == "pending_delivery"
+        )
+        and contact_asker.pending_delivery_open(db, str(resolved) if resolved else None)
+    ):
+        # Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY, as before #1922): pending delivery needs no reveal for office staff or
+        # a linked contact; an ask naming no kind is that kind for them (`report_ask.outstanding_kinds`).
+        return "pending_delivery_open"
     return decision
 
 
@@ -1915,7 +1928,7 @@ def run_fetch(
             if sales_need and need not in granted
             else "granted" if need in granted else "not_granted"
         )
-        if decision == "salesperson_book":
+        if decision in ("salesperson_book", "pending_delivery_open"):
             if trace is not None:
                 trace.add("domain_grant", {"domain": domain, "decision": decision, "needs": need})
         elif need not in granted:
@@ -2212,9 +2225,20 @@ def run_fetch(
         # their own book) is never offered the list of agents to pick from.
         _attrs = (ctx.get("access") or {}).get("attributes") if isinstance(ctx.get("access"), dict) else None
         _agent_filter = report_ask.grant_key(parse_output) in set(_attrs) if isinstance(_attrs, (list, tuple, set, frozenset)) else False
+        _kinds = report_ask.ASKED_KINDS
+        if parse_output.get("capability_from") == "outstanding" and report_ask.OUTSTANDING_GRANT not in set(_attrs or ()):
+            # Owner 29 Oct: only the kinds this contact may see are offered; one is run with no question (#b6e9).
+            _kinds = report_ask.outstanding_kinds(revealed=False, decision=sales_figure_decision(
+                db, contact_id, space_id, order_status=order_status_raw, granted=False, parse_output=parse_output,
+            ))
+        so_redirect = _kinds == ("pending_delivery",) and parse_output.get("basis") == "outstanding"
+        if so_redirect:
+            # Eval rpt-030/-038, as before #1922 (D13): undelivered orders asked by a contact that may see pending
+            # delivery only is answered with pending delivery, under the one SO sentence; never refused outright.
+            parse_output = {**parse_output, "basis": "pending_delivery"}
         settled, line = report_ask.settle(
             db, parse_output, entities, dealer=bool(customer_scope.get("enforced")), agent_filter=_agent_filter,
-            companies=sales_company_ask._companies(db, contact_id, space_id),
+            companies=sales_company_ask._companies(db, contact_id, space_id), kinds=_kinds,
         )
         if trace is not None:
             trace.add(
@@ -2222,14 +2246,29 @@ def run_fetch(
                 {"ask": report_ask.ASK_NAME, "done": bool(settled and settled.done),
                  "values": settled.values if settled else None, "line": line},
             )
+        def _with_so_line(text: str) -> str:
+            # Review (eval round): the SO line rides every reply of a redirected ask, a question asked first included.
+            return "\n\n".join(t for t in (fetch_mod.SO_NOT_ENABLED_MESSAGE, text) if t) if so_redirect else text
+
         if settled is None:
-            return _fixed_reply(line or "", refused=line == report_ask.DEALER_REFUSAL)
+            return _fixed_reply(_with_so_line(line or ""), refused=line == report_ask.DEALER_REFUSAL)
         if not settled.done:
-            return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            return _fixed_reply(_with_so_line(settled.reply or ""), required_ask=settled.slot)
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
+        listed = None if customer_scope.get("enforced") else report_ask.document_list_args(
+            semantic_input["report_ask_args"], settled
+        )
+        if listed is not None:
+            # Item 3 (owner 29 Oct, as before #1922): no subject = the outstanding document list, under V1-DOC-SCOPE
+            # (a non-staff contact with no linked customer owns no document). A dealer's own customers are its subject.
+            if parse_output.get("doc_staff") is not True and not customer_scope.get("ids"):
+                if trace is not None:
+                    trace.add("customer_scope", {"refused": "no_links", "tool": tool_name})
+                return _fixed_reply(_with_so_line(_scope_refusal(customer_scope)), refused=True)
+            semantic_input["report_ask_args"] = listed
         location_line = report_ask.invoiced_location_line(semantic_input["report_ask_args"])
         if location_line:
-            return _fixed_reply(location_line)
+            return _fixed_reply(_with_so_line(location_line))
         unapplied = [
             *report_ask.unapplied_words(parse_output, semantic_input["report_ask_args"]),
             *[str(w) for w in settled.extras.get("not_applied") or []],  # a brand / category / agent word that bound to nothing
@@ -2237,10 +2276,14 @@ def run_fetch(
         if unapplied:
             sole = report_ask.sole_unapplied_question(unapplied, semantic_input["report_ask_args"])
             if sole:
-                return _fixed_reply(sole)
+                return _fixed_reply(_with_so_line(sole))
             semantic_input["report_ask_not_applied"] = unapplied
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
+        if so_redirect:
+            semantic_input["report_ask_note"] = "\n\n".join(
+                n for n in (fetch_mod.SO_NOT_ENABLED_MESSAGE, semantic_input.get("report_ask_note")) if n
+            )
         if settled.extras.get("detail"):
             semantic_input["report_ask_detail"] = True  # R3c: a row's detail leaves the ranking on screen
             if settled.extras.get("detail_second"):

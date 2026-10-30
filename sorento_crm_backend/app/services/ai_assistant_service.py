@@ -1092,14 +1092,10 @@ class AIAssistantChatService:
         selected_tools: list[dict[str, Any]] = []
         sources: list[dict[str, Any]] = []
         if route.kind == "agent" and not route.skip_rag:
-            # Augment the query so the tool picker sees entity-type hints.
-            rag_query = standalone_query
-            query_hint = resolution.to_query_hint()
-            if query_hint:
-                rag_query = f"{standalone_query}\n{query_hint}"
+            # Tools are ranked on the question only: the entity hint names records, not tools.
             rag_started = time.perf_counter()
             selected_tools, sources = self._rag_select_tools(
-                standalone_query=rag_query,
+                standalone_query=standalone_query,  # the question only: the entity hint stays out of tool ranking
                 enabled_tools=list(config.enabled_tools or []),
                 top_k=max(1, int(getattr(settings, "ai_assistant_rag_top_k", 3))),
             )
@@ -1117,7 +1113,7 @@ class AIAssistantChatService:
                 self._turn_trace.add_span(
                     kind=KIND_RETRIEVER,
                     name="rag_select_tools",
-                    query=rag_query,
+                    query=standalone_query,
                     documents=[
                         {
                             "id": str(s.get("tool_name") or s.get("title") or ""),
@@ -1436,67 +1432,26 @@ class AIAssistantChatService:
         enabled_tools: list[str],
         top_k: int,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Top-K MCP tool candidates by embedding similarity on the reformulated query."""
-        logger.info(
-            "AI assistant RAG started query_len=%s enabled_tools=%s top_k=%s",
-            len(standalone_query or ""),
-            len(enabled_tools),
-            top_k,
-        )
-        embed_started = time.perf_counter()
-        query_embedding = self._embed_query(standalone_query)
-        logger.info(
-            "AI assistant embedding generated elapsed_ms=%.1f",
-            (time.perf_counter() - embed_started) * 1000,
-        )
+        """Top-K enabled MCP tools by word overlap with the reformulated query (`tool_keyword_rank`).
 
-        search_started = time.perf_counter()
-        candidates = EmbeddingReadService(self.db).search_tool_candidates(
-            query_embedding,
-            query=standalone_query,
-            top_k=max(top_k, 5),
-            include_planned=False,
+        Tool vectors are no longer maintained (the keep set holds records only), so nothing is embedded: each tool is
+        scored against its capability text, with the portal pin and the intent nudges kept.
+        """
+        from app.services.tool_keyword_rank import rank_tools
+
+        # The entity hint ("Resolved references: ...") names records, not tools: it never takes part in the ranking.
+        standalone_query = re.split(r"\n\s*Resolved references:", standalone_query or "")[0]
+
+        portal_intent = bool(
+            re.search(r"intent:\s*(stock_inquiry|complaint|purchase_request|sponsorship_form)\b", (standalone_query or "").lower())
         )
-        logger.info(
-            "AI assistant tool candidates fetched count=%s elapsed_ms=%.1f",
-            len(candidates),
-            (time.perf_counter() - search_started) * 1000,
-        )
-        if enabled_tools:
-            allowed = set(enabled_tools)
-            candidates = [c for c in candidates if str(c.get("tool_name")) in allowed]
-            logger.info("AI assistant candidates filtered by enabled tools remaining=%s", len(candidates))
-        # Deterministic single-tool resolution (K=top_k, default 1): the top-`top_k`
-        # candidates are BOUND to the agent; each carries is_current=True.
-        selected_tools = candidates[:top_k]
-        for c in selected_tools:
-            c["is_current"] = True
-        logger.info(
-            "AI assistant selected tools=%s",
-            [
-                {
-                    "tool_name": c.get("tool_name"),
-                    "score": c.get("score"),
-                    "is_current": c.get("is_current"),
-                    "missing_params": c.get("missing_params") or [],
-                    "why_selected": (str(c.get("why_selected") or "")[:120]),
-                }
-                for c in selected_tools
-            ],
-        )
-        # Sources describe ONLY the bound tool(s) - they are injected into the
-        # agent prompt, so listing unbound runners-up here would advertise tools
-        # the agent can't call. Each bound source is is_current=True.
+        selected_tools = rank_tools(standalone_query, enabled_tools, top_k, portal_intent=portal_intent)
         sources = [
-            {
-                "title": c.get("tool_name"),
-                "chunk_text": c.get("chunk_text"),
-                "score": c.get("score"),
-                "why_selected": c.get("why_selected"),
-                "is_current": True,
-            }
+            {"title": c["tool_name"], "chunk_text": c["chunk_text"], "score": c["score"],
+             "why_selected": c["why_selected"], "is_current": True}
             for c in selected_tools
         ]
+        logger.info("AI assistant selected tools by keyword=%s", [c["tool_name"] for c in selected_tools])
         return selected_tools, sources
 
     # ---------- Agent loop (OpenAI function calling → MCP tools) ----------

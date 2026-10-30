@@ -931,7 +931,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "REQUIRED: `contact_id` + `space_id`; and for the sales bases `date_from` and `date_to` (ISO dates; 422 `period_required` otherwise - "
             "ask the person which period, never guess one). Outstanding, pending_delivery and unpaid may leave both off = every date. "
             "`group_by` = customer | product | brand | category | sales_agent | location | "
-            "channel | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only); absent = ONE total. With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
+            "channel | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only) | "
+            "delivery_order (pending_delivery only: the delivery order list); absent = ONE total (an outstanding or "
+            "pending_delivery total naming a product or customer also carries `summary`: counts, date range, by location, "
+            "by customer or product). With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
             "(422 `top_n_required`): the number the person named, or ask. `sort` desc (top, "
             "default) | asc (bottom). `measure` amount (RM) | qty | customers | orders | "
             "products (what the ranking sorts by), the last three COUNT distinct customers, orders "
@@ -997,6 +1000,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
             "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec", "company",
+            "group_offset",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),

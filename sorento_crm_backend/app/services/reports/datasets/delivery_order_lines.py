@@ -90,9 +90,13 @@ def _fixed_filters(ctx: Any) -> List[Any]:
     preds: List[Any] = [
         Order.is_cancelled.is_(False),
         Order.deleted_at.is_(None),
+        # Undated DOs stay out until lane DO-IMPORT-DATE fixes them at source (owner 29 Oct).
         Order.order_date.isnot(None),
-        ~Order.order_number.like("REP%"),
     ]
+    if ctx.definition.key != PENDING_KEY:
+        # A REP (replacement) DO is not a sale (AC-SR-20), but it is still a delivery owed: pending delivery counts it
+        # (REPORT-OUTSTANDING-SUMMARY item 10, owner 29 Oct, as the pre-#1922 outstanding report did).
+        preds.append(~Order.order_number.like("REP%"))
     if ctx.definition.key == PENDING_KEY:
         from app.services import order_service
 

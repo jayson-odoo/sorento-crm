@@ -91,6 +91,8 @@ def _pr_display_status(status: Any, approval_status: Any) -> str:
         return "Processed by CS"
     if s == "closed":
         return "Closed"
+    if s == "voided":
+        return "Voided"
     a = (approval_status or "").strip().lower()
     if a == "pending":
         return "Pending approval"

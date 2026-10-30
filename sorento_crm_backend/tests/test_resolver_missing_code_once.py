@@ -24,7 +24,7 @@ from sqlalchemy import text
 from app.api.v1.system.references import _resolve_input
 from app.models.base import set_company_scope
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.services import embedding_worker
+from app.services import embedding_settings
 from app.services import entity_resolver as er
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
 
@@ -92,7 +92,8 @@ def counted(monkeypatch):
         time.sleep(delay["s"])
         return [[0.0] * 1536 for _ in chunks]
 
-    monkeypatch.setattr(embedding_worker, "_embed_text_chunks", fake_embed)
+    monkeypatch.setattr(er, "_SEARCH_SEAMS", {})  # the seam captures the stub when first built
+    monkeypatch.setattr(embedding_settings, "embed_search_texts", lambda texts, model, **kw: fake_embed(texts))
     return probe_calls, embeds, delay
 
 
