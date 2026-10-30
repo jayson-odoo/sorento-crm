@@ -1334,6 +1334,10 @@ class QuotationAmendmentRequest(Base, CompanyScopedMixin):
     submitted_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     applied_at = Column(DateTime(timezone=False), nullable=True)
     applied_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Apply drafted a revision. Only then does an applied request keep the issue from being
+    # signed or asked about again (captain's ruling S4): a note, or all-rejected rows, changes
+    # nothing the customer holds.
+    revised = Column(Boolean, nullable=False, server_default=text("false"), default=False)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(

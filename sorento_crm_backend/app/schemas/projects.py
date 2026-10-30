@@ -2210,7 +2210,7 @@ class QuotationAmendmentDecideRequest(BaseModel):
     # Checked by the service (accepted | rejected | pending, reason <= 500), so the rule is
     # stated once.
     decision: str = Field(max_length=16)
-    reason: Optional[str] = None
+    reason: Optional[str] = Field(None, max_length=2000)
 
 
 class QuotationAmendmentRowResponse(BaseModel):
@@ -2241,8 +2241,15 @@ class QuotationAmendmentResponse(BaseModel):
     rows: List[QuotationAmendmentRowResponse] = Field(default_factory=list)
 
 
+class QuotationAmendmentBlockedScope(BaseModel):
+    quotation_id: str
+    scope_label: str
+
+
 class QuotationAmendmentStaffResponse(QuotationAmendmentResponse):
     rows: List[QuotationAmendmentStaffRowResponse] = Field(default_factory=list)
+    # Scopes a suggestion touches that already carry a hand-made draft: Apply would refuse.
+    blocked_scopes: List[QuotationAmendmentBlockedScope] = Field(default_factory=list)
     # The issue's total, and the total with the ACCEPTED rows applied (the summary row).
     total_issued: Decimal = Decimal("0")
     total_after: Decimal = Decimal("0")

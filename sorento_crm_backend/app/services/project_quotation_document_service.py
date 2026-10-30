@@ -1110,21 +1110,32 @@ def accept_issue(
     An issue that carries terms needs `terms_accepted`; the public route passes what the customer
     ticked (false when missing), so the box is enforced server-side and not only by the page.
     """
+    # Locked and re-read BEFORE any check, as `request_changes` and a suggestion submit do: a
+    # signature and a suggestion racing from two tabs serialise on this row, and the second
+    # sees what the first wrote.
+    record = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.id == record.id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    ) or record
     if record.accepted_at is not None:
         return record
     assert_not_superseded(db, record)
     # Owner decision Q1 (a), 30 Oct 2026: no signature while suggested changes are unanswered,
-    # and none on a revision whose suggestions were applied, since a new revision follows.
+    # and none on a revision whose suggestions drafted a new one, since that one follows.
     from app.services import quotation_amendment_service as amendments
 
     asked = amendments.request_for_issue(db, record.id)
-    if asked is not None and asked.status == amendments.STATUS_OPEN:
+    blocked = amendments.blocks_issue(asked)
+    if blocked == "amendment_open":
         raise AppException(
             status_code=409,
             message="You can sign once Sorento has answered your suggestions.",
             code="quotation_amendment_open",
         )
-    if asked is not None and asked.status == amendments.STATUS_APPLIED:
+    if blocked == "amendment_applied":
         raise AppException(
             status_code=409,
             message=(
@@ -1461,12 +1472,8 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         blocked = "accepted"
     elif newer is not None:
         blocked = "superseded"
-    elif asked is not None and asked.status == amendments.STATUS_OPEN:
-        blocked = "amendment_open"
-    elif asked is not None and asked.status == amendments.STATUS_APPLIED:
-        blocked = "amendment_applied"
     else:
-        blocked = None
+        blocked = amendments.blocks_issue(asked)
 
     return {
         "our_ref": (

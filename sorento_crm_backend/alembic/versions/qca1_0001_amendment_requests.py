@@ -33,12 +33,18 @@ def upgrade() -> None:
             submitted_at timestamp NOT NULL DEFAULT now(),
             applied_at timestamp,
             applied_by varchar(100) REFERENCES public.users (id) ON DELETE SET NULL,
+            revised boolean NOT NULL DEFAULT false,
             created_at timestamp NOT NULL DEFAULT now(),
             updated_at timestamp NOT NULL DEFAULT now(),
             CONSTRAINT ck_quotation_amendment_requests_status
                 CHECK (status IN ('open', 'applied', 'superseded'))
         )
         """
+    )
+    # The table may already exist from an earlier run of this revision.
+    op.execute(
+        "ALTER TABLE projects.quotation_amendment_requests "
+        "ADD COLUMN IF NOT EXISTS revised boolean NOT NULL DEFAULT false"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_projects_quotation_amendment_requests_company_id "

@@ -58,6 +58,8 @@ FIELD_REMOVE = "remove"
 MAX_QUANTITY = Decimal("9999999.99")
 MAX_PRICE = Decimal("9999999999.99")
 MAX_REASON = 500
+# NUMERIC(15,2), what `line_total` holds.
+MAX_LINE_TOTAL = Decimal("9999999999999.99")
 _CENTS = Decimal("0.01")
 # Digits, then at most two decimals. Written out rather than left to Decimal(), which also takes
 # "1e3", "NaN" and "Infinity".
@@ -76,6 +78,17 @@ def open_request(db: Session, issue_id: str) -> Optional[QuotationAmendmentReque
         )
         .first()
     )
+
+
+def blocks_issue(request: Optional[QuotationAmendmentRequest]) -> Optional[str]:
+    """Why this request stops the issue being signed: open, or applied with a revision."""
+    if request is None:
+        return None
+    if request.status == STATUS_OPEN:
+        return "amendment_open"
+    if request.status == STATUS_APPLIED and request.revised:
+        return "amendment_applied"
+    return None
 
 
 def request_for_issue(db: Session, issue_id: str) -> Optional[QuotationAmendmentRequest]:
@@ -116,6 +129,10 @@ def get_request_for_document_or_404(
             QuotationAmendmentRequest.id == str(request_id),
             ProjectQuotationIssue.document_id == document.id,
         )
+        # Locked, and re-read: a decision and an Apply (or two Applies) on the same request
+        # serialise here, and the second sees the status the first committed.
+        .with_for_update(of=QuotationAmendmentRequest)
+        .populate_existing()
         .first()
     )
     if request is None:
@@ -190,11 +207,14 @@ def _assert_can_ask(db: Session, record: ProjectQuotationIssue) -> None:
             "quotation_amendment_open",
             "Your suggested changes are already with Sorento.",
         )
+    # Only an answer that drafted a revision closes the issue (S4): a note, or rejected rows
+    # alone, leave the customer holding exactly what they held, so they may ask again.
     answered = (
         db.query(QuotationAmendmentRequest.id)
         .filter(
             QuotationAmendmentRequest.issue_id == record.id,
             QuotationAmendmentRequest.status == STATUS_APPLIED,
+            QuotationAmendmentRequest.revised.is_(True),
         )
         .first()
     )
@@ -268,6 +288,20 @@ def _rows_from(
                         "The price of this line is part of the line above it.",
                     )
                 rows.append((line, FIELD_PRICE, issued_price, value))
+
+        # The amount the line would come to, with the issued value for a side not suggested.
+        new_qty = next(
+            (r[3] for r in rows if r[0] is line and r[1] == FIELD_QUANTITY), None
+        ) or Decimal(line.quantity or 0)
+        new_price = next(
+            (r[3] for r in rows if r[0] is line and r[1] == FIELD_PRICE), None
+        ) or Decimal(line.unit_price or 0)
+        if new_qty * new_price > MAX_LINE_TOTAL:
+            raise _refuse(
+                422,
+                "quotation_amendment_price_invalid",
+                "That quantity and unit price come to more than one line can hold.",
+            )
     return rows
 
 
@@ -302,7 +336,8 @@ def submit_request(
             "Change a quantity or price, or add a note, before sending.",
         )
 
-    name = (requester_name or "").strip() or None
+    # One line: the name is quoted into a notification title and a WhatsApp message.
+    name = " ".join((requester_name or "").split()) or None
     now = datetime.utcnow()
     request = QuotationAmendmentRequest(
         company_id=locked.company_id,
@@ -477,6 +512,35 @@ def decide_row(
 # ------------------------------------------------------------------ apply
 
 
+def _blocked_scopes(
+    db: Session, request: QuotationAmendmentRequest, rows: List[QuotationAmendmentRequestRow]
+) -> List[Dict[str, str]]:
+    """Scopes a suggestion touches whose live version is no longer the one issued: the same
+    check Apply makes (``_assert_no_later_draft``), said in advance."""
+    record = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.id == request.issue_id)
+        .first()
+    )
+    if record is None:
+        return []
+    issued = _issued_lines(db, record)
+    blocked: List[Dict[str, str]] = []
+    seen = set()
+    for row in rows:
+        entry = issued.get(str(row.line_id))
+        if entry is None or str(entry[1].quotation_id) in seen:
+            continue
+        pair = entry[1]
+        seen.add(str(pair.quotation_id))
+        scope = db.query(ProjectQuotation).filter(ProjectQuotation.id == pair.quotation_id).first()
+        if scope is None:
+            continue
+        if str(scopes.current_version(db, scope.id).id) != str(pair.version_id):
+            blocked.append({"quotation_id": str(scope.id), "scope_label": scope.scope_label})
+    return blocked
+
+
 def _assert_no_later_draft(
     db: Session, touched: List[Tuple[ProjectQuotation, ProjectQuotationIssueScope]]
 ) -> None:
@@ -583,6 +647,7 @@ def apply_request(
         drafts.append(draft)
 
     request.status = STATUS_APPLIED
+    request.revised = bool(drafts)
     request.applied_at = datetime.utcnow()
     request.applied_by = actor_user_id
     db.flush()
@@ -623,6 +688,8 @@ def _floors_for(
     db: Session, rows: List[QuotationAmendmentRequestRow]
 ) -> Dict[str, Optional[Decimal]]:
     """The floor of every line with a suggested price, through the line writer's own rule."""
+    # The preview judges against the ISSUED line's list-price snapshot; Apply re-snapshots the
+    # catalogue like a hand edit, so a catalogue change since issue can move the floor there.
     floors: Dict[str, Optional[Decimal]] = {}
     for row in rows:
         if row.field != FIELD_PRICE or str(row.line_id) in floors:
@@ -730,4 +797,5 @@ def serialize_request(
     }
     if staff:
         payload["total_issued"], payload["total_after"] = _totals(db, request, rows)
+        payload["blocked_scopes"] = _blocked_scopes(db, request, rows)
     return payload

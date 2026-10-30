@@ -1768,3 +1768,203 @@ def test_staff_apply_alerts_a_below_floor_accepted_price_like_a_hand_edit(staff,
     assert event["product_code"] == f"ZZT-WC-1001{w.tag}"
     assert Decimal(str(event["unit_price"])) == Decimal("380.00")
     assert Decimal(str(event["floor_value"])) == Decimal("390.00")
+
+
+# ================================================================== fix round 1 (review + security)
+
+
+def _statements(db):
+    """Every SQL statement the session sends while the block runs."""
+    from contextlib import contextmanager
+
+    from sqlalchemy import event
+
+    @contextmanager
+    def capture():
+        seen: list = []
+        engine = db.get_bind()
+
+        def listen(conn, cursor, statement, params, context, executemany):
+            seen.append(statement)
+
+        event.listen(engine, "before_cursor_execute", listen)
+        try:
+            yield seen
+        finally:
+            event.remove(engine, "before_cursor_execute", listen)
+
+    return capture()
+
+
+def test_s1_accept_reads_the_issue_for_update_before_its_checks():
+    """Two tabs, one signing and one sending suggestions, serialise on the issue row."""
+    with blank_session() as db:
+        w = _world(db)
+        with _statements(db) as seen:
+            qdocs.accept_issue(
+                db, record=w.record, signer_name=CUSTOMER, mode="draw", image_data_uri=A_SIGNATURE
+            )
+        assert any(
+            "FOR UPDATE" in s and "quotation_issues" in s for s in seen
+        ), "accept_issue never locked the issue row"
+
+
+def test_s2_the_request_is_locked_when_read_for_a_decision_or_apply():
+    with blank_session() as db:
+        w = _world(db)
+        request = _submit(db, w, [_change(w.lines["WC"], quantity="110.00")])
+        with _statements(db) as seen:
+            found = _svc().get_request_for_document_or_404(db, w.document, str(request.id))
+        assert str(found.id) == str(request.id)
+        assert any(
+            "FOR UPDATE" in s and "quotation_amendment_requests" in s for s in seen
+        ), "the request was read without a row lock"
+
+
+def test_s2_wire_a_decision_after_apply_is_409_not_open(staff):
+    client, db, w = staff
+    request = _submit(db, w, [_change(w.lines["WC"], quantity="110.00")])
+    row = next(iter(_rows(db, request).values()))
+    _decide(db, w, request, {})
+    db.commit()
+
+    assert client.post(f"{_root(w)}/amendment-requests/{request.id}/apply").status_code == 200
+    late = client.put(
+        f"{_root(w)}/amendment-requests/{request.id}/rows/{row.id}",
+        json={"decision": "rejected", "reason": "Changed my mind"},
+    )
+    assert late.status_code == 409, late.text
+    assert late.json().get("code") == "quotation_amendment_not_open"
+
+
+def test_s3_the_staff_payload_names_a_scope_with_a_hand_made_draft():
+    with blank_session() as db:
+        w = _world(db)
+        request = _a_suggestion(db, w)
+        clean = _svc().serialize_request(db, request)
+        assert clean["blocked_scopes"] == []
+
+        quotes.revise(db, quotation=w.scope_a, actor_user_id=w.owner)
+        db.flush()
+        blocked = _svc().serialize_request(db, request)["blocked_scopes"]
+        assert blocked == [
+            {"quotation_id": str(w.scope_a.id), "scope_label": w.scope_a.scope_label}
+        ]
+
+
+def _apply_note_only(db, w):
+    request = _submit(db, w, [], note=NOTE)
+    _svc().apply_request(db, request=request, actor_user_id=w.owner)
+    db.flush()
+    return request
+
+
+def _apply_with_a_revision(db, w):
+    request = _submit(db, w, [_change(w.lines["WC"], quantity="110.00")])
+    _decide(db, w, request, {})
+    _svc().apply_request(db, request=request, actor_user_id=w.owner)
+    db.flush()
+    return request
+
+
+def test_s4_a_note_only_applied_request_leaves_the_issue_signable():
+    with blank_session() as db:
+        w = _world(db)
+        _apply_note_only(db, w)
+        page = qdocs.serialize_sign_page(db, w.record)
+        assert page["can_sign"] is True and page["sign_blocked_reason"] is None
+        qdocs.accept_issue(
+            db, record=w.record, signer_name=CUSTOMER, mode="draw", image_data_uri=A_SIGNATURE
+        )
+        assert w.record.accepted_at is not None
+
+
+def test_s4_a_note_only_applied_request_allows_another_request():
+    with blank_session() as db:
+        w = _world(db)
+        first = _apply_note_only(db, w)
+        second = _submit(db, w, [_change(w.lines["WC"], quantity="110.00")])
+        assert second.status == "open" and str(second.id) != str(first.id)
+
+
+def test_s4_an_all_rejected_applied_request_leaves_the_issue_signable():
+    with blank_session() as db:
+        w = _world(db)
+        request = _submit(db, w, [_change(w.lines["WC"], quantity="110.00")])
+        _decide(db, w, request, {("WC", "quantity"): "rejected"}, reason="No")
+        _svc().apply_request(db, request=request, actor_user_id=w.owner)
+        db.flush()
+        assert qdocs.serialize_sign_page(db, w.record)["can_sign"] is True
+
+
+def test_s4_an_applied_request_that_revised_keeps_blocking_sign_and_requests():
+    with blank_session() as db:
+        w = _world(db)
+        _apply_with_a_revision(db, w)
+        page = qdocs.serialize_sign_page(db, w.record)
+        assert page["sign_blocked_reason"] == "amendment_applied"
+        _refused(
+            lambda: qdocs.accept_issue(
+                db, record=w.record, signer_name=CUSTOMER, mode="draw", image_data_uri=A_SIGNATURE
+            ),
+            409,
+            "quotation_amendment_applied",
+        )
+        _refused(
+            lambda: _submit(db, w, [_change(w.lines["BSN"], unit_price="150.00")]),
+            409,
+            "quotation_amendment_applied",
+        )
+
+
+def test_l2_a_line_amount_beyond_the_column_is_refused():
+    """quantity x unit price must fit 9,999,999,999,999.99, using the issued value for a side
+    that was not suggested."""
+    with blank_session() as db:
+        w = _world(db)
+        for change in (
+            _change(w.lines["WC"], quantity="9999999.99", unit_price="9999999999.99"),
+            _change(w.lines["WC"], quantity="9999999.99", unit_price="1000000.01"),
+        ):
+            _refused(
+                lambda change=change: _submit(db, w, [change]),
+                422,
+                "quotation_amendment_price_invalid",
+            )
+        assert _all_requests(db) == 0
+        # Exactly at the ceiling is allowed: 9,999,999.99 x 1,000,000.00 fits.
+        ok = _submit(db, w, [_change(w.lines["WC"], quantity="9999999.99", unit_price="1000000.00")])
+        assert ok.status == "open"
+
+
+def test_l3_the_requester_name_is_stored_on_one_line():
+    with blank_session() as db:
+        w = _world(db)
+        request = _submit(
+            db, w, [_change(w.lines["WC"], quantity="110.00")], name="  Kelly\n  Tan\t "
+        )
+        assert request.requester_name == "Kelly Tan"
+
+
+def test_wire_the_public_page_carries_no_internal_pricing_or_audit_fields(public):
+    client, db, w, token, _hits = public
+    submitted = client.post(f"{PUBLIC}/{token}/amendment-request", json=_body(w))
+    assert submitted.status_code == 200, submitted.text
+    read = client.get(f"{PUBLIC}/{token}")
+    import json
+
+    hidden = (
+        "floor_value",
+        "below_floor",
+        "total_issued",
+        "total_after",
+        "decided_by",
+        "ip_address",
+    )
+    for page in (submitted.json(), read.json()):
+        # The signature blocks carry their own `ip_address` on purpose (the page shows it), so
+        # the guard is on the page's own keys and on the whole suggestion block.
+        assert not set(hidden) & set(page)
+        block = json.dumps(page["amendment_request"])
+        for key in hidden:
+            assert f'"{key}"' not in block, key
