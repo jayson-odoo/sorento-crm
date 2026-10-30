@@ -321,6 +321,10 @@ def _picks_a_member_option(pending: Pending, decision: Decision) -> bool:
     )
 
 
+#: The option kinds whose `uuid` is a person (`users.id`), CHATBOT-FAIL-TRIAGE AC-7e.
+_ASSIGNEE_OPTION_TYPES = frozenset({"member", "member_offer"})
+
+
 def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Trace):
     """An escalation offer, ACCEPTED - the mirror of `answer_pending_decline`.
 
@@ -390,7 +394,11 @@ def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Tra
     # A bare "yes" (no position picked, `picked` stays `None`) leaves `picked` empty
     # and assigns nothing, which is what keeps the round-robin draw for that
     # acceptance unchanged.
-    trace.assignee = (picked or {}).get("uuid")
+    # CHATBOT-FAIL-TRIAGE AC-7e: the uuid is a person only on an ASSIGNEE option
+    # (`answer_bridge.member_option`'s `member`, or a legacy roster row read back as its
+    # `member_offer` kind). A company option carries the company id there and a team
+    # option the team slug (`engine._question_offered`): never `preferred_assignee_id`.
+    trace.assignee = (picked or {}).get("uuid") if (picked or {}).get("entity_type") in _ASSIGNEE_OPTION_TYPES else None
     # Hand pass 11, blocker 2: the same rule for the COMPANY a numbered pick named
     # (`option.payload.company`, the company clarify's own options). A bare "yes" picks
     # no position, so this stays `None` and the pool travels instead - which is exactly

@@ -95,6 +95,34 @@ RESPOND_INBOX_URL = "https://app.respond.io/space/{space_id}/inbox/{contact_id}#
 NEXT_ASSIGNEE_POLICY_CODE = "NORMAL"
 NEXT_ASSIGNEE_TIER = 1
 
+# CHATBOT-FAIL-TRIAGE AC-7c (owner, 30 Oct 2026: "we shouldn't do no topic escalate to
+# marketing product, we should clarify"): what an escalation with no topic asks about, each
+# topic with the domains whose (agent, team) pair answers it, first reachable pair wins.
+ESCALATION_TOPICS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Orders & delivery", ("order",)),
+    ("Stock & ETA", ("inventory", "incoming")),
+    ("Product info", ("master_products", "product_attachment")),
+    ("Promotions", ("promotion",)),
+    ("Forms", ("forms",)),
+)
+
+
+def topic_pairs() -> dict[str, tuple[str, str]]:
+    """AC-7a: `{domain: (agent, team)}`, the parser's R-X-08 map, as ONE pair per domain.
+
+    The business domains read `sub_answer.MISS_ROSTER_LANE`'s own first routing pair (the
+    pair the miss offer is phrased with, so the offer and the draw cannot disagree);
+    `forms` has no miss offer there, so its one pair is stated here.
+    """
+    from app.services.chatbot.lanes.business.sub_answer import MISS_ROSTER_LANE
+
+    pairs: dict[str, tuple[str, str]] = {}
+    for lane in MISS_ROSTER_LANE.values():
+        team, agent = lane["pairs"][0]
+        pairs.setdefault(lane["domain"], (agent, team))
+    pairs.setdefault("forms", ("marketing_form", "marketing_form"))
+    return pairs
+
 
 # --------------------------------------------------------------------------- #
 # The services seam
@@ -714,19 +742,138 @@ def _human_intervention(
             dry_run=False,
             routing=_routing_record({**context_item, "team": asked["team"]}, None, None),
         )
-    if routed is not None and routed["kind"] == "assign":
+    if routed is not None and routed["kind"] == "assign" and routed.get("assignee") is not None:
+        # A named person IS the assignee: no rotation is drawn, so there is no pair to pick.
         actions, routing = _assign(
-            ctx,
-            # The team the draw is made from is the routed one (fix round 4, R1): a team
-            # the customer named replaces the parser's in the next-assignee body too.
-            {**context_item, "team": routed["team"]},
-            routed["team"],
-            services,
-            assignee=routed["assignee"],
+            ctx, {**context_item, "team": routed["team"]}, routed["team"], services, assignee=routed["assignee"]
         )
         return {**result, "actions": actions, "pending": None, "routing": routing}
-    actions, routing = _assign(ctx, context_item, team, services)
+    # The team the draw is made from is the routed one (fix round 4, R1): a team the
+    # customer named replaces the parser's in the next-assignee body too.
+    named = routed is not None and routed["kind"] == "assign"
+    pair = _route_pair(ctx, context_item, routed["team"] if named else team, services, named=named)
+    if pair["kind"] == "clarify":
+        return _topic_clarify_result(context_item, pair, dry_run=False)
+    paired = {**context_item, "team": pair["team"], "agent_code": pair["agent"]}
+    actions, routing = _assign(ctx, paired, pair["team"], services)
     return {**result, "actions": actions, "pending": None, "routing": routing}
+
+
+def _team_is_explicit(ctx: dict[str, Any], context_item: dict[str, Any], team: Any) -> bool:
+    """Did THIS message or an accepted offer name `team` (AC-7a/7b)?
+
+    True for an accepted offer's team (`accepted_team`, the engine's `plan.trace.team`)
+    and for a team the parser itself named (`_parser_team`, the pre-derivation snapshot).
+    False for a team the routing chain only FILLED (`turn_runtime.lane_parse_output`: the
+    domain's team, a prior turn's carry or `DEFAULT_SUGGESTED_TEAM`), which never routes
+    on its own: the topic does.
+    """
+    return jsc.truthy(jsc.get(context_item, "accepted_team")) or jsc.truthy(_parser_team(ctx, team))
+
+
+def _reachable_pairs(ctx: dict[str, Any], context_item: dict[str, Any], services: Any) -> set | None:
+    """The `(agent, team)` pairs linked for the company this draw routes to, or None when
+    the bundle cannot say (an older injected stub, or the read failed): then every pair
+    reads as reachable, which is the behaviour before AC-7a."""
+    seam = getattr(services, "reachable_pairs", None) if services is not None else None
+    if seam is None:
+        return None
+    try:
+        # A company with no link at all is not configured yet: the draw then fails with
+        # the honest H-ESC reply (AC-1d), rather than the lane guessing what it lacks.
+        return set(seam(_next_assignee_body(ctx, context_item))) or None
+    except Exception:  # noqa: BLE001 - a failed read must not block the hand-off
+        logger.warning("chatbot: escalation reachable pairs did not read", exc_info=True)
+        return None
+
+
+def _route_pair(
+    ctx: dict[str, Any], context_item: dict[str, Any], team: Any, services: Any, *, named: bool = False
+) -> dict[str, Any]:
+    """CHATBOT-FAIL-TRIAGE AC-7a..c: the ONE (agent, team) pair this escalation draws from,
+    or the topic clarify. Never `DEFAULT_SUGGESTED_TEAM` / `DEFAULT_SUGGESTED_AGENT` by
+    default: a pair is drawn only when `agent_teams` links it for the contact's company.
+
+    * An explicit team (`named` by the customer, accepted off an offer, or named by the
+      parser) keeps its team; its agent is, in order, the topic's own pair agent, the
+      routing agent (the parser's or the accepted offer's), any R-X-08 agent for that
+      team, else the one agent the company links to it.
+    * Otherwise the topic routes: this turn's domain, else the one held from earlier turns
+      (`topic_domains`, the turn's focus), as its R-X-08 pair.
+    * No reachable pair: one short question over the topics this company can reach.
+
+    The topic is the ENGINE's to state (`engine._run_escalation_arm` stamps
+    `topic_domains` on every turn). A direct caller that states none (the n8n-shaped lane
+    contract, H27, and the B-TEAM-1' xfails in `test_s5_escalation_lane.py`) has its team
+    drawn as it arrives, with only the agent paired, and is never asked a topic.
+    """
+    pairs = topic_pairs()
+    reachable = _reachable_pairs(ctx, context_item, services)
+    topics = [d for d in jsc.array(jsc.get(context_item, "topic_domains")) if d in pairs]
+    stated = jsc.has(context_item, "topic_domains")
+    output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    agent = jsc.get(jsc.get(output, "routing"), "suggested_agent")
+    candidates: list[tuple[Any, Any]]
+    if not stated or (jsc.truthy(team) and (named or _team_is_explicit(ctx, context_item, team))):
+        candidates = [pairs[d] for d in topics if pairs[d][1] == team]
+        if jsc.truthy(agent):
+            candidates.append((agent, team))
+        candidates += [p for p in pairs.values() if p[1] == team]
+        linked = sorted({a for a, t in reachable or () if t == team})
+        if len(linked) == 1:
+            candidates.append((linked[0], team))
+    else:
+        candidates = [pairs[d] for d in topics]
+    for pair_agent, pair_team in candidates:
+        if reachable is None or (pair_agent, pair_team) in reachable:
+            return {"kind": "assign", "agent": pair_agent, "team": pair_team}
+    if not stated:
+        return {"kind": "assign", "agent": agent, "team": team}
+    return _topic_clarify(pairs, reachable)
+
+
+def _topic_clarify(pairs: dict[str, tuple[str, str]], reachable: set | None) -> dict[str, Any]:
+    """AC-7c: one short question whose options are the topics this company can reach.
+
+    Each option carries its pair (`team` and `agent`), so the number or tap that answers
+    it is an accepted offer routed to exactly that pair. A company with no pair at all
+    has nothing to ask about, and that is a failed hand-off, never a default team.
+    """
+    options: list[dict[str, Any]] = []
+    for label, domains in ESCALATION_TOPICS:
+        pair = next(
+            (pairs[d] for d in domains if d in pairs and (reachable is None or pairs[d] in reachable)), None
+        )
+        if pair is not None:
+            options.append({"team": pair[1], "agent": pair[0], "label": label})
+    if not options:
+        raise LookupError("no escalation team is linked for this contact's company")
+    labels = [o["label"] for o in options]
+    listed = f"{', '.join(labels[:-1])} or {labels[-1]}" if len(labels) > 1 else labels[0]
+    return {
+        "kind": "clarify",
+        "text": f"Which topic is this about - {listed}?",
+        "options": labels,
+        "option_pairs": options,
+    }
+
+
+def _topic_clarify_result(context_item: dict[str, Any], asked: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    """The topic clarify as the lane's answer: nothing is drawn and no SLA row is written;
+    the question goes through the team clarify's own path (`engine._question_offered`
+    mints its options as a `team_pick`)."""
+    clarify = {
+        **context_item,
+        "clarify_team": True,
+        "clarify_text": asked["text"],
+        "clarify_team_options": asked["option_pairs"],
+    }
+    return {
+        **escalation_result(clarify_team=clarify),
+        "actions": _clarify_actions(asked["text"], options=asked["options"], dry_run=dry_run),
+        "pending": {"kind": "team_clarify", "options": asked["option_pairs"]},
+        "routing": _routing_record(context_item, None, None),
+    }
 
 
 def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str, Any]:
@@ -1350,14 +1497,18 @@ def _preview_routing(
         asked = _product_clarify(item, routed, team, bundle)
         if asked is not None:
             return asked, None, _routing_record({**item, "team": asked["team"]}, None, None)
-        if routed is not None and routed["kind"] == "assign" and routed.get("assignee") is None:
-            # A named TEAM is a rotation draw (fix round 4, R1), so preview the draw from
-            # that team exactly as the live branch makes it.
-            item = {**item, "team": routed["team"]}
-        elif routed is not None:
+        named = routed is not None and routed["kind"] == "assign" and routed.get("assignee") is None
+        if routed is not None and not named:
             # A named person IS the assignee, and a clarify assigns nobody. Either way
             # there is no rotation to preview.
             return routed, routed.get("assignee"), _routing_record(item, None, routed.get("assignee"))
+        # A named TEAM is a rotation draw (fix round 4, R1), so preview the draw from
+        # that team exactly as the live branch makes it; AC-7a picks the same pair.
+        pair = _route_pair(ctx, item, routed["team"] if named else team, bundle, named=named)
+        if pair["kind"] == "clarify":
+            return pair, None, _routing_record(item, None, None)
+        routed = {"kind": "assign", "team": pair["team"], "assignee": None}
+        item = {**item, "team": pair["team"], "agent_code": pair["agent"]}
         seam = getattr(bundle, "preview_assignee", None)
         body = _next_assignee_body(ctx, item)
         if seam is None:
@@ -1402,10 +1553,16 @@ def _assign(
     clock still starts, because the escalation is just as real.
     """
     body = None
-    if assignee is None:
-        body = _next_assignee_body(ctx, context_item)
-        assignee = services.next_assignee(body)
-    sla = services.sla_create(_sla_body(ctx, context_item, assignee))
+    try:
+        if assignee is None:
+            body = _next_assignee_body(ctx, context_item)
+            assignee = services.next_assignee(body)
+        sla = services.sla_create(_sla_body(ctx, context_item, assignee))
+    except Exception as exc:
+        # CHATBOT-FAIL-TRIAGE AC-7d: the engine's failure reply names the team this draw
+        # was for, which is the offered one, not whatever the parser suggested.
+        exc.escalation_team = team  # type: ignore[attr-defined]
+        raise
     actions = _assignment_actions(
         ctx,
         team,
@@ -1535,7 +1692,8 @@ def _next_assignee_body(ctx: dict[str, Any], context_item: dict[str, Any]) -> di
     """
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     return {
-        "agent_code": jsc.get(jsc.get(output, "routing"), "suggested_agent"),
+        # AC-7a: the agent of the pair `_route_pair` chose, drawn together with its team.
+        "agent_code": jsc.get(context_item, "agent_code") or jsc.get(jsc.get(output, "routing"), "suggested_agent"),
         "team_code": jsc.get(context_item, "team"),
         "contact_phone_number": jsc.get(jsc.get(ctx, "contact"), "phone"),
         "policy_code": NEXT_ASSIGNEE_POLICY_CODE,
@@ -1567,7 +1725,7 @@ def _sla_body(
     return {
         "assigned_to_id": jsc.get(assignee, "assignee_id") or "",
         "contact_phone_number": jsc.get(jsc.get(ctx, "contact"), "phone") or "",
-        "agent_code": jsc.get(jsc.get(output, "routing"), "suggested_agent") or "",
+        "agent_code": jsc.get(context_item, "agent_code") or jsc.get(jsc.get(output, "routing"), "suggested_agent") or "",
         "team_set_code": prefer("team_set_code", jsc.get(context_item, "team") or ""),
         "brand_code": prefer("brand_code", jsc.get(context_item, "brand_code") or None),
         "company_id": prefer("company_id", jsc.get(context_item, "company_id") or None),

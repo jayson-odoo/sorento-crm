@@ -382,6 +382,8 @@ LABELS: dict[str, dict[str, str]] = {
     "Which customer or salesperson should I check the {label} for?": {"ms": "Pelanggan atau jurujual mana yang patut saya semak {label}nya?", "zh": "请问要查哪位客户或销售员的{label}？"},
     "Which product do you want the {label} for? Send me the code.": {"ms": "Produk mana yang anda mahu {label}nya? Hantarkan kod produk.", "zh": "您要哪个产品的{label}？请发送产品代码。"},
     "That report is not available on your account.": {"ms": "Laporan itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法查看该报告。"},
+    # CHATBOT-FAIL-TRIAGE AC-7c: the escalation's topic clarify (`lanes/escalation.py`).
+    "Which topic is this about - {topics}?": {"ms": "Perkara ini tentang topik apa - {topics}?", "zh": "这是关于哪个主题 - {topics}？"},
     'Low stock report is not enabled for your account.': {"ms": 'Laporan stok rendah tidak diaktifkan untuk akaun anda.', "zh": '您的账户未开通低库存报告。'},
     'Could not run the low stock report right now.': {"ms": 'Laporan stok rendah tidak dapat dijalankan sekarang.', "zh": '暂时无法生成低库存报告。'},
     # REPORT-SMART-1021 step 5: a report failure is a plain sentence.
@@ -725,6 +727,7 @@ INLINE = frozenset(
         "Which customer or salesperson should I check the {label} for?",
         "Which product do you want the {label} for? Send me the code.",
         "That report is not available on your account.",
+        "Which topic is this about - {topics}?",
         "Low stock report is not enabled for your account.",
         "Could not run the low stock report right now.",
         "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.",

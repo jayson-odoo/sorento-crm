@@ -66,6 +66,10 @@ class EscalationServices:
     # #865 round 5: the did-you-mean for a product code no company holds, so a typo is
     # settled inside the escalation. Defaulted for the same reason as `product_brand`.
     product_suggestions: Any = None
+    # CHATBOT-FAIL-TRIAGE AC-7a: the (agent, team) pairs `agent_teams` links for the
+    # company the draw routes to. Defaulted (None = not known) so an older injected bundle
+    # keeps working and every pair reads as reachable, exactly as before.
+    reachable_pairs: Any = None
 
 
 def _next_assignee(db: Any):
@@ -100,6 +104,38 @@ def _preview_assignee(db: Any):
             current_user={"id": None, "email": "chatbot"},
             db=db,
         )
+
+    return call
+
+
+def _reachable_pairs(db: Any):
+    def call(body: dict[str, Any]) -> set[tuple[str, str]]:
+        """Every `(agent_code, team_code)` linked in `agent_teams` for the company a
+        next-assignee call with `body` routes to (CHATBOT-FAIL-TRIAGE AC-7a).
+
+        The company is resolved by `resolve_routing_company`, the same resolver
+        `post_next_assignee` pins its own scope to, and read under that one company's
+        scope for the same reason it pins it (an untagged contact routes to Sorento, while
+        the turn's own scope for it is empty). A pair outside this set is a 404 at the draw.
+        """
+        from app.models.access import AccessAgent, AgentTeam
+        from app.models.base import company_scope
+        from app.services.company_routing_service import resolve_routing_company
+
+        company = resolve_routing_company(
+            db,
+            company_id=body.get("company_id"),
+            phone=body.get("contact_phone_number"),
+        )
+        company_id = str(company.company_id)
+        with company_scope(db, frozenset({company_id})):
+            rows = (
+                db.query(AccessAgent.code, AgentTeam.code)
+                .join(AccessAgent, AccessAgent.id == AgentTeam.agent_id)
+                .filter(AgentTeam.company_id == company_id)
+                .all()
+            )
+        return {(str(agent), str(team)) for agent, team in rows if agent and team}
 
     return call
 
@@ -434,4 +470,5 @@ def build(db: Any) -> EscalationServices:
         staff_lookup=_staff_lookup(db),
         product_brand=_product_brand(db),
         product_suggestions=_product_suggestions(db),
+        reachable_pairs=_reachable_pairs(db),
     )

@@ -8746,6 +8746,7 @@ def _run_stages_body(  # noqa: PLR0915
             remembered_before=remembered_before,
             contact_respond_id=contact_respond_id,
             recalled=recalled,
+            accepted_team=plan.trace.team,
         )
 
     if branch_kind == "low_signal" and completes_here:
@@ -10455,6 +10456,7 @@ def _run_escalation_arm(
     remembered_before: dict[str, Any] | None = None,
     contact_respond_id: str | None = None,
     recalled: list[dict[str, Any]] | None = None,
+    accepted_team: str | None = None,
 ) -> TurnResult:
     """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
 
@@ -10472,7 +10474,15 @@ def _run_escalation_arm(
     # turn's named product, else the one the previous turn left in focus; a topic reset
     # or a newer product already replaced it). The lane reads its brand off the product
     # row. On the lane's item only: the row keeps the route-turn item it always had.
-    lane_item = {**item, "focus_products": _focus_products(state)}
+    lane_item = {
+        **item,
+        "focus_products": _focus_products(state),
+        # CHATBOT-FAIL-TRIAGE AC-7a/7b: the topic the escalation routes by (this turn's
+        # domain, else the one the focus holds from earlier turns) and the team an
+        # accepted offer named; `lanes/escalation._route_pair` reads both.
+        "topic_domains": _escalation_topics(verdict, state),
+        "accepted_team": accepted_team,
+    }
     # CHAT-INBOX-QUEUE (IQ-27): the lane commits an SLA row and a round-robin draw it cannot
     # undo, so on the inbox drain the turn gives way to an earlier-sent message HERE.
     inbox_queue.checkpoint(turn_id)
@@ -10510,14 +10520,23 @@ def _run_escalation_arm(
             )
         from app.services.chatbot.tail.outcome import pretty_team
 
-        # CHATBOT-FAIL-TRIAGE AC-1d: the reply names the team the contact asked for.
-        team = ((verdict or {}).get("routing") or {}).get("suggested_team") or lane_item.get("team")
+        # CHATBOT-FAIL-TRIAGE AC-1d / AC-7d (R6): the reply names the OFFERED team - the
+        # one the draw was for, else the item's, else this turn's routing - and goes out
+        # in the contact's language (`_localize_result` reads the item's language).
+        routed = ((jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("routing")) or {}
+        team = (
+            getattr(exc, "escalation_team", None)
+            or lane_item.get("team")
+            or routed.get("suggested_team")
+            or ((verdict or {}).get("routing") or {}).get("suggested_team")
+        )
         return _failed_result(
             turn_id,
             "looked_up",
             message,
             actions,
             dry_run,
+            item=lane_item,
             reply_text=CHATBOT_REPLY_ESCALATION_FAILED.format(team=pretty_team(team) or "customer service"),
         )
 
@@ -10673,6 +10692,19 @@ def _run_escalation_arm(
         status=completed.status,
         stage=completed.stage,
     )
+
+
+def _escalation_topics(verdict: dict[str, Any] | None, state: Any) -> list[str]:
+    """The domains an escalation's topic is read from, in order: this turn's own domain,
+    then the ones the focus carries from earlier turns (CHATBOT-FAIL-TRIAGE AC-7b: a "Yes",
+    a "9" or an "Eta" names no topic of its own)."""
+    out: list[str] = []
+    own = (verdict or {}).get("domain_hint")
+    focus = getattr(state, "focus", None)
+    for domain in [own, *(getattr(focus, "domains", None) or [])]:
+        if isinstance(domain, str) and domain and domain not in out:
+            out.append(domain)
+    return out
 
 
 def _seal_send(action: dict[str, Any], sealed: dict[str, Any]) -> dict[str, Any]:
@@ -11917,7 +11949,8 @@ def _question_offered(
             routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
             return {
                 "team": jsc.get(row, "team"),
-                "agent": jsc.get(routing, "suggested_agent"),
+                # CHATBOT-FAIL-TRIAGE AC-7c: a topic option names its own pair's agent.
+                "agent": jsc.get(row, "agent") or jsc.get(routing, "suggested_agent"),
                 "brand_code": jsc.get(values.get("gate"), "routing_brand"),
             }
         if kind == "company":

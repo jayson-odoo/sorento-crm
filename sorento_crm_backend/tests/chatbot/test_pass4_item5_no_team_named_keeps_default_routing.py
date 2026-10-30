@@ -243,6 +243,9 @@ class TestATrulyColdRequestGetsTheRoutingTablesOwnDefault:
 
         assert head.branch_kind == "out_of_scope", (head.branch_kind, head.error)
         comments = [a for a in (head.actions or []) if a.get("kind") == "add_comment"]
-        assert any("Team: customer_service" in (a.get("text") or "") for a in comments), (
-            f"with nothing carried the chain's hard default is the answer: {comments!r}"
+        # CHATBOT-FAIL-TRIAGE AC-7c (owner, 30 Oct 2026) overrules the hard default here:
+        # no topic and none held asks which topic, and assigns nobody.
+        sent = " ".join(a.get("text") or "" for a in (head.actions or []) if a.get("kind") == "send_message")
+        assert comments == [] and "Which topic is this about" in sent, (
+            f"with nothing carried the bot asks the topic, never the default team: {head.actions!r}"
         )
