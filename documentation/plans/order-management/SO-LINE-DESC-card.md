@@ -43,11 +43,26 @@ the ITEM CODE cell carries code + description. Email = preview = attachment must
    ss `routers/companies.py:850-882`) after the CRM release; new and edited SOs carry it from the
    next sync.
 
-## Real examples
+## Real examples (crew, read-only on sorento_prod_1020, copy as of 23 Oct 2026)
 
-Lane cannot read rows: the auto-mode classifier blocks row reads on `sorento_prod_1020` (Production
-Reads). Read-only SQL for crew to run: `documentation/plans/order-management/SO-LINE-DESC-rpacc-examples.sql`
-(RP* line counts, 5 latest RPACC lines, SO428498; no customer columns). Mock v1 follows on those rows.
+- RP* SO lines: RPACC 5,404 (latest 20 Oct), RPAC 1,683, RPBK 3, RPJC 1. Product master name of
+  RPACC is just "RPACC", so SO > Lines shows nothing that tells the part today.
+- The AutoCount text exists in the CRM only on synced DELIVERY ORDER lines (`order_lines.description`,
+  `app/models/order.py:538`): 288 of 757 RPACC DO lines, 235 of them linked to an SO line. So today
+  4% of RPACC SO lines can be told at all, and only after delivery. Confirms the SO-side gap above.
+- Lines the mock uses (description from the linked DO line, which AutoCount copies from the SO line):
+
+| SO / line | Code | AutoCount line description | Qty |
+| --- | --- | --- | --- |
+| SO426526 / 16 | RPACC | SORENTO ACCESSORIES SRTWC8320-S150-UF PUSH BUTTON ONLY | 1 UNIT |
+| SO426522 / 32 | RPACC | SORENTO ONE PIECE WC FITTING SET ONLY 250MM (SRTWCFT250-OP) | 1 |
+| SO426062 / 48 | RPACC | SORENTO ACCESSORIES SRT70-CR - FLEXIBLE HOSE ONLY | 1 |
+| SO2610-0852 / 4 | RPACC | REPLACE ACCESORIES JOIN PART | 1 |
+| SO427041 / 36 | RPACC | (none reachable: undelivered) | 6 UNIT |
+| SO418853 / 48 | RPAC | CABANA ACCESSORIES - TAP HEAD ONLY FOR MODEL KT886SS-NL | - |
+
+- Descriptions often carry their own " - " (SO426062 above): the separator is still readable.
+- SO428498 (owner's screenshot) is newer than the copy.
 
 ## Edge cases
 
@@ -55,7 +70,9 @@ Reads). Read-only SQL for crew to run: `documentation/plans/order-management/SO-
   would stretch the table (Q5).
 - Canonical `product_name` caps at 255 chars (`canonical_documents.py:99`); AutoCount's SODTL.Description
   length is UNVERIFIED (believed shorter).
-- Live connection on contract v2: UNVERIFIED; SQL query 1 `with_line_remark > 0` proves it.
+- Live connection on contract v2: UNVERIFIED. The copy predates FULFIL-SO-REMARK (merged 25 Oct, #1847),
+  so its 12 `line_remark` rows prove nothing. Check the ss connection's `sorento_contract_version`
+  before the Repush; on v1 `product_name` is not sent at all.
 - Resend preview's own check `row.item_code in body_html` (`oi_handover_resend.py:210`) still holds:
   the code stays the cell's prefix.
 - A code switch prints the old code (`was.item_code`, set only on a real change) then NEW ITEM CODE
@@ -68,7 +85,8 @@ Reads). Read-only SQL for crew to run: `documentation/plans/order-management/SO-
 1. Cell format: (a) `RPACC - <line description>` on one line; (b) code, line break, description in the
    same cell; (c) code + space + description. Rec (a): reads the same in the HTML body, the email's
    plain-text part and Excel; a line break renders differently per email client.
-2. Code list: (a) a System Settings list, admins edit, starts as RPACC (pattern
+2. Code list: (a) a System Settings list, admins edit, starts as RPACC; RPAC (1,683 lines, Cabana
+   accessories, same pattern) added too? (pattern
    `handling_lock_enabled_types`, `app/models/user.py:575`, `app/api/v1/user_management/settings.py:423-426, 899-908`);
    (b) a tick on each product record; (c) fixed in code, change by release. Rec (a): one setting on
    an existing page, no product form change.
