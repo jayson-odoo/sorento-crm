@@ -8,6 +8,7 @@ slug is checked here at exposure, proposal and execution.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from contextlib import contextmanager
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 
 from app.services.chatbot.agent.tools import ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail
 
@@ -49,6 +51,8 @@ class UserRead:
     schema: dict
     #: (db, ctx, args) -> ToolResult
     run: Callable[[Any, Any, dict], ToolResult]
+    #: (linked user's result, operator's result) -> the result both may see; None = the operator adds nothing.
+    combine: Callable[[ToolResult, ToolResult], ToolResult] | None = None
 
 
 def holds(db, user_id: str, permission: str | tuple[str, ...]) -> bool:
@@ -94,18 +98,29 @@ def _plain(value: Any) -> Any:
 # ------------------------------------------------------------------ running as the user
 
 
-def run_as_user(db, ctx, fn: Callable[[dict], Any], *, tool_name: str | None = None) -> Any:
-    """`fn(user_dict)` under the linked user's company scope and audit actor. The previous scope and
-    actor come back even when `fn` raises."""
+def people(ctx) -> list[str]:
+    """The linked user, then the console operator when that is someone else. Every scope decision is
+    made for each of them (R9); the write itself runs once, as the linked user."""
+    operator = getattr(ctx, "operator_user_id", None)
+    return [str(ctx.user_id)] + ([str(operator)] if operator and str(operator) != str(ctx.user_id) else [])
+
+
+def run_as_user(
+    db, ctx, fn: Callable[[dict], Any], *, tool_name: str | None = None, user_id: str | None = None
+) -> Any:
+    """`fn(user_dict)` under a user's company scope (the linked user's, or `user_id`'s when given) and
+    the linked user's audit actor. The previous scope and actor come back even when `fn` raises."""
     from app.audit_context import AuditActor, actor_scope
     from app.dependencies import _load_user_dict_from_db
     from app.models.base import get_company_scope, set_company_scope
     from app.services import company_scope_resolver
     from app.services.error_handler import AppException
 
-    user = _load_user_dict_from_db(db, ctx.user_id)
+    who = str(user_id or ctx.user_id)
+    user = _load_user_dict_from_db(db, who)
     if user is None:
-        raise AppException(status_code=403, message="The linked user is no longer available.", code="USER_GONE")
+        raise AppException(status_code=403, message="The user is no longer available.", code="USER_GONE")
+    user["linked_user_id"] = str(ctx.user_id)
     previous = get_company_scope(db)
     actor = AuditActor(
         actor_type="user",
@@ -115,12 +130,24 @@ def run_as_user(db, ctx, fn: Callable[[dict], Any], *, tool_name: str | None = N
         contact_id=str(ctx.contact_pk),
         tool_name=tool_name,
     )
-    set_company_scope(db, company_scope_resolver._scope_for_user(db, ctx.user_id, None))
+    set_company_scope(db, company_scope_resolver._scope_for_user(db, who, None))
     try:
         with actor_scope(actor, db=db):
             return fn(user)
     finally:
         set_company_scope(db, previous)
+
+
+def read_before_all(db, ctx, definition: "WriteDef", args: dict) -> dict:
+    """`read_before` as the linked user and again as the console operator: either refusing refuses the
+    step. The linked user's reading is the one kept."""
+    before = None
+    for pid in people(ctx):
+        read = run_as_user(
+            db, ctx, lambda user: definition.read_before(db, user, args), tool_name=definition.name, user_id=pid
+        )
+        before = read if before is None else before
+    return before
 
 
 def error_text(exc: Exception) -> str:
@@ -287,6 +314,19 @@ def _recent_actions(db, ctx, args: dict) -> ToolResult:
     return ToolResult("ok", data=data, more=more)
 
 
+def _keep_rows(rows: list, other: list) -> list:
+    ids = {r.get("id") for r in other}
+    return [r for r in rows if r.get("id") in ids]
+
+
+def _combine_asks(mine: ToolResult, theirs: ToolResult) -> ToolResult:
+    data = {
+        **mine.data,
+        **{k: _keep_rows(mine.data[k], theirs.data[k]) for k in ("open", "done_today")},
+    }
+    return ToolResult("ok", data=data, more=mine.more)
+
+
 USER_READS: dict[str, UserRead] = {
     LIST_ASKS: UserRead(
         name=LIST_ASKS,
@@ -304,6 +344,7 @@ USER_READS: dict[str, UserRead] = {
             },
         },
         run=_asks_list,
+        combine=_combine_asks,
     ),
     RECENT_ACTIONS: UserRead(
         name=RECENT_ACTIONS,
@@ -346,6 +387,11 @@ def run_user_read(db, ctx, name: str, args: Any, seen_ids: set[str]) -> ToolResu
     if not isinstance(args, dict):
         return ToolResult("invalid", message="Arguments must be an object of named values.")
     out = read.run(db, ctx, args)
+    operator = [p for p in people(ctx)[1:]]
+    if out.status == "ok" and operator and read.combine is not None:
+        # The operator's reach counts too: only what both of them may see is shown.
+        theirs = read.run(db, dataclasses.replace(ctx, user_id=operator[0], operator_user_id=None), args)
+        out = theirs if theirs.status != "ok" else read.combine(out, theirs)
     if out.status == "ok":
         _collect_uuids(out.data, seen_ids)
     return out
@@ -396,7 +442,7 @@ def propose_step(db, ctx, name: str, args: Any, *, seen_ids: set[str]) -> tuple[
     if bad_id is not None:
         return bad_id, None
     try:
-        before = run_as_user(db, ctx, lambda user: definition.read_before(db, user, args), tool_name=name)
+        before = read_before_all(db, ctx, definition, args)
     except Exception as exc:  # noqa: BLE001
         return _route_failure(exc), None
     # `_show` holds what the summary needs but the re-check must not compare (names looked up now).
@@ -560,6 +606,12 @@ def _opp_list(db, ctx, args: dict) -> ToolResult:
     return ToolResult("ok", data=data, more=more)
 
 
+def _combine_opps(mine: ToolResult, theirs: ToolResult) -> ToolResult:
+    rows = _keep_rows(mine.data["opportunities"], theirs.data["opportunities"])
+    total = mine.data["total"] if len(rows) == len(mine.data["opportunities"]) else len(rows)
+    return ToolResult("ok", data={"opportunities": rows, "total": total}, more=mine.more)
+
+
 def _opp_meta(db, ctx, args: dict) -> ToolResult:
     from app.api.v1.sales.opportunities import get_meta
 
@@ -651,6 +703,7 @@ USER_READS[LIST_OPPS] = UserRead(
         },
     },
     run=_opp_list,
+    combine=_combine_opps,
 )
 USER_READS[OPP_META] = UserRead(
     name=OPP_META,
@@ -797,7 +850,28 @@ def _relinkable(db, user_id: str, contact_id: str, customer_id: str) -> bool:
     """The undo of a resign: this user's own executed unlink of exactly this customer from this contact
     is still the latest change to that link."""
     latest = _latest_link_change(db, contact_id, customer_id)
-    return latest is not None and latest[0] == str(user_id) and latest[1]
+    return latest is not None and latest[0] == str(user_id) and latest[1] and _unlink_is_latest_audit(
+        db, contact_id, customer_id, user_id
+    )
+
+
+def _unlink_is_latest_audit(db, contact_id: str, customer_id: str, user_id: str) -> bool:
+    """Screen edits count too: the newest audit row of this link must be this user's agent unlink."""
+    from app.models.audit import AuditLog
+
+    key = {"contact_id": str(contact_id), "customer_id": str(customer_id)}
+    last = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.entity_type == "respond_contact_customers",
+            or_(AuditLog.old_values.contains(key), AuditLog.new_values.contains(key)),
+        )
+        .order_by(AuditLog.changed_at.desc(), AuditLog.id.desc())
+        .first()
+    )
+    return last is None or (
+        last.action == "DELETE" and last.auth_method == "agent" and str(last.user_id) == str(user_id)
+    )
 
 
 def _own_customer_codes(db, user_id: str, ids: list[str]) -> dict[str, str]:
@@ -843,7 +917,12 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     refused = AppException(status_code=403, message="That contact is not one of yours.", code="FORBIDDEN")
     in_scope = contact_in_scope(db, uid, contact.id)
     # Linking is the `.edit` holder's right; an `.edit_own` holder links only to undo their own resign.
-    undo = bool(link_ids) and all(_relinkable(db, uid, contact.id, c) for c in link_ids)
+    # The undo belongs to the linked user who unlinked; a console operator reaches the contact on their own tier.
+    undo = (
+        bool(link_ids)
+        and uid == str(user.get("linked_user_id", uid))
+        and all(_relinkable(db, uid, contact.id, c) for c in link_ids)
+    )
     if link_ids and not undo and not _permitted(db, uid, CONTACT_EDIT):
         raise AppException(status_code=403, message="You can only restore a link you removed.", code="FORBIDDEN")
     if not in_scope and not (undo and not unlink_ids and role is None and ai in (None, True)):
@@ -858,6 +937,15 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     remove: set[str] = set()
     lines: list[str] = []
     template_codes = facts["template_codes"]
+    if role == "owner" and not template_codes:
+        raise AppException(
+            status_code=422,
+            message=(
+                "This contact's companies have no owner role to set." if facts["codes"]
+                else "This contact has no company, so its role cannot be set."
+            ),
+            code="VALIDATION_ERROR",
+        )
     if role is not None:
         lacking = [c for c in template_codes if c not in facts["owner_codes"]]
         changes = bool(lacking) if role == "owner" else role != facts["role"]
@@ -1005,6 +1093,19 @@ def _contacts_find(db, ctx, args: dict) -> ToolResult:
     return ToolResult("ok", data=out)
 
 
+def _combine_finds(mine: ToolResult, theirs: ToolResult) -> ToolResult:
+    """A phone is `not_yours` when either person's reach says so; accounts are those both may see."""
+    out = []
+    for a, b in zip(mine.data, theirs.data):
+        if a["status"] == "found" and b["status"] != "found":
+            a = {"status": "not_yours", "phone": a["phone"]} if b["status"] == "not_yours" else a
+        elif a["status"] == "found":
+            both = {x["customer_id"] for x in b["accounts"]}
+            a = {**a, "accounts": [x for x in a["accounts"] if x["customer_id"] in both]}
+        out.append(a)
+    return ToolResult("ok", data=out)
+
+
 WRITES[UPDATE_CONTACT] = WriteDef(
     name=UPDATE_CONTACT,
     user_permission=CONTACT_SLUGS,
@@ -1056,4 +1157,5 @@ USER_READS[FIND_CONTACTS] = UserRead(
         },
     },
     run=_contacts_find,
+    combine=_combine_finds,
 )

@@ -119,9 +119,7 @@ def _recheck(db, ctx, step: dict) -> str | None:
     if not writes.holds_ctx(db, ctx, definition.user_permission):
         return "You do not have permission for this change."
     try:
-        now = writes.run_as_user(
-            db, ctx, lambda user: definition.read_before(db, user, step["args"]), tool_name=step["tool"]
-        )
+        now = writes.read_before_all(db, ctx, definition, step["args"])
     except Exception as exc:  # noqa: BLE001
         text = writes.error_text(exc)
         # A rule that now refuses (nothing left to change, a field no longer valid) means it moved on.
@@ -265,6 +263,20 @@ def _finish(
 
 def cancel(db, contact_respond_id: str, action_id: str, *, operator_user_id: str | None = None) -> ActionOutcome:
     action = _load(db, contact_respond_id, action_id)
+    if operator_user_id:
+        # A console operator may cancel for the linked user only while that is still who the action is for,
+        # and only when they could have confirmed at least one step themselves.
+        try:
+            ctx = build_context(db, contact_respond_id)
+        except AgentRefused:
+            raise ActionRefused("entry_refused")
+        theirs = str(operator_user_id)
+        may = theirs == str(ctx.user_id) or any(
+            (d := writes.WRITES.get(step.get("tool"))) is not None and writes.holds(db, theirs, d.user_permission)
+            for step in action.steps or []
+        )
+        if str(ctx.user_id) != str(action.user_id) or not may:
+            raise ActionRefused("entry_refused")
     changed = db.execute(
         update(AgentAction)
         .where(AgentAction.id == action.id, AgentAction.status == "proposed")

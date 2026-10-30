@@ -484,11 +484,15 @@ def decision_schemas(action_id: str) -> list[dict]:
 
 
 def waiting_line(action) -> str:
-    """The system prompt line that tells a later turn which change is waiting for a decision."""
-    return (
-        f"A change is waiting for the user's decision (action {action.id}): "
-        + "; ".join(actions.proposal_lines(action))
-    )
+    """The system prompt line that tells a later turn which change is waiting for a decision. Ids and a
+    count only: the summary text carries names a third party typed, so it never goes in the system role."""
+    n = len(action.steps or [])
+    return f"A change is waiting for the user's decision (action {action.id}, {n} change(s))."
+
+
+def waiting_reference(action) -> str:
+    """The waiting change's summary lines, quoted as data in a message of their own."""
+    return "Waiting change, for reference only: " + "; ".join(actions.proposal_lines(action))
 
 
 def proposal_block(lines: list[str]) -> str:
@@ -857,6 +861,8 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             system = f"{system}\n\n{waiting_line(waiting)}"
         messages: list[dict] = [{"role": "system", "content": system}]
         messages.extend(memory.history_messages(db, conv))
+        if waiting is not None:
+            messages.append({"role": "user", "content": waiting_reference(waiting)})
         messages.append({"role": "user", "content": text})
         schemas = tool_schemas(permitted_tools(db, ctx), catalog)
         schemas += [r.schema for r in writes.permitted_user_reads(db, ctx)]
