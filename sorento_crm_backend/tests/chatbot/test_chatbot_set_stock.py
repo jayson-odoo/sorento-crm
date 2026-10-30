@@ -265,3 +265,39 @@ def test_a_word_inside_a_set_code_is_no_set_hit():
     _drop_word_code_fragments(result, frozenset())
 
     assert result["intersection"] == []
+
+
+# ---------------------------------------------------------------- every intent (owner, card v4 Q1 (a))
+
+#: The domains that accept product entities besides stock and product info (`gate.ALLOWED`), each
+#: with the intent the parser emits for it: ETA, photos and files, orders and delivery, promotions.
+_OTHER_PRODUCT_DOMAINS = [
+    ("incoming", "check_incoming"),
+    ("product_attachment", "check_product_attachment"),
+    ("order", "check_order"),
+    ("promotion", "check_promotion"),
+]
+
+
+def _ids_sent(calls) -> set[str]:
+    """Every product id any tool received, whatever its parameter name."""
+    out: set[str] = set()
+    for _name, args in calls:
+        for key, value in (args or {}).items():
+            if key.endswith("product_ids") and isinstance(value, list):
+                out.update(str(v) for v in value)
+    return out
+
+
+@pytest.mark.parametrize("domain, intent", _OTHER_PRODUCT_DOMAINS)
+def test_every_product_ask_expands_a_set_to_its_parts(domain, intent, session_factory, seeded, stub_access, monkeypatch):
+    """Owner hand test, 30 Oct: "srtwc8826 eta" answered the seat cover only. Any ask that takes
+    products (ETA, photos, delivery, promotion) runs on every part of every set the code names."""
+    ids = _seed(session_factory, SETS_8826)
+
+    _text, calls = _run(
+        session_factory, stub_access, monkeypatch, text=f"srtwc8826 {domain}", raw=STEM_8826.lower(), canonical=None,
+        domain=domain, intent=intent, code_lookup=False,
+    )
+
+    assert {ids[c] for c in _codes(SETS_8826)} <= _ids_sent(calls), (domain, sorted(_ids_sent(calls)), calls)
