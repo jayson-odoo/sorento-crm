@@ -417,9 +417,11 @@ def test_the_first_sheet_carries_the_letterhead_and_the_rest_carry_the_reference
         workbook = qxlsx.build_issue_workbook(db, issued)
 
         first = _values(workbook.worksheets[0])
-        assert issued.our_ref_text in first
-        assert "R1" in str(issued.our_ref_text)  # the revision is part of the reference
-        assert "Our Ref" in first
+        # QUOTE-SIGN-PAGE AC2.6: the same "Quotation No." as the sign page and the PDF.
+        number = f"{document.document_no}-R{issued.issue_no}"
+        assert number in first
+        assert "Quotation No." in first
+        assert "Our Ref" not in first
         assert f"{MARKER}/NC/2026/007" in first
         assert f"{MARKER} Level 8, Menara Lama, Kuala Lumpur" in first
         assert any(f"{MARKER} Kelly" in str(value) for value in first)
@@ -430,7 +432,8 @@ def test_the_first_sheet_carries_the_letterhead_and_the_rest_carry_the_reference
         # identifiable on its own.
         second = _values(workbook.worksheets[1])
         assert f"{MARKER} Guard House" in second
-        assert any(str(issued.our_ref_text) in str(value) for value in second)
+        assert any(number in str(value) for value in second)
+        assert not any("Our Ref" in str(value) for value in second)
         # And it does NOT re-print the whole letterhead.
         assert f"{MARKER} Level 8, Menara Lama, Kuala Lumpur" not in second
 
@@ -1227,3 +1230,35 @@ def test_a_component_of_a_set_leaves_its_money_cells_empty_not_zero():
         assert any(cell.value == Decimal("305.55") for cell in parent_row)
         assert any(cell.value == Decimal("273161.70") for cell in parent_row)
         assert issued.grand_total == Decimal("273161.70")
+
+
+def test_the_workbook_prints_the_built_quotation_no_even_for_an_old_stored_text():
+    """AC2.6 / AC2.3: `<document_no>-R<issue_no>`, never the stored `(R1)` text."""
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_excel_service as qxlsx
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        product = _product(db, env["category"].id, env["uom"], description=f"{MARKER} WC")
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        for label in (f"{MARKER} Townhouse", f"{MARKER} Guard House"):
+            scope = qdocs.add_scope(db, document=document, scope_label=label, actor_user_id=owner)
+            quotes.upsert_line(
+                db,
+                version=quotes.current_version(db, scope.id),
+                actor_user_id=owner,
+                payload={"product_id": product.id, "unit_price": PRICED_RATE, "quantity": 1},
+            )
+        issued = _issue(db, document, owner)
+        issued.our_ref_text = f"{document.document_no} (R{issued.issue_no})"
+        db.flush()
+
+        workbook = qxlsx.build_issue_workbook(db, issued)
+        number = f"{document.document_no}-R{issued.issue_no}"
+        for sheet in workbook.worksheets:
+            joined = " | ".join(str(v) for v in _values(sheet))
+            assert number in joined
+            assert "(R1)" not in joined
+            assert "Our Ref" not in joined
