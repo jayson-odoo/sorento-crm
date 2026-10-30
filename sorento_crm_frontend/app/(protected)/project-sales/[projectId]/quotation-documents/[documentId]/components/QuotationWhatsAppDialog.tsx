@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/lib/toast';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { waMeUrl } from '@/lib/wa-me';
+import { QuotationSignLinkDialog } from './QuotationSignLinkDialog';
 import { useQuotationDocumentMutations } from '../../../../_shared/hooks/useQuotationDocuments';
 import {
   pickMobile,
@@ -62,6 +63,7 @@ export function QuotationWhatsAppDialog({
           <WhatsAppBody
             projectId={projectId}
             document={document}
+            key={shown.id}
             issue={shown}
             onClose={() => onOpenChange(false)}
           />
@@ -91,6 +93,7 @@ function WhatsAppBody({
     return digits ? `+${digits}` : '';
   });
   const [edited, setEdited] = React.useState<string | null>(null);
+  const [linkToShow, setLinkToShow] = React.useState<string | null>(null);
   const messageRef = React.useRef<HTMLTextAreaElement>(null);
   const mintedFor = React.useRef<string | null>(null);
 
@@ -165,10 +168,13 @@ function WhatsAppBody({
             // Clipboard refused: select the link in the message so Ctrl/Cmd+C finishes the job.
             const box = messageRef.current;
             const start = box ? box.value.indexOf(link) : -1;
-            if (box) {
-              box.focus();
-              if (start >= 0) box.setSelectionRange(start, start + link.length);
+            if (!box || start < 0) {
+              // The link was edited out of the message: show it where it can be copied by hand.
+              setLinkToShow(link);
+              return;
             }
+            box.focus();
+            box.setSelectionRange(start, start + link.length);
             toast.error('Press Ctrl/Cmd+C to copy the selected link');
           }}
         >
@@ -199,6 +205,7 @@ function WhatsAppBody({
           </a>
         </Button>
       </DialogFooter>
+      <QuotationSignLinkDialog url={linkToShow} onOpenChange={() => setLinkToShow(null)} />
     </>
   );
 }

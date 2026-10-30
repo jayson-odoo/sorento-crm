@@ -1,17 +1,22 @@
 import type { QuotationDocument, QuotationIssue } from '../services/quotationDocumentService';
 
-/**
- * One phone number as wa.me digits: digits only, a leading `00` dropped, a leading `0` (or `600`)
- * and a bare mobile read as Malaysian (`60`).
- */
-export function toWaDigits(raw: string): string {
-  const digits = raw.replace(/\D/g, '');
-  if (digits.startsWith('00')) return digits.slice(2);
+/** Digits only; `00` dropped, `600` folded to `60`, a leading `0` read as Malaysian (`60`). */
+function normalise(raw: string): string {
+  let digits = raw.replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
   // "+60 012-...": the country code typed together with the trunk 0.
   if (digits.startsWith('600')) return `60${digits.slice(3)}`;
   if (digits.startsWith('0')) return `60${digits.slice(1)}`;
-  // A mobile typed without its trunk 0 ("12-000 0001").
-  if (/^1\d{8,9}$/.test(digits)) return `60${digits}`;
+  return digits;
+}
+
+/**
+ * One typed phone number as wa.me digits. On top of the field rules a mobile typed without its
+ * trunk 0 ("12-000 0001") is read as Malaysian; 1300, 1700 and 1800 numbers stay as typed.
+ */
+export function toWaDigits(raw: string): string {
+  const digits = normalise(raw);
+  if (/^1\d{8,9}$/.test(digits) && !/^1[378]00/.test(digits)) return `60${digits}`;
   return digits;
 }
 
@@ -26,7 +31,8 @@ export function pickMobile(field: string | null | undefined): string {
   for (const part of field.split(/[\n/,;&]|\sor\s/i)) {
     const trimmed = part.trim();
     if (!trimmed) continue;
-    const digits = toWaDigits(trimmed);
+    // Strict: a bare `1...` in the stored field is never taken for a mobile.
+    const digits = normalise(trimmed);
     if (MY_MOBILE.test(digits)) return digits;
     const international = /^\s*(\+|00)/.test(trimmed);
     if (international && !digits.startsWith('60') && digits.length >= 8) return digits;
