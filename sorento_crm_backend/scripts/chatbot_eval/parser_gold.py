@@ -56,6 +56,8 @@ EXPECT_KEYS = frozenset({
     # CHATBOT-FAIL-TRIAGE-B2: the portal form key (equality), the routing's suggested team, and the
     # number a specification entity keyed "size" carries (null: no such entity).
     "portal_form", "suggested_team", "size",
+    # a product entity whose `raw`, folded like `product`, equals this.
+    "product_raw",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("portal_form", "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
@@ -81,6 +83,7 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "portal_form": (str, type(None)),
     "suggested_team": (str, type(None)),
     "size": (int, float, type(None)),
+    "product_raw": (str,),
 }
 #: PARSER-TEMPLATE F1-B: what a gold row may say the conversation held before its message. Each
 #: value is the text as the user block shows it, or null.
@@ -179,6 +182,10 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         codes = {_fold(e.get("canonical_code")) for e in entities if e.get("hint") == "product"}
         if _fold(expect["product"]) not in codes:
             reasons.append(f"no product entity {expect['product']!r}")
+    if "product_raw" in expect:
+        raws = {_fold(e.get("raw")) for e in entities if e.get("hint") == "product"}
+        if _fold(expect["product_raw"]) not in raws:
+            reasons.append(f"no product entity with raw {expect['product_raw']!r}")
     if "canonical" in expect:
         picks = [_fold(e.get("canonical_code")) for e in entities if e.get("hint") == "product"]
         if expect["canonical"] is None:
