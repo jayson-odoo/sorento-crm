@@ -104,7 +104,13 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
           const status = row.original.status;
           const label =
             status === 'pending' ? 'Pending' : status === 'approved' ? 'Reassigned' : 'Dismissed';
-          return <Badge variant={status === 'pending' ? 'secondary' : 'outline'}>{label}</Badge>;
+          const variant =
+            status === 'pending' ? 'warning' : status === 'approved' ? 'success' : 'secondary';
+          return (
+            <Badge variant={variant} appearance="light">
+              {label}
+            </Badge>
+          );
         },
         size: 120,
         meta: { headerTitle: 'Status' },
@@ -193,6 +199,17 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             </div>
           )}
 
+          <PanelDataGrid
+            title="Secondary leads"
+            columns={columns}
+            rows={secondaryLeads}
+            getRowId={(row) => row.id}
+            listingKey="projects.projects.view::project-secondary-leads"
+            isLoading={requests.isLoading}
+            error={requests.isError ? requests.error : undefined}
+            emptyTitle="No secondary leads"
+          />
+
           <div>
             <p className="text-xs text-muted-foreground">Open requests</p>
             {pending.length === 0 ? (
@@ -271,17 +288,6 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
           )}
         </CardContent>
       </Card>
-
-      <PanelDataGrid
-        title="Secondary leads"
-        columns={columns}
-        rows={secondaryLeads}
-        getRowId={(row) => row.id}
-        listingKey="projects.projects.view::project-secondary-leads"
-        isLoading={requests.isLoading}
-        error={requests.isError ? requests.error : undefined}
-        emptyTitle="No secondary leads"
-      />
 
       {requesting && (
         <RequestDialog

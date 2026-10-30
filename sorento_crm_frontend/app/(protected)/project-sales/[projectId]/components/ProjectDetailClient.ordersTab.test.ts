@@ -15,7 +15,7 @@ describe('the Orders tab', () => {
   it('opens Orders for the old ?tab= links', () => {
     expect(resolveProjectTab('pos')).toBe('orders');
     expect(resolveProjectTab('schedules')).toBe('orders');
-    expect(resolveProjectTab('sales-orders')).toBe('orders');
+    expect(resolveProjectTab('sales-orders')).toBe('sales-orders');
     expect(resolveProjectTab('orders')).toBe('orders');
     expect(resolveProjectTab(null)).toBe('overview');
     expect(resolveProjectTab('nonsense')).toBe('overview');

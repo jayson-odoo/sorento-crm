@@ -1587,11 +1587,9 @@ export function usePriceFloorMutations() {
   return { upsert, remove };
 }
 
-// ------------------------------------------------------- samples and customer POs
+// ------------------------------------------------------- customer POs
 
-export const SAMPLES_KEY = 'project-samples';
 export const POS_KEY = 'project-purchase-orders';
-export const samplesKey = (projectId: string) => [SAMPLES_KEY, projectId];
 export const poLinesKey = (poId: string) => [POS_KEY, 'lines', poId];
 
 export function usePurchaseOrders(projectId: string | undefined) {

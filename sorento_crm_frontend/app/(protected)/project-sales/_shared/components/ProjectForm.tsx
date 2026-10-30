@@ -579,6 +579,8 @@ export function ProjectForm(props: ProjectFormProps) {
           </div>
         )}
 
+        {wizard && step === 'details' && blockingCandidate && checkResult}
+
         {(!wizard || step === 'details') && (
           <FormSection
             title="Who and what"
@@ -1020,7 +1022,7 @@ export function ProjectForm(props: ProjectFormProps) {
               <ArrowLeft className="size-4" aria-hidden />
               Back
             </Button>
-            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Button type="button" variant="outline" onClick={handleCancel}>
                 Cancel
               </Button>

@@ -102,7 +102,7 @@ export const TABS = [
   { id: 'sponsorships', label: 'Sponsorship Form', icon: HandCoins },
   // PO is the old Orders tab (id kept so links hold); SO lists every sales order.
   { id: 'orders', label: 'PO', icon: ShoppingCart },
-  { id: 'sales-orders-tab', label: 'SO', icon: Package },
+  { id: 'sales-orders', label: 'SO', icon: Package },
   { id: 'stakeholders', label: 'Stakeholders', icon: Users },
   { id: 'tasks', label: 'Tasks', icon: ListChecks },
   { id: 'activity', label: 'Activity', icon: History },
@@ -110,8 +110,8 @@ export const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 
-/** The three tabs Orders replaced; their old links (and bookmarks) open Orders. */
-const LEGACY_ORDER_TABS = ['pos', 'schedules', 'sales-orders'];
+/** The retired order tabs; their old links (and bookmarks) open Orders. */
+const LEGACY_ORDER_TABS = ['pos', 'schedules'];
 
 // Rung key -> the form its forward stage action opens.
 const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
@@ -566,7 +566,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         <TabsContent value="orders">
           <PurchaseOrdersPanel project={project} />
         </TabsContent>
-        <TabsContent value="sales-orders-tab">
+        <TabsContent value="sales-orders">
           <SalesOrdersPanel project={project} />
         </TabsContent>
         <TabsContent value="activity">
