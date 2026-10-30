@@ -8,14 +8,14 @@ salesperson reaches Projects and Conversations in the CRM, scoped to their own r
 absent on an install is skipped. Downgrade removes exactly those two pairs.
 
 Revision ID: pp3_0001_salesperson_grants
-Revises: agp1_0001_agent_foundation
+Revises: tbc_0001_allowed_item_classes
 Create Date: 2026-10-28
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "pp3_0001_salesperson_grants"
-down_revision = "agp1_0001_agent_foundation"
+down_revision = "tbc_0001_allowed_item_classes"
 branch_labels = None
 depends_on = None
 
