@@ -3,7 +3,8 @@ staff AI assistant marks its calls `X-MCP-Scope: staff`.
 
 `MCPRuntimeClient` is the only in-repo MCP caller (AI assistant, chatbot business lane, ideate,
 opportunity lane, agent loop), so the token is set there once. No database: the transport is an
-httpx MockTransport.
+httpx MockTransport, and the token store (`mcp_auth_token.current_token`, MCP-TOKEN-UI: set on
+Settings > Integrations, no env) is replaced by `_token`.
 """
 from __future__ import annotations
 
@@ -14,11 +15,19 @@ import re
 import httpx
 import pytest
 
-from app.config import settings
-from app.services import ai_assistant_service
+from app.services import ai_assistant_service, mcp_auth_token
 from app.services.ai_assistant_service import MCPRuntimeClient
 
 TOKEN = "x" * 40  # fake fixture, built at runtime so it never looks like a real key
+
+
+def _token(monkeypatch, value):
+    monkeypatch.setattr(mcp_auth_token, "current_token", lambda db=None: value)
+
+
+@pytest.fixture(autouse=True)
+def _no_token_by_default(monkeypatch):
+    _token(monkeypatch, None)
 
 
 @pytest.fixture
@@ -42,27 +51,21 @@ def seen(monkeypatch):
 
 
 def test_sends_the_bearer_token(monkeypatch, seen):
-    monkeypatch.setattr(settings, "mcp_auth_token", TOKEN)
+    _token(monkeypatch, TOKEN)
     MCPRuntimeClient("http://mcp:8765/mcp").list_tools()
     assert seen[0].headers["authorization"] == f"Bearer {TOKEN}"
 
 
 def test_no_token_configured_sends_no_header(monkeypatch, seen):
-    monkeypatch.setattr(settings, "mcp_auth_token", "")
+    _token(monkeypatch, None)
     MCPRuntimeClient("http://mcp:8765/mcp").call_tool("crm_x", {})
     assert "authorization" not in seen[0].headers
 
 
-def test_the_token_setting_defaults_blank():
+def test_the_token_is_no_longer_an_env_setting():
     from app.config import Settings
 
-    assert Settings.model_fields["mcp_auth_token"].default == ""
-
-
-def test_a_token_with_a_trailing_newline_is_stripped(monkeypatch, seen):
-    monkeypatch.setattr(settings, "mcp_auth_token", TOKEN + "\n")
-    MCPRuntimeClient("http://mcp:8765/mcp").list_tools()
-    assert seen[0].headers["authorization"] == f"Bearer {TOKEN}"
+    assert "mcp_auth_token" not in Settings.model_fields
 
 
 def test_default_client_sends_no_staff_marker(seen):
@@ -106,7 +109,7 @@ def test_no_chatbot_lane_client_is_staff():
 def test_agent_loop_catalogue_fetch_sends_the_bearer_token(monkeypatch, seen):
     from app.services.chatbot.agent import loop
 
-    monkeypatch.setattr(settings, "mcp_auth_token", TOKEN)
+    _token(monkeypatch, TOKEN)
     monkeypatch.setattr(loop, "_CATALOG_CACHE", {})
     loop._fetch_catalog()
     assert seen[0].headers["authorization"] == f"Bearer {TOKEN}"
@@ -124,7 +127,7 @@ def test_agent_loop_tool_call_sends_the_bearer_token_and_the_contact(monkeypatch
     from app.services.chatbot.lanes.business.services import _mcp_call
 
     assert "_mcp_call(db, timeout_seconds=seconds)" in _inspect.getsource(loop)
-    monkeypatch.setattr(settings, "mcp_auth_token", TOKEN)
+    _token(monkeypatch, TOKEN)
     tool = sorted(CHATBOT_READ_ONLY_TOOLS)[0]
     _mcp_call(None, timeout_seconds=7)(tool, {"contact_id": "c-1", "space_id": "s-1"})
     assert seen[0].headers["authorization"] == f"Bearer {TOKEN}"
@@ -136,7 +139,7 @@ def test_agent_loop_tool_call_sends_the_bearer_token_and_the_contact(monkeypatch
 def test_opportunity_lane_sends_the_bearer_token(monkeypatch, seen):
     from app.services.chatbot.lanes.opportunity import call_opportunity_tool
 
-    monkeypatch.setattr(settings, "mcp_auth_token", TOKEN)
+    _token(monkeypatch, TOKEN)
     call_opportunity_tool("crm_x", {"contact_id": "c-1", "space_id": "s-1"})
     assert seen[0].headers["authorization"] == f"Bearer {TOKEN}"
     assert "x-mcp-scope" not in seen[0].headers

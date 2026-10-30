@@ -743,6 +743,69 @@ def update_runtime_settings(
     return _runtime_settings_body(db)
 
 
+# MCP-TOKEN-UI: the MCP server's bearer token, on the same secrets slug as the runtime settings.
+# No request body carries a token: the server generates it, so nothing secret reaches a 422 log.
+def _actor_id(db: Session, current_user: dict) -> Optional[str]:
+    from app.audit_context import get_actor
+
+    # The person at the keyboard: the admin, not the target, under impersonation.
+    actor = get_actor(db)
+    return ((actor.real_user_id or actor.user_id) if actor else None) or current_user["id"]
+
+
+@router.get("/mcp-token")
+def get_mcp_token(
+    current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
+    db: Session = Depends(get_db),
+):
+    """The MCP token's state, masked (last 4 only); never the token."""
+    from app.services import mcp_auth_token
+
+    return mcp_auth_token.describe(db)
+
+
+@router.post("/mcp-token/rotate")
+def rotate_mcp_token(
+    current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
+    db: Session = Depends(get_db),
+):
+    """Generate (first time) or rotate the token. The new token is in this answer only."""
+    from app.services import mcp_auth_token
+
+    token = mcp_auth_token.rotate(db, _actor_id(db, current_user))
+    return {**mcp_auth_token.describe(db), "token": token}
+
+
+@router.put("/mcp-token")
+def update_mcp_token(
+    payload: Any = Body(...),
+    current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
+    db: Session = Depends(get_db),
+):
+    """Switch Enforce on or off: `{"enforce": true|false}`."""
+    from app.services import mcp_auth_token
+
+    if not isinstance(payload, dict) or set(payload) != {"enforce"} or not isinstance(payload["enforce"], bool):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Expected {"enforce": true|false}.')
+    try:
+        mcp_auth_token.set_enforce(db, payload["enforce"], _actor_id(db, current_user))
+    except mcp_auth_token.EnforceWithoutToken as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return mcp_auth_token.describe(db)
+
+
+@router.post("/mcp-token/revoke-previous")
+def revoke_previous_mcp_token(
+    current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
+    db: Session = Depends(get_db),
+):
+    """End the previous token's rotation grace window now."""
+    from app.services import mcp_auth_token
+
+    mcp_auth_token.revoke_previous(db, _actor_id(db, current_user))
+    return mcp_auth_token.describe(db)
+
+
 def _chatbot_memory_own_level_count(db: Session) -> int:
     """Read-only: how many contacts carry their own `chatbot_memory_level`, for the
     Memory card's "Contacts with their own level" line (chatbot memory lane A,

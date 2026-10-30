@@ -1,4 +1,4 @@
-"""Test double for the backend's `GET /api/v1/external/mcp-auth` answer (MCP-TOKEN-UI).
+"""Test double for the backend's `GET /api/v1/system/mcp-auth` answer (MCP-TOKEN-UI).
 
 The MCP server no longer reads its token from env: it asks the backend which tokens are valid
 and gets SHA-256 digests back. Tests hand `create_http_app` a fetcher built here instead of

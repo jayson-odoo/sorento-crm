@@ -39,7 +39,7 @@ Default MCP streamable HTTP path: **`/mcp`** (see [MCP streamable HTTP](https://
 
 - The bearer token is not an env value. An admin generates, rotates and switches it to Enforce on the CRM's
   Settings > Integrations screen; this server asks the backend which tokens are valid (`GET
-  /api/v1/external/mcp-auth`, digests only, cached 30 s) (`sorento_crm_mcp/auth.py`).
+  /api/v1/system/mcp-auth`, digests only, cached 30 s) (`sorento_crm_mcp/auth.py`).
 - Enforce on: every request needs `Authorization: Bearer <token>`, else 401. Enforce off (or no token set
   yet): a request with no Authorization header passes and logs a warning; a wrong bearer is 401 either way.
 - Backend unreachable: the last answer is kept. Before the first answer arrives, `/mcp` answers 503.

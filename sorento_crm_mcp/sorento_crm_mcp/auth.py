@@ -2,7 +2,7 @@
 
 The token is set on the CRM's Settings > Integrations screen and lives encrypted in the backend
 database; there is no env value for it any more. This server learns which tokens are valid by
-asking the backend (`GET /api/v1/external/mcp-auth`, over the X-API-Key channel it already
+asking the backend (`GET /api/v1/system/mcp-auth`, over the X-API-Key channel it already
 uses). The answer holds SHA-256 digests of the valid tokens (current, plus the previous one
 while it is in its rotation grace window) and the screen's Enforce switch, never a token.
 
@@ -37,7 +37,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 logger = logging.getLogger(__name__)
 
 HEALTH_PATH = "/healthz"
-TOKEN_PATH = "/api/v1/external/mcp-auth"
+TOKEN_PATH = "/api/v1/system/mcp-auth"
 CACHE_TTL_SECONDS = 30.0
 MISS_REFRESH_SECONDS = 5.0
 FETCH_TIMEOUT_SECONDS = 5.0

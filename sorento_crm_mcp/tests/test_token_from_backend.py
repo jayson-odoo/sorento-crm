@@ -1,6 +1,6 @@
 """MCP-TOKEN-UI: the MCP server learns its valid tokens from the backend, not from env.
 
-The backend answers `GET /api/v1/external/mcp-auth` (over the X-API-Key channel the server
+The backend answers `GET /api/v1/system/mcp-auth` (over the X-API-Key channel the server
 already uses) with SHA-256 digests of the tokens that are valid now (current, plus the previous
 one while it is in its grace window) and the Enforce switch. These tests pin the four states
 from the plan (no token, token + Enforce off, token + Enforce on, rotation), the cache, the
@@ -178,7 +178,7 @@ async def test_default_fetcher_calls_the_backend_with_the_api_key():
     fetch = auth.backend_fetcher(_settings(), transport=httpx.MockTransport(handler))
     answer = await fetch()
     assert answer == {"enforce": True, "token_sha256": [digest(NEW)]}
-    assert str(seen[0].url) == "http://crm.local/api/v1/external/mcp-auth"
+    assert str(seen[0].url) == "http://crm.local/api/v1/system/mcp-auth"
     assert seen[0].headers["X-API-Key"] == "k"
     assert seen[0].method == "GET"
 
