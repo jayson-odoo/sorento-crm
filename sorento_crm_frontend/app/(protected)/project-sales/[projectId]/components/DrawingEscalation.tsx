@@ -93,7 +93,7 @@ export function DrawingEscalation({
         disabled={escalate.isPending}
         onClick={() => escalate.mutate(line.id)}
         className={cn(
-          'flex aspect-square max-h-48 w-full flex-col items-center justify-center gap-0.5 overflow-hidden rounded border px-0 py-0.5 text-center text-2xs leading-tight tracking-tight',
+          'flex aspect-square max-h-48 w-full flex-col items-center justify-center gap-0.5 overflow-hidden rounded border px-0 py-0.5 text-center text-2xs leading-tight tracking-tighter',
           tone,
           escalate.isPending && 'cursor-progress opacity-60',
         )}
