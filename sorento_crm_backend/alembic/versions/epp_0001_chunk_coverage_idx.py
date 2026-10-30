@@ -10,7 +10,7 @@ times out or fails logs a WARNING and lets this revision SUCCEED with the index 
 ``scripts/ensure_goods_chain_indexes.py`` (run in the background by ``start.sh``) retries it.
 
 Revision ID: epp_0001_chunk_coverage_idx
-Revises: oiac_0001_ack_override
+Revises: qca1_0001_amendment_requests
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from app.services import embedding_indexes
 from app.utils import online_index
 
 revision = "epp_0001_chunk_coverage_idx"
-down_revision = "oiac_0001_ack_override"
+down_revision = "qca1_0001_amendment_requests"
 branch_labels = None
 depends_on = None
 
