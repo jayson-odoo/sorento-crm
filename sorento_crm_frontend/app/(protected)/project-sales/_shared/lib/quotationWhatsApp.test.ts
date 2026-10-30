@@ -142,3 +142,13 @@ describe('fix round 2: toll-free numbers and the 0060 prefix', () => {
   });
 });
 
+
+describe('fix round 3: bare 1... numbers', () => {
+  it('never prefills a bare 1... number as a mobile (AC-C5)', () => {
+    expect(pickMobile('12-000 0001')).toBe('');
+  });
+  it('reads a typed 9-digit mobile that starts 13 as a mobile, a 10-digit 1300 line as typed', () => {
+    expect(toWaDigits('13-000 0001')).toBe('60130000001');
+    expect(toWaDigits('1300-00-0001')).toBe('1300000001');
+  });
+});
