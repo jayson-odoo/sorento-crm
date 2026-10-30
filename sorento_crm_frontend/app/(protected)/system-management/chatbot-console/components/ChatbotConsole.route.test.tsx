@@ -169,3 +169,20 @@ describe('ChatbotConsole - route pill (V3)', () => {
     expect(await screen.findByText(words)).toBeInTheDocument();
   });
 });
+
+describe('ChatbotConsole - route popover placement (375 px browser pass)', () => {
+  it('renders the popover outside the thread scroll container so it can flip above the pill', async () => {
+    postConsoleTurn.mockResolvedValue(
+      turn('Stock is 12.', { side: 'chat', reason: 'classified', score: 0.9, model: 'jev-1.14.0', ms: 412 }),
+    );
+    renderConsole();
+    const bubble = await sendAndGetBubble('Stock is 12.');
+    fireEvent.click(pill(bubble, 'Chat'));
+    const reason = await screen.findByText('Reason');
+    const popover = reason.closest('[data-slot="popover-content"]') as HTMLElement;
+    expect(popover).toBeTruthy();
+    expect(document.body).toContainElement(popover);
+    const thread = screen.getByTestId('chatbot-console-thread');
+    expect(thread.contains(popover)).toBe(false);
+  });
+});
