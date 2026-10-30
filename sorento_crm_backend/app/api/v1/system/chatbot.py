@@ -832,7 +832,7 @@ def _actions_by_turn(db, turn_ids: list[str], user_id: str) -> dict[str, list[Ag
                 steps=[
                     {
                         "summary": st.get("summary"), "status": st.get("status") or "proposed",
-                        "error": st.get("error"), "changes": st.get("changes") or [],
+                        "error": agent_actions.scrub_ids(st.get("error")), "changes": st.get("changes") or [],
                     }
                     for st in a.steps or []
                 ],

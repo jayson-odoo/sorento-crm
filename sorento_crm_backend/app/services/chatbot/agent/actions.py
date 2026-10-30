@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -20,6 +21,14 @@ from app.services.chatbot.agent import writes
 from app.services.chatbot.agent.access import AgentRefused, build_context
 
 logger = logging.getLogger(__name__)
+
+_UUID_TEXT = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+
+
+def scrub_ids(text: str | None) -> str | None:
+    """A step error as a person reads it: no id in it."""
+    return None if text is None else " ".join(_UUID_TEXT.sub("", text).split())
+
 
 ACTION_TTL_MINUTES = 10
 MAX_STEPS = 20
@@ -104,7 +113,7 @@ def proposal_lines(action: AgentAction) -> list[str]:
 
 def _out_steps(steps: list[dict]) -> list[dict]:
     return [
-        {"summary": s.get("summary"), "status": s.get("status"), "error": s.get("error"), "changes": s.get("changes") or []}
+        {"summary": s.get("summary"), "status": s.get("status"), "error": scrub_ids(s.get("error")), "changes": s.get("changes") or []}
         for s in steps
     ]
 
@@ -142,7 +151,7 @@ def _reply(status: str, steps: list[dict]) -> str:
     for n, s in enumerate(steps, 1):
         tail = "" if status == "executed" else f" ({marks.get(s['status'], s['status'])})"
         if s.get("error"):
-            tail = f" ({marks.get(s['status'], s['status'])}: {s['error']})"
+            tail = f" ({marks.get(s['status'], s['status'])}: {scrub_ids(s['error'])})"
         lines.append(f"{n}. {s['summary']}{tail}")
     head = {
         "executed": "Done. I made these changes:",
