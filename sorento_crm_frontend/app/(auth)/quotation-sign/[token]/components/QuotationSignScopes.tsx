@@ -20,6 +20,7 @@ import {
   compareMoney,
   formatMyrExact,
   formatQty,
+  multiplyMoney,
 } from '@/app/(protected)/project-sales/_shared/lib/money';
 import type {
   QuotationSignAmendment,
@@ -108,6 +109,27 @@ function SentValue({
   );
 }
 
+/**
+ * What a line comes to once its suggestions were answered: the accepted quantity and price, the
+ * issued value for a side not accepted. Null when nothing on the line was accepted (or the
+ * request is not answered yet), so the issued amount stands.
+ */
+function answeredAmount(
+  line: QuotationSignLine,
+  answers: Answers,
+  amendment: QuotationSignAmendment | null | undefined,
+): string | null {
+  if (amendment?.status !== 'applied' || line.is_rate_only) return null;
+  const accepted = (field: string) => {
+    const row = answers.get(`${line.id}:${field}`);
+    return row && row.decision === 'accepted' ? row.value_to : null;
+  };
+  const quantity = accepted('quantity');
+  const price = accepted('unit_price');
+  if (quantity === null && price === null) return null;
+  return multiplyMoney(quantity ?? line.quantity, price ?? line.unit_price);
+}
+
 function RemovalAnswer({
   row,
   status,
@@ -187,7 +209,9 @@ function ScopeTable({
     // on a phone, with nothing to sort, page or select, so DataGrid's toolbar and pagination
     // would be furniture in the way. `overflow-x-auto` + `min-w-0` keep the wide table scrolling
     // inside its own gutter instead of dragging the whole PAGE sideways at 375px.
-    <div className="min-w-0 overflow-x-auto">
+    // `relative` so the sr-only header label (position: absolute) is clipped by this scroller
+    // instead of escaping it and widening the whole page at 375px.
+    <div data-testid="quotation-sign-scroller" className="relative min-w-0 overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
@@ -260,10 +284,21 @@ function ScopeTable({
                     <td className="px-2 py-2 text-muted-foreground">{text(line.complete_set)}</td>
                     <td className="px-2 py-2 text-right">
                       {amendment && answers.get(`${line.id}:remove`) ? (
-                        <RemovalAnswer
-                          row={answers.get(`${line.id}:remove`)!}
-                          status={amendment.status}
-                        />
+                        <span className="flex flex-col items-end gap-0.5">
+                          {/* An accepted removal leaves no amount; any other keeps the issued one. */}
+                          {!(
+                            amendment.status === 'applied' &&
+                            answers.get(`${line.id}:remove`)!.decision === 'accepted'
+                          ) && <LineAmount line={line} />}
+                          <RemovalAnswer
+                            row={answers.get(`${line.id}:remove`)!}
+                            status={amendment.status}
+                          />
+                        </span>
+                      ) : answeredAmount(line, answers, amendment) !== null ? (
+                        <span className="tabular-nums">
+                          {lineMoney(answeredAmount(line, answers, amendment))}
+                        </span>
                       ) : (
                         <LineAmount line={line} />
                       )}

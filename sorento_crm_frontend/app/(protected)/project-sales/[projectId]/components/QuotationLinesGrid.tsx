@@ -202,6 +202,7 @@ function SuggestionDecision({
       aria-label={`Reject ${words} ${label}`}
       aria-pressed={rejected}
       title="Reject"
+      className="size-6"
       disabled={grid.reviewDisabled}
       onClick={() => (rejected ? decide('pending') : setAsking((open) => !open))}
     >
@@ -211,7 +212,7 @@ function SuggestionDecision({
 
   return (
     <div className={compact ? 'flex flex-col items-center gap-0.5' : 'mt-1'}>
-      <div className={compact ? 'flex flex-col items-center gap-0.5' : 'flex justify-end gap-1'}>
+      <div className={compact ? 'flex flex-col items-center gap-1' : 'flex justify-end gap-1.5'}>
         <Button
           type="button"
           mode="icon"
@@ -220,6 +221,7 @@ function SuggestionDecision({
           aria-label={`Accept ${words} ${label}`}
           aria-pressed={accepted}
           title="Accept"
+          className="size-6"
           disabled={grid.reviewDisabled}
           onClick={() => {
             setAsking(false);
@@ -991,7 +993,8 @@ const FLUSH = 'px-0';
 
 /**
  * The columns, per the approved mock (section 1) and the owner's hand test (UOM beside Qty):
- * the defaults sum to 876px, so the grid fits the 878px scroller at 1280 with the sidebar open. The handle and the row menu only exist while editing (column visibility), so the
+ * the defaults sum to 908px, 852px in view mode, where the 28px handle and the 28px row menu are
+ * hidden. The handle and the row menu only exist while editing (column visibility), so the
  * column order a user saves holds in both views.
  */
 const COLUMNS: ColumnDef<GridRow>[] = [
@@ -1151,6 +1154,22 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     },
   },
 ];
+
+/**
+ * Review mode's widths (QUOTE-CUSTOMER-AMEND): the row-actions column holds a removal's badge over
+ * its Accept / Reject, and Qty holds a decision pair. View mode's ten columns sum to 852px;
+ * Description gives up what these two gain, so review sums to 892px, inside the 893px the grid
+ * shows at 1280 with the sidebar open (measured in the browser pass). Same ids and order, so a
+ * saved column order holds in both modes.
+ */
+const REVIEW_WIDTHS: Record<string, { size: number; minSize: number }> = {
+  row_actions: { size: 56, minSize: 56 },
+  qty: { size: 72, minSize: 64 },
+  description: { size: 156, minSize: 140 },
+};
+const REVIEW_COLUMNS: ColumnDef<GridRow>[] = COLUMNS.map((column) =>
+  column.id && REVIEW_WIDTHS[column.id] ? { ...column, ...REVIEW_WIDTHS[column.id] } : column,
+);
 
 // ------------------------------------------------------------------------------- grid
 
@@ -1555,7 +1574,7 @@ export function QuotationLinesGrid({
     React.useState<VisibilityState>({});
 
   const table = useReactTable({
-    columns: COLUMNS,
+    columns: review ? REVIEW_COLUMNS : COLUMNS,
     data: visibleRows,
     getRowId: (row) => row.key,
     getCoreRowModel: getCoreRowModel(),

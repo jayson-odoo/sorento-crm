@@ -1121,6 +1121,8 @@ export function useQuotationMutations(projectId: string) {
     queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
     queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'list'] });
     if (quotationId) queryClient.invalidateQueries({ queryKey: versionsKey(quotationId) });
+    // A revise can open the draft that blocks a customer's suggestions (QUOTE-CUSTOMER-AMEND).
+    queryClient.invalidateQueries({ queryKey: ['project-quotation-amendment'] });
   };
 
   const create = useMutation({

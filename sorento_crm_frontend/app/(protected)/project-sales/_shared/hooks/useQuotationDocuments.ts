@@ -39,7 +39,12 @@ import {
 const DOCUMENTS_KEY = 'project-quotation-documents';
 const ISSUES_KEY = 'project-quotation-issues';
 const APPROVAL_GRAPH_KEY = ['quotation-approval-graph'];
-const AMENDMENT_KEY = 'project-quotation-amendment';
+/**
+ * The customer's suggestions on a document. Invalidated by every write that can open or close a
+ * version (issue, revise, approval moves, scope revise), because its `blocked_scopes` says
+ * whether a hand-made draft now stands in the way of Apply.
+ */
+export const AMENDMENT_KEY = 'project-quotation-amendment';
 
 export const quotationDocumentsKey = (projectId: string) => [DOCUMENTS_KEY, projectId];
 export const quotationDocumentKey = (projectId: string, documentId: string) => [
@@ -113,6 +118,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     queryClient.invalidateQueries({ queryKey: [ISSUES_KEY, projectId] });
     queryClient.invalidateQueries({ queryKey: ['project-quotations'] });
     queryClient.invalidateQueries({ queryKey: ['project-quotation-versions'] });
+    queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY] });
   };
 
   /**

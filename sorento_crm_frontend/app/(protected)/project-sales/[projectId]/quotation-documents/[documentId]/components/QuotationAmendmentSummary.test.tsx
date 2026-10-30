@@ -63,3 +63,20 @@ describe('QuotationAmendmentSummary with a hand-made draft on a touched scope', 
     expect(screen.getByRole('button', { name: 'Apply decisions' })).toBeEnabled();
   });
 });
+
+describe('QuotationAmendmentSummary blocked before any decision (D2)', () => {
+  it('says why at once, with nothing decided, and Apply is off', () => {
+    renderSummary(
+      request({
+        rows: request().rows.map((row) => ({ ...row, decision: 'pending' as const })),
+        blocked_scopes: [{ quotation_id: 'q1', scope_label: 'Block A' }],
+      }),
+    );
+    expect(
+      screen.getByText('A revision is already open on Block A; issue or discard it first.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply decisions' })).toBeDisabled();
+    // One reason at a time: the "decide the rest" hint gives way to the blocked one.
+    expect(screen.queryByText(/Accept or reject/)).toBeNull();
+  });
+});

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { hasOpenChangeRequest } from '../../../../_shared/lib/quotationDecision';
 import type { QuotationDocument } from '../../../../_shared/services/quotationDocumentService';
+import type { QuotationAmendmentRequest } from '../../../../_shared/types/project.types';
 
 /**
  * The customer has asked for something, said on the document rather than behind a tab.
@@ -35,8 +36,16 @@ export function QuotationChangesRequestedPanel({
   reviseLabel,
   onRevise,
   isRevising = false,
+  amendment = null,
 }: {
   document: QuotationDocument;
+  /**
+   * The customer's suggested changes on the latest issue (QUOTE-CUSTOMER-AMEND). While one is
+   * open, or applied with suggestions, the Lines tab's summary row carries the note and the way
+   * forward, and this strip stands down: its Revise would open a hand-made draft, which is the
+   * one thing that stops those suggestions being applied.
+   */
+  amendment?: QuotationAmendmentRequest | null;
   /** What the click will actually do, e.g. "Revise to v3". */
   reviseLabel: string;
   /** Omitted for a reader, and while an edit session is already open. */
@@ -44,6 +53,11 @@ export function QuotationChangesRequestedPanel({
   isRevising?: boolean;
 }) {
   if (!hasOpenChangeRequest(document)) return null;
+  if (
+    amendment &&
+    (amendment.status === 'open' || (amendment.status === 'applied' && amendment.rows.length > 0))
+  )
+    return null;
 
   const who = document.changes_requested_by_name?.trim() || 'The customer';
   const when = document.changes_requested_at

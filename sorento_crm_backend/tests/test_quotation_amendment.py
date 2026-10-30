@@ -1972,3 +1972,16 @@ def test_wire_the_public_page_carries_no_internal_pricing_or_audit_fields(public
         block = json.dumps(page["amendment_request"])
         for key in hidden:
             assert f'"{key}"' not in block, key
+
+
+def test_d2_wire_the_staff_get_names_a_blocked_scope_before_anything_is_decided(staff):
+    client, db, w = staff
+    _a_suggestion(db, w)
+    quotes.revise(db, quotation=w.scope_a, actor_user_id=w.owner)
+    db.commit()
+
+    body = client.get(f"{_root(w)}/amendment-request").json()
+    assert all(row["decision"] == "pending" for row in body["rows"])
+    assert body["blocked_scopes"] == [
+        {"quotation_id": str(w.scope_a.id), "scope_label": w.scope_a.scope_label}
+    ]
