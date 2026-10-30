@@ -370,10 +370,11 @@ def withdraw(
     if operator_user_id and str(operator_user_id) != str(ctx.user_id):
         ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
     try:
-        writes.run_as_user(
-            db, ctx, lambda user: cancel_form_action(action_id=str(after["pending_action_id"]), current_user=user, db=db),
-            tool_name=step.get("tool"),
-        )
+        def run(user: dict) -> None:
+            writes._module_open(user, db, "sla")  # the cancel route's router guard
+            cancel_form_action(action_id=str(after["pending_action_id"]), current_user=user, db=db)
+
+        writes.run_as_user(db, ctx, run, tool_name=step.get("tool"))
     except writes.HTTPException as exc:
         db.rollback()
         if exc.status_code == 409 and "already been applied" in writes.error_text(exc):

@@ -1452,7 +1452,7 @@ def _in_full(value: Any) -> str:
 
 def _pr_summary(args: dict, before: dict) -> str:
     # Record text is capped (it is shown, not sent); the reason is shown whole (it is sent).
-    detail = ", ".join(x for x in (_quoted(before["title"]) if before["title"] else "", _line(before["value"])) if x)
+    detail = ", ".join(x for x in (_quoted(before["title"]) if before["title"] else "", _word(before["value"]) if before["value"] else "") if x)
     text = f"{'Approve' if args['decision'] == 'approve' else 'Reject'} {before['kind']} {_word(before['number'])}"
     if before["customer"]:
         text += f" for {_word(before['customer'])}"

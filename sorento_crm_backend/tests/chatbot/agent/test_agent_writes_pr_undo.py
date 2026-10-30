@@ -387,3 +387,33 @@ def test_a_disabled_module_closes_the_agents_request_tools(db, monkeypatch):
 
     assert listed.status == "denied"
     assert step is None and res.status == "denied"
+
+
+def test_withdraw_refused_by_the_cancel_rule_reads_as_not_yours(db, sends, monkeypatch):
+    from app.services.chatbot.agent import actions
+    from app.services.error_handler import handle_conflict
+
+    w = make_world(db)
+    _, action = decided(db, w, monkeypatch, parked=True)
+
+    def refuse(**kw):
+        raise handle_conflict("Only the person who started this action can undo it.")
+
+    monkeypatch.setattr("app.api.v1.sla.form_actions.cancel_form_action", refuse)
+    with pytest.raises(actions.ActionRefused) as exc:
+        actions.withdraw(db, w.respond_id, str(action.id), 0)
+
+    assert exc.value.reason == "entry_refused"
+
+
+def test_withdraw_with_the_sla_module_off_is_refused(db, sends, monkeypatch):
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    pr, action = decided(db, w, monkeypatch, parked=True)
+    monkeypatch.setattr("app.modules.runtime.guards.module_blocked", lambda db_, uid, key: key == "sla")
+
+    with pytest.raises(actions.ActionRefused):
+        actions.withdraw(db, w.respond_id, str(action.id), 0)
+
+    assert [a.status for a in form_actions(db, pr.id)] == ["pending"]
