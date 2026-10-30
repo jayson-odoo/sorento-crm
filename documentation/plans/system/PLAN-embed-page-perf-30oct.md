@@ -1,6 +1,6 @@
 # PLAN: Embeddings page perf (EMBED-PAGE-PERF)
 
-Status: in review (size M per crew 30 Oct: one additive index migration, built online)
+Status: in review, merge-ready pending CI (size M per crew 30 Oct: one additive index migration, built online)
 
 ## Problem
 Owner, 30 Oct on prod: System > Configuration > Embeddings, the Records tab sits empty while
@@ -25,4 +25,4 @@ cold 3.3 s, warm 0.3 s.
 Result on the same seed: cold 0.32-0.40 s, warm 0.19 s.
 
 ## Not built (needs crew OK)
-Project documents are never seeded by Start backfill (no `ensure_project_documents`); see the PR crew-note.
+Project documents: `scripts/seed_project_embeddings.py` already backfills existing approved projects (run once on prod); see the PR crew-note.
