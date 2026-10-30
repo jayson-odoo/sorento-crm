@@ -608,6 +608,37 @@ def sign_quotation_document(
 
 
 @router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/whatsapp-opened",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def log_quotation_whatsapp_opened(
+    project_id: str,
+    document_id: str,
+    issue_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """One line on the project feed: the salesperson opened the quotation link in WhatsApp.
+
+    The message and the number never come here; only the fact that the chat was opened.
+    """
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(issue_id, resource="Revision")
+        _editable_project(db, project_id, current_user)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        record = _issue_or_404(db, document, issue_id)
+        svc.record_whatsapp_opened(
+            db, document=document, record=record, actor_id=current_user["id"]
+        )
+        db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/sign-link",
 )
 def create_quotation_sign_link(

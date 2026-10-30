@@ -999,12 +999,12 @@ def set_contact_brands(
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
-    """Replace the contact's accessible brands (empty = clear, every brand) and per brand its
-    item classes (none = every class of that brand)."""
+    """Replace the contact's accessible brands (empty = clear, every brand) and, when given, its
+    allowed item class codes (empty = every class)."""
     try:
         from app.services.contact_brand_scope import set_contact_brands as write
 
-        return write(db, contact_id, payload.brand_ids, payload.brand_class_ids)
+        return write(db, contact_id, payload.brand_ids, payload.allowed_item_class_codes)
     except HTTPException:
         raise
     except Exception as e:
