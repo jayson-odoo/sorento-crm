@@ -534,7 +534,7 @@ export function DataGridListToolbar<TData extends object>({
               */}
               <div
                 data-slot="data-grid-list-toolbar-search"
-                className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 sm:basis-auto sm:flex-initial [&>*]:min-w-0 [&>*]:flex-wrap"
+                className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 sm:basis-auto sm:flex-initial [&>*]:min-w-0 [&>*]:flex-wrap empty:hidden"
               >
                 {searchSlot}
               </div>
@@ -603,7 +603,7 @@ export function DataGridListToolbar<TData extends object>({
           )}
 
           {/* RIGHT cluster - secondary overflow + primary CTA (always present). */}
-          <div className={cn('ml-auto flex shrink-0 flex-wrap items-center gap-2 sm:ml-0', alignActionsEnd && 'ms-auto justify-end')}>
+          <div className={cn('flex shrink-0 flex-wrap items-center gap-2', alignActionsEnd ? 'ms-auto justify-end' : 'ml-auto sm:ml-0')}>
             {secondaryActions.length === 1 && !secondaryActionsAsMenu ? (
               <ActionButton action={secondaryActions[0]} />
             ) : secondaryActions.length >= 1 ? (
