@@ -6,12 +6,12 @@
 Additive; guarded so a re-run is harmless.
 
 Revision ID: agp3_0001_agent_actions
-Revises: agp1_0001_agent_foundation
+Revises: tbc_0001_allowed_item_classes
 """
 from alembic import op
 
 revision = "agp3_0001_agent_actions"
-down_revision = "agp1_0001_agent_foundation"
+down_revision = "tbc_0001_allowed_item_classes"
 branch_labels = None
 depends_on = None
 
