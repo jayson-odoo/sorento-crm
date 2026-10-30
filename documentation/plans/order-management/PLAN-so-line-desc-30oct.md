@@ -1,6 +1,6 @@
 # PLAN: SO line description (SO-LINE-DESC, 30 Oct 2026)
 
-Status: Build (owner answered 30 Oct 16:13; Q2 = per-product tick). Track: full (size L:
+Status: Review (reviewer READY after round 1, security clean, hand test filed 30 Oct; owner answered 16:13, Q2 = per-product tick). Track: full (size L:
 migration, ingest contract field, purchasing-facing email). PR #2000. LEAD pattern.
 
 Card: `documentation/plans/order-management/SO-LINE-DESC-card.md`. Mock:
