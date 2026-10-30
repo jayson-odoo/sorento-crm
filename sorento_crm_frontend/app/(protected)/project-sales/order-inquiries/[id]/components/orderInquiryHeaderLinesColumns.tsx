@@ -824,9 +824,8 @@ export function useOrderInquiryHeaderLinesColumns({
         // the icons is choosing that, and can drag it back out again (owner, 24 Sep).
         // OI-BULK-RESERVE: +28 for the x between the tick and the pen.
         size: canReserve ? 438 : 220,
-        // The pill never shrinks, so a narrow saved width is clamped; the wide reserve layout
-        // (438) stays free to narrow (AC-RS-83c).
-        ...(canReserve ? {} : { minSize: 190 }),
+        // The pill never shrinks, so a narrow saved width is clamped in both layouts.
+        minSize: 190,
         meta: { headerTitle: 'State' },
         cell: ({ row }) => {
           const line = lineOf(row.original);
