@@ -284,7 +284,8 @@ def test_a_cancelled_line_row_that_was_acknowledged_stays_done_without_a_link():
 
 
 @pytest.mark.parametrize("before", [ACK_AWAITING, ACK_ACKNOWLEDGED, ACK_CHANGED])
-def test_a_cancelled_line_row_with_a_live_link_is_not_done_whatever_the_auto_rule_runs(before):
+def test_a_cancelled_line_row_with_a_live_link_is_done_whatever_the_auto_rule_runs(before):
+    # owner ruling 30 Oct 2026 (AC-AC-10e) replaces rule (c): live link or not, it is done
     with blank_session() as db:
         company_id, row = _cancelled_line_row(db, ack_state=before, linked=True)
         svc = ProjectOrderInquiryService(db)
@@ -293,23 +294,23 @@ def test_a_cancelled_line_row_with_a_live_link_is_not_done_whatever_the_auto_rul
             svc.refresh_link_state([row])
             svc.auto_confirm([row.id])
         _reload(db, row)
-        assert row.ack_state in (ACK_AWAITING, ACK_CHANGED), row.ack_state
-        assert row.acknowledged_at is None
+        assert row.ack_state == ACK_ACKNOWLEDGED, row.ack_state
+        assert row.acknowledged_by is None
 
 
-def test_a_manual_confirm_finishes_a_cancelled_line_row_that_holds_a_live_link():
+def test_a_manual_unconfirm_overrides_a_cancelled_line_row_that_holds_a_live_link():
     with blank_session() as db:
         company_id, row = _cancelled_line_row(db, linked=True)
         buyer = _new_user(db)
         svc = ProjectOrderInquiryService(db)
         with company_scope(db, frozenset({company_id})):
             svc.auto_confirm([row.id])
-            assert _reload(db, row).ack_state != ACK_ACKNOWLEDGED
-            svc.acknowledge_rows([row.id], actor_user_id=buyer)
             assert _reload(db, row).ack_state == ACK_ACKNOWLEDGED
+            svc.unacknowledge_rows([row.id], actor_user_id=buyer)
+            assert _reload(db, row).ack_state == ACK_AWAITING
             svc.auto_confirm([row.id])
-        assert _reload(db, row).ack_state == ACK_ACKNOWLEDGED, "the manual Confirm sticks"
-        assert row.ack_override == "confirmed"
+        assert _reload(db, row).ack_state == ACK_AWAITING, "the manual Unconfirm sticks"
+        assert row.ack_override == "unconfirmed"
 
 
 def test_an_open_line_with_a_live_link_is_still_done_the_cancelled_rule_is_not_general():
@@ -340,29 +341,30 @@ def test_ac_ac_10e_the_cancel_flag_leaves_a_linkless_acknowledged_row_done():
         assert row.acknowledged_by is None
 
 
-def test_ac_ac_10e_the_cancel_flag_reopens_a_linked_row_and_a_later_auto_confirm_keeps_it():
+def test_ac_ac_10e_the_cancel_flag_leaves_a_linked_row_done_and_a_later_auto_confirm_keeps_it():
     with blank_session() as db:
         company_id, row = _cancelled_line_row(db, ack_state=ACK_ACKNOWLEDGED, linked=True)
         _flag_cancelled_line(db, company_id, row)
-        assert _reload(db, row).ack_state == ACK_CHANGED
+        assert _reload(db, row).ack_state == ACK_ACKNOWLEDGED
         svc = ProjectOrderInquiryService(db)
         with company_scope(db, frozenset({company_id})):
             svc.refresh_link_state([row])
             svc.auto_confirm([row.id])
-        assert _reload(db, row).ack_state == ACK_CHANGED, "a later link write must not finish it"
+        assert _reload(db, row).ack_state == ACK_ACKNOWLEDGED, "stays done after a link write"
 
 
-def test_ac_ac_10e_a_manual_confirm_finishes_the_flagged_linked_row():
+def test_ac_ac_10e_a_manual_unconfirm_overrides_the_flagged_linked_row():
     with blank_session() as db:
         company_id, row = _cancelled_line_row(db, ack_state=ACK_ACKNOWLEDGED, linked=True)
         _flag_cancelled_line(db, company_id, row)
-        assert _reload(db, row).ack_state == ACK_CHANGED
+        assert _reload(db, row).ack_state == ACK_ACKNOWLEDGED
         buyer = _new_user(db)
         svc = ProjectOrderInquiryService(db)
         with company_scope(db, frozenset({company_id})):
-            svc.acknowledge_rows([row.id], actor_user_id=buyer)
-        assert _reload(db, row).ack_state == ACK_ACKNOWLEDGED
-        assert row.ack_override == "confirmed"
+            svc.unacknowledge_rows([row.id], actor_user_id=buyer)
+            svc.auto_confirm([row.id])
+        assert _reload(db, row).ack_state == ACK_AWAITING
+        assert row.ack_override == "unconfirmed"
 
 
 # =============================================================================================

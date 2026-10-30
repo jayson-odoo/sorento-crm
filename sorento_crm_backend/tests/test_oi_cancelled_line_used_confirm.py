@@ -902,8 +902,8 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
         row_a = _oi_row(
             db, company_a, inquiry_a.id, mirror_a.id, product_a.product_code, "8",
         )
-        # a live link keeps the flag at `changed` under ruling (c), so the scope guard
-        # still tells the flipped row from the untouched one
+        # a live link: under the 30 Oct ruling the row stays done, so the scope guard reads
+        # the call's returned count, not a state flip
         allocation_a = _spo_allocation(db, company_a, product_a, qty=8)
         _link(db, company_a, row_a.id, "8", spo_allocation_id=allocation_a.id,
               document=allocation_a.spo_number)
@@ -933,8 +933,8 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
         db.refresh(row_b)
 
     assert changed == 1, changed
-    assert row_a.ack_state == ACK_CHANGED
-    assert row_a.changed_at is not None
+    assert row_a.ack_state == ACK_ACKNOWLEDGED
+    assert row_a.changed_at is None, "the cancel stamps no changed_at (AC-AC-10e)"
 
     assert row_b.ack_state == ACK_ACKNOWLEDGED
     assert row_b.changed_at is None
@@ -1473,7 +1473,7 @@ def test_ac_cl_18_whole_journey_upload_ack_cancel_read_confirm_read_repush():
             w.db.refresh(row)
             assert row.ack_state == ACK_ACKNOWLEDGED
 
-            # ruling (c): only a row holding a live PO/SPO link is reopened by the cancel
+            # owner ruling 30 Oct (AC-AC-10e): a live link does not reopen the row either
             allocation = _spo_allocation(w.db, row.company_id, w.product, qty=30)
             _link(w.db, row.company_id, row.id, "30", spo_allocation_id=allocation.id,
                   document=allocation.spo_number)
@@ -1487,16 +1487,12 @@ def test_ac_cl_18_whole_journey_upload_ack_cancel_read_confirm_read_repush():
             assert found["line_cancelled"] is True, found
 
             to_confirm = client.get(LIST, params={"ack": "to_confirm", "limit": 200}).json()
-            assert str(row.id) in {r["id"] for r in to_confirm["data"]}, to_confirm["data"]
+            assert str(row.id) not in {r["id"] for r in to_confirm["data"]}, to_confirm["data"]
+            w.db.refresh(row)
+            assert row.ack_state == ACK_ACKNOWLEDGED, "done at the cancel"
 
             buy = client.get(LIST, params={"kind": "buy", "limit": 200}).json()
             assert str(row.id) not in {r["id"] for r in buy["data"]}, buy["data"]
-
-            confirm = client.post(ACK_URL, json={"row_ids": [str(row.id)]})
-            assert confirm.status_code == 200, confirm.text
-            w.db.commit()
-            w.db.refresh(row)
-            assert row.ack_state == ACK_ACKNOWLEDGED
 
             to_confirm_after = client.get(
                 LIST, params={"ack": "to_confirm", "limit": 200}

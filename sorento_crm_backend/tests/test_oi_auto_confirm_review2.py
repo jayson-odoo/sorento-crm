@@ -99,7 +99,7 @@ def _po_linked_row(db, *, ack_state=ACK_ACKNOWLEDGED, actioned=False, redirected
 
 
 @pytest.mark.parametrize("actioned", [True, False], ids=["actioned", "plain"])
-def test_ac_ac_10e_an_acknowledged_covered_buy_row_on_a_cancelled_line_is_changed_and_stays(
+def test_ac_ac_10e_an_acknowledged_covered_buy_row_on_a_cancelled_line_is_done_and_stays(
     actioned,
 ):
     with blank_session() as db:
@@ -111,7 +111,9 @@ def test_ac_ac_10e_an_acknowledged_covered_buy_row_on_a_cancelled_line_is_change
             svc.refresh_link_state([row])
             svc.auto_confirm([row.id])
         after_auto = _reload(db, row).ack_state
-        assert (after_flag, after_auto) == (ACK_CHANGED, ACK_CHANGED), (after_flag, after_auto)
+        assert (after_flag, after_auto) == (ACK_ACKNOWLEDGED, ACK_ACKNOWLEDGED), (
+            after_flag, after_auto,
+        )
 
 
 def test_ac_ac_8_guard_a_used_row_on_a_cancelled_line_stays_done():
