@@ -63,10 +63,6 @@ import {
   updateSeries,
   uploadSeriesProducts,
   upsertPriceFloor,
-  listSamples,
-  createSample,
-  updateSample,
-  deleteSample,
   listPurchaseOrders,
   createPurchaseOrder,
   updatePurchaseOrder,
@@ -126,7 +122,6 @@ import type {
   LeadListParams,
   FloorTargetLevel,
   PriceFloorRuleBody,
-  ProjectSampleBody,
   ProjectPurchaseOrderBody,
   ProjectPurchaseOrderSaveBody,
   PurchaseOrderLineBody,
@@ -503,7 +498,7 @@ export function useTakeoverMutations(projectId: string) {
       toast.success(
         created.kind === 'join'
           ? 'Request sent to the project owner'
-          : 'Interest registered',
+          : 'Registered as secondary lead',
       );
     },
     onError: (error: Error) => toast.error(error.message),
@@ -784,39 +779,6 @@ export function useLeads(params: LeadListParams) {
     queryFn: () => listLeads(params),
   });
 }
-
-/**
- * The project form's Lead picker (D4): a server search over OPEN leads only, capped at
- * 20, by title or lead code. Returned as options rather than raw leads so `ProjectForm`
- * never has to know the field is async-searched vs static.
- */
-export function useFetchLeadOptions() {
-  return React.useCallback(async (query: string) => {
-    const result = await listLeads({ query: query || undefined, outcome: ['open'], limit: 20 });
-    // Title first, code as the second line: no " · " joins (owner rule, 13 Oct). The
-    // customer and assignee ride along so the form fills from the pick without a fetch.
-    return result.data.map(
-      (lead): LeadPick => ({
-        value: lead.id,
-        label: lead.title,
-        description: lead.lead_code,
-        customer_id: lead.customer_id ?? null,
-        customer_name: lead.customer_name ?? null,
-        owner_user_id: lead.owner_user_id ?? null,
-      }),
-    );
-  }, []);
-}
-
-/** A Lead picker option: the pick plus what the register form takes from the lead. */
-export type LeadPick = {
-  value: string;
-  label: string;
-  description?: string;
-  customer_id: string | null;
-  customer_name: string | null;
-  owner_user_id: string | null;
-};
 
 /**
  * Async options for the Developer / Architect / Main contractor pickers: a server-side search
@@ -1598,20 +1560,10 @@ export function usePriceFloorMutations() {
   return { upsert, remove };
 }
 
-// ------------------------------------------------------- samples and customer POs
+// ------------------------------------------------------- customer POs
 
-export const SAMPLES_KEY = 'project-samples';
 export const POS_KEY = 'project-purchase-orders';
-export const samplesKey = (projectId: string) => [SAMPLES_KEY, projectId];
 export const poLinesKey = (poId: string) => [POS_KEY, 'lines', poId];
-
-export function useSamples(projectId: string | undefined) {
-  return useQuery({
-    queryKey: samplesKey(projectId ?? ''),
-    queryFn: () => listSamples(projectId as string),
-    enabled: Boolean(projectId),
-  });
-}
 
 export function usePurchaseOrders(projectId: string | undefined) {
   return useQuery({
@@ -1628,45 +1580,6 @@ export function usePurchaseOrderLines(poId: string | undefined) {
     queryFn: () => listPurchaseOrderLines(poId as string),
     enabled: Boolean(poId),
   });
-}
-
-/**
- * A sample write invalidates the QUOTATIONS too: the version a sample hangs off shows a
- * sample count, so recording one changes a panel the user may be looking at.
- */
-export function useSampleMutations(projectId: string) {
-  const queryClient = useQueryClient();
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: samplesKey(projectId) });
-    queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
-  };
-
-  const create = useMutation({
-    mutationFn: (body: ProjectSampleBody) => createSample(projectId, body),
-    onSuccess: () => {
-      invalidate();
-      toast.success('Sample recorded');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const update = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectSampleBody> }) =>
-      updateSample(id, body),
-    onSuccess: () => {
-      invalidate();
-      toast.success('Sample saved');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  // No success toast: the only caller is a ConfirmDeleteDialog, which raises its own.
-  const remove = useMutation({
-    mutationFn: (sampleId: string) => deleteSample(sampleId),
-    onSuccess: () => invalidate(),
-  });
-
-  return { create, update, remove };
 }
 
 /**

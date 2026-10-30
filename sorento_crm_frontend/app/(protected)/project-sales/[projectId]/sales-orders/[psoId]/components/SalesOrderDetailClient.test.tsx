@@ -282,7 +282,10 @@ describe('SalesOrderDetailClient', () => {
 
     expect(await screen.findByText('This sales order could not be loaded')).toBeInTheDocument();
     expect(screen.getByText('That draft was rebuilt')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Back to orders' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to orders' })).toHaveAttribute(
+      'href',
+      '/project-sales/p1?tab=sales-orders',
+    );
   });
 
   it('shows every line and no gate count when nothing is open', async () => {

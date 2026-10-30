@@ -66,6 +66,7 @@ def _seed_portal(db):
         inquiry_number="ZZT-" + uuid.uuid4().hex[:6],
         contact_id=contact_id,
         space_id="space-1",
+        salesperson_contact_id=contact_id,  # required on submit (FORM-REQUIRED-SERVER)
         portal_draft_at=datetime.utcnow(),
     )
     db.add_all([token, inquiry])

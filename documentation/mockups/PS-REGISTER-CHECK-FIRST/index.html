@@ -1,0 +1,215 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Register check first</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><style>
+:root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--input:#e4e4e7;--primary:#3b82f6;--primary-soft:#eff6ff;--destructive:#dc2626;--success:#15803d;--success-soft:#f0fdf4;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--page:#f7f7f8}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+.doc{max-width:1500px;margin:0 auto;padding:16px}h1{font-size:22px;margin:0 0 4px}.ver{display:inline-block;font-size:12px;background:var(--foreground);color:#fff;border-radius:999px;padding:2px 10px;margin-bottom:8px}
+.nav{position:sticky;top:0;z-index:60;background:var(--page);padding:8px 0;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 40px}section>h2{font-size:16px;margin:0 0 8px}.gcap{font-size:11px;color:var(--muted-fg);margin:0 0 4px;max-width:760px}
+.row{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+.deskwrap{width:calc(1280px*.6);overflow:hidden;border:1px solid var(--border);border-radius:12px;background:#fff}
+.desk{width:1280px;zoom:.6}.desk .screen{display:flex;position:relative}
+.side{width:240px;flex:none;background:#0d0e12;color:#a1a1aa;font-size:13px;padding:18px 14px}.side .logo{color:#fff;font-weight:600;margin-bottom:18px}.side div{padding:6px 8px;border-radius:6px}.side .on{background:#1f2128;color:#fff}
+.phone{width:375px;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:#fff}.phone .screen{position:relative}.phone .side{display:none}
+.main{flex:1;min-width:0;padding:20px 24px;position:relative}.phone .main{padding:14px 16px}
+.pagehead{margin-bottom:12px}.crumb{font-size:12.5px;color:var(--muted-fg)}.t{font-size:22px;font-weight:600}
+.card{border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:14px}.card>.hd{padding:11px 18px;border-bottom:1px solid var(--border);font-weight:600;font-size:13.5px}.card>.bd{padding:14px 18px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}.phone .g2{grid-template-columns:1fr}.fld.full,.fullc{grid-column:1/-1}
+.fld label,.lab{display:block;font-size:12.5px;font-weight:500;margin-bottom:4px}.lblrow{display:flex;justify-content:space-between;align-items:center}.lblrow label{margin:0}.acts{display:flex;gap:6px}
+.sel,.inp{height:34px;border:1px solid var(--input);border-radius:6px;padding:0 10px;font-size:13px;display:flex;align-items:center;justify-content:space-between;background:#fff}.sel::after{content:"\25BE";color:var(--muted-fg);font-size:10px}.ph{color:var(--muted-fg)}
+.ta{border:1px solid var(--input);border-radius:6px;padding:7px 10px;font-size:13px;line-height:1.45;background:#fff;margin-bottom:6px}
+.btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--input);background:#fff;font-size:13px;font-weight:500;white-space:nowrap}.btn.sm{height:26px;font-size:12px;padding:0 8px}.btn.pri{background:var(--primary);color:#fff;border-color:var(--primary)}.btn.ghost{border-color:transparent;background:transparent}.btn.lg{height:36px;padding:0 16px}.btn.ico{padding:0 6px}.btn.ai{color:var(--primary);border-color:#bfdbfe;background:var(--primary-soft)}.ic{width:14px;height:14px}
+.foot{display:flex;justify-content:flex-end;gap:8px;padding:6px 0}
+.menu{position:absolute;left:0;right:0;top:56px;background:#fff;border:1px solid var(--input);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:5;padding:4px}.mi{padding:7px 10px;font-size:13px;border-radius:5px}.mi.dis{color:var(--muted-fg)}.mi.cr{color:var(--primary);font-weight:500;background:var(--primary-soft)}
+.pill{display:inline-block;font-size:11.5px;font-weight:500;border-radius:999px;padding:1px 9px;border:1px solid}.amb{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-line)}.grn{background:var(--success-soft);color:var(--success);border-color:#bbf7d0}.code{display:inline-block;width:92px;white-space:nowrap;color:var(--muted-fg);font-variant-numeric:tabular-nums}.wsteps{display:flex;gap:6px;flex-wrap:wrap;font-size:12px;margin-bottom:12px}.wsteps span{border:1px solid var(--border);border-radius:999px;padding:2px 9px;color:var(--muted-fg)}.wsteps .on{background:var(--primary-soft);color:#1d4ed8;border-color:#bfdbfe}.dz{border:2px dashed var(--input);border-radius:8px;padding:18px;display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:10px}.pv{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:6px;padding:6px 8px;margin-bottom:6px}.pt{width:40px;height:40px;background:var(--muted);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted-fg)}.pt.img{background:#d4d4d8}.pn{flex:1;font-size:13px}.rvt{width:100%;border:1px solid var(--border)}.rvt td{border:0;border-bottom:1px solid var(--border)}.rl{color:var(--muted-fg);width:110px}.rx{text-align:right;width:40px}.clash.one{display:flex;gap:8px;align-items:center;padding:8px 12px;font-size:13px}.ct{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.g2{grid-template-columns:repeat(2,minmax(0,1fr))}.phone .g2{grid-template-columns:minmax(0,1fr)}.g2>*{min-width:0}.card{overflow:visible;min-width:0}.phone .card,.phone .fld,.phone .sel,.phone .inp,.phone .ta,.phone .clash,.phone .crow{width:100%;max-width:100%;min-width:0;box-sizing:border-box}.phone .clash.one{overflow:hidden}.phone .ct{flex:1;min-width:0;display:block}.rf .lab{font-size:12.5px;font-weight:500;margin-bottom:6px}.rfr{display:flex;gap:10px;align-items:flex-start}.ro{flex:1;min-width:0;font-size:13px;color:var(--muted-fg);background:var(--muted);border-radius:6px;padding:6px 10px}.pgrid{width:max-content;min-width:100%}.pgrid td,.pgrid th{white-space:nowrap}.pgrid .tr1{max-width:260px;overflow:hidden;text-overflow:ellipsis}.phone .pgrid td,.phone .pgrid th{border-left:0;border-right:0}.ph2{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.toolbar .sel{width:auto;gap:10px}.pill.rej{background:#fef2f2;color:var(--destructive);border-color:#fecaca}.blu{background:var(--primary-soft);color:#1d4ed8;border-color:#bfdbfe}.gry{background:var(--muted);color:var(--muted-fg);border-color:var(--border)}
+.clash{border:1px solid var(--warning-line);background:var(--warning-soft);border-radius:8px;padding:10px 12px}.ch{font-weight:600;font-size:13px;margin-bottom:6px}.crow{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px}.cmain{flex:1;min-width:200px;font-size:13px}.cbtn{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.lnk{color:var(--primary);font-weight:500;text-decoration:underline}.meta{font-size:12px;color:var(--muted-fg);margin-top:2px}
+.ovl{position:relative;min-height:700px}.scrim{position:absolute;inset:0;background:rgba(9,9,11,.45);z-index:20}
+.dlg{position:absolute;top:72px;left:12px;right:12px;max-width:none!important;background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.3)}.desk .dlg{left:50%;right:auto;transform:translateX(-50%);width:100%;max-width:560px!important;top:120px}.dh{padding:14px 18px;font-weight:600;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:center}.db{padding:14px 18px}.df{padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.src{display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:10px}.thumbph{width:84px;height:56px;background:#e4e4e7;border-radius:6px;font-size:10px;color:var(--muted-fg);display:flex;align-items:flex-end;padding:3px}
+.xr{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border)}.xm{flex:1;min-width:0}.xf{font-size:11.5px;color:var(--muted-fg)}.xv{font-size:13px;font-weight:500}.xa{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.cb{width:16px;height:16px;border:1px solid var(--input);border-radius:4px;flex:none;font-size:11px;text-align:center;line-height:14px}.cb.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.codeline{font-size:13px;color:var(--muted-fg);margin:6px 0 4px;display:flex;gap:8px;align-items:center}.ttlrow{display:flex;gap:8px;align-items:flex-start}.ttlrow .t{font-size:18px;line-height:1.3;flex:1}.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.strip{display:flex;gap:24px;flex-wrap:wrap;margin:10px 0;font-size:13px}.strip span{display:block;font-size:11.5px;color:var(--muted-fg)}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);margin:0 0 14px;font-size:13.5px;overflow:hidden;white-space:nowrap}.tabs span{padding:8px 0;color:var(--muted-fg)}.tabs .on{color:var(--primary);border-bottom:2px solid var(--primary);font-weight:500}
+.kv{display:flex;gap:16px;padding:5px 0;font-size:13px}.kv>span{width:150px;flex:none;color:var(--muted-fg)}.kv.top{align-items:flex-start}.phone .kv{flex-direction:column;gap:2px}.il{flex:1}.ir{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--border)}
+.grp{font-size:11.5px;color:var(--muted-fg);text-transform:uppercase;margin:8px 0 2px}.opt{display:flex;gap:8px;align-items:center;padding:7px 8px;border-radius:6px;font-size:13px}.opt.on{background:var(--primary-soft)}.rd{width:14px;height:14px;border:1px solid var(--input);border-radius:50%}.rd.on{border:4px solid var(--primary)}
+table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}th,td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}th{background:#fafafa}code{font-size:12px}
+.wrap{position:relative}.wrap .menu{top:38px}.mo{padding:7px 10px;border-radius:5px}.mo b{display:block;font-weight:500;font-size:13px}.mo small{display:block;font-size:11.5px;color:var(--muted-fg)}.mo.hl{background:var(--muted)}.mo.empty{color:var(--muted-fg);text-align:center;padding:12px}
+.mock{border:1px solid var(--border);border-radius:12px;background:#fff;overflow:hidden;margin-bottom:24px;max-width:760px}.mock.pg{padding:16px 20px}.mock.dialogbg{background:rgba(9,9,11,.45);padding:28px 16px;min-height:420px}
+.dialog{max-width:512px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.3)}.dialog .db{min-height:150px}
+.ro{min-height:34px;display:flex;align-items:center;font-size:13px;padding:0 2px}.ro.empty{color:var(--muted-fg)}
+.req{color:var(--destructive)}.dis{opacity:.5}.chev{color:var(--muted-fg);font-size:10px}
+.fact{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;font-size:13px;margin-bottom:12px}.fact span{color:var(--muted-fg)}
+.fs{border:1px solid var(--border);border-radius:12px;margin-bottom:10px}.fs .fh{padding:10px 16px;font-weight:600;font-size:13.5px;display:flex;justify-content:space-between}.fs .fh i{font-style:normal;color:var(--muted-fg);font-weight:400}.fs .fb{padding:12px 16px;border-top:1px solid var(--border)}
+.pbox{width:375px;border:1px solid var(--input);border-radius:16px;overflow:hidden;background:#fff;padding:12px 16px}.pbox .g2{grid-template-columns:1fr}
+.dg{width:100%;table-layout:fixed}.dg th{font-size:12px;color:var(--muted-fg);font-weight:500}.dg td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pbox{max-width:100%}.pbox .cmain{min-width:0;overflow:hidden}.pbox .ct{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#reuse td code{word-break:break-all}#reuse table{table-layout:fixed}#reuse th:first-child{width:32%}.wst{margin:4px 0 14px}.wrow{display:flex;align-items:center;max-width:240px}.wc{width:24px;height:24px;border-radius:50%;border:1px solid var(--input);display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted-fg);flex:none;background:#fff}.wc.on{border-color:var(--primary);color:var(--primary);font-weight:600}.wc.done{background:var(--primary);border-color:var(--primary);color:#fff}.wl{flex:1;height:1px;background:var(--input);margin:0 6px}.wl.done{background:var(--primary)}.wcap{font-size:12.5px;font-weight:500;margin-top:6px}.wfoot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 0 2px;border-top:1px solid var(--border);margin-top:6px}.wfoot{flex-wrap:wrap}.wfoot .wr{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}.wfoot.col{flex-direction:column;align-items:stretch}.wfoot.col .btn{justify-content:center}.clash1{display:flex;gap:8px;align-items:center;border:1px solid #fecaca;background:#fef2f2;border-radius:8px;padding:9px 12px;font-size:13px;min-width:0}.clash1 b{color:var(--destructive);white-space:nowrap}.clash1 .ct{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gridw{border:1px solid var(--border);border-radius:8px;overflow:auto}.gridw table{table-layout:fixed;min-width:640px}.gridw td,.gridw th{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pager{display:flex;justify-content:space-between;font-size:12px;color:var(--muted-fg);padding:6px 10px}.tip{position:absolute;right:0;top:36px;white-space:nowrap;background:var(--foreground);color:#fff;font-size:11.5px;border-radius:6px;padding:4px 8px;z-index:3}.acts{position:relative}.pbox .tip{right:auto;left:0}.pbox .wrap{position:relative}</style></head>
+<body><div class="doc">
+<h1>Register: check first</h1><div class="ver">mock v4</div>
+<p class="gcap">v4 (owner note 30 Oct 10:02): after Register the next step is "Upload Requirement"; Spec In stays off until the project has a document; the upload dialog only uploads (section C). v3 (owner notes 30 Oct 09:54): the Check says only Clash or No clash (no similar list); secondary leads are a table; any uploaded document meets the Spec In gate (no Requirements kind). v2 (owner notes 30 Oct 00:32): the register form is a progressive wizard like Create lead (same step strip, Back on the left, Cancel and the forward action bottom right); Check is step 1's own bottom-right action, and Register exists only on step 2 Details after a passing Check; project tabs reordered, Samples tab removed (C0). Card answers A-E all (a). Masked data: roles for people, placeholder township and developer.</p>
+<div class="nav"><a href="#a">A. Register wizard</a><a href="#b">B. Secondary lead</a><a href="#c0">C0. Project tabs</a><a href="#c">C. Requirement before Spec In</a><a href="#reuse">Reuses</a></div>
+
+<section id="a"><h2>A. Register a project (create only)</h2>
+
+<div class="gcap">A1. Step 1 Check. Title, developer, AI extract. The only forward action is Check, bottom right. Back is off on step 1 (as in Create lead).</div>
+<div class="mock pg">
+<div class="pagehead"><div class="crumb">Project Sales / Projects</div><div class="t">Register project</div></div>
+<div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
+<div class="fld full"><div class="lblrow"><label>Project title <span class="req">*</span></label><span class="btn sm ai">AI extract</span></div><div class="inp">100 units DSTH Taman Contoh</div></div>
+<div class="fld full"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
+</div></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Check</span></span></div>
+</div>
+
+<div class="gcap">A2. Check passed, no match: the result shows and the bottom-right action becomes Next.</div>
+<div class="mock pg">
+<div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
+<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">Restroom refurbishment, Sekolah Contoh</div></div>
+<div class="fld full"><label>Developer</label><div class="sel ph">Search developers</div></div>
+<div class="fullc"><span class="pill grn">No clash</span></div>
+</div></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Next</span></span></div>
+</div>
+
+<div class="gcap">A3. A title close to another developer's project, or below the clash threshold: still just "No clash". No similar list.</div>
+<div class="mock pg">
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
+<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">DSTH phase 3 Taman Contoh</div></div>
+<div class="fld full"><label>Developer</label><div class="sel">Developer Lain Sdn. Bhd.</div></div>
+<div class="fullc"><span class="pill grn">No clash</span></div>
+</div></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Next</span></span></div>
+</div>
+
+<div class="gcap">A4. Clash (a blocking match): one line, code and title only. Next never appears; the bottom-right action is the one way on. Editing the title or developer turns it back into Check.</div>
+<div class="mock pg">
+<div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
+<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
+<div class="fld full"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
+<div class="fullc clash1"><b>&#9888; Clash:</b><span class="code">PRJ-000002</span><span class="ct">100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</span></div>
+</div></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Register as secondary lead on PRJ-000002</span></span></div>
+</div>
+
+<div class="gcap">A5. That button opens today's dialog, renamed. A salesperson (submit only) sees code and title, never the owner.</div>
+<div class="mock dialogbg"><div class="dialog"><div class="dh">Register as secondary lead on PRJ-000002</div><div class="db">
+<div class="fact"><span>Project</span><div>100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</div></div>
+<div class="fld"><label>How and when did you find this project? <span class="req">*</span></label><div class="ta" style="height:72px">Dealer at Taman Contoh asked for a quote on 27 Oct; the site office named us for the bathrooms.</div></div>
+</div><div class="df"><span class="btn">Cancel</span><span class="btn pri">Register as secondary lead</span></div></div></div>
+
+<div class="gcap">A6. Check failed or timed out: say so; the action stays Check (try again).</div>
+<div class="mock pg">
+<div class="fs"><div class="fb" style="border-top:0"><div class="g2">
+<div class="fld full"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
+<div class="fld full"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
+<div class="fullc"><span class="pill rej">The check did not finish. Try again.</span></div>
+</div></div></div>
+<div class="wfoot"><span class="btn dis">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Check</span></span></div>
+</div>
+
+<div class="gcap">A7. Step 2 Details (after Next): today's Details and Lead, customer and salesperson fields. Register lives only here. Back returns to Check with everything typed kept.</div>
+<div class="mock pg">
+<div class="wst"><div class="wrow"><span class="wc done">&#10003;</span><span class="wl done"></span><span class="wc on">2</span></div><div class="wcap">Details</div></div>
+<div class="codeline"><b style="color:var(--foreground)">Restroom refurbishment, Sekolah Contoh</b><span class="pill grn">Checked</span></div>
+<div class="fs"><div class="fh">Details</div><div class="fb"><div class="g2">
+<div class="fld"><label>Project type</label><div class="sel">Refurbishment</div></div>
+<div class="fld"><label>Location</label><div class="inp">Johor Bahru</div></div>
+<div class="fld"><label>State</label><div class="sel">Johor</div></div>
+<div class="fld"><label>Estimated sales value (RM)</label><div class="inp">85,000.00</div></div>
+<div class="fld"><label>Architect</label><div class="sel ph">Search architects</div></div>
+<div class="fld"><label>Main contractor</label><div class="sel ph">Search contractors</div></div>
+</div></div></div>
+<div class="fs"><div class="fh">Lead, customer and salesperson</div><div class="fb"><div class="g2">
+<div class="fld"><label>Lead <span class="req">*</span></label><div class="sel">Restroom refurbishment (LEAD-000004)</div></div>
+<div class="fld"><label>Customer</label><div class="ro">KEDAI CONTOH SDN. BHD.</div></div>
+<div class="fld"><label>Salesperson</label><div class="sel">Sales A</div></div>
+</div></div></div>
+<div class="wfoot"><span class="btn">Back</span><span class="wr"><span class="btn">Cancel</span><span class="btn pri">Register project</span></span></div>
+</div>
+
+<div class="gcap">A7b. Same step for a salesperson who submits for approval.</div>
+<div class="mock pg"><div class="wfoot"><span class="btn">Back</span><span class="wr"><span class="btn">Save draft</span><span class="btn pri">Submit for approval</span></span></div></div>
+
+<div class="gcap">A8. 375px: A4 for a salesperson. Footer stacks like Create lead on a phone.</div>
+<div class="pbox">
+<div class="t" style="font-size:18px;margin-bottom:8px">Register project</div>
+<div class="wst"><div class="wrow"><span class="wc on">1</span><span class="wl"></span><span class="wc">2</span></div><div class="wcap">Check</div></div>
+<div class="fld" style="margin-bottom:10px"><label>Project title <span class="req">*</span></label><div class="inp">100 units DSTH Taman Contoh</div></div>
+<div class="fld" style="margin-bottom:10px"><label>Developer</label><div class="sel">Developer Contoh Berhad</div></div>
+<div class="clash1"><b>&#9888; Clash:</b><span class="code">PRJ-000002</span><span class="ct">100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</span></div>
+<div class="wfoot col"><span class="btn pri lg">Register as secondary lead on PRJ-000002</span><span class="btn lg">Cancel</span><span class="btn lg dis">Back</span></div>
+</div>
+</section>
+<section id="b"><h2>B. Where management sees secondary leads</h2>
+<div class="gcap">B1. Project page, Access panel: secondary leads as a table (the panel list, <code>PanelDataGrid</code>), newest first; decided rows keep their status. "Ask to join" requests and their past decisions stay as today.</div>
+<div class="mock pg">
+<div class="card"><div class="hd">Access</div><div class="bd">
+<div class="kv"><span>Owner</span>Sales A</div>
+<div class="grp">Secondary leads</div>
+<div class="gridw"><table><colgroup><col style="width:16%"><col style="width:11%"><col style="width:35%"><col style="width:14%"><col style="width:24%"></colgroup>
+<tr><th>Salesperson</th><th>Date</th><th>How they found it</th><th>Status</th><th></th></tr>
+<tr><td>Sales B</td><td>29 Oct</td><td title="Dealer at Taman Contoh asked for a quote on 27 Oct; the site office named us for the bathrooms.">Dealer at Taman Contoh asked for a quote on 27 Oct; the site office named us for the bathrooms.</td><td><span class="pill amb">Pending</span></td><td><span class="btn sm">Reassign to Sales B</span> <span class="btn sm ghost">Dismiss</span></td></tr>
+<tr><td>Sales C</td><td>12 Oct</td><td title="Architect mentioned it at a site visit.">Architect mentioned it at a site visit.</td><td><span class="pill gry">Dismissed</span></td><td class="meta">by Manager, 14 Oct</td></tr>
+</table><div class="pager"><span>1 - 2 of 2</span><span>Rows per page 10</span></div></div>
+</div></div>
+</div>
+<div class="gcap">B2. Notification and email subject (both read the same line).</div>
+<div class="mock pg"><div class="crow"><div class="cmain"><b>Sales B registered as secondary lead on PRJ-000002</b><div class="meta">Sales B registered as secondary lead on PRJ-000002: 100 UNITS DSTH &amp; 8 UNITS DS SEMI-S AT TAMAN CONTOH</div></div></div></div>
+</section>
+
+<section id="c0"><h2>C0. Project tabs (owner note 4)</h2>
+<div class="gcap">Today: Overview, Stakeholders, Tasks, Quotations, Sample requests, Samples, Sponsorships, Orders, Activity, Documents.</div>
+<div class="mock pg"><div class="tabs"><span class="on">Overview</span><span>Stakeholders</span><span>Tasks</span><span>Quotations</span><span>Sample requests</span><span style="text-decoration:line-through">Samples</span><span>Sponsorships</span><span>Orders</span><span>Activity</span><span>Documents</span></div></div>
+<div class="gcap">v2: your order first, in your words; Samples gone; Orders split into PO and SO; the three tabs your list did not name keep their place at the end (question V1).</div>
+<div class="mock pg"><div class="tabs" style="flex-wrap:wrap;white-space:normal;row-gap:0"><span class="on">Overview</span><span>Documents</span><span>Quotation</span><span>Samples Request</span><span>Sponsorship Form</span><span>PO</span><span>SO</span><span style="color:var(--muted-fg)">Stakeholders</span><span style="color:var(--muted-fg)">Tasks</span><span style="color:var(--muted-fg)">Activity</span></div>
+<table style="margin-top:8px"><tr><th style="width:22%">Tab</th><th>Shows</th></tr>
+<tr><td>PO</td><td>The project's purchase orders (today's top half of Orders); a PO's schedule and sales orders stay on the PO's own page.</td></tr>
+<tr><td>SO</td><td>Every sales order of the project (question V2; today's Orders shows only the ones without a PO).</td></tr>
+<tr><td>Samples (removed)</td><td>The samples table and its Record a sample dialog are used nowhere else. Old links to it open Samples Request. Stored sample rows are not deleted.</td></tr></table></div>
+<div class="gcap">Asked again, not yet answered (tabs only; recommendation first): V1 Stakeholders, Tasks, Activity: (a) keep them after SO / (b) remove them. V2 SO tab: (a) all the project's sales orders / (b) only those without a PO, as today. V3 labels: (a) your words as written (Quotation, Samples Request, Sponsorship Form, PO, SO) / (b) today's (Quotations, Sample requests, Sponsorships). Rec (a) for all three.</div>
+</section>
+
+<section id="c"><h2>C. Requirement before Spec In</h2>
+<div class="gcap">C1. Just registered, no document yet. The header's one call to action is Upload Requirement; Spec In shows but is off, its reason on hover / tap.</div>
+<div class="mock pg">
+<div class="ph2"><div><div class="crumb">Project Sales / Projects / PPF26XXXXX</div><div class="t">Showroom fit-out, Bandar Contoh</div><div class="codeline"><span class="pill blu">Registered</span></div></div><div class="acts"><span class="btn ico">&#9881;</span><span class="wrap" style="display:inline-block"><span class="btn dis" title="Upload a requirement first">Spec In</span><span class="tip">Upload a requirement first</span></span><span class="btn pri">Upload Requirement</span></div></div>
+<div class="tabs"><span class="on">Overview</span><span>Documents</span><span>Quotation</span><span>Samples Request</span><span>Sponsorship Form</span><span>PO</span><span>SO</span></div>
+<div style="height:40px"></div>
+</div>
+<div class="gcap">C1b. 375px of C1.</div>
+<div class="pbox">
+<div class="crumb">Project Sales / Projects / PPF26XXXXX</div><div class="t" style="font-size:18px">Showroom fit-out, Bandar Contoh</div><div class="codeline"><span class="pill blu">Registered</span></div>
+<div class="acts" style="flex-wrap:wrap;margin:8px 0 4px"><span class="btn ico">&#9881;</span><span class="wrap" style="display:inline-block"><span class="btn dis" title="Upload a requirement first">Spec In</span><span class="tip">Upload a requirement first</span></span><span class="btn pri">Upload Requirement</span></div>
+<div style="height:30px"></div>
+</div>
+<div class="gcap">C2. Upload Requirement opens a small upload dialog. It only uploads: any file, filed as a project document. No stage move here.</div>
+<div class="mock dialogbg"><div class="dialog"><div class="dh">Upload requirement</div><div class="db">
+<div class="dz"><span class="btn sm">Choose files</span><span class="meta">or drop them here &middot; PDF, photo or screenshot, up to 50 MB</span></div>
+<div class="pv"><div class="pt">PDF</div><div class="pn">Bandar Contoh showroom brief.pdf<div class="meta">2.1 MB</div></div><span class="btn sm ghost">Remove</span></div>
+</div><div class="df"><span class="btn">Cancel</span><span class="btn pri">Upload</span></div></div></div>
+<div class="gcap">C3. After the upload: Spec In is the call to action again (today's button); Upload Requirement leaves the header. The file is in Documents.</div>
+<div class="mock pg">
+<div class="ph2"><div><div class="crumb">Project Sales / Projects / PPF26XXXXX</div><div class="t">Showroom fit-out, Bandar Contoh</div><div class="codeline"><span class="pill blu">Registered</span></div></div><div class="acts"><span class="btn ico">&#9881;</span><span class="btn pri">Spec In</span></div></div>
+<div class="tabs"><span>Overview</span><span class="on">Documents</span><span>Quotation</span><span>Samples Request</span><span>Sponsorship Form</span><span>PO</span><span>SO</span></div>
+<div class="gridw"><table><colgroup><col style="width:50%"><col style="width:25%"><col style="width:25%"></colgroup><tr><th>File</th><th>Uploaded by</th><th>Date</th></tr>
+<tr><td title="Bandar Contoh showroom brief.pdf">Bandar Contoh showroom brief.pdf</td><td>Sales A</td><td>30 Oct</td></tr></table></div>
+</div>
+<div class="gcap">C4. Any file uploaded from the Documents tab counts the same. If a move is sent while there is no document (another tab, the API), the server refuses it and the page shows its sentence as an error toast; the project stays in Registered.</div>
+<div class="mock pg"><span class="pill rej">Upload the requirements document before moving this project to Spec In.</span></div>
+</section>
+
+<section id="reuse"><h2>Reuses</h2><table><tr><th>Element</th><th>Existing</th></tr>
+<tr><td>Step strip (A1-A7)</td><td><code>sorento_crm_frontend/components/common/WizardSteps.tsx</code></td></tr>
+<tr><td>Form sections</td><td><code>sorento_crm_frontend/components/common/FormSection.tsx</code>, open state <code>sorento_crm_frontend/app/(protected)/project-sales/_shared/components/ProjectForm.tsx:192-196</code></td></tr>
+<tr><td>Title, developer, AI extract, Check</td><td><code>ProjectForm.tsx:428-548</code> (Check <code>:454-464</code>, AI extract <code>:465-468</code>)</td></tr>
+<tr><td>Clash line (blocking rows only)</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/pipeline/components/ClashWarningPanel.tsx:39-59</code> (its blocking branch)</td></tr>
+<tr><td>Step 2 sections</td><td><code>ProjectForm.tsx:550-719</code> (Details), <code>:721-805</code> (Lead, customer and salesperson)</td></tr>
+<tr><td>Secondary lead button + dialog</td><td><code>ProjectForm.tsx:811-814</code>, <code>RegisterInterestDialog</code> <code>:883-956</code></td></tr>
+<tr><td>Secondary leads table (B1)</td><td><code>sorento_crm_frontend/components/common/PanelDataGrid.tsx</code> (the system list inside a detail tab; a raw <code>components/ui/table</code> is barred by <code>components/ui/raw-table.inventory.test.ts</code>); status pill <code>Badge</code></td></tr><tr><td>Access panel</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectAccessPanel.tsx:97-141,209,259-300</code>; <code>ReassignProjectDialog.tsx</code></td></tr>
+<tr><td>Notification line</td><td><code>sorento_crm_backend/app/services/project_notify_service.py:207-209</code></td></tr>
+<tr><td>Stage button</td><td><code>[projectId]/components/ProjectStatusAction.tsx:122-140</code>, header <code>ProjectDetailClient.tsx:388-392</code></td></tr>
+<tr><td>Header actions (C1, C3)</td><td><code>[projectId]/components/ProjectStatusAction.tsx:122-140</code> (Spec In, disabled state), header <code>ProjectDetailClient.tsx:388-392</code>; document count from the Documents tab query <code>['project-documents', id]</code> (<code>ProjectDocumentsPanel.tsx:61-69</code>), shared cache, so an upload flips the header</td></tr><tr><td>Drop zone + upload (C2)</td><td><code>ProjectDocumentsPanel</code> <code>UploadDialog</code> (<code>FileDropzone</code>, 50 MB) and its upload service <code>_shared/services/projectDocumentService.ts:72-125</code> (Project Document type, unchanged)</td></tr>
+<tr><td>Dialog shell</td><td><code>sorento_crm_frontend/components/ui/dialog</code></td></tr></table></section>
+</div></body></html>

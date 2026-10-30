@@ -60,6 +60,19 @@ def _seed_complaint(db):
         contact_id=contact_id,
         space_id="space-1",
         portal_draft_at=datetime.utcnow(),
+        # Every field the portal form requires on submit (FORM-REQUIRED-SERVER).
+        delivery_order_number="DO-ZZT-1",
+        customer_name="ZZT customer",
+        contact_person="ZZT Ali",
+        contact_number="0123456789",
+        customer_type="dealer",
+        complaint_date=datetime.utcnow().date(),
+        within_warranty="yes",
+        defects_discovered="upon_delivery",
+        complaint_type="product_defect",
+        defect_description="Chipped",
+        salesperson="ZZT Aminah",
+        product_code="ZZT-TILE-1",
     )
     db.add_all([contact, token, complaint])
     db.commit()

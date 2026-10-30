@@ -408,7 +408,10 @@ describe('SalesOrderWorksheetClient', () => {
     renderWorksheet();
 
     expect(await screen.findByText('This worksheet has no lines')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to the orders' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to the orders' })).toHaveAttribute(
+      'href',
+      '/project-sales/p1?tab=sales-orders',
+    );
     // Every other block still renders: an empty document is still a document.
     expect(screen.getByText('Header fields')).toBeInTheDocument();
     expect(screen.getByText('No blocking findings.')).toBeInTheDocument();
