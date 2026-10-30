@@ -38,7 +38,7 @@ export function QuotationSignLinkDialog({
     <Dialog open={Boolean(url)} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Copy the link</DialogTitle>
+          <DialogTitle>Counter-sign link</DialogTitle>
           <DialogDescription>
             Send this to the customer so they can read and accept the quotation.
           </DialogDescription>
