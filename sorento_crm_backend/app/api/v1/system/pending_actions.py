@@ -288,13 +288,19 @@ def _assert_entity_visible(
 
         if get_customer_in_scope(db, entity_id) is None:
             raise handle_not_found("Customer", entity_id)
+    elif action_key == "price_tag_request_tag.delete":
+        from app.services.record_actions import price_tag_request_tag_in_scope
+
+        validate_uuid_path(entity_id, resource="Tag")
+        if price_tag_request_tag_in_scope(db, entity_id) is None:
+            raise handle_not_found("Tag", entity_id)
     model = _PARK_SCOPED_MODELS.get(action_key)
     if model is not None:
         # Every other key on a company-owned record: read it under the caller's scope, so
         # nobody starts a countdown on (or learns of) another company's record by id.
-        validate_uuid_path(entity_id, resource=model.__name__)
+        validate_uuid_path(entity_id, resource="Record")
         if db.query(model).filter(model.id == entity_id).first() is None:
-            raise handle_not_found(model.__name__, entity_id)
+            raise handle_not_found("Record", entity_id)
 
 
 # The company-owned record each action key is parked against (`entity_id` is its id).
@@ -362,6 +368,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "my_request_attachment.unlink",
     "new_product_application.delete",
     "new_product_application_attachment.unlink",
+    "price_tag_request_tag.delete",
     "product_alternative.unlink",
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
@@ -380,7 +387,9 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "flyer_code_adoption.undo",
     # The record lives in a table with no company column (global settings, users and
     # roles, the chatbot, SLA, tickets, workflows, specs, SCM reference data), or in
-    # the ideation service.
+    # the ideation service. Some (an SO line attachment, a shipment line photo) hang off
+    # a company-owned parent: parking on another company's id is not refused here, but
+    # the commit runs under the requester's stored scope and finds nothing.
     "access_agent.delete",
     "automation.delete",
     "chatbot_domain.delete",
@@ -403,7 +412,6 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "market_topic.delete",
     "message_snippet.delete",
     "notification.delete",
-    "price_tag_request_tag.delete",
     "product_combo.delete",
     "product_combo_part.delete",
     "reorder_policy.delete",

@@ -147,3 +147,12 @@ describe('PromotionsList - Resubmit gate', () => {
     expect(hasPermission).toHaveBeenCalledWith('marketing.promotions.edit');
   });
 });
+
+describe('PromotionsList - bulk Delete gate', () => {
+  it('asks for the slug the bulk delete route requires', async () => {
+    // DELETE /marketing/promotions/bulk answers 403 without it.
+    renderList();
+    await waitFor(() => expect(hasPermission).toHaveBeenCalled());
+    expect(hasPermission).toHaveBeenCalledWith('marketing.promotions.delete');
+  });
+});

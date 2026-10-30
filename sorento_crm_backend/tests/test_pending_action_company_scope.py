@@ -232,7 +232,7 @@ def test_a_parked_delete_still_commits_for_the_company_that_asked(api):
     assert db.query(Brand).filter(Brand.id == brand_id).first() is None
 
 
-def test_the_sweep_will_not_delete_another_companys_record(api):
+def test_parking_on_another_companys_record_is_refused_and_the_sweep_leaves_it(api):
     """The click checked a permission SLUG, never a company. A company-A user naming
     a company-B id is now refused at park time (the record is read under the
     caller's scope first), so there is no action for the sweep to carry out."""
