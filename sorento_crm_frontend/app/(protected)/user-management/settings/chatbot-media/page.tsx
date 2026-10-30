@@ -441,7 +441,7 @@ export default function ChatbotMediaSettingsPage() {
         <CardContent className="grid grid-cols-1 gap-5 py-5 sm:grid-cols-2">
           <div className="flex items-center justify-between gap-4 sm:col-span-2">
             <Label htmlFor="router-enabled" className="cursor-pointer font-normal">
-              Route staff messages to the bot or the agent
+              Console Auto mode: route each message to the bot or the agent
             </Label>
             <Switch
               id="router-enabled"

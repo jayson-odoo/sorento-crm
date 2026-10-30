@@ -90,7 +90,7 @@ export function cancelAgentAction(contactRespondId: string, actionId: string) {
   return decideAction(contactRespondId, actionId, 'cancel');
 }
 
-async function refusalReason(response: Response): Promise<string | null> {
+export async function refusalReason(response: Response): Promise<string | null> {
   try {
     const body = await response.clone().json();
     const detail = body?.detail;
