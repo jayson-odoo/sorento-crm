@@ -180,13 +180,25 @@ def compute_done(
     return done
 
 
+_PRESS_COLUMNS = ("acknowledged_by", "acknowledged_at", "ack_override")
+
+
 class _Facts:
-    __slots__ = _ROW_COLUMNS + ("ack_override",)
+    __slots__ = _ROW_COLUMNS + _PRESS_COLUMNS + ("person_confirmed",)
 
     def __init__(self, mapping):
-        for name in _ROW_COLUMNS:
+        for name in _ROW_COLUMNS + _PRESS_COLUMNS:
             setattr(self, name, mapping[name])
-        self.ack_override = None  # the backfill runs before any press exists
+        # A row a PERSON confirmed before this shipped (acknowledged, by a user) is a manual
+        # Confirm: it stays Done (AC-AC-17c) and is written as one below.
+        self.person_confirmed = bool(
+            self.ack_state == ACK_ACKNOWLEDGED
+            and self.acknowledged_by is not None
+            and self.ack_override is None
+            and self.state != INQUIRY_CANCELLED
+        )
+        if self.person_confirmed:
+            self.ack_override = "confirmed"
         self.id = str(self.id)
         if self.bundled_with_row_id:
             self.bundled_with_row_id = str(self.bundled_with_row_id)
@@ -195,13 +207,13 @@ class _Facts:
 def backfill_auto_confirm(connection) -> int:
     """Set every live, not-rejected row to the state the rule gives it: done -> `acknowledged`
     (by NULL, at now) when not already; not done and `acknowledged` -> `awaiting`, stamps
-    cleared; `awaiting` / `changed` not done stay. `ack_override` is never written (a press
-    before this shipped is not a manual decision). Idempotent. Returns rows changed."""
+    cleared; `awaiting` / `changed` not done stay. A row a person confirmed before this shipped keeps
+    Done and is written as a manual Confirm (`ack_override`). Idempotent. Returns rows changed."""
     rows_t = OrderInquiryRow.__table__
 
     rows: Dict[str, _Facts] = {}
     for mapping in connection.execute(
-        sa.select(*[rows_t.c[name] for name in _ROW_COLUMNS])
+        sa.select(*[rows_t.c[name] for name in _ROW_COLUMNS + _PRESS_COLUMNS])
     ).mappings():
         facts = _Facts(mapping)
         rows[facts.id] = facts
@@ -228,7 +240,23 @@ def backfill_auto_confirm(connection) -> int:
         and r.ack_state == ACK_ACKNOWLEDGED
         and not done[r.id]
     ]
+    to_override = [
+        {"b_id": r.id, "b_by": r.acknowledged_by, "b_at": r.acknowledged_at}
+        for r in rows.values()
+        if r.person_confirmed
+    ]
     now = datetime.utcnow()
+    if to_override:
+        connection.execute(
+            sa.update(rows_t)
+            .where(rows_t.c.id == sa.bindparam("b_id"))
+            .values(
+                ack_override="confirmed",
+                ack_override_by=sa.bindparam("b_by"),
+                ack_override_at=sa.bindparam("b_at"),
+            ),
+            to_override,
+        )
     if to_done:
         connection.execute(
             sa.update(rows_t)
@@ -243,4 +271,4 @@ def backfill_auto_confirm(connection) -> int:
             .values(ack_state=ACK_AWAITING, acknowledged_by=None, acknowledged_at=None),
             to_awaiting,
         )
-    return len(to_done) + len(to_awaiting)
+    return len(to_done) + len(to_awaiting) + len(to_override)
