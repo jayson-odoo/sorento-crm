@@ -23,13 +23,13 @@ A row the sheet import CREATED, when all of these hold, read off `import_job_row
   (tab, SO, item, qty, delivery date), and that row sits on a line whose qty and date are
   the sheet's;
 * this row's line has neither the sheet's qty nor the sheet's date;
-* a sheet row read at or after this one names this line exactly (same SO and item, the
-  line's date AND the line's qty) and was skipped `already_raised`.
+* a sheet row from the same or a later upload names this line exactly (same SO and item,
+  the line's date AND the line's qty) and was skipped `already_raised`.
 
 WHAT IT WRITES (`--apply`)
 ---------------------------
 Only a `raised` row with no links, no reserve request rows and no bundle, still carrying
-the sheet's qty and date. Its qty and date become the skipped row's (which are the line's):
+the sheet's qty and date, and the only live row on its line. Its qty and date become the skipped row's (which are the line's):
 exactly the row that skipped instruction would have raised. `previous_qty` /
 `previous_delivery_date` keep the Was, the note names both sheet rows, an acknowledged row
 goes back to `changed` so purchasing re-reads it, and each row gets one audit EVENT. Every
@@ -75,6 +75,7 @@ from app.models.project_so import (  # noqa: E402
     ProjectSalesOrderLine,
 )
 from app.services.audit_service import log_audit  # noqa: E402
+from app.services.project_order_inquiry_service import ProjectOrderInquiryService  # noqa: E402
 
 _JOB_TYPE = "order_inquiry_import"
 _EVENT = "OI_ROW_LEGACY_DUP_RESTATED"
@@ -177,6 +178,18 @@ def _rows_on_lines(db: Session, row_ids, inquiry_id: Optional[str]) -> dict:
 def _verdict(db: Session, row: OrderInquiryRow, sheet_qty, sheet_date, restate_qty, restate_date) -> str:
     if row.state == INQUIRY_CANCELLED:
         return "cancelled"
+    # Restating adds the line's FULL qty; with another live row on the line (a second copy,
+    # or a real instruction) that would ask for the line twice (review of PR #1996).
+    if (
+        db.query(OrderInquiryRow.id)
+        .filter(
+            OrderInquiryRow.so_line_id == row.so_line_id,
+            OrderInquiryRow.id != row.id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .first()
+    ):
+        return "line carries other rows"
     if row.qty == restate_qty and row.delivery_date == restate_date:
         return "already restated"
     if db.query(OrderInquiryLink.id).filter(OrderInquiryLink.row_id == row.id).first():
@@ -218,7 +231,10 @@ def find_squatters(db: Session, *, inquiry_id: Optional[str] = None) -> List[Squ
             if line.qty == m[6] or line.delivery_date == m[7]:
                 continue
             twin = next(
-                ((t, trow) for t, trow in on_sheet_line if trow.so_line_id != row.so_line_id),
+                (
+                    (t, trow) for t, trow in on_sheet_line
+                    if t[1] != m[1] and trow.so_line_id != row.so_line_id
+                ),
                 None,
             )
             if twin is not None:
@@ -226,8 +242,8 @@ def find_squatters(db: Session, *, inquiry_id: Optional[str] = None) -> List[Squ
     if not pending:
         return []
 
-    # the blocked instruction: a sheet row read at or after the duplicate, naming its
-    # line exactly, skipped because the duplicate already sat there
+    # the blocked instruction: a sheet row from the same or a later upload, naming the
+    # duplicate's line exactly, skipped because a row already sat there
     docs = sorted({m[4] for m, *_ in pending})
     skipped = sorted(
         _imported(db, "already_raised", _text(ImportJobRow, "doc_no").in_(docs)).all(),
@@ -279,11 +295,11 @@ def _restate(db: Session, hit: Squatter, now: datetime) -> None:
     if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
         row.ack_state = ACK_CHANGED
         row.changed_at = now
-    row.note = (
-        f"{row.note or ''}; Restated {now.date().isoformat()}: was {old['qty']} on "
+    row.note = "; ".join(filter(None, [row.note, (
+        f"Restated {now.date().isoformat()}: was {old['qty']} on "
         f"{old['delivery_date']}, a second copy of {hit.sheet} row {hit.sibling_sheet_row} "
         f"put on this line; now this line's own {hit.skipped_sheet} row {hit.skipped_sheet_row}"
-    )
+    )]))
     log_audit(
         db,
         "project_order_inquiry_rows",
@@ -335,6 +351,13 @@ def run(
     now = datetime.utcnow()
     for hit in to_restate:
         _restate(db, hit, now)
+    db.flush()
+    # The one writer of state and bundles re-derives them, as settle-in-place does
+    # (`project_order_inquiry_service.py:3001`): a companion sized off this row's old qty
+    # follows the new one. An unlinked raised row stays raised.
+    ProjectOrderInquiryService(db).refresh_link_state(
+        [db.get(OrderInquiryRow, hit.row_id) for hit in to_restate]
+    )
     db.flush()
     result["restated"] = len(to_restate)
     return result
