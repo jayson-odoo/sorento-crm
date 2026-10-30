@@ -121,7 +121,7 @@ export interface StagedReserveEntry {
  * chip behind "+N" - never lost to a de-dup by document number. */
 /** The status pill keeps the text's own case ("To order \u00b7 220 left"), so no capitalize. */
 const ACK_PILL_BASE =
-  'inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold';
+  'inline-block max-w-full truncate rounded-full px-2 py-0.5 text-xs font-semibold';
 
 function ackPalette(row: Parameters<typeof ackStateOf>[0]): string {
   const state = ackStateOf(row);
@@ -842,7 +842,7 @@ export function useOrderInquiryHeaderLinesColumns({
               // OI-AUTO-CONFIRM (approved mock): a live line reads its status, not the supply pill.
               <span
                 className={`${ACK_PILL_BASE} ${statusPillClass(ackPalette(primary))}`}
-                title={ackOverrideHint(primary) ?? undefined}
+                title={[ackStatusText(primary), ackOverrideHint(primary)].filter(Boolean).join('. ')}
               >
                 {ackStatusText(primary)}
               </span>
@@ -879,7 +879,7 @@ export function useOrderInquiryHeaderLinesColumns({
           if (!canReserve || line.liveRows.length === 0) {
             return (
               <div className="flex min-w-0 items-center gap-1">
-                <span className="shrink-0">{pill}</span>
+                <span className="min-w-0">{pill}</span>
                 {history}
                 {coreLineId ? (
                   <SoLineAttachmentsButton
@@ -894,7 +894,7 @@ export function useOrderInquiryHeaderLinesColumns({
           }
           return (
             <div className="flex min-w-0 items-center gap-1">
-              <span className="shrink-0">{pill}</span>
+              <span className="min-w-0">{pill}</span>
               {history}
               {coreLineId ? (
                 <SoLineAttachmentsButton
