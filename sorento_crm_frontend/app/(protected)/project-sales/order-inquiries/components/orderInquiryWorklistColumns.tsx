@@ -80,9 +80,12 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
   // A refused row's links are gone; there is nothing to mark as anything.
   if (state === 'rejected') return null;
   if (state === 'acknowledged') {
-    const who = row.acknowledged_by_name ?? 'Purchasing';
     const when = row.acknowledged_at ? ` ${formatDateInMalaysia(row.acknowledged_at)}` : '';
-    const label = `Confirmed by ${who}${when}`;
+    // A row the system marked done has nobody's name on it.
+    const label =
+      row.acknowledged_by_name || row.ack_override
+        ? `Confirmed by ${row.acknowledged_by_name ?? 'Purchasing'}${when}`
+        : `Done${when}`;
     return (
       <span data-testid="link-confirmed-mark" title={label} aria-label={label}>
         <CircleCheck className="size-3.5 shrink-0 text-emerald-600" aria-hidden />
@@ -236,6 +239,26 @@ export function documentChipsOf(
   return [...chips.filter((chip) => !chip.deadReason), ...chips.filter((chip) => chip.deadReason)];
 }
 
+/** OI-AUTO-CONFIRM (AC-AC-10b): a CS reserve is not a document link; the PO cell prints it as
+ * plain text, "Reserved @ BRW 3" (the row's `reserve_label` and `reserved_qty`). */
+export function reserveTextOfRows(
+  rows: { reserve_label?: string | null; reserved_qty?: string | null }[],
+): string | null {
+  const labelled = rows.filter((row) => row.reserve_label && Number(row.reserved_qty ?? 0) > 0);
+  if (labelled.length === 0) return null;
+  return labelled
+    .map((row) => `${row.reserve_label as string} ${Number(row.reserved_qty ?? 0)}`)
+    .join(', ');
+}
+
+export function ReserveText({ text }: { text: string }) {
+  return (
+    <span className="block truncate text-xs font-medium tabular-nums text-muted-foreground" title={text}>
+      {text}
+    </span>
+  );
+}
+
 export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
   return documentChipsOf(
     (row.links ?? []).map((link) => ({ row, link })),
@@ -368,7 +391,20 @@ function LinkSuggestionDialog({
  * The dialog mounts only once opened, so a page of a hundred rows does not carry two
  * hundred dialogs - the same pattern the info icon used.
  */
+/** The PO cell: the row's purchase documents and, beside them, a reserve ("Reserved @ BRW 3"). */
 function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
+  const reserve = kind === 'po' ? reserveTextOfRows([row]) : null;
+  if (!reserve) return <PurchaseDocumentsCell row={row} kind={kind} />;
+  if (documentsOf(row, kind).length === 0) return <ReserveText text={reserve} />;
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <PurchaseDocumentsCell row={row} kind={kind} />
+      <ReserveText text={reserve} />
+    </div>
+  );
+}
+
+function PurchaseDocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
   const [open, setOpen] = React.useState(false);
   const [suggestionOpen, setSuggestionOpen] = React.useState(false);
   const numbers = documentsOf(row, kind);
@@ -1242,6 +1278,8 @@ export function useOrderInquiryWorklistColumns({
             }
           }
           if ((row.original.links ?? []).length === 0) {
+            const reserveOnly = reserveTextOfRows([row.original]);
+            if (reserveOnly) return <ReserveText text={reserveOnly} />;
             // Nothing in either book can cover this row (S5, AC-D4): a plain dash, the
             // same "no explanation in the UI" rule every other blank cell here follows -
             // "Not found (new order)" read as a caption nobody asked for. Nothing is

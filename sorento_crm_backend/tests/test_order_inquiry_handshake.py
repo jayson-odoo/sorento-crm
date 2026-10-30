@@ -1164,7 +1164,9 @@ def test_a_carried_lines_own_link_survives_reconfirm_with_no_false_changed_stamp
     world.db.commit()
     world.db.refresh(first_row)
     assert first_row.state == "placed", "the seeded real link has to cover it whole"
-    assert first_row.ack_state == ACK_AWAITING
+    # OI-AUTO-CONFIRM: fully covered by a live link, so the system marks it Done by NULL.
+    assert first_row.ack_state == ACK_ACKNOWLEDGED
+    assert first_row.acknowledged_by is None
     born_note = first_row.note
     (first_link,) = _links_of(world, first_row)
     first_link_id = str(first_link.id)
@@ -1178,9 +1180,8 @@ def test_a_carried_lines_own_link_survives_reconfirm_with_no_false_changed_stamp
 
     carried = _order_row(world, fixture["first"]["line"])
     assert str(carried.id) == str(first_row.id), "the same row, not a fresh one"
-    assert carried.ack_state == ACK_AWAITING
+    assert carried.ack_state == ACK_ACKNOWLEDGED, "still covered, so still Done"
     assert carried.acknowledged_by is None
-    assert carried.acknowledged_at is None
     assert carried.changed_at is None, "nothing about this line changed"
     assert carried.previous_qty is None, "a no-op settle writes no Was/Now"
     assert carried.previous_delivery_date is None
@@ -1229,7 +1230,7 @@ def test_a_rejected_line_re_decided_raises_a_fresh_acknowledged_row(api):
 # ---------------------------------------------------------------------------
 
 
-def test_the_plan_counts_a_row_only_once_purchasing_confirms_it(api):
+def test_the_plan_counts_a_to_order_row_until_purchasing_marks_it_done(api):
     """AC-H10, RESTORED by `PLAN-oi-confirm-per-so.md` S1 (owner ruling 17 Sep 2026): a
     row is born AWAITING again, so the plan's own committed SELECT does not see it until
     purchasing's Confirm press takes it on - the "instant count, no confirm step" this
@@ -1241,13 +1242,14 @@ def test_the_plan_counts_a_row_only_once_purchasing_confirms_it(api):
     row = fixture["row"]
     assert row.ack_state == ACK_AWAITING
 
-    assert _project_committed(world, planned=True) == Decimal("0")
+    # OI-AUTO-CONFIRM Q4 = b: To order is what the plan buys against; Done adds nothing.
+    assert _project_committed(world, planned=True) == Decimal("10")
     assert _project_committed(world, planned=False) >= Decimal("10")
 
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
     world.db.commit()
-    assert _project_committed(world, planned=True) == Decimal("10")
+    assert _project_committed(world, planned=True) == Decimal("0")
 
 
 def test_a_rejected_row_is_not_something_to_buy_against(api):

@@ -678,7 +678,7 @@ def test_a3_a_superseded_decision_now_contributes_to_the_sheet(db, chain):
 #
 # Predicate (captain ruling 23 Sep after review, superseding the plan's first cut):
 # verb IN ('ORDER', 'ORDER_BACK'), state IN ('raised', 'partly_linked'), not redirected,
-# ack_state IN ('acknowledged', 'changed'), owed (qty minus linked minus bundled) > 0,
+# ack_state IN ('awaiting', 'changed'), owed (qty minus linked minus bundled) > 0,
 # printed qty = owed. Product read off the CORE line (`sol.product_id`), not the project
 # line's own copy. SO in `so_numbers` when the list is non-``None``, `delivery_date`
 # inside `[horizon_start, horizon]` when given (a NULL delivery date is always included).
@@ -698,7 +698,7 @@ def _scope_row(db, *, product, qty, delivery=None, verb=None, state=None, ack_st
     neither - so this stays a smaller chain than `test_channel_read_model._confirmed_leg`,
     not a copy of it; only the reconciled core line is shared machinery now."""
     from app.models.project_so import (  # noqa: PLC0415
-        ACK_ACKNOWLEDGED,
+        ACK_AWAITING,
         INQUIRY_RAISED,
         IV_ORDER,
         OrderInquiry,
@@ -755,7 +755,7 @@ def _scope_row(db, *, product, qty, delivery=None, verb=None, state=None, ack_st
     row = OrderInquiryRow(
         id=_u(), order_inquiry_id=inquiry.id, so_line_id=psl.id, qty=qty,
         verb=verb or IV_ORDER, state=state or INQUIRY_RAISED,
-        ack_state=ack_state or ACK_ACKNOWLEDGED, delivery_date=delivery,
+        ack_state=ack_state or ACK_AWAITING, delivery_date=delivery,
         supply_decision_id=None, redirected_to_pool=redirected,
     )
     db.add(row)
@@ -911,15 +911,15 @@ def test_a3_actioned_row_is_absent(db, chain):
     assert str(f["product"].id) not in out or out[str(f["product"].id)]["months"] == {}
 
 
-def test_a3_awaiting_ack_row_is_absent(db, chain):
-    """The reorder plan buys only against ACKNOWLEDGED/CHANGED rows (`PLANNED_ACK_
-    STATES`) - an AWAITING row is a count on the plan page, never something purchasing
-    may buy against yet, so it is absent."""
-    from app.models.project_so import ACK_AWAITING  # noqa: PLC0415
+def test_a3_done_ack_row_is_absent(db, chain):
+    """The reorder plan buys only against To order rows (`PLANNED_ACK_STATES`: AWAITING /
+    CHANGED, OI-AUTO-CONFIRM Q4 b) - a Done (ACKNOWLEDGED) row has nothing left to order,
+    so it is absent."""
+    from app.models.project_so import ACK_ACKNOWLEDGED  # noqa: PLC0415
 
     f = chain
     _scope_row(db, product=f["product"], qty=10, delivery=date(2026, 10, 1),
-              ack_state=ACK_AWAITING)
+              ack_state=ACK_ACKNOWLEDGED)
 
     out = svc._project_inquiry_map(db, [f["product"].id])
 

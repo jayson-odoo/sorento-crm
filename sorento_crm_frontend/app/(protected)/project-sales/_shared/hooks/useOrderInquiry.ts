@@ -862,9 +862,9 @@ export function useOrderInquiryHandshake() {
       // partial outcome - a batch that skipped something is not silently the same as
       // one that did not.
       if (result.skipped > 0) {
-        toast.warning(`${rows} back to To confirm, ${result.skipped} skipped`);
+        toast.warning(`${rows} back to To order, ${result.skipped} skipped`);
       } else {
-        toast.success(`${rows} back to To confirm`);
+        toast.success(`${rows} back to To order`);
       }
     },
     onError: (error: Error) => toast.error(error.message),

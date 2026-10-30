@@ -211,13 +211,13 @@ def test_ac_cf_3_change_on_an_acknowledged_row_marks_changed_not_reacknowledged(
     assert Decimal(str(row.previous_qty)) == Decimal("10")
 
 
-def test_ac_cf_1b_borrow_asker_row_is_born_awaiting(api):
+def test_ac_cf_1b_borrow_asker_row_is_done_on_its_po_link(api):
     """AC-CF-1b (review round). `ProjectSupplyService._place_supply_borrows` writes a
     step-3 supply borrow's own asker-side ORDER_BACK row with `supply_decision_id` set
     - board-origin exactly like any other decision-linked row - so S1's rule covers it
-    too: born `ACK_AWAITING`, no acknowledge stamps, even though the cascade may have
-    already linked it to the donor document (AC-CF-4). Built the same way
-    `tests/test_project_supply_borrow_row_ack.py::test_a_supply_borrow_row_is_born_awaiting`
+    too. OI-AUTO-CONFIRM: the cascade links it to the donor document (AC-CF-4), that PO
+    link covers the row (AC-AC-1), so the system makes it `ACK_ACKNOWLEDGED`, by NULL. Built the same way
+    `tests/test_project_supply_borrow_row_ack.py::test_a_supply_borrow_row_is_done_on_its_po_link`
     exercises the method directly, since this file's own fixtures never reach step 3."""
     _client, world = api
     fixture = _raise_one_row(api, qty="10")
@@ -260,9 +260,9 @@ def test_ac_cf_1b_borrow_asker_row_is_born_awaiting(api):
     )
     assert row is not None, "the borrow-asker row was not written at all"
     assert row.supply_decision_id is not None, "board-origin, so S1's rule applies"
-    assert row.ack_state == ACK_AWAITING
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-1: its PO link covers the whole row
     assert row.acknowledged_by is None
-    assert row.acknowledged_at is None
+    assert row.acknowledged_at is not None
 
 
 # ---------------------------------------------------------------------------
@@ -643,24 +643,23 @@ def test_ac_cf_12_summary_to_confirm_counts_a_freshly_raised_row(api):
 # ---------------------------------------------------------------------------
 
 
-def test_ac_cf_14_demand_excludes_awaiting_includes_confirmed_and_changed(api):
-    """AC-CF-14. `demand.horizon_committed_select_sql()`'s `PLANNED_ACK_STATES =
-    ("acknowledged", "changed")` already excludes anything else - the SQL predicate is
-    right today. What is wrong is the BORN state: a fresh raise is `acknowledged`
-    already (G4), so it is already inside the plan's demand the instant CS confirms,
-    the opposite of what this test pins. Red on the first assertion."""
+def test_ac_cf_14_demand_counts_to_order_rows_and_not_done_ones(api):
+    """AC-CF-14 as amended by OI-AUTO-CONFIRM Q4 = b (AC-AC-22). `PLANNED_ACK_STATES =
+    ("awaiting", "changed")`: the plan counts a To order row for its uncovered qty, and a
+    Done row (here a manual Confirm with no link) adds nothing. A CS amendment clears the
+    manual decision, so the changed row counts again."""
     _client, world = api
     fixture = _raise_one_row(api, qty="10")
     row = fixture["row"]
 
-    assert _project_committed(world, planned=True) == Decimal("0"), (
-        "a freshly raised row must not be planning demand until purchasing confirms it"
+    assert _project_committed(world, planned=True) == Decimal("10"), (
+        "a freshly raised row is To order, so the plan counts it"
     )
 
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
     world.db.commit()
-    assert _project_committed(world, planned=True) == Decimal("10")
+    assert _project_committed(world, planned=True) == Decimal("0"), "Done adds nothing"
 
     _settle(world, fixture, qty="15")
     assert _project_committed(world, planned=True) == Decimal("15"), (

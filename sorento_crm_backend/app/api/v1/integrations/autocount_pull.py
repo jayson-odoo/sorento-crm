@@ -45,6 +45,7 @@ from app.services.foundryx_autocount_client import FoundryxPullError
 from app.services.job_service import active_company_id_from_scope
 from app.services.user_service import UserPermissionService
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 # Module-gated at the mount in app/api/v1/__init__.py (require_any_module_enabled("product",
 # "inventory") - the router covers both entities and neither gates the other).
@@ -366,6 +367,7 @@ def get_pull_rows(
 
 
 @router.get("/{job_id}/download.xlsx")
+@heavy
 def download_pull(
     job_id: str,
     current_user: dict = Depends(get_current_user),

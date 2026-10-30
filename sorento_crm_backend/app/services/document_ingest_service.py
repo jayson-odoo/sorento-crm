@@ -1699,6 +1699,20 @@ class DocumentIngestService(MasterRefResolver):
                 self.db.delete(row)
                 counts["deleted"] += 1
         self.db.flush()
+        if spec.entity_type == "purchase_orders":
+            from app.services.project_order_inquiry_service import (
+                auto_confirm_rows_on_po_lines,
+            )
+
+            auto_confirm_rows_on_po_lines(
+                self.db,
+                [
+                    line_id
+                    for (line_id,) in self.db.query(spec.line_model.id).filter(
+                        getattr(spec.line_model, spec.line_fk) == str(header.id)
+                    )
+                ],
+            )
         # AC-RL-07: a push carrying no lines at all (header-only, failed detail) releases
         # nothing; the sweep above still runs as before.
         if removed_lines and (line_values or dropped_refs):

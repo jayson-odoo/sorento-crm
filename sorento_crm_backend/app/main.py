@@ -62,6 +62,7 @@ from app.middleware.relative_redirect_middleware import (
     RelativeRedirectMiddleware,
     SlashTolerantPathMiddleware,
 )
+from app.utils.heavy_work import HeavyRouteLimit
 
 # Configure logging
 logging.basicConfig(
@@ -106,6 +107,10 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# BACKEND-MEM-2 S2: routes marked @heavy (exports, reports, upload parsers) take turns, one at a time per worker by
+# default. Added first, so innermost: it sees the path after SlashTolerantPathMiddleware. See app/utils/heavy_work.py.
+app.add_middleware(HeavyRouteLimit, routes=app.router.routes)
 
 # Add logging middleware
 app.add_middleware(LoggingMiddleware)

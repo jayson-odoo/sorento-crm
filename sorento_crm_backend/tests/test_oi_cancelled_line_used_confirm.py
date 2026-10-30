@@ -468,10 +468,9 @@ def _cancel_via_so_edit(db, so) -> None:
 
 
 @pytest.mark.parametrize("row_state", [INQUIRY_RAISED, INQUIRY_PLACED, INQUIRY_ACTIONED])
-def test_so_edit_cancel_flags_an_acknowledged_row_changed(db, row_state):
+def test_so_edit_cancel_leaves_an_acknowledged_row_done(db, row_state):
     """AC-CL-6 (write site 1): a live row (raised/placed/actioned) that was
-    `acknowledged` becomes `changed` with `changed_at` set the moment its line is
-    cancelled by the sales order edit."""
+    `acknowledged` stays done the moment its line is cancelled by the sales order edit."""
     so, _product, line, row = _so_edit_chain(db, row_state=row_state, row_ack=ACK_ACKNOWLEDGED)
 
     _cancel_via_so_edit(db, so)
@@ -480,16 +479,22 @@ def test_so_edit_cancel_flags_an_acknowledged_row_changed(db, row_state):
     line = db.get(SalesOrderLine, line.id)
     row = db.get(OrderInquiryRow, row.id)
     assert line.line_status == "cancelled"
-    assert row.ack_state == ACK_CHANGED
-    assert row.changed_at is not None
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
 @pytest.mark.parametrize(
-    "row_ack,pre_changed_at",
-    [(ACK_AWAITING, None), (ACK_CHANGED, datetime(2026, 1, 1)), (ACK_REJECTED, None)],
+    "row_ack,pre_changed_at,expected",
+    [
+        (ACK_AWAITING, None, ACK_ACKNOWLEDGED),
+        (ACK_CHANGED, datetime(2026, 1, 1), ACK_ACKNOWLEDGED),
+        (ACK_REJECTED, None, ACK_REJECTED),
+    ],
 )
-def test_so_edit_cancel_leaves_non_acknowledged_rows_untouched(db, row_ack, pre_changed_at):
-    """AC-CL-6: a row already `awaiting`, `changed` or `rejected` is left as it is."""
+def test_so_edit_cancel_makes_awaiting_and_changed_rows_done_and_leaves_rejected(
+    db, row_ack, pre_changed_at, expected
+):
+    """AC-CL-6 / AC-AC-10e (owner 30 Oct): every live row on the cancelled line is done;
+    a `rejected` row is left as it is. No changed stamp either way."""
     so, _product, _line, row = _so_edit_chain(
         db, row_state=INQUIRY_RAISED, row_ack=row_ack, changed_at=pre_changed_at
     )
@@ -498,7 +503,7 @@ def test_so_edit_cancel_leaves_non_acknowledged_rows_untouched(db, row_ack, pre_
 
     db.expire_all()
     row = db.get(OrderInquiryRow, row.id)
-    assert row.ack_state == row_ack
+    assert row.ack_state == expected
     assert row.changed_at == pre_changed_at
 
 
@@ -538,9 +543,8 @@ def test_so_edit_repeated_cancel_does_not_reflag_a_reconfirmed_row(db):
     line = db.get(SalesOrderLine, line.id)
     row = db.get(OrderInquiryRow, row.id)
     assert line.line_status == "cancelled"
-    assert row.ack_state == ACK_CHANGED
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
     first_changed_at = row.changed_at
-    assert first_changed_at is not None
 
     # purchasing re-confirms
     row.ack_state = ACK_ACKNOWLEDGED
@@ -609,9 +613,9 @@ def _create_then_prep_push(env):
 
 
 @pytest.mark.parametrize("row_state", [INQUIRY_RAISED, INQUIRY_PLACED, INQUIRY_ACTIONED])
-def test_autocount_cancel_push_flags_an_acknowledged_row_changed(env, row_state):
-    """AC-CL-6 (write site 2): a cancelled AutoCount push flags a live, acknowledged
-    row `changed` with `changed_at` set, same as the sales order edit."""
+def test_autocount_cancel_push_leaves_an_acknowledged_row_done(env, row_state):
+    """AC-CL-6 (write site 2): a cancelled AutoCount push leaves a live, acknowledged
+    row done, same as the sales order edit."""
     record, header, line, product_id = _create_then_prep_push(env)
     _mirror, row = _mirror_for_ingest_line(
         env, header["id"], line["id"], product_id, row_state=row_state, row_ack=ACK_ACKNOWLEDGED,
@@ -624,17 +628,21 @@ def test_autocount_cancel_push_flags_an_acknowledged_row_changed(env, row_state)
     row = env.db.get(OrderInquiryRow, row.id)
     updated_core_line = env.so_lines(header["id"])[0]
     assert updated_core_line["line_status"] == "cancelled"
-    assert row.ack_state == ACK_CHANGED
-    assert row.changed_at is not None
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
 @pytest.mark.parametrize(
-    "row_ack,pre_changed_at",
-    [(ACK_AWAITING, None), (ACK_CHANGED, datetime(2026, 1, 1)), (ACK_REJECTED, None)],
+    "row_ack,pre_changed_at,expected",
+    [
+        (ACK_AWAITING, None, ACK_ACKNOWLEDGED),
+        (ACK_CHANGED, datetime(2026, 1, 1), ACK_ACKNOWLEDGED),
+        (ACK_REJECTED, None, ACK_REJECTED),
+    ],
 )
-def test_autocount_cancel_push_leaves_non_acknowledged_rows_untouched(env, row_ack, pre_changed_at):
-    """AC-CL-6 (write site 2): a row already `awaiting`, `changed` or `rejected` is
-    left as it is by the push too."""
+def test_autocount_cancel_push_makes_awaiting_and_changed_rows_done_and_leaves_rejected(
+    env, row_ack, pre_changed_at, expected
+):
+    """AC-CL-6 / AC-AC-10e (owner 30 Oct), write site 2: same as the sales order edit."""
     record, header, line, product_id = _create_then_prep_push(env)
     _mirror, row = _mirror_for_ingest_line(
         env, header["id"], line["id"], product_id, row_ack=row_ack, changed_at=pre_changed_at,
@@ -644,7 +652,7 @@ def test_autocount_cancel_push_leaves_non_acknowledged_rows_untouched(env, row_a
 
     env.db.expire_all()
     row = env.db.get(OrderInquiryRow, row.id)
-    assert row.ack_state == row_ack
+    assert row.ack_state == expected
     assert row.changed_at == pre_changed_at
 
 
@@ -684,9 +692,8 @@ def test_autocount_repeated_cancel_push_does_not_reflag_a_reconfirmed_row(env):
     env.post(INGEST_SO, [dict(record, status="cancelled")])
     env.db.expire_all()
     row = env.db.get(OrderInquiryRow, row.id)
-    assert row.ack_state == ACK_CHANGED
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
     first_changed_at = row.changed_at
-    assert first_changed_at is not None
 
     row.ack_state = ACK_ACKNOWLEDGED
     env.db.flush()
@@ -750,8 +757,7 @@ def test_autocount_leftover_referenced_line_flags_an_acknowledged_row_changed(en
         # retired like Transfer to Cancel SO, not flagged (supersedes the C1 flag here).
         assert row.state == INQUIRY_CANCELLED
     else:
-        assert row.ack_state == ACK_CHANGED
-        assert row.changed_at is not None
+        assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
 def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(env):
@@ -828,8 +834,7 @@ def test_autocount_deletion_flags_an_acknowledged_row_changed(env, row_state):
     row = env.db.get(OrderInquiryRow, row.id)
     updated_line = env.so_lines(header["id"])[0]
     assert updated_line["line_status"] == "cancelled"
-    assert row.ack_state == ACK_CHANGED
-    assert row.changed_at is not None
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
 def test_autocount_repeated_deletion_does_not_reflag_a_reconfirmed_row(env):
@@ -908,6 +913,11 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
         row_a = _oi_row(
             db, company_a, inquiry_a.id, mirror_a.id, product_a.product_code, "8",
         )
+        # a live link: under the 30 Oct ruling the row stays done, so the scope guard reads
+        # the call's returned count, not a state flip
+        allocation_a = _spo_allocation(db, company_a, product_a, qty=8)
+        _link(db, company_a, row_a.id, "8", spo_allocation_id=allocation_a.id,
+              document=allocation_a.spo_number)
 
         product_b = _product(db, f"ZZT-CLX-B-{_uid()[:6]}", f"{MARKER} company b")
         _so_b, core_line_b, _pso_b, mirror_b = _line_chain(
@@ -917,6 +927,9 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
         row_b = _oi_row(
             db, company_b, inquiry_b.id, mirror_b.id, product_b.product_code, "6",
         )
+        # the real precondition of the flag: both core lines are cancelled before it runs
+        core_line_a.line_status = "cancelled"
+        core_line_b.line_status = "cancelled"
         db.commit()
 
         from app.services.project_order_inquiry_service import (
@@ -931,8 +944,8 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
         db.refresh(row_b)
 
     assert changed == 1, changed
-    assert row_a.ack_state == ACK_CHANGED
-    assert row_a.changed_at is not None
+    assert row_a.ack_state == ACK_ACKNOWLEDGED
+    assert row_a.changed_at is None, "the cancel stamps no changed_at (AC-AC-10e)"
 
     assert row_b.ack_state == ACK_ACKNOWLEDGED
     assert row_b.changed_at is None
@@ -954,9 +967,9 @@ def test_flag_rows_for_cancelled_lines_is_scoped_to_the_calling_company():
 # proves the importer's ordinary birth state.
 
 
-def test_ordinary_sheet_row_is_still_born_acknowledged():
-    """AC-CL-8 (control): a row onto an OPEN line is still born acknowledged, exactly
-    as the importer's own G4 migration behaviour."""
+def test_ordinary_sheet_row_is_born_to_order():
+    """AC-CL-8 (control), amended by OI-AUTO-CONFIRM: a row onto an OPEN line with no
+    link is To order (awaiting) - Done is now earned by cover, not granted at birth."""
     with mig_world() as w:
         order = w.order()
         w.line(order, qty_ordered="50")
@@ -969,7 +982,7 @@ def test_ordinary_sheet_row_is_still_born_acknowledged():
 
         assert result["rows_raised"] == 1, result
         row = w.one_row()
-        assert row.ack_state == ACK_ACKNOWLEDGED
+        assert row.ack_state == ACK_AWAITING
 
 
 def test_used_row_from_sheet_rebuild_is_born_awaiting():
@@ -996,7 +1009,7 @@ def test_used_row_from_sheet_rebuild_is_born_awaiting():
         rows = w.rows()
         used = next(r for r in rows if str(r.id) != str(fresh.id))
         assert used.redirected_to_pool is True
-        assert used.ack_state == ACK_AWAITING
+        assert used.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: done at birth
 
 
 # ---------------------------------------------------------------------------
@@ -1401,7 +1414,7 @@ def test_settle_flags_an_acknowledged_row_used_changed(api):
     (`_redirect_row_if_received`) sets that row `changed` with `changed_at` when it was
     `acknowledged`."""
     _world_, row, _fixture = _used_row_fixture(api, ack_first=True)
-    assert row.ack_state == ACK_CHANGED
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: a used row is done at birth
     assert row.changed_at is not None
 
 
@@ -1409,7 +1422,7 @@ def test_settle_leaves_an_awaiting_row_used_awaiting(api):
     """AC-CL-12 (control): a row nobody has acknowledged yet stays `awaiting` when it
     becomes used - there is nothing new for purchasing to be told."""
     _world_, row, _fixture = _used_row_fixture(api, ack_first=False)
-    assert row.ack_state == ACK_AWAITING
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: a used row is done at birth
     assert row.changed_at is None
 
 
@@ -1418,7 +1431,7 @@ def test_confirming_a_used_row_moves_no_link_and_draws_no_new_one(api):
     are IDENTICAL before and after, and no new link lands on it even with ample open
     supply for its own product sitting there - a used row is never linkable."""
     world_, row, fixture = _used_row_fixture(api, ack_first=False)
-    assert row.ack_state == ACK_AWAITING  # already "To confirm" today
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-8: a used row is done at birth
     before_links = sorted(str(l.id) for l in _links_of(world_, row))
 
     _open_po_line(world_, qty=999, product=world_.product)
@@ -1458,11 +1471,9 @@ def test_ac_cl_18_whole_journey_upload_ack_cancel_read_confirm_read_repush():
         assert result["rows_raised"] == 1, result
         w.db.commit()
         row = w.one_row()
-        # The sheet importer's own birth state (AC-CL-8's control): already
-        # acknowledged, a migration of instructions purchasing has been working from.
-        # "Acknowledge" still runs here as the journey's own step - tolerant of an
-        # already-acknowledged row, a genuine no-op (AC-H2's own guard).
-        assert row.ack_state == ACK_ACKNOWLEDGED
+        # OI-AUTO-CONFIRM: an uncovered sheet row is born To order; the journey's
+        # "acknowledge" step is purchasing's manual Confirm.
+        assert row.ack_state == ACK_AWAITING
 
         buyer_id = _user(w.db, f"{MARKER} journey buyer")
         client, originals = _client(w.db, buyer_id, [VIEW, ACKNOWLEDGE])
@@ -1473,6 +1484,12 @@ def test_ac_cl_18_whole_journey_upload_ack_cancel_read_confirm_read_repush():
             w.db.refresh(row)
             assert row.ack_state == ACK_ACKNOWLEDGED
 
+            # owner ruling 30 Oct (AC-AC-10e): a live link does not reopen the row either
+            allocation = _spo_allocation(w.db, row.company_id, w.product, qty=30)
+            _link(w.db, row.company_id, row.id, "30", spo_allocation_id=allocation.id,
+                  document=allocation.spo_number)
+            w.db.commit()
+
             SalesOrderService(w.db).update(order.id, SalesOrderUpdate(lines=[]), user_id=None)
             w.db.expire_all()
 
@@ -1481,16 +1498,12 @@ def test_ac_cl_18_whole_journey_upload_ack_cancel_read_confirm_read_repush():
             assert found["line_cancelled"] is True, found
 
             to_confirm = client.get(LIST, params={"ack": "to_confirm", "limit": 200}).json()
-            assert str(row.id) in {r["id"] for r in to_confirm["data"]}, to_confirm["data"]
+            assert str(row.id) not in {r["id"] for r in to_confirm["data"]}, to_confirm["data"]
+            w.db.refresh(row)
+            assert row.ack_state == ACK_ACKNOWLEDGED, "done at the cancel"
 
             buy = client.get(LIST, params={"kind": "buy", "limit": 200}).json()
             assert str(row.id) not in {r["id"] for r in buy["data"]}, buy["data"]
-
-            confirm = client.post(ACK_URL, json={"row_ids": [str(row.id)]})
-            assert confirm.status_code == 200, confirm.text
-            w.db.commit()
-            w.db.refresh(row)
-            assert row.ack_state == ACK_ACKNOWLEDGED
 
             to_confirm_after = client.get(
                 LIST, params={"ack": "to_confirm", "limit": 200}

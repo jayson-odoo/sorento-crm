@@ -957,8 +957,14 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
         try:
             from app.database import SessionLocal
 
-            with SessionLocal() as s:
-                loaded = lookup_word_store.load_lookup_vectors(s, model)
+            # BACKEND-MEM-2: the whole store only on a process's first warm; a later one (a new row text in a turn)
+            # reads just the texts this process lacks instead of every vector again.
+            with _store_lock:
+                have_model = any(k[0] == model for k in _cache)
+                lacking = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache] if have_model else None
+            if lacking is None or lacking:
+                with SessionLocal() as s:
+                    loaded = lookup_word_store.load_lookup_vectors(s, model, lacking)
         except Exception:  # noqa: BLE001 - advisory: the warm embeds what it cannot load
             logger.warning("lookup warm: stored vectors not loaded", exc_info=True)
         with _store_lock:

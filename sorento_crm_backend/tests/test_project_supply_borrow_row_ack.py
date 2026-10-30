@@ -11,10 +11,10 @@ reach through the UI, which no longer offers Confirm at all). That gap is what t
 
 `PLAN-oi-confirm-per-so.md` S1 reverses that rule: this row carries a
 `supply_decision_id`, so it is board-origin the same as any other decision-linked row, and
-it is now born `ACK_AWAITING` like every other one -
-`tests/scm/test_oi_confirm_per_so.py::test_ac_cf_1b_borrow_asker_row_is_born_awaiting` is
-the AC-CF-1b pin for that. This file's own assertion is updated to match rather than left
-to lie, the same way `test_order_inquiry_handshake.py` was updated for S1.
+it is born without a stamp like every other one. OI-AUTO-CONFIRM: the borrow places a PO
+link that covers the row (AC-AC-1), so the system marks it `ACK_ACKNOWLEDGED`, by NULL -
+`tests/scm/test_oi_confirm_per_so.py::test_ac_cf_1b_borrow_asker_row_is_done_on_its_po_link`
+is the AC-CF-1b pin.
 
 Exercises `_place_supply_borrows` directly rather than through the full ladder v7.1 step-3
 HTTP confirm (real supply-key validation needs a real inbound document with a live
@@ -28,6 +28,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
     ACK_AWAITING,
     IV_ORDER_BACK,
     OrderInquiry,
@@ -42,7 +43,7 @@ from .test_planning_changes import _core_line, _core_so, _project_line, _project
 __all__ = ["api", "world"]  # re-exported fixtures; keeps linters from calling them unused
 
 
-def test_a_supply_borrow_row_is_born_awaiting(api):
+def test_a_supply_borrow_row_is_done_on_its_po_link(api):
     _client, world = api
     fixture = _raise_one_row(api, qty="10")
     order = fixture["order"]
@@ -85,9 +86,9 @@ def test_a_supply_borrow_row_is_born_awaiting(api):
         .first()
     )
     assert row is not None, "the borrow-asker row was not written at all"
-    assert row.ack_state == ACK_AWAITING
+    assert row.ack_state == ACK_ACKNOWLEDGED  # AC-AC-1: its PO link covers the whole row
     assert row.acknowledged_by is None
-    assert row.acknowledged_at is None
+    assert row.acknowledged_at is not None
 
 
 def test_a_supply_borrow_with_no_inquiry_passed_mints_the_header(api):

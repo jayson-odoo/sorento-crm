@@ -777,9 +777,9 @@ ACK_STATES = (ACK_AWAITING, ACK_ACKNOWLEDGED, ACK_CHANGED, ACK_REJECTED)
 #: The two an acknowledgement may be taken on: a row nobody has looked at, and one that
 #: has changed since somebody did.
 ACK_ACKNOWLEDGEABLE = (ACK_AWAITING, ACK_CHANGED)
-#: What a cascade may link. Links are purchasing's word, so an awaiting row gets none
-#: (`ProjectOrderInquiryService.auto_place_for_products`).
-ACK_LINKABLE = (ACK_ACKNOWLEDGED, ACK_CHANGED)
+#: What a cascade may link. Awaiting is "To order" now (OI-AUTO-CONFIRM: nobody presses
+#: Confirm, a row is done when its links cover it), so every state but rejected is linkable.
+ACK_LINKABLE = (ACK_AWAITING, ACK_ACKNOWLEDGED, ACK_CHANGED)
 
 IV_ORDER = "ORDER"
 IV_RESERVE_AND_ORDER = "RESERVE_AND_ORDER"
@@ -1078,6 +1078,14 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     acknowledged_at = Column(DateTime(timezone=False), nullable=True)
+    #: OI-AUTO-CONFIRM: a person's Confirm / Unconfirm press, 'confirmed' | 'unconfirmed' |
+    #: NULL. 'confirmed' sticks over the automatic rule; 'unconfirmed' holds until a newer
+    #: link arrives; a CS amendment or a reject clears it.
+    ack_override = Column(String(16), nullable=True)
+    ack_override_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    ack_override_at = Column(DateTime(timezone=False), nullable=True)
     rejected_by = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
