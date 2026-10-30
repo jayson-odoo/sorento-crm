@@ -382,15 +382,8 @@ describe('QuotationSignClient requesting changes', () => {
     expect(screen.queryByRole('button', { name: 'Send request' })).not.toBeInTheDocument();
   });
 
-  it('stacks the two actions on a phone and sets them side by side above it', async () => {
-    // 375px: `justify-between` on one row puts a full-width pad next to a button and clips both.
-    getQuotationSignPage.mockResolvedValue(page());
-    renderPage();
-
-    const actions = await screen.findByTestId('quotation-sign-actions');
-    expect(actions.className).toContain('flex-col');
-    expect(actions.className).toContain('sm:flex-row');
-  });
+  // The "Not ready to sign this?" row this pinned is gone: the owner's hand test (30 Oct) moved
+  // "Suggest changes" into the Quotation card's header (QuotationSignAmend.test.tsx).
 });
 
 describe('QuotationSignClient dead link', () => {

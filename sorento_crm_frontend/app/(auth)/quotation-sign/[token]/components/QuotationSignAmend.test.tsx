@@ -551,7 +551,7 @@ describe('Send suggestions opens a confirm step that holds the note', () => {
 
     const [token, body] = submitAmendmentRequest.mock.calls[0];
     expect(token).toBe('tok-123');
-    expect(body.requester_name).toBe('Kelly');
+    expect(body.requester_name).toBe('Buyer A');
     expect(body.note).toBe('Please deliver the WCs in two batches.');
     expect(body.lines).toHaveLength(3);
     expect(requestQuotationChanges).not.toHaveBeenCalled();
