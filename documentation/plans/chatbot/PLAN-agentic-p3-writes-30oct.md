@@ -143,8 +143,9 @@ inverse writes, confirmed like any other.
 ### 5. Responses
 
 - `AgentTurnResponse` gains `pending_action: {id, lines: [str], expires_at} | null`.
-- `GET agent/conversation` turns gain the same `pending_action` for the turn that proposed it, with its current
-  status.
+- `GET agent/conversation` gains a top-level `pending_action` (`{id, lines, expires_at, turn_id}` or null): the
+  contact's current proposal, so a reloaded console still shows Confirm / Cancel under the proposing turn.
+  `pending_action` on `/agent/turn` carries `turn_id` too.
 - `POST agent/actions/{id}/confirm|cancel` -> `{action_id, status, reply_text, steps: [{summary, status,
   error}]}`; refusals -> 409 `{"detail": {"code": "action_refused", "reason": ...}}` with reasons
   `not_found | not_newest | expired | not_proposed | entry_refused | changed`.
