@@ -3896,12 +3896,14 @@ def _run_on_worker(envelope: Envelope, *, session_factory: SessionFactory) -> Tu
                 envelope,
                 session_factory,
                 "the offloaded turn finished without returning a turn",
+                reply_text=GENERIC_ERROR_REPLY,
             )
         if state in ("failed", "stopped", "canceled"):
             return _worker_failed(
                 envelope,
                 session_factory,
                 f"the offloaded turn {state}: {(snapshot.get('exc_info') or '')[:300]}",
+                reply_text=GENERIC_ERROR_REPLY,
             )
         if time.monotonic() >= deadline:
             # STOP the job before answering. Left running, the worker finishes the turn
@@ -3922,9 +3924,17 @@ def _run_on_worker(envelope: Envelope, *, session_factory: SessionFactory) -> Tu
 
 
 def _worker_failed(
-    envelope: Envelope, session_factory: SessionFactory, message: str
+    envelope: Envelope,
+    session_factory: SessionFactory,
+    message: str,
+    *,
+    reply_text: str = CHATBOT_REPLY_PREVIOUS_STILL_RUNNING,
 ) -> TurnResult:
-    """The caller still gets today's error reply when the offloaded turn does not answer.
+    """The caller still gets an honest reply when the offloaded turn does not answer.
+
+    CHATBOT-FAIL-TRIAGE R4: H-QUEUE ("I was still answering your previous message") is the
+    queue-wait TIMEOUT's sentence only; a job that finished without a turn or crashed is an
+    error on this turn, so those callers pass H-ERROR (`GENERIC_ERROR_REPLY`).
 
     The turn id is read back off the row the WORKER inserted, so the operator opening the
     trace screen lands on the turn that actually ran rather than on a job id that means
@@ -3968,9 +3978,7 @@ def _worker_failed(
     except Exception:  # noqa: BLE001 - the reply matters more than the id
         logger.warning("chatbot offload: could not close the turn row", exc_info=True)
     logger.error("chatbot offload failed: %s", message)
-    return _failed_result(
-        turn_id, "queued", message, [], envelope.dry_run, reply_text=CHATBOT_REPLY_PREVIOUS_STILL_RUNNING
-    )
+    return _failed_result(turn_id, "queued", message, [], envelope.dry_run, reply_text=reply_text)
 
 
 def _fanout_domain_hint(domains: list[Any], entities: Any) -> Any:
@@ -10175,6 +10183,7 @@ def _run_casual_lane(
             # sentence, never the provider's text. The row keeps the real reason.
             # CHATBOT-FAIL-TRIAGE AC-1b: and the reply is the canned offer, not a "busy" line.
             failed = f"{type(exc).__name__}: {exc}"
+            reply_language = _failed_clarifier_language(user_turn, fallback, remembered_before, parsed_language, item)
             text = CHATBOT_REPLY_FALLBACK_OFFER.get(reply_language or "en", CHATBOT_REPLY_FALLBACK_OFFER["en"])
         except Exception as exc:  # noqa: BLE001 - a provider error or an unreadable answer
             # AC-MEM086 (owner ruling Q10): the dealer never reads exception text. The
@@ -10182,6 +10191,7 @@ def _run_casual_lane(
             # canned offer (CHATBOT-FAIL-TRIAGE AC-1b). n8n's `sub-error-logger`
             # interpolation is retired here.
             failed = f"{type(exc).__name__}: {exc}"
+            reply_language = _failed_clarifier_language(user_turn, fallback, remembered_before, parsed_language, item)
             text = CHATBOT_REPLY_FALLBACK_OFFER.get(reply_language or "en", CHATBOT_REPLY_FALLBACK_OFFER["en"])
     if clarifier_calls and not dry_run:
         # LIVE turns only, like the parser's row (`_record_parser_usage`, D14). Telemetry never
@@ -11171,6 +11181,21 @@ def _ask_localizer(ask: Any, db: Session, item: Mapping[str, Any], *, dry_run: b
     """CHAT-LANGUAGE: the localizer a question prints with: its stored offer text and its short
     header read in the turn's language (the stored text stays English). English reads nothing."""
     return label_catalog.resolve(db, item.get("reply_language") or "en", dry_run=dry_run)
+
+
+def _failed_clarifier_language(
+    user_turn: Any,
+    fallback: Any,
+    remembered_before: Mapping[str, Any] | None,
+    parsed: Any,
+    item: Mapping[str, Any] | None,
+) -> str | None:
+    """CHATBOT-FAIL-TRIAGE R3: the canned offer a failed clarifier sends is in the contact's
+    language. The fallback's own rule when it was built (no clarifier reading to add), else
+    the language this turn's item already chose."""
+    if fallback is not None:
+        return _fallback_language(user_turn, fallback, remembered_before, None, parsed)
+    return (item or {}).get("reply_language")
 
 
 def _fallback_language(

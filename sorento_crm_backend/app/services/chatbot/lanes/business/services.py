@@ -226,6 +226,14 @@ def _probe(db: Session | None = None) -> ProbeFn:
     return call
 
 
+# CHATBOT-FAIL-TRIAGE R5: the allow-listed tools that are NOT retried on a timeout. Both
+# pass `ensure_read_only` (no customer-visible write) but each call still creates something:
+# `crm_low_stock_report` starts a report run and writes its workbook, and
+# `crm_portal_link_get` mints a portal token. The MCP catalogue's `read_only` flag is true
+# for both, so there is no marker on the capability rows to read this from.
+_NOT_RETRIED_ON_TIMEOUT: frozenset[str] = frozenset({"crm_low_stock_report", "crm_portal_link_get"})
+
+
 def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) -> McpCallFn:
     def call(name: str, args: dict[str, Any]) -> Any:
         """One MCP tool call at the CONFIGURED url (H52, D10).
@@ -277,8 +285,12 @@ def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) 
         try:
             raw = client.call_tool(name, args)
         except (TimeoutError, httpx.TimeoutException):
-            # CHATBOT-FAIL-TRIAGE AC-2d: a read that timed out is tried once more. These are
-            # read-only calls, so the repeat is safe; a second timeout reaches the caller.
+            # CHATBOT-FAIL-TRIAGE AC-2d: a read that timed out is tried once more; a second
+            # timeout reaches the caller. R5: never for a tool that creates something per
+            # call, and never inside a caller's own budget (`timeout_seconds`, the agent
+            # loop's turn clock), which a second full wait would overrun.
+            if timeout_seconds or name in _NOT_RETRIED_ON_TIMEOUT:
+                raise
             logger.warning("chatbot: MCP tool %s timed out, retrying once", name)
             raw = client.call_tool(name, args)
         result = parse_mcp_content(raw)

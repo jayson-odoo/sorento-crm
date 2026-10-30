@@ -56,7 +56,7 @@ from app.schemas.integration import IntegrationLogCreate
 from app.services.chatbot import complete_turn, inbox_queue, run_turn
 # The head's OWN lookup for "which row is this message's turn" (D15), so the id-less
 # complete route and the duplicate-delivery check can never pick different rows.
-from app.services.chatbot.engine import find_turn_for_message
+from app.services.chatbot.engine import _send_actions, find_turn_for_message
 from app.services.error_handler import AppException
 from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
 from app.services.chatbot.contracts import (
@@ -566,17 +566,10 @@ def chat_turn_complete(
             reply=reply,
             # NEVER a null reply and never an empty `actions`: the caller executes
             # `actions` and nothing else (the executor ruling, 5 Sep), so an answer whose
-            # words are only on `reply.text` is a customer left in silence. Same four keys
-            # `_send_actions` emits, so the sender reads one shape on every turn.
-            actions=[
-                {
-                    "kind": "send_message",
-                    "text": text,
-                    "quick_replies": reply.get("quick_replies"),
-                    "result_set": reply.get("result_set"),
-                    "dry_run": dry_run,
-                }
-            ],
+            # words are only on `reply.text` is a customer left in silence. Built by the
+            # engine's own `_send_actions`, so a composed answer keeps its
+            # `send_attachments` (CHATBOT-FAIL-TRIAGE N1) and the sender reads one shape.
+            actions=_send_actions({**reply, "text": text}, dry_run=dry_run),
             is_test=dry_run,
         )
 

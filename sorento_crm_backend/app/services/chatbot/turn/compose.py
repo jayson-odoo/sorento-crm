@@ -745,15 +745,21 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             # (below) names the token, and this section says nothing of its own.
             block = ""
             spared_unplaced = True
+        elif codes and not header_override and env.get("tool_has_result") is True and len(subjects) > 1:
+            # CHATBOT-FAIL-TRIAGE AC-2c / R2: the tool DID answer and the lane withheld the
+            # set of several products (its only line was the header `envelope_of` strips),
+            # e.g. attachments for a 201-product held set. Nothing failed, so ask which
+            # product rather than "could not fetch".
+            block = f"Which product do you want the {shown_label} for? Send me the code."
         elif codes and not header_override and (
             env.get("tool_has_result") is True or env.get("tool_ran") is not True
         ):
             # Never-stuck (owner ruling, STOCK-FILL-PREDICATE, prod turn 121 of 6 Oct
             # 2026): a lane header is never sent with an empty body. And no claim
             # without a lookup (owner, 6 Oct 17:50, the #1501 principle): the lane
-            # rendered nothing, and EITHER the tool did answer (a withheld set whose
-            # only line was the header `envelope_of` strips) OR no tool ran for these
-            # codes at all (a set predicate's refusal, a gate refusal, `tool_ran` off
+            # rendered nothing, and EITHER the tool did answer for the ONE code (a withheld
+            # set whose only line was the header `envelope_of` strips) OR no tool ran for
+            # these codes at all (a set predicate's refusal, a gate refusal, `tool_ran` off
             # `turn_runtime.envelope_of`), so "No stock found" would be a stock claim
             # nothing looked up: this is the `error` arm's own sentence, a reply that
             # did not reach the dealer, never a verdict about the stock.

@@ -39,6 +39,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
+from app.services.chatbot_reply_copy import CHATBOT_REPLY_AI_DID_NOT_ANSWER
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +59,9 @@ CLARIFIER_MAX_TOKENS = 512
 #
 # Fixed, and never `str(exc)`: those messages name providers, configuration keys and
 # occasionally a URL. A customer gets a sentence that tells them what to do; the operator
-# gets the real reason on the turn row and the trace.
-CLARIFIER_UNAVAILABLE_REPLY = (
-    "Sorry, I can't reply to that right now. Please try again in a moment."
-)
+# gets the real reason on the turn row and the trace. CHATBOT-FAIL-TRIAGE R7: the sentence
+# is H-AI, the one every "our AI did not answer" path sends (MS / ZH in `label_catalog`).
+CLARIFIER_UNAVAILABLE_REPLY = CHATBOT_REPLY_AI_DID_NOT_ANSWER
 
 # `resolve-entity-clarification`'s own literal, used for all three of query, tokens and
 # allowed_entity_types when the turn named nothing. It is a real string the resolver
@@ -333,8 +333,9 @@ def call_clarifier(config: ClarifierConfig, user_prompt: str) -> str:
 
 
 class ClarifierRateLimited(ClarifierError):
-    """Every attempt was refused with a 429 (PR #1247 round 6, ruling 3). The dealer is
-    told `llm_call.RATE_LIMITED_REPLY`, never the provider's text."""
+    """Every attempt was refused with a 429 (PR #1247 round 6, ruling 3). The dealer gets
+    the canned offer (`CHATBOT_REPLY_FALLBACK_OFFER`, CHATBOT-FAIL-TRIAGE AC-1b), never the
+    provider's text."""
 
 
 class ClarifierAnswerEmpty(ClarifierError):
