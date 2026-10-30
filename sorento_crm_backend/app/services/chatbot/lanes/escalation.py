@@ -107,21 +107,43 @@ ESCALATION_TOPICS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def topic_pairs() -> dict[str, tuple[str, str]]:
-    """AC-7a: `{domain: (agent, team)}`, the parser's R-X-08 map, as ONE pair per domain.
+# The candidate pairs `sub_answer.MISS_ROSTER_LANE` has no row for: `forms` has no miss
+# offer, and a company may link a domain's agent to its own team (Mocha links
+# general_enquiries to purchasing_product, not purchasing; UAC AC-7a, review round 2 S4).
+_EXTRA_TOPIC_PAIRS: dict[str, tuple[tuple[str, str], ...]] = {
+    "master_products": (("general_enquiries", "purchasing_product"),),
+    "forms": (("marketing_form", "marketing_form"),),
+}
 
-    The business domains read `sub_answer.MISS_ROSTER_LANE`'s own first routing pair (the
-    pair the miss offer is phrased with, so the offer and the draw cannot disagree);
-    `forms` has no miss offer there, so its one pair is stated here.
+
+class NoReachableTeam(LookupError):
+    """No (agent, team) pair this escalation could route to is linked for the contact's
+    company (AC-7a/7c). The engine answers it with the neutral H-ESC, naming no team."""
+
+
+def topic_pairs() -> dict[str, list[tuple[str, str]]]:
+    """AC-7a: `{domain: [(agent, team), ...]}`, the parser's R-X-08 map, each domain's
+    candidate pairs in order: the first one `agent_teams` links for the company wins.
+
+    Each business domain leads with `sub_answer.MISS_ROSTER_LANE`'s own first routing pair
+    (the pair the miss offer is phrased with, so the offer and the draw cannot disagree);
+    `_EXTRA_TOPIC_PAIRS` adds the pairs that table has no row for.
     """
     from app.services.chatbot.lanes.business.sub_answer import MISS_ROSTER_LANE
 
-    pairs: dict[str, tuple[str, str]] = {}
+    pairs: dict[str, list[tuple[str, str]]] = {}
     for lane in MISS_ROSTER_LANE.values():
         team, agent = lane["pairs"][0]
-        pairs.setdefault(lane["domain"], (agent, team))
-    pairs.setdefault("forms", ("marketing_form", "marketing_form"))
+        pairs.setdefault(lane["domain"], [(agent, team)])
+    for domain, extra in _EXTRA_TOPIC_PAIRS.items():
+        held = pairs.setdefault(domain, [])
+        held.extend(pair for pair in extra if pair not in held)
     return pairs
+
+
+def topic_teams() -> frozenset[str]:
+    """The teams of the topic map: the only teams a failed escalation names (S1)."""
+    return frozenset(team for candidates in topic_pairs().values() for _agent, team in candidates)
 
 
 # --------------------------------------------------------------------------- #
@@ -759,16 +781,28 @@ def _human_intervention(
     return {**result, "actions": actions, "pending": None, "routing": routing}
 
 
-def _team_is_explicit(ctx: dict[str, Any], context_item: dict[str, Any], team: Any) -> bool:
-    """Did THIS message or an accepted offer name `team` (AC-7a/7b)?
+def _team_source(ctx: dict[str, Any], context_item: dict[str, Any], team: Any, *, named: bool) -> str | None:
+    """Who named `team` (AC-7a/7b, review round 2 B2).
 
-    True for an accepted offer's team (`accepted_team`, the engine's `plan.trace.team`)
-    and for a team the parser itself named (`_parser_team`, the pre-derivation snapshot).
-    False for a team the routing chain only FILLED (`turn_runtime.lane_parse_output`: the
-    domain's team, a prior turn's carry or `DEFAULT_SUGGESTED_TEAM`), which never routes
-    on its own: the topic does.
+    * "chosen": the customer named it this turn (`named` by `_person_routing`, or one of
+      `_named_teams`, even when the routing chain filled the same team) or accepted it off
+      an offer (`accepted_team`, the engine's `plan.trace.team`). A held topic never
+      overrides it.
+    * "parser": only the parser's own reading named it (`_parser_team`). The parser fills
+      R-X-08 from the domain, so a team it named that the company cannot reach yields to
+      the topic.
+    * None: the routing chain only FILLED it (`turn_runtime.lane_parse_output`: the
+      domain's team, a prior turn's carry or `DEFAULT_SUGGESTED_TEAM`), which never routes
+      on its own: the topic does.
     """
-    return jsc.truthy(jsc.get(context_item, "accepted_team")) or jsc.truthy(_parser_team(ctx, team))
+    if not jsc.truthy(team):
+        return None
+    if named or jsc.truthy(jsc.get(context_item, "accepted_team")):
+        return "chosen"
+    output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    if jsc.nullish_str(team).strip().lower() in _named_teams(output):
+        return "chosen"
+    return "parser" if jsc.truthy(_parser_team(ctx, team)) else None
 
 
 def _reachable_pairs(ctx: dict[str, Any], context_item: dict[str, Any], services: Any) -> set | None:
@@ -794,13 +828,14 @@ def _route_pair(
     or the topic clarify. Never `DEFAULT_SUGGESTED_TEAM` / `DEFAULT_SUGGESTED_AGENT` by
     default: a pair is drawn only when `agent_teams` links it for the contact's company.
 
-    * An explicit team (`named` by the customer, accepted off an offer, or named by the
-      parser) keeps its team; its agent is, in order, the topic's own pair agent, the
-      routing agent (the parser's or the accepted offer's), any R-X-08 agent for that
-      team, else the one agent the company links to it.
-    * Otherwise the topic routes: this turn's domain, else the one held from earlier turns
-      (`topic_domains`, the turn's focus), as its R-X-08 pair.
-    * No reachable pair: one short question over the topics this company can reach.
+    * A team with a source (`_team_source`) keeps its team; its agent is, in order, the
+      topic's own pair agent, the team's R-X-08 agents, the routing agent (which may be the
+      code default, S2), else the one agent the company links to it.
+    * Otherwise, and after a parser-only team the company cannot reach, the topic routes:
+      this turn's domain, else the one held from earlier turns (`topic_domains`, the
+      turn's focus), each domain's candidate pairs in order (S4).
+    * No reachable pair: one short question over the topics this company can reach, and
+      `NoReachableTeam` when it can reach none (the neutral H-ESC, S1).
 
     The topic is the ENGINE's to state (`engine._run_escalation_arm` stamps
     `topic_domains` on every turn). A direct caller that states none (the n8n-shaped lane
@@ -809,21 +844,30 @@ def _route_pair(
     """
     pairs = topic_pairs()
     reachable = _reachable_pairs(ctx, context_item, services)
-    topics = [d for d in jsc.array(jsc.get(context_item, "topic_domains")) if d in pairs]
+    on_topic = [p for d in jsc.array(jsc.get(context_item, "topic_domains")) for p in pairs.get(d, [])]
+    on_map = [p for candidates in pairs.values() for p in candidates]
     stated = jsc.has(context_item, "topic_domains")
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     agent = jsc.get(jsc.get(output, "routing"), "suggested_agent")
-    candidates: list[tuple[Any, Any]]
-    if not stated or (jsc.truthy(team) and (named or _team_is_explicit(ctx, context_item, team))):
-        candidates = [pairs[d] for d in topics if pairs[d][1] == team]
-        if jsc.truthy(agent):
-            candidates.append((agent, team))
-        candidates += [p for p in pairs.values() if p[1] == team]
+    source = _team_source(ctx, context_item, team, named=named)
+    candidates: list[tuple[Any, Any]] = []
+    if not stated:
+        # The caller's own routing agent first, as before AC-7 (H27).
+        candidates += [(agent, team)] if jsc.truthy(agent) else []
+        candidates += [p for p in on_map if p[1] == team]
+    elif source is not None:
+        # S2: the routing agent may be the code default (`with_routing_agent_default` fills
+        # it before `_parser_raw` is taken, so no snapshot tells the two apart): it comes
+        # after the team's own map agents.
+        candidates += [p for p in on_topic if p[1] == team]
+        candidates += [p for p in on_map if p[1] == team]
+        candidates += [(agent, team)] if jsc.truthy(agent) else []
+    if not stated or source is not None:
         linked = sorted({a for a, t in reachable or () if t == team})
         if len(linked) == 1:
             candidates.append((linked[0], team))
-    else:
-        candidates = [pairs[d] for d in topics]
+    if stated and source != "chosen":
+        candidates += on_topic
     for pair_agent, pair_team in candidates:
         if reachable is None or (pair_agent, pair_team) in reachable:
             return {"kind": "assign", "agent": pair_agent, "team": pair_team}
@@ -832,7 +876,7 @@ def _route_pair(
     return _topic_clarify(pairs, reachable)
 
 
-def _topic_clarify(pairs: dict[str, tuple[str, str]], reachable: set | None) -> dict[str, Any]:
+def _topic_clarify(pairs: dict[str, list[tuple[str, str]]], reachable: set | None) -> dict[str, Any]:
     """AC-7c: one short question whose options are the topics this company can reach.
 
     Each option carries its pair (`team` and `agent`), so the number or tap that answers
@@ -842,12 +886,12 @@ def _topic_clarify(pairs: dict[str, tuple[str, str]], reachable: set | None) -> 
     options: list[dict[str, Any]] = []
     for label, domains in ESCALATION_TOPICS:
         pair = next(
-            (pairs[d] for d in domains if d in pairs and (reachable is None or pairs[d] in reachable)), None
+            (p for d in domains for p in pairs.get(d, []) if reachable is None or p in reachable), None
         )
         if pair is not None:
             options.append({"team": pair[1], "agent": pair[0], "label": label})
     if not options:
-        raise LookupError("no escalation team is linked for this contact's company")
+        raise NoReachableTeam("no escalation team is linked for this contact's company")
     labels = [o["label"] for o in options]
     listed = f"{', '.join(labels[:-1])} or {labels[-1]}" if len(labels) > 1 else labels[0]
     return {
@@ -1527,6 +1571,10 @@ def _preview_routing(
 
         with escalation_services.production_session(session_factory) as db:
             return _both(escalation_services.build(db))
+    except NoReachableTeam:
+        # S3: a dry run (the chat console) shows the failure the live turn has, never a
+        # previewed assignment to a team the company cannot reach.
+        raise
     except Exception:  # noqa: BLE001 - a preview is never worth failing a test turn for
         logger.warning("chatbot: dry-run routing preview did not run", exc_info=True)
         return None, None, None

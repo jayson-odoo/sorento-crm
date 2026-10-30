@@ -46,6 +46,7 @@ from app.services import llm_cassette
 from app.services.chatbot_reply_copy import (
     CHATBOT_REPLY_AI_DID_NOT_ANSWER,
     CHATBOT_REPLY_ESCALATION_FAILED,
+    CHATBOT_REPLY_ESCALATION_FAILED_NO_TEAM,
     CHATBOT_REPLY_FALLBACK_OFFER,
     CHATBOT_REPLY_PREVIOUS_STILL_RUNNING,
     CHATBOT_REPLY_TURN_FAILED,
@@ -2988,8 +2989,18 @@ def _localize_result(result: TurnResult, session_factory: SessionFactory, dry_ru
         reply = dict(result.reply)
         if isinstance(reply.get("text"), str):
             reply["text"] = localizer.reply(reply["text"])
+        if isinstance(reply.get("quick_replies"), str):
+            reply["quick_replies"] = localizer.quick_replies(reply["quick_replies"])
+
+        def said(action: dict[str, Any]) -> dict[str, Any]:
+            out = {**action, "text": localizer.reply(action["text"])}
+            if isinstance(action.get("quick_replies"), str):
+                # CHATBOT-FAIL-TRIAGE B3: the taps read in the reply's language too.
+                out["quick_replies"] = localizer.quick_replies(action["quick_replies"])
+            return out
+
         actions = [
-            {**a, "text": localizer.reply(a["text"])}
+            said(a)
             if isinstance(a, dict) and a.get("kind") == "send_message" and isinstance(a.get("text"), str)
             else a
             for a in (result.actions or [])
@@ -10519,17 +10530,27 @@ def _run_escalation_arm(
                 records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": actions},
             )
+        from app.services.chatbot.lanes.escalation import NoReachableTeam, topic_teams
         from app.services.chatbot.tail.outcome import pretty_team
 
         # CHATBOT-FAIL-TRIAGE AC-1d / AC-7d (R6): the reply names the OFFERED team - the
-        # one the draw was for, else the item's, else this turn's routing - and goes out
-        # in the contact's language (`_localize_result` reads the item's language).
+        # item's own, else the one the draw was for, else this turn's routing - and goes out
+        # in the contact's language (`_localize_result` reads the item's language). S1:
+        # a drawn or routed team is named only when it is a topic-map team; no reachable
+        # pair, a parser free string, or no team at all gets the neutral sentence.
         routed = ((jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("routing")) or {}
-        team = (
-            getattr(exc, "escalation_team", None)
-            or lane_item.get("team")
-            or routed.get("suggested_team")
-            or ((verdict or {}).get("routing") or {}).get("suggested_team")
+        mapped = topic_teams()
+        team = None if isinstance(exc, NoReachableTeam) else lane_item.get("team") or next(
+            (
+                t
+                for t in (
+                    getattr(exc, "escalation_team", None),
+                    routed.get("suggested_team"),
+                    ((verdict or {}).get("routing") or {}).get("suggested_team"),
+                )
+                if t in mapped
+            ),
+            None,
         )
         return _failed_result(
             turn_id,
@@ -10538,7 +10559,11 @@ def _run_escalation_arm(
             actions,
             dry_run,
             item=lane_item,
-            reply_text=CHATBOT_REPLY_ESCALATION_FAILED.format(team=pretty_team(team) or "customer service"),
+            reply_text=(
+                CHATBOT_REPLY_ESCALATION_FAILED.format(team=pretty_team(team))
+                if team
+                else CHATBOT_REPLY_ESCALATION_FAILED_NO_TEAM
+            ),
         )
 
     arm = fragment.get("arm")

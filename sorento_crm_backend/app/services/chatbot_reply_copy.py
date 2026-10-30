@@ -111,6 +111,8 @@ CHATBOT_REPLY_PREVIOUS_STILL_RUNNING = (
     "I was still answering your previous message, so I could not take this one. Please send it again."
 )
 CHATBOT_REPLY_ESCALATION_FAILED = "I could not pass this to the {team} team just now. Please contact them directly."
+# Review round 2 S1: the same failure when there is no reachable topic-map team to name.
+CHATBOT_REPLY_ESCALATION_FAILED_NO_TEAM = "I could not pass this to our team just now. Please contact us directly."
 CHATBOT_REPLY_NONE_FOUND = "No current {label} found for {subject}."
 CHATBOT_REPLY_ASK_SUBJECT = "Which customer or salesperson should I check the {label} for?"
 CHATBOT_REPLY_ASK_PRODUCT = "Which product do you want the {label} for? Send me the code."
