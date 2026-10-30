@@ -15,6 +15,8 @@ from app.models.product_spec import ProductSpecifications
 from app.services.product_code_family import narrow_code_tokens_by_specs
 from tests.chatbot.test_closed_lists_bare_size import WC, _ask, _ent, _seed, _spec
 from tests.chatbot.test_closed_lists_bare_size import session_factory, seeded, stub_access  # noqa: F401
+from tests.chatbot.conftest import system_settings_row  # noqa: F401
+from tests.chatbot.test_engine import stub_parser  # noqa: F401
 from tests.chatbot.test_trap_spec_search import ENDPOINT, _route_codes, client, world  # noqa: F401
 
 ANY = ["dim_height", "dim_length", "dim_width", "trap_length"]
@@ -271,3 +273,118 @@ def test_non_stock_ask_head_plus_size_names_the_matching_variants(session_factor
     wanted = {ids[_code("SH-200")], ids[_code("SH-NEW-200")]}
     unwanted = {v for k, v in ids.items() if k not in (_code("SH-200"), _code("SH-NEW-200"))}
     assert wanted <= _called_ids(calls) and not (unwanted & _called_ids(calls)), (text, calls)
+
+
+# --------------------------------------------------------------------------- #
+# Loose family lookup (short head anywhere in a code) under brand scope         #
+# --------------------------------------------------------------------------- #
+
+SRT_BRAND_HEAD = "ZZSRTWC287"
+MCH_BRAND_HEAD = "ZZMWC287"
+
+
+@pytest.fixture
+def two_brands(world):
+    """The digits 287 under two brands, both holding 200: SORENTO ZZSRTWC287-* and MOCHA ZZMWC287-*."""
+    for suffix, length in (("SH-200", 200), ("SH-250", 250), ("UF-200", 200)):
+        world.product(f"{SRT_BRAND_HEAD}-{suffix}", f"SORENTO WC {suffix}", brand=world.sorento, stock=1)
+        _set_values(world, f"{SRT_BRAND_HEAD}-{suffix}", {"trap_length": length})
+        world.product(f"{MCH_BRAND_HEAD}-{suffix}", f"MOCHA WC {suffix}", brand=world.mocha, stock=1)
+        _set_values(world, f"{MCH_BRAND_HEAD}-{suffix}", {"trap_length": length})
+    return world
+
+
+def _scoped_to(world, brand):
+    from app.models.base import set_brand_scope
+
+    set_brand_scope(world.db, frozenset({brand.id}))
+
+
+def test_short_head_scoped_to_sorento_never_reaches_the_mocha_family_unit(two_brands):
+    _scoped_to(two_brands, two_brands.sorento)
+    got = _sorted(_narrow(two_brands, "wc287", [_size(200)]))
+    assert got == sorted([f"{SRT_BRAND_HEAD}-SH-200", f"{SRT_BRAND_HEAD}-UF-200"]), got
+
+
+def test_short_head_scoped_to_mocha_never_reaches_the_sorento_family_unit(two_brands):
+    _scoped_to(two_brands, two_brands.mocha)
+    got = _sorted(_narrow(two_brands, "wc287", [_size(200)]))
+    assert got == sorted([f"{MCH_BRAND_HEAD}-SH-200", f"{MCH_BRAND_HEAD}-UF-200"]), got
+
+
+def test_short_head_resolve_route_scoped_to_one_brand(client, two_brands):
+    _scoped_to(two_brands, two_brands.sorento)
+    got = _route(client, "wc287", [_size(200)], "wc287 200mm")
+    assert got == sorted([f"{SRT_BRAND_HEAD}-SH-200", f"{SRT_BRAND_HEAD}-UF-200"]), got
+    assert not [c for c in got if c.startswith(MCH_BRAND_HEAD)], got
+
+
+def test_unscoped_short_head_reaches_both_brands_200_variants(two_brands):
+    """Control: with no brand scope the two brands' 200 variants are all one family of the short head."""
+    got = _sorted(_narrow(two_brands, "wc287", [_size(200)]))
+    assert got == sorted(
+        [f"{SRT_BRAND_HEAD}-SH-200", f"{SRT_BRAND_HEAD}-UF-200", f"{MCH_BRAND_HEAD}-SH-200", f"{MCH_BRAND_HEAD}-UF-200"]
+    ), got
+
+
+def test_an_anchored_hit_wins_over_a_substring_family(world):
+    """"wc288" starts WC288-A / WC288-B (anchored) and sits inside ZZSRTWC288-* (substring): the anchored
+    family answers alone, never a mix."""
+    for code, length in (("WC288-A-200", 200), ("WC288-B-250", 250), ("ZZSRTWC288-SH-200", 200), ("ZZSRTWC288-SH-250", 250)):
+        world.product(code, f"WC {code}", stock=1)
+        _set_values(world, code, {"trap_length": length})
+    assert _sorted(_narrow(world, "wc288", [_size(200)])) == ["WC288-A-200"]
+
+
+# Turn path: a contact scoped to SORENTO, a short head, the other brand's code in no reply and no call.
+def test_turn_short_head_scoped_contact_sees_only_its_brand(
+    session_factory, stub_parser, stub_access, system_settings_row, monkeypatch  # noqa: F811
+):
+    from app.models.access import RespondContact
+    from app.models.company import RespondContactCompany
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._brand_scope_seed import brand, branded_product
+    from tests._pg_fixture import unique_code
+    from tests.chatbot.test_engine import _parser_output
+    from tests.chatbot.test_engine_company_scope import (
+        _scope_envelope, _seed_workspace, _spy_resolve_kinds, _wire_business_query_turn,
+    )
+    from app.services.chatbot import engine as engine_mod
+
+    db = session_factory()
+    srt, mch = brand(db, "SORENTO"), brand(db, "MOCHA")
+    mine, theirs = {}, {}
+    for suffix, length in (("SH-200", 200), ("SH-250", 250)):
+        for store, head, b in ((mine, SRT_BRAND_HEAD, srt), (theirs, MCH_BRAND_HEAD, mch)):
+            p = branded_product(db, f"{head}-{suffix}", b)
+            db.add(ProductSpecifications(id=str(__import__("uuid").uuid4()), product_id=p.id, values={"trap_length": {"value": length}}))
+            store[suffix] = p
+    db.commit()
+    workspace_id = _seed_workspace(session_factory)
+    contact_id = unique_code("rid")
+    db = session_factory()
+    row = RespondContact(
+        respond_io_id=contact_id, phone_number=f"+6{unique_code('PH')}", workspace_id=workspace_id,
+        session_vars={"variables": {}}, brand_ids=[srt.id], chatbot_allowed=True,
+    )
+    db.add(row)
+    db.flush()
+    db.add(RespondContactCompany(respond_contact_id=row.id, company_id=DEFAULT_COMPANY_ID))
+    db.commit()
+
+    _wire_business_query_turn(session_factory, system_settings_row, monkeypatch)
+    ent = {"raw": "wc287", "hint": "product", "canonical_code": None, "current_message": True, "confident": True}
+    size = {"raw": "200mm", "hint": "specification", "spec_key": "size", "spec_value": 200, "spec_unit": "mm",
+            "canonical_code": None, "current_message": True, "confident": True}
+    stub_parser(_parser_output(domain_hint="inventory", entities=[ent, size]))
+    stub_access()
+    calls = _spy_resolve_kinds(monkeypatch)
+    result = engine_mod.run_turn(
+        _scope_envelope(contact_id, message_id=unique_code("msg"), text="wc287 200mm stock"), session_factory=session_factory
+    )
+    assert result.status == "done", result.error
+    matched = {m.get("uuid") for m in (calls[-1] if calls else [])}
+    text = result.reply["text"]
+    assert mine["SH-200"].id in matched, (matched, text)
+    assert theirs["SH-200"].id not in matched and theirs["SH-250"].id not in matched, matched
+    assert MCH_BRAND_HEAD not in text, text
