@@ -134,7 +134,7 @@ def embeddings_overview(db: Session = Depends(get_db)):
         )
     ).scalar()
     with_vector = (
-        db.query(func.count(EmbeddingChunk.id))
+        db.query(func.count())
         .filter(
             EmbeddingChunk.source_type == "lookup_word",
             EmbeddingChunk.model_name == model,
@@ -150,7 +150,7 @@ def embeddings_overview(db: Session = Depends(get_db)):
     )
     chunks: dict[str, dict[str, int]] = {}
     for source_type, model_name, n in (
-        db.query(EmbeddingChunk.source_type, EmbeddingChunk.model_name, func.count(EmbeddingChunk.id))
+        db.query(EmbeddingChunk.source_type, EmbeddingChunk.model_name, func.count())
         .filter(EmbeddingChunk.is_current.is_(True), EmbeddingChunk.source_type.in_(sorted(RECORD_KEEP_SET)))
         .group_by(EmbeddingChunk.source_type, EmbeddingChunk.model_name)
         .all()
