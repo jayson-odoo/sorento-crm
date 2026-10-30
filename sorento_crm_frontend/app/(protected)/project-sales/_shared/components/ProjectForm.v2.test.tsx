@@ -556,11 +556,11 @@ describe('D2 a blocking clash becomes Register interest', () => {
     clashAnswer = () => ({ candidates: [BLOCKING], would_block: true });
   });
 
-  it('shows ONE line "Project already registered: <code> <title>" with the code linking to the project', async () => {
+  it('AC-W4 shows ONE line "Clash: <code> <title>" with the code linking to the project', async () => {
     renderForm();
     await checkTitle();
     const line = await waitFor(() => {
-      const found = linesWithText('Project already registered: PRJ-000009 Setia Alam Phase 3B CONTOH');
+      const found = linesWithText('Clash: PRJ-000009 Setia Alam Phase 3B CONTOH');
       expect(found).toHaveLength(1);
       return found[0];
     });
@@ -619,19 +619,15 @@ describe('D2 a blocking clash becomes Register interest', () => {
   });
 });
 
-describe('D3 a non-blocking candidate is information only', () => {
-  it('shows "Similar project: <code> <title>" with no action; the primary stays Register project', async () => {
+describe('D3 a non-blocking candidate is shown as No clash (AC-W3)', () => {
+  it('AC-W3 a non-blocking candidate shows just "No clash": no similar row, no action', async () => {
     clashAnswer = () => ({ candidates: [SIMILAR], would_block: false });
     renderForm();
     await checkTitle('Setia Alam Phase 3C CONTOH');
-    const line = await waitFor(() => {
-      const found = linesWithText('Similar project: PRJ-000010 Setia Alam Phase 3C CONTOH');
-      expect(found).toHaveLength(1);
-      return found[0];
-    });
-    expect(within(line).queryByRole('button')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Register project' })).toBeInTheDocument();
-    expect(screen.queryByText(/Dispute/)).toBeNull();
+    expect(await screen.findByText('No clash')).toBeInTheDocument();
+    expect(screen.queryByText(/Similar project/)).toBeNull();
+    expect(screen.queryByText(/PRJ-000010/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
   });
 });
 
@@ -884,7 +880,7 @@ describe('D8 a submit-only salesperson registers interest', () => {
     renderForm();
     await checkTitle();
     await waitFor(() =>
-      expect(linesWithText('Project already registered: PRJ-000009 Setia Alam Phase 3B CONTOH')).toHaveLength(1),
+      expect(linesWithText('Clash: PRJ-000009 Setia Alam Phase 3B CONTOH')).toHaveLength(1),
     );
   });
 

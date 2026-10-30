@@ -1,7 +1,7 @@
 /**
- * PS-REGISTER-CHECK-FIRST AC-G7: the status move hook raises no error toast for the refusal the page
- * answers with a dialog (code `project_requirements_missing`); any other refusal still toasts.
- * The service rejects with a CodedError (lib/api-client): an Error carrying `code`.
+ * PS-REGISTER-CHECK-FIRST AC-G10: the status move hook KEEPS today's error toast for
+ * `project_requirements_missing` (the server's message), like any other refusal.
+ * REGRESSION GUARD: both tests pass before the feature and must stay green.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -44,16 +44,16 @@ function coded(message: string, code: string) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('useChangeProjectStatus refusals', () => {
-  it('AC-G7 project_requirements_missing raises no error toast (the dialog answers it)', async () => {
+  it('AC-G10 project_requirements_missing keeps the error toast with the server message', async () => {
     changeProjectStatus.mockRejectedValue(coded('Upload the requirements document.', 'project_requirements_missing'));
     const get = mount();
     await act(async () => {
       await get().mutateAsync({ projectId: 'p1', toStatusId: 's-spec' }).catch(() => undefined);
     });
-    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('Upload the requirements document.');
   });
 
-  it('AC-G7 any other refusal keeps the error toast', async () => {
+  it('AC-G10 any other refusal keeps the error toast', async () => {
     changeProjectStatus.mockRejectedValue(coded('Not allowed.', 'something_else'));
     const get = mount();
     await act(async () => {

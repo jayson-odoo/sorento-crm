@@ -535,7 +535,7 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     const cta = await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' });
     expect(cta).toBeEnabled();
-    expect(screen.getByText(/Project already registered/)).toBeInTheDocument();
+    expect(screen.getByText(/Clash:/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Register project' })).toBeNull();
     expect(screen.queryByText('Blocked by an existing project')).toBeNull();
   });
@@ -955,7 +955,7 @@ describe('ProjectForm: edit guards (review round 1, PR #1345)', () => {
       ),
     );
     expect(previewClashes).toHaveBeenCalled();
-    expect(screen.queryByText(/Project already registered/)).toBeNull();
+    expect(screen.queryByText(/Clash:/)).toBeNull();
   });
 
   it('a rename onto another project is still blocked (AC-PF032)', async () => {
@@ -970,7 +970,7 @@ describe('ProjectForm: edit guards (review round 1, PR #1345)', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled(),
     );
-    expect(screen.getByText(/Project already registered/)).toBeInTheDocument();
+    expect(screen.getByText(/Clash:/)).toBeInTheDocument();
     expect(updateProject).not.toHaveBeenCalled();
   });
 });

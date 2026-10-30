@@ -1,4 +1,4 @@
-"""PS-REGISTER-CHECK-FIRST UAC G1-G6, G9: a Requirements document gates Registered -> Spec In.
+"""PS-REGISTER-CHECK-FIRST UAC G2-G6: any live document gates Registered -> Spec In.
 
 Red-first. The gate lives in `project_service.change_status`, so the service and the HTTP route
 both see it. Every row is seeded here (Postgres, isolated schema).
@@ -20,7 +20,6 @@ from ._project_register_v2_support import (  # noqa: F401
     v2,
 )
 
-REQ_CODE = "project_requirements"
 DOC_CODE = "project_document"
 REFUSAL = "Upload the requirements document before moving this project to Spec In."
 
@@ -49,7 +48,7 @@ def _kind(db, code: str, name: str):
     return row
 
 
-def _file(w, project, code: str = REQ_CODE, name: str = "Requirements", deleted: bool = False):
+def _file(w, project, code: str = DOC_CODE, name: str = "Project Document", deleted: bool = False):
     from app.models.entity_attachment import EntityAttachmentLink
     from app.models.resources import Attachment
 
@@ -114,37 +113,10 @@ def _service_move(w, project, to_key: str):
     )
 
 
-# ------------------------------------------------------------------ G1 the seed
-
-
-def test_ac_g1_seed_creates_one_requirements_kind_and_is_idempotent():
-    from app.models.resources import AttachmentType
-    from app.services import project_seed_service
-
-    with blank_session() as db:
-        project_seed_service.ensure_requirements_document_type(db)
-        project_seed_service.ensure_requirements_document_type(db)
-        rows = db.query(AttachmentType).filter(AttachmentType.code == REQ_CODE).all()
-        assert len(rows) == 1
-        assert rows[0].type_name == "Requirements"
-
-
-def test_ac_g1_run_seeds_the_requirements_kind_once_across_two_runs():
-    from app.models.resources import AttachmentType
-    from app.services import project_seed_service
-
-    with blank_session() as db:
-        project_seed_service.run(db)
-        project_seed_service.run(db)
-        rows = db.query(AttachmentType).filter(AttachmentType.code == REQ_CODE).all()
-        assert len(rows) == 1
-        assert rows[0].type_name == "Requirements"
-
-
 # ------------------------------------------------------------------ G2, G3 through the route
 
 
-def test_ac_g2_registered_to_spec_in_without_requirements_refused(v2):
+def test_ac_g2_registered_to_spec_in_without_a_document_refused(v2):
     project = _at(v2, "registered")
     res = _move(v2, project, "specified")
     assert res.status_code == 422, res.text
@@ -166,7 +138,7 @@ def test_ac_g2_service_raises_with_code_and_exact_message_and_leaves_status(v2):
     assert _stage_key(v2, project.status_id) == "registered"
 
 
-def test_ac_g3_registered_to_spec_in_with_a_live_requirements_file_moves(v2):
+def test_ac_g3_registered_to_spec_in_with_a_live_document_moves(v2):
     project = _at(v2, "registered")
     _file(v2, project)
     res = _move(v2, project, "specified")
@@ -174,7 +146,7 @@ def test_ac_g3_registered_to_spec_in_with_a_live_requirements_file_moves(v2):
     assert _status_key(v2, project) == "specified"
 
 
-def test_ac_g3_service_moves_with_a_live_requirements_file(v2):
+def test_ac_g3_service_moves_with_a_live_document(v2):
     project = _at(v2, "registered")
     _file(v2, project)
     _service_move(v2, project, "specified")
@@ -184,17 +156,34 @@ def test_ac_g3_service_moves_with_a_live_requirements_file(v2):
 # ------------------------------------------------------------------ G4 what does not count
 
 
-def test_ac_g4_a_project_document_kind_file_does_not_count(v2):
-    from app.services.error_handler import AppException
+def test_ac_g3_a_project_document_kind_file_counts(v2):
+    project = _at(v2, "registered")
+    _file(v2, project, code=DOC_CODE)
+    _service_move(v2, project, "specified")
+    assert _stage_key(v2, project.status_id) == "specified"
+
+
+def test_ac_g3_a_document_with_no_attachment_type_counts(v2):
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
 
     project = _at(v2, "registered")
-    _file(v2, project, code=DOC_CODE, name="Project Document")
-    with pytest.raises(AppException) as exc:
-        _service_move(v2, project, "specified")
-    assert exc.value.code == "project_requirements_missing"
+    att = Attachment(
+        id=str(uuid.uuid4()), company_id=v2.company_id, attachment_type_id=None,
+        original_filename="zzt.pdf", stored_filename=f"zzt-{uuid.uuid4().hex}.pdf",
+        file_path="zzt/x.pdf", entity_type="project", entity_id=project.id,
+    )
+    v2.db.add(att)
+    v2.db.flush()
+    v2.db.add(EntityAttachmentLink(
+        id=str(uuid.uuid4()), entity_type="project", entity_id=str(project.id), attachment_id=att.id
+    ))
+    v2.db.flush()
+    _service_move(v2, project, "specified")
+    assert _stage_key(v2, project.status_id) == "specified"
 
 
-def test_ac_g4_a_deleted_requirements_file_does_not_count(v2):
+def test_ac_g4_a_deleted_document_does_not_count(v2):
     from app.services.error_handler import AppException
 
     project = _at(v2, "registered")
@@ -204,7 +193,7 @@ def test_ac_g4_a_deleted_requirements_file_does_not_count(v2):
     assert exc.value.code == "project_requirements_missing"
 
 
-def test_ac_g4_a_requirements_file_of_another_project_does_not_count(v2):
+def test_ac_g4_a_document_of_another_project_does_not_count(v2):
     from app.services.error_handler import AppException
 
     other = _at(v2, "registered")

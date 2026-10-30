@@ -24,6 +24,7 @@ vi.mock('next-auth/react', () => ({
 }));
 
 let granted = new Set<string>();
+let approvedDispute = false;
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => granted.has(slug),
   useHasAnyPermission: (slugs: string[]) => slugs.some((s) => granted.has(s)),
@@ -113,7 +114,25 @@ vi.mock('@/lib/api', async (importOriginal) => {
       });
       const ok = (b: unknown) =>
         new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
-      if (method === 'GET' && String(input).includes('/takeover-requests')) return ok({ data: REQUESTS });
+      if (method === 'GET' && String(input).includes('/takeover-requests')) {
+        return ok({
+          data: approvedDispute
+            ? [
+                ...REQUESTS,
+                {
+                  id: 'r4',
+                  project_id: 'p1',
+                  kind: 'dispute',
+                  status: 'approved',
+                  requester_user_id: 'u-d',
+                  requester_name: 'Sales D',
+                  reason: 'Won the reassignment.',
+                  created_at: '2026-09-02T08:00:00Z',
+                },
+              ]
+            : REQUESTS,
+        });
+      }
       if (method === 'POST' && String(input).includes('/decide')) {
         return ok({ id: 'r1', status: (JSON.parse(String(init.body)).approve ? 'approved' : 'rejected') });
       }
@@ -152,8 +171,9 @@ function wrap(node: React.ReactNode) {
   return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
 }
 const interestedBox = async () => {
+  // AC-R6: the section is a grid card titled Secondary leads (PanelDataGrid), not a plain list.
   const heading = await screen.findByText('Secondary leads');
-  return heading.parentElement as HTMLElement;
+  return heading.closest('[data-slot="card"]') as HTMLElement;
 };
 const posts = (part: string) => calls.filter((c) => c.method === 'POST' && c.url.includes(part));
 
@@ -161,6 +181,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   calls.length = 0;
   granted = new Set();
+  approvedDispute = false;
 });
 
 describe('ProjectAccessPanel: Interested (E1, E2, E4)', () => {
@@ -170,9 +191,9 @@ describe('ProjectAccessPanel: Interested (E1, E2, E4)', () => {
     await within(box).findByText('Sales B');
     expect(within(box).getByText(/Found this project at the March site visit\./)).toBeInTheDocument();
     expect(box.textContent).toMatch(/20 Oct|Oct 20|2026-10-20|20\/10/);
-    // A join request and a decided interest are not "interested".
+    // A join request is not a secondary lead; a decided dispute is, as a row (AC-R6).
     expect(within(box).queryByText('Sales C')).toBeNull();
-    expect(within(box).queryByText('Manager M')).toBeNull();
+    expect(within(box).getByText('Manager M')).toBeInTheDocument();
     // A plain viewer sees no management buttons.
     expect(within(box).queryByRole('button', { name: /Reassign to/ })).toBeNull();
     expect(within(box).queryByRole('button', { name: 'Dismiss' })).toBeNull();
@@ -221,6 +242,69 @@ describe('ProjectAccessPanel: Interested (E1, E2, E4)', () => {
   });
 });
 
+describe('AC-R6 secondary leads table', () => {
+  const rowOf = async (name: string) => {
+    const box = await interestedBox();
+    const cell = await within(box).findByText(name);
+    return cell.closest('tr') as HTMLElement;
+  };
+
+  it('AC-R6 renders a table with columns Salesperson, Date, How they found it, Status', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    const box = await interestedBox();
+    const table = await within(box).findByRole('table');
+    for (const name of ['Salesperson', 'Date', 'How they found it', 'Status']) {
+      expect(within(table).getByRole('columnheader', { name: new RegExp(name) })).toBeInTheDocument();
+    }
+  });
+
+  it('AC-R6 a pending dispute row shows name, note and a Pending badge', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    const row = await rowOf('Sales B');
+    expect(within(row).getByText(/Found this project at the March site visit\./)).toBeInTheDocument();
+    expect(within(row).getByText('Pending')).toBeInTheDocument();
+  });
+
+  it('AC-R6 a rejected dispute row reads Dismissed, with no actions', async () => {
+    granted = new Set(['projects.projects.manage']);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const row = await rowOf('Manager M');
+    expect(within(row).getByText('Dismissed')).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: /Reassign to/ })).toBeNull();
+  });
+
+  it('AC-R6 an approved dispute row reads Reassigned', async () => {
+    approvedDispute = true;
+    wrap(<ProjectAccessPanel project={project()} />);
+    const row = await rowOf('Sales D');
+    expect(within(row).getByText('Reassigned')).toBeInTheDocument();
+  });
+
+  it('AC-R6 Reassign to <name> and Dismiss sit on the pending row for a manage holder only', async () => {
+    granted = new Set(['projects.projects.manage']);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const row = await rowOf('Sales B');
+    expect(within(row).getByRole('button', { name: 'Reassign to Sales B' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('AC-R6 a viewer without manage sees the row but no actions', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    const row = await rowOf('Sales B');
+    expect(within(row).queryByRole('button')).toBeNull();
+  });
+
+  it('AC-R6 join requests stay out of the table and keep Open requests', async () => {
+    wrap(<ProjectAccessPanel project={project({ can_edit: true })} />);
+    const box = await interestedBox();
+    await within(box).findByRole('table');
+    expect(within(box).queryByText('Sales C')).toBeNull();
+    expect(await screen.findByText('Sales C')).toBeInTheDocument();
+    expect(screen.getByText(/Open requests/)).toBeInTheDocument();
+  });
+});
+
 describe('AC-R4 secondary lead wording on the Access card', () => {
   it('AC-R4 the heading reads Secondary leads and the old Interested heading is gone', async () => {
     wrap(<ProjectAccessPanel project={project()} />);
@@ -229,12 +313,11 @@ describe('AC-R4 secondary lead wording on the Access card', () => {
     expect(screen.queryByText(/register interest/i)).toBeNull();
   });
 
-  it('AC-R4 a past dispute decision reads "Secondary lead by <name>", not "Interest by"', async () => {
+  it('AC-R4 no past decision reads "Interest by"; a join decision still reads "Join by"', async () => {
     wrap(<ProjectAccessPanel project={project()} />);
     await screen.findByText('Secondary leads');
-    expect(await screen.findByText(/Secondary lead by Manager M/)).toBeInTheDocument();
     expect(screen.queryByText(/Interest by/)).toBeNull();
-    expect(screen.getByText(/Join by/)).toBeInTheDocument();
+    expect(screen.queryByText(/Interested/)).toBeNull();
   });
 
   it('AC-R4 the dialog title and submit read Register as secondary lead', async () => {

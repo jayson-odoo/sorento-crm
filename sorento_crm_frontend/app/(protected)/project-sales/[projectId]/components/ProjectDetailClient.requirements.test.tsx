@@ -1,13 +1,10 @@
 /**
- * PS-REGISTER-CHECK-FIRST AC-G7: moving a Registered project to Spec In without a Requirements file is
- * refused by the server (422, code `project_requirements_missing`). The page answers with a
- * "Requirements needed" dialog instead of an error toast; "Upload and move to Spec In" files the
- * documents as Requirements (the attachment type whose code is `project_requirements`) and repeats
- * the move. The code is read from the CodedError (`error.code`) the status call rejects with
- * (lib/api-client codedError). Any other code keeps today's toast and opens no dialog.
- *
- * The hook is mocked here (as in ProjectDetailClient.test.tsx), so "no toast" for the code is pinned
- * on the real hook in useChangeProjectStatus.requirements.test.tsx.
+ * PS-REGISTER-CHECK-FIRST AC-G7..G10: a Registered project whose Spec In move is available and that has
+ * no document shows "Upload Requirement" in the header instead of Spec In (hidden, not disabled).
+ * The button opens an "Upload requirement" dialog; Upload files a Project Document (type code
+ * `project_document`) and makes NO status call. Once the documents query (['project-documents', id],
+ * same service as ProjectDocumentsPanel) returns a row the header shows Spec In. A server 422
+ * `project_requirements_missing` on a stale page is today's error toast, no dialog.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -55,6 +52,7 @@ vi.mock('@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout', () =>
 
 type Call = { url: string; method: string; body: unknown; at: number };
 const apiCalls: Call[] = [];
+let docs: unknown[] = [];
 let seq = 0;
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
@@ -74,7 +72,12 @@ vi.mock('@/lib/api', async (importOriginal) => {
           ],
         });
       }
+      if (method === 'POST' && String(input).includes('/attachments')) {
+        docs = [{ id: 'd-new', original_filename: 'reqs.pdf', stored_filename: 'reqs.pdf', attachment_type: { id: 'ty-doc', type_name: 'Project Document' } }];
+        return ok({ id: 'd-new' });
+      }
       if (method === 'POST') return ok({ id: 'new' });
+      if (method === 'GET' && String(input).includes('/attachments')) return ok({ data: docs });
       return ok({ data: [] });
     },
   };
@@ -262,12 +265,10 @@ function renderDetail() {
 }
 
 
-function refuse(code: string | null) {
+function refuse(code: string | null, message = 'Upload the requirements document before moving this project to Spec In.') {
   changeStatus.mockImplementation(
     (_vars: unknown, options?: { onError?: (e: Error) => void }) => {
-      const error = new Error('Upload the requirements document before moving this project to Spec In.') as Error & {
-        code: string | null;
-      };
+      const error = new Error(message) as Error & { code: string | null };
       error.code = code;
       options?.onError?.(error);
     },
@@ -294,71 +295,95 @@ const header = () => within(screen.getByTestId('project-header-actions'));
 beforeEach(() => {
   vi.clearAllMocks();
   apiCalls.length = 0;
+  docs = [];
   canManage = true;
   updateProject.mockResolvedValue({});
   standRegistered();
 });
 
-describe('AC-G7 Requirements needed dialog', () => {
-  it('AC-G7 a project_requirements_missing refusal opens the dialog and shows no error toast', async () => {
-    refuse('project_requirements_missing');
+describe('AC-G7 header with no document', () => {
+  it('AC-G7 Registered with 0 documents shows Upload Requirement and no Spec In button at all', async () => {
     renderDetail();
-    fireEvent.click(header().getByRole('button', { name: 'Spec In' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Requirements needed' });
-    expect(
-      within(dialog).getByText('Upload the requirements document before moving this project to Spec In.'),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Upload and move to Spec In' })).toBeInTheDocument();
-    expect(dialog.querySelector('input[type="file"]')).not.toBeNull();
-    expect(toast.error).not.toHaveBeenCalled();
+    expect(await header().findByRole('button', { name: 'Upload Requirement' })).toBeInTheDocument();
+    expect(header().queryByRole('button', { name: 'Spec In' })).toBeNull();
+    expect(screen.queryByText(/Spec In/, { selector: 'button *' })).toBeNull();
   });
 
-  it('AC-G7 Upload and move files the document as Requirements, then repeats the move', async () => {
-    refuse('project_requirements_missing');
+  it('AC-G7 a user who cannot work on the project sees no Upload Requirement', async () => {
+    projectFixture = project({ status_id: 's-reg', status_key: 'registered', status_label: 'Registered', can_edit: false });
     renderDetail();
-    fireEvent.click(header().getByRole('button', { name: 'Spec In' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Requirements needed' });
-    expect(changeStatus).toHaveBeenCalledTimes(1);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Guard: passes before the feature too; it must stay green after it.
+    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
+  });
+
+  it('AC-G9 with one document from the start the header is today: Spec In, no Upload Requirement', async () => {
+    docs = [{ id: 'd1', original_filename: 'brief.pdf', stored_filename: 'brief.pdf' }];
+    renderDetail();
+    expect(await header().findByRole('button', { name: 'Spec In' })).toBeInTheDocument();
+    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
+  });
+});
+
+describe('AC-G8 Upload requirement dialog', () => {
+  it('AC-G8 opens the dialog with a file input, Cancel and Upload', async () => {
+    renderDetail();
+    fireEvent.click(await header().findByRole('button', { name: 'Upload Requirement' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Upload requirement' });
+    expect(dialog.querySelector('input[type="file"]')).not.toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Upload' })).toBeInTheDocument();
+  });
+
+  it('AC-G8 Upload files a Project Document, makes no status call, then the header shows Spec In', async () => {
+    renderDetail();
+    fireEvent.click(await header().findByRole('button', { name: 'Upload Requirement' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Upload requirement' });
     const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, {
       target: { files: [new File(['x'], 'reqs.pdf', { type: 'application/pdf' })] },
     });
-    // The second attempt succeeds.
-    changeStatus.mockImplementation(
-      (_vars: unknown, options?: { onSuccess?: () => void }) => options?.onSuccess?.(),
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Upload' }));
+    await waitFor(() =>
+      expect(apiCalls.filter((c) => c.method === 'POST' && c.url.includes('/attachments'))).toHaveLength(1),
     );
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Upload and move to Spec In' }));
-    await waitFor(() => expect(changeStatus).toHaveBeenCalledTimes(2));
-    const posts = apiCalls.filter((c) => c.method === 'POST' && c.url.includes('/attachments'));
-    expect(posts).toHaveLength(1);
-    const form = posts[0].body as FormData;
-    expect(form.get('attachment_type_id')).toBe('ty-req');
+    const form = apiCalls.find((c) => c.method === 'POST' && c.url.includes('/attachments'))!.body as FormData;
+    expect(form.get('attachment_type_id')).toBe('ty-doc');
     expect(form.get('entity_type')).toBe('project');
     expect(form.get('entity_id')).toBe('p1');
-    expect(changeStatus).toHaveBeenLastCalledWith(
-      { projectId: 'p1', toStatusId: 's-spec' },
-      expect.anything(),
-    );
+    expect(changeStatus).not.toHaveBeenCalled();
+    expect(await header().findByRole('button', { name: 'Spec In' })).toBeInTheDocument();
+    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
   });
 
-  it('AC-G7 Cancel closes the dialog and uploads nothing', async () => {
+  it('AC-G8 Cancel closes the dialog and uploads nothing', async () => {
+    renderDetail();
+    fireEvent.click(await header().findByRole('button', { name: 'Upload Requirement' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Upload requirement' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Upload requirement' })).toBeNull());
+    expect(apiCalls.filter((c) => c.method === 'POST')).toHaveLength(0);
+    expect(changeStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('AC-G10 stale page', () => {
+  it('AC-G10 a 422 project_requirements_missing on a Spec In click is the server message as a toast, no dialog', async () => {
+    docs = [{ id: 'd1', original_filename: 'brief.pdf', stored_filename: 'brief.pdf' }];
     refuse('project_requirements_missing');
     renderDetail();
-    fireEvent.click(header().getByRole('button', { name: 'Spec In' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Requirements needed' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Requirements needed' })).toBeNull());
-    expect(apiCalls.filter((c) => c.method === 'POST')).toHaveLength(0);
-    expect(changeStatus).toHaveBeenCalledTimes(1);
+    fireEvent.click(await header().findByRole('button', { name: 'Spec In' }));
+    await waitFor(() => expect(changeStatus).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
+});
 
-  it.each([['some_other_code'], [null]])('AC-G7 a refusal with code %s opens no dialog', async (code) => {
-    refuse(code);
-    renderDetail();
-    fireEvent.click(header().getByRole('button', { name: 'Spec In' }));
-    await waitFor(() => expect(changeStatus).toHaveBeenCalled());
-    expect(screen.queryByRole('dialog', { name: 'Requirements needed' })).toBeNull();
-    expect(screen.queryByText('Requirements needed')).toBeNull();
+describe('AC-T2 SO tab shows every sales order', () => {
+  it('AC-T2 the SO tab renders SalesOrdersPanel without withoutPurchaseOrder, the PO tab no sales orders', async () => {
+    // The panels are real here; the observable is the call each makes. A PO tab that still embeds
+    // the filtered SalesOrdersPanel, or an SO tab that filters, both break this.
+    const src = await import('./ProjectDetailClient?raw').then((m) => m.default as string).catch(() => '');
+    expect(src, 'raw source readable').not.toBe('');
+    expect(src).not.toContain('withoutPurchaseOrder');
   });
 });
