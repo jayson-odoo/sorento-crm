@@ -134,4 +134,67 @@ describe('useSampleRequestPrefill', () => {
     expect(codes(result.current.state)).toEqual(['']);
     expect(result.current.note).toBeNull();
   });
+
+  it('review B1: a loaded draft that moves to another project drops its recorded quotation', async () => {
+    const fetchPrefill = vi.fn(async () => quote('d1', 'A'));
+    const { result, rerender } = renderHook(
+      ({ projectId }: { projectId: string }) => {
+        const [state, setState] = useState<FormState>({
+          ...EMPTY_FORM,
+          lines: [{ ...blankLine(), product_id: 'id-A', label: 'A' }],
+          quotation_document_id: 'd-saved',
+          quotation_issue_id: 'i-saved',
+          project_id: 'p-saved',
+        });
+        const patch = (p: Partial<FormState>) => setState((s) => ({ ...s, ...p }));
+        const prefill = useSampleRequestPrefill({
+          enabled: false,
+          projectId: projectId || state.project_id,
+          state,
+          patch,
+          fetchPrefill,
+        });
+        return { state, ...prefill };
+      },
+      { initialProps: { projectId: '' } },
+    );
+    await act(async () => {});
+    expect(result.current.state.quotation_document_id).toBe('d-saved');
+
+    rerender({ projectId: 'p-other' });
+    await waitFor(() => expect(result.current.state.quotation_document_id).toBe(''));
+    expect(result.current.state.quotation_issue_id).toBe('');
+    expect(codes(result.current.state)).toEqual(['id-A']);
+    expect(fetchPrefill).not.toHaveBeenCalled();
+  });
+
+  it('review S2: a project change drops the old source even if the new read fails', async () => {
+    let fail = false;
+    const fetchPrefill = vi.fn(async () => {
+      if (fail) throw new Error('down');
+      return quote('d1', 'A');
+    });
+    const { result, rerender } = setup(fetchPrefill);
+    rerender({ projectId: 'p1' });
+    await waitFor(() => expect(result.current.state.quotation_document_id).toBe('d1'));
+
+    fail = true;
+    rerender({ projectId: 'p2' });
+    await waitFor(() => expect(fetchPrefill).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(result.current.state.quotation_document_id).toBe('');
+  });
+
+  it('review S3: once the rows are edited the quotation picker is offered no more', async () => {
+    const fetchPrefill = vi.fn(async () => quote('d1', 'A', 'B'));
+    const { result, rerender } = setup(fetchPrefill);
+    rerender({ projectId: 'p1' });
+    await waitFor(() => expect(result.current.documents).toHaveLength(2));
+
+    act(() => {
+      result.current.setState((s) => ({ ...s, lines: s.lines.slice(1) }));
+    });
+    expect(result.current.documents).toEqual([]);
+  });
 });
+
