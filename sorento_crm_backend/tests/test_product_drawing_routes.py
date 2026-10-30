@@ -18,6 +18,7 @@ missing or unknown ``kind`` is a 422.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -599,3 +600,181 @@ def test_a_stranger_cannot_act_on_either_kind(scene, kind, action):
     assert response.status_code in (400, 404), response.text
     s["db"].refresh(tracker)
     assert tracker.is_responded is False and tracker.is_resolved is False
+
+
+# =============================================================================================
+# OWNER HAND TEST ROUND 2: the side panel reads one task (GET .../media-request).
+# =============================================================================================
+
+DETAIL = "media-request"
+
+
+def _escalate_as(s, user_id, version, line, kind="drawing"):
+    with acting(s["db"], user_id, {VIEW}) as client:
+        r = client.post(_url(version.id, line.id), json={"kind": kind})
+    assert r.status_code in (200, 201), r.text
+
+
+def _second_quotation(s):
+    """A second quotation (and its line) of the same product, in the same project."""
+    from app.services import project_quotation_service as quotes
+
+    from .test_project_quotation_images import _priced_line
+    from .test_quotation_lines_grid import _scope
+
+    _document, scope = _scope(s["db"], s["env"])
+    line = _priced_line(s["db"], s["env"], scope, s["product"])
+    version = quotes.current_version(s["db"], scope.id)
+    s["db"].commit()
+    return version, line, scope
+
+
+def test_the_detail_describes_a_task_with_two_requesters_on_two_quotations(scene):
+    s = scene
+    version_b, line_b, scope_b = _second_quotation(s)
+    _escalate_as(s, s["owner"], s["version"], s["line"])
+    _escalate_as(s, s["stranger"], version_b, line_b)
+    (tracker,) = trackers_for(s["db"], s["product"].id)
+
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        response = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["tracking_id"] == str(tracker.id)
+    assert body["kind"] == "drawing"
+    assert body["product_id"] == str(s["product"].id)
+    assert body["product_code"] == s["product"].product_code
+    assert body["product_name"] == s["product"].product_name
+    assert body["product_href"] == f"/master-data-management/products/{s['product'].id}"
+    assert body["resources_href"] == "/resource-management/attachment-directories"
+    assert body["is_assignee"] is True and body["can_resolve"] is True
+    assert body["is_responded"] is False and body["is_resolved"] is False
+    assert body["current_tier"] == 1 and body["assignee_name"]
+    assert body["assignee_team_id"] in {str(t) for t in s["team"]["team_ids"].values()}
+    assert body["due_at"] and body["due_at_resolution"] and body["due_at"].endswith(("Z", "+00:00"))
+    assert {"responded_at", "resolved_at", "escalated_at", "extension_count"} <= set(body)
+    hrefs = {q["href"] for q in body["quotations"]}
+    assert len(body["quotations"]) == 2 and len(hrefs) == 2
+    for q in body["quotations"]:
+        assert q["href"] == f"/project-sales/{q['project_id']}/quotations/{q['quotation_id']}"
+    assert len(body["followers"]) == 2 and len(set(body["followers"])) == 2
+
+
+def test_a_quotation_label_is_a_reference_never_a_uuid(scene):
+    s = scene
+    _escalate_as(s, s["owner"], s["version"], s["line"])
+    (tracker,) = trackers_for(s["db"], s["product"].id)
+
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        body = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}").json()
+
+    (quotation,) = body["quotations"]
+    assert quotation["label"]
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", quotation["label"])
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", " ".join(body["followers"]))
+
+
+def test_the_detail_is_a_404_for_someone_who_cannot_see_the_task(scene):
+    s = scene
+    from app.main import app
+
+    assert any(
+        isinstance(r, APIRoute) and r.path.endswith(f"/{DETAIL}") and "GET" in r.methods for r in app.routes
+    ), "GET ...media-request is not registered"
+    _escalate_as(s, s["owner"], s["version"], s["line"])
+    (tracker,) = trackers_for(s["db"], s["product"].id)
+
+    with acting(s["db"], s["stranger"], {VIEW}) as client:
+        response = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}")
+
+    assert response.status_code == 404, response.text
+
+
+def test_the_detail_of_a_non_media_task_is_a_409(scene):
+    from datetime import datetime, timedelta
+
+    s = scene
+    other = ConversationSLATracking(
+        id=_uid(), policy_id=s["team"]["policy_id"], current_tier=1,
+        initiated_at=datetime.utcnow(), current_tier_started_at=datetime.utcnow(),
+        due_at=datetime.utcnow() + timedelta(hours=4), due_at_resolution=datetime.utcnow() + timedelta(hours=24),
+        is_resolved=False, source_entity_type="complaint", source_entity_id=_uid(),
+        agent_id=s["team"]["agent_id"], assigned_to_id=s["team"]["assignee"],
+    )
+    s["db"].add(other)
+    s["db"].commit()
+
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        response = client.get(f"{SLA_BASE}/{other.id}/{DETAIL}")
+
+    assert response.status_code == 409, response.text
+
+
+def test_can_resolve_needs_the_assignee_and_the_resolve_permission(scene):
+    s = scene
+    _escalate_as(s, s["owner"], s["version"], s["line"])
+    (tracker,) = trackers_for(s["db"], s["product"].id)
+
+    with acting(s["db"], s["team"]["assignee"], set()) as client:
+        no_permission = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}").json()
+    # An admin-like viewer who can see the task but is not its assignee.
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        with_permission = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}").json()
+
+    assert no_permission["is_assignee"] is True and no_permission["can_resolve"] is False
+    assert with_permission["can_resolve"] is True
+
+
+def test_can_resolve_is_false_for_a_viewer_who_is_not_the_assignee(scene):
+    from app.services.sla_service import ConversationSLATrackingService
+
+    s = scene
+    _escalate_as(s, s["owner"], s["version"], s["line"])
+    (tracker,) = trackers_for(s["db"], s["product"].id)
+    s["db"].query(ConversationSLATracking).filter(ConversationSLATracking.id == tracker.id).update(
+        {"assigned_to_id": s["stranger"]}
+    )
+    s["db"].commit()
+    original = ConversationSLATrackingService.can_user_act_on_tracking
+    ConversationSLATrackingService.can_user_act_on_tracking = lambda self, uid_, t: True
+    try:
+        with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+            body = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}").json()
+    finally:
+        ConversationSLATrackingService.can_user_act_on_tracking = original
+
+    assert body["is_assignee"] is False
+    assert body["can_resolve"] is False
+
+
+# --------------------------------------------- the H3 notice through the Resources link route
+
+
+def test_linking_a_drawing_through_the_product_attachments_route_notifies_the_assignee(scene):
+    """Resources > Files links the uploaded file with POST /master-data/product-attachments."""
+    from app.models.product import ProductAttachment  # noqa: F401
+    from .test_product_drawing_request import DRAWINGS, _file
+
+    s = scene
+    _escalate_as(s, s["owner"], s["version"], s["line"])
+    (tracker,) = trackers_for(s["db"], s["product"].id)
+    attachment = _file(s["db"], s["env"]["company_id"], DRAWINGS, "from-resources.png")
+    s["db"].commit()
+
+    with acting(s["db"], s["owner"], {"master_data.product_attachments.edit"}) as client:
+        paths = [r.path for r in client.app.routes if getattr(r, "path", "").endswith("/product-attachments/")]
+        assert paths, "the product attachments create route is not mounted"
+        response = client.post(
+            paths[0],
+            json={"product_id": str(s["product"].id), "attachment_id": str(attachment.id)},
+        )
+
+    assert response.status_code in (200, 201), response.text
+    s["db"].refresh(tracker)
+    assert tracker.is_resolved is False
+    added = [
+        n for n in notes_for(s["db"], s["team"]["assignee"])
+        if "Drawing added" in f"{n.title} {n.body or ''}"
+    ]
+    assert len(added) == 1

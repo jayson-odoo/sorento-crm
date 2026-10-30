@@ -301,3 +301,26 @@ def resolve_media_request(
     from app.services import product_drawing_request_service as drawing_requests
 
     return _drawing_action(db, drawing_requests.resolve, tracking_id, current_user)
+
+
+@router.get("/{tracking_id}/media-request")
+def get_media_request(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """What the side panel shows for a product drawing or photo task."""
+    from app.services import product_drawing_request_service as drawing_requests
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    try:
+        UUID(str(tracking_id))
+    except ValueError:
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    has_resolve = UserPermissionService(db).check_user_has_permission(
+        current_user["id"], "sla_management.conversation_sla_tracking.resolve"
+    )
+    return drawing_requests.media_request_detail(
+        db, tracking_id, current_user, has_resolve_permission=bool(has_resolve)
+    )

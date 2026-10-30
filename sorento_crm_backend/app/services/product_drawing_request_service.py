@@ -500,6 +500,132 @@ def _tracker_for_actor(db: Session, tracking_id: str, user: dict) -> Conversatio
     return tracking
 
 
+def media_request_detail(db: Session, tracking_id: str, user: dict, *, has_resolve_permission: bool) -> Dict[str, Any]:
+    """Everything the side panel shows for one drawing or photo task.
+
+    Same gates as respond/resolve for seeing it: 404 when the viewer cannot see the task, 409 when
+    it is not a media task. Acting on it is a separate question (`can_resolve`).
+    """
+    from app.models.user import User
+    from app.services.sla_service import ConversationSLATrackingService, _tracking_company_id
+    from app.services.user_service import AccessAgentService
+
+    service = ConversationSLATrackingService(db)
+    tracking = service.get_tracking(str(tracking_id), load_event_logs=False)
+    if not tracking or not service.can_user_act_on_tracking(user["id"], tracking):
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    if tracking.source_entity_type not in SOURCE_TYPES.values():
+        raise AppException(
+            status_code=409,
+            message="This task is not a drawing or photo request.",
+            code="not_a_media_request",
+        )
+    kind = "photo" if tracking.source_entity_type == SOURCE_TYPES["photo"] else "drawing"
+    product_id = str(tracking.source_entity_id)
+    product = db.query(Product.product_code, Product.product_name).filter(Product.id == product_id).first()
+
+    assignee_name = None
+    if tracking.assigned_to_id:
+        assignee = db.query(User.name, User.email).filter(User.id == str(tracking.assigned_to_id)).first()
+        assignee_name = ((assignee[0] or assignee[1]) if assignee else None)
+
+    team_id = None
+    if tracking.agent_id:
+        team_id = AccessAgentService(db).get_team_id_by_tier(
+            str(tracking.agent_id),
+            tracking.current_tier,
+            team_set_code=tracking.team_set_code,
+            company_id=_tracking_company_id(tracking),
+        )
+
+    # Requesters in join order; each escalated from one quotation version (the reason).
+    rows = (
+        db.query(ConversationSLAEventLog.triggered_by_id, ConversationSLAEventLog.reason)
+        .filter(
+            ConversationSLAEventLog.sla_tracking_id == str(tracking.id),
+            ConversationSLAEventLog.event_type == REQUESTER_EVENT,
+            ConversationSLAEventLog.triggered_by_id.isnot(None),
+        )
+        .order_by(ConversationSLAEventLog.event_at.asc(), ConversationSLAEventLog.id.asc())
+        .all()
+    )
+    user_ids = list(dict.fromkeys(str(uid) for uid, _ in rows))
+    names = {
+        str(uid): (name or email)
+        for uid, name, email in db.query(User.id, User.name, User.email).filter(User.id.in_(user_ids)).all()
+    } if user_ids else {}
+    followers = [names[uid] for uid in user_ids if names.get(uid)]
+
+    version_ids = list(
+        dict.fromkeys(
+            reason[len(_VERSION_REASON_PREFIX):]
+            for _uid, reason in rows
+            if (reason or "").startswith(_VERSION_REASON_PREFIX)
+        )
+    )
+    quotations: List[Dict[str, Any]] = []
+    if version_ids:
+        from app.models.projects import ProjectQuotationDocument
+
+        found = {
+            str(version_id): (str(quotation_id), str(project_id), scope_label, document_no)
+            for version_id, quotation_id, project_id, scope_label, document_no in db.query(
+                ProjectQuotationVersion.id,
+                ProjectQuotation.id,
+                ProjectQuotation.project_id,
+                ProjectQuotation.scope_label,
+                ProjectQuotationDocument.document_no,
+            )
+            .join(ProjectQuotation, ProjectQuotation.id == ProjectQuotationVersion.quotation_id)
+            .outerjoin(ProjectQuotationDocument, ProjectQuotationDocument.id == ProjectQuotation.document_id)
+            .filter(ProjectQuotationVersion.id.in_(version_ids))
+            .all()
+        }
+        seen = set()
+        for version_id in version_ids:
+            hit = found.get(version_id)
+            if hit is None or hit[0] in seen:
+                continue
+            seen.add(hit[0])
+            quotation_id, project_id, scope_label, document_no = hit
+            quotations.append(
+                {
+                    "quotation_id": quotation_id,
+                    "project_id": project_id,
+                    "label": " · ".join(part for part in (document_no, scope_label) if part),
+                    "href": f"/project-sales/{project_id}/quotations/{quotation_id}",
+                }
+            )
+
+    is_assignee = bool(tracking.assigned_to_id) and str(tracking.assigned_to_id) == str(user["id"])
+    return {
+        "tracking_id": str(tracking.id),
+        "kind": kind,
+        "product_id": product_id,
+        "product_code": product[0] if product else None,
+        "product_name": product[1] if product else None,
+        "product_href": f"/master-data-management/products/{product_id}",
+        "resources_href": "/resource-management/attachment-directories",
+        "assignee_name": assignee_name,
+        "assignee_team_id": str(team_id) if team_id else None,
+        "is_assignee": is_assignee,
+        "can_resolve": bool(
+            has_resolve_permission and service.can_user_resolve_tracking(user["id"], tracking)
+        ),
+        "is_responded": bool(tracking.is_responded),
+        "responded_at": _utc(tracking.responded_at),
+        "is_resolved": bool(tracking.is_resolved),
+        "resolved_at": _utc(tracking.resolved_at),
+        "due_at": _utc(tracking.due_at),
+        "due_at_resolution": _utc(tracking.due_at_resolution),
+        "current_tier": tracking.current_tier,
+        "escalated_at": _utc(tracking.escalated_at),
+        "extension_count": int(tracking.extension_count or 0),
+        "quotations": quotations,
+        "followers": followers,
+    }
+
+
 def _update(db: Session, tracking_id: str, **fields) -> None:
     """The write the SLA resolve route makes: straight onto the tracker by id, so a blank event
     name or a changed team set on the step can never strand a task."""
