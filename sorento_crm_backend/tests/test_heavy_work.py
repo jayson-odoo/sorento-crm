@@ -116,6 +116,59 @@ def test_a_light_route_never_waits_behind_a_heavy_one(monkeypatch):
     assert code == 200 and took < 0.2  # five heavy ones take 0.25 s one after another
 
 
+def test_a_request_that_waits_too_long_gets_503_and_the_rest_still_run(monkeypatch):
+    """Security review, 30 Oct: one slow request must not queue every other heavy request forever."""
+    monkeypatch.delenv("HEAVY_HANDLER_CONCURRENCY", raising=False)
+    monkeypatch.setenv("HEAVY_WAIT_SECONDS", "0")
+    app = FastAPI()
+
+    @app.get("/slow")
+    @heavy_work.heavy
+    def slow():
+        time.sleep(0.3)
+        return {"ok": True}
+
+    app.add_middleware(heavy_work.HeavyRouteLimit, routes=app.router.routes)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            first = asyncio.ensure_future(c.get("/slow"))
+            await asyncio.sleep(0.05)
+            second = await c.get("/slow")
+            return (await first).status_code, second
+
+    first, second = asyncio.run(go())
+    assert first == 200
+    assert second.status_code == 503 and second.headers["retry-after"] == "5"
+
+
+def test_the_turn_is_given_back_when_a_handler_raises(monkeypatch):
+    monkeypatch.delenv("HEAVY_HANDLER_CONCURRENCY", raising=False)
+    monkeypatch.setenv("HEAVY_WAIT_SECONDS", "1")
+    app = FastAPI()
+
+    @app.get("/boom")
+    @heavy_work.heavy
+    def boom():
+        raise RuntimeError("zz")
+
+    @app.get("/fine")
+    @heavy_work.heavy
+    def fine():
+        return {"ok": True}
+
+    app.add_middleware(heavy_work.HeavyRouteLimit, routes=app.router.routes)
+    client = TestClient(app, raise_server_exceptions=False)
+    assert client.get("/boom").status_code == 500
+    assert client.get("/fine").status_code == 200
+
+
+def test_a_bad_knob_falls_back_to_the_default(monkeypatch):
+    monkeypatch.setenv("HEAVY_HANDLER_CONCURRENCY", "x")
+    monkeypatch.setenv("HEAVY_WAIT_SECONDS", "soon")
+    assert heavy_work.concurrency() == 1 and heavy_work.wait_seconds() == 60
+
+
 def test_the_marker_keeps_the_handler_as_it_is():
     def handler(item: str, limit: int = 5):
         return {"item": item, "limit": limit}
@@ -128,6 +181,9 @@ def test_the_marker_keeps_the_handler_as_it_is():
 
 # ---- the handlers that wear it (PLAN-backend-mem-2-30oct.md S2): exports, reports and upload parsers that build or
 # parse a large file or result in the request. Not LLM-bound handlers (chat turn, AI extract): they wait, not allocate.
+# Not the reports the chatbot calls as MCP tools (report-ask, sales-report, outstanding-report): they are part of a
+# chat turn with a 10 s budget, and must not queue behind an export. Not public portal routes: an outside caller
+# must not be able to hold the staff's slot (security review, 30 Oct).
 WRAPPED = {
     "app.api.v1.sales.targets.dealer_targets_template",
     "app.api.v1.sales.targets.import_dealer_targets",
@@ -135,14 +191,11 @@ WRAPPED = {
     "app.api.v1.projects.order_inquiries.export_order_inquiry_worklist",
     "app.api.v1.projects.order_inquiries.export_order_inquiry",
     "app.api.v1.projects.sales_orders.export_autocount_change_list",
+    "app.api.v1.projects.quotation_documents.download_quotation_issue_pdf",
     "app.api.v1.projects.divergences.ingest_sales_order_file",
-    "app.api.v1.public.portal_sample_request.portal_pdf",
-    "app.api.v1.order_management.report_ask.report_ask",
     "app.api.v1.order_management.orders.bulk_import_orders",
     "app.api.v1.order_management.orders.import_order_tracking",
     "app.api.v1.order_management.orders.import_delivery_order_detail",
-    "app.api.v1.order_management.orders.get_outstanding_report",
-    "app.api.v1.order_management.orders.get_sales_report",
     "app.api.v1.order_management.orders.get_top_selling",
     "app.api.v1.order_management.customers.import_customers",
     "app.api.v1.master_data.products.bulk_import_products",

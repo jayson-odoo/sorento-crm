@@ -169,7 +169,14 @@ lets `HEAVY_HANDLER_CONCURRENCY` (default 1, 0 = off) marked requests run at onc
 read to the last byte sent. First built as a lock around the handler: 566 -> 543 MB, because FastAPI validates
 and serializes the result after the handler returns. As middleware, real gunicorn, one worker, 3 rounds of 32
 exports of 15k rows 16 at once: knob 0 -> 485 / 641 / 664 MB private, 23-24 s a round; knob 1 -> 157 / 160 /
-160 MB, 19 s a round. The 42 wrapped handlers are listed in `tests/test_heavy_work.py` `WRAPPED`.
+160 MB, 19 s a round. The wrapped handlers (39 after review) are listed in `tests/test_heavy_work.py` `WRAPPED`.
+After review (30 Oct): a request that waits `HEAVY_WAIT_SECONDS` (default 60) for its turn gets 503 with
+Retry-After (security review: one slow upload body, read inside the turn and before auth, must not queue every
+other export forever; a short queue also drains inside a recycle's graceful shutdown). Unwrapped: the three
+reports the chatbot calls as MCP tools (report-ask, sales-report, outstanding-report; 10 s budget per call, they
+must not queue behind an export) and the public portal PDF (an outside caller must not hold the staff's slot).
+Wrapped: the quotation issue PDF (WeasyPrint, up to 50 pages). Known: a queued request whose client has gone still
+runs when its turn comes (uvicorn reports a disconnect only through `receive`); the wait bound keeps that short.
 
 **S3** `gunicorn.conf.py`: `max_requests` 2000 (`GUNICORN_MAX_REQUESTS`), jitter 500
 (`GUNICORN_MAX_REQUESTS_JITTER`, about 45 min of spread at 650 requests per worker per hour), 0 = off. gunicorn's
@@ -185,6 +192,11 @@ back). Signals coalesce and carry no sender, so in 2 of 3 runs the master was le
 Real gunicorn, 2 workers, limit 40 + 10, 600 GETs 8 at once, three runs: 600 / 600 / 600 OK (0 failed), 11 / 10
 / 10 recycles with as many exits, 2 workers throughout, no WORKER TIMEOUT. One worker inflated by 32 exports with
 the S2 limit off: 672 MB private; its replacement after the recycle: 62 MB.
+Known limits: a request sent on an idle keep-alive connection at the moment uvicorn closes it can still be reset
+(as at every deploy before; nginx retries idempotent requests, the MCP client turns keep-alive off). A request-limit
+exit has no signal, so the inbox stop starts after up to 100 s of connection drain; the worker can take about 240 s
+in all, inside the master's kill point (last heartbeat at 150 s plus `timeout` 120 s). `max_requests` counts every
+request, cheap 401s included, so heavy junk traffic recycles workers sooner; harmless (that is a fresh worker).
 
 ## Expected per worker after
 

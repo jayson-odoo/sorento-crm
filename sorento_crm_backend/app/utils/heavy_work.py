@@ -12,18 +12,24 @@ the turn for the whole request, body to last byte sent, and waits on an asyncio 
 thread and never blocks the event loop.
 
 Only the routes that build or parse a large file or result wear it. Not the whole pool: `def chat_turn` and the AI
-extractors wait on an LLM, and would queue behind an export for nothing.
+extractors wait on an LLM, and would queue behind an export for nothing; nor the reports the chatbot calls as MCP
+tools, nor public portal routes (see tests/test_heavy_work.py WRAPPED). A request that waits `HEAVY_WAIT_SECONDS`
+(default 60) for its turn is answered 503 with Retry-After. A queued request whose client has gone still runs when its
+turn comes (uvicorn reports a disconnect only through `receive`); the wait bound keeps that queue short.
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any, Callable, Optional, TypeVar
 
+from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Match
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 F = TypeVar("F", bound=Callable[..., Any])
+logger = logging.getLogger(__name__)
 
 
 def heavy(fn: F) -> F:
@@ -32,9 +38,25 @@ def heavy(fn: F) -> F:
     return fn
 
 
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "")
+    try:
+        return int(raw) if raw.strip() else default
+    except ValueError:
+        logger.warning("%s=%r is not a whole number; using %d", name, raw, default)
+        return default
+
+
 def concurrency() -> int:
     """`HEAVY_HANDLER_CONCURRENCY`, read when a worker's middleware first runs; 0 (or less) = no limit."""
-    return int(os.getenv("HEAVY_HANDLER_CONCURRENCY", "1") or "1")
+    return _int_env("HEAVY_HANDLER_CONCURRENCY", 1)
+
+
+def wait_seconds() -> int:
+    """`HEAVY_WAIT_SECONDS`: how long a heavy request waits for its turn before it is answered 503 (security review,
+    30 Oct: one slow upload body, read inside the turn and before auth, must not queue every other export forever,
+    and a short queue also drains inside a recycle's graceful shutdown)."""
+    return _int_env("HEAVY_WAIT_SECONDS", 60)
 
 
 class HeavyRouteLimit:
@@ -46,6 +68,7 @@ class HeavyRouteLimit:
         self._heavy: Optional[list[BaseRoute]] = None
         self._semaphore: Optional[asyncio.Semaphore] = None
         self._limit: Optional[int] = None
+        self._wait = 0
 
     def _is_heavy(self, scope: Scope) -> bool:
         if self._heavy is None:
@@ -59,9 +82,24 @@ class HeavyRouteLimit:
         if self._limit is None:
             # Created here, in the worker and on its event loop, never in the preloading master.
             self._limit = concurrency()
+            self._wait = wait_seconds()
             self._semaphore = asyncio.Semaphore(self._limit) if self._limit > 0 else None
         if self._semaphore is None:
             await self.app(scope, receive, send)
             return
-        async with self._semaphore:
+        try:
+            if self._semaphore.locked():
+                await asyncio.wait_for(self._semaphore.acquire(), timeout=self._wait)
+            else:
+                await self._semaphore.acquire()  # free: taken at once, no wait (and no timeout at 0)
+        except asyncio.TimeoutError:
+            busy = JSONResponse(
+                {"detail": "The server is busy with another export or import. Try again in a moment."},
+                status_code=503, headers={"Retry-After": "5"},
+            )
+            await busy(scope, receive, send)
+            return
+        try:
             await self.app(scope, receive, send)
+        finally:
+            self._semaphore.release()

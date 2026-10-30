@@ -181,4 +181,3 @@ def test_workers_are_recycled_after_a_jittered_request_count(monkeypatch):
     monkeypatch.setenv("GUNICORN_MAX_REQUESTS_JITTER", "0")
     module = _load_conf_module()
     assert (module.max_requests, module.max_requests_jitter) == (0, 0)  # 0 = never recycled, gunicorn's own off
-

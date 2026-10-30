@@ -257,7 +257,7 @@ def load_lookup_vectors(db: Session, model: str, only: Iterable[str] | None = No
         with ll._store_lock:
             for (text, _v), vec in zip(batch, unit):
                 key = ll._key(text, model)
-                if key not in ll._cache and len(ll._cache) < ll._CACHE_CAP:  # the cap `embed` keeps
+                if key not in ll._cache and len(ll._cache) < ll._CACHE_CAP:  # the cap `embed` keeps; past it `fill` clears and re-embeds
                     ll._cache[key] = vec
                     added += 1
         return added

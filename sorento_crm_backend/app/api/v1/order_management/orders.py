@@ -1579,7 +1579,6 @@ outstanding_report_router = APIRouter()
 
 
 @outstanding_report_router.get("/outstanding-report", response_model=OutstandingReportResponse)
-@heavy
 def get_outstanding_report(
     product_code: Optional[str] = Query(
         None,
@@ -1824,7 +1823,6 @@ sales_report_router = APIRouter()
 
 
 @sales_report_router.get("/sales-report", response_model=SalesReportResponse)
-@heavy
 def get_sales_report(
     product_code: Optional[str] = Query(
         None,

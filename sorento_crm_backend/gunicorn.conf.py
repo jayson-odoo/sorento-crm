@@ -107,4 +107,3 @@ def post_fork(server, worker):
     from app.database import engine
 
     engine.dispose(close=False)
-
