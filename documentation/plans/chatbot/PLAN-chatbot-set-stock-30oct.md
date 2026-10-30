@@ -1,6 +1,6 @@
 # PLAN: CHATBOT-SET-STOCK - a stock ask for a set code answers SET availability first
 
-Status: Plan (behaviour card being drafted; no code until the owner answers). Size M, owner-visible chatbot change.
+Status: Waiting on owner (behaviour card v2 filed as crew-ask; no code until answered). Size M, owner-visible chatbot change.
 
 ## Why
 
