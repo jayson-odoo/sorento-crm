@@ -44,6 +44,7 @@ from app.services.project_so_ingest_service import (
 )
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,7 @@ def ingest_sales_order(
 
 
 @router.post("/sales-orders/ingest-file", response_model=IngestResponse)
+@heavy
 def ingest_sales_order_file(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission(EDIT)),

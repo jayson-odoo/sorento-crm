@@ -16,6 +16,7 @@ from app.schemas.common import ListResponse
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.grn_summary_service import grn_summary_rows
 from app.services.uuid_list_param import parse_uuid_list
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -95,6 +96,7 @@ def get_grns(
 
 
 @router.post("/import-listing", status_code=status.HTTP_202_ACCEPTED)
+@heavy
 def import_grn_listing(
     file: UploadFile = File(..., description="Excel file: GRN listing (doc number, transfer from, date)"),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
@@ -154,6 +156,7 @@ def import_grn_listing(
 
 
 @router.post("/import-lines", status_code=status.HTTP_202_ACCEPTED)
+@heavy
 def import_grn_lines(
     file: UploadFile = File(..., description="Excel file: GRN lines (doc no, item code, location, quantity)"),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),

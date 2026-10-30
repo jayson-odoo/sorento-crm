@@ -25,7 +25,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import exists, func, or_
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.new_product_application import NewProductApplication, NewProductApplicationLine
@@ -763,6 +763,30 @@ _SORTS = {
     "submitted_at": NewProductApplication.submitted_at,
     "needed_by": NewProductApplication.needed_by,
     "customer_name": NewProductApplication.customer_name,
+    # Every column of the list sorts (PORTAL-P4-REQUESTS P4-23), each by what it shows
+    # (`serialize_summary`): the linked inquiry's number, the first line's text, the line counts.
+    "stock_inquiry_number": select(StockInquiry.inquiry_number)
+    .where(StockInquiry.id == NewProductApplication.stock_inquiry_id)
+    .scalar_subquery(),
+    "first_line": select(
+        func.coalesce(NewProductApplicationLine.description, NewProductApplicationLine.proposed_code)
+    )
+    .where(NewProductApplicationLine.application_id == NewProductApplication.id)
+    .order_by(NewProductApplicationLine.line_no)
+    .limit(1)
+    .scalar_subquery(),
+    "lines_total": select(func.count(NewProductApplicationLine.id))
+    .where(NewProductApplicationLine.application_id == NewProductApplication.id)
+    .scalar_subquery(),
+    "lines_done": select(func.count(NewProductApplicationLine.id))
+    .where(
+        NewProductApplicationLine.application_id == NewProductApplication.id,
+        or_(
+            NewProductApplicationLine.opened_product_id.isnot(None),
+            NewProductApplicationLine.closed_reason.isnot(None),
+        ),
+    )
+    .scalar_subquery(),
 }
 
 

@@ -51,6 +51,7 @@ from app.services.scm import (
 )
 from app.services.scm.upload_intake import read_upload, read_upload_retained
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -130,6 +131,7 @@ def _refuse_cancelled(plan: LoadingPlan) -> None:
 
 
 @router.post("/supplier-inventory/preview")
+@heavy
 def preview_supplier_inventory(
     file: UploadFile = File(..., description="The supplier's own stock list"),
     supplier_id: str = Form(..., description="Which supplier sent it"),
@@ -162,6 +164,7 @@ def preview_supplier_inventory(
 
 
 @router.post("/supplier-inventory/apply")
+@heavy
 def apply_supplier_inventory(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     supplier_id: str = Form(...),
@@ -1150,6 +1153,7 @@ def consolidated_packing_list_for_shipment(
 
 
 @router.get("/inbound-shipments/{shipment_id}/packing-list/export")
+@heavy
 def export_consolidated_packing_list(
     shipment_id: str,
     _user: dict = Depends(_READ),
@@ -1420,6 +1424,7 @@ def delete_spo(
 
 
 @router.get("/inbound-shipments/{shipment_id}/spo-worksheet/export")
+@heavy
 def export_spo_worksheet(
     shipment_id: str,
     _user: dict = Depends(_READ),

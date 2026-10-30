@@ -75,6 +75,14 @@ graceful_timeout = 150
 # into a 5x re-offer rate.
 keepalive = int(os.environ.get("GUNICORN_KEEP_ALIVE", "75"))
 
+# BACKEND-MEM-2 S3: a worker keeps the memory of its busiest moment until it exits, and without a request limit it
+# exits only at the next deploy (documentation/plans/deploy/PLAN-backend-mem-2-30oct.md). At about 650 requests per
+# worker per hour, 2000 plus up to 500 of jitter recycles each worker every 2.5-4 h, never all together. The retiring
+# worker stops accepting and drains like a TTOU'd one (app/uvicorn_worker.py, inbox stop included); the other workers
+# take its new connections and the master forks the replacement when it exits. 0 turns recycling off.
+max_requests = int(os.environ.get("GUNICORN_MAX_REQUESTS", "2000"))
+max_requests_jitter = int(os.environ.get("GUNICORN_MAX_REQUESTS_JITTER", "500"))
+
 accesslog = "-"
 errorlog = "-"
 loglevel = "info"

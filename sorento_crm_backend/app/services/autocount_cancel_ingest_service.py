@@ -812,6 +812,13 @@ def recompute_cancelled(db: Session, touched: Touched,
             value = max(min(total, cap), _ZERO)
             if row.qty_cancelled != value:
                 row.qty_cancelled = value
+    if touched.po_line_ids:
+        # OI-AUTO-CONFIRM: a PO line cancelled (or reopened) by a cancel document moves
+        # every order inquiry row linked to it.
+        from app.services.project_order_inquiry_service import auto_confirm_rows_on_po_lines
+
+        db.flush()
+        auto_confirm_rows_on_po_lines(db, list(touched.po_line_ids))
     # AC-CONSIGN-CRM: a return touches the consignment line it was (or is) matched to.
     derived.plan_moves.extend(
         return_plan_moves(db, recompute_returned(db, touched.so_line_ids, company_id))

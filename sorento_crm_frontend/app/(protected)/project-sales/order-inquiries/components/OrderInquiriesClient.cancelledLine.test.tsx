@@ -356,7 +356,7 @@ describe('AC-CL-17: the To confirm card toggles off on a second press, like the 
     );
     const card = screen.getByTestId('order-inquiry-strip-to-confirm');
     expect(card).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByLabelText('Clear filter: To confirm')).toBeInTheDocument();
+    expect(screen.getByLabelText('Clear filter: To order')).toBeInTheDocument();
 
     fireEvent.click(card);
 
@@ -365,7 +365,7 @@ describe('AC-CL-17: the To confirm card toggles off on a second press, like the 
         expect.objectContaining({ ack: undefined }),
       ),
     );
-    expect(screen.queryByLabelText('Clear filter: To confirm')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Clear filter: To order')).not.toBeInTheDocument();
     expect(screen.getByTestId('order-inquiry-strip-to-confirm')).toHaveAttribute(
       'aria-pressed',
       'false',

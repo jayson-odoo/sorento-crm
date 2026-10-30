@@ -3,8 +3,9 @@
 Mounted at ``/api/v1/dealer-kit`` behind
 ``require_module_enabled_with_api_key("dealer_kit")``.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.v1._request_own_scope import price_tag_request_own_scope
 from app.api.v1.dealer_kit import (
     assets,
     catalogue,
@@ -32,7 +33,11 @@ router.include_router(selections.router)
 router.include_router(flyer_spec_proposals.router)
 router.include_router(flyer_readings.router)
 router.include_router(editions.router)
-router.include_router(price_tag_requests.router)
+# PORTAL-P4-REQUESTS S7: a salesperson holding only `.view_own` reads their own rows here and
+# nothing else (`_request_own_scope.check_module`); staff are left alone.
+router.include_router(
+    price_tag_requests.router, dependencies=[Depends(price_tag_request_own_scope)]
+)
 router.include_router(tag_templates.router)
 router.include_router(tag_sizes.router)
 router.include_router(tag_data.router)

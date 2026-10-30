@@ -7,6 +7,8 @@ import FormRevisionsTab, { type FormRevisionsKind } from './FormRevisionsTab';
 import { useRevisionEnabledMap } from './useRevisionEnabledMap';
 import { useStockInquiry } from '@/app/(protected)/procurement-management/stock-inquiries/hooks/useStockInquiries';
 import { usePurchaseRequest } from '@/app/(protected)/procurement-management/purchase-requests/hooks/usePurchaseRequests';
+import { useComplaint } from '@/app/(protected)/complaint-management/complaints/hooks/useComplaints';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import type { FormSLASourceType } from './formSLAService';
 import type { FormCommentKind } from '@/types/formComments';
 
@@ -37,7 +39,7 @@ interface FormDetailTabsWithRevisionsProps {
  *
  * The lineage signal is the record's own denormalized `revision_no` (UAC H4),
  * read through the SAME query the detail page already issues
- * (`['stock-inquiry', id]` / `['purchase-request', id]`), so it costs no extra
+ * (`['stock-inquiry', id]` / `['purchase-request', id]` / `['complaint', id]`), so it costs no extra
  * request - and it is only subscribed to when the type is disabled, so the
  * common enabled case does not even do that. Fetching the lineage itself here
  * would be a second request on every load of every form; the tab body fetches it
@@ -60,16 +62,22 @@ export default function FormDetailTabsWithRevisions({
   revisionsKind,
   commentsKind,
 }: FormDetailTabsWithRevisionsProps) {
+  // A limited user's detail is the portal's own form (PORTAL-P4-REQUESTS R1), which carries its
+  // own Comments and Revisions tabs: no second tab strip around it.
+  const { limited } = useRequestScope(sourceEntityType);
   const { data: enabledMap } = useRevisionEnabledMap();
   const revisionsEnabled = enabledMap?.[revisionsKind] === true;
   // Only a DISABLED type has to ask whether this record has history; an enabled
   // one shows the tab regardless, so both queries stay switched off (null id).
   const probeForHistory = !!enabledMap && !revisionsEnabled;
   const isStockInquiry = revisionsKind === 'stock_inquiry';
+  const isComplaint = revisionsKind === 'complaint';
+  const isRequest = !isStockInquiry && !isComplaint;
   const inquiry = useStockInquiry(probeForHistory && isStockInquiry ? sourceEntityId : null);
-  const request = usePurchaseRequest(probeForHistory && !isStockInquiry ? sourceEntityId : null);
+  const request = usePurchaseRequest(probeForHistory && isRequest ? sourceEntityId : null);
+  const complaint = useComplaint(probeForHistory && isComplaint ? sourceEntityId : null);
 
-  const record = isStockInquiry ? inquiry.data : request.data;
+  const record = isStockInquiry ? inquiry.data : isComplaint ? complaint.data : request.data;
   const hasLineage = Number(record?.revision_no ?? 0) > 0;
   const showRevisions = revisionsEnabled || (probeForHistory && hasLineage);
 
@@ -84,6 +92,8 @@ export default function FormDetailTabsWithRevisions({
         },
       ]
     : extraTabs;
+
+  if (limited) return <>{children}</>;
 
   return (
     <FormDetailWithSLATabs

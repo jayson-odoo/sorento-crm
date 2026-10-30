@@ -631,12 +631,12 @@ PERMISSION_REGISTRY.extend([
         "slug": "projects.order_inquiries.acknowledge",
         "name": "Acknowledge Order Inquiry Rows",
         "description": (
-            "Purchasing grant: acknowledge an order inquiry row - which is the moment "
-            "documents are linked to it - reject one with a reason, run Link now, and "
-            "upload the purchase order and SPO books from the Order Inquiries page. "
-            "Separate from `projects.order_inquiry.action`, which is marking a row's "
-            "supply state: acknowledging is purchasing taking CS's instruction on, and "
-            "CS may not do it for them."
+            "Purchasing grant: the manual override on an order inquiry row. The system marks "
+            "a row Done by itself when its documents cover it; this grant lets a person "
+            "Confirm (mark Done by hand) or Unconfirm (put back to To order) over that rule. "
+            "It also covers rejecting a row with a reason, running Link now, and uploading "
+            "the purchase order and SPO books from the Order Inquiries page. Separate from "
+            "`projects.order_inquiry.action`, which is marking a row's supply state."
         ),
     },
     {
@@ -1061,6 +1061,44 @@ PERMISSION_REGISTRY.extend([
     },
 ])
 
+
+# PORTAL-P4-REQUESTS: "only theirs" on the four request forms (`own_scope.REQUEST_KINDS`): a
+# form's `view_own` without its `view` narrows its staff routes to rows their own contact
+# submitted. Seeded and granted to role `salesperson` by migration `pp4_0001_request_view_own`,
+# which also owns `projects.registrations.submit` for lane PROJECT-REGISTER-V2 and the price tag
+# request `view_own` (card v1.2).
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "procurement.stock_inquiries.view_own",
+        "name": "View Own Stock Inquiries",
+        "description": "See only the stock inquiries your own contact submitted. Ignored when View Stock Inquiries is also held.",
+    },
+    {
+        "slug": "complaint_management.complaints.view_own",
+        "name": "View Own Complaints",
+        "description": "See only the complaints your own contact submitted. Ignored when View Complaints is also held.",
+    },
+    {
+        "slug": "procurement.purchase_requests.view_own",
+        "name": "View Own Purchase Requests",
+        "description": "See only the purchase requests your own contact submitted. Ignored when View Purchase Requests is also held.",
+    },
+    {
+        "slug": "procurement.sponsorship_forms.view_own",
+        "name": "View Own Sponsorship Forms",
+        "description": "See only the sponsorship forms your own contact submitted. Ignored when View Sponsorship Forms is also held.",
+    },
+    {
+        "slug": "dealer_kit.price_tag_requests.view_own",
+        "name": "View Own Price Tag Requests",
+        "description": "See only the price tag requests your own contact submitted. Ignored when View Price Tag Requests is also held.",
+    },
+    {
+        "slug": "projects.registrations.submit",
+        "name": "Submit project registrations",
+        "description": "Register a project from the CRM, the way a portal contact registers one.",
+    },
+])
 
 # AGENTIC-P3 W0: change a dealer contact's role or end its access, only for contacts linked to
 # customers of the user's own sales agents. Seeded by `agp3_0002_contacts_edit_own`, granted to NO

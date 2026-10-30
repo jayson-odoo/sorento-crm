@@ -2261,3 +2261,86 @@ describe('OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit beside
     expect(within(row).getByText('-')).toBeInTheDocument();
   });
 });
+
+describe('AC-AC-10b: a reserve link prints in the PO cell as "Reserved @ <code> <qty>"', () => {
+  const reserveRow = () =>
+    worklistRow({
+      id: 'row-reserve',
+      qty: '3',
+      linked_qty: '0',
+      links: [],
+      reserve_label: 'Reserved @ BRW',
+      reserved_qty: '3',
+    } as never);
+
+  it('reads "Reserved @ BRW 3" instead of a dash', () => {
+    renderRows([reserveRow()]);
+
+    const cell = screen.getByTestId('row-row-reserve');
+    expect(within(cell).getByText('Reserved @ BRW 3')).toBeInTheDocument();
+    expect(within(cell).queryByText('-')).not.toBeInTheDocument();
+  });
+
+  it('is not a link to a purchase order', () => {
+    renderRows([reserveRow()]);
+
+    const cell = screen.getByTestId('row-row-reserve');
+    expect(within(cell).queryByTestId('document-detail-trigger-Reserved @ BRW')).toBeNull();
+    expect(within(cell).queryByRole('link')).toBeNull();
+  });
+});
+
+describe('OI-AUTO-CONFIRM: a row with a PO link AND a reserve link shows both chips in the PO cell', () => {
+  it('prints the PO number and "Reserved @ BRW 3" together', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-both',
+        qty: '8',
+        linked_qty: '8',
+        links: [{ id: 'p1', kind: 'po', document: '202607-S0105', po_id: 'po-1', qty: '5' }],
+        reserve_label: 'Reserved @ BRW',
+        reserved_qty: '3',
+      } as never),
+    ]);
+
+    const cell = screen.getByTestId('row-row-both');
+    expect(within(cell).getByText('202607-S0105')).toBeInTheDocument();
+    expect(within(cell).getByText('Reserved @ BRW 3')).toBeInTheDocument();
+  });
+});
+
+describe('OI-AUTO-CONFIRM review round 1: a row the system marked done is not "Confirmed by Purchasing"', () => {
+  it('system-done (no acknowledged_by, no override) carries no Confirmed by label', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-sysdone',
+        ack_state: 'acknowledged',
+        acknowledged_by: null,
+        acknowledged_by_name: null,
+        acknowledged_at: '2026-10-13T06:05:00Z',
+        ack_override: null,
+        links: [{ id: 'p1', kind: 'po', document: 'PO-9', po_id: 'po-9', qty: '5' }],
+      } as never),
+    ]);
+    const cell = screen.getByTestId('row-row-sysdone');
+    const mark = within(cell).queryByTestId('link-confirmed-mark');
+    expect(mark?.getAttribute('title') ?? '').not.toMatch(/Confirmed by Purchasing/);
+    expect(within(cell).queryByLabelText(/Confirmed by Purchasing/)).toBeNull();
+  });
+
+  it('a manual Confirm still names the person', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-manual',
+        ack_state: 'acknowledged',
+        acknowledged_by: 'u-1',
+        acknowledged_by_name: 'Aisyah',
+        acknowledged_at: '2026-10-13T06:05:00Z',
+        ack_override: 'confirmed',
+        links: [{ id: 'p1', kind: 'po', document: 'PO-8', po_id: 'po-8', qty: '5' }],
+      } as never),
+    ]);
+    const mark = within(screen.getByTestId('row-row-manual')).getByTestId('link-confirmed-mark');
+    expect(mark.getAttribute('title')).toMatch(/Confirmed by Aisyah/);
+  });
+});

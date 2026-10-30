@@ -148,8 +148,11 @@ def get_application(
     db: Session = Depends(get_db),
 ):
     app = _load(db, application_id)
-    svc.assert_can_view(app, _actor(db, user))
-    return svc.serialize_detail(db, app)
+    actor = _actor(db, user)
+    svc.assert_can_view(app, actor)
+    # A salesperson limited to their own applications reads the portal's shape: no item group,
+    # base UOM or list price (PORTAL-P4-REQUESTS S5).
+    return svc.serialize_detail(db, app, portal=actor.own_only)
 
 
 @router.put("/{application_id}")

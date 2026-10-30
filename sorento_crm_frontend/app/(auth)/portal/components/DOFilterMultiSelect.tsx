@@ -13,7 +13,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DOLookupItem, DOProductLine, lookupDeliveryOrders } from '../lib/portal-client';
+import { DOLookupItem, DOProductLine } from '../lib/portal-client';
+import { useSubmissionClient } from '../lib/submission-client';
 import {
   PeriodPicker,
   PeriodValue,
@@ -68,13 +69,14 @@ export function DOFilterMultiSelect({
   const [pendingItems, setPendingItems] = useState<DOLookupItem[]>([]);
   const [pendingOrderNumbers, setPendingOrderNumbers] = useState<string[]>([]);
   const [pendingFilter, setPendingFilter] = useState<string>('');
+  const client = useSubmissionClient();
 
   const runSearch = useCallback(async () => {
     const bounds = periodToIsoBounds(period);
     setLoading(true);
     setError(null);
     try {
-      const items = await lookupDeliveryOrders('', 50, {
+      const items = await client.lookupDeliveryOrders('', 50, {
         start_date: bounds.start_date,
         end_date: bounds.end_date,
         product_code: productCode.trim() || undefined,
@@ -87,7 +89,7 @@ export function DOFilterMultiSelect({
     } finally {
       setLoading(false);
     }
-  }, [period, productCode, customer]);
+  }, [period, productCode, customer, client]);
 
   // Auto-load when the dialog opens with current selection seeded.
   useEffect(() => {

@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { LookupSetOption, lookupSet } from '../lib/portal-client';
+import { LookupSetOption } from '../lib/portal-client';
+import { useSubmissionClient } from '../lib/submission-client';
 
 export interface LookupSelectProps {
   setKey: string;
@@ -26,13 +27,15 @@ export function LookupSelect({
   disabled,
   id,
 }: LookupSelectProps) {
+  const client = useSubmissionClient();
   const [options, setOptions] = useState<LookupSetOption[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    lookupSet(setKey)
+    client
+      .lookupSet(setKey)
       .then((data) => {
         if (!cancelled) setOptions(data.options);
       })
@@ -45,7 +48,7 @@ export function LookupSelect({
     return () => {
       cancelled = true;
     };
-  }, [setKey]);
+  }, [setKey, client]);
 
   return (
     <div className="relative">

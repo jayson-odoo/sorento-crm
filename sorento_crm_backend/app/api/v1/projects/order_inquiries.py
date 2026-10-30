@@ -92,6 +92,7 @@ from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import UUID_PATTERN, validate_uuid_path
 from app.utils.http import content_disposition
 from app.utils.multi_value import multi_choices, multi_text, multi_values
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 
@@ -553,6 +554,7 @@ def order_inquiry_worklist_summary(
 
 
 @router.get("/order-inquiries/export")
+@heavy
 def export_order_inquiry_worklist(
     query: Optional[str] = Query(None, max_length=_MAX_QUERY_LENGTH),
     delivery_month: Optional[str] = Query(None),
@@ -1175,6 +1177,7 @@ def order_inquiry_summary(
 
 
 @router.get("/projects/{project_id}/order-inquiry-export")
+@heavy
 def export_order_inquiry(
     project_id: str,
     query: Optional[str] = Query(None),

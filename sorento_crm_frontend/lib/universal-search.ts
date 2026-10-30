@@ -1,5 +1,5 @@
 import type { MenuConfig, MenuItem } from '@/config/types';
-import { filterMenuBySuperadmin } from '@/lib/menu-access-filter';
+import { filterMenuByAudience, filterMenuBySuperadmin } from '@/lib/menu-access-filter';
 
 export type UniversalSearchSource = 'menu' | 'spo';
 
@@ -23,6 +23,8 @@ export interface UniversalSearchContext {
    * still loading, keep them (MENU-PERM-GATE).
    */
   isSuperadmin?: boolean | null;
+  /** The signed-in salesperson (their portal kinds), or null/undefined for staff; the sidebar's audience filter. */
+  salesperson?: { portalKinds: string[] } | null;
 }
 
 export interface UniversalSearchProvider {
@@ -109,7 +111,10 @@ export function createMenuSearchProvider(menu: MenuConfig): UniversalSearchProvi
     label: 'Menus',
     search: (query, context) => {
       const records = collectMenuItems(
-        filterMenuBySuperadmin(menu, context.isSuperadmin ?? null),
+        filterMenuBySuperadmin(
+          filterMenuByAudience(menu, context.salesperson),
+          context.isSuperadmin ?? null,
+        ),
         context.permissionSet,
         context.enabledModuleKeys,
       );

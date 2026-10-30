@@ -235,3 +235,20 @@ describe('R17 (owner rulings, 25 Sep 2026): "from PO X" is clickable, never dead
     expect(getOrderInquiryPoDetail).not.toHaveBeenCalled();
   });
 });
+
+describe('OI-AUTO-CONFIRM: a reserve entry in the documents list is text, never a purchase order link', () => {
+  it('prints "Reserved @ BRW" as plain text with no document trigger', async () => {
+    const row = {
+      id: 'row-r',
+      qty: '3',
+      linked_qty: '3',
+      links: [{ id: 'r1', kind: 'reserve', document: 'Reserved @ BRW', qty: '3', po_id: 'po-x' }],
+    } as unknown as OrderInquiryWorklistRow;
+
+    renderNode(<OrderInquiryBackingDocumentsDialog row={row} open onOpenChange={vi.fn()} />);
+
+    expect(await screen.findByText('Reserved @ BRW')).toBeInTheDocument();
+    expect(screen.queryByTestId('document-detail-trigger-Reserved @ BRW')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+});

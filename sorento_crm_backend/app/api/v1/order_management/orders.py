@@ -26,6 +26,7 @@ from app.services.order_service import (
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.document_relations import RELATED_SORT_PATTERN
 from app.config import settings as app_settings
+from app.utils.heavy_work import heavy
 
 
 # External/AI callers capped at 20 rows: even with slimmed MCP rows (no UUIDs /
@@ -1380,6 +1381,7 @@ def restore_order(
 
 
 @router.post("/bulk-import", response_model=BulkImportResponse, status_code=status.HTTP_200_OK)
+@heavy
 def bulk_import_orders(
     import_data: BulkImportRequest,
     current_user: dict = Depends(require_permission("order_management.orders.import")),
@@ -1400,6 +1402,7 @@ def bulk_import_orders(
 
 
 @router.post("/import-tracking", status_code=status.HTTP_202_ACCEPTED)
+@heavy
 def import_order_tracking(
     file: UploadFile = File(...),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
@@ -1471,6 +1474,7 @@ def import_order_tracking(
 
 
 @router.post("/import-order-lines", status_code=status.HTTP_202_ACCEPTED)
+@heavy
 def import_delivery_order_detail(
     file: UploadFile = File(...),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
@@ -2112,6 +2116,7 @@ def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str
 
 
 @sales_report_router.get("/top-selling", response_model=TopSellingResponse)
+@heavy
 def get_top_selling(
     rank_by: Optional[str] = Query(
         None,

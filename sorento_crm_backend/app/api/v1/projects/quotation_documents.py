@@ -45,6 +45,7 @@ from app.services.client_ip import client_ip
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 
@@ -676,6 +677,7 @@ def create_quotation_sign_link(
 @router.get(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf",
 )
+@heavy
 def download_quotation_issue_pdf(
     project_id: str,
     document_id: str,

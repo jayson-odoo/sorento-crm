@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircleIcon, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,7 +17,11 @@ import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { useSaveSalesOpportunity } from '../hooks/useSalesOpportunities';
+import { SALES_OPPORTUNITIES_KEY, useSaveSalesOpportunity } from '../hooks/useSalesOpportunities';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import SalesOpportunityPortalForm from '@/app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalForm';
+import { myRequestsPaths } from '@/services/myRequestsSubmissionClient';
 import { numberFieldError } from '@/lib/number-field';
 import {
   OpportunityLineRow,
@@ -31,21 +37,7 @@ import {
   customerTriggerLabel,
 } from '../lib/customerOrProspect';
 
-/**
- * The Log opportunity modal (UAC S2-12, S2-15, S2-16; plan 3.4, 3.5, section 16, N10, N11).
- *
- * ONE "Customer or prospect" search (N10): typing lists matching customers, plus, when
- * nothing matches the typed name exactly, an "Add ... as a new prospect" option; a name
- * that belongs to another agent's customer shows as a disabled, explained option instead
- * (S2-15). Products are optional (N11): a product and a quantity per row, the complaint
- * form's line pattern. Create only - editing is in place on the detail page.
- */
-export default function SalesOpportunityModal({
-  open,
-  onOpenChange,
-  presetCustomerId,
-  presetCustomerLabel,
-}: {
+interface SalesOpportunityModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Preset from a customer's own page (J8); the field still shows the picked customer. */
@@ -54,7 +46,62 @@ export default function SalesOpportunityModal({
    *  contain this id, so without the name here the field reads as empty despite a real
    *  preset - the caller already has it (the customer page it was opened from). */
   presetCustomerLabel?: string;
-}) {
+}
+
+/**
+ * The Log opportunity modal (UAC S2-12, S2-15, S2-16; plan 3.4, 3.5, section 16, N10, N11).
+ *
+ * ONE "Customer or prospect" search (N10): typing lists matching customers, plus, when
+ * nothing matches the typed name exactly, an "Add ... as a new prospect" option; a name
+ * that belongs to another agent's customer shows as a disabled, explained option instead
+ * (S2-15). Products are optional (N11): a product and a quantity per row, the complaint
+ * form's line pattern. Create only - editing is in place on the detail page.
+ *
+ * A salesperson limited to their own opportunities (PORTAL-P4-REQUESTS R3, form parity) logs one in
+ * the portal's own create form, through My Requests, then lands on its detail.
+ */
+export default function SalesOpportunityModal(props: SalesOpportunityModalProps) {
+  const { limited } = useRequestScope('sales_opportunity');
+  if (limited) return <OwnOpportunityModal open={props.open} onOpenChange={props.onOpenChange} />;
+  return <StaffSalesOpportunityModal {...props} />;
+}
+
+/** No customer preset: every caller that passes one (the customer page) is shown to `.view`
+ *  holders only, never to a limited user. */
+function OwnOpportunityModal({
+  open,
+  onOpenChange,
+}: Pick<SalesOpportunityModalProps, 'open' | 'onOpenChange'>) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Log opportunity</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <MyRequestClientProvider>
+            <SalesOpportunityPortalForm
+              onCreated={(id) => {
+                void queryClient.invalidateQueries({ queryKey: SALES_OPPORTUNITIES_KEY });
+                onOpenChange(false);
+                router.push(myRequestsPaths.detail('sales_opportunity', id));
+              }}
+            />
+          </MyRequestClientProvider>
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function StaffSalesOpportunityModal({
+  open,
+  onOpenChange,
+  presetCustomerId,
+  presetCustomerLabel,
+}: SalesOpportunityModalProps) {
   const save = useSaveSalesOpportunity();
 
   const [customerOrProspect, setCustomerOrProspect] = useState('');

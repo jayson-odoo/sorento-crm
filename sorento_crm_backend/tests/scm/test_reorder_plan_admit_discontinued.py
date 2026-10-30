@@ -126,7 +126,7 @@ def _discontinued_pool_below_level(db, *, level=150, demand_add=5.0, lead=30, mo
     return u
 
 
-def _oi_row(db, *, pid, wid, qty=8, delivery=date(2026, 10, 1), ack_state=ACK_ACKNOWLEDGED):
+def _oi_row(db, *, pid, wid, qty=8, delivery=date(2026, 10, 1), ack_state=ACK_AWAITING):
     return _project_so_with_lines(db, lines=[
         {"product_id": pid, "warehouse_id": wid, "qty": qty,
          "delivery_date": delivery, "ack_state": ack_state},
@@ -242,10 +242,10 @@ def test_ac_e2_row_on_an_unpicked_so_admits_nothing(scm_app):
     assert recs == [], f"a row on an un-picked SO must not admit the product, got {recs}"
 
 
-def test_ac_e2_row_awaiting_ack_admits_nothing(scm_app):
+def test_ac_e2_a_done_row_admits_nothing(scm_app):
     _, db, _, _ = scm_app
     u = _discontinued_below_level(db)
-    so = _oi_row(db, pid=u["pid"], wid=u["wid"], qty=8, ack_state=ACK_AWAITING)
+    so = _oi_row(db, pid=u["pid"], wid=u["wid"], qty=8, ack_state=ACK_ACKNOWLEDGED)
 
     created = svc.create_run(
         db, [], enqueue=False,
@@ -255,7 +255,7 @@ def test_ac_e2_row_awaiting_ack_admits_nothing(scm_app):
     svc.run_reorder(created["run_id"], db=db)
 
     recs = _recs_for(db, created["run_id"], u["pid"])
-    assert recs == [], f"a row still awaiting acknowledgement must not admit the product, got {recs}"
+    assert recs == [], f"a Done row (AC-AC-22) must not admit the product, got {recs}"
 
 
 # =============================================================================

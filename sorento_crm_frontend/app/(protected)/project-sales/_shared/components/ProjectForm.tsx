@@ -49,6 +49,7 @@ import type {
   ProjectRegisterBody,
   ProjectUpdateBody,
 } from '../types/project.types';
+import { isProjectApproved } from '../lib/projectApproval';
 import { ClashWarningPanel } from '../../pipeline/components/ClashWarningPanel';
 import { isAwaitingDecision } from './ApprovalStatePill';
 import { LeadWizardDialog } from '../../leads/components/LeadWizardDialog';
@@ -85,7 +86,11 @@ export function ProjectForm(props: ProjectFormProps) {
   const canCreateParty = useHasPermission(PARTY_EDIT_PERMISSION);
   // A salesperson with the submit slug but no edit rights saves a draft or submits for
   // approval instead of registering (PROJECT-REGISTER-V2 J1).
-  const submitOnly = !canEditProjects && canSubmitRegistration;
+  // A staff or approved project being edited follows the general rule (Save changes).
+  const submitOnly =
+    !canEditProjects &&
+    canSubmitRegistration &&
+    !(mode === 'edit' && project && isProjectApproved(project));
 
   const register = useRegisterProject();
   const update = useUpdateProject(project?.id ?? '');
@@ -171,8 +176,11 @@ export function ProjectForm(props: ProjectFormProps) {
   const fetchArchitectOptions = useFetchPartyOptions('architect');
   const fetchContractorOptions = useFetchPartyOptions('main_contractor');
   const fetchCustomerOptions = useFetchCustomerOptions();
-  const types = useProjectTypes();
-  const templates = useProjectTemplates(typeId || undefined);
+  // Both routes need projects.types.view: without it the type and template show as the
+  // project's own text and nothing is requested.
+  const canViewTypes = useHasPermission('projects.types.view');
+  const types = useProjectTypes({ enabled: canViewTypes });
+  const templates = useProjectTemplates(typeId || undefined, { enabled: canViewTypes });
   const states = useLookupSetOptions('my_state');
   const fetchLeadOptions = useFetchLeadOptions();
   const users = useQuery({
@@ -314,7 +322,7 @@ export function ProjectForm(props: ProjectFormProps) {
       setMainContractorId(fill.main_contractor.id);
       setContractorOption({ value: fill.main_contractor.id, label: fill.main_contractor.name });
     }
-    if (fill.project_type && fill.project_type.id !== typeId) {
+    if (canViewTypes && fill.project_type && fill.project_type.id !== typeId) {
       setTypeId(fill.project_type.id);
       setTemplateId('');
     }
@@ -498,7 +506,14 @@ export function ProjectForm(props: ProjectFormProps) {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="project-type">Project type</Label>
+              <Label id="project-type-label" htmlFor="project-type">
+                Project type
+              </Label>
+              {!canViewTypes ? (
+                <p id="project-type" aria-labelledby="project-type-label" className="text-sm">
+                  {project?.type_name || '-'}
+                </p>
+              ) : (
               <SearchableSelect
                 id="project-type"
                 value={typeId}
@@ -519,12 +534,20 @@ export function ProjectForm(props: ProjectFormProps) {
                 }))}
                 placeholder="Select a type"
               />
+              )}
             </div>
           </div>
 
           {typeId && (
             <div className="space-y-1.5">
-              <Label htmlFor="project-template">To-do list template</Label>
+              <Label id="project-template-label" htmlFor="project-template">
+                To-do list template
+              </Label>
+              {!canViewTypes ? (
+                <p id="project-template" aria-labelledby="project-template-label" className="text-sm">
+                  {project?.template_name || '-'}
+                </p>
+              ) : (
               <SearchableSelect
                 id="project-template"
                 value={templateId}
@@ -542,6 +565,7 @@ export function ProjectForm(props: ProjectFormProps) {
                 placeholder="Select a to-do list template"
                 emptyMessage="No to-do list templates for this type"
               />
+              )}
             </div>
           )}
 
@@ -715,7 +739,6 @@ export function ProjectForm(props: ProjectFormProps) {
               <TypedHint typed={typed?.main_contractor_name} picked={mainContractorId} />
             </div>
           </div>
-
         </FormSection>
 
         <FormSection

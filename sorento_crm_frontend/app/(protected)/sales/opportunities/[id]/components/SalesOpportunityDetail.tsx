@@ -24,6 +24,9 @@ import DetailActions from '@/components/common/DetailActions';
 import { RecordNavigation } from '@/components/common/RecordNavigation';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import SalesOpportunityPortalDetail from '@/app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalDetail';
 import { formatCurrency, formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getSalesOpportunitySalesOrderOptions } from '../../services/salesOpportunityService';
 import {
@@ -63,6 +66,21 @@ import { codeWithName } from '@/lib/product-display';
  * renders with an empty state.
  */
 export default function SalesOpportunityDetail({ id }: { id: string }) {
+  // A salesperson limited to their own opportunities (PORTAL-P4-REQUESTS R3, form parity) views,
+  // edits and moves theirs in the portal's own detail, through My Requests; everyone else the
+  // staff detail, unchanged.
+  const { limited } = useRequestScope('sales_opportunity');
+  if (limited) {
+    return (
+      <MyRequestClientProvider>
+        <SalesOpportunityPortalDetail id={id} />
+      </MyRequestClientProvider>
+    );
+  }
+  return <StaffSalesOpportunityDetail id={id} />;
+}
+
+function StaffSalesOpportunityDetail({ id }: { id: string }) {
   const router = useRouter();
   const canEdit = useHasPermission('sales.opportunities.edit');
   const { data: opportunity, isLoading, isError } = useSalesOpportunity(id);

@@ -832,6 +832,7 @@ _LOCATION = func.coalesce(OrderInquiryRow.stock_location, Warehouse.warehouse_co
 #: reaches the list.
 _ACK_USER = aliased(User)
 _REJECT_USER = aliased(User)
+_OVERRIDE_USER = aliased(User)
 
 _SORT_EXPRESSIONS = {
     "inquiry_no": OrderInquiry.inquiry_no,
@@ -940,6 +941,9 @@ _COLUMNS = (
     # outer join the location fallback already uses - no second join for this.
     _LINE_CANCELLED.label("line_cancelled"),
     _ACK_USER.name.label("acknowledged_by_name"),
+    OrderInquiryRow.ack_override.label("ack_override"),
+    OrderInquiryRow.ack_override_at.label("ack_override_at"),
+    _OVERRIDE_USER.name.label("ack_override_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
     # PLAN-oi-request-cs-reserve.md 3.4/3.5 (AC-RS-12/AC-RS-20).
     _RESERVED_LINKED_QTY.label("reserved_qty"),
@@ -1419,6 +1423,7 @@ class OrderInquiryWorklistService:
             )
             .outerjoin(User, User.id == _RAISED_BY_ID)
             .outerjoin(_ACK_USER, _ACK_USER.id == OrderInquiryRow.acknowledged_by)
+            .outerjoin(_OVERRIDE_USER, _OVERRIDE_USER.id == OrderInquiryRow.ack_override_by)
             .outerjoin(_REJECT_USER, _REJECT_USER.id == OrderInquiryRow.rejected_by)
             .outerjoin(
                 ProjectSalesOrderLine,
@@ -1863,6 +1868,9 @@ class OrderInquiryWorklistService:
         split_views = ProjectOrderInquiryService(self.db).split_views_for_lines(
             [row.so_line_id for row in rows]
         )
+        oi_service = ProjectOrderInquiryService(self.db)
+        open_qty = oi_service.open_qty_by_row(rows)
+        reserve_labels = oi_service.reserve_labels_for_rows([row.id for row in rows])
         return {
             "data": [
                 self._serialize(
@@ -1878,6 +1886,8 @@ class OrderInquiryWorklistService:
                     raise_events_by_row,
                     splits_by_line,
                     split_views,
+                    open_qty,
+                    reserve_labels,
                 )
                 for row in rows
             ],
@@ -2506,6 +2516,8 @@ class OrderInquiryWorklistService:
         raise_events_by_row: Optional[Dict[str, Dict[str, Any]]] = None,
         splits_by_line: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         split_views: Optional[Dict[str, Dict[str, Any]]] = None,
+        open_qty: Optional[Dict[str, Decimal]] = None,
+        reserve_labels: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -2579,6 +2591,10 @@ class OrderInquiryWorklistService:
             # requested again on the balance reads `requested`, never `reserved`).
             "reserve_state": self._reserve_state(row),
             "reserved_qty": _qty_str(_dec(getattr(row, "reserved_qty", None))),
+            # OI-AUTO-CONFIRM: the reserve's own words (a reserve is not a document link), and
+            # what is still to order: qty less live cover less bundled, never below zero.
+            "reserve_label": (reserve_labels or {}).get(row.id),
+            "open_qty": _qty_str((open_qty or {}).get(row.id, _dec(row.qty))),
             # 6e.2: "0" when there is no open request row, same default shape as
             # `reserved_qty` above.
             "requested_qty": _qty_str(_dec(getattr(row, "requested_qty", None))),
@@ -2638,6 +2654,9 @@ class OrderInquiryWorklistService:
             "ack_state": row.ack_state,
             "acknowledged_by_name": row.acknowledged_by_name,
             "acknowledged_at": row.acknowledged_at,
+            "ack_override": row.ack_override,
+            "ack_override_at": row.ack_override_at,
+            "ack_override_by_name": row.ack_override_by_name,
             "rejected_by_name": row.rejected_by_name,
             "rejected_at": row.rejected_at,
             "rejected_reason": row.rejected_reason,
