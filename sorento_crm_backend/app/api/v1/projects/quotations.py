@@ -304,8 +304,8 @@ def judge_draft_line(
     half-typed price that does not parse is judged as "no price yet", not an error - the
     person is mid-keystroke, and a 422 would toast at them for typing.
 
-    An off-catalog draft (no product) is non-standard whenever a series is nominated, and
-    has no floor - the same rule the save applies (AC-E5).
+    A draft with no product or set is not a saveable line: it is non-standard only through a
+    series check, and has no floor.
     """
     from decimal import Decimal, InvalidOperation
 
