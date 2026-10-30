@@ -1246,6 +1246,9 @@ def update_project(
     Phase 9", then rename it to the colleague's project. The DB unique index catches
     the exact-key case, but only the matcher catches the near-duplicate.
     """
+    # A project has no lead on edit (owner ruling 30 Oct): a sent lead_id is dropped before any
+    # guard, so it can neither link nor change which refusal the request meets.
+    payload = {k: v for k, v in payload.items() if k != "lead_id"}
     assert_can_edit_project(db, project, actor_user_id, permissions)
     check_company_refs(db, str(project.company_id), _changed_refs(db, project, payload))
 
