@@ -1,8 +1,11 @@
 # Behaviour card: a stock ask for a set answers SET availability first (CHATBOT-SET-STOCK)
 
-Status: v3 FILED for the owner's answers (30 Oct 2026), rebuilt on the crew's dev rows (prod copy
-20 Oct, read-only). v1/v2 superseded: their "no 7405 set row" guess was wrong, the rows exist.
-No code until answered. Size M, owner-visible. Plan: `PLAN-chatbot-set-stock-30oct.md`.
+Status: ANSWERED (owner, 30 Oct ~17:35): Q1 resolver change (not the prompt), Q2 the existing product
+logic, Q3 show every product under its set (no set maths), Q4 today's long-answer behaviour, Q5 no
+prompt change. The "S" rules below that add a set block or set counts are NOT built; the build follows
+`chatbot-set-stock-acceptance-criteria.md`. Correction to item 4: the chatbot resolves in AND mode,
+whose probe list had no set probe; that, not only the prompt gate, is why 7405 showed only the SC.
+Plan: `PLAN-chatbot-set-stock-30oct.md`.
 
 ## What the owner asked
 
