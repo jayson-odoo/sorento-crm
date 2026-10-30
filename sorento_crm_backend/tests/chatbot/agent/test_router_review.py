@@ -310,3 +310,162 @@ def test_8_the_global_value_is_read_only_on_put(db, settings_client):
     contact_id = _seed_contact(db)
     settings_client.put(f"{BASE}/{contact_id}/chatbot", json={GLOBAL: 5})
     assert settings_client.get(f"{BASE}/{contact_id}").json()[GLOBAL] == 33
+
+
+# ------------------------------------------------------------------ diagnostics: JevError.detail, one log line, route error
+
+import logging
+
+FAKE_KEY = "jev-fake-secret-key-424242"
+
+
+def _failing_post(monkeypatch, exc):
+    def boom(*a, **k):
+        raise exc
+
+    monkeypatch.setattr(httpx, "post", boom)
+
+
+def _classify(key=FAKE_KEY):
+    from app.services.chatbot import jev_client
+
+    return jev_client.classify(key, model="jev-1.14.0", instructions="i", criteria={"chat": "c"}, state={})
+
+
+@pytest.mark.parametrize(
+    "exc, kind, detail",
+    [
+        (RuntimeError(f"boom {FAKE_KEY}"), "transport", "RuntimeError"),
+        (httpx.ConnectError(f"refused {FAKE_KEY}"), "transport", "ConnectError"),
+        (httpx.LocalProtocolError(f"bad header {FAKE_KEY}"), "transport", "LocalProtocolError"),
+        (httpx.ReadTimeout(f"slow {FAKE_KEY}"), "timeout", "ReadTimeout"),
+        (httpx.ConnectTimeout(f"slow {FAKE_KEY}"), "timeout", "ConnectTimeout"),
+    ],
+)
+def test_diag_detail_is_the_exception_class_name_only(monkeypatch, exc, kind, detail):
+    from app.services.chatbot import jev_client
+
+    _failing_post(monkeypatch, exc)
+    with pytest.raises(jev_client.JevError) as err:
+        _classify()
+    assert err.value.kind == kind
+    assert err.value.detail == detail
+    for e in _chain(err.value):
+        assert FAKE_KEY not in str(e) and FAKE_KEY not in repr(e)
+    assert FAKE_KEY not in str(err.value.detail)
+    assert err.value.__cause__ is None and err.value.__context__ is None
+
+
+def test_diag_a_non_ascii_key_detail_is_unicodeencodeerror(monkeypatch):
+    from app.services.chatbot import jev_client
+
+    key = "jev-kéy-424242"
+    monkeypatch.setattr(
+        httpx.HTTPTransport, "handle_request", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no network"))
+    )
+    with pytest.raises(jev_client.JevError) as err:
+        _classify(key)
+    assert err.value.kind == "transport" and err.value.detail == "UnicodeEncodeError"
+
+
+class _Status:
+    def __init__(self, code):
+        self.status_code = code
+
+    def json(self):
+        return {}
+
+
+@pytest.mark.parametrize("code, kind", [(429, "rate_limited"), (500, "http_500"), (401, "http_401")])
+def test_diag_http_errors_have_no_detail(monkeypatch, code, kind):
+    from app.services.chatbot import jev_client
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Status(code))
+    with pytest.raises(jev_client.JevError) as err:
+        _classify()
+    assert err.value.kind == kind and err.value.detail is None
+
+
+def test_diag_malformed_has_no_detail(monkeypatch):
+    from app.services.chatbot import jev_client
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp(float("nan")))
+    with pytest.raises(jev_client.JevError) as err:
+        _classify()
+    assert err.value.kind == "malformed" and err.value.detail is None
+
+
+@pytest.mark.parametrize(
+    "exc, kind, name",
+    [
+        (httpx.ConnectError(f"refused {FAKE_KEY}"), "transport", "ConnectError"),
+        (httpx.ReadTimeout(f"slow {FAKE_KEY}"), "timeout", "ReadTimeout"),
+    ],
+)
+def test_diag_one_warning_with_kind_and_class_name_and_no_key_or_message(monkeypatch, caplog, exc, kind, name):
+    from app.services.chatbot import jev_client
+
+    _failing_post(monkeypatch, exc)
+    with caplog.at_level(logging.DEBUG, logger="app.services.chatbot.jev_client"):
+        with pytest.raises(jev_client.JevError):
+            _classify()
+    records = [r for r in caplog.records if r.name == "app.services.chatbot.jev_client"]
+    assert len(records) == 1 and records[0].levelno == logging.WARNING
+    text_ = records[0].getMessage()
+    assert kind in text_ and name in text_
+    assert FAKE_KEY not in text_ and "refused" not in text_ and "slow" not in text_
+    assert FAKE_KEY not in str(records[0].exc_info) and records[0].exc_info is None
+
+
+def test_diag_decide_route_carries_the_detail_as_error(db, jev):
+    from app.services.chatbot.jev_client import JevError
+
+    contact = seed_agent_contact(db)
+    arm(db)
+    err = JevError("transport")
+    err.detail = "ConnectError"
+    jev.error = err
+    decision = route(db, contact["respond_id"])
+    assert decision.reason == "router_failed:transport"
+    assert decision.error == "ConnectError"
+    assert decision.as_response()["error"] == "ConnectError"
+
+
+def test_diag_error_is_none_without_a_jev_failure(db, jev):
+    contact = seed_agent_contact(db)
+    arm(db)
+    decision = route(db, contact["respond_id"])
+    assert decision.reason == "classified" and decision.error is None
+    state = route(db, "ZZT-nobody")
+    assert state.error is None
+
+
+def test_diag_the_console_route_and_trace_carry_the_error(
+    client, eligible, console_jev, agent_calls, stub_console_seams, bot_parser,
+):
+    from app.services.chatbot.jev_client import JevError
+
+    err = JevError("transport")
+    err.detail = "ConnectError"
+    _GRANTS.add("system.chat_history.view")
+    _CONSOLE_GRANTS.add("system.chat_history.view")
+    console_jev.error = err
+    body = _post(client, eligible, "can I submit a goods receive here").json()
+    assert body["route"]["reason"] == "router_failed:transport"
+    assert body["route"]["error"] == "ConnectError"
+    row = eligible["db"].query(ChatbotTurn).filter(ChatbotTurn.id == body["turn_id"]).one()
+    stage = [s for s in (row.trace or []) if s.get("stage") == "route"][0]
+    assert stage["facts"]["error"] == "ConnectError"
+
+
+def test_diag_the_console_route_error_is_null_when_there_is_none(
+    client, eligible, console_jev, agent_calls, stub_console_seams, bot_parser,
+):
+    console_jev.answer = jev_answer("chat", 0.95)
+    _GRANTS.add("system.chat_history.view")
+    _CONSOLE_GRANTS.add("system.chat_history.view")
+    body = _post(client, eligible, "can I submit a goods receive here").json()
+    assert "error" in body["route"] and body["route"]["error"] is None
+    row = eligible["db"].query(ChatbotTurn).filter(ChatbotTurn.id == body["turn_id"]).one()
+    stage = [s for s in (row.trace or []) if s.get("stage") == "route"][0]
+    assert "error" in stage["facts"] and stage["facts"]["error"] is None
