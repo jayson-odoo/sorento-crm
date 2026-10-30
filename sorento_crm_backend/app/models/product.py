@@ -330,6 +330,8 @@ class Product(Base, CompanyScopedMixin):
     warranty_months = Column(Integer, nullable=True)
     has_serial_tracking = Column(Boolean, default=False, server_default=text("false"), nullable=False)
     has_batch_tracking = Column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # SO-LINE-DESC: print the SO line description beside this product's code in the OI email.
+    show_so_line_description = Column(Boolean, default=False, server_default=text("false"), nullable=False)
     reorder_level = Column(Integer, nullable=True)
     reorder_quantity = Column(Integer, nullable=True)
     # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X (max quantity

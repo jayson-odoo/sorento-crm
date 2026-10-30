@@ -67,6 +67,7 @@ export interface Product {
   warranty_months?: number | null;
   has_serial_tracking: boolean;
   has_batch_tracking: boolean;
+  show_so_line_description: boolean;
   reorder_level: number;
   reorder_quantity: number;
   // Chatbot stock ask v2 (PLAN-chatbot-stock-ask-v2-24sep.md S1): X, the highest
@@ -261,6 +262,7 @@ export interface ProductFormData {
   warranty_months?: number | null;
   has_serial_tracking: boolean;
   has_batch_tracking: boolean;
+  show_so_line_description: boolean;
   reorder_level: number;
   reorder_quantity: number;
   chatbot_max_qty?: number | null;

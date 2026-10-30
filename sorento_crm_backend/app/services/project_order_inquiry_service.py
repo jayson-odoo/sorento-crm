@@ -1599,6 +1599,9 @@ class ProjectOrderInquiryService:
         # attachments key on - off the SAME `ProjectSalesOrderLine` read, so this stays
         # one round trip rather than two.
         self._handover_line_no_cache: Dict[str, tuple[Optional[int], Optional[str]]] = {}
+        #: SO-LINE-DESC: core line id -> (description, company id), and (company id, code) -> tick.
+        self._line_description_cache: Dict[str, tuple[str, Optional[str]]] = {}
+        self._description_tick_cache: Dict[tuple[Optional[str], str], bool] = {}
         # R7's own-arrival credit, asked once per ROW by the path picker
         # (`_own_arrival_credit_for_row`). A replan settles every row of an order in one
         # call, and each row used to build a fresh `ProjectSupplyService` (throwing away
@@ -3141,6 +3144,8 @@ class ProjectOrderInquiryService:
                 line["was"] = was
                 line["item_code"] = live[0].item_code
                 item["item_code"] = live[0].item_code
+                line.pop("item_wrap", None)
+                self.decorate_handover_line(line, item.get("core_line_id"))
                 phrase = _NEW_ITEM_CODE
                 line["remark"] = f"{line['remark']}, {phrase}" if line.get("remark") else phrase
                 if "CHANGE_ITEM_CODE" not in item["verb_keys"]:
@@ -4615,6 +4620,60 @@ class ProjectOrderInquiryService:
         item["tx"] = tx_chain[-1] if tx_chain else None
         self.db.info.setdefault(_HANDOVER_PENDING_KEY, []).append(item)
 
+    def decorate_handover_line(self, line: Dict[str, Any], core_line_id: Optional[str]) -> None:
+        """SO-LINE-DESC (AC-10..AC-13): the ITEM CODE a handover line prints is
+        `<code> - <description>` when the code's product ticks "Show SO line description in OI
+        email" and the core SO line's description is not blank and not the code; otherwise the
+        bare code. Each side of a code switch (`line.item_code`, `line.was.item_code`) follows
+        its OWN product's tick. Decided here, eagerly, on the writing session (the drain's fresh
+        session cannot see an open write), at every place a queued line is built, so the email
+        body, text part, preview and Excel can only print one string. A line that prints a
+        description gets `item_wrap` so the template lets its cell wrap. Idempotent."""
+        if not core_line_id:
+            return
+        key = str(core_line_id)
+        if key not in self._line_description_cache:
+            found = (
+                self.db.query(SalesOrderLine.description, SalesOrderLine.company_id)
+                .filter(SalesOrderLine.id == key)
+                .first()
+            )
+            self._line_description_cache[key] = (
+                ((found[0] or "").strip(), str(found[1]) if found[1] else None)
+                if found
+                else ("", None)
+            )
+        description, company_id = self._line_description_cache[key]
+        if not description:
+            return
+
+        def decorate(code: Optional[str]) -> Optional[str]:
+            if not code or code == description or code.endswith(f" - {description}"):
+                return code
+            tick_key = (company_id, code)
+            if tick_key not in self._description_tick_cache:
+                self._description_tick_cache[tick_key] = bool(
+                    self.db.query(Product.id)
+                    .filter(
+                        Product.product_code == code,
+                        Product.company_id == company_id,
+                        Product.show_so_line_description.is_(True),
+                    )
+                    .first()
+                )
+            return f"{code} - {description}" if self._description_tick_cache[tick_key] else code
+
+        before = line.get("item_code")
+        line["item_code"] = decorate(before)
+        wrapped = line["item_code"] != before
+        was = line.get("was")
+        if was and was.get("item_code"):
+            decorated = decorate(was["item_code"])
+            wrapped = wrapped or decorated != was["item_code"]
+            line["was"] = {**was, "item_code": decorated}
+        if wrapped:
+            line["item_wrap"] = True
+
     def handover_item(
         self,
         row: OrderInquiryRow,
@@ -4739,6 +4798,7 @@ class ProjectOrderInquiryService:
             ),
             "was": _format_handover_was(was),
         }
+        self.decorate_handover_line(line, core_line_id)
         return {
             #: Which row this line tells.
             "row_id": str(row.id),
@@ -5136,6 +5196,7 @@ class ProjectOrderInquiryService:
             entry = item["line"]
             entry["remark"] = row.remark
             entry["was"] = _format_handover_was(was or None)
+            self.decorate_handover_line(entry, item.get("core_line_id"))
             entry["continued"] = index > 0
             item["verb_keys"] = self._plan_row_keys(row, template)
 
@@ -5552,6 +5613,7 @@ class ProjectOrderInquiryService:
             "remark": remark,
             "was": _format_handover_was(was or None),
         }
+        self.decorate_handover_line(line_entry, line.core_sales_order_line_id)
         tx_chain = _transaction_chain(self.db)
         self.db.info.setdefault(_HANDOVER_PENDING_KEY, []).append(
             {
