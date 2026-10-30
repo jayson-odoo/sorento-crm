@@ -21,8 +21,9 @@ Q1 a, Q2 a, Q4 a, Q5 a, Q6 a (staff form too), Q7 a (discontinued pre-fills as-i
   `SAMPLE_REQUEST_QUOTATION_INVALID`.
 - **SFQ-9** No prices leave the read: a line carries product id, code, name and brand only.
 - **SFQ-10** Staff route requires `projects.sample_requests.create` (403 without). An unknown or unapproved
-  project, or one outside a limited user's own projects, is 422 `SAMPLE_REQUEST_PROJECT_INVALID`, the same
-  answer the request write gives for that project.
+  project is 422 `SAMPLE_REQUEST_PROJECT_INVALID`, the same answer the request write gives; a project outside
+  a limited user's own projects is refused by the projects router's own-scope guard (404) before that. Through
+  `/api/v1/my-requests` the same user gets 422 `SAMPLE_REQUEST_PROJECT_NOT_ALLOWED`, and the read needs `.create`.
 - **SFQ-11** Portal route answers only for a project `assert_portal_project_allowed` accepts; any other is 422
   `SAMPLE_REQUEST_PROJECT_NOT_ALLOWED`.
 
@@ -40,10 +41,10 @@ Q1 a, Q2 a, Q4 a, Q5 a, Q6 a (staff form too), Q7 a (discontinued pre-fills as-i
   no remark; the source document and issue are recorded in the form state.
 - **SFQ-21** Editing an existing draft never pre-fills.
 - **SFQ-22** Project changed: untouched pre-filled rows are replaced by the new project's; edited rows stay and
-  the source is cleared.
+  the source is cleared. A loaded draft whose project changes drops its recorded source too (the rows stay).
 - **SFQ-23** Each pre-filled row has the existing Remove line control; Add item still adds a blank row.
 - **SFQ-24** More than one document: a quotation picker above the items, defaulting to the first; picking another
-  replaces untouched rows.
+  replaces untouched rows. Once the rows are edited the picker is not offered.
 - **SFQ-25** Q3 switch (`QUOTE_FREE_TEXT_LINES` in `lib/sample-request-form.ts`): `'note'` shows one muted line
   naming how many quotation lines were not added and why; `'row'` adds each free-text line as an empty-product
   row carrying the description as its remark. Inactive products are always left out with the note.

@@ -1,8 +1,9 @@
 # PLAN SAMPLE-FROM-QUOTE: a sample request starts from the project's quotation
 
-Status: backend and shared frontend pieces built and green on the lane branch (PR #1985, draft); the
-form wiring and the request page line wait for #1953 (PORTAL-P4-REQUESTS) to merge. Q3 waits on the
-owner, held behind `QUOTE_FREE_TEXT_LINES`. Track: M lane (migration, portal read surface).
+Status: built on the lane branch after #1953 merged (PR #1985, draft): backend, both forms, request-page row,
+My Requests route. Security B1/N1 and reviewer B1/S2/S3 fixed red-first; reviewer re-check, browser pass and
+hand test pending. Q3 waits on the owner, held behind `QUOTE_FREE_TEXT_LINES`; S1 (portal read breadth) asked of
+crew. Track: M lane (migration, portal read surface).
 
 Card: `CARD-sample-from-quote-29oct.md`. UAC: `sample-from-quote-29oct-acceptance-criteria.md`.
 
@@ -46,6 +47,8 @@ document's). Detail: both plus `quotation_ref`.
 |---|---|---|
 | BE | `sample_request_service.quotation_prefill`, `_check_source`, `quotation_label`; both routes; `sfq_0001_sample_request_source` (two nullable FK columns, SET NULL) | red f43c16d6, green de621365 (20 tests) |
 | FE shared | form state + payload source fields, `linesUntouched`, `prefillFromQuotation`, `prefillNote`, `QUOTE_FREE_TEXT_LINES`; `useSampleRequestPrefill`; staff + portal fetchers | red a1332e53, green dfec4272 (18 tests) |
-| FE forms (after #1953) | portal `SampleRequestForm` and `StaffSampleRequestForm` call the hook; quotation picker (only for more than one document) above the items; the note under the table; `?project_id=` seed triggers it too | waiting |
-| FE request page (after #1953) | "Quotation" read-only row from `quotation_ref` | waiting |
-| My Requests (after #1953) | register the portal pre-fill route on `/api/v1/my-requests` like the other portal form routes | waiting |
+| FE forms | portal `SampleRequestForm` and `StaffSampleRequestForm` call the hook; quotation picker (more than one document, rows untouched) above the items; the note under the table; `?project_id=` seed triggers it too | red 780b1aa7, green a118ecef |
+| FE request page | "Quotation" read-only row from `quotation_ref` (staff detail; "Quotation: ..." on the shared form) | red 332ecca9, green d7aa237c |
+| My Requests | the pre-fill route lives inside `register_sample_request_routes`, so `/api/v1/my-requests` serves it | merge dfadf3aa |
+| Security B1, N1 | own-project rule on the shared route for a contact linked to a limited CRM user (read and recorded source); `/my-requests` read needs `.create` | red c68f65ec, green b04877b3 |
+| Review B1, S2, S3 | a project change drops the recorded source (new or loaded draft, failed read too); no picker once rows are edited | see branch log |

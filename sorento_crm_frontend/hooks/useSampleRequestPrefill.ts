@@ -56,6 +56,21 @@ export function useSampleRequestPrefill({
   const patchRef = useRef(patch);
   patchRef.current = patch;
 
+  // A recorded quotation belongs to the project it was recorded on. When the project moves away
+  // (a new request or a loaded draft alike), the source goes, so the save is never refused for a
+  // stranger's quotation; the rows stay, and untouched pre-fill can still be replaced.
+  const sourceProject = useRef<string | null>(null);
+  useEffect(() => {
+    if (!state.quotation_document_id) {
+      sourceProject.current = null;
+    } else if (sourceProject.current === null) {
+      sourceProject.current = projectId;
+    } else if (sourceProject.current !== projectId) {
+      sourceProject.current = null;
+      patchRef.current({ quotation_document_id: '', quotation_issue_id: '' });
+    }
+  }, [projectId, state.quotation_document_id]);
+
   // A new project starts from its default quotation.
   const [forProject, setForProject] = useState(projectId);
   if (forProject !== projectId) {
@@ -105,8 +120,9 @@ export function useSampleRequestPrefill({
   }, [enabled, projectId, documentId]);
 
   return {
-    /** The project's quotation documents; the form shows a picker only for more than one. */
-    documents,
+    /** The project's quotation documents, while the rows are still the pre-fill's own: once the
+     * person edits them a pick would change nothing, so no picker is offered. */
+    documents: linesUntouched(state) ? documents : [],
     /** The picked document, else the one the server defaulted to. */
     documentId: documentId ?? answered ?? undefined,
     pickDocument: setDocumentId,

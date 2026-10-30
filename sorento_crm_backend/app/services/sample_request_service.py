@@ -627,7 +627,6 @@ def search_products(db: Session, q: str, limit: int = 20) -> List[Dict[str, Any]
     ]
 
 
-
 # ------------------------------------------------------------------ quotation pre-fill
 
 
@@ -797,6 +796,7 @@ def quotation_prefill(
             }
         )
     return result
+
 
 LIST_SORTS = {
     "request_no": SampleRequest.request_no,
