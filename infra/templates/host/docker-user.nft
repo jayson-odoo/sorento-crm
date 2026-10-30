@@ -1,0 +1,48 @@
+# Container firewall for node B (the KVM 8, which also runs n8n) and the witness. The witness is the shared-service box for
+# now (owner, 27 Oct): there <N8N_SUBNETS> means EVERY app network on that box (Claude connector,
+# ideation, its backend), since none of them may reach etcd 2379/2380.
+# Security review B1: binding to 127.0.0.1 + the tunnel address does not keep containers out.
+# An n8n Code node can open <B_WG_IP>:5432/8008/2379/2380 through its bridge gateway, and
+# traffic to <A_WG_IP> or the witness is masqueraded to <B_WG_IP>, so node A would see n8n as
+# node B (replication, rewind, Patroni REST, etcd). These rules drop it.
+#
+# Load with `nft -f docker-user.nft` from a systemd unit ordered After=docker.service (Docker
+# rebuilds its own chains on restart; this table is separate and survives that). Then run the
+# check in plan section 12, drill 9, from INSIDE an n8n container.
+#
+# <N8N_SUBNETS>: every docker network n8n containers join (pin them with compose `ipam`). n8n must
+# NEVER join a CRM compose network: traffic inside one bridge skips these hooks. IPv4 only: keep
+# Docker IPv6 off on the n8n networks (or add the same rules for ip6).
+# <HAPROXY_BIND_IP>: the one address n8n may use (443 API, 8765 MCP, 6432 DB).
+
+# Re-runnable: drop the old table first so a reload never duplicates rules.
+table inet sorento_ha_guard
+delete table inet sorento_ha_guard
+
+include "/etc/sorento-ha/ha-members.nft"
+
+table inet sorento_ha_guard {
+  set n8n_nets { type ipv4_addr; flags interval; elements = { <N8N_SUBNETS> } }
+  set ha_peers { type ipv4_addr; elements = { $A_WG_IP, $B_WG_IP, $WITNESS_WG_IP } }
+
+  # Container traffic to the host itself (published ports, host-network etcd/HAProxy).
+  chain input {
+    type filter hook input priority -10; policy accept;
+    ip saddr @n8n_nets ip daddr <HAPROXY_BIND_IP> tcp dport { 443, 8765, 6432 } accept
+    ip saddr @n8n_nets tcp dport { 2379, 2380, 5432, 8008, 6432, 8765 } drop
+    ip saddr @n8n_nets ip daddr @ha_peers drop
+  }
+
+  # Container traffic routed to the other members over wg0 (before Docker's masquerade).
+  chain forward {
+    type filter hook forward priority -10; policy accept;
+    ip saddr @n8n_nets ip daddr @ha_peers drop
+  }
+
+  # Published ports are DNAT'd in prerouting, so also match the original destination.
+  chain prerouting_guard {
+    type filter hook prerouting priority -110; policy accept;
+    ip saddr @n8n_nets ip daddr @ha_peers drop
+    ip saddr @n8n_nets ip daddr != <HAPROXY_BIND_IP> tcp dport { 2379, 2380, 5432, 8008 } drop
+  }
+}

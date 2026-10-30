@@ -953,8 +953,10 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
                 for key, value in held_ask.items():
                     if verdict.get(key) in (None, "", []):
                         verdict[key] = value
-                if pending.kind == "customer_pick":
-                    verdict["ranking_pick"] = True  # only a customer pick: the picked row is this ranking's customer (engine key, never the parser's)
+            if pending.kind == "customer_pick" and isinstance(verdict, dict):
+                # Only a customer pick: the picked row is the held report ask's customer, a ranking's or an outstanding
+                # ask's (REPORT-UNIFY), (engine key, never the parser's).
+                verdict["ranking_pick"] = True
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
         # queued on THIS pick's own payload is asked NEXT, once this one is
         # answered - never the same options re-printed (`with_answered_positions`,
@@ -1378,9 +1380,24 @@ def _answer_top_selling_pick(
 
     None when nothing on the list was picked: the generic rules settle it (an aside keeps
     the list open, a number past the end re-prints it, a new ask closes it)."""
+    ranking = (pending.payload.get("filters") or {}).get("ranking")
+    more = _report_more(verdict, focus)
+    if more is not None and isinstance(verdict, dict) and isinstance(ranking, dict):
+        # REPORT-OUTSTANDING-SUMMARY item 6 (owner 29 Oct, as before #1922): "more" under a cut outstanding summary is
+        # its next page; the held ask re-runs at that offset and the list offer stays open.
+        from app.services.chatbot.lanes.business.report_ask import MORE_PAGE
+
+        key = focus.set_page.get("set_key") if isinstance(focus.set_page, dict) else None
+        listed = key.get("list") if isinstance(key, dict) else None
+        # A "more" under a document list pages that list, not the summary held behind it.
+        verdict["ranking_detail"] = {"group_by": MORE_PAGE, "offset": more, **({"list": listed} if listed else {})}
+        focus.status = "sales_ranking"
+        focus.domains = [contracts.SALES_DOMAIN]
+        focus.set_page = None
+        trace.rules_fired.append("report_summary_more")
+        return focus, pending, None, True
     positions = list(decision.positions) if decision.answers else []
     matched = [o for o in pending.options if o.get("position") in positions]
-    ranking = (pending.payload.get("filters") or {}).get("ranking")
     if not matched or not isinstance(ranking, dict) or not isinstance(verdict, dict):
         return None
     option = matched[-1]

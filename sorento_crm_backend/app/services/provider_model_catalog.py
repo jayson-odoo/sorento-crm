@@ -52,8 +52,10 @@ FALLBACK_MODELS: dict[str, list[ProviderModel]] = {
         ProviderModel("claude-opus-4-7", "Claude Opus 4.7"),
     ],
     "gemini": [
-        ProviderModel("gemini-2.5-pro", "Gemini 2.5 Pro"),
-        ProviderModel("gemini-2.5-flash", "Gemini 2.5 Flash"),
+        # 2.5 is gone from this list: a key from a new Google account 404s on it
+        # (prod, 29 Oct 2026), so offering it as the no-network fallback invites that.
+        ProviderModel("gemini-3.5-flash", "Gemini 3.5 Flash"),
+        ProviderModel("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
     ],
 }
 

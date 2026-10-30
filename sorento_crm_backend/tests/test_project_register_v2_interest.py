@@ -70,7 +70,7 @@ def test_d5_a_direct_register_on_a_blocking_clash_is_still_409(v2):
     ttl = title("Residensi")
     approved_project(v2, ttl=ttl, dev=dev)
     res = as_user(v2, v2.sales_b).post(
-        LIST, json=register_body(v2, title=ttl, developer_party_id=dev.id)
+        LIST, json=register_body(v2, user=v2.sales_b, title=ttl, developer_party_id=dev.id)
     )
     assert res.status_code == 409, res.text
     assert res.json()["code"] == "project_already_registered"

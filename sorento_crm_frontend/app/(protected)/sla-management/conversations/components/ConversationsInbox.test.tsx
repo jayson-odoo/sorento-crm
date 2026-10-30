@@ -32,6 +32,7 @@ const loadedRow = {
   open_ticket_count: 1,
   my_open_ticket_count: 1,
   my_open_ticket_id: 't1',
+  match: null,
 };
 
 vi.mock('./ConversationListPane', () => ({
@@ -46,13 +47,28 @@ vi.mock('./ConversationListPane', () => ({
     tab: string;
     onTabChange: (t: string) => void;
     selectedRef: string | null;
-    onSelect: (item: unknown) => void;
+    onSelect: (item: unknown, searchTerm?: string) => void;
     onRowsLoaded?: (items: unknown[]) => void;
     className?: string;
   }) => (
     <div data-testid="list-pane" data-class={className} data-tab={tab} data-selected={selectedRef ?? ''}>
       <button type="button" data-testid="pick-contact" onClick={() => onSelect(loadedRow)}>
         pick
+      </button>
+      <button
+        type="button"
+        data-testid="pick-match"
+        onClick={() =>
+          onSelect(
+            {
+              ...loadedRow,
+              match: { message_id: 'm-1', sent_at: null, direction: 'incoming', snippet: 'sofa' },
+            },
+            'sofa',
+          )
+        }
+      >
+        pick match
       </button>
       <button type="button" data-testid="switch-tab" onClick={() => onTabChange('all')}>
         all
@@ -74,9 +90,11 @@ vi.mock('./ConversationThreadPane', () => ({
     canReply,
     onBack,
     className,
+    searchTerm,
   }: {
     contact: { contact_ref: string; name: string | null } | null;
     canReply: boolean;
+    searchTerm?: string;
     onBack?: () => void;
     className?: string;
   }) => (
@@ -86,6 +104,7 @@ vi.mock('./ConversationThreadPane', () => ({
       data-contact={contact?.contact_ref ?? ''}
       data-contact-name={contact?.name ?? ''}
       data-can-reply={String(canReply)}
+      data-search-term={searchTerm ?? ''}
     >
       <button type="button" data-testid="back" onClick={() => onBack?.()}>
         back
@@ -187,5 +206,13 @@ describe('ConversationsInbox', () => {
 
     expect(screen.getByTestId('thread-pane')).toHaveAttribute('data-contact', '99999999');
     expect(screen.getByTestId('thread-pane')).toHaveAttribute('data-contact-name', '');
+  });
+
+  it('CONVO-SEARCH-MESSAGES: a picked message match carries the search term to the thread', () => {
+    render(<ConversationsInbox />);
+    fireEvent.click(screen.getByTestId('pick-match'));
+    expect(screen.getByTestId('thread-pane')).toHaveAttribute('data-search-term', 'sofa');
+    fireEvent.click(screen.getByTestId('pick-contact'));
+    expect(screen.getByTestId('thread-pane')).toHaveAttribute('data-search-term', '');
   });
 });

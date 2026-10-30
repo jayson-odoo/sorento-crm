@@ -103,6 +103,7 @@ GET /purchase-orders/{po_id}/schedule-findings
 GET /purchase-orders/{po_id}/versions
 GET /quotation-approval-graph
 GET /quotation-line-images
+GET /quotation-line-stock
 GET /quotation-versions/{version_id}/lines
 GET /quotations/{quotation_id}/line-verdict
 GET /quotations/{quotation_id}/versions
@@ -195,6 +196,7 @@ POST /projects/{project_id}/quotation-documents/{document_id}/issue
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/pdf
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/xlsx
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/sign-link
+POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/whatsapp-opened
 POST /projects/{project_id}/quotation-documents/{document_id}/reject
 POST /projects/{project_id}/quotation-documents/{document_id}/scopes
 POST /projects/{project_id}/quotation-documents/{document_id}/sign

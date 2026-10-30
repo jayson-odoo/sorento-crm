@@ -445,7 +445,8 @@ _PORTAL_PROJECT_REGISTRATION: list[ExtractFieldSpec] = [
     ),
     ExtractFieldSpec(
         name="mukim",
-        label="Mukim",
+        # Shown on the extract review; the name stays `mukim` (owner, 29 Oct: Mukim is called Area).
+        label="Area",
         kind="text",
         note="The mukim after the word MUKIM in the title or address, name only.",
     ),

@@ -8,6 +8,7 @@ import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from '@/lib/toast';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { projectCodeLabel } from '../lib/projectCode';
+import { formatMyrExact } from '../lib/money';
 import { getProductSetsForLineSelect } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
   addStakeholder,
@@ -734,7 +735,7 @@ export function useProjectTemplateMutations() {
     mutationFn: (body: ProjectTemplateBody) => createProjectTemplate(body),
     onSuccess: () => {
       invalidate();
-      toast.success('Template created');
+      toast.success('To-do list template created');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -744,7 +745,7 @@ export function useProjectTemplateMutations() {
       updateProjectTemplate(id, body),
     onSuccess: () => {
       invalidate();
-      toast.success('Template saved');
+      toast.success('To-do list template saved');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -753,7 +754,7 @@ export function useProjectTemplateMutations() {
     mutationFn: (id: string) => deleteProjectTemplate(id),
     onSuccess: () => {
       invalidate();
-      toast.success('Template deleted');
+      toast.success('To-do list template deleted');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -791,14 +792,30 @@ export function useLeads(params: LeadListParams) {
 export function useFetchLeadOptions() {
   return React.useCallback(async (query: string) => {
     const result = await listLeads({ query: query || undefined, outcome: ['open'], limit: 20 });
-    // Title first, code as the second line: no " · " joins (owner rule, 13 Oct).
-    return result.data.map((lead) => ({
-      value: lead.id,
-      label: lead.title,
-      description: lead.lead_code,
-    }));
+    // Title first, code as the second line: no " · " joins (owner rule, 13 Oct). The
+    // customer and assignee ride along so the form fills from the pick without a fetch.
+    return result.data.map(
+      (lead): LeadPick => ({
+        value: lead.id,
+        label: lead.title,
+        description: lead.lead_code,
+        customer_id: lead.customer_id ?? null,
+        customer_name: lead.customer_name ?? null,
+        owner_user_id: lead.owner_user_id ?? null,
+      }),
+    );
   }, []);
 }
+
+/** A Lead picker option: the pick plus what the register form takes from the lead. */
+export type LeadPick = {
+  value: string;
+  label: string;
+  description?: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  owner_user_id: string | null;
+};
 
 /**
  * Async options for the Developer / Architect / Main contractor pickers: a server-side search
@@ -1187,7 +1204,7 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
       // while somebody is working down a column of twenty lines.
       if (line.is_below_floor) {
         toast.warning(
-          `Below the floor of ${line.floor_value_applied}. Management has been notified.`,
+          `Below the minimum price of ${formatMyrExact(line.floor_value_applied)}. Management has been notified.`,
         );
       }
     },
@@ -1200,7 +1217,9 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
     onSuccess: (line) => {
       invalidate();
       if (line.is_below_floor) {
-        toast.warning(`Below the floor of ${line.floor_value_applied}.`);
+        toast.warning(
+          `Below the minimum price of ${formatMyrExact(line.floor_value_applied)}.`,
+        );
       }
     },
     onError: (error: Error) => toast.error(error.message),

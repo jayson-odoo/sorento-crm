@@ -56,6 +56,9 @@ IDEATION_ASK = rf.register(rf.AskType(
         "message_type": "business_query",
         "intent_hint": "submit_idea",
         "domain_hint": "ideate",
+        # The captured reply is the idea, whatever report status the parser (and `report_ask.by_capability`) read on it.
+        "order_status": None,
+        "capability_from": None,
     },
     cancelled="Okay, I have dropped that idea.",
     give_up="I could not get the idea. Send it in one message when you are ready.",

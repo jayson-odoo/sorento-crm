@@ -385,6 +385,7 @@ def start_project(
 
 
 MANAGE_PERMISSION = "projects.projects.manage"
+EDIT_PERMISSION = "projects.projects.edit"
 CUSTOMERS_VIEW_PERMISSION = "order_management.customers.view"
 
 TAKEOVER_JOIN = "join"
@@ -740,10 +741,9 @@ def serialize_projects(
             for row in db.query(ProjectLead).filter(ProjectLead.id.in_(lead_ids)).all()
         }
 
-    # The customer is the lead's buyer (owner, 13 Oct): the Overview shows it and the
-    # quotation header defaults its name, phone and Attn from it. Bulk like the rest.
     # The customer is the one picked on the register form (sales_profile.customer_id);
-    # where none was, the linked lead's buyer.
+    # where none was, the linked lead's buyer. The Overview shows it and the quotation
+    # header defaults its name, phone and Attn from it (owner, 13 Oct). Bulk like the rest.
     def _effective_customer_id(project_row):
         pr = profiles.get(project_row.id)
         if pr and pr.customer_id:
@@ -1272,6 +1272,29 @@ def update_project(
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
 
+    own_leads_only = "projects.registrations.submit" in permissions and EDIT_PERMISSION not in permissions
+    target_lead = payload["lead_id"] if "lead_id" in payload else project.lead_id
+    if target_lead:
+        # The lead governs the customer (LEAD-GOVERNS-REGISTER E4, E9). The right to link it is
+        # decided first, so a refused lead answers the same whatever customer came with it.
+        from app.services import project_lead_service as leads
+
+        changing = target_lead != project.lead_id
+        lead = leads.lead_for_registration(
+            db,
+            target_lead,
+            actor_user_id=actor_user_id,
+            own_leads_only=own_leads_only and changing,
+            permissions=permissions if changing else None,
+        )
+        if lead.customer_id:
+            # A null customer counts as absent: the lead's customer is never cleared (LGR-E9).
+            if "customer_id" in payload and not payload["customer_id"] and not changing:
+                payload = {k: v for k, v in payload.items() if k != "customer_id"}
+            elif changing or payload.get("customer_id"):
+                picked = leads.customer_from_lead(lead, payload.get("customer_id"))
+                if changing:
+                    payload = {**payload, "customer_id": picked}
     apply_sales_details(db, project, payload)
 
     # Present-and-null is an unlink; absent leaves the link alone (#1339).
@@ -1284,7 +1307,11 @@ def update_project(
             payload["lead_id"],
             actor_user_id=actor_user_id,
             permissions=permissions,
+            own_leads_only=own_leads_only,
         )
+    from app.services.project_lead_service import fill_lead_customer
+
+    fill_lead_customer(db, project, actor_user_id=actor_user_id, permissions=permissions)
     return project
 
 

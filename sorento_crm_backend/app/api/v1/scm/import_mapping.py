@@ -127,7 +127,7 @@ async def probe_import_mapping(
     already knows about each one."""
     _check_doc_type_permission(db, current_user, doc_types)
     assert_supplier(db, supplier_id)
-    data = await read_upload(file)
+    data = await run_in_threadpool(read_upload, file)
     return await run_in_threadpool(
         import_mapping_service.probe,
         db,

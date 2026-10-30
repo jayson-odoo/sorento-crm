@@ -41,6 +41,7 @@ _load_env_file()
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -610,7 +611,7 @@ async def shutdown_event():
 
 
 @app.get("/")
-async def root():
+def root():
     """Root endpoint."""
     return {"message": "Sorento CRM API", "version": "1.0.0"}
 
@@ -646,15 +647,20 @@ async def health_check():
     Also names the code and the prompt that answered, so a stack check can tell a lane
     running yesterday's commit from one running today's (`scripts/chatbot-stack-check.sh`).
     """
-    try:
+    def _database_check():
         from sqlalchemy import text
         from app.database import SessionLocal
         db = SessionLocal()
         try:
             db.execute(text("SELECT 1"))
-            prompt_version = _production_prompt_version(db)
+            return _production_prompt_version(db)
         finally:
             db.close()
+
+    try:
+        # Off the event loop (API-NONBLOCKING): a slow or starved connection checkout must
+        # not freeze every other request this worker holds.
+        prompt_version = await run_in_threadpool(_database_check)
     except Exception as e:
         # The error stays server-side: a Postgres connection error names the internal host
         # and port.
@@ -715,3 +721,32 @@ def public_health_check():
         if db is not None:
             db.close()
     return {"status": "healthy", "checks": {"database": "ok"}}
+
+
+@app.get("/api/v1/health/role")
+def public_health_role():
+    """Cloudflare Load Balancing monitor (HA-TIER1-N8N-BOX): 200 only on a node whose DB
+    accepts writes.
+
+    A warm standby serves pages from a hot-standby replica, so `/api/v1/health` is green there
+    too; the LB must not send users to it until the replica is promoted. 503 `role: standby` on
+    a replica, 503 `unhealthy` when the DB does not answer. Unauthenticated like
+    `/api/v1/health`: states only. No replay lag either: it grows while the primary is idle, so
+    on a public URL it would show when the business is active (lag is read over SQL instead).
+    """
+    from sqlalchemy import text
+    from app import database
+
+    db = None
+    try:
+        db = database.SessionLocal()
+        in_recovery = db.execute(text("SELECT pg_is_in_recovery()")).scalar()
+    except Exception as e:
+        logging.getLogger(__name__).warning("api/v1/health/role: database check failed: %s", type(e).__name__)
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "role": "unknown"})
+    finally:
+        if db is not None:
+            db.close()
+    if in_recovery:
+        return JSONResponse(status_code=503, content={"status": "standby", "role": "standby"})
+    return {"status": "healthy", "role": "primary"}

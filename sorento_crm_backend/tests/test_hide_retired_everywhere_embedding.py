@@ -136,11 +136,13 @@ class TestAcE3WorkerDeactivatesInsteadOfReembedding:
         embedding_worker.process_embedding_queue_item(queue_row.id)
 
         db.expire_all()
+        # Changed meaning (LOOKUP-EMBED-CENTRAL AC-LEC-5): spo_allocation left the keep set, so the worker
+        # skips the item before the hidden check. The old document is left exactly as it was (never deleted,
+        # no longer read by any search), and nothing is re-embedded.
         refreshed_doc = (
             db.query(EmbeddingDocument).filter(EmbeddingDocument.id == doc.id).one()
         )
-        assert refreshed_doc.is_active is False, refreshed_doc.is_active
-        # No re-embed happened: still exactly the one stale chunk this test seeded.
+        assert refreshed_doc.is_active is True, refreshed_doc.is_active
         chunk_count = (
             db.query(EmbeddingChunk).filter(EmbeddingChunk.document_id == doc.id).count()
         )
@@ -148,7 +150,7 @@ class TestAcE3WorkerDeactivatesInsteadOfReembedding:
         refreshed_queue = (
             db.query(EmbeddingQueue).filter(EmbeddingQueue.id == queue_row.id).one()
         )
-        assert refreshed_queue.status == "completed", refreshed_queue.status
+        assert refreshed_queue.status == "skipped", refreshed_queue.status
 
     def test_a_retired_line_carrying_a_receipt_is_not_treated_as_hidden(self, db):
         """R2, at the decision point the worker actually reads: a retired line with a
@@ -220,50 +222,25 @@ class TestAcE15DeactivationIsReversible:
         )
         return embedding_worker
 
-    def test_un_retiring_reactivates_the_document(self, db, monkeypatch):
+    def test_a_visible_spo_allocation_is_no_longer_embedded(self, db, monkeypatch):
+        """Changed meaning (LOOKUP-EMBED-CENTRAL AC-LEC-5): the round trips this class pinned (retire then
+        un-retire, receipt landing) existed only to keep a searchable spo_allocation document in step with its
+        line. spo_allocation left the keep set, so draining a visible line creates no document at all."""
         embedding_worker = self._rigged(db, monkeypatch)
         product = _product(db)
         alloc = _alloc(db, product, retired=False)
 
-        doc = self._embed_while_visible(db, embedding_worker, alloc)
-        assert doc.is_active is True  # sanity: the ordinary path activates it
-
-        self._retire_and_drain(db, embedding_worker, alloc)
-        db.refresh(doc)
-        assert doc.is_active is False  # sanity: pinned by the deactivation test too
-
-        # A later push un-retires it - the leftover sweep no longer names it retired.
-        alloc.retired_at = None
-        alloc.line_status = "open"
-        db.flush()
         q = _pending_queue_row(db, alloc.id)
         embedding_worker.process_embedding_queue_item(q.id)
 
         db.expire_all()
-        db.refresh(doc)
-        assert doc.is_active is True, doc.is_active
-
-    def test_a_receipt_landing_reactivates_the_document_under_r2(self, db, monkeypatch):
-        embedding_worker = self._rigged(db, monkeypatch)
-        product = _product(db)
-        alloc = _alloc(db, product, retired=False)
-
-        doc = self._embed_while_visible(db, embedding_worker, alloc)
-
-        self._retire_and_drain(db, embedding_worker, alloc)
-        db.refresh(doc)
-        assert doc.is_active is False  # sanity
-
-        # R2's own path: a goods-received note lands - `quantity_received` 0 -> 5,
-        # `retired_at` is NEVER touched.
-        alloc.quantity_received = 5
-        db.flush()
-        q = _pending_queue_row(db, alloc.id)
-        embedding_worker.process_embedding_queue_item(q.id)
-
-        db.expire_all()
-        db.refresh(doc)
-        assert doc.is_active is True, doc.is_active
+        assert db.query(EmbeddingQueue).filter(EmbeddingQueue.id == q.id).one().status == "skipped"
+        assert (
+            db.query(EmbeddingDocument)
+            .filter(EmbeddingDocument.source_type == "spo_allocation", EmbeddingDocument.source_id == alloc.id)
+            .count()
+            == 0
+        )
 
 
 # =================================================================================== #

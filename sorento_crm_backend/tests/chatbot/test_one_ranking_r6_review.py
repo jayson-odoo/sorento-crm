@@ -58,21 +58,26 @@ def test_r6b_3_a_top_selling_label_keeps_its_default_item_axis_whatever_by_words
 def test_r6b_4_by_capability_reads_the_typed_axis() -> None:
     from app.services.chatbot.lanes.business import report_ask
 
+    # REPORT-UNIFY (Q1): every sales analysis / report is the report ask's; a null `by_words` names no axis, so the
+    # guessed `group_by` is dropped and it is a total.
     analysis = {"order_status": "sales_analysis", "group_by": "customer", "by_words": None, "measure": None}
     out = report_ask.by_capability(analysis)
-    assert out["order_status"] == "sales_analysis" and not out.get("capability_from"), out  # stays the analysis tool's
+    assert out["order_status"] == "sales_ranking" and out["group_by"] is None and out["capability_from"] == "sales_analysis", out
     report = {"order_status": "sales_report", "group_by": "product", "by_words": None, "measure": None}
     out = report_ask.by_capability(report)
-    assert out["order_status"] == "sales_report" and not out.get("capability_from"), out
+    assert out["order_status"] == "sales_ranking" and out["group_by"] is None and out["capability_from"] == "sales_report", out
     typed = {"order_status": "sales_analysis", "group_by": "customer", "by_words": "by customer", "measure": None}
-    assert report_ask.by_capability(typed)["order_status"] == "sales_ranking"  # a named axis is still the report ask's
+    assert report_ask.by_capability(typed)["group_by"] == "customer"  # a named axis is kept
     absent = {"order_status": "sales_analysis", "group_by": "customer", "measure": None}
-    assert report_ask.by_capability(absent)["order_status"] == "sales_ranking"  # key absent: today's behaviour
+    assert report_ask.by_capability(absent)["group_by"] == "customer"  # key absent: today's behaviour
+    yearly = {"order_status": "sales_analysis", "group_by": "year", "by_words": "by year", "measure": None}
+    out = report_ask.by_capability(yearly)  # crew 28 Oct: the Yearly comparison is the report ask grouped by year
+    assert out["order_status"] == "sales_ranking" and out["group_by"] == "year", out
 
 
 @pytest.mark.parametrize(
     ("status", "group_by"),
-    [("pending", "month"), ("pending", "transporter"), (None, "supplier"), ("so_outstanding", "customer"), ("pending", "date")],
+    [("pending", "month"), ("pending", "transporter"), (None, "supplier"), ("pending", "date")],
 )
 def test_r6b_5_by_capability_leaves_the_grouping_of_a_non_report_status_alone(status, group_by) -> None:
     from app.services.chatbot.lanes.business import report_ask

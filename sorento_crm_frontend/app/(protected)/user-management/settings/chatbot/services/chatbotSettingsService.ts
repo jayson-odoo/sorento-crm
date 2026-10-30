@@ -43,6 +43,8 @@ export interface ChatbotSettings {
   chatbot_closed_lists_mode: ChatbotClosedListsMode;
   /** CHAT-COMPOSER: the stored reply composer switch (an env var can override it). */
   chatbot_composer_enabled: boolean;
+  /** PARSER-MAX-TOKENS: the output cap on one parser call (1024 to 32768). */
+  chatbot_parser_max_output_tokens: number;
 }
 
 export type ChatbotDirectIngressMode = 'off' | 'contacts' | 'all';
@@ -77,6 +79,7 @@ const FALLBACKS: ChatbotSettings = {
   chatbot_direct_ingress_contacts: null,
   chatbot_closed_lists_mode: 'block',
   chatbot_composer_enabled: false,
+  chatbot_parser_max_output_tokens: 8192,
 };
 
 function pickChatbotSettings(row: Record<string, unknown> | null | undefined): ChatbotSettings {
@@ -102,6 +105,11 @@ function pickChatbotSettings(row: Record<string, unknown> | null | undefined): C
       ? (row?.chatbot_closed_lists_mode as ChatbotClosedListsMode)
       : FALLBACKS.chatbot_closed_lists_mode,
     chatbot_composer_enabled: Boolean(row?.chatbot_composer_enabled),
+    chatbot_parser_max_output_tokens:
+      typeof row?.chatbot_parser_max_output_tokens === 'number' &&
+      Number.isFinite(row.chatbot_parser_max_output_tokens)
+        ? row.chatbot_parser_max_output_tokens
+        : FALLBACKS.chatbot_parser_max_output_tokens,
   };
 }
 

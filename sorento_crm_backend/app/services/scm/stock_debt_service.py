@@ -33,7 +33,7 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import and_, func, or_, select, union
+from sqlalchemy import String, and_, cast, func, or_, select, union
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
@@ -325,6 +325,11 @@ def _source_order(label: str) -> tuple:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _text(column, name):
+    # The driver builds a uuid.UUID per uuid cell; as text it is the str the code reads.
+    return cast(column, String).label(name)
 
 
 class StockDebtService:
@@ -1474,8 +1479,8 @@ class StockDebtService:
 
         rows = (
             self.db.query(
-                Stock.product_id,
-                Stock.warehouse_id,
+                _text(Stock.product_id, "product_id"),
+                _text(Stock.warehouse_id, "warehouse_id"),
                 func.sum(
                     func.coalesce(Stock.quantity_on_hand, 0)
                     - func.coalesce(Stock.quantity_reserved, 0)
@@ -1603,11 +1608,11 @@ class StockDebtService:
             )
         rows = (
             self.db.query(
-                SalesOrderLine.id,
-                SalesOrderLine.product_id,
-                SalesOrderLine.warehouse_id,
+                _text(SalesOrderLine.id, "id"),
+                _text(SalesOrderLine.product_id, "product_id"),
+                _text(SalesOrderLine.warehouse_id, "warehouse_id"),
                 SalesOrderLine.required_date,
-                SalesOrderLine.sales_order_id,
+                _text(SalesOrderLine.sales_order_id, "sales_order_id"),
                 # R29: the CORE line's own `line_no` (AutoCount's `Seq`) - Supply's own
                 # "Assigned to" entries name this, never the PROJECT mirror's `line_no`
                 # selected below (a different number, the ladder's own).
@@ -1804,11 +1809,14 @@ class StockDebtService:
                 [str(pid) for pid in product_ids],
                 exclude_line_ids=None,
                 entities=(
-                    ProjectSalesOrderLine.core_sales_order_line_id,
-                    SOLineAllocation.warehouse_id,
+                    _text(
+                        ProjectSalesOrderLine.core_sales_order_line_id,
+                        "core_sales_order_line_id",
+                    ),
+                    _text(SOLineAllocation.warehouse_id, "warehouse_id"),
                     held_qty_expr(),
                     Warehouse.warehouse_code,
-                    _hold_product,
+                    _text(_hold_product, "product_id"),
                 ),
             )
             .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
@@ -1824,20 +1832,24 @@ class StockDebtService:
         )
         links = (
             self.db.query(
-                OrderInquiryLink.id.label("link_id"),
-                ProjectSalesOrderLine.core_sales_order_line_id,
-                OrderInquiryLink.spo_allocation_id,
+                _text(OrderInquiryLink.id, "link_id"),
+                _text(
+                    ProjectSalesOrderLine.core_sales_order_line_id,
+                    "core_sales_order_line_id",
+                ),
+                _text(OrderInquiryLink.spo_allocation_id, "spo_allocation_id"),
                 # The product a `received` hop's bin is looked up under (`found_empty`):
                 # an SPO link's own, or for a PO link the PO line's, which is the product
                 # of every allocation the line was transferred onto (OI-SPO-EXACT).
-                func.coalesce(SPOAllocation.product_id, PurchaseOrderLine.product_id).label(
-                    "product_id"
+                _text(
+                    func.coalesce(SPOAllocation.product_id, PurchaseOrderLine.product_id),
+                    "product_id",
                 ),
                 # R29 addendum: the order inquiry this placement came through - a
                 # placement is part of an OI ROW's quantity on one document line, and
                 # `_holds` already joins that row to get here.
                 OrderInquiry.inquiry_no,
-                OrderInquiry.id.label("order_inquiry_id"),
+                _text(OrderInquiry.id, "order_inquiry_id"),
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
             .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)

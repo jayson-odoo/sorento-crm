@@ -28,8 +28,7 @@ import pytest
 from app.services.chatbot.lanes.business.services import FetchServices
 from tests.chatbot.test_engine import _parser_output
 from tests.chatbot.test_outstanding_lane import _capturing_mcp, _qf
-from tests.chatbot.test_sales_analysis_company_pick import (
-    ANALYSIS,
+from tests.chatbot._sales_pick_helpers import (
     QUESTION as COMPANY_QUESTION,
     Chat,
     _calls,
@@ -39,6 +38,8 @@ from tests.chatbot.test_sales_analysis_company_pick import (
 from tests.chatbot.test_sales_analysis_lane import GRANT, _rendered
 
 BASIS_QUESTION = "Invoiced, delivered, ordered or outstanding?"
+#: REPORT-UNIFY: every sales total runs on the report ask now; the analysis tool is never called from chat.
+TOOL = "crm_report_ask"
 JAN_2026 = {"date_mode": "month", "date_filter_start": "2026-01-01", "date_filter_end": "2026-01-31"}
 
 
@@ -90,7 +91,7 @@ def test_t1_a_total_with_no_basis_is_asked_never_run(session_factory):
 )
 def test_t2_a_named_basis_runs_without_asking(session_factory, named):
     result, captured = _lane(**JAN_2026, **named)
-    assert [name for name, _ in captured] == [ANALYSIS], f"a named basis runs: {result}"
+    assert [name for name, _ in captured] == [TOOL], f"a named basis runs: {result}"
     assert captured[0][1]["basis"] == next(iter(named.values()))
 
 
@@ -125,6 +126,7 @@ def _answer(**fields: Any) -> dict[str, Any]:
     base = dict(
         message_type="business_query", domain_hint="order", intent_hint="check_order",
         order_status="sales_ranking", entities=[], entity_op="reuse", domain_in_message=False,
+        by_words=None,  # the live prompt defines `by_words`: a bare reply carries it null
     )
     base.update(fields)
     return _parser_output(**base)
@@ -137,11 +139,11 @@ FILL = {"mode": "fill", "picked": [], "items": [], "qty_for_all": None}
 def _ask(chat: Chat) -> None:
     result, captured = chat.say(_total(), "total sales Jan 2026")
     assert _reply(result).strip() == BASIS_QUESTION, f"the basis is asked: {_reply(result)!r}"
-    assert _calls(captured, ANALYSIS) == [], f"no figure before the basis: {captured}"
+    assert captured == [], f"no tool call at all before the basis: {captured}"
 
 
 def _ran(captured: list[tuple[str, dict[str, Any]]], basis: str) -> dict[str, Any]:
-    calls = _calls(captured, ANALYSIS)
+    calls = _calls(captured, TOOL)
     assert calls, f"the answer runs the sales total: {captured}"
     args = calls[0]
     assert args.get("basis") == basis, args
@@ -175,24 +177,40 @@ def test_t4_a_basis_word_answers_it(one, fields, body, basis):
     _ran(captured, basis)
 
 
-def test_t5_outstanding_runs_the_report_ask_never_the_analysis(one):
+def test_t5_outstanding_runs_the_one_report_ask_total_layout(one):
     _ask(one)
     _result, captured = one.say(_answer(basis="outstanding", open_question_answer=FILL), "outstanding")
-    assert _calls(captured, ANALYSIS) == [], f"the analysis has no outstanding basis: {captured}"
     asks = _calls(captured, "crm_report_ask")
     assert asks, f"the report ask's outstanding total runs: {captured}"
-    assert asks[0].get("basis") == "outstanding" and asks[0].get("group_by") == "channel", asks[0]
+    # ONE layout (reviewer 6): the report ask total, one figure plus the header, for every basis (the analysis's
+    # one-line-per-channel layout is gone with the analysis).
+    assert asks[0].get("basis") == "outstanding" and not asks[0].get("group_by"), asks[0]
     assert asks[0].get("date_from") == "2026-01-01" and asks[0].get("date_to") == "2026-01-31", asks[0]
+
+
+def test_t5b_outstanding_answering_the_basis_question_with_no_declared_mode_never_runs_another_report(one):
+    """REPORT-OUTSTANDING-SUMMARY review (eval round): the parser read "outstanding" as `sales_analysis` +
+    `sales_basis: outstanding` and declared no answer mode. With the basis question open that is never a fresh
+    outstanding ask (which dropped the Jan 2026 period and listed every delivery order); as on main, the total's
+    questions stand."""
+    _ask(one)
+    result, captured = one.say(
+        _answer(order_status="sales_analysis", sales_basis="outstanding", basis=None), "outstanding"
+    )
+    assert not _calls(captured, "crm_report_ask"), captured
+    assert "Invoiced, delivered, ordered or outstanding?" in _reply(result), _reply(result)
 
 
 def test_t6_two_companies_basis_then_company_then_both_ride(two):
     _ask(two)
     result, captured = two.say(_answer(basis="ordered", open_question_answer=FILL), "ordered")
     assert COMPANY_QUESTION in _reply(result), f"then the company: {_reply(result)!r}"
-    assert not [a for a in _calls(captured, ANALYSIS) if a.get("company")], captured
+    assert not [a for a in _calls(captured, TOOL) if a.get("company")], captured
     _result, captured = two.say(_answer(open_question_answer=_pick(2), order_status=None), "2")
     args = _ran(captured, "ordered")
-    assert args.get("company") == "Mocha", args
+    from tests._mc_lookup_seed import MOCHA_ID
+
+    assert args.get("company") == MOCHA_ID, args  # the report ask sends the company id
 
 
 # --------------------------------------------------------------------------- #
@@ -203,8 +221,14 @@ def test_t6_two_companies_basis_then_company_then_both_ride(two):
 def test_t7_outstanding_named_on_a_fresh_total_is_never_the_analysis(session_factory):
     """Finding 2: "outstanding" named up front runs the report ask too, never the analysis with no basis (the
     route would default it to invoiced)."""
-    _result, captured = _lane(**JAN_2026, basis="outstanding")
-    assert ANALYSIS not in [name for name, _ in captured], captured
+    from app.services.chatbot.lanes.business import run_fetch
+
+    payload = _payload(**JAN_2026, basis="outstanding")
+    payload["ctx"]["access"] = {"attributes": [GRANT, "sales_orders.outstanding"]}  # Q6: outstanding is its own reveal
+    call, captured = _capturing_mcp(_rendered())
+    run_fetch(payload, services=FetchServices(mcp_call=call))
+    asks = _calls(captured, TOOL)
+    assert asks and asks[0].get("basis") == "outstanding", captured  # the report ask runs it, no other tool
 
 
 def test_t8_the_first_messages_axes_win_over_the_answers_own_parse(one):
@@ -217,7 +241,7 @@ def test_t8_the_first_messages_axes_win_over_the_answers_own_parse(one):
         "1",
     )
     args = _ran(captured, "invoiced")
-    assert args.get("rows") == "channel" and not args.get("channel"), args
+    assert not args.get("group_by") and not args.get("channel"), args  # the first message's total, no channel
 
 
 def test_t9_a_new_total_while_the_question_is_open_is_its_own_ask(one):
@@ -228,7 +252,7 @@ def test_t9_a_new_total_while_the_question_is_open_is_its_own_ask(one):
         _total(sales_basis="delivered", date_filter_start="2026-02-01", date_filter_end="2026-02-28"),
         "total delivered sales Feb 2026",
     )
-    calls = _calls(captured, ANALYSIS)
+    calls = _calls(captured, TOOL)
     assert calls and calls[0].get("basis") == "delivered", captured
     assert calls[0].get("date_from") == "2026-02-01" and calls[0].get("date_to") == "2026-02-28", calls[0]
 
@@ -241,7 +265,7 @@ def test_t10_a_ranking_while_the_question_is_open_is_never_read_as_the_basis(one
                 entity_op="replace_combine", date_filter_start="2026-02-01", date_filter_end="2026-02-28"),
         "top 5 dealers in feb 2026",
     )
-    assert _calls(captured, ANALYSIS) == [], captured
+    assert not [a for a in _calls(captured, TOOL) if not a.get("group_by")], captured  # no total from the typed ranking
     assert "which basis" not in _reply(result), _reply(result)
     question = one.next_open_question() or {}
     assert question.get("about") != "sales_basis", question
@@ -294,7 +318,7 @@ def test_t16_a_reply_the_parser_declared_no_answer_for_is_never_read_from_its_te
     miss is fixed in the prompt."""
     _ask(one)
     _result, captured = one.say(_answer(**fields), body)
-    assert _calls(captured, ANALYSIS) == [], f"no figure from the typed text: {captured}"
+    assert _calls(captured, TOOL) == [], f"no figure from the typed text: {captured}"
     assert (one.next_open_question() or {}).get("about") != "sales_basis"
 
 
@@ -306,7 +330,7 @@ def test_t14_another_domains_ask_while_the_question_is_open_is_its_own(one):
                        entities=[], domain_in_message=True),
         "stock for SRTWC286",
     )
-    assert _calls(captured, ANALYSIS) == [], captured
+    assert _calls(captured, TOOL) == [], captured
     assert "which basis" not in _reply(result) and _reply(result).strip() != BASIS_QUESTION, _reply(result)
 
 
@@ -352,8 +376,7 @@ def test_t17_a_declared_pick_of_2_runs_delivered(one):
 def test_t18_a_declared_pick_of_4_runs_the_outstanding_report_ask(one):
     _ask(one)
     _result, captured = one.say(_answer(open_question_answer=_pick(4)), "4")
-    assert _calls(captured, ANALYSIS) == [], captured
-    asks = _calls(captured, "crm_report_ask")
+    asks = _calls(captured, TOOL)
     assert asks and asks[0].get("basis") == "outstanding", captured
 
 
@@ -367,7 +390,7 @@ def test_t20_a_declared_cancel_cancels(one):
     _ask(one)
     cancel = {"mode": "cancel", "picked": [], "items": [], "qty_for_all": None}
     result, captured = one.say(_answer(open_question_answer=cancel), "cancel")
-    assert captured == [] or _calls(captured, ANALYSIS) == [], captured
+    assert captured == [], captured
     assert "Sales report cancelled." in _reply(result), _reply(result)
     assert (one.next_open_question() or {}).get("about") != "sales_basis"
 
@@ -376,20 +399,17 @@ def test_t21_a_declared_answer_naming_no_option_is_asked_again_then_given_up(one
     """A declared pick outside the four: asked again in the same words, then given up, never echoing a word."""
     _ask(one)
     result, captured = one.say(_answer(open_question_answer=_pick(9)), "zzqq")
-    assert _reply(result).strip() == BASIS_QUESTION and _calls(captured, ANALYSIS) == [], _reply(result)
+    assert _reply(result).strip() == BASIS_QUESTION and captured == [], _reply(result)
     result, captured = one.say(_answer(open_question_answer=_pick(9)), "zzqq")
     assert "I still can't tell which basis you mean." in _reply(result) and "zzqq" not in _reply(result), _reply(result)
-    assert _calls(captured, ANALYSIS) == [], captured
+    assert captured == [], captured
 
 
-def test_t22_outstanding_with_no_period_reads_this_year_as_the_other_bases_do(one):
-    """The analysis reads this calendar year when no period is said; the outstanding answer does too, never a
-    second question."""
-    from app.services.reports.registry import today_malaysia
-
+def test_t22_outstanding_with_no_period_reads_every_date_never_a_second_question(one):
+    """An outstanding kind takes no period (Q2): none said means every date, and it is never asked."""
     result, _c = one.say(_total(date_mode=None, date_filter_start=None, date_filter_end=None), "total sales")
     assert _reply(result).strip() == BASIS_QUESTION, _reply(result)
     _result, captured = one.say(_answer(open_question_answer=_pick(4)), "4")
     asks = _calls(captured, "crm_report_ask")
-    today = today_malaysia()
-    assert asks and asks[0].get("date_from") == f"{today.year}-01-01" and asks[0].get("date_to") == today.isoformat(), captured
+    assert asks and asks[0].get("basis") == "outstanding", captured
+    assert "date_from" not in asks[0] and "date_to" not in asks[0], asks[0]

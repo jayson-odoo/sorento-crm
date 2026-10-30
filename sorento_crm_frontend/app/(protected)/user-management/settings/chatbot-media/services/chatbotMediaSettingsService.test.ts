@@ -60,6 +60,11 @@ describe('getChatbotMediaSettings', () => {
     // Lane REPORT-RATE-LIMIT-CONFIG: the report cap's own defaults, 10 per 10 minutes.
     expect(settings.report_ask_rate_limit).toBe(10);
     expect(settings.report_ask_rate_window_minutes).toBe(10);
+    // AGENTIC-P1: the agent budgets' own defaults.
+    expect(settings.chatbot_agent_max_rounds).toBe(8);
+    expect(settings.chatbot_agent_max_seconds).toBe(45);
+    expect(settings.chatbot_agent_max_input_tokens).toBe(150000);
+    expect(settings.chatbot_agent_compact_tokens).toBe(40000);
   });
 
   it('reads the stored report rate limit, a stored 0 included (0 means no limit)', async () => {
@@ -92,6 +97,23 @@ describe('getChatbotMediaSettings', () => {
     expect(settings.media_image_model).toBeNull();
     expect(settings.media_image_degraded_model).toBeNull();
     expect(settings.media_voice_degraded_model).toBeNull();
+  });
+
+  it('reads the saved document reader pair', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        settings: {
+          ...ALL_NULL,
+          document_ai_provider: 'gemini',
+          document_ai_model: 'gemini-3.5-flash',
+        },
+      }),
+    );
+
+    const settings = await getChatbotMediaSettings();
+
+    expect(settings.document_ai_provider).toBe('gemini');
+    expect(settings.document_ai_model).toBe('gemini-3.5-flash');
   });
 
   it('a stored value still wins over the fallback', async () => {
@@ -145,6 +167,8 @@ describe('saveChatbotMediaSettings', () => {
       media_image_provider: null,
       media_image_model: null,
       media_image_degraded_model: null,
+      document_ai_provider: 'gemini',
+      document_ai_model: 'gemini-3.5-flash',
       media_transcribe_model: 'whisper-1',
       media_voice_degraded_model: null,
       media_language_mode: 'pinned',
@@ -156,6 +180,10 @@ describe('saveChatbotMediaSettings', () => {
       low_stock_sync_wait_seconds: 40,
       report_ask_rate_limit: 10,
       report_ask_rate_window_minutes: 10,
+      chatbot_agent_max_rounds: 8,
+      chatbot_agent_max_seconds: 45,
+      chatbot_agent_max_input_tokens: 150000,
+      chatbot_agent_compact_tokens: 40000,
       ...overrides,
     };
   }

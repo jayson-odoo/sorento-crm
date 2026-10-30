@@ -2702,7 +2702,7 @@ def _low_stock_envelope(payload: dict) -> dict:
 _OUTSTANDING_BOTH_HEADINGS = {"so": "*Sales order list*", "do": "*Delivery order list*"}
 
 
-def _outstanding_detail(report: dict, scope: str) -> str:
+def _outstanding_detail(report: dict, scope: str, *, start: int = 1) -> str:
     """Numbered SO (``scope="so"``) or DO (``scope="do"``) list (AC-1106), served
     from the SAME report the presenter already rendered - no second fetch, no
     re-parse (D10). Every row renders, in whatever order `so_rows` / `do_rows`
@@ -2725,7 +2725,7 @@ def _outstanding_detail(report: dict, scope: str) -> str:
         field_defs = _OUTSTANDING_DO_FIELDS
 
     items: list[str] = []
-    for i, row in enumerate(rows, start=1):
+    for i, row in enumerate(rows, start=start):
         field_lines = []
         for label, key, kind in field_defs:
             value = row.get(key)
@@ -3394,6 +3394,9 @@ _REPORT_ASK_PLURALS = {
     "location": "locations",
     "channel": "channels",
     "month": "months",
+    "year": "years",
+    "sales_order": "sales orders",
+    "delivery_order": "delivery orders",
 }
 
 
@@ -3467,7 +3470,7 @@ def _ask_rows(rows: list, group_by: Any, measure: Any = None, sort: Any = None) 
         else:
             merged[name] = dict(row)
     out = list(merged.values())
-    if group_by == "month":
+    if group_by in ("month", "year"):
         out.sort(key=lambda r: str(r.get("name")))
     elif len(out) < len(rows):
         first, second = {"qty": ("qty", "amount"), "amount": ("amount", "qty")}.get(str(measure), ("count", "amount"))
@@ -3476,6 +3479,139 @@ def _ask_rows(rows: list, group_by: Any, measure: Any = None, sort: Any = None) 
         for i, row in enumerate(out, start=1):
             row["rank"] = i
     return out
+
+
+#: REPORT-UNIFY: why the route could not apply a filter (`not_applied[].reason`), as words, and the label each
+#: filter word is said with. A reason code is never printed as it is.
+_NOT_APPLIED_REASONS = {
+    "per_document": "unpaid invoices are per document",
+    "unknown_spec": "not a specification I know",
+    "unit": "unit not recognised",
+    "invalid_value": "value not readable",
+}
+_NOT_APPLIED_LABELS = {
+    "customer": "Customer", "product": "Product", "brand": "Brand", "category": "Category",
+    "sales_agent": "Sales agent", "customer_agent": "Customers assigned to", "location": "Location",
+    "channel": "Channel", "spec": "Specification",
+}
+
+
+def _not_applied(body: dict) -> list[dict]:
+    """The route's `not_applied`, one entry per filter and reason: `{filter, label, words}`."""
+    out: list[dict] = []
+    for item in body.get("not_applied") or []:
+        word = str(item.get("filter") or "")
+        entry = {
+            "filter": word,
+            "label": _NOT_APPLIED_LABELS.get(word, word.replace("_", " ").capitalize()),
+            "words": _NOT_APPLIED_REASONS.get(str(item.get("reason")), "not applied"),
+        }
+        if entry not in out:
+            out.append(entry)
+    return out
+
+
+_ASK_SO_LIST_OFFER = "Reply 1 for the sales order list."
+_ASK_DO_LIST_OFFER = "Reply 1 for the delivery order list."
+#: The engine's name for a row with no value (`reports.engine.BLANK_VALUE`): a location with no code.
+_ASK_BLANK = "(blank)"
+#: A summary group's noun for its "... and N more" line, by axis (the old report's own nouns where it had them).
+_ASK_SUMMARY_NOUNS = {"customer": "customer", "product": "product", "sales_agent": "sales agent"}
+
+
+#: The pre-#1922 block title of each outstanding kind (`_outstanding_so_block` / `_outstanding_do_block`).
+_ASK_OUTSTANDING_BLOCKS = {"outstanding": "*Sales order outstanding*", "pending_delivery": "*Delivery order outstanding*"}
+#: What an outstanding kind with nothing in it says (`_outstanding_report`'s own empty blocks).
+_ASK_OUTSTANDING_EMPTY = {"outstanding": "No open sales order.", "pending_delivery": "No outstanding delivery order."}
+#: The filters the pre-#1922 header names in its own four lines (`_outstanding_header_lines`), and Brand after them.
+_ASK_HEADER_KEYS = ("product", "customer", "location", "brand")
+
+
+def _ask_outstanding_header(body: dict, facts: list[str]) -> list[str]:
+    """Item 5 (owner 29 Oct): `_outstanding_header_lines`' own lines over the report ask's echo: Product, Customer,
+    Location and Order date, "all" when not given, then Brand when one was named. Every other fact the ask printed (a
+    filter the old report had none of, "Not applied", a book line) follows; the "Period:" line is the Order date line."""
+    values = {f.get("key"): ", ".join(str(v) for v in f.get("values") or []) for f in body.get("filters") or []}
+    labels = {f"{f.get('label')}: {values.get(f.get('key'))}" for f in body.get("filters") or [] if f.get("key") in _ASK_HEADER_KEYS}
+    lines = [
+        f"Product: {values.get('product') or 'all'}",
+        f"Customer: {values.get('customer') or 'all'}",
+        f"Location: {values.get('location') or 'all'}",
+        f"Order date: {_outstanding_date_range(body.get('date_from'), body.get('date_to'))}",
+    ]
+    if values.get("brand"):
+        lines.append(f"Brand: {values['brand']}")
+    return lines + [f for f in facts if f not in labels and not f.startswith("Period:")]
+
+
+def _ask_summary(basis: Any, summary: dict) -> list[str]:
+    """REPORT-OUTSTANDING-SUMMARY: the pre-#1922 outstanding summary's lines (`_outstanding_so_block` /
+    `_outstanding_do_block`, same words and the same `name: total (O/S: outstanding)` groups), from the report ask's
+    `summary`, then the list offer. Undelivered orders: the total is the ordered quantity of the open lines and
+    Transferred to DO is ordered minus outstanding. Pending delivery: every DO in it is undelivered as a whole, so its
+    DO qty is the outstanding quantity and Delivered is 0, as the old block printed it. One `*_By <axis>_*` group per
+    route group, in the route's order; By location prints whole, any other group is capped as the old second group."""
+    so = basis == "outstanding"
+    if not summary.get("documents"):
+        return [_ASK_OUTSTANDING_EMPTY[basis]]
+    qty = summary.get("qty") or 0
+    outstanding = f"Outstanding: {_ask_pcs(qty)}, {_ask_rm(summary.get('amount'))}"
+    days = _outstanding_date_range(summary.get("date_first"), summary.get("date_last"))
+    total_key = "ordered_qty" if so else "qty"
+    if so:
+        ordered = summary.get("ordered_qty") or 0
+        lines = [
+            f"Sales orders: {_outstanding_fmt_int(summary.get('documents'))}",
+            f"Ordered: {_outstanding_fmt_int(ordered)}",
+            f"Transferred to DO: {_outstanding_fmt_int(ordered - qty)}",
+            outstanding,
+            f"Order date range: {days}",
+        ]
+    else:
+        lines = [
+            f"Delivery orders: {_outstanding_fmt_int(summary.get('documents'))}",
+            f"DO qty: {_outstanding_fmt_int(qty)}",
+            "Delivered: 0",
+            outstanding,
+            f"DO date range: {days}",
+        ]
+    # Item 6 (owner 29 Oct, as before #1922): every group but By location pages 20 rows at a time; "more" asks the next.
+    offset, longest = _ask_summary_window(summary)
+    if offset and offset >= longest:
+        lines.extend(["", f"That is all {longest:,}."])
+    else:
+        for group in summary.get("groups") or []:
+            axis = str(group.get("axis") or "")
+            rows = [{**r, "name": None if r.get("name") == _ASK_BLANK else r.get("name")} for r in group.get("rows") or []]
+            shown = rows if axis == "location" else rows[offset : offset + OUTSTANDING_GROUP_CAP]
+            if offset and axis != "location" and not shown:
+                continue  # a shorter group has no rows on this page
+            lines.append(f"*_By {str(group.get('label') or axis).lower()}_*")
+            lines.extend(_outstanding_group(shown, name_key="name", total_key=total_key, outstanding_key="qty"))
+    left = longest - offset - OUTSTANDING_GROUP_CAP
+    if left > 0:
+        lines.extend(["", f'Reply "more" to see the next {min(OUTSTANDING_GROUP_CAP, left):,}.'])
+    lines.extend(["", _ASK_SO_LIST_OFFER if so else _ASK_DO_LIST_OFFER])
+    return lines
+
+
+def _ask_documents_window(body: dict) -> tuple[int, int]:
+    """A document list's page start and the whole list's count (the route's `group_offset`, `documents_total`)."""
+    offset = body.get("group_offset")
+    offset = offset if isinstance(offset, int) and not isinstance(offset, bool) and offset > 0 else 0
+    total = body.get("documents_total")
+    total = total if isinstance(total, int) and not isinstance(total, bool) else offset + len(body.get("documents") or [])
+    return offset, total
+
+
+def _ask_summary_window(summary: dict) -> tuple[int, int]:
+    """The page start a "more" asked for (0 on the first page) and the longest paged group's row count."""
+    offset = summary.get("group_offset")
+    offset = offset if isinstance(offset, int) and not isinstance(offset, bool) and offset > 0 else 0
+    longest = max(
+        (len(g.get("rows") or []) for g in summary.get("groups") or [] if g.get("axis") != "location"), default=0
+    )
+    return offset, longest
 
 
 def _report_ask(body: dict) -> str:
@@ -3497,15 +3633,60 @@ def _report_ask(body: dict) -> str:
     agent_note = _top_selling_agent_note(body)  # REPORT-SMART-L R3b: the top selling fill-rate caveat, below 95%
     if agent_note:
         facts.append(agent_note)
-    facts.append(f"Period: {_chat_date(body.get('date_from'))} to {_chat_date(body.get('date_to'))}")
+    if body.get("date_from") is None and body.get("date_to") is None:
+        facts.append("Period: all dates")  # an outstanding basis asked with no period
+    else:
+        facts.append(f"Period: {_chat_date(body.get('date_from'))} to {_chat_date(body.get('date_to'))}")
+    skipped = _not_applied(body)
+    if skipped:
+        facts.append("Not applied: " + "; ".join(f"{n['label']} ({n['words']})" for n in skipped))
     if body.get("compare_to") and body.get("compare_from"):
         facts.append(f"Compared with: {_chat_date(body.get('compare_from'))} to {_chat_date(body.get('compare_until'))}")
     measure = body.get("measure")
     figures = _ask_figures(body.get("total") or {}, measure) + _ask_before(body.get("total") or {}, measure)
     basis = body.get("basis_label")
     group_by = body.get("group_by")
+    outstanding_kind = body.get("basis") in _ASK_OUTSTANDING_BLOCKS
+    if outstanding_kind:
+        # REPORT-OUTSTANDING-SUMMARY item 5 (owner 29 Oct): the pre-#1922 header in place of the filter facts and period.
+        facts = _ask_outstanding_header(body, facts)
+    if outstanding_kind and isinstance(body.get("documents"), list):
+        # Item 7 (owner 29 Oct): the SO / DO list as before #1922: the header, then one numbered block per document with
+        # every field (`_outstanding_detail`, the old list's own renderer).
+        # Eval hard guard: the route sends one 20-row page (`group_offset`, `documents_total`); "more" asks the next.
+        scope = "so" if body["basis"] == "outstanding" else "do"
+        offset, total = _ask_documents_window(body)
+        if offset and offset >= total:
+            return "\n".join(facts) + f"\n\nThat is all {total:,}."
+        listed = _outstanding_detail({f"{scope}_rows": body["documents"]}, scope, start=offset + 1)
+        text = "\n".join(facts) + "\n\n" + (listed or _ASK_OUTSTANDING_EMPTY[body["basis"]])
+        left = total - offset - len(body["documents"])
+        if left > 0:
+            text += f'\n\nReply "more" to see the next {min(OUTSTANDING_GROUP_CAP, left):,}.'
+        return text
+    if isinstance(body.get("summary"), dict):
+        # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or customer prints the summary in the pre-#1922
+        # frame (header, a blank line, the block), its breakdowns the route's (the defaults, or the axis the user named).
+        return "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], *_ask_summary(body["basis"], body["summary"])])
+    if not group_by and outstanding_kind:
+        text = "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], f"Total {figures}"])
+        if body.get("basis") == "outstanding" and not body.get("compare_to"):
+            # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure.
+            text += "\n\n" + _ASK_SO_LIST_OFFER
+        return text
     if not group_by:
-        return "\n".join([f"Sales by {basis}", *facts, f"Total {figures}"])
+        # An outstanding kind is not a sale: "Undelivered orders", "Pending delivery", "Unpaid invoices" (the kinds'
+        # own words); every sales basis reads "Sales by <basis>".
+        head = (
+            "Undelivered orders" if body.get("basis") == "outstanding"
+            else basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid")
+            else f"Sales by {basis}"
+        )
+        text = "\n".join([head, *facts, f"Total {figures}"])
+        if body.get("basis") == "outstanding" and not body.get("compare_to"):
+            # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure; pending delivery and unpaid get none.
+            text += "\n\n" + _ASK_SO_LIST_OFFER
+        return text
     rows = _ask_rows(body.get("rows") or [], group_by, measure, body.get("sort"))
     if not rows:
         return "\n".join([f"No {basis} found", *facts])
@@ -3526,9 +3707,10 @@ def _report_ask(body: dict) -> str:
         # REPORT-SMART-L R3a: what the top selling reply said of a least sold ranking (an item that sold nothing is never ranked).
         lines.insert(1, TOP_SELLING_NO_SALE_LINE.replace("Items", "Categories") if group_by == "category" else TOP_SELLING_NO_SALE_LINE)
     for row in rows:
-        if group_by == "month":
-            # A trend, not a ranking: its months in date order, no rank number.
-            lines.append(f"{_ask_month(row.get('name'))} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
+        if group_by in ("month", "year"):
+            # A trend, not a ranking: its months (or years) in date order, no rank number.
+            when = _ask_month(row.get("name")) if group_by == "month" else str(row.get("name"))
+            lines.append(f"{when} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
         else:
             label = row.get("code") if group_by == "category" and _filled(row.get("code")) else row.get("name")
             lines.append(f"{row.get('rank')}. {label} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
@@ -3661,7 +3843,24 @@ def _report_ask_envelope(body: dict) -> dict:
         if rows
         else None
     )
-    return {"result_type": "report_ask", "response": _report_ask(body), "has_result": answered, "drill_rows": drill}
+    envelope = {
+        "result_type": "report_ask", "response": _report_ask(body), "has_result": answered, "drill_rows": drill,
+        "not_applied": _not_applied(body),
+    }
+    summary = body.get("summary")
+    if body.get("status") == "ok" and isinstance(body.get("documents"), list):
+        offset, total = _ask_documents_window(body)
+        if total > OUTSTANDING_GROUP_CAP or offset:
+            # Eval hard guard: a long document list arms "more" like a long summary breakdown.
+            envelope["group_window"] = {"offset": offset, "shown": len(body["documents"]), "total": total}
+    elif body.get("status") == "ok" and isinstance(summary, dict):
+        offset, longest = _ask_summary_window(summary)
+        if longest > OUTSTANDING_GROUP_CAP or offset:
+            # Item 6: the lane arms "more" off this, as it does the pre-#1922 report's (`_outstanding_envelope`).
+            envelope["group_window"] = {
+                "offset": offset, "shown": max(0, min(OUTSTANDING_GROUP_CAP, longest - offset)), "total": longest,
+            }
+    return envelope
 
 
 def _sales_analysis_envelope(payload: dict) -> dict:

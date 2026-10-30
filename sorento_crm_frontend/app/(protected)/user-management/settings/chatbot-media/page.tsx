@@ -64,6 +64,8 @@ type Draft = {
   imageProvider: string;
   imageModel: string;
   imageDegradedModel: string;
+  documentProvider: string;
+  documentModel: string;
   transcribeModel: string;
   voiceDegradedModel: string;
   languageMode: MediaLanguageMode;
@@ -75,6 +77,10 @@ type Draft = {
   lowStockWaitSeconds: string;
   reportRateLimit: string;
   reportRateWindowMinutes: string;
+  agentMaxRounds: string;
+  agentMaxSeconds: string;
+  agentMaxInputTokens: string;
+  agentCompactTokens: string;
 };
 
 function toDraft(settings: ChatbotMediaSettings): Draft {
@@ -88,6 +94,8 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     imageProvider: settings.media_image_provider ?? '',
     imageModel: settings.media_image_model ?? '',
     imageDegradedModel: settings.media_image_degraded_model ?? '',
+    documentProvider: settings.document_ai_provider ?? '',
+    documentModel: settings.document_ai_model ?? '',
     transcribeModel: settings.media_transcribe_model,
     voiceDegradedModel: settings.media_voice_degraded_model ?? '',
     languageMode: settings.media_language_mode,
@@ -99,6 +107,10 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     lowStockWaitSeconds: String(settings.low_stock_sync_wait_seconds),
     reportRateLimit: String(settings.report_ask_rate_limit),
     reportRateWindowMinutes: String(settings.report_ask_rate_window_minutes),
+    agentMaxRounds: String(settings.chatbot_agent_max_rounds),
+    agentMaxSeconds: String(settings.chatbot_agent_max_seconds),
+    agentMaxInputTokens: String(settings.chatbot_agent_max_input_tokens),
+    agentCompactTokens: String(settings.chatbot_agent_compact_tokens),
   };
 }
 
@@ -113,6 +125,9 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     media_image_provider: draft.imageProvider.trim() || null,
     media_image_model: draft.imageModel.trim() || null,
     media_image_degraded_model: draft.imageDegradedModel.trim() || null,
+    document_ai_provider: draft.documentProvider.trim() || null,
+    // A model id means nothing without the provider it was picked from.
+    document_ai_model: (draft.documentProvider.trim() && draft.documentModel.trim()) || null,
     media_transcribe_model: draft.transcribeModel.trim(),
     media_voice_degraded_model: draft.voiceDegradedModel.trim() || null,
     media_language_mode: draft.languageMode,
@@ -125,6 +140,10 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     // Blank is "no limit", stored as 0 (`Number('')` is 0).
     report_ask_rate_limit: Number(draft.reportRateLimit.trim()),
     report_ask_rate_window_minutes: Number(draft.reportRateWindowMinutes.trim()),
+    chatbot_agent_max_rounds: Number(draft.agentMaxRounds.trim()),
+    chatbot_agent_max_seconds: Number(draft.agentMaxSeconds.trim()),
+    chatbot_agent_max_input_tokens: Number(draft.agentMaxInputTokens.trim()),
+    chatbot_agent_compact_tokens: Number(draft.agentCompactTokens.trim()),
   };
 }
 
@@ -149,6 +168,10 @@ const NUMBER_BOUNDS = {
   lowStockWaitSeconds: [5, 90],
   reportRateLimit: [0, 1000],
   reportRateWindowMinutes: [1, 1440],
+  agentMaxRounds: [1, 30],
+  agentMaxSeconds: [5, 300],
+  agentMaxInputTokens: [10000, 2000000],
+  agentCompactTokens: [5000, 500000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 type NumberKey = keyof typeof NUMBER_BOUNDS;
@@ -191,6 +214,7 @@ export default function ChatbotMediaSettingsPage() {
   // blank provider is sent as blank: the backend reads it as "the assistant's
   // own", which is exactly what a blank provider column means at runtime.
   const modelsQuery = useProviderModels(draft?.imageProvider ?? '');
+  const documentModelsQuery = useProviderModels(draft?.documentProvider ?? '');
 
   useEffect(() => {
     if (settingsQuery.data && draft === null) setDraft(toDraft(settingsQuery.data));
@@ -248,6 +272,9 @@ export default function ChatbotMediaSettingsPage() {
   const liveModels = modelsQuery.data?.models;
   const modelOptions = (
     liveModels ?? MODEL_OPTIONS[draft.imageProvider] ?? []
+  ).map((m) => ({ value: m.value, label: m.label }));
+  const documentModelOptions = (
+    documentModelsQuery.data?.models ?? MODEL_OPTIONS[draft.documentProvider] ?? []
   ).map((m) => ({ value: m.value, label: m.label }));
   const modelListNotice = modelsQuery.isError
     ? 'Showing the built-in model list; the model list could not be loaded.'
@@ -360,6 +387,42 @@ export default function ChatbotMediaSettingsPage() {
 
       <Card>
         <CardHeader className="border-b border-border">
+          <CardTitle>Agent budgets</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-5 py-5 sm:grid-cols-2">
+          <NumberField
+            id="agent-max-rounds"
+            label="Tool rounds"
+            value={draft.agentMaxRounds}
+            error={numberError.agentMaxRounds}
+            onChange={(v) => set('agentMaxRounds', v)}
+          />
+          <NumberField
+            id="agent-max-seconds"
+            label="Seconds per turn"
+            value={draft.agentMaxSeconds}
+            error={numberError.agentMaxSeconds}
+            onChange={(v) => set('agentMaxSeconds', v)}
+          />
+          <NumberField
+            id="agent-max-input-tokens"
+            label="Input tokens per turn"
+            value={draft.agentMaxInputTokens}
+            error={numberError.agentMaxInputTokens}
+            onChange={(v) => set('agentMaxInputTokens', v)}
+          />
+          <NumberField
+            id="agent-compact-tokens"
+            label="Compact history above (tokens)"
+            value={draft.agentCompactTokens}
+            error={numberError.agentCompactTokens}
+            onChange={(v) => set('agentCompactTokens', v)}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b border-border">
           <CardTitle>Image extraction</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5 py-5">
@@ -434,6 +497,44 @@ export default function ChatbotMediaSettingsPage() {
               </AlertTitle>
             </Alert>
           ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b border-border">
+          <CardTitle>PO and delivery schedule reading</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-5 py-5 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="document-ai-provider">Provider</Label>
+            <SearchableSelect
+              id="document-ai-provider"
+              value={draft.documentProvider}
+              onChange={(v) => {
+                // A model id belongs to the provider it was picked from.
+                set('documentProvider', v);
+                set('documentModel', '');
+              }}
+              options={PROVIDER_OPTIONS}
+              clearable
+              placeholder="Server default"
+            />
+          </div>
+          <ModelField
+            id="document-ai-model"
+            label="Model"
+            value={draft.documentModel}
+            options={documentModelOptions}
+            onChange={(v) => set('documentModel', v)}
+            hint={
+              draft.documentProvider
+                ? "Blank uses the provider's default model."
+                : 'Pick a provider first.'
+            }
+            emptyLabel="Server default"
+            disabled={!draft.documentProvider}
+            testProvider={draft.documentProvider}
+          />
         </CardContent>
       </Card>
 
@@ -603,6 +704,7 @@ function ModelField({
   required,
   emptyLabel,
   testProvider,
+  disabled = false,
   onChange,
 }: {
   id: string;
@@ -626,13 +728,15 @@ function ModelField({
    * a transcription model for reasons that have nothing to do with the setting.
    */
   testProvider?: string;
+  /** No model can be picked yet, e.g. while the provider it belongs to is blank. */
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   const known = options.some((opt) => opt.value === value);
   const merged =
     value && !known ? [...options, { value, label: value }] : options;
   const probe = useTestProviderModel();
-  const canTest = testProvider !== undefined && value.trim() !== '';
+  const canTest = !disabled && testProvider !== undefined && value.trim() !== '';
   // A verdict belongs to one (provider, model) pair. Changing the provider makes
   // it stale in exactly the way a changed model does.
   const probeReset = probe.reset;
@@ -654,6 +758,7 @@ function ModelField({
           onChange(next);
         }}
         options={merged}
+        disabled={disabled}
         clearable={!required}
         placeholder={required ? 'Select a model' : (emptyLabel ?? 'Inherit')}
       />
@@ -661,6 +766,7 @@ function ModelField({
         className="font-mono text-xs"
         placeholder="or type a model name"
         value={value}
+        disabled={disabled}
         aria-invalid={invalid}
         onChange={(e) => {
           probe.reset();

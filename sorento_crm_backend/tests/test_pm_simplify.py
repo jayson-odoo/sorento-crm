@@ -464,7 +464,6 @@ def test_an_adopted_order_on_the_area_is_named_not_rewritten(seeded):
 def test_the_sales_order_list_refuses_a_malformed_po_filter(seeded):
     """Security review S1: a non-UUID filter is a clean client error, never a database
     error echoed back in a 500."""
-    import asyncio
 
     from app.api.v1.projects.sales_orders import list_project_sales_orders
 
@@ -472,19 +471,17 @@ def test_the_sales_order_list_refuses_a_malformed_po_filter(seeded):
     po, _phases, _a, _b = _two_line_po(db, company_id, owner)
 
     with pytest.raises(AppException) as caught:
-        asyncio.run(
-            list_project_sales_orders(
-                project_id=po.project_id,
-                query=None,
-                so_status=None,
-                purchase_order_id="x",
-                page=1,
-                limit=50,
-                sort="created_at",
-                dir="desc",
-                _user={"id": owner},
-                db=db,
-            )
+        list_project_sales_orders(
+            project_id=po.project_id,
+            query=None,
+            so_status=None,
+            purchase_order_id="x",
+            page=1,
+            limit=50,
+            sort="created_at",
+            dir="desc",
+            _user={"id": owner},
+            db=db,
         )
     assert caught.value.status_code in (404, 422)
     assert "uuid" not in str(caught.value.detail).lower()

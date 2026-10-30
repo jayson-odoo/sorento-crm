@@ -148,6 +148,9 @@ class SystemSettingUpdate(BaseModel):
     media_image_provider: Optional[str] = None
     media_image_model: Optional[str] = None
     media_image_degraded_model: Optional[str] = None
+    # The PO / delivery schedule document reader. Blank falls back to the env.
+    document_ai_provider: Optional[str] = None
+    document_ai_model: Optional[str] = None
     media_transcribe_model: Optional[str] = None
     # Voice's own degraded tier. NULL means the voice quota is a hard refusal
     # rather than a degrade - image was measured and is seeded, voice was not.
@@ -169,6 +172,11 @@ class SystemSettingUpdate(BaseModel):
     # The chatbot report engine's cap (lane REPORT-RATE-LIMIT-CONFIG). 0 = no limit.
     report_ask_rate_limit: Optional[int] = Field(None, ge=0, le=1000)
     report_ask_rate_window_minutes: Optional[int] = Field(None, ge=1, le=1440)
+    # AGENTIC-P1: budgets for one agent turn.
+    chatbot_agent_max_rounds: Optional[int] = Field(None, ge=1, le=30)
+    chatbot_agent_max_seconds: Optional[int] = Field(None, ge=5, le=300)
+    chatbot_agent_max_input_tokens: Optional[int] = Field(None, ge=10000, le=2000000)
+    chatbot_agent_compact_tokens: Optional[int] = Field(None, ge=5000, le=500000)
     chatbot_stock_denial_enabled: Optional[bool] = None
     # PLAN-local-buy-routing-toggle.md: local-supplier Buy routing is a switch, off
     # by default. Off means the rule does not run at all (no pill, every Buy raises).
@@ -207,6 +215,10 @@ class SystemSettingUpdate(BaseModel):
     # CHAT-RELEASE-1021: the stored reply composer switch (default off). Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
     chatbot_composer_enabled: Optional[bool] = None
+    # PARSER-MAX-TOKENS: the parser's answer budget, bounded as `head/parser.PARSER_MAX_TOKENS_RANGE`
+    # (core may not import the chatbot package). Same rule as every block above - it must appear
+    # HERE and in the GET dict, because both are manual.
+    chatbot_parser_max_output_tokens: Optional[int] = Field(None, ge=1024, le=32768)
     # Price tag packages (D2): the product classes a request line is WARNED about
     # when it reaches marketing without its catalogue package. Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
@@ -216,6 +228,12 @@ class SystemSettingUpdate(BaseModel):
     # (the dialog then falls back to the row's own site pool, R3). Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
     oi_reserve_default_pool_warehouse_id: Optional[str] = None
+    # LOOKUP-EMBED-CENTRAL: the lookup embedder and the backfill rate. Same rule as every block
+    # above - they must appear HERE and in the GET dict, because both are manual. The records-search
+    # model is deliberately NOT a field: only the guard writes it.
+    embedding_provider: Optional[Literal["openai", "gemini"]] = None
+    embedding_model: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9._-]{1,128}$")
+    embedding_backfill_rpm: Optional[int] = Field(None, ge=1, le=600)
 
 
 class ChatbotLane(BaseModel):
@@ -264,7 +282,7 @@ class AppConfigResponse(BaseModel):
 
 
 @router.get("/")
-async def get_settings(
+def get_settings(
     current_user: dict = Depends(require_permission("user_management.settings.view")),
     db: Session = Depends(get_db)
 ):
@@ -446,6 +464,8 @@ async def get_settings(
                 "media_image_provider": getattr(settings, "media_image_provider", None) if settings else None,
                 "media_image_model": getattr(settings, "media_image_model", None) if settings else None,
                 "media_image_degraded_model": getattr(settings, "media_image_degraded_model", None) if settings else None,
+                "document_ai_provider": getattr(settings, "document_ai_provider", None) if settings else None,
+                "document_ai_model": getattr(settings, "document_ai_model", None) if settings else None,
                 "media_transcribe_model": getattr(settings, "media_transcribe_model", "whisper-1") if settings else None,
                 "media_voice_degraded_model": getattr(settings, "media_voice_degraded_model", None) if settings else None,
                 "media_language_mode": getattr(settings, "media_language_mode", "pinned") if settings else None,
@@ -459,6 +479,10 @@ async def get_settings(
                 "low_stock_sync_wait_seconds": getattr(settings, "low_stock_sync_wait_seconds", 40) if settings else None,
                 "report_ask_rate_limit": getattr(settings, "report_ask_rate_limit", 10) if settings else None,
                 "report_ask_rate_window_minutes": getattr(settings, "report_ask_rate_window_minutes", 10) if settings else None,
+                "chatbot_agent_max_rounds": getattr(settings, "chatbot_agent_max_rounds", 8) if settings else None,
+                "chatbot_agent_max_seconds": getattr(settings, "chatbot_agent_max_seconds", 45) if settings else None,
+                "chatbot_agent_max_input_tokens": getattr(settings, "chatbot_agent_max_input_tokens", 150000) if settings else None,
+                "chatbot_agent_compact_tokens": getattr(settings, "chatbot_agent_compact_tokens", 40000) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
                 # PLAN-local-buy-routing-toggle.md: BOTH manual builders, or the setting
                 # never reaches the General settings screen at all.
@@ -486,6 +510,7 @@ async def get_settings(
                 "chatbot_direct_ingress_contacts": getattr(settings, "chatbot_direct_ingress_contacts", None) if settings else None,
                 "chatbot_closed_lists_mode": getattr(settings, "chatbot_closed_lists_mode", None) or "block" if settings else None,
                 "chatbot_composer_enabled": bool(getattr(settings, "chatbot_composer_enabled", False)) if settings else None,
+                "chatbot_parser_max_output_tokens": getattr(settings, "chatbot_parser_max_output_tokens", None) or 8192 if settings else None,
                 "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
                 # PLAN-oi-request-cs-reserve.md section 6c (F1): BOTH manual builders,
                 # or the setting never reaches the General settings screen at all.
@@ -494,6 +519,13 @@ async def get_settings(
                     if settings
                     else None
                 ),
+                # LOOKUP-EMBED-CENTRAL: the records-search model is read-only here.
+                "embedding_provider": getattr(settings, "embedding_provider", None) if settings else None,
+                "embedding_model": getattr(settings, "embedding_model", None) if settings else None,
+                "embedding_records_search_model": (
+                    getattr(settings, "embedding_records_search_model", None) if settings else None
+                ),
+                "embedding_backfill_rpm": getattr(settings, "embedding_backfill_rpm", 20) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -505,7 +537,7 @@ async def get_settings(
 # Declared immediately after `GET /` and ahead of every other GET in this file so a
 # path-parameter route added later (e.g. `/{section}`) cannot shadow this static path.
 @router.get("/app-config", response_model=AppConfigResponse)
-async def get_app_config(
+def get_app_config(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -686,7 +718,7 @@ def _runtime_settings_body(db: Session) -> dict:
 
 
 @router.get("/runtime")
-async def get_runtime_settings(
+def get_runtime_settings(
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
 ):
@@ -695,7 +727,7 @@ async def get_runtime_settings(
 
 
 @router.put("/runtime")
-async def update_runtime_settings(
+def update_runtime_settings(
     payload: Any = Body(...),
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
@@ -739,7 +771,7 @@ def _completed_lane_vocabulary() -> frozenset[str]:
 
 
 @router.get("/chatbot-lanes", response_model=List[ChatbotLane])
-async def get_chatbot_lanes(
+def get_chatbot_lanes(
     current_user: dict = Depends(require_permission("user_management.settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -919,6 +951,14 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 if model_col not in update_data:
                     update_data[model_col] = None
 
+    # The document reader: same rule, same reason.
+    if "document_ai_provider" in update_data:
+        new_provider = (update_data["document_ai_provider"] or "").strip() or None
+        update_data["document_ai_provider"] = new_provider
+        old_provider = (getattr(settings, "document_ai_provider", None) or "").strip() or None
+        if new_provider != old_provider and "document_ai_model" not in update_data:
+            update_data["document_ai_model"] = None
+
     # Chatbot media: the pair has to hold together, and the per-field ge/le on
     # SystemSettingUpdate cannot express a relationship between two fields. An
     # extraction ceiling below the synchronous wait would kill a job mid-flight at
@@ -1041,6 +1081,8 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "chatbot_direct_ingress_mode": "off",
         "chatbot_closed_lists_mode": "block",
         "chatbot_composer_enabled": False,
+        # Repeats SystemSetting.chatbot_parser_max_output_tokens' own default (app/models/user.py).
+        "chatbot_parser_max_output_tokens": 8192,
         # A7 (chatbot-growth-r1): repeats SystemSetting.chatbot_crossdomain_ladder's own
         # default (app/models/user.py).
         "chatbot_crossdomain_ladder": {
@@ -1089,8 +1131,13 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         if column in update_data and update_data[column] is None:
             update_data[column] = False
 
+    embedder_before = (settings.embedding_provider, settings.embedding_model)
     for key, value in update_data.items():
         setattr(settings, key, value)
+    embedder_changed = (
+        any(k in update_data for k in ("embedding_provider", "embedding_model"))
+        and (settings.embedding_provider, settings.embedding_model) != embedder_before
+    )
 
     if cost_price_verification_changed:
         from app.services.audit_service import log_audit
@@ -1110,6 +1157,24 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 
     db.commit()
     db.refresh(settings)
+    if embedder_changed:
+        # A new lookup embedder re-embeds the records in the background; the guard flips the search model
+        # only once every document has a vector of the new model. None of this may undo the save.
+        try:
+            from app.services import queue_service
+            from app.services.embedding_backfill_service import clear_failures
+            from app.tasks.embedding_backfill import run_records_backfill
+
+            if settings.embedding_model:
+                clear_failures(db, settings.embedding_model)  # the new model starts without old failure counts
+                db.commit()
+            from app.api.v1.system.embeddings import RECORDS_BACKFILL_STOP_KEY
+
+            queue_service.redis_conn.delete(RECORDS_BACKFILL_STOP_KEY)  # an earlier Stop must not halt the new run
+            queue_service.enqueue_job(run_records_backfill, queue_name="imports")
+        except Exception:  # noqa: BLE001 - the save stands; the backfill can be started from the Embeddings screen
+            db.rollback()
+            logging.getLogger(__name__).warning("embedding backfill could not be queued after a settings save", exc_info=True)
     if "chatbot_composer_enabled" in update_data:
         from app.modules.chatbot.lane_vocabulary import clear_composer_cache
 
@@ -1119,7 +1184,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 
 
 @router.put("/general", status_code=status.HTTP_200_OK)
-async def update_general_settings(
+def update_general_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1147,7 +1212,7 @@ async def update_general_settings(
 
 
 @router.post("/general", status_code=status.HTTP_200_OK)
-async def update_general_settings_post(
+def update_general_settings_post(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1167,7 +1232,7 @@ async def update_general_settings_post(
 
 
 @router.put("/social", status_code=status.HTTP_200_OK)
-async def update_social_settings(
+def update_social_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1198,7 +1263,7 @@ async def update_social_settings(
 
 
 @router.put("/notifications", status_code=status.HTTP_200_OK)
-async def update_notification_settings(
+def update_notification_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1232,7 +1297,7 @@ async def update_notification_settings(
 
 
 @router.put("/smtp", status_code=status.HTTP_200_OK)
-async def update_smtp_settings(
+def update_smtp_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
@@ -1266,7 +1331,7 @@ async def update_smtp_settings(
 
 
 @router.post("/smtp/test", status_code=status.HTTP_200_OK, response_model=SmtpTestResult)
-async def test_smtp_connection(
+def test_smtp_connection(
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
 ):

@@ -85,6 +85,7 @@ const BASE_PROFILE = {
   chatbot_allowed: true,
   skip_period_questions: false,
   files_as_links: false,
+  agent_enabled: false,
 };
 
 function renderWithClient(ui: React.ReactElement) {
@@ -400,5 +401,25 @@ describe('ContactChatbotSection - Send files as links switch', () => {
     expect(screen.getByLabelText('Send files as links')).toHaveAttribute('data-state', 'checked');
     fireEvent.click(screen.getByLabelText('Send files as links'));
     expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, files_as_links: false });
+  });
+});
+
+describe('ContactChatbotSection - Agent mode switch', () => {
+  it('renders unchecked by default, directly after the send files as links switch', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    const toggle = screen.getByLabelText('Agent mode');
+    expect(toggle).toHaveAttribute('data-state', 'unchecked');
+    const links = screen.getByLabelText('Send files as links');
+    const switches = screen.getAllByRole('switch');
+    expect(switches.indexOf(toggle)).toBe(switches.indexOf(links) + 1);
+  });
+
+  it('turning it on saves agent_enabled true with every other field unchanged', () => {
+    const loaded = { ...BASE_PROFILE, notify_salesman: true };
+    useContactChatbotProfile.mockReturnValue({ data: loaded, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    fireEvent.click(screen.getByLabelText('Agent mode'));
+    expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, agent_enabled: true });
   });
 });

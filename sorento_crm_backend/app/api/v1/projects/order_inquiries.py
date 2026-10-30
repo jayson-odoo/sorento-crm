@@ -869,7 +869,7 @@ def order_inquiry_worklist_matrix(
 
 
 @router.post("/order-inquiries/acknowledge", response_model=AcknowledgeResult)
-async def acknowledge_order_inquiry_rows(
+def acknowledge_order_inquiry_rows(
     payload: AcknowledgeRowsRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
@@ -927,7 +927,7 @@ async def acknowledge_order_inquiry_rows(
 
 
 @router.post("/order-inquiries/unacknowledge", response_model=UnacknowledgeResult)
-async def unacknowledge_order_inquiry_rows(
+def unacknowledge_order_inquiry_rows(
     payload: UnacknowledgeRowsRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
@@ -965,7 +965,7 @@ async def unacknowledge_order_inquiry_rows(
 
 
 @router.post("/order-inquiries/reject", response_model=RejectRowsResult)
-async def reject_order_inquiry_rows(
+def reject_order_inquiry_rows(
     payload: RejectRowsRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
@@ -996,7 +996,7 @@ async def reject_order_inquiry_rows(
 
 
 @router.post("/order-inquiries/{row_id}/reject", response_model=OrderInquiryRowOut)
-async def reject_order_inquiry_row(
+def reject_order_inquiry_row(
     row_id: str,
     payload: RejectRowRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
@@ -1020,7 +1020,7 @@ async def reject_order_inquiry_row(
 
 
 @router.post("/order-inquiries/link-now", response_model=AutoPlaceResult)
-async def link_acknowledged_order_inquiry_rows(
+def link_acknowledged_order_inquiry_rows(
     payload: LinkNowRequest,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
@@ -1120,7 +1120,7 @@ def get_order_inquiry_spo_detail(
     "/projects/{project_id}/order-inquiry-rows",
     response_model=ListResponse[OrderInquiryRowOut],
 )
-async def list_order_inquiry_rows(
+def list_order_inquiry_rows(
     project_id: str,
     query: Optional[str] = Query(None, description="Item code, SPO ref, location or SO number"),
     verb: Optional[List[str]] = Query(None),
@@ -1161,7 +1161,7 @@ async def list_order_inquiry_rows(
 @router.get(
     "/projects/{project_id}/order-inquiry-summary", response_model=OrderInquirySummary
 )
-async def order_inquiry_summary(
+def order_inquiry_summary(
     project_id: str,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -1175,7 +1175,7 @@ async def order_inquiry_summary(
 
 
 @router.get("/projects/{project_id}/order-inquiry-export")
-async def export_order_inquiry(
+def export_order_inquiry(
     project_id: str,
     query: Optional[str] = Query(None),
     verb: Optional[List[str]] = Query(None),
@@ -1208,7 +1208,7 @@ async def export_order_inquiry(
 
 
 @router.get("/sales-orders/{pso_id}/order-inquiry", response_model=OrderInquiryDetail)
-async def get_sales_order_inquiry(
+def get_sales_order_inquiry(
     pso_id: str,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -1308,7 +1308,7 @@ def _serialize_reserve_request(
     response_model=OrderInquiryReserveRequestOut,
     status_code=201,
 )
-async def create_order_inquiry_reserve_request(
+def create_order_inquiry_reserve_request(
     inquiry_id: str,
     payload: CreateReserveRequestIn,
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
@@ -1346,7 +1346,7 @@ async def create_order_inquiry_reserve_request(
     "/order-inquiries/reserve-requests/{request_id}/cancel",
     response_model=OrderInquiryReserveRequestOut,
 )
-async def cancel_order_inquiry_reserve_request(
+def cancel_order_inquiry_reserve_request(
     request_id: str,
     current_user: dict = Depends(require_any_permission([ACKNOWLEDGE, RESERVE])),
     db: Session = Depends(get_db),
@@ -1380,7 +1380,7 @@ async def cancel_order_inquiry_reserve_request(
     "/order-inquiries/{inquiry_id}/reserve-commit",
     response_model=List[OrderInquiryReserveRequestOut],
 )
-async def commit_order_inquiry_reserve(
+def commit_order_inquiry_reserve(
     inquiry_id: str,
     payload: CommitReserveRequestIn,
     current_user: dict = Depends(require_permission(RESERVE)),
@@ -1614,7 +1614,7 @@ def sales_order_line_decision_trail(
     "/order-inquiries/{inquiry_id}/reserve-requests",
     response_model=List[OrderInquiryReserveRequestOut],
 )
-async def list_order_inquiry_reserve_requests(
+def list_order_inquiry_reserve_requests(
     inquiry_id: str,
     current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
     db: Session = Depends(get_db),
@@ -1641,7 +1641,7 @@ async def list_order_inquiry_reserve_requests(
 
 
 @router.post("/order-inquiry-rows/mark", response_model=List[OrderInquiryRowOut])
-async def mark_order_inquiry_rows(
+def mark_order_inquiry_rows(
     payload: MarkInquiryRowsRequest,
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
@@ -1664,7 +1664,7 @@ async def mark_order_inquiry_rows(
     "/order-inquiry-rows/{row_id}/po-candidates",
     response_model=OrderInquiryPoCandidatesResponse,
 )
-async def order_inquiry_po_candidates(
+def order_inquiry_po_candidates(
     row_id: str,
     _user: dict = Depends(require_permission_with_api_key(ACTION)),
     db: Session = Depends(get_db),
@@ -1689,7 +1689,7 @@ async def order_inquiry_po_candidates(
 @router.post(
     "/order-inquiry-rows/{row_id}/place-on-po", response_model=OrderInquiryRowOut
 )
-async def place_order_inquiry_row_on_po(
+def place_order_inquiry_row_on_po(
     row_id: str,
     payload: PlaceOnPoRequest,
     current_user: dict = Depends(require_permission(ACTION)),
@@ -1750,7 +1750,7 @@ async def place_order_inquiry_row_on_po(
 
 
 @router.post("/order-inquiries/auto-place", response_model=AutoPlaceResult)
-async def auto_place_order_inquiries(
+def auto_place_order_inquiries(
     payload: AutoPlaceRequest,
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
@@ -1806,7 +1806,7 @@ async def auto_place_order_inquiries(
 @router.post(
     "/order-inquiry-rows/{row_id}/unplace", response_model=OrderInquiryRowOut
 )
-async def unplace_order_inquiry_row(
+def unplace_order_inquiry_row(
     row_id: str,
     payload: UnlinkRequest = UnlinkRequest(),
     current_user: dict = Depends(require_permission(ACTION)),
@@ -1872,7 +1872,7 @@ def order_inquiry_unplace_all_preview(
 
 
 @router.post("/order-inquiries/unplace-all", response_model=UnplaceAllResult)
-async def unplace_order_inquiry_rows_in_scope(
+def unplace_order_inquiry_rows_in_scope(
     payload: UnplaceAllRequest,
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),

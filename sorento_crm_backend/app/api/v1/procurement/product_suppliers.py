@@ -27,7 +27,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[ProductSupplierResponse])
-async def get_product_suppliers(
+def get_product_suppliers(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),
@@ -54,7 +54,7 @@ async def get_product_suppliers(
 
 
 @router.get("/{product_supplier_id}", response_model=ProductSupplierResponse)
-async def get_product_supplier(
+def get_product_supplier(
     product_supplier_id: str,
     current_user: dict = Depends(require_permission(PS_VIEW_PERM)),
     db: Session = Depends(get_db)
@@ -72,7 +72,7 @@ async def get_product_supplier(
 
 
 @router.post("/", response_model=ProductSupplierResponse, status_code=status.HTTP_201_CREATED)
-async def create_product_supplier(
+def create_product_supplier(
     product_supplier_data: ProductSupplierCreate,
     current_user: dict = Depends(require_permission(PS_ADD_PERM)),
     db: Session = Depends(get_db)
@@ -89,7 +89,7 @@ async def create_product_supplier(
 
 
 @router.put("/{product_supplier_id}", response_model=ProductSupplierResponse)
-async def update_product_supplier(
+def update_product_supplier(
     product_supplier_id: str,
     product_supplier_data: ProductSupplierUpdate,
     current_user: dict = Depends(require_permission(PS_EDIT_PERM)),
@@ -108,7 +108,7 @@ async def update_product_supplier(
 
 
 @router.delete("/{product_supplier_id}", status_code=status.HTTP_200_OK)
-async def delete_product_supplier(
+def delete_product_supplier(
     product_supplier_id: str,
     current_user: dict = Depends(require_permission(PS_DELETE_PERM)),
     db: Session = Depends(get_db)
@@ -126,7 +126,7 @@ async def delete_product_supplier(
 
 
 @router.get("/product/{product_id}")
-async def get_product_suppliers_by_product(
+def get_product_suppliers_by_product(
     product_id: str,
     current_user: dict = Depends(require_permission(PS_VIEW_PERM)),
     db: Session = Depends(get_db)
@@ -192,7 +192,7 @@ async def get_product_suppliers_by_product(
 
 
 @router.post("/{link_id}/costs", status_code=status.HTTP_201_CREATED)
-async def create_product_supplier_cost(
+def create_product_supplier_cost(
     link_id: str,
     body: ProductSupplierCostCreate,
     current_user: dict = Depends(require_permission(PS_EDIT_PERM)),
@@ -204,7 +204,7 @@ async def create_product_supplier_cost(
 
 
 @router.put("/{link_id}/costs/{cost_id}")
-async def update_product_supplier_cost(
+def update_product_supplier_cost(
     link_id: str,
     cost_id: str,
     body: ProductSupplierCostUpdate,
@@ -217,7 +217,7 @@ async def update_product_supplier_cost(
 
 
 @router.delete("/{link_id}/costs/{cost_id}")
-async def delete_product_supplier_cost(
+def delete_product_supplier_cost(
     link_id: str,
     cost_id: str,
     current_user: dict = Depends(require_permission(PS_EDIT_PERM)),

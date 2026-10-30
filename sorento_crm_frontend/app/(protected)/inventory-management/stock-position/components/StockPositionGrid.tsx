@@ -30,6 +30,8 @@ import { exportStockPosition } from '../services/stockPositionService';
 import type { StockPositionRow } from '../services/stockPosition.types';
 
 const QTY = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
+/** A warehouse column's id is this prefix plus the warehouse code. */
+const WAREHOUSE_COLUMN_PREFIX = 'wh:';
 
 /** A quantity as the sheet prints it: whole units, thousands separated, 0 for none. */
 export function formatQty(value: number | null | undefined): string {
@@ -130,7 +132,7 @@ export default function StockPositionGrid() {
       // One column per site-pool warehouse holding stock, as the server lists them (owner: no
       // "Stock" word in the header, the code alone).
       ...warehouseCodes.map<ColumnDef<StockPositionRow>>((code) => ({
-        id: `wh:${code}`,
+        id: `${WAREHOUSE_COLUMN_PREFIX}${code}`,
         accessorFn: (row) => row.stock[code] ?? 0,
         header: ({ column }) => <DataGridColumnHeader title={code} column={column} />,
         cell: ({ row }) => numberCell(row.original.stock[code] ?? 0),
@@ -179,8 +181,8 @@ export default function StockPositionGrid() {
       // The warehouse columns the user shows (Columns chooser, owner ruling Q5), in the export too.
       const shownWarehouses = table
         .getAllLeafColumns()
-        .filter((c) => c.id.startsWith('wh:') && c.getIsVisible())
-        .map((c) => c.id.slice(3));
+        .filter((c) => c.id.startsWith(WAREHOUSE_COLUMN_PREFIX) && c.getIsVisible())
+        .map((c) => c.id.slice(WAREHOUSE_COLUMN_PREFIX.length));
       await exportStockPosition(params, filters, shownWarehouses);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to export the stock position');

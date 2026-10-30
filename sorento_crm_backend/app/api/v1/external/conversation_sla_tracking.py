@@ -39,7 +39,7 @@ _AGENT_REPLIED_LOG_STATUS = {
     response_model=ConversationSLAOpenCountResponse,
     summary="Count a contact's OPEN conversation SLA tickets",
 )
-async def get_conversation_sla_open_count(
+def get_conversation_sla_open_count(
     contact_id: Optional[str] = Query(
         None,
         description="Respond.io contact id (respond_io_id) or CRM respond_contacts row id.",
@@ -106,7 +106,7 @@ async def get_conversation_sla_open_count(
     status_code=status.HTTP_200_OK,
     summary="Record that a staff member replied to a contact in the Respond app",
 )
-async def record_agent_reply(
+def record_agent_reply(
     body: ConversationSLAAgentRepliedRequest,
     request: Request,
     _current_user: dict = Depends(get_external_api_user),
@@ -179,7 +179,7 @@ async def record_agent_reply(
     response_model=ConversationSLATrackingResponse,
     summary="Get SLA tracking by contact_id or phone_number",
 )
-async def get_conversation_sla_tracking_by_contact(
+def get_conversation_sla_tracking_by_contact(
     contact_id: Optional[str] = Query(
         None,
         description="Respond.io contact id (respond_io_id) or CRM respond_contacts row id.",

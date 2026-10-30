@@ -42,7 +42,7 @@ _RESOURCE = "Sales Agent"
 
 
 @router.get("/", response_model=ListResponse[SalesAgentResponse])
-async def list_sales_agents(
+def list_sales_agents(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -62,7 +62,7 @@ async def list_sales_agents(
 
 
 @router.post("/bulk-annotate", response_model=BulkAnnotateResult)
-async def bulk_annotate_sales_agents(
+def bulk_annotate_sales_agents(
     payload: SalesAgentBulkAnnotate,
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
     db: Session = Depends(get_db),
@@ -96,7 +96,7 @@ async def bulk_annotate_sales_agents(
 
 
 @router.get("/{sales_agent_id}", response_model=SalesAgentResponse)
-async def get_sales_agent(
+def get_sales_agent(
     sales_agent_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.sales_agents.view")),
     db: Session = Depends(get_db),
@@ -111,7 +111,7 @@ async def get_sales_agent(
 
 
 @router.patch("/{sales_agent_id}/annotation", response_model=SalesAgentResponse)
-async def annotate_sales_agent(
+def annotate_sales_agent(
     sales_agent_id: str,
     payload: SalesAgentAnnotationUpdate,
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
@@ -154,7 +154,7 @@ async def annotate_sales_agent(
 
 
 @router.get("/{sales_agent_id}/customers", response_model=ListResponse[CustomerResponse])
-async def list_sales_agent_customers(
+def list_sales_agent_customers(
     sales_agent_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -179,7 +179,7 @@ async def list_sales_agent_customers(
 
 
 @router.post("/{sales_agent_id}/customers", response_model=AgentCustomersAssignedResponse)
-async def assign_sales_agent_customers(
+def assign_sales_agent_customers(
     sales_agent_id: str,
     payload: AgentCustomerAssign,
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
@@ -284,11 +284,12 @@ def rederive_preview(
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
     db: Session = Depends(get_db),
 ):
-    """The dry run (Q8, Q10 (a)): every sales order whose stored class differs from the rule,
-    per agent per month, with the RM. Writes nothing."""
+    """The bulk script's dry run (Q8, Q10 (a)): every sales order whose stored class differs from
+    the rule, per agent per month, with the RM; an order the rule gives no class keeps its own,
+    as in the script. Writes nothing."""
     from app.services.sales import agent_class_service
 
-    moves = agent_class_service.rederive(db, apply=False)
+    moves = agent_class_service.rederive(db, apply=False, keep_unset=True)
     return {"data": [
         {"agent": m.agent, "month": m.month, "before": m.before, "after": m.after,
          "orders": m.orders, "amount": str(m.amount)}

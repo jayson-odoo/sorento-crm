@@ -225,7 +225,7 @@ def _probe(db: Session | None = None) -> ProbeFn:
     return call
 
 
-def _mcp_call(db: Session | None = None) -> McpCallFn:
+def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) -> McpCallFn:
     def call(name: str, args: dict[str, Any]) -> Any:
         """One MCP tool call at the CONFIGURED url (H52, D10).
 
@@ -270,7 +270,8 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
         # own 20 is a different budget for a different surface (a user watching a screen,
         # not a customer waiting on WhatsApp inside a whole turn's latency target).
         # `CHATBOT_MCP_TIMEOUT_SECONDS` overrides it per environment.
-        timeout = int(getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
+        # `timeout_seconds` is a caller's own tighter budget (the agent's turn clock).
+        timeout = int(timeout_seconds or getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
         client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
         result = parse_mcp_content(client.call_tool(name, args))
         # CONTACT-BRAND-SCOPE: the probes (cross-domain, did-you-mean, siblings) read through
@@ -593,6 +594,59 @@ def customer_names_reader(db: Session) -> Callable[[list[str]], dict[str, str]]:
     return read
 
 
+def readable_customers(db: Any, rows: Any, contact_respond_id: Any, has_company_scope: bool) -> list[Any]:
+    """CHAT-STATE S7: the carried customer rows this contact can still read, at turn start.
+    One read through the contact's scope-stamped session (company scope applies), narrowed to
+    the current customer links for an enforced contact. A row whose keys are all unreadable is
+    dropped; a row with no code and no key is dropped; token-only rows travel to the resolver."""
+    keys_of = lambda r: [  # noqa: E731
+        str(k) for k in ([r.get("uuid")] if r.get("uuid") else []) + list(r.get("uuids") or []) if k
+    ]
+    from app.services.identifier_resolver import is_uuid
+
+    every_key = {k for r in rows or [] if isinstance(r, dict) for k in keys_of(r)}
+    wanted = {k for k in every_key if is_uuid(k)}
+    # A key that is not a UUID can name nothing readable.
+    unreadable: set[str] = every_key - wanted
+    if wanted:
+        try:
+            from app.models.base import company_scope
+            from app.models.order import Customer
+
+            # A key nothing holds names no data and is left to the resolver; a key a customer
+            # holds but this contact's scope cannot read is dropped.
+            with company_scope(db, None):
+                existing = {str(i) for (i,) in db.query(Customer.id).filter(Customer.id.in_(wanted)).all()}
+            readable = (
+                {str(i) for (i,) in db.query(Customer.id).filter(Customer.id.in_(wanted)).all()}
+                if has_company_scope
+                else set()
+            )
+            scope = customer_scope(db, contact_respond_id, fetch_space_id(db))
+            if scope and scope.get("enforced"):
+                readable &= {str(i) for i in scope["ids"]}
+            # With no company scope at all nothing is readable, whether or not the key exists.
+            unreadable |= (existing - readable) if has_company_scope else set(wanted)
+        except Exception:  # noqa: BLE001 - fail closed: no keyed row is trusted when the read fails
+            logger.warning("chatbot: the carried-customer read failed; keyed customer rows dropped", exc_info=False)
+            unreadable = set(every_key)
+    kept: list[Any] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        keys = keys_of(row)
+        if keys:
+            live = [k for k in keys if k not in unreadable]
+            if not live:
+                continue
+            if len(live) != len(keys):
+                row = {**row, "uuid": live[0], **({"uuids": live} if row.get("uuids") else {})}
+        elif not (row.get("canonical_code") or row.get("raw") or row.get("name")):
+            continue
+        kept.append(row)
+    return kept
+
+
 def customer_scope(db: Session, contact_respond_id: Any, space_id: str | None) -> dict[str, Any] | None:
     """The asking contact's customer scope, read ONCE per turn
     (PLAN-chatbot-customer-scope-29sep.md D1/D3): None when nobody linked the contact to a
@@ -719,11 +773,16 @@ def resolve_sales_agent_token(db: Session, token: str) -> list[tuple[str, str]]:
     word = _norm(token)
     if not word:
         return []
-    rows = (
-        db.query(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label, SalesAgent.aliases)
-        .order_by(SalesAgent.sales_agent)
-        .all()
-    )
+    from app.models.base import get_company_scope
+    from app.services.scm.sales_agent_service import scope_filter
+
+    query = db.query(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label, SalesAgent.aliases)
+    # Only the contact's own companies' agents and the shared ones (`company_id IS NULL`): an agent of another company
+    # is never a match, so never a pick line (security review S3).
+    predicate = scope_filter(get_company_scope(db))
+    if predicate is not None:
+        query = query.filter(predicate)
+    rows = query.order_by(SalesAgent.sales_agent).all()
     exact = [(str(r[0]), r[1]) for r in rows if word in (_norm(r[1]), _norm(r[2]))]
     if exact:
         return exact

@@ -36,7 +36,7 @@ class BulkUpdateResponse(BaseModel):
 
 
 @router.get("/", response_model=ListResponse[SupplierResponse])
-async def get_suppliers(
+def get_suppliers(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -61,7 +61,7 @@ async def get_suppliers(
 
 
 @router.get("/select")
-async def get_suppliers_select(
+def get_suppliers_select(
     query: Optional[str] = Query(None),
     page: Optional[int] = Query(
         None, ge=1, description="Enables paging; omitted, the legacy bare array is returned."
@@ -110,7 +110,7 @@ async def get_suppliers_select(
 
 
 @router.get("/{supplier_id}", response_model=SupplierResponse)
-async def get_supplier(
+def get_supplier(
     supplier_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -128,7 +128,7 @@ async def get_supplier(
 
 
 @router.post("/", response_model=SupplierResponse, status_code=status.HTTP_201_CREATED)
-async def create_supplier(
+def create_supplier(
     supplier_data: SupplierCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -145,7 +145,7 @@ async def create_supplier(
 
 
 @router.post("/bulk-update", response_model=BulkUpdateResponse)
-async def bulk_update_suppliers(
+def bulk_update_suppliers(
     payload: BulkUpdateRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -174,7 +174,7 @@ async def bulk_update_suppliers(
 
 
 @router.put("/{supplier_id}", response_model=SupplierResponse)
-async def update_supplier(
+def update_supplier(
     supplier_id: str,
     supplier_data: SupplierUpdate,
     current_user: dict = Depends(get_current_user),
@@ -193,7 +193,7 @@ async def update_supplier(
 
 
 @router.delete("/{supplier_id}", status_code=status.HTTP_200_OK)
-async def delete_supplier(
+def delete_supplier(
     supplier_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -211,7 +211,7 @@ async def delete_supplier(
 
 
 @router.get("/{supplier_id}/cost-lists")
-async def get_supplier_cost_lists(
+def get_supplier_cost_lists(
     supplier_id: str,
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None),

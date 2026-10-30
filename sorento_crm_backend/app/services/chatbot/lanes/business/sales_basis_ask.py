@@ -9,8 +9,8 @@ the message answers it. Nothing here reads the typed text (owner rule, 28 Oct 20
 
 * `settle` (lane): a fresh analysis with no basis is asked; the parser's declared answer (the basis
   it filled, or the option it picked) runs the first message's own ask with it.
-* Outstanding is not a basis of `crm_sales_analysis`: that answer runs the report ask's
-  outstanding total instead (`as_report_ask`), never a defaulted figure.
+* Every answer, outstanding included, runs the first message's own ask as the report ask total (one figure plus the
+  header, one layout for every basis); no chat path calls `crm_sales_analysis` any more.
 """
 from __future__ import annotations
 
@@ -113,33 +113,3 @@ def run_input(outcome: rf.Outcome) -> dict[str, Any]:
     out = {key: carried.get(key) for key in CARRIED}
     out["sales_basis"] = (outcome.values.get("basis") or {}).get("value")
     return out
-
-
-def as_report_ask(parse_output: dict[str, Any]) -> dict[str, Any]:
-    """An outstanding answer: the report ask's outstanding orders laid out as the analysis lays its total out,
-    one line per channel (or the months, for a month split), in RM, over the first message's channel and period,
-    read by `report_ask.settle` like any breakdown (`report_breakdown`). Not an axis-less total: the report ask
-    totals only a filtered ask (`CATALOGUE_LINE`). No period said reads this calendar year to today, as the
-    analysis does (`fetch.py`, the `crm_sales_analysis` builder), never a second question."""
-    from app.services.chatbot.lanes.business import report_ask
-    from app.services.reports.registry import today_malaysia
-
-    group_by = "month" if parse_output.get("group_by") == "month" else "channel"
-    period = {}
-    if not parse_output.get("date_filter_start") and not parse_output.get("date_filter_end"):
-        today = today_malaysia()
-        period = {"date_filter_start": f"{today.year}-01-01", "date_filter_end": today.isoformat()}
-    return report_ask.take_words(
-        {
-            **{k: v for k, v in parse_output.items() if k not in ("required_ask", "required_ask_answer", "required_ask_reply", "sales_basis")},
-            **report_ask.SALES_RANKING_ASK.reroute,
-            "basis": "outstanding",
-            "group_by": group_by,
-            "measure": "amount",
-            "report_breakdown": True,
-            "capability_from": "sales_analysis",
-            "entities": [],
-            **period,
-        },
-        "",
-    )

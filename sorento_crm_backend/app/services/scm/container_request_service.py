@@ -518,7 +518,7 @@ def _project_open_need(
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
             {_SPO_PLACED_ON_LINE_SQL}
-            WHERE sol.product_id::text = ANY(:pids)
+            WHERE sol.product_id = ANY(CAST(:pids AS uuid[]))
               AND so.demand_class = 'project'
               AND so.status = 'open'
               AND sol.line_status = 'open'
@@ -876,7 +876,7 @@ def _open_lines(
                    ON pso.so_id = so.id AND pso.company_id = so.company_id
             LEFT JOIN projects.projects pj ON pj.id = pso.project_id
             {_SPO_PLACED_ON_LINE_SQL}
-            WHERE sol.product_id::text = ANY(:pids)
+            WHERE sol.product_id = ANY(CAST(:pids AS uuid[]))
               AND so.status = 'open'
               AND sol.line_status = 'open'
               AND sol.purchasing_status <> 'covered'

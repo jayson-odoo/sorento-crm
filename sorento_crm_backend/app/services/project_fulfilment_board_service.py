@@ -982,6 +982,7 @@ class FulfilmentBoardService:
         warehouse_id: Optional[str] = None,
         line_ids: Optional[Sequence[str]] = None,
         group: Optional[str] = None,
+        warehouse_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """One product at one location - or at a whole OWNERSHIP GROUP - and its documents.
 
@@ -1017,6 +1018,10 @@ class FulfilmentBoardService:
         on the pile it actually starts from. The set is resolved through `group_netting`,
         which is the same reader the cell's subtotal prints its net from, so the drill and
         the subtotal cannot come to disagree about who is in the group.
+
+        **`warehouse_ids` reads an explicit set of bins** (the quotation line's stock, which
+        follows the user's contact's Stock visibility). It is a plain multi-location read: no
+        group, so no `net`/`net_of` and no holds, the totals are the sum of the listed bins.
         """
         product = (
             self.db.query(Product).filter(Product.id == product_id).first()
@@ -1025,10 +1030,10 @@ class FulfilmentBoardService:
         )
         warehouse = (
             self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
-            if warehouse_id and not group
+            if warehouse_id and not group and not warehouse_ids
             else None
         )
-        if product is None or (warehouse is None and not group):
+        if product is None or (warehouse is None and not group and not warehouse_ids):
             raise AppException(
                 status_code=404,
                 message="That product or location does not exist.",
@@ -1037,7 +1042,12 @@ class FulfilmentBoardService:
         # The bins this read covers: one, or the whole set. Codes by id, so every document
         # row can say where it sits without a second lookup.
         set_position = self._set_position(str(product.id), group) if group else None
-        if set_position is not None:
+        if warehouse_ids and not group:
+            codes = {
+                str(row.id): row.warehouse_code or ""
+                for row in self.db.query(Warehouse).filter(Warehouse.id.in_(list(warehouse_ids)))
+            }
+        elif set_position is not None:
             codes = {
                 str(entry.warehouse_id): entry.location
                 for entry in set_position.by_location
@@ -1901,7 +1911,9 @@ class FulfilmentBoardService:
             .exists()
         )
         records = (
-            self.db.query(SalesOrderLine, SalesOrder, ProjectSalesOrderLine, Product, User)
+            self.db.query(
+                SalesOrderLine, SalesOrder, ProjectSalesOrderLine, Product, User, Warehouse
+            )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(
                 ProjectSalesOrderLine,
@@ -1909,6 +1921,8 @@ class FulfilmentBoardService:
             )
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(User, User.id == SalesOrderLine.cancelled_by_id)
+            # PLAN-SO-LOCATION: the List view's Location column reads these rows too.
+            .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status.in_(["open", "closed"]),
@@ -1932,7 +1946,7 @@ class FulfilmentBoardService:
             {str(order.customer_id) for _cl, order, *_r in records if order.customer_id}
         )
         rows: List[_Row] = []
-        for core_line, order, project_line, product, user in records:
+        for core_line, order, project_line, product, user, warehouse in records:
             customer_id = str(order.customer_id) if order.customer_id else None
             autocount = by_cancel_doc.get(str(core_line.id))
             rows.append(
@@ -1954,6 +1968,7 @@ class FulfilmentBoardService:
                     qty_delivered=delivered_qty_of(core_line),
                     required_date=core_line.required_date,
                     warehouse_id=str(core_line.warehouse_id) if core_line.warehouse_id else None,
+                    location=warehouse.warehouse_code if warehouse else None,
                     bucket_key=NO_DATE_BUCKET,
                     cancelled=True,
                     # Always set: the screen reads a set `cancelled_at` as committed, never

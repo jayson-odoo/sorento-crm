@@ -44,6 +44,7 @@ export function useProducts(params: GetProductsParams) {
       params.searchQuery,
       params.category_id,
       params.brand_id,
+      params.item_class_id,
       params.status,
       params.price_min,
       params.price_max,

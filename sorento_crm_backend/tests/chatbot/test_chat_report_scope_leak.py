@@ -105,7 +105,8 @@ def test_without_the_chat_reveal_a_chat_plus_orders_turn_is_still_scoped(session
     reply, captured = _turn(
         session_factory, monkeypatch, _two_asks(foreign_id),
         f"top 5 questions this year and outstanding for {FOREIGN}",
-        attributes=(OUTSTANDING_KEY,), matches=_matches(foreign_id), mcp_response={"has_result": False},
+        attributes=(OUTSTANDING_KEY, "sales_orders.sales_report"), matches=_matches(foreign_id),
+        mcp_response={"has_result": False},
     )
     assert REFUSAL in reply, reply
     assert foreign_id not in str(_calls(captured, REPORT)), captured
@@ -132,7 +133,8 @@ def test_baseline_an_orders_only_turn_is_refused_for_a_customer_outside_the_link
                              entities=[_ent(FOREIGN)])
     reply, captured = _turn(
         session_factory, monkeypatch, verdict, f"outstanding for {FOREIGN}",
-        attributes=(OUTSTANDING_KEY,), matches=_matches(foreign_id), mcp_response={"has_result": False},
+        attributes=(OUTSTANDING_KEY, "sales_orders.sales_report"), matches=_matches(foreign_id),
+        mcp_response={"has_result": False},
     )
     assert REFUSAL in reply and _calls(captured, REPORT) == [], (reply, captured)
 

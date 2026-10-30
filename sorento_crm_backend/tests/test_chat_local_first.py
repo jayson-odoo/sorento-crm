@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -340,7 +340,9 @@ def test_a_fresh_incoming_row_the_sync_stored_first_gets_the_phone_push(db, tran
     Only for a message younger than PUSH_FRESHNESS; a recovered old one buzzes nobody."""
     pushed: list[int] = []
     monkeypatch.setattr(sync, "_enqueue_push", pushed.append)
-    now_id = int(datetime.utcnow().timestamp() * 1_000_000)
+    # An aware UTC epoch: a naive `utcnow().timestamp()` is read as LOCAL time, so on a +08
+    # host (the colima CI runner, a Malaysian laptop) "now" lands 8 h back, past PUSH_FRESHNESS.
+    now_id = int(datetime.now(tz=timezone.utc).timestamp() * 1_000_000)
     fresh = _item(0, text="just now")
     fresh["messageId"] = now_id
     stale = _item(1, text="last month")

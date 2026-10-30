@@ -13,7 +13,7 @@ from tests.chatbot.test_outstanding_lane import PRODUCT_CODE, PRODUCT_UUID, _qf,
 from tests.chatbot.test_sales_analysis_lane import ROUTE_HIT, _rendered
 from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
 
-PERIOD = dict(date_filter_start="2026-10-01", date_filter_end="2026-10-31")
+PERIOD = dict(date_filter_start="2026-10-01", date_filter_end="2026-10-31", basis="delivered")  # REPORT-UNIFY: a total names its basis
 
 
 def _no_subject(**over):
@@ -27,9 +27,11 @@ def test_b16_a_staff_sales_report_with_no_subject_runs_the_sales_analysis(sessio
         session_factory, monkeypatch, _no_subject(sales_basis="invoiced"), "sales report this month",
         mcp_response=_rendered(ROUTE_HIT),
     )
+    # REPORT-UNIFY: a staff total with no subject is the report ask's company total (no subject is required).
     assert _calls(captured, "crm_sales_report") == [], captured
-    (args,) = _calls(captured, "crm_sales_analysis")
+    (args,) = _calls(captured, "crm_report_ask")
     assert args["date_from"] == "2026-10-01" and args["date_to"] == "2026-10-31", args
+    assert not args.get("customer_ids") and not args.get("product_code"), args
     assert "could not fetch" not in reply.lower(), reply
 
 
@@ -40,11 +42,11 @@ def test_b16_a_staff_sales_report_with_a_channel_keeps_it_on_the_analysis(sessio
         session_factory, monkeypatch, _no_subject(sales_channel="dealer", sales_basis="invoiced"), "dealer sales this month",
         mcp_response=_rendered(ROUTE_HIT),
     )
-    (args,) = _calls(captured, "crm_sales_analysis")
+    (args,) = _calls(captured, "crm_report_ask")
     assert args["channel"] == "dealer", args
 
 
-def test_b16_near_miss_a_product_subject_still_runs_the_sales_report(session_factory, monkeypatch) -> None:
+def test_b16_near_miss_a_product_subject_runs_the_report_ask_with_the_product(session_factory, monkeypatch) -> None:
     _seed_contact(session_factory, variables={})
     qf = _qf(order_status="sales_report", self_reference=False, **PERIOD, entities=[
         {"raw": PRODUCT_CODE, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}])
@@ -52,7 +54,8 @@ def test_b16_near_miss_a_product_subject_still_runs_the_sales_report(session_fac
         session_factory, monkeypatch, qf, f"sales for {PRODUCT_CODE}", mcp_response=SALES_REPORT_HIT,
         matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
     )
-    assert len(_calls(captured, "crm_sales_report")) == 1 and _calls(captured, "crm_sales_analysis") == [], captured
+    (args,) = _calls(captured, "crm_report_ask")
+    assert args.get("product_code") == PRODUCT_CODE and _calls(captured, "crm_sales_analysis") == [], captured
 
 
 def test_b16_near_miss_a_customer_scoped_contact_keeps_its_links_as_the_subject(session_factory, monkeypatch) -> None:
@@ -63,7 +66,7 @@ def test_b16_near_miss_a_customer_scoped_contact_keeps_its_links_as_the_subject(
         mcp_response=SALES_REPORT_HIT,
     )
     assert _calls(captured, "crm_sales_analysis") == [], captured
-    (args,) = _calls(captured, "crm_sales_report")
+    (args,) = _calls(captured, "crm_report_ask")
     assert args["customer_ids"] == links, args
 
 
@@ -126,22 +129,24 @@ def test_r23_guard_a_carried_product_subject_rides_in_the_args_of_a_dealer_only_
     sales_channel dealer) stays on crm_sales_report because of the carried product, so the
     product must be in the args or the route answers 422 subject_required."""
     _seed_contact(session_factory, variables={})
-    _link_customers(session_factory, *HANLIM_LINKS[:1], codes=HANLIM_CODES)  # a dealer contact
-    first = _qf(order_status="sales_report", self_reference=False, entities=[
+    # REPORT-UNIFY: a customer-linked dealer may not filter by channel (`_dealer_outside`), so the refinement
+    # is a staff contact's.
+    _give_access_type(session_factory, "Sorento Office")
+    first = _qf(order_status="sales_report", self_reference=False, **PERIOD, entities=[
         {"raw": PRODUCT_CODE, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}])
     _run(session_factory, monkeypatch, first, f"sales for {PRODUCT_CODE}", mcp_response=SALES_REPORT_HIT,
          matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}})
     second = _qf(order_status="sales_analysis", entities=[], ranking_refine=True, sales_channel="dealer",
-                 self_reference=False)
+                 self_reference=False, **PERIOD)
     _res, _reply, captured = _run(session_factory, monkeypatch, second, "dealer only", mcp_response=SALES_REPORT_HIT)
-    calls = _calls(captured, "crm_sales_report")
+    calls = _calls(captured, "crm_report_ask")[-1:]
     assert len(calls) == 1, captured
     assert calls[0].get("channel") == "dealer", calls
     assert calls[0].get("product_code") == PRODUCT_CODE, calls
 
 
 
-def test_b16_guard_a_non_staff_contact_with_no_links_naming_only_a_brand_never_runs_a_company_report(
+def test_b16_a_granted_non_staff_contact_with_no_links_naming_only_a_brand_gets_that_brands_total(
     session_factory, monkeypatch
 ) -> None:
     import uuid
@@ -159,5 +164,8 @@ def test_b16_guard_a_non_staff_contact_with_no_links_naming_only_a_brand_never_r
     _res, _reply, captured = _run(
         session_factory, monkeypatch, qf, "sales for mocha this month", mcp_response=_rendered(ROUTE_HIT)
     )
-    assert _calls(captured, "crm_report_ask") == [], captured
+    # REPORT-UNIFY: the Sales report reveal is the gate (the route's audience for a holder with no links is the
+    # whole company), so the brand total runs; never the company analysis tool.
+    (args,) = _calls(captured, "crm_report_ask")
+    assert args.get("brand_ids"), args
     assert _calls(captured, "crm_sales_analysis") == [], captured

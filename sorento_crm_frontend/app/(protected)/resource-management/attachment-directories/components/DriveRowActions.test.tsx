@@ -72,7 +72,7 @@ function renderActions(props: Partial<React.ComponentProps<typeof DriveRowAction
           isTrashView={false}
           recursive={false}
           resubmitting={false}
-          canDeletePermanently
+          canDelete
           handlers={noopHandlers}
           {...props}
         />
@@ -113,15 +113,17 @@ describe('DriveRowActions', () => {
     expect(screen.queryByText('Move to trash')).not.toBeInTheDocument();
   });
 
-  it('file row in trash without resource.attachments.delete: no Permanently delete', () => {
-    renderActions({ item: fileItem, isTrashView: true, canDeletePermanently: false });
-    expect(screen.getByText('Restore')).toBeInTheDocument();
+  // ATTACH-PROJECT-WRITE: archive and restore take `resource.attachments.delete` server-side,
+  // so a row never offers a button the server would refuse.
+  it('file row in trash without resource.attachments.delete: no Restore, no Permanently delete', () => {
+    renderActions({ item: fileItem, isTrashView: true, canDelete: false });
+    expect(screen.queryByText('Restore')).not.toBeInTheDocument();
     expect(screen.queryByText('Permanently delete')).not.toBeInTheDocument();
   });
 
-  it('live file row without resource.attachments.delete still offers Move to trash', () => {
-    renderActions({ item: fileItem, canDeletePermanently: false });
-    expect(screen.getByText('Move to trash')).toBeInTheDocument();
+  it('live file row without resource.attachments.delete offers no Move to trash', () => {
+    renderActions({ item: fileItem, canDelete: false });
+    expect(screen.queryByText('Move to trash')).not.toBeInTheDocument();
   });
 
   it('folder row: open/new subfolder/rename/move/delete, no file actions', () => {

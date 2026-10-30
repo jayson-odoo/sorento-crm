@@ -53,6 +53,7 @@ const previewClashes = vi.fn();
 const registerProject = vi.fn();
 const updateProject = vi.fn();
 const listLeads = vi.fn();
+const getLead = vi.fn();
 const listCustomerOptions = vi.fn();
 
 // Same absolute module `../hooks/useProjects.ts` imports as `../services/projectService`
@@ -69,6 +70,7 @@ vi.mock('../services/projectService', async (importOriginal) => {
     registerProject: (...args: unknown[]) => registerProject(...args),
     updateProject: (...args: unknown[]) => updateProject(...args),
     listLeads: (...args: unknown[]) => listLeads(...args),
+    getLead: (...args: unknown[]) => getLead(...args),
     listCustomerOptions: (...args: unknown[]) => listCustomerOptions(...args),
   };
 });
@@ -268,6 +270,8 @@ const LEAD_OPEN = {
   title: 'Menara Lead',
   outcome: 'open',
   customer_id: 'cust-1',
+  customer_name: 'Aman Hartanah',
+  owner_user_id: 'u-me',
   project_count: 0,
   possible_duplicates: [],
   can_edit: true,
@@ -356,14 +360,16 @@ async function fillWho() {
   );
 }
 
-/** A new project needs its customer (PROJECT-REGISTER-V2 A4): search and pick it. */
+/**
+ * LEAD-GOVERNS-REGISTER D2: a new project needs a Lead and the Customer comes from it, so
+ * "picking the customer" is picking the lead whose customer is Aman Hartanah.
+ */
 async function pickCustomer() {
-  await pickParty(/^Customer/, 'Aman', 'Aman Hartanah');
+  await pickParty(/^Lead/, 'Menara', 'Menara Lead');
 }
 
-/** The lead is optional and lives in Details: open it, search, pick the open lead. */
+/** The Lead picker sits in the bottom section now, not in Details. */
 async function pickLead() {
-  openDetails();
   await pickParty(/^Lead/, 'Menara', 'Menara Lead');
 }
 
@@ -406,10 +412,11 @@ beforeEach(() => {
     { id: 'u-2', name: 'Aina' },
   ]);
   listCustomerOptions.mockResolvedValue([{ value: 'cust-1', label: 'Aman Hartanah' }]);
+  getLead.mockImplementation(async (id: string) => ({ ...LEAD_OPEN, id }));
 });
 
 describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
-  it('create mode opens Who and what and Salesperson and customer, collapses Details', () => {
+  it('create mode opens Who and what and Lead, customer and salesperson, collapses Details', () => {
     renderForm({ mode: 'create' });
     expect(screen.getByRole('button', { name: /Who and what/ })).toHaveAttribute(
       'aria-expanded',
@@ -419,7 +426,7 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
       'aria-expanded',
       'false',
     );
-    expect(screen.getByRole('button', { name: /Salesperson and customer/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /Lead, customer and salesperson/ })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
@@ -427,7 +434,7 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
 
   it('edit mode opens every section', () => {
     renderForm({ mode: 'edit', project: baseProject() });
-    for (const name of [/Who and what/, /^Details/, /Salesperson and customer/]) {
+    for (const name of [/Who and what/, /^Details/, /Lead, customer and salesperson/]) {
       expect(screen.getByRole('button', { name })).toHaveAttribute('aria-expanded', 'true');
     }
   });
@@ -553,25 +560,25 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
   });
 });
 
-describe('ProjectForm: type drives Template and delivery fields (AC-PF015, PF016, PF019, PF020)', () => {
-  it('shows Template only once a type is chosen', () => {
+describe('ProjectForm: type drives To-do list template and delivery fields (AC-PF015, PF016, PF019, PF020)', () => {
+  it('shows To-do list template only once a type is chosen', () => {
     renderForm({ mode: 'create' });
-    expect(screen.queryByLabelText('Template')).toBeNull();
+    expect(screen.queryByLabelText('To-do list template')).toBeNull();
   });
 
-  it('clears Template when the type changes', async () => {
+  it('clears To-do list template when the type changes', async () => {
     listProjectTemplates.mockResolvedValue([
       { id: 'tp1', name: 'Standard', has_forked_status_graph: false },
     ]);
     renderForm({ mode: 'create' });
     await pickType('ty2', 'Hotel');
     await waitFor(() =>
-      expect(within(screen.getByLabelText('Template')).getByText('Standard')).toBeInTheDocument(),
+      expect(within(screen.getByLabelText('To-do list template')).getByText('Standard')).toBeInTheDocument(),
     );
-    fireEvent.change(screen.getByLabelText('Template'), { target: { value: 'tp1' } });
+    fireEvent.change(screen.getByLabelText('To-do list template'), { target: { value: 'tp1' } });
     fireEvent.change(screen.getByLabelText('Project type'), { target: { value: 'ty1' } });
     await waitFor(() =>
-      expect((screen.getByLabelText('Template') as HTMLSelectElement).value).toBe(''),
+      expect((screen.getByLabelText('To-do list template') as HTMLSelectElement).value).toBe(''),
     );
   });
 
@@ -693,7 +700,14 @@ vi.mock('../../leads/components/LeadWizardDialog', () => ({
       <button
         type="button"
         onClick={() =>
-          onDone({ id: 'lead-new', lead_code: 'LEAD-000077', title: initialTitle ?? '' })
+          onDone({
+            id: 'lead-new',
+            lead_code: 'LEAD-000077',
+            title: initialTitle ?? '',
+            customer_id: 'cust-1',
+            customer_name: 'Aman Hartanah',
+            owner_user_id: 'u-me',
+          } as never)
         }
       >
         Finish wizard
@@ -703,11 +717,11 @@ vi.mock('../../leads/components/LeadWizardDialog', () => ({
 }));
 
 describe('ProjectForm: Lead link (AC-PF050-058)', () => {
-  it('will not register a project without a customer, and needs no lead (PROJECT-REGISTER-V2 A4)', async () => {
+  it('will not register a project without a lead; its customer comes with it (LEAD-GOVERNS-REGISTER D2)', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeDisabled();
-    await pickCustomer();
+    await pickLead();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeEnabled();
   });
 
@@ -718,7 +732,6 @@ describe('ProjectForm: Lead link (AC-PF050-058)', () => {
 
   it('lists a lead by its title with the code apart, never a dot-joined label', async () => {
     renderForm({ mode: 'create' });
-    openDetails();
     fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Menara' } });
     expect(await screen.findByRole('button', { name: 'Menara Lead' })).toBeInTheDocument();
     expect(screen.queryByText(/ · /)).toBeNull();
@@ -728,7 +741,6 @@ describe('ProjectForm: Lead link (AC-PF050-058)', () => {
     listLeads.mockResolvedValue({ data: [], pagination: { total: 0, page: 1, limit: 20 } });
     renderForm({ mode: 'create' });
     await fillWho();
-    await pickCustomer();
     fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Tower Q' } });
     fireEvent.click(await screen.findByRole('button', { name: /Create lead .Tower Q./ }));
 
@@ -746,7 +758,6 @@ describe('ProjectForm: Lead link (AC-PF050-058)', () => {
 
   it('searches open leads with the typed text, capped at 20', async () => {
     renderForm({ mode: 'create' });
-    openDetails();
     fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Menara' } });
     await waitFor(() =>
       expect(listLeads).toHaveBeenCalledWith({ query: 'Menara', outcome: ['open'], limit: 20 }),
@@ -765,7 +776,6 @@ describe('ProjectForm: Lead link (AC-PF050-058)', () => {
   it('sends lead_id on create when a lead is picked', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
-    await pickCustomer();
     await pickLead();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() =>

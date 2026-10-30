@@ -32,7 +32,7 @@ def _service(db: Session) -> ContactAccessTypeService:
 # `reference_data.view` until then, which left those pickers silently empty. The admin
 # reads below keep `access_agents.view`; every write needs `reference_data.manage`.
 @router.get("/", response_model=list)
-async def list_contact_access_types(
+def list_contact_access_types(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -48,7 +48,7 @@ async def list_contact_access_types(
 # --- Admin: contact access type catalog CRUD ---
 
 @router.get("/all", response_model=list[ContactAccessTypeResponse])
-async def list_all_contact_access_types(
+def list_all_contact_access_types(
     current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db),
 ):
@@ -62,7 +62,7 @@ async def list_all_contact_access_types(
 
 
 @router.get("/{code}", response_model=ContactAccessTypeResponse)
-async def get_contact_access_type(
+def get_contact_access_type(
     code: str,
     current_user: dict = Depends(require_permission("user_management.access_agents.view")),
     db: Session = Depends(get_db),
@@ -81,7 +81,7 @@ async def get_contact_access_type(
 
 
 @router.post("/", response_model=ContactAccessTypeResponse, status_code=status.HTTP_201_CREATED)
-async def create_contact_access_type(
+def create_contact_access_type(
     data: ContactAccessTypeCreate,
     current_user: dict = Depends(require_permission(MANAGE)),
     db: Session = Depends(get_db),
@@ -96,7 +96,7 @@ async def create_contact_access_type(
 
 
 @router.put("/{code}", response_model=ContactAccessTypeResponse)
-async def update_contact_access_type(
+def update_contact_access_type(
     code: str,
     data: ContactAccessTypeUpdate,
     current_user: dict = Depends(require_permission(MANAGE)),
@@ -112,7 +112,7 @@ async def update_contact_access_type(
 
 
 @router.delete("/{code}", status_code=status.HTTP_200_OK)
-async def delete_contact_access_type(
+def delete_contact_access_type(
     code: str,
     current_user: dict = Depends(require_permission(MANAGE)),
     db: Session = Depends(get_db),

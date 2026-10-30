@@ -2,9 +2,10 @@
 
 One self-hosted GitHub Actions runner, `sorento-mac-1` (labels
 `self-hosted, Linux, ARM64, sorento-mac`), registered to
-`jayson-odoo/sorento-crm` only. `deploy.yml` sends jobs here only when crew
-says so: repo variables `RUNNER_TESTS` / `RUNNER_FAST`, or the dispatch input
-`runner` (see the note above `jobs:` in `.github/workflows/deploy.yml`).
+`jayson-odoo/sorento-crm` only. `deploy.yml` sends jobs here only on a
+release dispatch with `-f runner=mac` (or `auto`); PR runs and the repo
+variables never route here since CI-HOSTED-RUNNERS (29 Oct 2026, repo public
+again). See the note above `jobs:` in `.github/workflows/deploy.yml`.
 Image builds and the deploy always stay on GitHub-hosted (prod is amd64).
 
 ## Layout

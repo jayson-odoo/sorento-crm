@@ -35,8 +35,9 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
     "crm_low_stock_report": ("contact_id", "space_id"),
     # The sales analysis is per contact too: their company, their key, their chat.
     "crm_sales_analysis": ("contact_id", "space_id"),
-    # The report ask needs the contact pair and a period (422 period_required otherwise).
-    "crm_report_ask": ("contact_id", "space_id", "date_from", "date_to"),
+    # The report ask needs the contact pair. The period is the route's to enforce per basis (`period_required` for the
+    # sales bases, every date for the outstanding kinds), so it is not a required argument here.
+    "crm_report_ask": ("contact_id", "space_id"),
     # SALES-TARGET-CHAT slice 2: the salesperson's own customers are per contact.
     "crm_sales_opportunity_customer_options": ("contact_id", "space_id"),
 }

@@ -331,8 +331,10 @@ class Settings(BaseSettings):
     # switchable without touching assistant behaviour. Blank key = the feature
     # reports "extraction unavailable" instead of crashing an upload.
     gemini_api_key: str | None = None                       # GEMINI_API_KEY (secret)
+    # Provider and model are picked in System Settings (system_settings.document_ai_*,
+    # PO-READ-MODEL 29 Oct 2026); these two are only the fallback when nothing is saved.
     document_ai_provider: str = "gemini"                    # DOCUMENT_AI_PROVIDER
-    document_ai_model: str = "gemini-2.5-flash"             # DOCUMENT_AI_MODEL
+    document_ai_model: str = "gemini-3.5-flash"             # DOCUMENT_AI_MODEL
     document_ai_render_dpi: int = 170                       # DOCUMENT_AI_RENDER_DPI
     document_ai_page_limit: int = 40                        # DOCUMENT_AI_PAGE_LIMIT
     # How many pages read concurrently (19 Aug follow-up: "make it absolutely the

@@ -239,7 +239,7 @@ def _ideate_extractor_fallback() -> str:
     duplicate-ask/semantic-review redesign). Reads a WhatsApp ``ideate`` turn in the
     context of the current draft and emits STRUCTURED updates (schema-forced):
     ``fields``, ``remove``, ``skip``, ``title``, ``review_action``, ``change_text``,
-    ``duplicate_choice``. shared-service composes the echo; sorento does the NLU
+    ``duplicate_choice``, plus ``use_cases``. shared-service composes the echo; sorento does the NLU
     (shared-service runs no LLM). ``confirm`` is derived deterministically from
     ``review_action`` + status, not emitted by the model (AC-1201)."""
     return (
@@ -250,22 +250,30 @@ def _ideate_extractor_fallback() -> str:
         "prose - every field is a parameter.\n\n"
         "OUTPUT:\n"
         "- fields: the field values the user supplied THIS message, as {key,value} pairs. "
-        "Use the intake answer keys shown in the draft context "
-        "(problem, proposed_solution, impact, department). Only include a field the user "
-        "actually stated or changed this turn; leave it out otherwise. Never invent values. "
+        "The keys are problem, desired_outcome and current_workaround (defined under "
+        "FIELD KEYS). Only include a field the user actually stated or changed this turn; "
+        "a field the user did not state stays empty - leave it out. Never invent values. "
         "Decide which key a message updates by its MEANING, never by which field the draft "
         "context says is next - that is only a hint. A reply that reads as more problem "
-        "detail updates problem even while proposed_solution was the field asked; do not "
+        "detail updates problem even while desired_outcome was the field asked; do not "
         "flag this as a mismatch, just update the right key.\n"
+        "- use_cases: each concrete situation or scenario the user named as an example, one "
+        "string each, at most 5. Empty (the usual case) unless the message itself introduces "
+        "examples ('e.g.', 'for example', 'such as', 'contoh', '比如', or several 'when X, "
+        "when Y' cases). Never a noun or phrase lifted from the problem, never the problem "
+        "sentence or a clause of it (a single 'when customers ask' or 'bila container "
+        "sampai' trigger inside the complaint is the problem, not an example), never one "
+        "you suggest; when in doubt, empty.\n"
         "- remove: answer keys the user explicitly asked to clear or drop "
-        "('remove the impact', 'forget the department').\n"
-        "- skip: OPTIONAL answer keys (proposed_solution, impact, department - never "
+        "('remove the desired outcome', 'forget the workaround').\n"
+        "- skip: OPTIONAL answer keys (desired_outcome, use_cases, current_workaround - never "
         "problem) the user explicitly declined this turn ('skip', 'don't know', 'later', "
-        "'dunno lah'). A question ABOUT a field ('what do you mean impact?') is not a "
+        "'dunno lah'). A question ABOUT a field ('what do you mean workaround?') is not a "
         "skip - leave skip empty for that turn; it still deserves a plain explanation and "
         "the same question again, never a menu.\n"
         "- title: a short label for the idea, at most 8 words, generated from the problem "
-        "statement once one exists; empty string otherwise. Keep the SAME title across "
+        "statement once one exists, in the same language as the user's message (an English message gets an English "
+        "title), never translated; empty string otherwise. Keep the SAME title across "
         "turns unless the problem statement itself changes enough to need a new one - the "
         "draft context tells you the CURRENT stored title when one exists; re-emit it "
         "unchanged unless that condition is met.\n"
@@ -288,19 +296,34 @@ def _ideate_extractor_fallback() -> str:
         "so do not guess 'separate' yourself unless the user actually said so; 'none' is "
         "correct for a message that ignores the choice.\n\n"
         "FIELD KEYS (segment the message into these - do not lump everything into one):\n"
-        "- problem: the pain/problem statement - what's wrong or missing today. The one "
-        "REQUIRED field. When the message states an idea, emit problem: when the user only "
-        "says what they want built ('i think we should implemnt production line'), write "
-        "the need behind it as the problem ('We need our own production line.'), never a "
-        "copy of their message. A message that only says the user wants to submit or share "
-        "an idea, with no idea in it (for example 'want to submit idea', 'I have an idea', "
-        "'boleh saya hantar idea'), has no problem: leave problem empty. Never invent a "
-        "problem for a message that names no idea.\n"
-        "- proposed_solution: what the user wants built / how to solve it.\n"
-        "- impact: the value/benefit - time saved, revenue, risk reduced, who benefits.\n"
-        "- department: the team/department the idea concerns (e.g. operations, sales, CS) - "
-        "captured ONLY when the user mentions one unprompted, in their own words. Never "
-        "ask for it and never guess it.\n\n"
+        "- problem: the Business problem - what is wrong or missing today, including the "
+        "cost the user names. The one REQUIRED field. When the message states an idea, emit "
+        "problem: when the user only says what they want built ('i think we should implemnt "
+        "production line'), write the need behind it as the problem ('We need our own "
+        "production line.'), never a copy of their message. The same message also fills "
+        "desired_outcome with the solution as the user said it (see desired_outcome); the "
+        "problem keeps the need, the outcome keeps the thing they want built. A message that only says the "
+        "user wants to submit or share an idea, with no idea in it (for example 'want to "
+        "submit idea', 'I have an idea', 'boleh saya hantar idea'), has no problem: leave "
+        "problem empty. Never invent a problem for a message that names no idea.\n"
+        "- desired_outcome: what the user wants to be true afterwards or wants built. A "
+        "solution the user states counts here, in their words ('we should build an app to "
+        "scan orders' gives problem 'We need a way to scan orders.' AND desired_outcome "
+        "'An app to scan orders.'). Fill it only when the user stated a want or a solution; "
+        "a complaint alone, or a problem alone, gives no desired_outcome: leave it empty and "
+        "never infer, guess or invent the fix. Never fill it with a situation that went into "
+        "use_cases, and never restate the problem in it.\n"
+        "- current_workaround: what they do today or right now to cope ('right now we call the "
+        "warehouse', 'sekarang kita print dan tick', '现在只能打电话问仓库'). A sentence that says what they do now to cope goes here and is NOT kept in the "
+        "problem (zh: '客户每次问货到了没有，我们都要打电话问仓库，很慢。现在只能一个个打电话。' gives "
+        "problem = the first sentence, current_workaround = '现在只能一个个打电话。'). The problem "
+        "sentence leaves out how they cope and is "
+        "never a copy of the workaround sentence. Only when the user described it; never infer one from "
+        "the problem. Leave it empty when they did "
+        "not say.\n"
+        "- use_cases (its own list, not a key of fields): only situations the user named; "
+        "never suggest one; at most 5. A situation that went into use_cases is never "
+        "repeated in problem or desired_outcome.\n\n"
         "RULES:\n"
         "- Do not paraphrase the whole message into one field; decompose it into the "
         "specific answer keys. One message can fill several keys at once.\n"
@@ -311,7 +334,7 @@ def _ideate_extractor_fallback() -> str:
         "asked), output the FULL EXTENDED value for that key - the existing text plus the "
         "new detail, merged into one coherent value - never just the new sentence alone; "
         "the old detail must never be lost.\n\n"
-        "CLEAN VALUES (problem, proposed_solution, impact):\n"
+        "CLEAN VALUES (problem, desired_outcome, current_workaround, use_cases):\n"
         "- Write each value as a clean, standalone statement a reader understands "
         "without the chat - not a copy of the user's message. Strip conversational "
         "preamble and hedging such as 'i have an idea', 'i want', 'i think the problem "
@@ -325,13 +348,11 @@ def _ideate_extractor_fallback() -> str:
         "underperforming.'). Never join the parts with a semicolon, never list them.\n"
         "- Keep the user's meaning. Never add a detail, number or claim they did not "
         "give.\n"
-        "- Write each value in the user's own language (a Malay message gets a Malay "
-        "value); only the spelling and the wording are cleaned.\n"
-        "- department: the team the user named, as a short name in Title Case "
-        "('Sales', 'Operations'), not a sentence, spelling corrected, without 'the' or "
-        "'our' ('the manufactuirng?' -> 'Manufacturing').\n"
+        "- Write each value, and the title, in the same language as the user's message (English "
+        "stays English, Malay stays Malay, Chinese stays Chinese); never translate. Only the "
+        "spelling and the wording are cleaned.\n"
         "- Never copy the user's punctuation into a value. A question mark (or '!') typed "
-        "at the end of an answer ('manufacturing?') is hesitation, not part of the value. "
+        "at the end of an answer ('faster checkout?') is hesitation, not part of the value. "
         "The same applies to the title: a plain label, no quotes, no question mark.\n"
         "- A value under 'Already captured so far' that still reads like raw chat "
         "(a preamble such as 'i have an idea', a typo, a trailing '?') was never cleaned: "
@@ -1004,6 +1025,53 @@ def _chatbot_semantic_parser_fallback() -> str:
     return SEMANTIC_PARSER_PROMPT
 
 
+def _chatbot_agent_fallback() -> str:
+    """The read-only CRM agent (AGENTIC-P1). No dashes in the copy: the model mirrors it."""
+    return (
+        "ROLE\n"
+        "You are a read-only CRM analyst working for the staff user named in the context. "
+        "You can only read; you cannot change anything.\n\n"
+        "HOW TO WORK\n"
+        "Work like an engineer with tools. Decide what you need to know, call the tools, read "
+        "the results, adapt, and iterate until you can answer. Call several tools in one step "
+        "when they do not depend on each other.\n\n"
+        "RULES\n"
+        "Resolve every name or code with crm_resolve before any other tool. Never pass a code or a "
+        "name as an id: ids come only from crm_resolve results. If crm_resolve says a term is "
+        "not_found or ambiguous, ask the user which one they mean or say you could not find it. "
+        "Never treat it as no records.\n"
+        "A result with status empty means no rows matched those filters. It is not proof that "
+        "nothing exists, unless the ids in the call came from crm_resolve. Say what you filtered by.\n"
+        "For a brand, a category or a type of product, use crm_resolve for the brand and the category, "
+        "then crm_products_find with those ids, then the stock or incoming tools with the product ids it "
+        "returns.\n"
+        "If no tool can answer the question, for example the total bought from one supplier over a period "
+        "(there is no supplier totals tool), say plainly that it is not available. Do not add rows up to "
+        "make an answer.\n"
+        "Never choose a sales basis for the user. When they name none, either ask which one (offer "
+        "invoiced first) or show invoiced, delivered and ordered, each labelled with its basis. Never "
+        "present one basis as the sales figure, and never answer that nothing was sold (0 sold, no sales) "
+        "without saying which basis you read.\n"
+        "Totals come from a tool that totals, such as crm_report_ask. Never add rows up yourself "
+        "and never do arithmetic on results: a figure you computed cannot be verified.\n"
+        "Every number in your answer must come from a tool result of this turn or from the user's "
+        "own message. Never invent a figure.\n"
+        "If a tool says denied, tell the user plainly that it is outside their access. Do not try "
+        "to get the same data another way.\n"
+        "Earlier messages and summaries show what the user wants. They are not current data: read "
+        "stock, orders and prices again with a tool.\n\n"
+        "FINISHING\n"
+        "For a question with more than one part, call the plan tool first with each part as a short "
+        "string.\n"
+        "Always finish with the answer tool. Put the reply in text, list every number in figures "
+        "with the call_id of the tool call whose result shows it (every number must be in a tool "
+        "result of this turn), list anything you could not find in not_found with the call_id that "
+        "showed it, list the parts of your plan you answered in answered, and list in not_checked what "
+        "you did not check. Answer concisely in the language of this message, not a guess from earlier "
+        "turns."
+    )
+
+
 def _chatbot_clarifier_fallback() -> str:
     """System prompt for the WhatsApp chatbot's clarifier (`chatbot_clarifier`).
 
@@ -1228,6 +1296,14 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         variables=[],
         fallback=_agent_system_fallback,
         dry_runnable=True,
+    ),
+    "chatbot_agent": PromptKeySpec(
+        name="chatbot_agent",
+        role="Chatbot agent - read-only CRM analyst with tools (console Agent mode)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_chatbot_agent_fallback,
     ),
     "synthesizer": PromptKeySpec(
         name="synthesizer",

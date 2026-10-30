@@ -177,6 +177,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         moduleKey: 'sales',
       },
       {
+        title: 'Sales & outstanding',
+        path: '/sales/sales-and-outstanding',
+        // Invoiced needs the reports slug, unpaid the finance one, the other four the orders slug: any opens the screen.
+        permissionsAny: ['sales.reports.view', 'order_management.orders.view', 'finance.billing_documents.view'],
+        moduleKey: 'sales',
+      },
+      {
         title: 'Set-apart customers',
         path: '/sales/set-apart-customers',
         permission: 'sales.reports.view',
@@ -596,6 +603,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Brands',
             path: '/master-data-management/brands',
             permission: 'master_data.brands.view',
+          },
+          {
+            title: 'Item Classes',
+            path: '/master-data-management/item-classes',
+            permission: 'master_data.item_classes.view',
           },
           {
             title: 'Units of Measure',
@@ -1150,6 +1162,11 @@ export const MENU_SIDEBAR: MenuConfig = [
           {
             title: 'Lookup Sets',
             path: '/master-data-management/lookup-sets',
+            permission: 'master_data.lookup_sets.view',
+          },
+          {
+            title: 'Embeddings',
+            path: '/system-management/embeddings',
             permission: 'master_data.lookup_sets.view',
           },
         ],
@@ -1973,6 +1990,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       permission: 'master_data.brands.view',
     },
     {
+      title: 'Item Classes',
+      path: '/master-data-management/item-classes',
+      permission: 'master_data.item_classes.view',
+    },
+    {
       title: 'Units of Measure',
       path: '/master-data-management/units-of-measure',
       permission: 'master_data.units_of_measure.view',
@@ -2530,6 +2552,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Lookup Sets',
         path: '/master-data-management/lookup-sets',
+        permission: 'master_data.lookup_sets.view',
+      },
+      {
+        title: 'Embeddings',
+        path: '/system-management/embeddings',
         permission: 'master_data.lookup_sets.view',
       },
       {

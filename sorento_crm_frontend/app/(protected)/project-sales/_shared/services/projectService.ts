@@ -499,7 +499,9 @@ export async function listProjectTemplates(typeId?: string): Promise<ProjectTemp
   if (typeId) sp.set('type_id', typeId);
   const query = sp.toString();
   const response = await apiFetch(`${BASE}/config/templates${query ? `?${query}` : ''}`);
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load templates'));
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load to-do list templates'));
+  }
   const body: ListEnvelope<ProjectTemplate> = await response.json();
   return body.data;
 }
@@ -541,7 +543,7 @@ export async function createProjectTemplate(
     body: JSON.stringify(body),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to create the template'));
+    throw new Error(await extractApiError(response, 'Failed to create the to-do list template'));
   return response.json();
 }
 
@@ -554,7 +556,7 @@ export async function updateProjectTemplate(
     body: JSON.stringify(body),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to save the template'));
+    throw new Error(await extractApiError(response, 'Failed to save the to-do list template'));
   return response.json();
 }
 
@@ -563,7 +565,7 @@ export async function deleteProjectTemplate(templateId: string): Promise<void> {
     method: 'DELETE',
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to delete the template'));
+    throw new Error(await extractApiError(response, 'Failed to delete the to-do list template'));
 }
 
 // ------------------------------------------------------------------- tasks

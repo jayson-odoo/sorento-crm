@@ -105,7 +105,7 @@ def _assert_own_unsubmitted(project, user_id: str) -> None:
 
 
 @router.post("/clash-preview", response_model=ClashPreviewResponse, response_model_exclude_unset=True)
-async def preview_clashes(
+def preview_clashes(
     payload: ClashPreviewRequest,
     _user: dict = Depends(require_any_permission([VIEW, SUBMIT])),
     db: Session = Depends(get_db),
@@ -260,7 +260,7 @@ def _visible_to(db: Session, current_user: dict):
 
 
 @router.get("/", response_model=ListResponse[ProjectResponse])
-async def list_projects(
+def list_projects(
     query: Optional[str] = Query(None, description="Matches title or project code"),
     status_id: Optional[List[str]] = Query(None),
     outcome: Optional[List[str]] = Query(None),
@@ -288,8 +288,9 @@ async def list_projects(
     status_key: Optional[List[str]] = Query(
         None,
         description=(
-            "Funnel rung by stable KEY (identified, registered, specified, quoted, "
-            "tendering, po_received, lost, dormant). Unknown keys are a 422 naming the "
+            "Funnel rung by stable KEY, from the status graph (identified, registered, "
+            "specified (Spec In), sample_submission, final_negotiation, sponsorship_form, "
+            "po_received, lost, dormant). Unknown keys are a 422 naming the "
             "valid ones."
         ),
     ),
@@ -377,7 +378,7 @@ async def list_projects(
 
 
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-async def register_project(
+def register_project(
     payload: ProjectRegisterRequest,
     current_user: dict = Depends(require_any_permission([EDIT, SUBMIT])),
     db: Session = Depends(get_db),
@@ -407,8 +408,19 @@ async def register_project(
 
         from app.services import project_registration_service as registrations
 
-        registrations.require_customer(payload.customer_id)
-        svc.check_company_refs(db, company_id, {"customer_id": payload.customer_id})
+        from app.services import project_lead_service as leads
+
+        registrations.require_lead(payload.lead_id)
+        lead = leads.lead_for_registration(
+            db,
+            payload.lead_id,
+            actor_user_id=current_user["id"],
+            own_leads_only=False,
+            permissions=permissions,
+        )
+        customer_id = leads.customer_from_lead(lead, payload.customer_id)
+        registrations.require_customer(customer_id)
+        svc.check_company_refs(db, company_id, {"customer_id": customer_id})
 
         owner = payload.owner_user_id
         if owner and owner != current_user["id"] and MANAGE not in permissions:
@@ -422,6 +434,7 @@ async def register_project(
 
         body = payload.model_dump(exclude_unset=True)
         details = {k: v for k, v in body.items() if k in _PROFILE_KEYS}
+        details["customer_id"] = customer_id
 
         project = svc.register_project(
             db,
@@ -434,18 +447,15 @@ async def register_project(
             owner_user_id=owner,
             details=details,
         )
-        if payload.lead_id:
-            # Same transaction as the registration: a refused link rolls the project
-            # back with it, so no project is left without the lead it was meant to carry.
-            from app.services.project_lead_service import set_project_lead
-
-            set_project_lead(
-                db,
-                project,
-                payload.lead_id,
-                actor_user_id=current_user["id"],
-                permissions=permissions,
-            )
+        # Same transaction as the registration: a refused link rolls the project
+        # back with it, so no project is left without the lead it was meant to carry.
+        leads.set_project_lead(
+            db,
+            project,
+            payload.lead_id,
+            actor_user_id=current_user["id"],
+            permissions=permissions,
+        )
         db.commit()
         db.refresh(project)
         return svc.serialize_project(
@@ -457,7 +467,7 @@ async def register_project(
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-async def get_project(
+def get_project(
     project_id: str,
     current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
@@ -506,7 +516,7 @@ async def get_project(
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
-async def update_project(
+def update_project(
     project_id: str,
     payload: ProjectUpdateRequest,
     current_user: dict = Depends(require_any_permission([EDIT, SUBMIT])),
@@ -536,7 +546,7 @@ async def update_project(
 
 
 @router.post("/{project_id}/submit", response_model=ProjectResponse)
-async def submit_project(
+def submit_project(
     project_id: str,
     payload: Optional[ProjectUpdateRequest] = None,
     current_user: dict = Depends(require_any_permission([EDIT, SUBMIT])),
@@ -569,7 +579,7 @@ async def submit_project(
 
 
 @router.post("/{project_id}/approve", response_model=ProjectResponse)
-async def approve_project(
+def approve_project(
     project_id: str,
     payload: Optional[ProjectApproveRequest] = None,
     current_user: dict = Depends(require_permission(APPROVE)),
@@ -605,7 +615,7 @@ async def approve_project(
 
 
 @router.post("/{project_id}/reject", response_model=ProjectResponse)
-async def reject_project(
+def reject_project(
     project_id: str,
     payload: ProjectRejectRequest,
     current_user: dict = Depends(require_permission(APPROVE)),
@@ -639,7 +649,7 @@ async def reject_project(
 
 
 @router.post("/{project_id}/status", response_model=ProjectResponse)
-async def change_project_status(
+def change_project_status(
     project_id: str,
     payload: ProjectStatusChangeRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -668,7 +678,7 @@ async def change_project_status(
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_200_OK)
-async def delete_project(
+def delete_project(
     project_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -697,7 +707,7 @@ async def delete_project(
     "/{project_id}/stakeholders",
     response_model=ListResponse[ProjectStakeholderResponse],
 )
-async def list_stakeholders(
+def list_stakeholders(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -721,7 +731,7 @@ async def list_stakeholders(
     response_model=ProjectStakeholderResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def add_stakeholder(
+def add_stakeholder(
     project_id: str,
     payload: ProjectStakeholderCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -751,7 +761,7 @@ async def add_stakeholder(
     "/{project_id}/stakeholders/{stakeholder_id}",
     response_model=ProjectStakeholderResponse,
 )
-async def update_stakeholder(
+def update_stakeholder(
     project_id: str,
     stakeholder_id: str,
     payload: ProjectStakeholderUpdate,
@@ -778,7 +788,7 @@ async def update_stakeholder(
 
 
 @router.delete("/{project_id}/stakeholders/{stakeholder_id}")
-async def remove_stakeholder(
+def remove_stakeholder(
     project_id: str,
     stakeholder_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -808,7 +818,7 @@ async def remove_stakeholder(
     "/{project_id}/collaborators",
     response_model=ListResponse[ProjectCollaboratorResponse],
 )
-async def list_collaborators(
+def list_collaborators(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -883,7 +893,7 @@ def _takeover_payload(db: Session, requests) -> List[dict]:
     "/{project_id}/takeover-requests",
     response_model=ListResponse[TakeoverRequestResponse],
 )
-async def list_takeover_requests(
+def list_takeover_requests(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -914,7 +924,7 @@ async def list_takeover_requests(
     response_model=TakeoverRequestResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_takeover_request(
+def create_takeover_request(
     project_id: str,
     payload: TakeoverRequestCreate,
     current_user: dict = Depends(require_any_permission(READ)),
@@ -978,7 +988,7 @@ async def create_takeover_request(
     "/{project_id}/takeover-requests/{request_id}/decide",
     response_model=TakeoverRequestResponse,
 )
-async def decide_takeover_request(
+def decide_takeover_request(
     project_id: str,
     request_id: str,
     payload: TakeoverRequestDecision,

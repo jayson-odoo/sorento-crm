@@ -443,7 +443,11 @@ class TestRealResolverPartialMiss:
 
         reply = (result.reply or {}).get("text") or ""
         assert captured, "the placed code must still be fetched"
-        assert f"Product: {placed}" in reply, reply
+        # REPORT-UNIFY: the answer for the placed code is the report ask run on it (its header is the presenter's).
+        # REPORT-OUTSTANDING-SUMMARY item 8: an outstanding ask sends the resolver's exact row, by id.
+        from tests.chatbot.test_outstanding_lane import _codes_of
+
+        assert _codes_of(session_factory, captured[0][1].get("product_ids")) == [placed], captured
         assert f'Couldn\'t find "{typo}" (product). Did you mean:' in reply, reply
         assert near_a in reply and near_b in reply, reply
         assert f"I could not find {typo}" not in reply, reply
