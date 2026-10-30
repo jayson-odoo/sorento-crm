@@ -82,3 +82,31 @@ describe('agentConsoleService', () => {
     await expect(newAgentConversation('C1')).rejects.toBeInstanceOf(AgentRefusedError);
   });
 });
+
+describe('agentConsoleService actions', () => {
+  it('confirms an action for the contact', async () => {
+    const { confirmAgentAction } = await import('./agentConsoleService');
+    apiFetch.mockResolvedValueOnce(json({ action_id: 'a1', status: 'executed', reply_text: 'Done.', steps: [] }));
+    const result = await confirmAgentAction('C1', 'a1');
+    expect(apiFetch.mock.calls[0][0]).toBe('/api/v1/system/chatbot/agent/actions/a1/confirm');
+    expect(apiFetch.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({ contact_respond_id: 'C1' });
+    expect(result.status).toBe('executed');
+  });
+
+  it('cancels an action for the contact', async () => {
+    const { cancelAgentAction } = await import('./agentConsoleService');
+    apiFetch.mockResolvedValueOnce(json({ action_id: 'a1', status: 'cancelled', reply_text: 'x', steps: [] }));
+    await cancelAgentAction('C1', 'a1');
+    expect(apiFetch.mock.calls[0][0]).toBe('/api/v1/system/chatbot/agent/actions/a1/cancel');
+  });
+
+  it('turns a 409 action refusal into an ActionRefusedError with plain words', async () => {
+    const { ActionRefusedError, confirmAgentAction } = await import('./agentConsoleService');
+    apiFetch.mockResolvedValueOnce(json({ detail: { code: 'action_refused', reason: 'not_proposed' } }, 409));
+    const error = await confirmAgentAction('C1', 'a1').catch((e) => e);
+    expect(error).toBeInstanceOf(ActionRefusedError);
+    expect(error.reason).toBe('not_proposed');
+    expect(error.message).toBe('This proposal was already decided.');
+  });
+});
