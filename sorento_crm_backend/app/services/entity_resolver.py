@@ -908,7 +908,7 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     if not tokens:
         return result
 
-    from app.models.product_set import ProductSet, ProductSetMember
+    from app.models.product_set import ProductSet
 
     normalized_tokens = [_strip_all_ws(t.lower()) for t in tokens]
     norm_to_token = dict(zip(normalized_tokens, tokens))
@@ -920,6 +920,17 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     )
     if not rows:
         return result
+
+    for product_set, entity in _product_set_entities(db, rows):
+        token = norm_to_token.get(_strip_all_ws(str(product_set.set_code).lower()))
+        if token:
+            result[token].append(entity)
+    return result
+
+
+def _product_set_entities(db: Session, rows: list, *, match_tier: str = "exact") -> list[tuple[Any, ResolvedEntity]]:
+    """One `product_set` entity per set row, members, stock and the complete-sets figure on it."""
+    from app.models.product_set import ProductSetMember
 
     members_by_set: dict[str, list] = {}
     for product_set in rows:
@@ -943,11 +954,8 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
         ):
             available[str(pid)] = int(total or 0)
 
+    out: list[tuple[Any, ResolvedEntity]] = []
     for product_set in rows:
-        token = norm_to_token.get(_strip_all_ws(str(product_set.set_code).lower()))
-        if not token:
-            continue
-
         rendered = []
         complete = None
         limiting = None
@@ -980,12 +988,14 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
             if complete is None or supplies < complete:
                 complete, limiting = supplies, product.product_code
 
-        result[token].append(
+        out.append((
+            product_set,
             ResolvedEntity(
                 entity_type="product_set",
                 canonical_code=product_set.set_code,
                 uuid=str(product_set.id),
                 match_field="set_code",
+                match_tier=match_tier,
                 display={
                     "name": product_set.name,
                     "member_count": len(rendered),
@@ -994,8 +1004,8 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
                     "members": rendered,
                 },
             )
-        )
-    return result
+        ))
+    return out
 
 
 def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
@@ -2111,6 +2121,33 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     ]
 
 
+def _prefix_probe_product_set(db: Session, token: str) -> list[ResolvedEntity]:
+    """CHATBOT-SET-STOCK: the product sets whose code starts with the token.
+
+    The catalogue prints the family code (SRTWC7405, SRTWC8826) and the sets carry it as their
+    head (SRTWC7405-RL-S-PJ, SRTWC8826-P), while their parts carry a role letter inside it
+    (SRTWCX7405-..., SRTWCY7405-...), so `_prefix_probe_product` finds only the seat cover. Same
+    prefix rule as products, over the set code; scoped by the ORM listener as `_probe_product_set`.
+    """
+    from app.models.product_set import ProductSet
+
+    norm_token = _strip_all_ws(token)
+    if not re.sub(r"[^0-9A-Za-z]", "", norm_token):
+        return []
+    escaped = norm_token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    rows = (
+        db.query(ProductSet)
+        .filter(
+            _ws_insensitive_lower(ProductSet.set_code).ilike(f"{escaped}%", escape="\\"),
+            ProductSet.is_active.is_(True),
+        )
+        .order_by(ProductSet.set_code, ProductSet.id)
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    return [entity for _set, entity in _product_set_entities(db, rows, match_tier="prefix")]
+
+
 def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity]:
     rows = (
         db.query(
@@ -2866,6 +2903,7 @@ def _prefix_probe_certificate(db: Session, token: str) -> list[ResolvedEntity]:
 # out of probes that can't return anything they accept.
 _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], frozenset[str]], ...] = (
     (_prefix_probe_product, frozenset({"product"})),
+    (_prefix_probe_product_set, frozenset({"product_set"})),
     (_prefix_probe_customer_order, frozenset({"customer_order"})),
     (_prefix_probe_inbound_shipment, frozenset({"inbound_shipment"})),
     (_prefix_probe_customer, frozenset({"customer"})),
@@ -3892,6 +3930,26 @@ def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     ]
 
 
+def _and_probe_product_set(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    """CHATBOT-SET-STOCK: the product sets whose code holds every token, the same code-only
+    match as `_and_probe_product`. The chatbot resolves in AND mode, so without this a
+    catalogue code (SRTWC7405) found only the seat cover: the sets carry it as their head,
+    their tank and bowl parts carry SRTWCX / SRTWCY. Scoped by the ORM listener."""
+    from app.models.product_set import ProductSet
+
+    counts = _and_token_match_counts(ProductSet.set_code, tokens)
+    base = db.query(ProductSet).filter(ProductSet.is_active.is_(True))
+    tier = _and_max_tier_filter(base, counts)
+    if tier is None:
+        return []
+    rows = base.filter(tier).order_by(ProductSet.set_code, ProductSet.id).limit(AND_MODE_LIMIT).all()
+    out = []
+    for product_set, entity in _product_set_entities(db, rows, match_tier="and"):
+        entity.match_blob = product_set.set_code
+        out.append(entity)
+    return out
+
+
 def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     counts = _and_token_match_counts(Promotion.description, tokens)
     base = db.query(Promotion.id, Promotion.description, Promotion.is_active)
@@ -4226,6 +4284,7 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
 
 _AND_PROBES: tuple[tuple[Callable[[Session, list[str]], list[ResolvedEntity]], frozenset[str]], ...] = (
     (_and_probe_product, frozenset({"product"})),
+    (_and_probe_product_set, frozenset({"product_set"})),
     (_and_probe_promotion, frozenset({"promotion"})),
     (_and_probe_attachment, frozenset({"attachment"})),
     (_and_probe_customer, frozenset({"customer"})),

@@ -436,9 +436,11 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     flat.extend(_flatten_by_entity_type(resolver.get("by_entity_type")))
 
     by_uuid: dict[Any, dict[str, Any]] = {}
-    # CHAT-CODE-LOOKUP R2: under the gate a flyer code that is a product set answers as its
-    # member products (product info and stock), the set's code riding on each as `set_code`.
-    set_members = parser.get("code_lookup") is True and domain in _SET_MEMBER_DOMAINS
+    # CHAT-CODE-LOOKUP R2: a flyer code that is a product set answers as its member products
+    # (product info and stock), the set's code riding on each as `set_code`. CHATBOT-SET-STOCK
+    # (owner, 30 Oct 2026): with or without the CODE LOOKUP prompt, so a set the resolver finds
+    # by its catalogue code (`_prefix_probe_product_set`) shows every part.
+    set_members = domain in _SET_MEMBER_DOMAINS
     for m in flat:
         if set_members and jsc.get(m, "entity_type") == "product_set" and (
             str(jsc.get(m, "uuid")) in {str(i) for i in resolver.get("visible_set_ids") or []}
@@ -460,6 +462,8 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     }
             continue
         if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid")):
+            if (by_uuid.get(jsc.get(m, "uuid")) or {}).get("set_code"):
+                continue  # already listed as a set member: the stem's own product match adds nothing
             entity = {
                 "uuid": jsc.get(m, "uuid"),
                 "entity_type": jsc.get(m, "entity_type"),

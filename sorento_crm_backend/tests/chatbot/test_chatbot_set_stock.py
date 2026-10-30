@@ -28,6 +28,8 @@ from tests.chatbot.test_code_lookup_set_codes import (  # noqa: F401
     _scope_listeners,
     db,
 )
+from tests.chatbot.test_code_lookup_round1 import _priced_tool
+from tests.chatbot.test_code_lookup_round1 import _run as _run_r1
 from tests.chatbot.test_engine import seeded, stub_access  # noqa: F401
 
 STEM = "ZZSTWC7405"  # the catalogue code the salesperson typed; no product or set carries it
@@ -135,13 +137,33 @@ def test_the_7405_ask_fetches_tank_bowl_and_seat_cover_of_every_set(session_fact
     assert _stock_ids(calls) == set(ids.values()), sorted(_stock_ids(calls))
 
 
-def test_the_7405_answer_names_each_set(session_factory, seeded, stub_access, monkeypatch):
+def _rendered(session_factory, stub_access, monkeypatch, text: str, raw: str, **kw) -> tuple[str, list]:
+    """The reply over the real MCP presenter, one stock row per fetched product."""
+    return _run_r1(
+        session_factory, stub_access, monkeypatch, text=text, raw=raw, canonical=None, domain="inventory",
+        intent="check_stock", code_lookup=False, tool=_priced_tool(session_factory), **kw,
+    )
+
+
+def test_the_7405_answer_lists_every_part_under_each_set(session_factory, seeded, stub_access, monkeypatch):
     _seed(session_factory, SETS_7405)
 
-    text, _calls = _stock(session_factory, stub_access, monkeypatch, f"stock {STEM.lower()}", STEM.lower())
+    text, _calls = _rendered(session_factory, stub_access, monkeypatch, f"stock {STEM.lower()}", STEM.lower())
 
     for set_code in SETS_7405:
-        assert set_code in text, text
+        assert f"Set {set_code}" in text, text
+    for code in _codes(SETS_7405):
+        assert code in text, (code, text)
+
+
+def test_an_availability_contact_gets_every_part_of_the_sets_too(session_factory, seeded, stub_access, monkeypatch):
+    ids = _seed(session_factory, SETS_8826)
+
+    _text, calls = _rendered(
+        session_factory, stub_access, monkeypatch, f"{STEM_8826.lower()} x 6 sets", STEM_8826.lower(), availability=True,
+    )
+
+    assert {ids[c] for c in _codes(SETS_8826)} <= _stock_ids(calls), sorted(_stock_ids(calls))
 
 
 def test_the_8826_ask_fetches_both_tanks_the_shared_bowl_and_the_seat_cover(session_factory, seeded, stub_access, monkeypatch):
