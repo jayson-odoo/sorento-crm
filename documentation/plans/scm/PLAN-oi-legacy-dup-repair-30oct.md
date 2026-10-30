@@ -3,7 +3,7 @@
 Status: Review (small fix track: data-repair script + tests, no migration, no UI, no auth). Owner
 approved a repair script 30 Oct ~09:30. Rehearsed 30 Oct on `sorento_prod_1028` in one rolled-back
 transaction (crew ruling: no full copy): 12 restated, re-run 0. Prod apply waits for the owner's go
-and his ruling on the 6 held rows.
+(owner ruled (a) on the 6 held rows: hold all, 30 Oct).
 
 UAC: `oi-legacy-dup-repair-acceptance-criteria.md` beside this file.
 
@@ -69,7 +69,8 @@ squatters. The 18th (OI-2609-0676 M3155) escapes crew's rule because its qty was
   (purchasing must re-acknowledge 26, not 2). One `log_audit` EVENT per row, then
   `refresh_link_state` on the restated rows, as settle-in-place does.
 - **Hold, report only** (no write): cancelled rows, placed/partly-linked rows with links, and an
-  actioned row. Each is printed with the reason. Delete was rejected: it would leave the line with
+  actioned row. Each is printed with the reason. Owner ruling 30 Oct (a): all 6 held rows on prod stay
+  held for a person, M3155's stale date included (AC-6h). Delete was rejected: it would leave the line with
   no instruction at all, while the skipped row proves what the line should carry.
 
 On `sorento_prod_1028`: 12 restated (all OI-2609-0676), 6 held.
@@ -98,6 +99,17 @@ restated 12, second apply 0; OI-2609-0676 rows off their line 15 -> 3, ack `chan
 shows M9713SS 26 on 2027-04-07 with Was 2 on 2026-10-07; the Stock Debt drill's live remaining for the
 2027-04-07 line goes 2 -> 26 (its frozen "OI row" figure stays 2 until the next snapshot). Nothing
 persisted. Crew asks the owner before anything touches prod.
+
+## 6b. Prod run (crew, after the owner's go)
+
+From `sorento_crm_backend/` on the prod backend host:
+
+1. `venv/bin/python scripts/repair_oi_legacy_dup_rows.py` - dry run. Expected on prod if it matches the
+   28 Oct copy: `found 18: restate 12, held 6` (12 restate all OI-2609-0676; held: 3 linked, 1 actioned,
+   2 cancelled). Different counts: stop and report, do not apply.
+2. `venv/bin/python scripts/repair_oi_legacy_dup_rows.py --apply --expect 12` (the restate count step 1
+   printed). It refuses and writes nothing if the count moved in between.
+3. Re-run step 1: expect `found 18: restate 0, held 18` (the 12 now read "already restated").
 
 ## 7. Detector speed
 
