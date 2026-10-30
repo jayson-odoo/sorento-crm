@@ -236,6 +236,7 @@ def test_changes_cannot_be_requested_once_the_quotation_is_accepted():
         _project_row, _document, owner, record = _issued(db)
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=record,
             signer_name=f"{MARKER} Kelly",
             mode="draw",
@@ -263,6 +264,7 @@ def test_a_customer_who_asked_for_changes_can_still_sign():
 
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=record,
             signer_name=f"{MARKER} Kelly",
             mode="draw",
@@ -427,6 +429,7 @@ def test_acceptance_wins_on_the_document_too():
         qdocs.request_changes(db, record=record, note=FEEDBACK)
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=record,
             signer_name=f"{MARKER} Kelly",
             mode="draw",

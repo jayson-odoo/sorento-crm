@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tag item classes mock</title>
+<!--
+  TAG-BRAND-CLASS mock (CARD-tag-brand-class-30oct.md, owner answers Q1 b, Q2 a, Q4 a, Q5 a).
+  Static, no data fetch. ONE shared block "Brands + Allowed item classes", used in two places:
+    app/(protected)/user-management/contact-tags/components/ContactTagSettings.tsx:359-385
+      (tag Access settings > Brands row: the All brands Switch + PickList stay, the class picker is added under them)
+    components/contacts/ContactBrandScopeSection.tsx (contact Profile > Brands card)
+  Reuses: components/common/SearchableMultiSelect (clearable), components/ui/switch, components/ui/label,
+    app/(protected)/master-data-management/shared/hooks/use-item-class-select-query (options; grouped by code, see note),
+    the tag apply preview dialog (contact_tag_apply.py rows: before / after / decided_by).
+  Q3 (the per-brand picker from #1972) is still open, so the per-brand row is not drawn here.
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --chip:#eef2ff; --chipfg:#3730a3; --primary:#1b84ff; --ok:#047857; --okbg:#ecfdf5; --warn:#b45309; --warnbg:#fffbeb; --off:#9ca3af; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --chip:#1e2547; --chipfg:#c7d2fe; --ok:#6ee7b7; --okbg:#0b2a20; --warn:#fcd34d; --warnbg:#2a2210; --off:#6b7280; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --chip:#1e2547; --chipfg:#c7d2fe; --ok:#6ee7b7; --okbg:#0b2a20; --warn:#fcd34d; --warnbg:#2a2210; --off:#6b7280; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 Inter, system-ui, sans-serif; padding:24px 16px; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  h2 { font-size:14px; margin:28px 0 8px; }
+  .note { color:var(--muted); font-size:12px; margin:0 0 16px; max-width:900px; }
+  .grid { display:grid; gap:20px; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); max-width:1280px; }
+  .state { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; display:grid; gap:12px; }
+  .row-title { font-weight:600; font-size:13px; display:flex; justify-content:space-between; }
+  .row-title span { font-weight:400; color:var(--muted); font-size:12px; }
+  label { font-weight:500; font-size:13px; }
+  .field { display:grid; gap:6px; }
+  .switch { display:flex; gap:8px; align-items:center; font-size:13px; }
+  .sw { width:30px; height:17px; border-radius:9px; background:var(--primary); position:relative; flex:none; }
+  .sw::after { content:""; position:absolute; top:2px; right:2px; width:13px; height:13px; border-radius:50%; background:#fff; }
+  .sw.off { background:var(--line); }
+  .sw.off::after { right:auto; left:2px; }
+  .select { min-height:36px; border:1px solid var(--line); border-radius:6px; padding:5px 8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .placeholder { color:var(--muted); }
+  .chip { background:var(--chip); color:var(--chipfg); border-radius:4px; padding:2px 6px; font-size:12px; display:inline-flex; gap:4px; align-items:center; }
+  .chip b { font-weight:400; opacity:.7; }
+  .chip.noclass { font-style:italic; }
+  .menu { border:1px solid var(--line); border-radius:6px; padding:4px; display:grid; gap:2px; font-size:13px; }
+  .opt { padding:5px 8px; border-radius:4px; display:flex; gap:8px; align-items:center; }
+  .opt .box { width:14px; height:14px; border:1px solid var(--muted); border-radius:3px; flex:none; display:grid; place-items:center; font-size:10px; }
+  .opt.on .box { background:var(--primary); border-color:var(--primary); color:#fff; }
+  .opt small { color:var(--muted); margin-left:auto; }
+  .opt.sep { border-bottom:1px solid var(--line); border-radius:0; }
+  .sub { margin-left:14px; padding-left:12px; border-left:2px solid var(--line); }
+  .sub label { font-weight:400; color:var(--muted); }
+  button { justify-self:start; border:0; border-radius:6px; background:var(--primary); color:#fff; padding:6px 12px; font-size:13px; }
+  button[disabled] { opacity:.45; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; }
+  .yes { color:var(--ok); background:var(--okbg); border-radius:4px; padding:1px 6px; font-size:12px; }
+  .no { color:var(--off); border:1px solid var(--line); border-radius:4px; padding:1px 6px; font-size:12px; }
+  .warn { color:var(--warn); background:var(--warnbg); border-radius:6px; padding:8px 10px; font-size:12px; }
+  .rec { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; max-width:900px; display:grid; gap:10px; }
+  .rec p { margin:0; }
+  .muted { color:var(--muted); }
+  @media (max-width:420px) { body { padding:16px; } .grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<h1>Brands + Allowed item classes: one block on tags and contacts</h1>
+<p class="note">Mock for review, no build yet. Owner answers: Q1 (b) an allow list that also works with All brands on; Q2 (a) one flat list under Brands; Q4 (a) Apply writes the tags' value onto the contact after a preview; Q5 (a) the list applies wherever brand access applies today. The same block sits in the tag Access settings Brands row and on the contact Profile Brands card.</p>
+
+<h2>A. Tag Access settings, Brands row</h2>
+<div class="grid">
+
+  <section>
+    <div class="state">1. Nothing set (today's default)</div>
+    <div class="card">
+      <div class="row-title">Brands <span>Set on this tag</span></div>
+      <div class="switch"><span class="sw"></span>All brands</div>
+      <div class="field sub"><label>Allowed item classes</label><div class="select"><span class="placeholder">All classes</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="state">2. The real case: dealers, no Serene</div>
+    <div class="card">
+      <div class="row-title">Brands <span>Set on this tag</span></div>
+      <div class="switch"><span class="sw"></span>All brands</div>
+      <div class="field sub"><label>Allowed item classes</label>
+        <div class="select"><span class="chip noclass">No class <b>x</b></span><span class="chip">DIY <b>x</b></span></div>
+      </div>
+      <div class="warn">SERENE and any class AutoCount adds later are hidden until ticked here.</div>
+      <button>Save</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="state">3. Picker open (state 2)</div>
+    <div class="card">
+      <div class="field sub"><label>Allowed item classes</label>
+        <div class="menu">
+          <div class="opt on sep"><span class="box">&#10003;</span><i>No class</i><small>products with no class</small></div>
+          <div class="opt on"><span class="box">&#10003;</span>DIY<small>SORENTO LITE - DIY</small></div>
+          <div class="opt"><span class="box"></span>SERENE<small>SORENTO SERENE SERIES</small></div>
+        </div>
+      </div>
+      <p class="note" style="margin:0">One option per class code: DIY covers the DIY rows of both companies.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="state">4. Brands picked, classes still apply</div>
+    <div class="card">
+      <div class="row-title">Brands <span>Set on this tag</span></div>
+      <div class="switch"><span class="sw off"></span>All brands</div>
+      <div class="select"><span class="chip">SORENTO <b>x</b></span></div>
+      <div class="field sub"><label>Allowed item classes</label>
+        <div class="select"><span class="chip noclass">No class <b>x</b></span><span class="chip">DIY <b>x</b></span></div>
+      </div>
+      <button disabled>Save</button>
+    </div>
+  </section>
+</div>
+
+<h2>B. Contact Profile > Brands card (same block)</h2>
+<div class="grid">
+  <section>
+    <div class="state">5. Contact after the tag is applied</div>
+    <div class="card">
+      <label>Brands</label>
+      <div class="select"><span class="placeholder">All brands</span></div>
+      <div class="field sub"><label>Allowed item classes</label>
+        <div class="select"><span class="chip noclass">No class <b>x</b></span><span class="chip">DIY <b>x</b></span></div>
+      </div>
+      <button disabled>Save</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="state">6. Apply preview (one holder row)</div>
+    <div class="card">
+      <table>
+        <tr><th>Setting</th><th>Before</th><th>After</th><th>Decided by</th></tr>
+        <tr><td>Allowed item classes</td><td>All classes</td><td>No class, DIY</td><td>Dealer</td></tr>
+      </table>
+      <p class="note" style="margin:0">Two tags with different lists: the contact gets only the classes BOTH allow (the Brands rule). Nothing in common is a conflict, written by neither.</p>
+    </div>
+  </section>
+</div>
+
+<h2>C. What a dealer on that tag sees</h2>
+<div class="card" style="max-width:900px">
+  <table>
+    <tr><th>Product</th><th>Company</th><th>Brand</th><th>Item class</th><th>Chatbot / MCP</th></tr>
+    <tr><td>A SRTWC8066-SH item</td><td>Sorento</td><td>SORENTO</td><td>SERENE</td><td><span class="no">Hidden</span></td></tr>
+    <tr><td>A Sorento Lite DIY item</td><td>Sorento</td><td>SORENTO</td><td>DIY</td><td><span class="yes">Shown</span></td></tr>
+    <tr><td>Any SORENTO item with no class</td><td>Sorento</td><td>SORENTO</td><td>(none)</td><td><span class="yes">Shown</span></td></tr>
+    <tr><td>Any MOCHA-brand item with no class</td><td>Sorento</td><td>MOCHA</td><td>(none)</td><td><span class="yes">Shown</span></td></tr>
+    <tr><td>Any Mocha-company item with no class</td><td>Mocha</td><td>(none)</td><td>(none)</td><td><span class="yes">Shown</span></td></tr>
+    <tr><td>A Mocha DIY item</td><td>Mocha</td><td>(none)</td><td>DIY</td><td><span class="yes">Shown</span></td></tr>
+    <tr><td>A class AutoCount adds next month</td><td>either</td><td>any</td><td>NEW</td><td><span class="no">Hidden until ticked</span></td></tr>
+  </table>
+  <p class="note" style="margin:0">Mocha-company products carry no brand, so the class list is checked on its own, never through a brand. A tag that also limits brands still applies its Brands rule first (brand allowed AND class allowed).</p>
+  <p class="note" style="margin:0">"Hidden" means: the chatbot and MCP do not list, price or quote stock for it, and order and PO status replies leave its lines out (the brand rule's surfaces). The portal, staff screens and quotations are unchanged (Q5 a).</p>
+</div>
+
+<h2>D. Proposals for the two side effects of an allow list</h2>
+<div class="rec">
+  <p><b>No-class products:</b> "No class" is an option in the list, and it is ticked for you the first time you pick any class (you can untick it). <span class="muted">Why: most AutoCount items carry no class, so an allow list without it would silently hide almost the whole catalogue.</span></p>
+  <p><b>New AutoCount classes:</b> hidden until ticked on the tag or contact. <span class="muted">Why: that is what "allowed" means, and a new premium series should stay out of dealer chats until someone decides; the class appears in this picker as soon as the sync brings it in.</span></p>
+  <p><b>One option per class code, across companies:</b> ticking DIY allows DIY in Sorento and Mocha alike. <span class="muted">Why: AutoCount ItemClass has no brand link and the same code lives in both books; the owner thinks in codes, not company rows.</span></p>
+</div>
+</body>
+</html>

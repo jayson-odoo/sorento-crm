@@ -141,6 +141,12 @@ class ItemClassService:
             if self._duplicate_code(update_data["item_class_code"], row.company_id, exclude_id=item_class_id):
                 raise handle_conflict("An item class with this code already exists.")
             update_data["item_class_code"] = update_data["item_class_code"].strip()
+            renamed = update_data["item_class_code"].upper() != (row.item_class_code or "").strip(" ").upper()
+            if renamed and self._class_limits_in_use(row):
+                raise handle_conflict(
+                    "Cannot change this item class code: products carry it and contacts or tags "
+                    "limit item classes by code."
+                )
         for key, value in update_data.items():
             setattr(row, key, value)
         row.updated_at = datetime.utcnow()
@@ -148,28 +154,44 @@ class ItemClassService:
         self.db.refresh(row)
         return row
 
-    def delete(self, item_class_id: str) -> dict:
-        """Hard delete; products keep existing with no class (FK SET NULL). Refused while a
-        contact's access is narrowed to this class: dropping it would leave that brand
-        narrowed to nothing, and the contact's card would read as "every class"."""
+    def _class_limits_in_use(self, row: ItemClass) -> int:
+        """How many contacts and tags limit item classes, when products carry `row` (else 0).
+
+        Access is keyed by class CODE (TAG-BRAND-CLASS D7): deleting a carried class turns its
+        products into "No class", and renaming its code moves them to another code, so either
+        one changes what every contact or tag with an allow list sees."""
         from sqlalchemy import text
 
-        row = self.get(item_class_id)
         with company_scope(self.db, None):
-            contacts = self.db.execute(
-                text(
-                    "SELECT count(*) FROM respond_contacts rc, jsonb_each(rc.brand_class_ids) e "
-                    "WHERE rc.brand_class_ids IS NOT NULL AND jsonb_typeof(rc.brand_class_ids) = 'object' "
-                    "AND jsonb_typeof(e.value) = 'array' AND e.value ? :cid "
-                    # A list for a brand no longer in brand_ids narrows nothing (review S2).
-                    "AND e.key = ANY(rc.brand_ids::text[])"
-                ),
+            carried = self.db.execute(
+                text("SELECT EXISTS (SELECT 1 FROM products WHERE item_class_id = :cid)"),
                 {"cid": str(row.id)},
-            ).scalar() or 0
-        if contacts:
+            ).scalar()
+            if not carried:
+                return 0
+            return int(
+                self.db.execute(
+                    text(
+                        "SELECT (SELECT count(*) FROM respond_contacts "
+                        "WHERE cardinality(COALESCE(allowed_item_class_codes, '{}')) > 0) + "
+                        "(SELECT count(*) FROM contact_tags "
+                        "WHERE jsonb_typeof(settings -> 'item_classes') = 'array')"
+                    )
+                ).scalar()
+                or 0
+            )
+
+    def delete(self, item_class_id: str) -> dict:
+        """Hard delete; products keep existing with no class (FK SET NULL). Refused while
+        products carry this class AND some contact or tag limits item classes
+        (`_class_limits_in_use`)."""
+        row = self.get(item_class_id)
+        limited = self._class_limits_in_use(row)
+        if limited:
             raise handle_conflict(
-                f"Cannot delete this item class: {contacts} contact{'s' if contacts != 1 else ''} "
-                "limit access to it."
+                "Cannot delete this item class: products carry it and "
+                f"{limited} contact{'s' if limited != 1 else ''} or tag{'s' if limited != 1 else ''} "
+                "limit item classes."
             )
         self.db.delete(row)
         self.db.commit()

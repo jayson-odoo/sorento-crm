@@ -5,10 +5,16 @@ import * as React from 'react';
 import Link from 'next/link';
 import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { useRouter } from 'next/navigation';
-import { PenLine } from 'lucide-react';
+import { ChevronDown, Mail, MessageCircle, PenLine } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
@@ -404,17 +410,33 @@ export function QuotationDocumentClient({
                 </>
               )}
               {action.kind === 'send' && (
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={mutations.issue.isPending}
-                  onClick={() => mutations.issue.mutate(documentId)}
-                >
-                  {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
-                      stays in the label, as it did, because R2 is a different paper from R1. The
-                      API and the status names keep "issue". */}
-                  {`Send to Customer R${nextIssueNo}`}
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" size="sm" disabled={mutations.issue.isPending}>
+                      {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
+                          stays in the label, as it did, because R2 is a different paper from R1. The
+                          API and the status names keep "issue". */}
+                      {`Send to Customer R${nextIssueNo}`}
+                      <ChevronDown className="size-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => mutations.issue.mutate(documentId)}>
+                      <Mail className="size-4" aria-hidden />
+                      Email
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        mutations.issue.mutate(documentId, {
+                          onSuccess: (issue) => gear.openWhatsApp(issue),
+                        })
+                      }
+                    >
+                      <MessageCircle className="size-4" aria-hidden />
+                      WhatsApp
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
               {/* Where a queued export is actually collected. Rendered only once something has
                   been issued, because a download of a revision that does not exist yet cannot: the

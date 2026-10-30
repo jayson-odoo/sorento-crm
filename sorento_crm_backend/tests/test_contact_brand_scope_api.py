@@ -77,7 +77,12 @@ def test_get_unscoped_contact_is_empty(db, caller) -> None:
     db.commit()
     resp = client.get(f"{BASE}/{c.id}/brands")
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"brand_ids": [], "brands": [], "brand_class_ids": {}, "item_classes": []}
+    body = resp.json()
+    assert {k: body[k] for k in ("brand_ids", "brands", "allowed_item_class_codes")} == {
+        "brand_ids": [], "brands": [], "allowed_item_class_codes": []
+    }
+    assert body["item_class_options"][0] == {"code": "__NONE__", "name": "No class"}
+    assert "brand_class_ids" not in body
 
 
 def test_put_replaces_the_list(db, caller) -> None:
@@ -102,7 +107,12 @@ def test_put_empty_list_stores_null(db, caller) -> None:
     db.commit()
     resp = client.put(f"{BASE}/{c.id}/brands", json={"brand_ids": []})
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"brand_ids": [], "brands": [], "brand_class_ids": {}, "item_classes": []}
+    body = resp.json()
+    assert {k: body[k] for k in ("brand_ids", "brands", "allowed_item_class_codes")} == {
+        "brand_ids": [], "brands": [], "allowed_item_class_codes": []
+    }
+    assert body["item_class_options"][0] == {"code": "__NONE__", "name": "No class"}
+    assert "brand_class_ids" not in body
     assert _stored(db, c.id) is None
 
 
@@ -167,3 +177,30 @@ def test_list_rows_carry_brands(db, caller) -> None:
     rows = {r["id"]: r for r in resp.json()["data"]}
     assert rows[scoped.id]["brands"] == [{"id": str(m.id), "brand_name": m.brand_name}], rows[scoped.id]
     assert rows[plain.id]["brands"] == [], rows[plain.id]
+
+
+def test_put_allowed_item_classes_round_trip(db, caller) -> None:
+    """TAG-BRAND-CLASS AC-6: the card PUT stores codes upper-cased; a brands-only PUT keeps them;
+    an unknown code is a 422 and changes nothing."""
+    from app.models.product import ItemClass
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._pg_fixture import unique_code
+
+    client, allow = caller
+    allow.update({VIEW, EDIT})
+    code = unique_code("DIY", alpha=True).upper()[:50]
+    db.add(ItemClass(id=str(uuid.uuid4()), item_class_code=code, item_class_name="ZZT DIY",
+                     company_id=DEFAULT_COMPANY_ID))
+    c = contact(db)
+    db.commit()
+    resp = client.put(f"{BASE}/{c.id}/brands", json={"brand_ids": [], "allowed_item_class_codes": [code.lower(), "__NONE__"]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["allowed_item_class_codes"] == ["__NONE__", code]
+    m = brand(db, "MOCHA")
+    db.commit()
+    resp = client.put(f"{BASE}/{c.id}/brands", json={"brand_ids": [m.id]})
+    assert resp.json()["allowed_item_class_codes"] == ["__NONE__", code]
+    resp = client.put(f"{BASE}/{c.id}/brands", json={"brand_ids": [], "allowed_item_class_codes": ["ZZT-NOPE"]})
+    assert resp.status_code == 422, resp.text
+    stored = db.execute(text("SELECT allowed_item_class_codes FROM respond_contacts WHERE id = :i"), {"i": c.id}).scalar()
+    assert stored == ["__NONE__", code]

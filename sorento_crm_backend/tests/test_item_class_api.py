@@ -168,18 +168,31 @@ def test_delete_clears_the_product_link(env) -> None:
     assert client.get(f"{BASE}/{row.id}").status_code == 404
 
 
-def test_delete_is_refused_while_a_contact_is_limited_to_it(env) -> None:
+def test_delete_is_refused_while_products_carry_it_and_a_contact_limits_classes(env) -> None:
+    """TAG-BRAND-CLASS D7 / AC-11: deleting a class its products carry turns them into "No class",
+    which changes what every contact with an allowed list sees."""
     client, db = env
     from app.models.access import RespondContact
 
-    brand, row = _brand(db, "SORENTO"), _class(db, "HELD")
-    contact = RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')}",
-                             brand_ids=[brand.id], brand_class_ids={brand.id: [row.id]})
-    db.add(contact)
+    row = _class(db, "HELD")
+    _product(db, item_class=row)
+    db.add(RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')}",
+                          allowed_item_class_codes=["__NONE__"]))
     db.commit()
     res = client.delete(f"{BASE}/{row.id}")
     assert res.status_code == 409, res.text
-    assert "1 contact" in res.text
+    assert "item class" in res.text.lower()
+
+
+def test_delete_is_allowed_when_no_product_carries_it(env) -> None:
+    client, db = env
+    from app.models.access import RespondContact
+
+    row = _class(db, "EMPTY")
+    db.add(RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')}",
+                          allowed_item_class_codes=[row.item_class_code.upper()]))
+    db.commit()
+    assert client.delete(f"{BASE}/{row.id}").status_code == 200
 
 
 def test_delete_runs_through_the_deferred_action_registry() -> None:
@@ -362,30 +375,30 @@ def test_same_code_in_another_company_is_not_a_conflict(env) -> None:
     assert res.status_code == 409, res.text
 
 
-def test_delete_ignores_a_class_list_of_a_brand_the_contact_no_longer_has(env) -> None:
-    """S2: a dormant entry (brand dropped from brand_ids) narrows nothing, so it does not block."""
+def test_delete_ignores_the_retired_brand_class_ids(env) -> None:
+    """AC-12: the #1972 column is no longer read, so a stale entry blocks nothing."""
     client, db = env
     from app.models.access import RespondContact
 
-    sorento, mocha, row = _brand(db, "SORENTO"), _brand(db, "MOCHA"), _class(db, "DORMANT")
+    sorento, row = _brand(db, "SORENTO"), _class(db, "DORMANT")
     db.add(RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')}",
-                          brand_ids=[mocha.id], brand_class_ids={sorento.id: [row.id]}))
+                          brand_ids=[sorento.id], brand_class_ids={sorento.id: [row.id]}))
     db.commit()
     res = client.delete(f"{BASE}/{row.id}")
     assert res.status_code == 200, res.text
 
 
-def test_tag_brand_write_drops_class_lists_of_dropped_brands(env) -> None:
-    """S2: a tag that changes the brands prunes class lists for brands it drops, so re-adding the
-    brand later does not silently bring the old narrowing back."""
+def test_tag_brand_write_leaves_the_allowed_classes_alone(env) -> None:
+    """Classes no longer hang off a brand: a tag's Brands write never touches them, and never
+    writes the retired brand_class_ids."""
     _, db = env
     from app.models.access import RespondContact
     from app.services.contact_tag_apply import ALL, _w_columns
 
-    sorento, mocha, row = _brand(db, "SORENTO"), _brand(db, "MOCHA"), _class(db, "TAGGED")
+    sorento, mocha = _brand(db, "SORENTO"), _brand(db, "MOCHA")
     contact = RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')}",
-                             brand_ids=[sorento.id, mocha.id],
-                             brand_class_ids={sorento.id: [row.id], mocha.id: [row.id]})
+                             brand_ids=[sorento.id, mocha.id], allowed_item_class_codes=["DIY"],
+                             brand_class_ids={sorento.id: ["x"]})
     db.add(contact)
     db.flush()
 
@@ -393,8 +406,45 @@ def test_tag_brand_write_drops_class_lists_of_dropped_brands(env) -> None:
         _w_columns(db, contact, [{"section": "brands", "key": "brands", "_raw": {"expected": want}}], _USER_ID)
 
     _brands({mocha.id})
-    assert contact.brand_class_ids == {mocha.id: [row.id]}
-    _brands({sorento.id, mocha.id})
-    assert contact.brand_class_ids == {mocha.id: [row.id]}
+    assert contact.allowed_item_class_codes == ["DIY"]
     _brands(ALL)
-    assert contact.brand_ids is None and contact.brand_class_ids is None
+    assert contact.brand_ids is None and contact.allowed_item_class_codes == ["DIY"]
+    assert contact.brand_class_ids == {sorento.id: ["x"]}  # untouched, unread
+
+
+def test_code_rename_is_refused_while_products_carry_it_and_a_contact_limits_classes(env) -> None:
+    """TAG-BRAND-CLASS security M1 / review S3: access is keyed by code, so a rename of a carried
+    class would move its products to another code (widen or narrow a contact silently)."""
+    client, db = env
+    from app.models.access import RespondContact
+
+    row = _class(db, "RENAMED")
+    _product(db, item_class=row)
+    db.add(RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')}",
+                          allowed_item_class_codes=["__NONE__"]))
+    db.commit()
+    res = client.put(f"{BASE}/{row.id}", json={"item_class_code": unique_code("OTHER")[:50]})
+    assert res.status_code == 409, res.text
+    # A name-only edit, or the same code in another case, is not a rename.
+    assert client.put(f"{BASE}/{row.id}", json={"item_class_name": f"{MARKER} new name"}).status_code == 200
+    assert client.put(f"{BASE}/{row.id}", json={"item_class_code": row.item_class_code.lower()}).status_code == 200
+
+
+def test_a_tag_limiting_classes_also_blocks_delete(env) -> None:
+    client, db = env
+    from sqlalchemy import text
+
+    row = _class(db, "TAGHELD")
+    _product(db, item_class=row)
+    db.execute(
+        text("INSERT INTO contact_tags (id, name, settings) VALUES (:i, :n, CAST(:s AS jsonb))"),
+        {"i": str(uuid.uuid4()), "n": f"{MARKER} tag {unique_code('t')}", "s": '{"item_classes": ["DIY"]}'},
+    )
+    db.commit()
+    assert client.delete(f"{BASE}/{row.id}").status_code == 409
+
+
+def test_the_reserved_no_class_code_is_refused(env) -> None:
+    client, _ = env
+    res = client.post(BASE + "/", json={"item_class_code": "__none__", "item_class_name": "Sneaky"})
+    assert res.status_code == 422, res.text

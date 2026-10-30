@@ -110,7 +110,7 @@ describe('hook writers refresh the Tags section', () => {
   it('spec visibility remove', () =>
     expectMutationInvalidates(() => useSpecVisibilityMutations({ kind: 'contact', contactId: 'c1' }).remove as never, undefined));
   it('brands save', () =>
-    expectMutationInvalidates(() => useContactBrandScopeMutations('c1').save as never, { brandIds: ['b1'], brandClassIds: {} }));
+    expectMutationInvalidates(() => useContactBrandScopeMutations('c1').save as never, { brandIds: ['b1'], allowedItemClassCodes: [] }));
   it('outbound (messaging) toggle', () =>
     expectMutationInvalidates(() => useRespondContactOutboundMutations().setOne as never, { contactId: 'c1', enabled: false }));
 });

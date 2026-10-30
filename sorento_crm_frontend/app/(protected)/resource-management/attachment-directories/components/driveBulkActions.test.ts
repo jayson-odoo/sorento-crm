@@ -29,6 +29,7 @@ describe('buildDriveBulkActions', () => {
         isTrashView: false,
         isResubmitting: false,
         canRestore: false,
+        canDelete: true,
       })
     ).toEqual([]);
   });
@@ -41,6 +42,7 @@ describe('buildDriveBulkActions', () => {
         isTrashView: false,
         isResubmitting: false,
         canRestore: false,
+        canDelete: true,
       })
     ).toEqual([
       'bulk-move',
@@ -62,6 +64,7 @@ describe('buildDriveBulkActions', () => {
         isTrashView: false,
         isResubmitting: false,
         canRestore: false,
+        canDelete: true,
       },
       handlers
     );
@@ -85,6 +88,7 @@ describe('buildDriveBulkActions', () => {
       isTrashView: false,
       isResubmitting: false,
       canRestore: false,
+      canDelete: true,
     });
     expect(all).not.toContain('bulk-rename');
     expect(all).not.toContain('bulk-replace');
@@ -97,24 +101,25 @@ describe('buildDriveBulkActions', () => {
       isTrashView: false,
       isResubmitting: false,
       canRestore: false,
+      canDelete: true,
     });
     expect(all).not.toContain('bulk-zip');
   });
 
   it('AC-F1: bulk-company is enabled for files, for folders and for a mix; absent in trash', () => {
     const filesOnly = buildDriveBulkActions(
-      { selectionCount: 2, selectionHasFolder: false, isTrashView: false, isResubmitting: false, canRestore: false },
+      { selectionCount: 2, selectionHasFolder: false, isTrashView: false, isResubmitting: false, canRestore: false, canDelete: true },
       handlers,
     );
     const foldersOnly = buildDriveBulkActions(
-      { selectionCount: 2, selectionHasFolder: true, isTrashView: false, isResubmitting: false, canRestore: false },
+      { selectionCount: 2, selectionHasFolder: true, isTrashView: false, isResubmitting: false, canRestore: false, canDelete: true },
       handlers,
     );
     // A mixed selection is represented the same way as folders-only: at least
     // one folder is present, so `selectionHasFolder` is the only signal the
     // state carries either way.
     const mixed = buildDriveBulkActions(
-      { selectionCount: 3, selectionHasFolder: true, isTrashView: false, isResubmitting: false, canRestore: false },
+      { selectionCount: 3, selectionHasFolder: true, isTrashView: false, isResubmitting: false, canRestore: false, canDelete: true },
       handlers,
     );
     for (const actions of [filesOnly, foldersOnly, mixed]) {
@@ -123,7 +128,7 @@ describe('buildDriveBulkActions', () => {
       expect(setCompany?.disabled).toBeFalsy();
     }
     const trash = buildDriveBulkActions(
-      { selectionCount: 1, selectionHasFolder: false, isTrashView: true, isResubmitting: false, canRestore: true },
+      { selectionCount: 1, selectionHasFolder: false, isTrashView: true, isResubmitting: false, canRestore: true, canDelete: true },
       handlers,
     );
     expect(trash.some((a) => a.key === 'bulk-company')).toBe(false);
@@ -137,12 +142,13 @@ describe('buildDriveBulkActions', () => {
         isTrashView: true,
         isResubmitting: false,
         canRestore: true,
+        canDelete: true,
       })
     ).toEqual(['bulk-restore', 'bulk-permanent-delete']);
   });
 
   describe('AC-A1..A3: Download selected', () => {
-    const base = { isTrashView: false, isResubmitting: false, canRestore: false };
+    const base = { isTrashView: false, isResubmitting: false, canRestore: false, canDelete: true };
 
     it('A1: bulk-download is enabled for file-only, folder-only and mixed selections, right after bulk-move', () => {
       const states = [
@@ -180,8 +186,17 @@ describe('buildDriveBulkActions', () => {
         isTrashView: true,
         isResubmitting: false,
         canRestore: true,
+        canDelete: true,
       });
       expect(all).toEqual(['bulk-restore', 'bulk-permanent-delete']);
     });
+  });
+
+  it('trash view without resource.attachments.delete offers no Restore (the server would refuse it)', () => {
+    const actions = buildDriveBulkActions(
+      { selectionCount: 1, selectionHasFolder: false, isTrashView: true, isResubmitting: false, canRestore: true, canDelete: false },
+      handlers
+    );
+    expect(actions.map((a) => a.key)).not.toContain('bulk-restore');
   });
 });
