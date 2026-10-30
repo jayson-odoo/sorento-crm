@@ -130,6 +130,16 @@ class Spec:
                 "product_code": tag,
                 "quantity": "2",
                 "project_title": "ZZT project",
+                # The rest of what the portal form requires on submit (FORM-REQUIRED-SERVER).
+                "delivery_order_number": f"DO-{tag}",
+                "contact_person": "ZZT Ali",
+                "contact_number": "0123456789",
+                "customer_type": "dealer",
+                "complaint_date": "2026-10-30",
+                "within_warranty": "yes",
+                "defects_discovered": "upon_delivery",
+                "complaint_type": "product_defect",
+                "salesperson": "ZZT Aminah",
             }
             products = None
         else:
