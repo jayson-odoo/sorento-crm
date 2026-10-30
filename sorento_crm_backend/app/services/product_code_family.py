@@ -68,24 +68,39 @@ def _code_word_for(token: str, message_words: list[str]) -> str | None:
     return best
 
 
-def _family_rows(db: Session, code_word: str) -> list[tuple[str, dict[str, Any], str]]:
+def _family_rows(
+    db: Session, code_word: str, *, loose: bool = False
+) -> list[tuple[str, dict[str, Any], str]]:
     """`(product_code, derived spec values, searchable text)` per variant of the family
-    `code_word` names, one per code, in code order."""
+    `code_word` names, one per code, in code order.
+
+    `loose` (the size path, AC-6) finds the family the way the resolver's own code probe
+    does (`_prefix_probe_product`): the anchored head first, else the head anywhere in the
+    code, so a short form ("wc287") reaches its family. It also drops the digit boundary when
+    the typed word ends in a letter, so "SH-NEW" reaches the "SHNEW200" variant; a word ending
+    in a digit keeps it (SRTWC286 never reaches SRTWC2861)."""
     from app.models.product import Product
     from app.models.product_spec import ProductSpecifications
 
     letters, rest = _CODE_WORD.match(code_word).groups()  # type: ignore[union-attr]
-    pattern = f"^({re.escape(letters)}|{re.escape(letters)}X){re.escape(rest)}([^0-9]|$)"
+    boundary = "([^0-9]|$)" if not loose or rest[-1].isdigit() else ""
+    body = f"({re.escape(letters)}|{re.escape(letters)}X){re.escape(rest)}{boundary}"
     folded_code = func.upper(func.regexp_replace(Product.product_code, "[^A-Za-z0-9]", "", "g"))
-    rows = (
-        db.query(Product, ProductSpecifications.values)
-        .outerjoin(ProductSpecifications, ProductSpecifications.product_id == Product.id)
-        .filter(Product.is_active.is_(True))
-        .filter(folded_code.op("~")(pattern))
-        .order_by(Product.product_code)
-        .limit(_FAMILY_CAP)
-        .all()
-    )
+
+    def fetch(pattern: str):
+        return (
+            db.query(Product, ProductSpecifications.values)
+            .outerjoin(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+            .filter(Product.is_active.is_(True))
+            .filter(folded_code.op("~")(pattern))
+            .order_by(Product.product_code)
+            .limit(_FAMILY_CAP)
+            .all()
+        )
+
+    rows = fetch(f"^{body}")
+    if loose and not rows:
+        rows = fetch(body)
     out = []
     seen: set[str] = set()
     for product, values in rows:
@@ -142,6 +157,7 @@ def narrow_code_tokens_by_specs(
     tokens: list[str] | None,
     allowed_types: list[str] | None,
     specs: list[dict[str, Any]] | None,
+    exact_out: list[str] | None = None,
 ) -> list[str] | None:
     """`tokens` with each CODE token replaced by the variants of its family that carry
     every grounded spec in `specs`, or None when nothing changes.
@@ -180,7 +196,7 @@ def narrow_code_tokens_by_specs(
         code_word = _fold(token)
         if not _CODE_WORD.match(code_word):
             continue
-        family = _family_rows(db, code_word)
+        family = _family_rows(db, code_word, loose=True)
         if len(family) < 2:
             continue
         picked = [
@@ -194,7 +210,10 @@ def narrow_code_tokens_by_specs(
             # The product itself carries the spec ("how about s trap" over an S trap):
             # it is its own answer, whatever its siblings carry. Replacing an exact code
             # by itself plus its siblings would turn an answered product into a
-            # which-one pick (reviewer, 6 Oct 2026).
+            # which-one pick (reviewer, 6 Oct 2026). A caller that passes `exact_out` is told
+            # which tokens that was, so the route can keep their exact match only.
+            if exact_out is not None:
+                exact_out.append(token)
             continue
         replaced[i] = picked
     if not replaced:
