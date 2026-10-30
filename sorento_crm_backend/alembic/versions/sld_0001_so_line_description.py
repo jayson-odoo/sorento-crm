@@ -6,13 +6,13 @@ Adds `sales_order_lines.description` (TEXT NULL, filled by ingest from the line'
 ticks every product coded RPACC (the generic spare-part code staff describe in the line text).
 
 Revision ID: sld_0001_so_line_description
-Revises: qca1_0001_amendment_requests
+Revises: epp_0001_chunk_coverage_idx
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "sld_0001_so_line_description"
-down_revision = "qca1_0001_amendment_requests"
+down_revision = "epp_0001_chunk_coverage_idx"
 branch_labels = None
 depends_on = None
 
