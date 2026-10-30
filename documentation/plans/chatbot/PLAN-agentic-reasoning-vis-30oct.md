@@ -1,6 +1,7 @@
 # PLAN: the agent's reasoning, visible in the Chatbot Console
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: in review (small fix track: no migration, no auth/RBAC change, no new ingest surface). Built, tests green,
+security reviewer SECURE, browser pass at 1280 + 375 PASS; waiting on the code reviewer and the owner hand test.
 Lane: AGENTIC-REASONING-VIS
 Owner, 30 Oct 23:13: "I need our reasoning to be more visible ... I need to see the reasoning in
 the console so at least I know agent's thought process."
@@ -42,3 +43,21 @@ the console so at least I know agent's thought process."
 - Anthropic: thinking text lands in `reasoning_text`.
 - Loop: reasoning stored on the turn trace per round; never in `reply_text`, history or digest.
 - Conversation read and live response return it; console renders it collapsed per round.
+
+## Cost
+
+Google bills Gemini thinking on the full thought tokens whether or not `includeThoughts` is set
+(ai.google.dev/gemini-api/docs/thinking), so asking for summaries adds no thinking spend. The one extra
+cost: each round's summary sits in the replayed `continuation` parts, so it goes back as input on the later
+rounds of the same turn (it is never replayed into a later turn). Not measured live here: the cloud sandbox
+has no provider key. The hand test reads the console's `Tokens: X in, Y out` line for one sample turn.
+
+## Accepted risk (security review)
+
+- A round's reasoning can restate what a tool returned, including rows the reply left out. #2009 stored
+  only each call's arguments and a one-line outcome, so this widens what is kept on `chatbot.turns`
+  (no expiry, like every trace). It is readable only with `system.chat_history.view` (console, Chat
+  History), the same staff who can run the agent for that contact and read the same data anyway.
+- `GET /agent/conversation` does not filter by the operator who ran the turn (already true for replies
+  and steps since #2009); any holder of the console permission sees another operator's reasoning for
+  the same contact.
