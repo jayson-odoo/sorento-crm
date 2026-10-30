@@ -225,8 +225,17 @@ quotation data.
   - `respond(db, tracking_id, user)` / `resolve(...)`: tracker must be `product_drawing` (else
     409); actor rule = `ConversationSLATrackingService.can_user_act_on_tracking` /
     `can_user_resolve_tracking` (404 / 400 as the existing resolve route answers,
-    `api/v1/sla/sla_tracking.py:1393-1420`); emit `respond` / `resolve` through
-    `emit_form_event`; on resolve notify every requester (H4) once.
+    `api/v1/sla/sla_tracking.py:1393-1420`). They update the tracker by id through
+    `update_tracking`, the way that route does (respond: `is_responded`, `responded_by`; resolve:
+    `is_resolved`, `resolved_by`, plus responded when not yet responded), so they do NOT go
+    through the step's configured respond/resolve events: a blank event or a changed team set
+    cannot strand a task. Only the start event `escalate` runs through the step. Resolve notifies
+    every requester (H4) once (per-tracker dedup key).
+  - Escalate holds a session-level Postgres advisory lock keyed on the product from the
+    open-task check until the requester row is written (a row lock would be released by the
+    round-robin commit). The product is read through the scoped ORM (another company's product
+    is 404 `product_not_found`) and its company routes the task (`company_id` argument of
+    `_start_for_config`). Setup errors surface as the plain 409 `drawing_requests_not_set_up`.
   - `notify_drawing_linked(db, product_id)`: open tracker -> H3 to its assignee. Called from
     `ProductAttachmentService.create_product_attachment` (both the new-row and the existing-row
     branches, after commit), when the file counts as a drawing. **Out of scope:** editing an
@@ -241,7 +250,8 @@ quotation data.
     `require_any_permission([view, view_own])`; added to `tests/portal_p2_allowed_routes.txt`
     (the own-scope guard anchors on `version_id`, `line_id` is already a trusted nested name).
   - `POST /api/v1/sla-management/form-sla-tracking/{tracking_id}/drawing-respond` and
-    `/drawing-resolve`, `get_current_user` + the actor rule above.
+    `/drawing-resolve`, `get_current_user` + the actor rule above; resolve also requires
+    `sla_management.conversation_sla_tracking.resolve`.
 
 ### Frontend
 

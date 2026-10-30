@@ -758,7 +758,9 @@ export default function MyPendingSLAWidget() {
                   </>
                 )
               )}
-              {!isTeam && item.source_entity_type === 'product_drawing' && (
+              {!isTeam &&
+                item.source_entity_type === 'product_drawing' &&
+                (!mineItem.is_responded || canResolve) && (
                 <Button
                   size="sm"
                   variant="outline"

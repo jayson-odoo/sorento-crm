@@ -18,6 +18,7 @@ const reassignSLATracking = vi.fn();
 const getTakeoverState = vi.fn();
 const cancelTakeover = vi.fn();
 const rejectTakeover = vi.fn();
+const actOnDrawingRequest = vi.fn();
 
 vi.mock('../services/conversationSLATrackingService', () => ({
   getMyPendingSLA: (...a: unknown[]) => getMyPendingSLA(...a),
@@ -30,6 +31,7 @@ vi.mock('../services/conversationSLATrackingService', () => ({
   getTakeoverState: (...a: unknown[]) => getTakeoverState(...a),
   cancelTakeover: (...a: unknown[]) => cancelTakeover(...a),
   rejectTakeover: (...a: unknown[]) => rejectTakeover(...a),
+  actOnDrawingRequest: (...a: unknown[]) => actOnDrawingRequest(...a),
 }));
 
 const push = vi.fn();
@@ -1027,6 +1029,54 @@ describe('MyPendingSLAWidget product drawing rows', () => {
     await screen.findByText('Product drawing');
     fireEvent.click(screen.getByText('Product drawing'));
     expect(push).toHaveBeenCalledWith('/master-data-management/products/product-uuid');
+  });
+
+  it('clicking Respond calls the drawing action with respond, then reloads the list', async () => {
+    actOnDrawingRequest.mockReset();
+    actOnDrawingRequest.mockResolvedValue(undefined);
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    fireEvent.click(getActionButton(/^Respond$/i));
+
+    await waitFor(() => expect(actOnDrawingRequest).toHaveBeenCalledWith('pd1', 'respond'));
+    await waitFor(() => expect(getMyPendingSLA.mock.calls.length).toBeGreaterThan(1));
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('clicking Resolve on a responded row calls the drawing action with resolve', async () => {
+    actOnDrawingRequest.mockReset();
+    actOnDrawingRequest.mockResolvedValue(undefined);
+    getMyPendingSLA.mockResolvedValue([
+      { ...drawingItem, is_responded: true, due_kind: 'resolve', next_action: 'Resolve' },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    fireEvent.click(getActionButton(/^Resolve$/i));
+
+    await waitFor(() => expect(actOnDrawingRequest).toHaveBeenCalledWith('pd1', 'resolve'));
+  });
+
+  it('hides Resolve on a responded drawing row when the viewer lacks the resolve permission', async () => {
+    deniedSlugs = new Set(['sla_management.conversation_sla_tracking.resolve']);
+    getMyPendingSLA.mockResolvedValue([
+      { ...drawingItem, is_responded: true, due_kind: 'resolve', next_action: 'Resolve' },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    expect(hasActionButton(/^Resolve$/i)).toBe(false);
+  });
+
+  it('keeps Respond for a viewer without the resolve permission (the route needs none)', async () => {
+    deniedSlugs = new Set(['sla_management.conversation_sla_tracking.resolve']);
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    expect(getActionButton(/^Respond$/i)).toBeInTheDocument();
   });
 
   it('every other form row still shows neither Respond nor Resolve', async () => {
