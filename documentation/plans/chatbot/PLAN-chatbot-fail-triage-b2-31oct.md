@@ -1,9 +1,15 @@
 # PLAN: chatbot failure triage, batch 2 (31 Oct 2026)
 
-**Status:** Plan. Feature track M, lead pattern (tester red -> coder -> reviewer + security-reviewer). Behaviour card
-filed with crew, build waits for the answers. Batch 1 is PR #2018 (lane CHATBOT-FAIL-TRIAGE). Parent plan and UAC:
-`PLAN-chatbot-fail-triage-30oct.md`, `chatbot-fail-triage-acceptance-criteria.md` (Batch 2 + AC-7f + R1), copied
+**Status:** Build. Feature track M, lead pattern (tester red -> coder -> reviewer + security-reviewer). Parser candidate
+E, md5 e90461ef, PASSED crew's hidden gate 31 Oct and is pinned: `PROMPT-fail-triage-b2-e90461ef.patch` rebuilds it from
+production md5 57d7d412; no further prompt edit without a new gate. Publishing waits for owner Q1-Q4 and #2018. AC-6 code
+done except the no-variant reply (Q3); AC-5 waits Q1, Q2. Batch 1 is PR #2018 (lane CHATBOT-FAIL-TRIAGE). Parent plan and
+UAC: `PLAN-chatbot-fail-triage-30oct.md`, `chatbot-fail-triage-acceptance-criteria.md` (Batch 2 + AC-7f + R1), copied
 unchanged so they merge cleanly with #2018.
+
+Hidden gate on E (crew, x2, USD 0.72): whole-parse A 181/226 = E 181/226; `suggested_team` non-null A 102, 101, E 105, 107
+(D was 84, 86); per-field within noise. Crew notes two to look at, texts sealed from the lane: 1 stable multi-field loss on
+a follow-up pick (picked_option + answers_open_question + products), and 3 rows where E always sets a team and A never does.
 
 ## Scope
 
