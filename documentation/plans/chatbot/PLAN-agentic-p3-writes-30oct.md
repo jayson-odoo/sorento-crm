@@ -481,3 +481,53 @@ its changes, another user's actions absent; V3 a turn's steps detail for a list 
 proposal, no UUID; V4 the audit row values and description; V5 the normaliser cases and that a stored reply is
 normalised; vitest: agent replies render bold / bullets via WhatsAppText, the reloaded actions block, the
 Steps disclosure shows `detail`.
+
+## Slice 7: purchase-request approve / reject (W3), own PR
+
+Card W3 + owner P3-Q1 (a) "W0, W1, W2 then W3". Crew 30 Oct: "start the PR approve/reject slice as its own PR".
+Stacked on #2009 (uses slice 6's change lines). Lane AGENTIC-P3-PR-DECISION.
+
+Existing path (reused as-is): `POST /procurement/purchase-requests/{id}/approval-decision`
+(`api/v1/procurement/purchase_requests.py` `decide_purchase_request_approval`), body `{action: approved|rejected,
+comments}`, slug `procurement.purchase_requests.approve`, `assert_can_act_on_form` (handling lock, form access),
+`_dispatch_form_action` -> `form_action_dispatch.dispatch_or_defer` (grace window when the caller is a browser,
+immediate for an API key or `request=None`). The service requires a non-blank reason to reject and a request in
+pending approval; it notifies the requester / contact, emits the form-SLA event and runs approval automation.
+
+### Tools
+
+| Tool | Kind | Route function (in process, as the user) | Slug |
+| --- | --- | --- | --- |
+| `crm_purchase_requests_list` | user read | `get_purchase_requests` (`purchase_requests.py:56`), args `query`, `approval_status` (default `["pending"]`), `request_type`, `limit` <= 50; `own` = `purchase_request_own_scope` computed for the person | the list's own access (the route's `get_current_user_or_api_key` + own scope); exposed with `procurement.purchase_requests.approve` |
+| `crm_purchase_request_get` | user read | `get_purchase_request_by_number` (`:102`) for a number, `get_purchase_request` (`:141`) for an id | same |
+| `crm_purchase_request_decide` | write | `decide_purchase_request_approval` | `procurement.purchase_requests.approve` |
+| `crm_purchase_request_decision_cancel` | write | `cancel_form_action` (`api/v1/sla/form_actions.py:151`) for a parked decision | `procurement.purchase_requests.approve` |
+
+### Rules
+
+D1. **Proposal checks** (`read_before`, for both people, R9): the request is readable to the person, its status is
+    pending approval (else invalid "This request is not waiting for approval (it is <status>)."),
+    `assert_can_act_on_form` passes (handling lock). `decision=reject` needs a non-blank `reason` (else invalid
+    "Give a reason to reject."). Before-state: approval status, `revision_no` when the header has one,
+    `updated_at`. Summary: `<request number> (<customer or contact>): approve` / `reject: "<reason>"`.
+D2. **Grace window, as the screen.** `execute` passes a request object without `X-API-Key` (a minimal
+    Starlette `Request`), so `dispatch_or_defer` applies the configured grace exactly as a browser click does
+    (card P3-Q4, settled default). A 202 outcome -> the step is `parked` with `pending_action_id` and
+    `commit_at`; the reply says the decision commits at `<time>` unless cancelled; the change line is
+    `Approval: Pending -> Approved (commits at <HH:MM>)`. No grace configured -> committed at once, step `done`.
+D3. **Cancel inside the window**: `crm_purchase_request_decision_cancel {request_id}` finds the request's
+    current parked form action (the `/sla/form-actions/current` read) and proposes cancelling it; confirmed like
+    any write; the route's own requester / admin gate applies. After commit there is no agent undo (the form's
+    own Undo stays on the screen).
+D4. **Side effects are stated, never hidden**: the proposal line ends with "(notifies the requester)" for
+    approve and reject.
+D5. **Re-check at confirm**: status still pending approval and unchanged `updated_at` / `revision_no`; else
+    rejected with what changed.
+
+### Tests (red first, `tests/chatbot/agent/test_agent_writes_pr_decision.py`)
+
+List and get as the user (own scope respected); approve proposal + confirm commits (no grace) with the
+requester notification recorded by the service; reject without reason invalid; not pending -> invalid; handling
+lock held by someone else -> denied; R9 narrow operator refused; grace configured -> step parked with
+commit_at, request still pending, cancel tool proposes and confirm cancels the parked action; changed since
+proposal -> rejected; change lines in words with no UUID.
