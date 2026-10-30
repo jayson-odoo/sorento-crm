@@ -111,3 +111,15 @@ describe('ContactChatbotSection - Agent mode (auto) and the daily cap (K3)', () 
     expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, agent_enabled: false });
   });
 });
+
+describe('ContactChatbotSection - the global cap as placeholder (review fix)', () => {
+  it('a blank cap shows the global value as its placeholder', () => {
+    mount({ ...BASE_PROFILE, chatbot_agent_daily_turns_global: 50 } as typeof BASE_PROFILE);
+    expect(cap()).toHaveAttribute('placeholder', '50');
+  });
+
+  it('follows the system setting, not a constant', () => {
+    mount({ ...BASE_PROFILE, chatbot_agent_daily_turns_global: 33 } as typeof BASE_PROFILE);
+    expect(cap()).toHaveAttribute('placeholder', '33');
+  });
+});
