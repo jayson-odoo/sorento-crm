@@ -137,3 +137,19 @@ def test_l1_own_kind_price_tag_list_reachable(pt_world):
 srso_world = srso.world
 npa_world = npa.world
 pt_world = pt.world
+
+
+def test_l1_project_registration_type_fails_closed_404(scene):
+    resp = scene.me.call("GET", LIST, params={"type": "project_registration"})
+    assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.parametrize("raw", [" Complaint ", "COMPLAINT", "Complaint"])
+def test_l1_type_is_normalised_like_the_portal(scene, raw):
+    mine, mine2, theirs = _seed(scene, "complaint")
+    plain = scene.me.call("GET", LIST, params={"type": "complaint"})
+    got = scene.me.call("GET", LIST, params={"type": raw})
+    assert got.status_code == 200, got.text
+    assert got.json() == plain.json()
+    assert set(_ids(got)) == {mine["id"], mine2["id"]}
+    assert theirs["id"] not in _ids(got)

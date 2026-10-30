@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   expectCreateOnFilterRow,
@@ -27,13 +27,14 @@ if (!window.matchMedia) {
 Element.prototype.scrollIntoView = vi.fn();
 
 const apiFetch = vi.hoisted(() => vi.fn());
+const push = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return { ...actual, apiFetch: (...a: unknown[]) => apiFetch(...a) };
 });
 vi.mock('next/navigation', () => ({
   usePathname: () => '/procurement-management/stock-inquiries',
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn(), prefetch: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -88,9 +89,11 @@ beforeEach(() => {
   cleanup();
   window.localStorage.clear();
   apiFetch.mockReset();
+  push.mockReset();
   apiFetch.mockImplementation(async (url: unknown) => {
     const u = String(url);
     if (u.includes('/api/v1/my-requests/submissions?type=stock_inquiry')) return jsonResponse({ items: [PORTAL_ROW] });
+    if (u.includes('/mine-1')) return jsonResponse({ ...PORTAL_ROW, revision: { enabled: true, allowed: true, used: 0, max: 3, remaining: 3, blocked_reason: null } });
     return jsonResponse({ items: [], data: [], pagination: { total: 0, page: 1, limit: 50 } });
   });
 });
@@ -151,6 +154,53 @@ describe('Stock Inquiry list, limited user: the portal list body', () => {
     mount(LIMITED);
     await screen.findByText('MYS-0001');
     expectNoPortalChrome('stock_inquiry');
+  });
+});
+
+describe('stock_inquiry list, limited user: navigation stays in the CRM', () => {
+  const BASE = '/procurement-management/stock-inquiries';
+  const pushed = () => push.mock.calls.map((c) => String(c[0]));
+
+  it('a card tap goes to the CRM detail page', async () => {
+    mount(LIMITED);
+    const card = (await screen.findByText('MYS-0001')).closest('[role="link"]') as HTMLElement;
+    fireEvent.click(card);
+    expect(pushed()).toEqual([`${BASE}/mine-1`]);
+  });
+
+  it('the preview Open and Duplicate go to CRM staff pages', async () => {
+    mount(LIMITED);
+    const card = (await screen.findByText('MYS-0001')).closest('[role="link"]') as HTMLElement;
+    fireEvent.contextMenu(card);
+    let dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open' }));
+    expect(pushed()).toEqual([`${BASE}/mine-1`]);
+    fireEvent.contextMenu(card);
+    dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Duplicate' }));
+    expect(pushed()).toEqual([`${BASE}/mine-1`, `${BASE}/new?from=mine-1`]);
+    expect(pushed().some((u) => u.includes('/portal'))).toBe(false);
+  });
+
+  it('the preview Revise goes to the CRM revise page', async () => {
+    mount(LIMITED);
+    const card = (await screen.findByText('MYS-0001')).closest('[role="link"]') as HTMLElement;
+    fireEvent.contextMenu(card);
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Revise' }));
+    expect(pushed()).toEqual([`${BASE}/mine-1?revise=1`]);
+  });
+
+  it('the list load error shows a Retry that refetches', async () => {
+    apiFetch.mockReset();
+    apiFetch.mockImplementation(async () => jsonResponse({ detail: 'boom' }, 500));
+    mount(LIMITED);
+    const retry = await screen.findByRole('button', { name: /retry/i });
+    const before = urlsOf(apiFetch).filter((u) => u.includes('/my-requests/submissions')).length;
+    fireEvent.click(retry);
+    await waitFor(() =>
+      expect(urlsOf(apiFetch).filter((u) => u.includes('/my-requests/submissions')).length).toBeGreaterThan(before),
+    );
   });
 });
 
