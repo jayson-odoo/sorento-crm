@@ -334,3 +334,43 @@ Slice 3, using the owner's example shape (4 phones to Business owner, 1 resign; 
    denied.
 8. a contact with no company -> invalid on role; nothing-to-change -> invalid.
 9. migration seeds the slug once (re-run safe); registry lists it.
+
+## Review round 1 (30 Oct): fixes, tester-first
+
+Reviewer NOT READY (B1, B2), security reviewer NOT SECURE (blocker: console operator acts as another user).
+
+R1. **Who may write from the console** (crew-ask filed; building the recommended (a) meanwhile): write tools are
+    offered, and `confirm` / `cancel` accepted from the console, only when the operator (the console caller) IS
+    the contact's linked user. Any other operator gets read tools only; a console confirm / cancel by another
+    operator -> 409 reason `not_your_contact`. `agent_actions` gains `decided_by_user_id` (the operator, or the
+    linked user for a chat confirm). `run_agent_turn` takes `operator_user_id` (None = chat, the sender is the
+    user).
+R2. **Chat confirm works across turns** (B1): while a proposal is pending, the system prompt carries one line
+    naming it (`A change is waiting for the user's decision (action <id>): <lines joined by "; ">`), and the
+    `confirm_action` / `cancel_action` schemas restrict `action_id` to that id (`enum`). The loop's same-turn
+    `if steps:` guard is removed: confirming the previous turn's proposal in a turn that also proposes is fine
+    (`store_proposal` expires nothing that is already executed).
+R3. **Undo is buildable in a later turn** (B2): `crm_agent_actions_recent` returns, per step, `tool`, `args`,
+    `result_id`, `before`, `after`, `status`, and only this linked user's actions (`user_id` filter); every id in
+    it joins the turn's seen ids. The pending proposal on `GET agent/conversation` is filtered the same way.
+R4. **Undo of a resign is exact** (security 2, reviewer 6): a step stores `unlinked_customer_ids` = the links it
+    actually removed. A re-link of an out-of-scope contact is allowed only when (i) this user's executed step
+    unlinked exactly that customer from that contact, and (ii) that unlink is still the latest change to the link
+    (no later executed agent step re-linked it). Out of scope, only `link_customer_ids` (from (i)) and
+    `chatbot_allowed: true` are accepted.
+R5. **`edit_own` links only for the undo** (security 4; owner ruling is role / resign only): an `.edit_own`
+    holder's `link_customer_ids` is accepted only under R4. `.edit` holders keep linking.
+R6. **Company scope** (security 5): customer lookups and link checks run under the user's company scope (no
+    `company_scope(db, None)`); an unlink that removed nothing fails the step ("<code> was not linked").
+R7. **Summaries cannot be forged** (security 3): every value placed in a summary has whitespace (newlines, tabs)
+    collapsed to single spaces; a note is shown in full when <= 200 characters, else its first 200 and
+    "(N characters)"; case kept as written (reviewer 1: no `.capitalize()`).
+R8. **Role per company** (reviewer nit): `role=owner` adds the missing owner types per company; it is "nothing to
+    change" only when every company already has them.
+
+Tests to add red first: two `run_agent_turn` calls where turn 2's model sees only history + system prompt and
+confirms (R2); resign in turn 1, undo in turn 2 without hand-seeded ids (R3/R4); claim race: the row flipped to
+`executing` from a second session between re-check and claim -> written once (reviewer 2); re-link refused for a
+`.edit` holder who did not do the unlink (binding only, reviewer 4); re-link refused after a later re-link and
+unlink by someone else (R4 ii); R1 console write tools absent and confirm 409 for another operator; R5, R6, R7, R8
+one each.
