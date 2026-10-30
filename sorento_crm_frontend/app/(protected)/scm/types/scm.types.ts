@@ -281,6 +281,8 @@ export interface SalesOrderLine {
   line_no?: number | null;
   sku: string;
   product_name: string;
+  /** SO-LINE-DESC: AutoCount's line description; `null` when none was sent. */
+  description?: string | null;
   qty_ordered: number;
   /** Stamped by create-DO-from-SO (soft link, no hard FK). */
   qty_delivered: number;
