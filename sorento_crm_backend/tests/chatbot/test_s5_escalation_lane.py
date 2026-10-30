@@ -1293,7 +1293,8 @@ def test_out_of_scope_seam_failure_fails_at_looked_up_with_no_partial_assignment
     result = engine_mod.run_turn(envelope, session_factory=session_factory)
 
     assert result.status == "failed"
-    assert result.reply["text"] == parser_mod.PARSER_ERROR_REPLY
+    from tests.chatbot import fail_triage_texts as FT
+    assert result.reply["text"] == FT.H_ESC.format(team="customer service")
     assert all(a["kind"] != "assign_conversation" for a in result.actions)
     assert all(a["kind"] != "add_comment" for a in result.actions)
 
