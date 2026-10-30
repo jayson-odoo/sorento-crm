@@ -25,6 +25,7 @@ from app.services.error_handler import AppException
 from app.utils.multi_value import multi_uuids, multi_values
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -289,6 +290,7 @@ def update_internal(
 
 
 @router.get("/sample-requests/{request_id}/pdf")
+@heavy
 def print_request(
     request_id: str,
     user: dict = Depends(get_current_user),

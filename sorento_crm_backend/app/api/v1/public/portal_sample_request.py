@@ -28,6 +28,7 @@ from app.services.portal_form_visibility_service import resolve_visible_form_typ
 from app.services.portal_service import PortalService
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 router = APIRouter(tags=["public-portal-sample-request"])
 
@@ -224,6 +225,7 @@ def portal_cancel(
 
 
 @router.get("/submissions/sample_request/{request_id}/pdf")
+@heavy
 def portal_pdf(
     request_id: str,
     token: PortalToken = Depends(get_portal_token),

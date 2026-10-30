@@ -37,6 +37,7 @@ from app.services.error_handler import AppException, handle_not_found
 from app.services.reports import ask, spec_set
 from app.services.sales_report_service import TOP_SELLING_N_CEILING, _resolve_products
 from app.services.uuid_list_param import parse_uuid_list
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -218,6 +219,7 @@ def _response(data: dict) -> JSONResponse:
 
 
 @router.get("/report-ask")
+@heavy
 def report_ask(
     request: Request,
     date_from: Optional[date] = Query(

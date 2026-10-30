@@ -110,3 +110,64 @@ def test_fastapi_still_sees_the_handler_signature():
         return {"item": item, "limit": limit}
 
     assert TestClient(app).get("/zz/a?limit=7").json() == {"item": "a", "limit": 7}
+
+
+# ---- the handlers that wear it (PLAN-backend-mem-2-30oct.md S2): exports, reports and upload parsers that build or
+# parse a large file or result in the request. Not LLM-bound handlers (chat turn, AI extract): they wait, not allocate.
+WRAPPED = {
+    "app.api.v1.sales.targets.dealer_targets_template",
+    "app.api.v1.sales.targets.import_dealer_targets",
+    "app.api.v1.projects.sample_requests.print_request",
+    "app.api.v1.projects.order_inquiries.export_order_inquiry_worklist",
+    "app.api.v1.projects.order_inquiries.export_order_inquiry",
+    "app.api.v1.projects.sales_orders.export_autocount_change_list",
+    "app.api.v1.projects.divergences.ingest_sales_order_file",
+    "app.api.v1.public.portal_sample_request.portal_pdf",
+    "app.api.v1.order_management.report_ask.report_ask",
+    "app.api.v1.order_management.orders.bulk_import_orders",
+    "app.api.v1.order_management.orders.import_order_tracking",
+    "app.api.v1.order_management.orders.import_delivery_order_detail",
+    "app.api.v1.order_management.orders.get_outstanding_report",
+    "app.api.v1.order_management.orders.get_sales_report",
+    "app.api.v1.order_management.orders.get_top_selling",
+    "app.api.v1.order_management.customers.import_customers",
+    "app.api.v1.master_data.products.bulk_import_products",
+    "app.api.v1.scm.reorder_levels.preview_level_import",
+    "app.api.v1.scm.reorder_levels.apply_level_import",
+    "app.api.v1.scm.fulfilment.export_consolidated_packing_list",
+    "app.api.v1.scm.fulfilment.export_spo_worksheet",
+    "app.api.v1.scm.fulfilment.preview_supplier_inventory",
+    "app.api.v1.scm.fulfilment.apply_supplier_inventory",
+    "app.api.v1.scm.outstanding_import.preview_outstanding_import",
+    "app.api.v1.scm.purchase_history.preview_order_inquiry",
+    "app.api.v1.scm.purchase_history.apply_order_inquiry",
+    "app.api.v1.procurement.grn.import_grn_listing",
+    "app.api.v1.procurement.grn.import_grn_lines",
+    "app.api.v1.procurement.spo_allocations.import_spo_allocations",
+    "app.api.v1.procurement.packing_lists.import_container_status",
+    "app.api.v1.procurement.cost_price_changes.probe_price_list",
+    "app.api.v1.procurement.cost_price_changes.upload_price_list",
+    "app.api.v1.integrations.autocount_pull.download_pull",
+    "app.api.v1.inventory.stock_position.export_stock_position",
+    "app.api.v1.inventory.stock.export_stock_balance",
+    "app.api.v1.inventory.stock.bulk_import_stock",
+    "app.api.v1.system.modules_runtime.upload_module_zip",
+    "app.api.v1.system.modules_runtime.export_module",
+    "app.api.v1.user_management.contacts.import_contact_access_sheet",
+    "app.api.v1.reports.reports.run_report",
+    "app.api.v1.connector.query",
+    "app.api.v1.list_query.export_rows",
+}
+
+
+def test_exactly_the_listed_handlers_are_heavy():
+    from fastapi.routing import APIRoute
+
+    import app.main
+
+    found = {
+        f"{r.endpoint.__module__}.{r.endpoint.__name__}"
+        for r in app.main.app.routes
+        if isinstance(r, APIRoute) and getattr(r.endpoint, "heavy", False)
+    }
+    assert found == WRAPPED
