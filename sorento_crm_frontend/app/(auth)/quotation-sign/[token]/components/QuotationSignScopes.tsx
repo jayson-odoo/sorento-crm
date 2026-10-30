@@ -34,9 +34,40 @@ import {
   priceError,
   priceIsEditable,
   quantityError,
+  totalAfter,
   type LineEdit,
   type LineEdits,
 } from './quotationSuggest';
+
+/**
+ * A money figure in suggest mode: the new value, and "quoted RM x" beneath it in the same style
+ * as a changed quantity's "quoted X". Unchanged, it is the issued figure alone.
+ */
+function MoneyChange({
+  before,
+  after,
+  className,
+}: {
+  before: string;
+  after: string;
+  className?: string;
+}) {
+  if (compareMoney(after, before) === 0) {
+    return (
+      <span className={cn('tabular-nums', className)}>
+        {formatMyrExact(before)}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex flex-col items-end">
+      <span className={cn('tabular-nums', className)}>
+        {formatMyrExact(after)}
+      </span>
+      <span className="text-xs font-normal text-muted-foreground">{`quoted ${formatMyrExact(before)}`}</span>
+    </span>
+  );
+}
 
 /** The sample workbook's column set, minus the product image. */
 const COLUMNS = 9;
@@ -52,9 +83,13 @@ export type QuotationSignSuggest = {
 /** The suggestions already sent, by line and field, shown in the cells they concern. */
 type Answers = Map<string, QuotationSignAmendmentRow>;
 
-function answersOf(amendment: QuotationSignAmendment | null | undefined): Answers {
+function answersOf(
+  amendment: QuotationSignAmendment | null | undefined,
+): Answers {
   const map: Answers = new Map();
-  (amendment?.rows ?? []).forEach((row) => map.set(`${row.line_id}:${row.field}`, row));
+  (amendment?.rows ?? []).forEach((row) =>
+    map.set(`${row.line_id}:${row.field}`, row),
+  );
   return map;
 }
 
@@ -97,7 +132,11 @@ function SentValue({
   return (
     <span className="flex flex-col items-end gap-0.5">
       <span>{accepted ? suggested : format(issued)}</span>
-      <Badge variant={accepted ? 'success' : 'secondary'} appearance="light" size="sm">
+      <Badge
+        variant={accepted ? 'success' : 'secondary'}
+        appearance="light"
+        size="sm"
+      >
         {accepted ? 'Accepted' : 'Not accepted'}
       </Badge>
       {!accepted && row.decision_reason && (
@@ -150,11 +189,13 @@ function RemovalAnswer({
       <Badge variant={variant} appearance="light" size="sm">
         {words}
       </Badge>
-      {status === 'applied' && row.decision === 'rejected' && row.decision_reason && (
-        <span className="max-w-[160px] whitespace-normal break-words text-xs text-muted-foreground">
-          {`"${row.decision_reason}"`}
-        </span>
-      )}
+      {status === 'applied' &&
+        row.decision === 'rejected' &&
+        row.decision_reason && (
+          <span className="max-w-[160px] whitespace-normal break-words text-xs text-muted-foreground">
+            {`"${row.decision_reason}"`}
+          </span>
+        )}
     </span>
   );
 }
@@ -173,7 +214,9 @@ function text(value: string | null | undefined): string {
  */
 function lineMoney(value: string | null | undefined): string {
   const amount = Number(value ?? 0);
-  return Number.isFinite(amount) && amount === 0 ? '' : formatMyrExact(value ?? '0');
+  return Number.isFinite(amount) && amount === 0
+    ? ''
+    : formatMyrExact(value ?? '0');
 }
 
 /**
@@ -211,19 +254,40 @@ function ScopeTable({
     // inside its own gutter instead of dragging the whole PAGE sideways at 375px.
     // `relative` so the sr-only header label (position: absolute) is clipped by this scroller
     // instead of escaping it and widening the whole page at 375px.
-    <div data-testid="quotation-sign-scroller" className="relative min-w-0 overflow-x-auto">
+    <div
+      data-testid="quotation-sign-scroller"
+      className="relative min-w-0 overflow-x-auto"
+    >
       <table className="w-full text-sm">
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
-            <th className="min-w-[140px] px-2 py-2 text-left font-semibold">Item</th>
-            <th className="min-w-[160px] px-2 py-2 text-left font-semibold">Technical spec</th>
-            <th className="min-w-[200px] px-2 py-2 text-left font-semibold">Description</th>
-            <th className="min-w-[100px] px-2 py-2 text-left font-semibold">Brand</th>
-            <th className="min-w-[120px] px-2 py-2 text-left font-semibold">Product code</th>
-            <th className="min-w-[70px] px-2 py-2 text-right font-semibold">Qty</th>
-            <th className="min-w-[120px] px-2 py-2 text-right font-semibold">Unit rate</th>
-            <th className="min-w-[140px] px-2 py-2 text-left font-semibold">Complete set</th>
-            <th className="min-w-[120px] px-2 py-2 text-right font-semibold">Amount</th>
+            <th className="min-w-[140px] px-2 py-2 text-left font-semibold">
+              Item
+            </th>
+            <th className="min-w-[160px] px-2 py-2 text-left font-semibold">
+              Technical spec
+            </th>
+            <th className="min-w-[200px] px-2 py-2 text-left font-semibold">
+              Description
+            </th>
+            <th className="min-w-[100px] px-2 py-2 text-left font-semibold">
+              Brand
+            </th>
+            <th className="min-w-[120px] px-2 py-2 text-left font-semibold">
+              Product code
+            </th>
+            <th className="min-w-[70px] px-2 py-2 text-right font-semibold">
+              Qty
+            </th>
+            <th className="min-w-[120px] px-2 py-2 text-right font-semibold">
+              Unit rate
+            </th>
+            <th className="min-w-[140px] px-2 py-2 text-left font-semibold">
+              Complete set
+            </th>
+            <th className="min-w-[120px] px-2 py-2 text-right font-semibold">
+              Amount
+            </th>
             {suggest && (
               <th className="w-10 px-1 py-2">
                 <span className="sr-only">Remove</span>
@@ -233,7 +297,9 @@ function ScopeTable({
         </thead>
         <tbody>
           {lines.map((line, index) => {
-            const band = line.band_label?.trim() ? line.band_label.trim() : null;
+            const band = line.band_label?.trim()
+              ? line.band_label.trim()
+              : null;
             const opensBand = band !== null && band !== currentBand;
             if (opensBand) currentBand = band;
             return (
@@ -253,7 +319,9 @@ function ScopeTable({
                 ) : (
                   <tr className="border-t border-border align-top">
                     <td className="px-2 py-2">{text(line.item_label)}</td>
-                    <td className="px-2 py-2 text-muted-foreground">{text(line.technical_spec)}</td>
+                    <td className="px-2 py-2 text-muted-foreground">
+                      {text(line.technical_spec)}
+                    </td>
                     <td className="px-2 py-2">{text(line.description)}</td>
                     <td className="px-2 py-2">{text(line.brand)}</td>
                     <td className="px-2 py-2">{text(line.product_code)}</td>
@@ -281,14 +349,17 @@ function ScopeTable({
                         lineMoney(line.unit_price)
                       )}
                     </td>
-                    <td className="px-2 py-2 text-muted-foreground">{text(line.complete_set)}</td>
+                    <td className="px-2 py-2 text-muted-foreground">
+                      {text(line.complete_set)}
+                    </td>
                     <td className="px-2 py-2 text-right">
                       {amendment && answers.get(`${line.id}:remove`) ? (
                         <span className="flex flex-col items-end gap-0.5">
                           {/* An accepted removal leaves no amount; any other keeps the issued one. */}
                           {!(
                             amendment.status === 'applied' &&
-                            answers.get(`${line.id}:remove`)!.decision === 'accepted'
+                            answers.get(`${line.id}:remove`)!.decision ===
+                              'accepted'
                           ) && <LineAmount line={line} />}
                           <RemovalAnswer
                             row={answers.get(`${line.id}:remove`)!}
@@ -330,9 +401,12 @@ function SuggestRow({
   const pricing = priceIsEditable(line);
   const qtyError = removed ? null : quantityError(edit.quantity);
   const rateError = removed || !pricing ? null : priceError(edit.unit_price);
-  const qtyChanged = !removed && compareMoney(edit.quantity.trim(), line.quantity) !== 0;
+  const qtyChanged =
+    !removed && compareMoney(edit.quantity.trim(), line.quantity) !== 0;
   const rateChanged =
-    !removed && pricing && compareMoney(edit.unit_price.trim(), line.unit_price) !== 0;
+    !removed &&
+    pricing &&
+    compareMoney(edit.unit_price.trim(), line.unit_price) !== 0;
   const inputs = suggest.disabled || removed;
 
   return (
@@ -343,7 +417,9 @@ function SuggestRow({
       )}
     >
       <td className="px-2 py-2">{text(line.item_label)}</td>
-      <td className="px-2 py-2 text-muted-foreground">{text(line.technical_spec)}</td>
+      <td className="px-2 py-2 text-muted-foreground">
+        {text(line.technical_spec)}
+      </td>
       <td className="px-2 py-2">{text(line.description)}</td>
       <td className="px-2 py-2">{text(line.brand)}</td>
       <td className="px-2 py-2">{text(line.product_code)}</td>
@@ -355,11 +431,18 @@ function SuggestRow({
           aria-label={`Quantity on line ${name}`}
           aria-invalid={qtyError ? true : undefined}
           disabled={inputs}
-          className={cn('w-20 text-end tabular-nums', qtyChanged && 'border-warning bg-warning/10')}
-          onChange={(event) => suggest.onEdit(line, { quantity: event.target.value })}
+          className={cn(
+            'w-20 text-end tabular-nums',
+            qtyChanged && 'border-warning bg-warning/10',
+          )}
+          onChange={(event) =>
+            suggest.onEdit(line, { quantity: event.target.value })
+          }
         />
         {qtyError ? (
-          <p className="mt-1 max-w-[120px] whitespace-normal text-xs text-destructive">{qtyError}</p>
+          <p className="mt-1 max-w-[120px] whitespace-normal text-xs text-destructive">
+            {qtyError}
+          </p>
         ) : qtyChanged ? (
           <p className="mt-1 text-xs text-muted-foreground">{`quoted ${formatQty(line.quantity)}`}</p>
         ) : null}
@@ -378,7 +461,9 @@ function SuggestRow({
                 'w-28 text-end tabular-nums',
                 rateChanged && 'border-warning bg-warning/10',
               )}
-              onChange={(event) => suggest.onEdit(line, { unit_price: event.target.value })}
+              onChange={(event) =>
+                suggest.onEdit(line, { unit_price: event.target.value })
+              }
             />
             {rateError ? (
               <p className="mt-1 max-w-[140px] whitespace-normal text-xs text-destructive">
@@ -392,16 +477,25 @@ function SuggestRow({
           <span className="tabular-nums">{lineMoney(line.unit_price)}</span>
         )}
       </td>
-      <td className="px-2 py-2 text-muted-foreground">{text(line.complete_set)}</td>
+      <td className="px-2 py-2 text-muted-foreground">
+        {text(line.complete_set)}
+      </td>
       <td className="px-2 py-2 text-right">
-        {removed ? (
-          <Badge variant="destructive" appearance="light" size="sm">
-            Remove
-          </Badge>
-        ) : line.is_rate_only ? (
+        {/* A removed line keeps its issued amount, struck through with the row; it drops out of
+            the subtotal and the total instead. */}
+        {removed ||
+        line.is_rate_only ||
+        compareMoney(editedAmount(line, edit), line.amount ?? '0') === 0 ? (
           <LineAmount line={line} />
         ) : (
-          <span className="tabular-nums">{lineMoney(editedAmount(line, edit))}</span>
+          <>
+            <span className="block tabular-nums">
+              {lineMoney(editedAmount(line, edit))}
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              {`quoted ${formatMyrExact(line.amount ?? '0')}`}
+            </span>
+          </>
         )}
       </td>
       <td className="px-1 py-1.5 text-center">
@@ -441,21 +535,27 @@ export function QuotationSignScopes({
   grandTotal,
   suggest,
   amendment,
+  action,
 }: {
   scopes: QuotationSignScope[];
   grandTotal: string;
+  /** One control beside the card's title (Suggest changes). */
+  action?: React.ReactNode;
   /** Present while the customer is suggesting changes. */
   suggest?: QuotationSignSuggest;
   /** The suggestions already sent, shown in the cells they concern. */
   amendment?: QuotationSignAmendment | null;
 }) {
   const keys = scopes.map((_, index) => `scope-${index}`);
-  const [open, setOpen] = React.useState<string[]>(scopes.length === 1 ? keys : []);
+  const [open, setOpen] = React.useState<string[]>(
+    scopes.length === 1 ? keys : [],
+  );
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle className="min-w-0 break-words text-sm">Quotation</CardTitle>
+        {action}
       </CardHeader>
       <CardContent className="min-w-0 px-3 py-0 sm:px-6">
         {scopes.length === 0 ? (
@@ -465,17 +565,36 @@ export function QuotationSignScopes({
         ) : (
           <Accordion type="multiple" value={open} onValueChange={setOpen}>
             {scopes.map((scope, index) => (
-              <AccordionItem key={`${scope.scope_label}-${index}`} value={keys[index]}>
+              <AccordionItem
+                key={`${scope.scope_label}-${index}`}
+                value={keys[index]}
+              >
                 <AccordionTrigger>
                   <span className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-left text-sm">
-                    <span className="min-w-0 break-words font-medium">{text(scope.scope_label)}</span>
+                    <span className="min-w-0 break-words font-medium">
+                      {text(scope.scope_label)}
+                    </span>
                     <span className="flex items-center gap-3">
                       <span className="text-muted-foreground">
-                        {scope.lines.length === 1 ? '1 item' : `${scope.lines.length} items`}
+                        {scope.lines.length === 1
+                          ? '1 item'
+                          : `${scope.lines.length} items`}
                       </span>
-                      <span className="font-semibold tabular-nums">
-                        {formatMyrExact(scope.scope_total)}
-                      </span>
+                      {suggest ? (
+                        <MoneyChange
+                          className="font-semibold"
+                          before={scope.scope_total}
+                          after={totalAfter(
+                            scope.lines,
+                            suggest.edits,
+                            scope.scope_total,
+                          )}
+                        />
+                      ) : (
+                        <span className="font-semibold tabular-nums">
+                          {formatMyrExact(scope.scope_total)}
+                        </span>
+                      )}
                     </span>
                   </span>
                 </AccordionTrigger>
@@ -483,9 +602,15 @@ export function QuotationSignScopes({
                     itself scrolls sideways on a phone. */}
                 <AccordionContent className="min-w-0">
                   {scope.lines.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No items under this section.</p>
+                    <p className="text-sm text-muted-foreground">
+                      No items under this section.
+                    </p>
                   ) : (
-                    <ScopeTable lines={scope.lines} suggest={suggest} amendment={amendment} />
+                    <ScopeTable
+                      lines={scope.lines}
+                      suggest={suggest}
+                      amendment={amendment}
+                    />
                   )}
                 </AccordionContent>
               </AccordionItem>
@@ -498,10 +623,24 @@ export function QuotationSignScopes({
             scopes.length > 0 && 'border-t border-border',
           )}
         >
-          <span className="text-sm font-semibold uppercase tracking-wide">Total amount</span>
-          <span className="text-base font-semibold tabular-nums">
-            {formatMyrExact(grandTotal)}
+          <span className="text-sm font-semibold uppercase tracking-wide">
+            Total amount
           </span>
+          {suggest ? (
+            <MoneyChange
+              className="text-base font-semibold"
+              before={grandTotal}
+              after={totalAfter(
+                scopes.flatMap((scope) => scope.lines),
+                suggest.edits,
+                grandTotal,
+              )}
+            />
+          ) : (
+            <span className="text-base font-semibold tabular-nums">
+              {formatMyrExact(grandTotal)}
+            </span>
+          )}
         </div>
       </CardContent>
     </Card>

@@ -8,12 +8,19 @@ import {
   Link2Off,
   MessageSquareText,
   Replace,
-  Send,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -23,24 +30,35 @@ import { signatureValueFrom } from '@/components/common/signatureValue';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { sanitizedHtml } from '@/lib/sanitize';
-import { useQuotationSignMutations, useQuotationSignPage } from '../../hooks/useQuotationSign';
-import { QuotationSignError, type QuotationSignPage } from '../../services/quotationSignService';
-import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
-import { QuotationSignScopes, type QuotationSignSuggest } from './QuotationSignScopes';
 import {
+  useQuotationSignMutations,
+  useQuotationSignPage,
+} from '../../hooks/useQuotationSign';
+import {
+  QuotationSignError,
+  type QuotationSignPage,
+} from '../../services/quotationSignService';
+import {
+  QuotationSignScopes,
+  type QuotationSignSuggest,
+} from './QuotationSignScopes';
+import {
+  changedLineCount,
   editOf,
   hasErrors,
   suggestionBody,
-  suggestionSummary,
   type LineEdits,
 } from './quotationSuggest';
 
 /** Why Sign is off while suggested changes wait for an answer (owner decision Q1 a). */
-const AMENDMENT_OPEN_SENTENCE = 'You can sign once Sorento has answered your suggestions.';
+const AMENDMENT_OPEN_SENTENCE =
+  'You can sign once Sorento has answered your suggestions.';
 
 /** "Quotation No. X", whether or not the ref already carries the label. */
 function quotationLabel(ref: string): string {
-  return /^quotation no\./i.test(ref.trim()) ? ref.trim() : `Quotation No. ${ref.trim()}`;
+  return /^quotation no\./i.test(ref.trim())
+    ? ref.trim()
+    : `Quotation No. ${ref.trim()}`;
 }
 
 function text(value: string | null | undefined): string {
@@ -88,7 +106,9 @@ function Letterhead({ page }: { page: QuotationSignPage }) {
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Quotation from
             </p>
-            <p className="min-w-0 break-words text-base font-semibold">{text(page.sender_name)}</p>
+            <p className="min-w-0 break-words text-base font-semibold">
+              {text(page.sender_name)}
+            </p>
           </div>
         </div>
 
@@ -97,10 +117,15 @@ function Letterhead({ page }: { page: QuotationSignPage }) {
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               To
             </p>
-            <p className="min-w-0 break-words text-sm font-medium">{text(page.recipient_name)}</p>
+            <p className="min-w-0 break-words text-sm font-medium">
+              {text(page.recipient_name)}
+            </p>
             {lines.length > 0 ? (
               lines.map((row) => (
-                <p key={row} className="min-w-0 break-words text-sm text-muted-foreground">
+                <p
+                  key={row}
+                  className="min-w-0 break-words text-sm text-muted-foreground"
+                >
                   {row}
                 </p>
               ))
@@ -115,11 +140,17 @@ function Letterhead({ page }: { page: QuotationSignPage }) {
 
           <div className="min-w-0 space-y-2 md:justify-self-end">
             <div className="flex gap-2 text-sm">
-              <span className="w-28 shrink-0 text-muted-foreground">Quotation No.</span>
-              <span className="min-w-0 break-words font-medium">{text(page.our_ref)}</span>
+              <span className="w-28 shrink-0 text-muted-foreground">
+                Quotation No.
+              </span>
+              <span className="min-w-0 break-words font-medium">
+                {text(page.our_ref)}
+              </span>
             </div>
             <div className="flex gap-2 text-sm">
-              <span className="w-28 shrink-0 text-muted-foreground">Revision</span>
+              <span className="w-28 shrink-0 text-muted-foreground">
+                Revision
+              </span>
               <span className="font-medium">{`R${page.issue_no}`}</span>
             </div>
             <div className="flex gap-2 text-sm">
@@ -128,8 +159,12 @@ function Letterhead({ page }: { page: QuotationSignPage }) {
             </div>
             {salesContact && (
               <div className="flex gap-2 text-sm">
-                <span className="w-28 shrink-0 text-muted-foreground">Sales contact</span>
-                <span className="min-w-0 break-words font-medium">{salesContact}</span>
+                <span className="w-28 shrink-0 text-muted-foreground">
+                  Sales contact
+                </span>
+                <span className="min-w-0 break-words font-medium">
+                  {salesContact}
+                </span>
               </div>
             )}
           </div>
@@ -151,7 +186,15 @@ function Letterhead({ page }: { page: QuotationSignPage }) {
  * Through `sanitizedHtml` because the stored copy is editable prose - untrusted input no matter
  * who last typed in it - and this page renders it for somebody outside the company.
  */
-function ProsePanel({ title, html, empty }: { title: string; html: string | null; empty: string }) {
+function ProsePanel({
+  title,
+  html,
+  empty,
+}: {
+  title: string;
+  html: string | null;
+  empty: string;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -164,7 +207,9 @@ function ProsePanel({ title, html, empty }: { title: string; html: string | null
             dangerouslySetInnerHTML={sanitizedHtml(html)}
           />
         ) : (
-          <p className="min-w-0 break-words text-sm text-muted-foreground">{empty}</p>
+          <p className="min-w-0 break-words text-sm text-muted-foreground">
+            {empty}
+          </p>
         )}
       </CardContent>
     </Card>
@@ -189,14 +234,11 @@ function CustomerSignature({
   token,
   signerName,
   onSignerName,
-  onSuggest,
 }: {
   page: QuotationSignPage;
   token: string;
   signerName: string;
   onSignerName: (name: string) => void;
-  /** Opens suggest mode; null while it is already open. */
-  onSuggest: (() => void) | null;
 }) {
   const { accept } = useQuotationSignMutations(token);
   const named = signerName.trim().length > 0;
@@ -218,7 +260,9 @@ function CustomerSignature({
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="min-w-0 break-words text-sm">
-            {['Accepted by', page.customer_signature?.signer_name?.trim()].filter(Boolean).join(' ')}
+            {['Accepted by', page.customer_signature?.signer_name?.trim()]
+              .filter(Boolean)
+              .join(' ')}
           </CardTitle>
           <Badge variant="success" appearance="light">
             <CheckCircle2 className="size-3.5" aria-hidden />
@@ -245,7 +289,10 @@ function CustomerSignature({
               'Your signature'
             }
             extraMetadata={[
-              { label: 'IP address', value: page.customer_signature?.ip_address ?? null },
+              {
+                label: 'IP address',
+                value: page.customer_signature?.ip_address ?? null,
+              },
             ]}
           />
         </CardContent>
@@ -258,7 +305,9 @@ function CustomerSignature({
     return (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="min-w-0 break-words text-sm">Replaced</CardTitle>
+          <CardTitle className="min-w-0 break-words text-sm">
+            Replaced
+          </CardTitle>
           <Badge variant="secondary" appearance="light">
             <Replace className="size-3.5" aria-hidden />
             Replaced
@@ -274,7 +323,10 @@ function CustomerSignature({
   }
 
   // Answered: the outcome is in the table's cells; this says so once, and what happens next.
-  if (page.sign_blocked_reason === 'amendment_applied' && page.amendment_request) {
+  if (
+    page.sign_blocked_reason === 'amendment_applied' &&
+    page.amendment_request
+  ) {
     // Counted by LINE, as the customer changed them: a line counts as accepted when any of its
     // suggestions was.
     const rows = page.amendment_request.rows;
@@ -286,7 +338,9 @@ function CustomerSignature({
     return (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="min-w-0 break-words text-sm">Your suggestions</CardTitle>
+          <CardTitle className="min-w-0 break-words text-sm">
+            Your suggestions
+          </CardTitle>
           <Badge variant="info" appearance="light">
             <MessageSquareText className="size-3.5" aria-hidden />
             Answered
@@ -313,7 +367,9 @@ function CustomerSignature({
     return (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="min-w-0 break-words text-sm">Your response</CardTitle>
+          <CardTitle className="min-w-0 break-words text-sm">
+            Your response
+          </CardTitle>
           <Badge variant="warning" appearance="light">
             <MessageSquareText className="size-3.5" aria-hidden />
             Changes requested
@@ -354,7 +410,11 @@ function CustomerSignature({
   function showMissingStep() {
     if (waiting) return;
     setNudged(true);
-    const target = !named ? nameRef.current : !termsOk ? tickRef.current : padRef.current;
+    const target = !named
+      ? nameRef.current
+      : !termsOk
+        ? tickRef.current
+        : padRef.current;
     target?.scrollIntoView?.({ block: 'center' });
     if (!named || !termsOk) target?.focus();
   }
@@ -362,7 +422,9 @@ function CustomerSignature({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="min-w-0 break-words text-sm">Accepted by</CardTitle>
+        <CardTitle className="min-w-0 break-words text-sm">
+          Accepted by
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 py-5">
         {waiting && page.amendment_request ? (
@@ -405,7 +467,10 @@ function CustomerSignature({
               disabled={accept.isPending}
               onCheckedChange={(next) => setTicked(next === true)}
             />
-            <Label htmlFor="quotation-sign-terms" className="min-w-0 break-words leading-snug">
+            <Label
+              htmlFor="quotation-sign-terms"
+              className="min-w-0 break-words leading-snug"
+            >
               I have read and agree to the Terms and conditions.
             </Label>
           </div>
@@ -432,7 +497,9 @@ function CustomerSignature({
                   aria-live="polite"
                   className={cn(
                     'order-last flex min-w-0 basis-full items-start gap-1.5 text-sm sm:order-none sm:basis-0 sm:flex-1',
-                    nudged ? 'font-medium text-warning' : 'text-muted-foreground',
+                    nudged
+                      ? 'font-medium text-warning'
+                      : 'text-muted-foreground',
                   )}
                 >
                   <HintIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -458,91 +525,99 @@ function CustomerSignature({
         </div>
 
         {accept.isPending && (
-          <p className="text-sm text-muted-foreground">Saving your signature...</p>
-        )}
-
-        {/* The second answer, beside the first rather than hidden below the fold. Stacked at
-            375px: a full-width button next to a sentence on one row clips both on a phone. */}
-        {!waiting && onSuggest && (
-          <div
-            data-testid="quotation-sign-actions"
-            className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <p className="min-w-0 break-words text-sm text-muted-foreground">
-              Not ready to sign this?
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full sm:w-auto"
-              disabled={accept.isPending}
-              onClick={onSuggest}
-            >
-              Suggest changes
-            </Button>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            Saving your signature...
+          </p>
         )}
       </CardContent>
     </Card>
   );
 }
 
-/**
- * Suggest mode's one summary row: how many lines changed, the total before and after, Discard
- * and Send. Stacked on a phone so nothing clips at 375px.
- */
-function SuggestSummary({
-  lines,
-  before,
-  after,
+/** Suggest mode's bar: Discard and Send suggestions, right-aligned, and nothing else. */
+function SuggestBar({
   canSend,
   sending,
   onSend,
   onDiscard,
 }: {
-  lines: number;
-  before: string;
-  after: string;
   canSend: boolean;
   sending: boolean;
   onSend: () => void;
   onDiscard: () => void;
 }) {
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:gap-6">
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">Your suggestions</p>
-          <p className="text-sm font-medium">{lines === 1 ? '1 line' : `${lines} lines`}</p>
-        </div>
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">Total</p>
-          <p className="break-words text-sm font-medium tabular-nums">
-            {`${formatMyrExact(before)} → ${formatMyrExact(after)}`}
-          </p>
-        </div>
-        <div className="flex flex-col gap-2 sm:ms-auto sm:flex-row">
+    <div className="flex justify-end gap-2">
+      <Button
+        type="button"
+        variant="ghost"
+        disabled={sending}
+        onClick={onDiscard}
+      >
+        Discard
+      </Button>
+      <Button type="button" disabled={!canSend || sending} onClick={onSend}>
+        Send suggestions
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The confirm step: the optional note, and the one Send that actually sends. Cancel closes it and
+ * keeps every edit (and the note) where it was.
+ */
+function SuggestConfirm({
+  open,
+  note,
+  canSend,
+  sending,
+  onNote,
+  onSend,
+  onCancel,
+}: {
+  open: boolean;
+  note: string;
+  canSend: boolean;
+  sending: boolean;
+  onNote: (note: string) => void;
+  onSend: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-md">
+        <DialogHeader>
+          <DialogTitle>Send your suggestions</DialogTitle>
+        </DialogHeader>
+        <DialogBody className="space-y-1.5">
+          <Label htmlFor="quotation-suggest-note">
+            Anything else (optional)
+          </Label>
+          <Textarea
+            id="quotation-suggest-note"
+            rows={3}
+            value={note}
+            maxLength={4000}
+            disabled={sending}
+            onChange={(event) => onNote(event.target.value)}
+          />
+        </DialogBody>
+        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button
             type="button"
             variant="ghost"
-            className="w-full sm:w-auto"
             disabled={sending}
-            onClick={onDiscard}
+            onClick={onCancel}
           >
-            Discard
+            Cancel
           </Button>
-          <Button
-            type="button"
-            className="w-full sm:w-auto"
-            disabled={!canSend || sending}
-            onClick={onSend}
-          >
-            <Send className="size-4" aria-hidden />
-            Send suggestions
+          <Button type="button" disabled={!canSend || sending} onClick={onSend}>
+            Send
           </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -556,7 +631,13 @@ function SuggestSummary({
  * unreadable - and `min-w-0` so the table scrolls in its own gutter rather than dragging the page
  * sideways at 375px.
  */
-function PageShell({ children, testId }: { children: React.ReactNode; testId: string }) {
+function PageShell({
+  children,
+  testId,
+}: {
+  children: React.ReactNode;
+  testId: string;
+}) {
   return (
     <div
       data-testid={testId}
@@ -590,16 +671,22 @@ export function QuotationSignClient({ token }: { token: string }) {
   }
 
   if (query.isError || !query.data) {
-    const dead = query.error instanceof QuotationSignError && query.error.isDeadLink;
+    const dead =
+      query.error instanceof QuotationSignError && query.error.isDeadLink;
     // A dead link is the expected end of an expired invitation, so it reads as a plain fact with
     // the one action that helps. Anything else is a fault the reader can retry out of.
     return (
       <PageShell testId="quotation-sign-unavailable">
         <Card>
           <CardContent className="px-4 py-10 text-center sm:px-6">
-            <Link2Off className="mx-auto size-6 text-muted-foreground" aria-hidden />
+            <Link2Off
+              className="mx-auto size-6 text-muted-foreground"
+              aria-hidden
+            />
             <h1 className="mt-3 text-base font-semibold">
-              {dead ? 'This link is no longer valid' : 'This quotation could not be loaded'}
+              {dead
+                ? 'This link is no longer valid'
+                : 'This quotation could not be loaded'}
             </h1>
             <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
               {dead
@@ -631,15 +718,23 @@ export function QuotationSignClient({ token }: { token: string }) {
  * The loaded page. Its own component so the name and the suggest-mode state can start from the
  * page itself: the name the customer types travels with a signature and with suggestions alike.
  */
-function SignPageBody({ page, token }: { page: QuotationSignPage; token: string }) {
+function SignPageBody({
+  page,
+  token,
+}: {
+  page: QuotationSignPage;
+  token: string;
+}) {
   const { submitAmendment } = useQuotationSignMutations(token);
   const [signerName, setSignerName] = React.useState(page.attn_name ?? '');
   const [suggesting, setSuggesting] = React.useState(false);
   const [edits, setEdits] = React.useState<LineEdits>({});
   const [note, setNote] = React.useState('');
+  const [confirming, setConfirming] = React.useState(false);
 
   const discard = React.useCallback(() => {
     setSuggesting(false);
+    setConfirming(false);
     setEdits({});
     setNote('');
   }, []);
@@ -657,13 +752,26 @@ function SignPageBody({ page, token }: { page: QuotationSignPage; token: string 
       onToggleRemove: (line) =>
         setEdits((previous) => {
           const current = editOf(previous, line);
-          return { ...previous, [line.id]: { ...current, remove: !current.remove } };
+          return {
+            ...previous,
+            [line.id]: { ...current, remove: !current.remove },
+          };
         }),
     }),
     [edits, sending],
   );
-  const summary = suggestionSummary(page.scopes, edits, page.grand_total);
-  const canSend = !hasErrors(page.scopes, edits) && (summary.lines > 0 || note.trim() !== '');
+  const valid = !hasErrors(page.scopes, edits);
+  // The bar opens the confirm step once every value can be sent; the final Send needs a change
+  // or a note, the same rule the server applies.
+  const canSend =
+    valid && (changedLineCount(page.scopes, edits) > 0 || note.trim() !== '');
+  // Offered only where a suggestion can be taken: unsigned, current, nothing waiting or applied
+  // with a revision, and no older free-text request settled on this page.
+  const canSuggest =
+    !suggesting &&
+    !page.is_accepted &&
+    page.sign_blocked_reason === null &&
+    !(page.is_changes_requested && !page.amendment_request);
 
   const preparedBy = firstName(
     page.sorento_signature?.signer_name,
@@ -682,19 +790,11 @@ function SignPageBody({ page, token }: { page: QuotationSignPage; token: string 
       />
 
       {suggesting && (
-        <SuggestSummary
-          lines={summary.lines}
-          before={page.grand_total}
-          after={summary.after}
-          canSend={canSend}
+        <SuggestBar
+          canSend={valid}
           sending={sending}
           onDiscard={discard}
-          onSend={() => {
-            if (!canSend) return;
-            submitAmendment.mutate(suggestionBody(page.scopes, edits, note, signerName), {
-              onSuccess: discard,
-            });
-          }}
+          onSend={() => valid && setConfirming(true)}
         />
       )}
 
@@ -703,21 +803,37 @@ function SignPageBody({ page, token }: { page: QuotationSignPage; token: string 
         grandTotal={page.grand_total}
         suggest={suggesting ? suggest : undefined}
         amendment={page.amendment_request}
+        action={
+          canSuggest ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSuggesting(true)}
+            >
+              Suggest changes
+            </Button>
+          ) : null
+        }
       />
 
-      {suggesting && (
-        <div className="max-w-xl space-y-1.5">
-          <Label htmlFor="quotation-suggest-note">Anything else (optional)</Label>
-          <Textarea
-            id="quotation-suggest-note"
-            rows={2}
-            value={note}
-            maxLength={4000}
-            disabled={sending}
-            onChange={(event) => setNote(event.target.value)}
-          />
-        </div>
-      )}
+      <SuggestConfirm
+        open={suggesting && confirming}
+        note={note}
+        canSend={canSend}
+        sending={sending}
+        onNote={setNote}
+        onCancel={() => setConfirming(false)}
+        onSend={() => {
+          if (!canSend) return;
+          submitAmendment.mutate(
+            suggestionBody(page.scopes, edits, note, signerName),
+            {
+              onSuccess: discard,
+            },
+          );
+        }}
+      />
 
       <ProsePanel
         title="Terms and conditions"
@@ -751,7 +867,6 @@ function SignPageBody({ page, token }: { page: QuotationSignPage; token: string 
             token={token}
             signerName={signerName}
             onSignerName={setSignerName}
-            onSuggest={suggesting ? null : () => setSuggesting(true)}
           />
         </div>
       </div>

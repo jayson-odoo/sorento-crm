@@ -19,7 +19,11 @@ import type {
  * at most two decimals. The server still checks; this keeps a bad value from being sent at all.
  */
 
-export type LineEdit = { quantity: string; unit_price: string; remove: boolean };
+export type LineEdit = {
+  quantity: string;
+  unit_price: string;
+  remove: boolean;
+};
 export type LineEdits = Record<string, LineEdit>;
 
 const AMOUNT = /^\d+(\.\d{1,2})?$/;
@@ -36,7 +40,11 @@ export function priceIsEditable(line: QuotationSignLine): boolean {
 
 /** What the inputs open at: the issued values, as the page prints them. */
 export function startingEdit(line: QuotationSignLine): LineEdit {
-  return { quantity: formatQty(line.quantity), unit_price: line.unit_price, remove: false };
+  return {
+    quantity: formatQty(line.quantity),
+    unit_price: line.unit_price,
+    remove: false,
+  };
 }
 
 export function editOf(edits: LineEdits, line: QuotationSignLine): LineEdit {
@@ -66,9 +74,15 @@ function differs(value: string, issued: string): boolean {
 export function changeOf(
   line: QuotationSignLine,
   edit: LineEdit,
-): { quantity: string | null; unit_price: string | null; remove: boolean } | null {
+): {
+  quantity: string | null;
+  unit_price: string | null;
+  remove: boolean;
+} | null {
   if (edit.remove) return { quantity: null, unit_price: null, remove: true };
-  const quantity = differs(edit.quantity, line.quantity) ? edit.quantity.trim() : null;
+  const quantity = differs(edit.quantity, line.quantity)
+    ? edit.quantity.trim()
+    : null;
   const price =
     priceIsEditable(line) && differs(edit.unit_price, line.unit_price)
       ? edit.unit_price.trim()
@@ -78,7 +92,10 @@ export function changeOf(
 }
 
 /** True when any line that is not staged for removal holds a value that cannot be sent. */
-export function hasErrors(scopes: QuotationSignScope[], edits: LineEdits): boolean {
+export function hasErrors(
+  scopes: QuotationSignScope[],
+  edits: LineEdits,
+): boolean {
   return scopes.some((scope) =>
     scope.lines.some((line) => {
       const edit = edits[line.id];
@@ -95,7 +112,10 @@ export function hasErrors(scopes: QuotationSignScope[], edits: LineEdits): boole
 export function editedAmount(line: QuotationSignLine, edit: LineEdit): string {
   if (edit.remove || line.is_rate_only) return '0.00';
   return (
-    multiplyMoney(edit.quantity.trim(), priceIsEditable(line) ? edit.unit_price.trim() : line.unit_price) ??
+    multiplyMoney(
+      edit.quantity.trim(),
+      priceIsEditable(line) ? edit.unit_price.trim() : line.unit_price,
+    ) ??
     line.amount ??
     '0.00'
   );
@@ -122,25 +142,37 @@ export function suggestionBody(
   };
 }
 
-/** How many lines changed, and the total before and after the changes. */
-export function suggestionSummary(
+/** How many lines differ from what was issued (a removal counts). */
+export function changedLineCount(
   scopes: QuotationSignScope[],
   edits: LineEdits,
-  grandTotal: string,
-): { lines: number; after: string } {
+): number {
   let count = 0;
-  const removed: string[] = [];
-  const added: string[] = [];
   for (const scope of scopes) {
     for (const line of scope.lines) {
-      const edit = editOf(edits, line);
-      if (!changeOf(line, edit)) continue;
-      count += 1;
-      removed.push(line.is_rate_only ? '0.00' : (line.amount ?? '0.00'));
-      added.push(editedAmount(line, edit));
+      if (changeOf(line, editOf(edits, line))) count += 1;
     }
   }
-  const after =
-    subtractMoney(sumMoney([grandTotal, ...added]), sumMoney(removed)) ?? grandTotal;
-  return { lines: count, after };
+  return count;
+}
+
+/**
+ * What `base` (a section subtotal, or the grand total, as issued) comes to with the edits on
+ * `lines` applied: each changed line's issued amount out, its edited amount in. A removed or
+ * rate-only line adds nothing, by the same rule as every total.
+ */
+export function totalAfter(
+  lines: QuotationSignLine[],
+  edits: LineEdits,
+  base: string,
+): string {
+  const removed: string[] = [];
+  const added: string[] = [];
+  for (const line of lines) {
+    const edit = editOf(edits, line);
+    if (!changeOf(line, edit)) continue;
+    removed.push(line.is_rate_only ? '0.00' : (line.amount ?? '0.00'));
+    added.push(editedAmount(line, edit));
+  }
+  return subtractMoney(sumMoney([base, ...added]), sumMoney(removed)) ?? base;
 }
