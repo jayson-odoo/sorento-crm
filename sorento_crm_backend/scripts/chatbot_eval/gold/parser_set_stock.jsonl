@@ -6,5 +6,3 @@
 {"id": "ss-stem-06", "message": "srtwc8840 got stock or not", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
 {"id": "ss-full-01", "message": "stock SRTWC8826-S", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
 {"id": "ss-full-02", "message": "SRTWC7405-RL-S-PJ x 6 stock", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
-{"id": "ss-member-01", "message": "stock SRTWC7405-SC", "expect": {"canonical": "SRTWC7405-SC", "domain_hint": "inventory", "intent_hint": "check_stock"}}
-{"id": "ss-member-02", "message": "SRTWCY8826 how many left", "expect": {"canonical": "SRTWCY8826", "domain_hint": "inventory", "intent_hint": "check_stock"}}

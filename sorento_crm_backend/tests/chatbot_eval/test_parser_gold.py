@@ -208,9 +208,11 @@ SET_STOCK = BACKEND / "scripts" / "chatbot_eval" / "gold" / "parser_set_stock.js
 
 
 def test_set_stock_gold_file():
-    """CHATBOT-SET-STOCK: no prompt change, so a catalogue code or a set code the shortlist
-    does not list stays without a canonical_code (the resolver finds the sets); a member's
-    own code on file is picked as itself."""
+    """CHATBOT-SET-STOCK: no prompt change, so a catalogue code or a set code stays without a
+    canonical_code (the resolver finds the sets). Runnable on any parser version, the production
+    label included (crew live run 30 Oct, v189). The member-code rows (a code on file picked as
+    itself) need the CLOSED LISTS shortlist, so they live in `parser_code_picks.jsonl`
+    (`cp-member-`)."""
     rows = pg.load_gold(SET_STOCK)
     ids = [r["id"] for r in rows]
     assert len(ids) == len(set(ids))
@@ -219,10 +221,8 @@ def test_set_stock_gold_file():
     assert any(r["message"] == "stock srtwc8826" for r in rows)
     for r in rows:
         assert r["expect"]["domain_hint"] == "inventory", r["id"]
-        if r["id"].startswith(("ss-stem-", "ss-full-")):
-            assert r["expect"]["canonical"] is None, r["id"]
-        else:
-            assert r["expect"]["canonical"], r["id"]
+        assert r["id"].startswith(("ss-stem-", "ss-full-")), r["id"]
+        assert r["expect"]["canonical"] is None, r["id"]
 
 
 def test_committed_gold_file():
