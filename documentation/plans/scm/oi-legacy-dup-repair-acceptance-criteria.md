@@ -14,8 +14,9 @@ Plan: `PLAN-oi-legacy-dup-repair-30oct.md`.
 - **AC-5 restate.** `--apply` sets a restate-eligible squatter's qty and date to the skipped row's,
   writes `previous_qty` / `previous_delivery_date`, appends a note, and flips `acknowledged` to
   `changed` with `changed_at` set; an `awaiting` row stays `awaiting`. The sibling row is untouched.
-- **AC-6 hold.** A cancelled squatter, a squatter with a link, and an actioned squatter are
-  reported with their reason and never written.
+- **AC-6 hold.** A cancelled, linked, actioned, edited-since-import, reserve-requested or bundled
+  squatter, and one sharing its line with another live row (two copies on one line, or a real
+  instruction beside it), is reported with its reason and never written.
 - **AC-7 dry run writes nothing.** Without `--apply` no row changes.
 - **AC-8 count guard.** `--apply` with an `--expect` that differs from the restate count found
   refuses and writes nothing.

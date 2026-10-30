@@ -60,12 +60,14 @@ squatters. The 18th (OI-2609-0676 M3155) escapes crew's rule because its qty was
 ## 3. Repair rule (per row, from evidence)
 
 - **Restate in place** when C is `raised`, has no `order_inquiry_links`, no reserve request rows,
-  is not a bundle anchor, and still carries the sheet's qty and date (untouched since import):
+  is not a bundle anchor, still carries the sheet's qty and date (untouched since import), and is the
+  only live row on its line (review of PR #1996: two copies on one line would both get the full qty):
   set `qty` / `delivery_date` to the skipped row's qty / date (which equal the line's). This is
   exactly the row the skipped instruction would have raised, on the line it names. Write
   `previous_qty` / `previous_delivery_date` (the Was / Now pair), append a note naming both sheet
   rows, and if purchasing had acknowledged it set `ack_state = changed`, `changed_at = now`
-  (purchasing must re-acknowledge 26, not 2). One `log_audit` EVENT per row.
+  (purchasing must re-acknowledge 26, not 2). One `log_audit` EVENT per row, then
+  `refresh_link_state` on the restated rows, as settle-in-place does.
 - **Hold, report only** (no write): cancelled rows, placed/partly-linked rows with links, and an
   actioned row. Each is printed with the reason. Delete was rejected: it would leave the line with
   no instruction at all, while the skipped row proves what the line should carry.
