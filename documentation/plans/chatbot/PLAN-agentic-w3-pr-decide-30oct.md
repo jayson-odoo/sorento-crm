@@ -1,8 +1,35 @@
 # PLAN: Agentic W3 - approve / reject a purchase request through the agent
 
-Status: Plan. Behaviour card posted as crew-ask; build waits on the answers, then red-first. Full track (new
-write surface on a form with outward notifications; reuses the existing approval permission, no new slug, no
-migration expected).
+Status: Build done (backend + console), red-first; review and browser pass next. Full track (new write surface
+on a form with outward notifications; reuses the existing approval permission, no new slug, no migration).
+
+## Owner rulings (30 Oct ~23:15)
+
+- Q1 (a): console Undo countdown inside the grace window; after commit, an undo write through the system's
+  undo (slug, guardrail, reason).
+- Q2 (a): same rule as the screen; no self-approval block.
+- Q3 (a): purchase requests and sponsorship forms.
+- Q4: the agent phrases its own sentence; the confirm block is system-rendered facts (number, kind, customer,
+  title, amount, decision, who is told) and the server validates the args, never the prose. That is how #1999
+  already works (model text + code-built proposal lines), so it is reused unchanged.
+- Q5: no agent-only rules. Agent writes are system service calls with the user's permissions and the system's
+  validation. The rejection-reason rule moved into `PurchaseRequestService.decision_comments` and the premise
+  into `assert_decidable`; the screen path and the agent both call them.
+
+## What was built
+
+| Piece | Where |
+| --- | --- |
+| Read `crm_purchase_requests_list` (list route + own-scope guard, as the user) | `agent/writes.py` W3 section |
+| Write `crm_purchase_request_decide` (route `decide_purchase_request_approval`, browser channel so the grace window applies) | `agent/writes.py` |
+| Write `crm_purchase_request_action_undo` (cancel route inside the window; undo route after commit) | `agent/writes.py` |
+| Shared decision rules | `procurement_service.py` `assert_decidable`, `decision_comments` |
+| Withdraw a parked step | `agent/actions.py` `withdraw`, `POST /system/chatbot/agent/actions/{id}/steps/{n}/withdraw` |
+| Step `waiting` (until `commit_at`) | `actions.waiting_of`, schema `AgentStepWaiting` |
+| Console Undo countdown (reuses `TakeoverCountdown`) | `AgentConsole.tsx` `WaitingStep` |
+
+Known limit: a parked decision the sweep later finds ineligible (the form moved underneath it) shows `done` in
+the agent ledger; the form's own banner and `last_outcome` carry the truth, as on the screen.
 Lane AGENTIC-W3-PR-DECIDE. Builds on PR #1999 (write foundation, merged) and its plan
 `PLAN-agentic-p3-writes-30oct.md` slice 5; card `CARD-agentic-p2-p3-30oct.md` row W3.
 
@@ -138,10 +165,18 @@ nobody is told.` (grace off): `Approved PR-25xxx.`
   model asks when none was given; (b) the model may phrase the reason. Recommend **(a)**: the reason goes to the
   dealer on WhatsApp, so it must be what the user said.
 
-## Test list (red first, Postgres)
+## Tests (red first, Postgres)
 
-To be filled after the answers: exposure by slug; propose writes nothing; not pending / voided / out of reach /
-lock refused at proposal; confirm approves and rejects (status, comments, notifications stubbed, audit actor);
-re-check after an on-screen decision; own-scope limited user refused; grace window parks and the ledger shows
-`commit_at`; withdraw inside the window; undo after commit (eligible, refused when moved on, slug missing);
-reason required; console operator without the slug refused.
+`tests/chatbot/agent/test_agent_writes_purchase_request.py` (27): exposure by slug; list (status, kind,
+own-only); propose writes nothing and names the facts; reason required in the service's words; decided /
+not pending / voided / own-scope / handling lock / parked action refused; confirm approve and reject (status,
+comments, rejecter, sends, audit actor, form-action ledger); on-screen decision after proposal; grace window
+parks; slug removed; one full turn.
+
+`tests/chatbot/agent/test_agent_writes_pr_undo.py` (20): withdraw inside the window; someone else's waiting
+action; undo needs the reason and the slug; undo reverses; the last action is the one named; voided refused;
+nothing to undo; withdraw proposal rejected once applied; console withdraw (waiting window, cancelled as the
+linked user, applied, never waited, bad index, operator without slug, other contact); `waiting` drops at
+`commit_at`.
+
+FE: `AgentConsole.withdraw.test.tsx` (4), `agentConsoleService.test.ts` (+2).
