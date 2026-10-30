@@ -271,6 +271,10 @@ class Settings(BaseSettings):
     # window per IP. Generous for a dealer tapping through a photo list, tight for a guesser.
     rate_limit_file_link_max: int = 60
     rate_limit_file_link_window_seconds: int = 60
+    # QUOTE-CUSTOMER-AMEND: suggested-changes submits on a quotation link, per token AND per IP.
+    # One open request per issue already caps what reaches staff; this caps the attempts.
+    rate_limit_quotation_amendment_max: int = 10
+    rate_limit_quotation_amendment_window_seconds: int = 3600
 
     # identity S1 (#1280): an optional override for the WhatsApp template use
     # case a phone sign-in code sends under. Ships empty: owner ruling of
