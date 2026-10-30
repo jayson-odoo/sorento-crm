@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ClipboardList,
   Clock,
@@ -56,7 +57,7 @@ import {
   useRejectProject,
 } from '../../_shared/hooks/useProjects';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
-import { isProjectApproved } from '../../_shared/lib/projectApproval';
+import { canWorkOnProject, isProjectApproved } from '../../_shared/lib/projectApproval';
 import {
   ApprovalStatePill,
   isAwaitingDecision,
@@ -71,14 +72,14 @@ import {
 } from './ProjectStatusAction';
 import { ProjectStatusPill } from './ProjectStatusPill';
 import { ProjectActivityPanel } from './ProjectActivityPanel';
-import { ProjectDocumentsPanel } from './ProjectDocumentsPanel';
+import { ProjectDocumentsPanel, UploadDialog } from './ProjectDocumentsPanel';
+import { projectDocumentsKey, useProjectDocuments } from '../../_shared/hooks/useProjectDocuments';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
 import { ReassignProjectDialog } from './ReassignProjectDialog';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
 import { SampleRequestsPanel } from './SampleRequestsPanel';
-import { SamplesPanel } from './SamplesPanel';
 import { SponsorshipsPanel } from './SponsorshipsPanel';
 import { StakeholdersPanel } from './StakeholdersPanel';
 import { TasksPanel } from './TasksPanel';
@@ -95,23 +96,22 @@ import { TasksPanel } from './TasksPanel';
  */
 export const TABS = [
   { id: 'overview', label: 'Overview', icon: Info },
+  { id: 'documents', label: 'Documents', icon: Paperclip },
+  { id: 'quotations', label: 'Quotation', icon: FileText },
+  { id: 'sample-requests', label: 'Samples Request', icon: ClipboardList },
+  { id: 'sponsorships', label: 'Sponsorship Form', icon: HandCoins },
+  // PO is the old Orders tab (id kept so links hold); SO lists every sales order.
+  { id: 'orders', label: 'PO', icon: ShoppingCart },
+  { id: 'sales-orders', label: 'SO', icon: Package },
   { id: 'stakeholders', label: 'Stakeholders', icon: Users },
   { id: 'tasks', label: 'Tasks', icon: ListChecks },
-  { id: 'quotations', label: 'Quotations', icon: FileText },
-  { id: 'sample-requests', label: 'Sample requests', icon: ClipboardList },
-  { id: 'samples', label: 'Samples', icon: Package },
-  { id: 'sponsorships', label: 'Sponsorships', icon: HandCoins },
-  // PM-SIMPLIFY AC-O1: one Orders tab where POs, Delivery schedules and Sales orders were.
-  // A PO's schedule and sales orders live on the PO's own page.
-  { id: 'orders', label: 'Orders', icon: ShoppingCart },
   { id: 'activity', label: 'Activity', icon: History },
-  { id: 'documents', label: 'Documents', icon: Paperclip },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
 
-/** The three tabs Orders replaced; their old links (and bookmarks) open Orders. */
-const LEGACY_ORDER_TABS = ['pos', 'schedules', 'sales-orders'];
+/** The retired order tabs; their old links (and bookmarks) open Orders. */
+const LEGACY_ORDER_TABS = ['pos', 'schedules'];
 
 // Rung key -> the form its forward stage action opens.
 const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
@@ -121,6 +121,7 @@ const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
 };
 
 export function resolveProjectTab(requested: string | null): TabId {
+  if (requested === 'samples') return 'sample-requests';
   if (requested && LEGACY_ORDER_TABS.includes(requested)) return 'orders';
   return requested && TABS.some((tab) => tab.id === requested)
     ? (requested as TabId)
@@ -136,6 +137,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const { data: project, isLoading, isError, error } = useProject(projectId);
   const graph = useProjectStatusGraph('project', project?.template_id ?? null);
   const move = useChangeProjectStatus();
+  const documents = useProjectDocuments(projectId, {
+    enabled: project?.status_key === 'registered',
+  });
+  const queryClient = useQueryClient();
+  const [uploadingRequirement, setUploadingRequirement] = React.useState(false);
   const remove = useDeleteProject();
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [reassigning, setReassigning] = React.useState(false);
@@ -202,7 +208,17 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const canDecide = mayApprove && isAwaitingReview(project.approval_state, 'pending');
   const moves =
     project.can_edit && !waiting ? availableStatusMoves(graph.data, project.status_id) : [];
-  const { secondary: secondaryMoves } = splitStatusMoves(moves);
+  // A Registered project needs a document before Spec In (server rule, 422 otherwise): with
+  // none, Spec In is hidden and the header offers the upload instead. A failed read falls back
+  // to today's header; the server still refuses.
+  const specInMove = moves.find((option) => option.toKey === 'specified');
+  const gatedOnDocument = project.status_key === 'registered' && Boolean(specInMove);
+  const needsRequirement =
+    gatedOnDocument && documents.isSuccess && (documents.data ?? []).length === 0;
+  const awaitingDocuments = gatedOnDocument && documents.isLoading;
+  const secondaryMoves = splitStatusMoves(moves).secondary.filter(
+    (option) => !(needsRequirement && option.toKey === 'specified'),
+  );
   // The gear's items, each with its own rule; the gear itself shows only when one applies,
   // so an approver deciding a registration (Edit in the header, no Reassign, no Delete,
   // no stage moves) never opens an empty menu.
@@ -386,7 +402,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               <Button type="button" onClick={() => router.push(`/project-sales/${project.id}/edit`)}>
                 Submit for approval
               </Button>
-            ) : (
+            ) : needsRequirement ? (
+              canWorkOnProject(project) ? (
+                <Button type="button" onClick={() => setUploadingRequirement(true)}>
+                  Upload Requirement
+                </Button>
+              ) : null
+            ) : awaitingDocuments ? null : (
               <ProjectStatusAction
                 moves={moves}
                 isPending={move.isPending}
@@ -396,6 +418,17 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           }
         />
       </header>
+
+      {uploadingRequirement && (
+        <UploadDialog
+          requirement
+          projectId={project.id}
+          onDone={() => setUploadingRequirement(false)}
+          onUploaded={() =>
+            queryClient.invalidateQueries({ queryKey: projectDocumentsKey(project.id) })
+          }
+        />
+      )}
 
       {/* Read-only metadata of a portal registration, directly under the header (R7). */}
       {project.registration && <RegistrationFacts project={project} />}
@@ -529,15 +562,14 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         <TabsContent value="sample-requests">
           <SampleRequestsPanel project={project} />
         </TabsContent>
-        <TabsContent value="samples">
-          <SamplesPanel project={project} />
-        </TabsContent>
         <TabsContent value="sponsorships">
           <SponsorshipsPanel project={project} />
         </TabsContent>
-        <TabsContent value="orders" className="space-y-4">
+        <TabsContent value="orders">
           <PurchaseOrdersPanel project={project} />
-          <SalesOrdersPanel project={project} withoutPurchaseOrder />
+        </TabsContent>
+        <TabsContent value="sales-orders">
+          <SalesOrdersPanel project={project} />
         </TabsContent>
         <TabsContent value="activity">
           <ProjectActivityPanel project={project} />

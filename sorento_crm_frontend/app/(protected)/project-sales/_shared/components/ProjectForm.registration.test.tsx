@@ -262,6 +262,19 @@ beforeEach(() => {
   ]);
 });
 
+/**
+ * PS-REGISTER-CHECK-FIRST: create mode opens on the Check step; walk it to Details.
+ * Types the title if the field is empty, Checks, waits for the result, presses Next.
+ */
+async function toDetails(text = 'Setia Alam Phase 3B') {
+  const box = screen.getByLabelText(/project title/i) as HTMLTextAreaElement;
+  if (!box.value) fireEvent.change(box, { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+  await screen.findByText('No clash');
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+  await screen.findByRole('button', { name: /^Customer and salesperson/ });
+}
+
 describe('editing a pending project: the typed name hint (RW14)', () => {
   it('shows "Typed: <developer_name>" under Developer while no party is picked', async () => {
     renderEdit(pendingProject());

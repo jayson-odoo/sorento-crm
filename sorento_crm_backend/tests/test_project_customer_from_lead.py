@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 
 from app.models.order import CustomerContact
-from app.models.projects import ProjectSalesProfile
+from app.models.projects import Project, ProjectSalesProfile
 
 from .test_project_form_lead_link import (  # noqa: F401  (api is a fixture)
     _REGISTER_CUSTOMER,
@@ -84,24 +84,27 @@ def test_a_project_names_its_customer_with_phone_and_main_contact(api):
     assert body["customer_attn"] == "Lim Wei Ming"
 
 
-def test_the_project_takes_the_customer_of_its_lead(api):
-    """LEAD-GOVERNS-REGISTER E2 replaces "the picked customer wins over the lead's buyer":
-    the lead's customer is the project's, and the request need not name one."""
+def test_the_project_takes_the_customer_sent_not_the_leads(api):
+    """AC-L2 (flipped from LEAD-GOVERNS-REGISTER E2): no customer-from-lead rule; a sent
+    lead_id is ignored."""
     client, db, company_id, _user_id = api
     lead = _lead_with_customer(client, db, company_id, f"zzt Lead Buyer {uuid.uuid4().hex[:8]}")
     assert lead["customer_id"] != _REGISTER_CUSTOMER["id"]
 
-    project = _register(client, lead_id=lead["id"], customer_id=None).json()
+    project = _register(client, lead_id=lead["id"]).json()
     body = client.get(f"{PROJECTS_BASE}/{project['id']}").json()
 
-    assert body["customer_id"] == lead["customer_id"]
+    assert body["customer_id"] == _REGISTER_CUSTOMER["id"]
 
 
 def test_an_older_project_with_no_picked_customer_reads_its_leads_buyer(api):
     client, db, company_id, _user_id = api
     lead = _lead_with_customer(client, db, company_id, f"zzt Older Buyer {uuid.uuid4().hex[:8]}")
-    project = _register(client, lead_id=lead["id"], customer_id=lead["customer_id"]).json()
+    project = _register(client).json()
     _registered_before_v2(db, project["id"])
+    # An older project already carried its lead; registering no longer links one (AC-L4).
+    db.query(Project).filter(Project.id == project["id"]).update({Project.lead_id: lead["id"]})
+    db.commit()
 
     body = client.get(f"{PROJECTS_BASE}/{project['id']}").json()
 

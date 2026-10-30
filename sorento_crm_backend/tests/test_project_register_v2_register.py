@@ -102,17 +102,6 @@ def test_a5_put_without_a_customer_keeps_saving(v2):
 # ------------------------------------------------------------------ A6 lead still links
 
 
-def test_a6_registering_with_a_lead_still_links_it(v2):
-    lead = as_user(v2, v2.owner).post(
-        LEADS, json={"title": title("Lead"), "customer_id": v2.customer.id}
-    )
-    assert lead.status_code in (200, 201), lead.text
-    lead_id = lead.json()["id"]
-    res = as_user(v2, v2.owner).post(LIST, json=register_body(v2, lead_id=lead_id))
-    assert res.status_code == 201, res.text
-    assert res.json()["lead_id"] == lead_id
-
-
 # ------------------------------------------------------------------ G1 brands gone
 
 

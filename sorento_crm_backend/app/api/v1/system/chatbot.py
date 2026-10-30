@@ -59,6 +59,7 @@ from app.schemas.chat_topic_audit import (
 from app.schemas.chatbot_turn import (
     AgentActionRequest,
     AgentActionResponse,
+    AgentConversationAction,
     AgentConversationNewRequest,
     AgentConversationNewResponse,
     AgentConversationResponse,
@@ -801,6 +802,45 @@ def _agent_refused(exc: AgentRefused) -> HTTPException:
     )
 
 
+def _actions_by_turn(db, turn_ids: list[str], user_id: str) -> dict[str, list[AgentConversationAction]]:
+    """This user's actions per proposing turn, as they stand now (so a reload still shows what was done)."""
+    from app.models.chatbot_agent import AgentAction
+    from app.models.user import User
+
+    if not turn_ids:
+        return {}
+    found = (
+        db.query(AgentAction)
+        .filter(AgentAction.turn_id.in_(turn_ids), AgentAction.user_id == str(user_id))
+        .order_by(AgentAction.created_at, AgentAction.id)
+        .all()
+    )
+    names = {
+        str(i): n
+        for i, n in db.query(User.id, User.name).filter(
+            User.id.in_({a.decided_by_user_id for a in found if a.decided_by_user_id})
+        )
+    } if found else {}
+    out: dict[str, list[AgentConversationAction]] = {}
+    for a in found:
+        out.setdefault(str(a.turn_id), []).append(
+            AgentConversationAction(
+                id=str(a.id),
+                status=a.status,
+                decided_at=a.decided_at,
+                decided_by_name=names.get(str(a.decided_by_user_id)) if a.decided_by_user_id else None,
+                steps=[
+                    {
+                        "summary": st.get("summary"), "status": st.get("status") or "proposed",
+                        "error": agent_actions.scrub_ids(st.get("error")), "changes": st.get("changes") or [],
+                    }
+                    for st in a.steps or []
+                ],
+            )
+        )
+    return out
+
+
 @router.get("/agent/conversation", response_model=AgentConversationResponse)
 def agent_conversation(
     contact_respond_id: str = Query(..., min_length=1, max_length=64),
@@ -817,8 +857,10 @@ def agent_conversation(
     conv = agent_memory.latest_conversation(db, contact_respond_id)
     if conv is None or not agent_memory.belongs_to(conv, ctx.user_id, grants_hash(ctx)):
         return AgentConversationResponse(conversation_id=None, turns=[], pending_action=pending)
+    rows = agent_memory.conversation_turns(db, conv)
+    by_turn = _actions_by_turn(db, [str(r.id) for r in rows], ctx.user_id)
     turns = []
-    for row in agent_memory.conversation_turns(db, conv):
+    for row in rows:
         envelope = row.envelope if isinstance(row.envelope, dict) else {}
         response = row.response if isinstance(row.response, dict) else {}
         digest = [d for d in (response.get("tool_digest") or []) if isinstance(d, dict)]
@@ -836,6 +878,7 @@ def agent_conversation(
                     for d in digest
                 ],
                 steps=agent_memory.steps_from_trace(row.trace),
+                actions=by_turn.get(str(row.id), []),
             )
         )
     return AgentConversationResponse(conversation_id=str(conv.id), turns=turns, pending_action=pending)

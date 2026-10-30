@@ -11,6 +11,7 @@ import {
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
+import { WhatsAppText } from '@/components/chatbot/WhatsAppText';
 import { getRespondContactsOutbound } from '../../respond-contacts/services/respondContactOutboundService';
 import { useAgentConsole } from '../hooks/useAgentConsole';
 import {
@@ -18,6 +19,7 @@ import {
   AGENT_LIMIT_LABELS,
   agentToolLabel,
   type AgentActionResponse,
+  type AgentConversationAction,
   type AgentConversationTurn,
   type AgentPendingAction,
   type AgentReplyMeta,
@@ -100,7 +102,9 @@ function StepsDisclosure({ steps }: { steps: AgentSteps }) {
           </li>
           {calls.map((call, index) => (
             <li key={`${call.name}-${index}`}>
-              {agentToolLabel(call.name)}: {call.status} ({call.ms} ms)
+              {call.detail
+                ? call.detail
+                : `${agentToolLabel(call.name)}: ${call.status} (${call.ms} ms)`}
             </li>
           ))}
         </ul>
@@ -194,6 +198,50 @@ const OUTCOME_LABEL: Record<string, string> = {
   partial: 'Partly done',
   rejected: 'Not changed',
   cancelled: 'Cancelled',
+};
+
+/** What an action changed, kept with the turn that proposed it: status, each step and its field lines. */
+function ActionsBlock({ actions }: { actions: AgentConversationAction[] }) {
+  return (
+    <div className="mt-2 space-y-2 border-t pt-2" data-testid="agent-actions">
+      {actions.map((action) => (
+        <div key={action.id} className="space-y-1">
+          <Badge
+            variant={OUTCOME_TONE[action.status] ?? 'secondary'}
+            appearance="light"
+            size="sm"
+          >
+            {OUTCOME_LABEL[action.status] ?? PROPOSAL_LABEL[action.status] ?? action.status}
+          </Badge>
+          {action.decided_by_name ? (
+            <span className="ms-2 text-xs text-muted-foreground">
+              {action.decided_by_name}
+            </span>
+          ) : null}
+          <ul className="space-y-1">
+            {action.steps.map((step, index) => (
+              <li key={index} className="text-xs">
+                <p className="break-words">{step.summary}</p>
+                {step.error ? (
+                  <p className="break-words text-destructive">{step.error}</p>
+                ) : null}
+                {(step.changes ?? []).map((change, i) => (
+                  <p key={i} className="break-words text-muted-foreground">
+                    {change.field}: {change.before} -&gt; {change.after}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const PROPOSAL_LABEL: Record<string, string> = {
+  proposed: 'Waiting',
+  expired: 'Expired',
 };
 
 function ActionOutcome({ outcome }: { outcome: AgentActionResponse }) {
@@ -302,8 +350,11 @@ export default function AgentConsole() {
             {turn.reply_text ? (
               <Bubble role="agent">
                 <p className="whitespace-pre-wrap break-words">
-                  {turn.reply_text}
+                  <WhatsAppText text={turn.reply_text} />
                 </p>
+                {turn.actions && turn.actions.length > 0 ? (
+                  <ActionsBlock actions={turn.actions} />
+                ) : null}
                 {(() => {
                   const meta =
                     agent.metaByTurn[turn.turn_id] ?? metaFromTurn(turn);
@@ -334,7 +385,8 @@ export default function AgentConsole() {
                 ) : null}
               </Bubble>
             ) : null}
-            {agent.outcomeByTurn[turn.turn_id] ? (
+            {agent.outcomeByTurn[turn.turn_id] &&
+            !(turn.actions && turn.actions.some((a) => a.status !== 'proposed')) ? (
               <ActionOutcome outcome={agent.outcomeByTurn[turn.turn_id]} />
             ) : null}
           </div>

@@ -12,7 +12,11 @@ import {
   newAgentConversation,
   postAgentTurn,
 } from '../services/agentConsoleService';
-import type { AgentActionResponse, AgentReplyMeta } from '../types/agentConsole.types';
+import type {
+  AgentActionResponse,
+  AgentConversationTurn,
+  AgentReplyMeta,
+} from '../types/agentConsole.types';
 
 const LAST_CONTACT_STORAGE_KEY = 'agent-console:last-contact';
 
@@ -36,6 +40,16 @@ function readStoredContact(): StoredContact | null {
   return null;
 }
 
+/** The server's turns, then any turn answered in this visit that the read has not caught up with. */
+function mergeTurns(
+  served: AgentConversationTurn[],
+  fresh: AgentConversationTurn[],
+): AgentConversationTurn[] {
+  const known = new Set(served.map((t) => t.turn_id));
+  const extra = fresh.filter((t) => !known.has(t.turn_id));
+  return extra.length ? [...served, ...extra] : served;
+}
+
 export function useAgentConsole() {
   const queryClient = useQueryClient();
   const [contact, setContactState] = useState<StoredContact | null>(() => readStoredContact());
@@ -45,6 +59,8 @@ export function useAgentConsole() {
   // server carries only text and reply.
   const [metaByTurn, setMetaByTurn] = useState<Record<string, AgentReplyMeta>>({});
   const [notice, setNotice] = useState<string | null>(null);
+  // Turns answered in this visit, shown until the conversation read carries them.
+  const [freshTurns, setFreshTurns] = useState<AgentConversationTurn[]>([]);
   // What Confirm / Cancel did, by the proposing turn's id, for the turns decided in this visit.
   const [outcomeByTurn, setOutcomeByTurn] = useState<Record<string, AgentActionResponse>>({});
 
@@ -55,6 +71,7 @@ export function useAgentConsole() {
     queryKey,
     queryFn: () => getAgentConversation(contactId as string),
     enabled: Boolean(contactId),
+    refetchOnWindowFocus: false,
     retry: false,
   });
   // A contact the agent may not run for is told in words, not left as an empty thread.
@@ -67,7 +84,18 @@ export function useAgentConsole() {
       setNotice(null);
       setPendingText(text);
     },
-    onSuccess: (result) => {
+    onSuccess: (result, text) => {
+      setFreshTurns((prev) => [
+        ...prev,
+        {
+          turn_id: result.turn_id,
+          text,
+          reply_text: result.reply_text,
+          status: 'done',
+          created_at: new Date().toISOString(),
+          steps: result.steps,
+        },
+      ]);
       setMetaByTurn((prev) => ({
         ...prev,
         [result.turn_id]: {
@@ -118,6 +146,7 @@ export function useAgentConsole() {
     onSuccess: async () => {
       setNotice(null);
       setMetaByTurn({});
+      setFreshTurns([]);
       setOutcomeByTurn({});
       await queryClient.invalidateQueries({ queryKey });
     },
@@ -135,6 +164,7 @@ export function useAgentConsole() {
     setNotice(null);
     setPendingText(null);
     setMetaByTurn({});
+    setFreshTurns([]);
     setOutcomeByTurn({});
     try {
       window.localStorage.setItem(LAST_CONTACT_STORAGE_KEY, JSON.stringify({ id, label }));
@@ -156,7 +186,7 @@ export function useAgentConsole() {
     contactId,
     contactLabel: contact?.label ?? '',
     setContact,
-    turns: conversation.data?.turns ?? [],
+    turns: mergeTurns(conversation.data?.turns ?? [], freshTurns),
     loading: Boolean(contactId) && conversation.isLoading,
     metaByTurn,
     pendingText,

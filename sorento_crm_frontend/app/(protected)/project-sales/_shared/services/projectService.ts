@@ -30,8 +30,6 @@ import type {
   ProjectDashboard,
   ProjectSponsorship,
   SponsorshipRollup,
-  ProjectSample,
-  ProjectSampleBody,
   ProjectPurchaseOrder,
   ProjectPurchaseOrderBody,
   ProjectPurchaseOrderSaveBody,
@@ -1216,47 +1214,7 @@ export async function deletePriceFloor(ruleId: string): Promise<void> {
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the floor'));
 }
 
-// ------------------------------------------------------- S4 samples and POs
-
-export async function listSamples(
-  projectId: string,
-  versionId?: string,
-): Promise<ProjectSample[]> {
-  const query = versionId ? `?version_id=${encodeURIComponent(versionId)}` : '';
-  const response = await apiFetch(`${BASE}/projects/${projectId}/samples${query}`);
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load samples'));
-  const body: ListEnvelope<ProjectSample> = await response.json();
-  return body.data;
-}
-
-export async function createSample(
-  projectId: string,
-  body: ProjectSampleBody,
-): Promise<ProjectSample> {
-  const response = await apiFetch(`${BASE}/projects/${projectId}/samples`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to record the sample'));
-  return response.json();
-}
-
-export async function updateSample(
-  sampleId: string,
-  body: Partial<ProjectSampleBody>,
-): Promise<ProjectSample> {
-  const response = await apiFetch(`${BASE}/samples/${sampleId}`, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the sample'));
-  return response.json();
-}
-
-export async function deleteSample(sampleId: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/samples/${sampleId}`, { method: 'DELETE' });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the sample'));
-}
+// ------------------------------------------------------- S4 POs
 
 export async function listPurchaseOrders(
   projectId: string,
