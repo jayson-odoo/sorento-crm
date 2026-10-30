@@ -34,7 +34,7 @@ import type {
   StagedQuotationLine,
 } from '../../_shared/types/project.types';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
-import { QuotationLinesGrid } from './QuotationLinesGrid';
+import { QuotationLinesGrid, type QuotationLinesReview } from './QuotationLinesGrid';
 import {
   completeSetText,
   lineErrors,
@@ -110,8 +110,20 @@ export function QuotationVersionEditor({
   seriesId,
   edit,
   locked = false,
+  review,
+  suggestedOnly = false,
+  reviewVersionId = null,
 }: {
   project: Project;
+  /** The customer's suggestions to decide on the lines (QUOTE-CUSTOMER-AMEND). A read only. */
+  review?: QuotationLinesReview;
+  /** With a review: show only the lines the customer made a suggestion on. */
+  suggestedOnly?: boolean;
+  /**
+   * The version the review's rows name, when it is not the current one: a scope where somebody
+   * opened a draft by hand after issuing. The editor opens on it and the review is decided there.
+   */
+  reviewVersionId?: string | null;
   /** The quotation is locked for approval: no per-scope revise is offered. */
   locked?: boolean;
   /**
@@ -141,7 +153,10 @@ export function QuotationVersionEditor({
     [versions.data],
   );
   const current = rows.find((version) => version.is_current) ?? null;
-  const selected = rows.find((version) => version.id === selectedId) ?? current;
+  const selected =
+    rows.find((version) => version.id === selectedId) ??
+    rows.find((version) => version.id === reviewVersionId) ??
+    current;
 
   const lines = useQuotationLines(selected?.id);
 
@@ -432,22 +447,36 @@ export function QuotationVersionEditor({
     [gridEditing, sortedLines, staged],
   );
 
+  // The review applies on the version the customer holds only: the suggestions name its lines.
+  // That is the current one, or the issued one under a hand-made draft (`reviewVersionId`).
+  const gridReview =
+    !gridEditing && selected && selected.id === (reviewVersionId ?? current?.id) ? review : undefined;
+  const suggestedIds = React.useMemo(
+    () =>
+      gridReview && suggestedOnly
+        ? new Set(gridReview.rows.map((row) => row.line_id))
+        : null,
+    [gridReview, suggestedOnly],
+  );
+  const withoutSuggestions = suggestedIds
+    ? gridLines.filter((line) => !line.line || !suggestedIds.has(line.line.id)).length
+    : 0;
+
   // Matched on the LIVE draft, so a description typed seconds ago is already findable, plus the
   // saved code the draft does not carry as text.
   const needle = lineSearch.trim().toLowerCase();
-  const rowFilter = React.useMemo(
-    () =>
-      needle
-        ? (line: StagedQuotationLine) =>
-            [
-              line.line?.product_code,
-              line.draft.description,
-              line.draft.brand_snapshot,
-              line.draft.band_label,
-            ].some((value) => (value ?? '').toLowerCase().includes(needle))
-        : undefined,
-    [needle],
-  );
+  const rowFilter = React.useMemo(() => {
+    if (!needle && !suggestedIds) return undefined;
+    return (line: StagedQuotationLine) =>
+      (!suggestedIds || (line.line !== null && suggestedIds.has(line.line.id))) &&
+      (!needle ||
+        [
+          line.line?.product_code,
+          line.draft.description,
+          line.draft.brand_snapshot,
+          line.draft.band_label,
+        ].some((value) => (value ?? '').toLowerCase().includes(needle)));
+  }, [needle, suggestedIds]);
 
   const stageLines = edit?.stage;
   const toggleRemoved = edit?.toggleRemoved;
@@ -570,7 +599,9 @@ export function QuotationVersionEditor({
                 ? 'No lines yet.'
                 : 'This version was frozen without any lines.'
           }
-          filterEmptyHint={`No line matches "${lineSearch.trim()}".`}
+          filterEmptyHint={
+            needle ? `No line matches "${lineSearch.trim()}".` : 'No suggestions on this scope.'
+          }
           fetchProducts={fetchProducts}
           resolveProduct={resolveProduct}
           productCodeOf={productCodeOf}
@@ -593,7 +624,14 @@ export function QuotationVersionEditor({
           brandOptions={brandOptions}
           onStage={gridEditing ? stageLines : undefined}
           onToggleRemoved={gridEditing ? toggleRemoved : undefined}
+          review={gridReview}
         />
+      )}
+
+      {withoutSuggestions > 0 && (
+        <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+          {`${withoutSuggestions} ${withoutSuggestions === 1 ? 'line' : 'lines'} without suggestions`}
+        </p>
       )}
 
       {revising && current && quotation && (

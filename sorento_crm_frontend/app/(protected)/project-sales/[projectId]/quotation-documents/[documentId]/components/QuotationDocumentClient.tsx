@@ -21,6 +21,7 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import DetailActions from '@/components/common/DetailActions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import {
+  useQuotationAmendmentRequest,
   useQuotationApprovalGraph,
   useQuotationDocument,
   useQuotationDocumentMutations,
@@ -145,6 +146,9 @@ export function QuotationDocumentClient({
   }, [quotations.data, scopeVersions.rows, scopes]);
 
   const canEditProject = project.data?.can_edit ?? false;
+  // The customer's suggested changes, shared with the Lines tab (same query): while there are
+  // some, the free-text banner below stands down. Staff with the edit right only, as the route.
+  const amendment = useQuotationAmendmentRequest(projectId, documentId, canEditProject);
   const gear = useQuotationDocumentActions({
     projectId,
     document: document.data,
@@ -487,6 +491,7 @@ export function QuotationDocumentClient({
         // asked about. Withheld from a reader.
         onRevise={canEdit ? startEditing : undefined}
         isRevising={quotationMutations.revise.isPending}
+        amendment={amendment.data ?? null}
       />
 
       {/* The price-floor gate. Renders nothing at all unless a line on this quotation is
