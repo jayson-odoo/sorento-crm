@@ -43,6 +43,8 @@ class WriteDef:
     record_key: str
     #: (args, before, after, shown) -> [{record, field, before, after}] in words, for what really changed.
     changes: Callable[[dict, dict, dict, dict], list[dict]] | None = None
+    #: True = `execute` also takes the confirmed `before` as a fourth argument, to refuse a different branch.
+    execute_takes_before: bool = False
 
 
 @dataclass(frozen=True)
@@ -1316,11 +1318,21 @@ _PR_STATES = ("pending", "approved", "rejected")
 _DECISIONS = {"approve": "approved", "reject": "rejected"}
 
 
+def _module_open(user: dict, db, *keys: str) -> None:
+    """The routers' `require_module_enabled` guards, which a direct call skips."""
+    from app.modules.runtime.guards import module_blocked
+
+    for key in keys:
+        if module_blocked(db, str(user["id"]), key):
+            raise HTTPException(status_code=403, detail=f"Module not enabled: {key}")
+
+
 def _pr_scope(db, user: dict, method: str, path: str, request_id: str | None = None):
     """The purchase-request router's "only theirs" guard (`_request_own_scope.check`), which a direct call
     skips: a `view_own`-only user is refused every write, and sees only their own rows."""
     from app.api.v1._request_own_scope import check
 
+    _module_open(user, db, "procurement")
     params = {"request_id": request_id} if request_id else {}
     return check(db, str(user["id"]), "purchase_request", method, PR_PREFIX + path, params)
 
@@ -1432,17 +1444,24 @@ def _pr_read_before(db, user: dict, args: dict) -> dict:
     }
 
 
+def _in_full(value: Any) -> str:
+    """Text that leaves the system (a reason sent to the dealer): quoted whole, never cut, so the person
+    confirming reads exactly what will be sent."""
+    return f'"{_line(value)}"'
+
+
 def _pr_summary(args: dict, before: dict) -> str:
-    detail = ", ".join(_line(x) for x in (f'"{_line(before["title"])}"' if before["title"] else "", before["value"]) if x)
-    text = f"{'Approve' if args['decision'] == 'approve' else 'Reject'} {before['kind']} {_line(before['number'])}"
+    # Record text is capped (it is shown, not sent); the reason is shown whole (it is sent).
+    detail = ", ".join(x for x in (_quoted(before["title"]) if before["title"] else "", _line(before["value"])) if x)
+    text = f"{'Approve' if args['decision'] == 'approve' else 'Reject'} {before['kind']} {_word(before['number'])}"
     if before["customer"]:
-        text += f" for {_line(before['customer'])}"
+        text += f" for {_word(before['customer'])}"
     if detail:
         text += f" ({detail})"
     if before["sender"]:
-        text += f", sent for approval by {_line(before['sender'])}"
+        text += f", sent for approval by {_word(before['sender'])}"
     if _line(args.get("reason")):
-        text += f", with the {'reason' if args['decision'] == 'reject' else 'comment'} {_quoted(args['reason'])}"
+        text += f", with the {'reason' if args['decision'] == 'reject' else 'comment'} {_in_full(args['reason'])}"
     return text + ". The requester and the dealer contact will be told."
 
 
@@ -1580,6 +1599,9 @@ def _undo_read_before(db, user: dict, args: dict) -> dict:
 
     rid = str(args["request_id"])
     validate_uuid_path(rid, resource="Request")
+    # Only a request this person may open (the row read's own-scope rule, 404 otherwise).
+    _pr_scope(db, user, "GET", "/{request_id}", rid)
+    _module_open(user, db, "sla")
     header = PurchaseRequestService(db).get_request(rid)
     kind = header.request_type
     waiting = FormActionService(db).pending_for(kind, rid)
@@ -1618,18 +1640,21 @@ def _undo_summary(args: dict, before: dict) -> str:
     if before["state"] == "waiting":
         return f"Withdraw the waiting {before['label']} on {target} before it applies. Nothing has been sent yet."
     return (
-        f"Undo the {before['label']} on {target} with the reason {_quoted(args['reason'])}. The request goes "
+        f"Undo the {before['label']} on {target} with the reason {_in_full(args['reason'])}. The request goes "
         "back to how it was before it, and everyone involved will be told."
     )
 
 
-def _undo_execute(db, user: dict, args: dict) -> dict:
+def _undo_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
     from app.api.v1.sla.form_actions import _UndoRequest, cancel_form_action, undo_form_action
-    from app.services.error_handler import AppException
+    from app.services.error_handler import AppException, handle_conflict
     from app.services.procurement_service import PurchaseRequestService
 
     rid = str(args["request_id"])
     before = _undo_read_before(db, user, args)
+    # Only what was confirmed: a waiting action that applied meanwhile is not undone in its place.
+    if (before["state"], before["form_action"]) != (confirmed.get("state"), confirmed.get("form_action")):
+        raise handle_conflict("The action on this form changed since this was proposed.")
     if before["state"] == "waiting":
         cancel_form_action(action_id=before["form_action"], current_user=user, db=db)
     else:
@@ -1685,4 +1710,5 @@ WRITES[UNDO_PR] = WriteDef(
     execute=_undo_execute,
     record_key="request_id",
     changes=_undo_changes,
+    execute_takes_before=True,
 )

@@ -324,3 +324,66 @@ def test_a_step_whose_window_has_passed_no_longer_reports_waiting():
     assert waiting_of(step) is None
     assert waiting_of({**step, "after": {**step["after"], "commit_at": future}})["window_seconds"] == 30
     assert waiting_of({**step, "status": "withdrawn", "after": {**step["after"], "commit_at": future}}) is None
+
+
+# ------------------------------------------------------------------ security review round 1
+
+
+def test_a_long_reason_is_shown_whole_in_the_proposal(db):
+    from tests.chatbot.agent.test_agent_writes_purchase_request import propose
+
+    w = make_world(db)
+    pr = make_request(db, w)
+    reason = "Budget not approved. " * 20 + "tail-marker"
+
+    res, step = propose(db, w, {"request_id": pr.id, "decision": "reject", "reason": reason})
+
+    assert res.status == "proposed", res.message
+    assert "tail-marker" in step["summary"] and "characters)" not in step["summary"]
+
+
+def test_the_undo_runs_only_the_branch_that_was_confirmed(db, sends, monkeypatch):
+    """A withdraw confirmed while waiting must not become an undo when the action applied in between."""
+    from app.services.chatbot.agent import writes
+    from app.services.error_handler import AppException
+    from app.services.form_action_service import FormActionService
+
+    w = make_world(db, slugs=(*APPROVER, UNDO_SLUG))
+    pr, _ = decided(db, w, monkeypatch, parked=True)
+    res, step = propose_undo(db, w, {"request_id": pr.id, "reason": "x"})
+    assert res.status == "proposed" and step["before"]["state"] == "waiting"
+    FormActionService(db).commit_one(form_actions(db, pr.id)[0])
+
+    with pytest.raises(AppException) as exc:
+        writes.run_as_user(
+            db, ctx_of(db, w),
+            lambda user: writes.WRITES[UNDO].execute(db, user, step["args"], step["before"]),
+        )
+
+    assert exc.value.status_code == 409
+    assert row_now(db, pr.id).approval_status == "approved"
+    assert [a.status for a in form_actions(db, pr.id)] == ["committed"]
+
+
+def test_a_limited_user_cannot_take_back_an_action_on_a_request_that_is_not_theirs(db, monkeypatch):
+    w = make_world(db, slugs=("procurement.purchase_requests.view_own", UNDO_SLUG))
+    pr = make_request(db, w, submitted_by=None)
+
+    res, step = propose_undo(db, w, {"request_id": pr.id, "reason": "x"})
+
+    assert step is None and res.status == "denied"
+
+
+def test_a_disabled_module_closes_the_agents_request_tools(db, monkeypatch):
+    from app.services.chatbot.agent import writes
+    from tests.chatbot.agent.test_agent_writes_purchase_request import propose
+
+    monkeypatch.setattr("app.modules.runtime.guards.module_blocked", lambda db_, uid, key: key == "procurement")
+    w = make_world(db)
+    pr = make_request(db, w)
+
+    listed = writes.run_user_read(db, ctx_of(db, w), "crm_purchase_requests_list", {}, set())
+    res, step = propose(db, w, {"request_id": pr.id, "decision": "approve"})
+
+    assert listed.status == "denied"
+    assert step is None and res.status == "denied"

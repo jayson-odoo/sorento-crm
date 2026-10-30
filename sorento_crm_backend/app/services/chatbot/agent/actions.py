@@ -261,9 +261,11 @@ def confirm(
             continue
         definition = writes.WRITES[step["tool"]]
         try:
-            result = writes.run_as_user(
-                db, ctx, lambda user: definition.execute(db, user, step["args"]), tool_name=step["tool"]
-            )
+            if definition.execute_takes_before:
+                run = lambda user: definition.execute(db, user, step["args"], step.get("before") or {})  # noqa: E731
+            else:
+                run = lambda user: definition.execute(db, user, step["args"])  # noqa: E731
+            result = writes.run_as_user(db, ctx, run, tool_name=step["tool"])
             step.update(status="done", result_id=result.get("id"), after=result.get("after"), error=None)
             try:
                 if definition.changes is not None:
@@ -374,7 +376,9 @@ def withdraw(
         )
     except writes.HTTPException as exc:
         db.rollback()
-        raise ActionRefused("applied" if exc.status_code == 409 else "not_waiting")
+        if exc.status_code == 409 and "already been applied" in writes.error_text(exc):
+            raise ActionRefused("applied")
+        raise ActionRefused("entry_refused" if exc.status_code in (403, 409) else "not_waiting")
     step["status"] = "withdrawn"
     step["changes"] = [dict(c, after="Withdrawn") for c in step.get("changes") or []]
     db.execute(update(AgentAction).where(AgentAction.id == action.id).values(steps=steps))
