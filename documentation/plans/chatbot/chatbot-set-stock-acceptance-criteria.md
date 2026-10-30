@@ -5,7 +5,7 @@ be able to identify it as set also, 2 it should be the same as existing logic fo
 should just show all product under the set, simple as that, 4 the logic should still be the same
 as current, 5 i don't think we need prompt change".
 
-Tests: `sorento_crm_backend/tests/chatbot/test_chatbot_set_stock.py` (SS-1 to SS-8),
+Tests: `sorento_crm_backend/tests/chatbot/test_chatbot_set_stock.py` (SS-1 to SS-8, SS-10 to SS-12),
 `tests/chatbot/test_code_lookup_set_codes.py::test_gate_off_the_set_only_code_answers_its_members` (SS-4),
 `tests/chatbot_eval/test_parser_gold.py::test_set_stock_gold_file` (SS-9).
 
@@ -28,4 +28,12 @@ Tests: `sorento_crm_backend/tests/chatbot/test_chatbot_set_stock.py` (SS-1 to SS
 - SS-9. No parser prompt change: gold rows for set asks expect no canonical code for a catalogue
   or set code the shortlist does not list (the resolver finds the sets), and a member's own code
   picked as itself.
-- Unchanged: long-answer caps and paging, price dropped for set members, company and brand scope.
+- SS-10. (owner, card v4 Q1 a) Every domain that takes products expands a visible set to its parts:
+  stock, product info, ETA, photos and files, promotion, orders, sales and delivery, SPO, last cost, PO.
+  "srtwc8826 eta" checks the ETA of both tanks, the bowl and the seat cover, never the seat cover alone.
+- SS-11. (owner, card v4 Q2 / Q3) A set is never a choice and never asks "how many sets": in ETA and photos
+  a set's parts resolve; only products outside every matched set can still make today's picker. No set
+  maths and no "Complete sets" line.
+- SS-12. A set the contact may not see is never expanded, in any domain.
+- Unchanged: long-answer caps and paging, price dropped for set members, company and brand scope, today's
+  numbered quantity list for products (owner Q4 a).

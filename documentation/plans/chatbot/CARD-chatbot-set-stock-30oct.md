@@ -1,6 +1,16 @@
 # Behaviour card: a stock ask for a set answers SET availability first (CHATBOT-SET-STOCK)
 
-## v4 (30 Oct ~22:30): owner hand test = CHANGE REQUEST. FILED for the owner's answers; no code until answered.
+## v4 (30 Oct ~22:30): owner hand test = CHANGE REQUEST. ANSWERED 30 Oct ~22:40, built at 8d994dbcc0.
+
+Owner answers (verbatim): Q1 "a"; Q2 "it should behave like product search in resolver, in this case it is
+like prefix search right just like product code, the resolver should behave similarly for product and set
+from entity perspective"; Q3 "hmm should we ask set? should we just show the product in the set?"; Q4 "a";
+Complete sets line: "I don't need the complete set answer".
+Built: R1 only (every domain that takes products expands a set; the domain list is gone). R2 (set quantity
+question) is DROPPED: no "How many sets?", no set maths, today's product quantity questions stay. In the
+ETA / photos branch, where the gate decides a picker, a set's parts always resolve and a set is never a
+choice; only products outside every matched set can still make today's picker. The resolver already matches
+a set like a product code (v3).
 
 Owner, hand test #2013, verbatim: "shouldn't apply to stock only, any ask like eta, photos, delivery also
 should be included; how it works is basically expand the set to multiple product codes under the set and
