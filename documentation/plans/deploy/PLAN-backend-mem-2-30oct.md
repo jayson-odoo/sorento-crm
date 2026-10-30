@@ -172,13 +172,19 @@ exports of 15k rows 16 at once: knob 0 -> 485 / 641 / 664 MB private, 23-24 s a 
 160 MB, 19 s a round. The 42 wrapped handlers are listed in `tests/test_heavy_work.py` `WRAPPED`.
 
 **S3** `gunicorn.conf.py`: `max_requests` 2000 (`GUNICORN_MAX_REQUESTS`), jitter 500
-(`GUNICORN_MAX_REQUESTS_JITTER`), 0 = off; `child_exit` returns the worker count. `app/uvicorn_worker.py`
-`DrainingServer.on_tick`: a worker at its limit (not a signal) sends SIGTTIN to the master and keeps serving
-until its replacement is a child of the master (`/proc`, at most 30 s), then drains; the drain closes the
-listener and waits 1 s before uvicorn closes idle connections. The inbox stop is the lifespan shutdown's
-(`shutdown_event` -> `stop_inbox_queue` -> `begin_shutdown`), the same as a signal's. Real gunicorn, 2 workers,
-limit 40 + 10, 600 GETs 8 at once: first version 596 of 600 OK (4 connection resets) and the worker count
-drifted 2 -> 4 (the exit could beat the master's TTIN); final version: RESULT_S3.
+(`GUNICORN_MAX_REQUESTS_JITTER`, about 45 min of spread at 650 requests per worker per hour), 0 = off. gunicorn's
+own order (crew ruling 30 Oct): the retiring worker stops accepting, drains like a TTOU'd one, exits, and the
+master forks its replacement; the other workers take every new connection meanwhile. The inbox stop is the
+lifespan shutdown's (`shutdown_event` -> `stop_inbox_queue` -> `begin_shutdown`), the same as a signal's.
+`app/uvicorn_worker.py` `DrainingServer.shutdown` closes the listener and waits 1 s
+(`ACCEPT_SETTLE_SECONDS`) before uvicorn closes idle connections: without it a connection accepted just before
+the limit was reset (4 of 600 requests over 10 recycles; kill-tested in `tests/test_uvicorn_worker.py`).
+Tried and dropped: forking the replacement first (the worker sends SIGTTIN, a `child_exit` hook takes the count
+back). Signals coalesce and carry no sender, so in 2 of 3 runs the master was left with 3-4 workers instead of 2.
+
+Real gunicorn, 2 workers, limit 40 + 10, 600 GETs 8 at once, three runs: 600 / 600 / 600 OK (0 failed), 11 / 10
+/ 10 recycles with as many exits, 2 workers throughout, no WORKER TIMEOUT. One worker inflated by 32 exports with
+the S2 limit off: 672 MB private; its replacement after the recycle: 62 MB.
 
 ## Expected per worker after
 
