@@ -64,7 +64,7 @@ function MoneyChange({
       <span className={cn('tabular-nums', className)}>
         {formatMyrExact(after)}
       </span>
-      <span className="text-xs font-normal text-muted-foreground">{`quoted ${formatMyrExact(before)}`}</span>
+      <span className="whitespace-nowrap text-xs font-normal text-muted-foreground">{`quoted ${formatMyrExact(before)}`}</span>
     </span>
   );
 }
@@ -470,7 +470,7 @@ function SuggestRow({
                 {rateError}
               </p>
             ) : rateChanged ? (
-              <p className="mt-1 text-xs text-muted-foreground">{`quoted ${formatMyrExact(line.unit_price)}`}</p>
+              <p className="mt-1 whitespace-nowrap text-xs text-muted-foreground">{`quoted ${formatMyrExact(line.unit_price)}`}</p>
             ) : null}
           </>
         ) : (
@@ -492,7 +492,7 @@ function SuggestRow({
             <span className="block tabular-nums">
               {lineMoney(editedAmount(line, edit))}
             </span>
-            <span className="block text-xs text-muted-foreground">
+            <span className="block whitespace-nowrap text-xs text-muted-foreground">
               {`quoted ${formatMyrExact(line.amount ?? '0')}`}
             </span>
           </>
