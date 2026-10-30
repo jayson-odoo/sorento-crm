@@ -204,6 +204,27 @@ def test_code_picks_gold_file():
             assert r["expect"]["canonical"], r["id"]
 
 
+SET_STOCK = BACKEND / "scripts" / "chatbot_eval" / "gold" / "parser_set_stock.jsonl"
+
+
+def test_set_stock_gold_file():
+    """CHATBOT-SET-STOCK: no prompt change, so a catalogue code or a set code the shortlist
+    does not list stays without a canonical_code (the resolver finds the sets); a member's
+    own code on file is picked as itself."""
+    rows = pg.load_gold(SET_STOCK)
+    ids = [r["id"] for r in rows]
+    assert len(ids) == len(set(ids))
+    assert sum(i.startswith("ss-stem-") for i in ids) >= 5
+    assert any("x 6 sets" in r["message"] for r in rows)
+    assert any(r["message"] == "stock srtwc8826" for r in rows)
+    for r in rows:
+        assert r["expect"]["domain_hint"] == "inventory", r["id"]
+        if r["id"].startswith(("ss-stem-", "ss-full-")):
+            assert r["expect"]["canonical"] is None, r["id"]
+        else:
+            assert r["expect"]["canonical"], r["id"]
+
+
 def test_committed_gold_file():
     rows = pg.load_gold(GOLD)
     ids = [r["id"] for r in rows]
