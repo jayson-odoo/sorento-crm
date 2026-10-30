@@ -16,7 +16,7 @@ function normalise(raw: string): string {
  */
 export function toWaDigits(raw: string): string {
   const digits = normalise(raw);
-  if (/^1\d{8,9}$/.test(digits) && !/^1[378]00/.test(digits)) return `60${digits}`;
+  if (/^1\d{8,9}$/.test(digits) && !/^1[378]00\d{6}$/.test(digits)) return `60${digits}`;
   return digits;
 }
 
