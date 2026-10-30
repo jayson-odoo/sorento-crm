@@ -84,6 +84,13 @@ describe('OrderForm on an undated DO', () => {
     expect(screen.queryByDisplayValue(todayInput())).not.toBeInTheDocument();
   });
 
+  it('shows an empty estimated delivery date when the DO has none, not today + 2', async () => {
+    mockOrder({ estimated_delivery_date: null });
+    await renderForm('o-1');
+    await waitFor(() => screen.getByDisplayValue('Seed Debtor'));
+    expect((screen.getByLabelText(/Estimated Delivery Date/) as HTMLInputElement).value).toBe('');
+  });
+
   it('saving another field leaves the DO date out of the update', async () => {
     mockOrder({});
     await renderForm('o-1');
@@ -95,6 +102,7 @@ describe('OrderForm on an undated DO', () => {
     expect(sent.debtor_name).toBe('Seed Debtor Edited');
     expect(sent.order_date ?? undefined).toBeUndefined();
     expect(JSON.stringify(sent)).not.toContain('order_date');
+    expect(sent.estimated_delivery_date ?? null).toBeNull();
   });
 
   it('still takes a real date the user types', async () => {

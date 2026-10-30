@@ -110,8 +110,8 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       // Never invent a date: an undated DO stays out of reports until a person types one.
       // null, not undefined: an undefined value falls back to the create default (today).
       order_date: dateOnlyUTC(order.order_date) ?? null,
-      estimated_delivery_date: dateOnlyUTC(order.estimated_delivery_date),
-      actual_delivery_date: dateOnlyUTC(order.actual_delivery_date),
+      estimated_delivery_date: dateOnlyUTC(order.estimated_delivery_date) ?? null,
+      actual_delivery_date: dateOnlyUTC(order.actual_delivery_date) ?? null,
       customer_id: order.customer_id ? String(order.customer_id) : '',
       order_status_id: order.order_status_id ? String(order.order_status_id) : '',
       billing_address_id: order.billing_address_id || undefined,
