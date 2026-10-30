@@ -1,6 +1,6 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Build: rework round (owner hand-test note 30 Oct 13:40, answers 13:50: 1a 2a 3a); standard track, no migration. The rework section below supersedes the Phase 2 contract where they differ.
+Status: Build: rework final fix round (owner hand-test note 30 Oct 13:40, answers 13:50: 1a 2a 3a); standard track, no migration. The rework section below supersedes the Phase 2 contract where they differ.
 (M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
 table, no migration)
 
@@ -318,8 +318,8 @@ product has no photo at all.
   product's brand, `company_id` = the product's company, `policy_id` from the binding,
   `current_tier` 1 (or the tier fallback), due dates on the working calendar as
   `_start_for_config` computes them, then `FormSLAOrchestrator._notify_assignee(tracker, "assigned")`.
-- No setup: errors are 409 `marketing_team_not_set_up` ("The marketing product team has no
-  members for this company") when the agent, team, member or policy is missing, with detail only
+- No setup: errors are 409 `marketing_team_not_set_up` ("The marketing product team is not
+  set up for this company") when the agent, team, member or policy is missing, with detail only
   in the log. No `form_sla_configs` lookup; the `company_id` keyword on `_start_for_config` is
   reverted.
 - Tier escalation keeps the brand: `_escalate_tracker` passes `brand_code=tracker.brand_code` to
@@ -351,9 +351,9 @@ tasks" rows, and the element-to-component map.
 - BE: dedupe per product (a second escalate adds a requester, no second task; the same person
   twice is one requester; concurrent escalates make one); a PDF typed Technical Specifications
   counts as a drawing (no escalate, 409 "already has a drawing"); adding a drawing does NOT
-  resolve and notifies the assignee; respond and resolve through the configured events, resolve
+  resolve and notifies the assignee; respond and resolve update the task directly, resolve
   notifies every requester once; 403 without view/view_own, 404 for a quotation outside own
-  scope; 409 with no configured step; the line read carries the request state; no team code in
-  the service.
+  scope; 409 when the general-enquiries route has a missing piece; the line read carries the
+  request state; no team code in the service.
 - FE: cell states (Escalate, escalating, Escalated, Responded, PDF tile, drawing shown,
   off-catalogue blank); My Pending Respond/Resolve on a product_drawing row.
