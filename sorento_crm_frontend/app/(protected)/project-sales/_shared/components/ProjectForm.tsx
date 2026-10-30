@@ -33,9 +33,7 @@ import {
   useClashPreview,
   useFetchClashPreview,
   useFetchCustomerOptions,
-  useFetchLeadOptions,
   useFetchPartyOptions,
-  type LeadPick,
   usePartyMutations,
   useProjectTemplates,
   useProjectTypes,
@@ -52,7 +50,6 @@ import type {
   ProjectUpdateBody,
 } from '../types/project.types';
 import { isAwaitingDecision } from './ApprovalStatePill';
-import { LeadWizardDialog } from '../../leads/components/LeadWizardDialog';
 import { ProjectAIExtractDialog, type ProjectExtractFill } from './ProjectAIExtractDialog';
 
 const WIZARD_STEPS = [
@@ -77,7 +74,7 @@ const PARTY_EDIT_PERMISSION = 'projects.parties.edit';
  * from the register dialog it replaces (PR #1336 round 2). Two things differ from that
  * dialog:
  *
- * - A third section, "Lead, customer and salesperson", open from the start.
+ * - A third section, "Customer and salesperson", open from the start.
  * - Edit mode starts every section open, never wipes the project's own template on
  *   first render, and excludes the project itself from its own clash check.
  */
@@ -157,19 +154,6 @@ export function ProjectForm(props: ProjectFormProps) {
       setOwnerUserId((current) => current || sessionUserId);
     }
   }, [mode, sessionUserId]);
-  const [leadId, setLeadId] = React.useState(project?.lead_id ?? '');
-  const [leadOption, setLeadOption] = React.useState<PickOption | null>(
-    project?.lead_id ? { value: project.lead_id, label: project.lead_code ?? 'Linked lead' } : null,
-  );
-  // The lead governs the customer: when the lead has one it is shown read-only. An edit with a
-  // stored lead shows the project's own customer without asking the lead again.
-  const [leadHasCustomer, setLeadHasCustomer] = React.useState(
-    mode === 'edit' && Boolean(project?.lead_id) && Boolean(project?.customer_id),
-  );
-
-  // The text typed into the Lead picker when nothing matched; non-null opens the lead wizard.
-  const [creatingLeadTitle, setCreatingLeadTitle] = React.useState<string | null>(null);
-
   // The blocking project the user is registering interest in (D4); non-null opens the dialog.
   const [interestTarget, setInterestTarget] = React.useState<ClashCandidate | null>(null);
   const [extractOpen, setExtractOpen] = React.useState(false);
@@ -181,7 +165,6 @@ export function ProjectForm(props: ProjectFormProps) {
   const types = useProjectTypes();
   const templates = useProjectTemplates(typeId || undefined);
   const states = useLookupSetOptions('my_state');
-  const fetchLeadOptions = useFetchLeadOptions();
   const users = useQuery({
     queryKey: ['user-lookup', 'project-owner'],
     queryFn: () => getUserLookup(),
@@ -264,13 +247,9 @@ export function ProjectForm(props: ProjectFormProps) {
   const pending = register.isPending || update.isPending || submitDraft.isPending;
   const [showErrors, setShowErrors] = React.useState(false);
   const valueError = numberFieldError(estimatedValue, { min: 0, optional: true });
-  // A new project needs its Lead (LEAD-GOVERNS-REGISTER D1) and a Customer, which the lead
-  // supplies unless it has none. Edit leaves both optional, so a project registered before the
-  // rule saves. A salesperson's Submit for approval enforces them either way.
-  const leadMissing = (mode === 'create' || submitOnly) && !leadId;
   const customerMissing = (mode === 'create' || submitOnly) && !customerId;
   const canSubmit =
-    title.trim().length > 0 && !leadMissing && !customerMissing && !wouldBlock && !pending;
+    title.trim().length > 0 && !customerMissing && !wouldBlock && !pending;
   const canSaveDraft = title.trim().length > 0 && !pending;
   // The top blocking candidate: the footer's one primary becomes Register as secondary lead (D2).
   const blocker =
@@ -363,11 +342,9 @@ export function ProjectForm(props: ProjectFormProps) {
       launch_date: launchDate || null,
       expected_delivery_from: deliveryFrom || null,
       expected_delivery_to: deliveryTo || null,
-      // A lead's own customer is sent back unchanged, which the server accepts.
       ...((mode === 'create' ? Boolean(customerId) : customerId !== (project?.customer_id ?? ''))
         ? { customer_id: customerId || null }
         : {}),
-      lead_id: leadId || null,
     };
   }
 
@@ -394,25 +371,6 @@ export function ProjectForm(props: ProjectFormProps) {
     if (fill.state) setState(fill.state);
     if (fill.mukim) setMukim(fill.mukim);
     setTitleSettled(true);
-  }
-
-  /** Takes the customer and the assignee from the picked lead (LEAD-GOVERNS-REGISTER D2, D4). */
-  function takeFromLead(
-    lead: {
-      customer_id?: string | null;
-      customer_name?: string | null;
-      owner_user_id?: string | null;
-    } | null,
-  ) {
-    setLeadHasCustomer(Boolean(lead?.customer_id));
-    if (lead?.customer_id) {
-      setCustomerId(lead.customer_id);
-      setCustomerOption({ value: lead.customer_id, label: lead.customer_name ?? 'Customer' });
-    } else if (mode === 'create') {
-      setCustomerId('');
-      setCustomerOption(null);
-    }
-    if (lead?.owner_user_id && canManageOwner) setOwnerUserId(lead.owner_user_id);
   }
 
   /** Creates a party from the typed text and selects it (B2); holders of parties.edit only. */
@@ -476,7 +434,7 @@ export function ProjectForm(props: ProjectFormProps) {
           : previewCandidates;
       if (filtered.some((c) => c.blocks)) return;
     }
-    // A refusal (409 lead_already_linked, 403, ...) is toasted by the mutation hook;
+    // A refusal (403, ...) is toasted by the mutation hook;
     // the user stays on the form with what they typed.
     try {
       if (mode === 'create') {
@@ -919,57 +877,12 @@ export function ProjectForm(props: ProjectFormProps) {
 
         {(!wizard || step === 'details') && (
           <FormSection
-            title="Lead, customer and salesperson"
+            title="Customer and salesperson"
             open={sectionOpen.salesCustomer}
             onOpenChange={(next) => toggleSection('salesCustomer', next)}
           >
-            <div className="space-y-1.5">
-              <Label htmlFor="project-lead">
-                Lead
-                {(mode === 'create' || submitOnly) && (
-                  <span className="text-destructive"> *</span>
-                )}
-              </Label>
-              <SearchableSelect
-                id="project-lead"
-                value={leadId}
-                onChange={setLeadId}
-                onOptionChange={(option) => {
-                  setLeadOption(option);
-                  takeFromLead(option as LeadPick | null);
-                }}
-                fetchOptions={fetchLeadOptions}
-                selectedOption={leadOption ?? undefined}
-                clearable
-                placeholder="Search leads by title or code"
-                emptyMessage="No open leads match"
-                // Ungated, like the Leads page's own Create lead: the server decides who may
-                // create one (projects.projects.edit or projects.registrations.submit).
-                createOption={{
-                  label: (query) => (
-                    <span>Create lead &ldquo;{query}&rdquo;</span>
-                  ),
-                  onCreate: setCreatingLeadTitle,
-                }}
-              />
-            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                {(leadId && leadHasCustomer) ||
-                (mode === 'create' && !leadId) ? (
-                  <>
-                    <Label>Customer</Label>
-                    <div className="flex min-h-9 items-center text-sm">
-                      {customerId && customerOption ? (
-                        <span className="truncate" title={customerOption.label}>
-                          {customerOption.label}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </div>
-                  </>
-                ) : (
                   <>
                     <Label htmlFor="project-customer">
                       Customer
@@ -984,12 +897,11 @@ export function ProjectForm(props: ProjectFormProps) {
                       onOptionChange={setCustomerOption}
                       fetchOptions={fetchCustomerOptions}
                       selectedOption={customerOption ?? undefined}
-                      clearable={mode === 'edit'}
+                      clearable
                       placeholder="Search customers"
                       emptyMessage="No customers found"
                     />
                   </>
-                )}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="project-owner">Salesperson</Label>
@@ -1131,23 +1043,6 @@ export function ProjectForm(props: ProjectFormProps) {
           </div>
         )}
       </form>
-
-      {creatingLeadTitle !== null && (
-        <LeadWizardDialog
-          initialTitle={creatingLeadTitle}
-          onDone={(created) => {
-            setCreatingLeadTitle(null);
-            if (!created) return;
-            setLeadId(created.id);
-            setLeadOption({
-              value: created.id,
-              label: created.title,
-              description: created.lead_code,
-            });
-            takeFromLead(created);
-          }}
-        />
-      )}
 
       {interestTarget && (
         <RegisterInterestDialog
