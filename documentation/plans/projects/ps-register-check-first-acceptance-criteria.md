@@ -8,9 +8,12 @@ questions V1-V3 = (a). BE = `sorento_crm_backend/app`, FE = `sorento_crm_fronten
 ## G. A document gates Registered -> Spec In (BE + FE)
 
 - AC-G2. `POST /api/v1/project-sales/projects/{id}/status` from status key `registered` to key `specified` on a project
-  with no live document (no `entity_attachment_links` row with `entity_type='project'`, `entity_id=<project id>` whose
-  attachment is not `is_deleted`) -> 422, code `project_requirements_missing`, message exactly "Upload the requirements
-  document before moving this project to Spec In." The project's status is unchanged.
+  with no live document -> 422, code `project_requirements_missing`, message exactly "Upload the requirements document
+  before moving this project to Spec In." The project's status is unchanged. A live document is exactly what the
+  Documents tab lists: an `attachments` row with `entity_type='project'`, `entity_id=<project id>`, not `is_deleted`
+  (the upload writes these on the row, `BE/api/v1/resources/attachments.py:1130-1131`; the list filters on them,
+  `BE/services/resources_service.py:840-841`). Corrected 30 Oct after the browser pass: the first text named
+  `entity_attachment_links`, which the Documents upload never writes.
 - AC-G3. Same move with one live document linked (any attachment type, e.g. Project Document) -> 200, status Spec In.
 - AC-G4. A deleted document does not count; another project's document does not count. No attachment type is created
   or required (no seed, no new kind).
