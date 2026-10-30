@@ -462,8 +462,6 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     }
             continue
         if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid")):
-            if (by_uuid.get(jsc.get(m, "uuid")) or {}).get("set_code"):
-                continue  # already listed as a set member: the stem's own product match adds nothing
             entity = {
                 "uuid": jsc.get(m, "uuid"),
                 "entity_type": jsc.get(m, "entity_type"),

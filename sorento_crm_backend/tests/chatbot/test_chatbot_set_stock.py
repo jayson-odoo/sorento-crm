@@ -212,3 +212,56 @@ def test_a_member_code_typed_in_full_answers_that_product_only(session_factory, 
 def _no_code_lookup_prompt(monkeypatch):
     """Belt and braces: nothing here may depend on the CODE LOOKUP prompt being published."""
     monkeypatch.setattr(parser_mod, "uses_code_lookup", lambda *a, **k: False)
+
+
+def test_two_catalogue_codes_in_one_message_answer_every_part_of_both(session_factory, seeded, stub_access, monkeypatch):
+    """Two product codes switch the resolve to OR mode (reviewer blocker, 30 Oct): a catalogue code
+    there matches products and sets, and the kinds must not turn into a "product set or product?"
+    question. Both families' parts are fetched."""
+    from tests.chatbot.test_code_lookup_set_codes import _message
+    from tests.chatbot.test_engine import _envelope, _parser_output
+    from app.services.ai_assistant_service import MCPRuntimeClient
+    from app.services.chatbot import engine as engine_mod
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    db = session_factory()
+    ids = _seed_sets(db, SETS_7405)
+    ids.update(_seed_sets(db, SETS_8826))
+    db.commit()
+    verdict = _parser_output(
+        intent_hint="check_stock", domain_hint="inventory", user_goal="ask",
+        entities=[
+            {"raw": STEM.lower(), "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+            {"raw": STEM_8826.lower(), "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+        ],
+    )
+    calls: list = []
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **k: parser_mod.ParserConfig(
+        system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True))
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: verdict)
+    monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda self, n, a: calls.append((n, a)) or '{"ok": true, "items": []}')
+    stub_access()
+
+    result = engine_mod.run_turn(
+        _envelope(message=_message(f"stock {STEM.lower()} and {STEM_8826.lower()}")), session_factory=session_factory,
+    )
+    text = (result.reply or {}).get("text") or ""
+
+    assert "product set" not in text and "Which one do you mean" not in text, text
+    assert set(ids.values()) <= _stock_ids(calls), sorted(_stock_ids(calls))
+
+
+def test_a_word_inside_a_set_code_is_no_set_hit():
+    """Reviewer nit (30 Oct): "wc" sits inside SRTWC7405-S; a word token gets no set from a code
+    fragment, as it gets no product."""
+    from app.api.v1.system.references import _drop_word_code_fragments
+
+    result = {
+        "tokens": ["wc"],
+        "intersection": [{"entity_type": "product_set", "canonical_code": "ZZSTWC7405-S", "match_tier": "and"}],
+    }
+
+    _drop_word_code_fragments(result, frozenset())
+
+    assert result["intersection"] == []
