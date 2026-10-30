@@ -15,7 +15,7 @@ def main() -> None:
         settings = Settings()  # type: ignore[call-arg]
     except Exception as e:
         print("Configuration error:", e, file=sys.stderr)
-        print("Set CRM_BASE_URL, EXTERNAL_API_KEY and MCP_AUTH_TOKEN (see README).", file=sys.stderr)
+        print("Set CRM_BASE_URL and EXTERNAL_API_KEY (see README).", file=sys.stderr)
         sys.exit(1)
 
     logging.basicConfig(
@@ -23,11 +23,9 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    try:
-        app = create_http_app(settings)
-    except RuntimeError as e:
-        print("Configuration error:", e, file=sys.stderr)
-        sys.exit(1)
+    # The bearer token is set on the CRM's settings screen and fetched from the backend
+    # (MCP-TOKEN-UI), so a missing token is a state the gate handles, never an exit.
+    app = create_http_app(settings)
     # Same server FastMCP.run_streamable_http_async starts, serving the bearer-gated app.
     uvicorn.run(app, host=settings.mcp_host, port=settings.mcp_port, log_level=settings.log_level.lower())
 
