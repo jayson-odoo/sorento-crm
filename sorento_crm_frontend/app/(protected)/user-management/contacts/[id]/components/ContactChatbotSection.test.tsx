@@ -423,3 +423,48 @@ describe('ContactChatbotSection - Agent mode switch', () => {
     expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, agent_enabled: true });
   });
 });
+
+describe('ContactChatbotSection - agent turns per day', () => {
+  const input = () => screen.getByLabelText('Agent turns per day') as HTMLInputElement;
+
+  it('is blank when the contact follows the system value', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    expect(input().value).toBe('');
+  });
+
+  it('shows the own cap and saves an edit on blur with every other field unchanged', () => {
+    const loaded = { ...BASE_PROFILE, notify_salesman: true, agent_daily_turns: 20 };
+    useContactChatbotProfile.mockReturnValue({ data: loaded, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    expect(input().value).toBe('20');
+    fireEvent.change(input(), { target: { value: '0' } });
+    fireEvent.blur(input());
+    expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, agent_daily_turns: 0 });
+  });
+
+  it('clearing the field saves null so the contact follows the system value again', () => {
+    const loaded = { ...BASE_PROFILE, agent_daily_turns: 20 };
+    useContactChatbotProfile.mockReturnValue({ data: loaded, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    fireEvent.change(input(), { target: { value: '' } });
+    fireEvent.blur(input());
+    expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, agent_daily_turns: null });
+  });
+
+  it('refuses a negative number and saves nothing', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    fireEvent.change(input(), { target: { value: '-3' } });
+    fireEvent.blur(input());
+    expect(screen.getByText('Enter a whole number between 0 and 100000, or leave it blank.')).toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it('does not save when the value is unchanged', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    fireEvent.blur(input());
+    expect(mutate).not.toHaveBeenCalled();
+  });
+});

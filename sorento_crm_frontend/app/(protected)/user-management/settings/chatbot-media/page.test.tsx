@@ -80,6 +80,9 @@ function settings(overrides: Partial<ChatbotMediaSettings> = {}): ChatbotMediaSe
     chatbot_agent_max_seconds: 45,
     chatbot_agent_max_input_tokens: 150000,
     chatbot_agent_compact_tokens: 40000,
+    chatbot_router_enabled: false,
+    chatbot_router_min_score: 0.7,
+    chatbot_agent_daily_turns: 50,
     ...overrides,
   };
 }
@@ -829,5 +832,49 @@ describe('ChatbotMediaSettingsPage - agent budgets', () => {
 
     fireEvent.change(field('agent-max-rounds'), { target: { value: '31' } });
     expect(screen.getByText('Enter a whole number between 1 and 30.')).toBeInTheDocument();
+  });
+});
+
+describe('ChatbotMediaSettingsPage - auto routing', () => {
+  const field = (id: string) => document.getElementById(id) as HTMLInputElement;
+
+  it('seeds the three router settings and saves edits, the bar as a 0 to 1 score', () => {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockQuery.mockReturnValue({
+      data: settings({ chatbot_router_min_score: 0.85, chatbot_agent_daily_turns: 12 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    expect(screen.getByText('Auto routing')).toBeInTheDocument();
+    expect(document.getElementById('router-enabled')).toHaveAttribute('data-state', 'unchecked');
+    expect(field('router-min-percent').value).toBe('85');
+    expect(field('agent-daily-turns').value).toBe('12');
+
+    fireEvent.click(document.getElementById('router-enabled') as Element);
+    fireEvent.change(field('router-min-percent'), { target: { value: '70' } });
+    fireEvent.change(field('agent-daily-turns'), { target: { value: '0' } });
+    fireEvent.click(saveButton());
+    expect(mutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chatbot_router_enabled: true,
+        chatbot_router_min_score: 0.7,
+        chatbot_agent_daily_turns: 0,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('refuses a bar outside 50 to 95 and a negative cap', () => {
+    mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+    mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderWithClient();
+
+    fireEvent.change(field('router-min-percent'), { target: { value: '96' } });
+    expect(screen.getByText('Enter a whole number between 50 and 95.')).toBeInTheDocument();
+    fireEvent.change(field('agent-daily-turns'), { target: { value: '-1' } });
+    expect(screen.getByText('Enter a whole number between 0 and 100000.')).toBeInTheDocument();
   });
 });

@@ -33,8 +33,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import binascii
+import dataclasses
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -67,6 +69,9 @@ from app.schemas.chatbot_turn import (
     AgentConversationTurn,
     AgentTurnRequest,
     AgentTurnResponse,
+    AutoRoute,
+    AutoTurnRequest,
+    AutoTurnResponse,
     ChatbotTurnDetailResponse,
     ChatbotTurnListResponse,
     ChatbotTurnResponse,
@@ -82,6 +87,7 @@ from app.services.chatbot.agent import memory as agent_memory
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
 from app.services.chatbot.agent.loop import AgentBusy, run_agent_turn
 from app.services.chatbot import console_service
+from app.services.chatbot import router as chatbot_router
 from app.services.chatbot.analytics import topic_audit
 from app.services.chatbot.contracts import TURN_STAGES
 from app.services.chatbot.trace_detail import compose_trace_detail
@@ -682,6 +688,10 @@ def console_turn(
         media=payload.media.model_dump() if payload.media is not None else None,
         reply_to=payload.reply_to.model_dump() if payload.reply_to is not None else None,
     )
+    return _console_response(result)
+
+
+def _console_response(result) -> ConsoleTurnResponse:
     return ConsoleTurnResponse(
         turn_id=result.turn_id,
         branch_kind=result.branch_kind,
@@ -715,6 +725,10 @@ def agent_turn(
     """One turn of the agent for a contact whose Agent switch is on and which has a linked
     active user. A refusal is a 409 carrying the reason; a second turn for the same contact
     while one runs is a 409 agent_busy."""
+    return _run_agent(db, user, payload.contact_respond_id, payload.text)
+
+
+def _run_agent(db: Session, user: dict, contact_respond_id: str, text: str) -> AgentTurnResponse:
     from app.services import rate_limit
 
     # Each turn can spend a dozen model calls: limited per operator (fail-open without Redis).
@@ -727,8 +741,8 @@ def agent_turn(
     try:
         result = run_agent_turn(
             db,
-            contact_respond_id=payload.contact_respond_id,
-            text=payload.text,
+            contact_respond_id=contact_respond_id,
+            text=text,
             operator_user_id=user.get("id"),
         )
     except AgentRefused as exc:
@@ -747,6 +761,47 @@ def agent_turn(
         steps=agent_memory.steps_for_turn(db, result.turn_id),
         pending_action=result.pending_action,
     )
+
+
+# AGENTIC-P2: Auto mode. The router picks the side, then that side's own turn runs; an agent
+# failure is the agent's error (409 / 429), never re-run on the bot.
+@router.post("/console/auto-turn", response_model=AutoTurnResponse)
+def auto_turn(
+    payload: AutoTurnRequest,
+    user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    if not chatbot_router.router_enabled(db):
+        # The switch is off (the default): no Jev call, today's bot answers.
+        decision = chatbot_router.RouteDecision("chat", None, "routing_off")
+    else:
+        try:
+            ctx = build_context(db, payload.contact_respond_id)
+        except AgentRefused as exc:
+            # A contact the agent may not serve never meets the router: today's bot, no model call.
+            decision = chatbot_router.RouteDecision("chat", None, "not_eligible", detail=exc.reason)
+        else:
+            decision = chatbot_router.decide(
+                db,
+                ctx,
+                payload.text,
+                history=chatbot_router.recent_exchanges(db, payload.contact_respond_id),
+                has_media=False,
+                session_vars=payload.session_vars,
+            )
+    if decision.route == "agent":
+        turn = _run_agent(db, user, payload.contact_respond_id, payload.text)
+    else:
+        turn = _console_response(
+            console_service.run_console_turn(
+                db,
+                contact_respond_id=payload.contact_respond_id,
+                text=payload.text,
+                session_vars=payload.session_vars,
+                run_id=payload.run_id or str(uuid.uuid4()),
+            )
+        )
+    return AutoTurnResponse(route=AutoRoute(**dataclasses.asdict(decision)), turn=turn)
 
 
 def _action_response(outcome) -> AgentActionResponse:

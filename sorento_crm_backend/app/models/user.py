@@ -1,6 +1,6 @@
 """User management models."""
 import enum
-from sqlalchemy import CheckConstraint, Column, String, Boolean, Date, DateTime, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Column, String, Boolean, Date, DateTime, Float, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
@@ -650,6 +650,11 @@ class SystemSetting(Base):
     chatbot_agent_max_seconds = Column(Integer, nullable=False, server_default="45", default=45)
     chatbot_agent_max_input_tokens = Column(Integer, nullable=False, server_default="150000", default=150000)
     chatbot_agent_compact_tokens = Column(Integer, nullable=False, server_default="40000", default=40000)
+    # AGENTIC-P2: the Jev router (console Auto mode), its confidence bar, and the per-contact daily
+    # cap on agent turns (0 = no cap; `respond_contacts.chatbot_agent_daily_turns` overrides it).
+    chatbot_router_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    chatbot_router_min_score = Column(Float, nullable=False, server_default="0.7", default=0.7)
+    chatbot_agent_daily_turns = Column(Integer, nullable=False, server_default="50", default=50)
     # R1 (H1): the corrected `check_stock` vocabulary makes two lanes reachable that
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.

@@ -71,6 +71,8 @@ export interface RespondContact {
   chatbot_skip_period_questions?: boolean;
   chatbot_files_as_links?: boolean;
   chatbot_agent_enabled?: boolean;
+  /** AGENTIC-P2: this contact's own daily agent-turn cap; null follows the system value, 0 is no cap. */
+  chatbot_agent_daily_turns?: number | null;
   /** MODEL-PER-CONTACT: the effective model and where it came from (detail reads only). */
   chatbot_llm?: ChatbotLlm | null;
   /** Identity S3: the user this contact is linked to, if any (list rows). Null

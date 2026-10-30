@@ -94,6 +94,8 @@ class RespondContactResponse(RespondContactBase):
     chatbot_files_as_links: bool = False
     # AGENTIC-P1: explicit entry to the read-only agent. Default off.
     chatbot_agent_enabled: bool = False
+    # AGENTIC-P2: this contact's daily agent-turn cap; null = the global value, 0 = no cap.
+    chatbot_agent_daily_turns: Optional[int] = None
     # CONTACT-BULK-ACCESS (UAC A2.1): `chatbot_profile.tier` flattened, and whether the
     # contact holds the `purchase_orders.cost` reveal (filled by the list only; null on detail).
     chatbot_tier: Optional[str] = None

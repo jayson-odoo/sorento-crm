@@ -170,3 +170,23 @@ export const AGENT_HIDDEN_TOOLS = new Set(['answer', 'plan']);
 export function agentToolLabel(name: string): string {
   return AGENT_TOOL_LABELS[name] ?? name.replace(/^crm_/, '').replace(/_/g, ' ');
 }
+
+/** The router's verdict on one Auto message (AGENTIC-P2). */
+export interface AutoRoute {
+  route: 'chat' | 'agent';
+  score: number | null;
+  reason: string;
+  detail?: string | null;
+  provider?: string | null;
+  ms?: number;
+  tokens_in?: number;
+}
+
+/** What decided the side when it was not a plain Jev verdict; absent reasons need no words. */
+export const AUTO_REASON_LABELS: Record<string, string> = {
+  low_confidence: 'low confidence',
+  daily_cap: 'daily cap',
+  router_failed: 'router failed',
+  routing_off: 'routing off',
+  not_eligible: 'not eligible',
+};

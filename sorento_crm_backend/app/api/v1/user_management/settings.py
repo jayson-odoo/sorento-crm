@@ -177,6 +177,10 @@ class SystemSettingUpdate(BaseModel):
     chatbot_agent_max_seconds: Optional[int] = Field(None, ge=5, le=300)
     chatbot_agent_max_input_tokens: Optional[int] = Field(None, ge=10000, le=2000000)
     chatbot_agent_compact_tokens: Optional[int] = Field(None, ge=5000, le=500000)
+    # AGENTIC-P2: the Jev router. 0 daily turns = no cap.
+    chatbot_router_enabled: Optional[bool] = None
+    chatbot_router_min_score: Optional[float] = Field(None, ge=0.5, le=0.95)
+    chatbot_agent_daily_turns: Optional[int] = Field(None, ge=0, le=100000)
     chatbot_stock_denial_enabled: Optional[bool] = None
     # PLAN-local-buy-routing-toggle.md: local-supplier Buy routing is a switch, off
     # by default. Off means the rule does not run at all (no pill, every Buy raises).
@@ -483,6 +487,9 @@ def get_settings(
                 "chatbot_agent_max_seconds": getattr(settings, "chatbot_agent_max_seconds", 45) if settings else None,
                 "chatbot_agent_max_input_tokens": getattr(settings, "chatbot_agent_max_input_tokens", 150000) if settings else None,
                 "chatbot_agent_compact_tokens": getattr(settings, "chatbot_agent_compact_tokens", 40000) if settings else None,
+                "chatbot_router_enabled": getattr(settings, "chatbot_router_enabled", False) if settings else None,
+                "chatbot_router_min_score": getattr(settings, "chatbot_router_min_score", 0.7) if settings else None,
+                "chatbot_agent_daily_turns": getattr(settings, "chatbot_agent_daily_turns", 50) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
                 # PLAN-local-buy-routing-toggle.md: BOTH manual builders, or the setting
                 # never reaches the General settings screen at all.
@@ -1074,6 +1081,10 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "chatbot_unsupported_domains": default_unsupported_domains(),
         "chatbot_completed_lanes": [],
         "chatbot_stock_denial_enabled": False,
+        # AGENTIC-P2: repeat SystemSetting's own defaults (app/models/user.py).
+        "chatbot_router_enabled": False,
+        "chatbot_router_min_score": 0.7,
+        "chatbot_agent_daily_turns": 50,
         "local_buy_routing_enabled": False,
         "borrow_from_order_enabled": False,
         "chatbot_business_lane_enabled": False,

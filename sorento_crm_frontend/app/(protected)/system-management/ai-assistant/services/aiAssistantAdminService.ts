@@ -11,6 +11,7 @@ export interface AIAssistantConfig {
   anthropic_api_key_masked: string | null;
   gemini_api_key_masked: string | null;
   openai_api_key_masked: string | null;
+  jev_api_key_masked?: string | null;
   enabled_tools: string[];
   rag_enabled: boolean;
   is_enabled: boolean;
@@ -27,6 +28,7 @@ export interface AIAssistantConfigUpdatePayload {
   anthropic_api_key?: string | null;
   gemini_api_key?: string | null;
   openai_api_key?: string | null;
+  jev_api_key?: string | null;
   enabled_tools: string[];
   rag_enabled: boolean;
   is_enabled: boolean;
@@ -47,8 +49,7 @@ export async function updateAIAssistantConfig(
     body: JSON.stringify(payload),
   });
   if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail || 'Failed to update AI assistant config');
+    throw new Error(await extractApiError(r, 'Failed to update AI assistant config'));
   }
   return r.json();
 }

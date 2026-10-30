@@ -272,6 +272,33 @@ class AgentTurnResponse(BaseModel):
     pending_action: AgentPendingAction | None = None
 
 
+class AutoTurnRequest(AgentTurnRequest):
+    # As on `ConsoleTurnRequest`: the console conversation rides along, so the bot side of an
+    # Auto turn continues the same session. `session_vars` is membership-sensitive (`{}` is
+    # "remembers nothing", absent or null is "use the stored session").
+    session_vars: dict[str, Any] | None = None
+    run_id: str | None = None
+
+
+class AutoRoute(BaseModel):
+    """Which side answered an Auto turn and why (AGENTIC-P2)."""
+
+    route: Literal["chat", "agent"]
+    score: float | None = None
+    reason: str
+    # The refusal behind `not_eligible`; null otherwise.
+    detail: str | None = None
+    provider: str | None = None
+    ms: int = 0
+    tokens_in: int = 0
+
+
+class AutoTurnResponse(BaseModel):
+    route: AutoRoute
+    # The chosen side's own turn: a console turn for `chat`, an agent turn for `agent`.
+    turn: ConsoleTurnResponse | AgentTurnResponse
+
+
 class AgentConversationToolCall(BaseModel):
     name: str
     status: str

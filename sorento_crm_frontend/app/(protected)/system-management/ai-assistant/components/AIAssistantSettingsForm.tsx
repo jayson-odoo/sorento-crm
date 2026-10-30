@@ -47,6 +47,9 @@ export default function AIAssistantSettingsForm() {
   // Dedicated OpenAI key - each provider resolves its own key slot.
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
   const [openaiKeyEdited, setOpenaiKeyEdited] = useState(false);
+  // Dedicated Jev key - the chatbot router (console Auto mode).
+  const [jevKeyInput, setJevKeyInput] = useState('');
+  const [jevKeyEdited, setJevKeyEdited] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState('');
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
@@ -88,6 +91,8 @@ export default function AIAssistantSettingsForm() {
     setGeminiKeyEdited(false);
     setOpenaiKeyInput(data.openai_api_key_masked || '');
     setOpenaiKeyEdited(false);
+    setJevKeyInput(data.jev_api_key_masked || '');
+    setJevKeyEdited(false);
   }, [data]);
 
   const filteredTools = useMemo(() => {
@@ -289,6 +294,19 @@ export default function AIAssistantSettingsForm() {
       </div>
 
       <div className="space-y-2">
+        <Label>Jev API key</Label>
+        <Input
+          type="text"
+          value={jevKeyInput}
+          onChange={(e) => {
+            setJevKeyInput(e.target.value);
+            setJevKeyEdited(true);
+          }}
+          placeholder="jev-****"
+        />
+      </div>
+
+      <div className="space-y-2">
         <Label>Enabled tools</Label>
         {toolsQuery.isError ? (
           <p className="text-xs text-destructive">
@@ -393,6 +411,7 @@ export default function AIAssistantSettingsForm() {
                 : undefined,
               gemini_api_key: geminiKeyEdited ? geminiKeyInput.trim() || undefined : undefined,
               openai_api_key: openaiKeyEdited ? openaiKeyInput.trim() || undefined : undefined,
+              jev_api_key: jevKeyEdited ? jevKeyInput.trim() || undefined : undefined,
               enabled_tools: enabledTools,
               rag_enabled: ragEnabled,
               is_enabled: isEnabled,
@@ -408,6 +427,8 @@ export default function AIAssistantSettingsForm() {
                 setGeminiKeyEdited(false);
                 setOpenaiKeyInput(saved.openai_api_key_masked || '');
                 setOpenaiKeyEdited(false);
+                setJevKeyInput(saved.jev_api_key_masked || '');
+                setJevKeyEdited(false);
               },
               onError: (e: Error) => toast.error(e.message),
             },
