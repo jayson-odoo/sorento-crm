@@ -8,6 +8,10 @@ Old DO quantities must not re-decide key-less Cancel SO groups, so a backfill ba
 cancel relink and none of its reactions (since #1679: the pending Transfer to Cancel SO
 proposal and the planning change on the CS board; before it, OI retirement and the email). It also queues no embedding work: about 1.2M events of
 OpenAI spend for history nobody searches. A plain push keeps both, as before.
+
+Since LOOKUP-EMBED-CENTRAL (#1967) `order` and `order_line` are outside RECORD_KEEP_SET and a
+plain push queues no embedding either; the embedding tests here use `orders_embedded`
+(`tests/test_do_history_backfill_flag.py`) so the backfill suppression stays measurable.
 """
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ from app.api.v1.external import ingest as ingest_route
 from app.models.email_outbox import EmailOutbox
 from app.models.embeddings import EmbeddingQueue
 from app.services.autocount_cancel_ingest_service import Derived
+from tests.test_do_history_backfill_flag import orders_embedded  # noqa: F401 - a fixture
 from tests.test_ingest_autocount_do_grn import (  # noqa: F401 - env is a fixture
     DO_INGEST,
     _records,
@@ -119,7 +124,7 @@ def test_plain_batch_still_reaches_the_cancel_proposal(env, monkeypatch):
     assert saved == [("00000000-0000-0000-0000-00000000dbq1", "ZZXS-DBQ1")]
 
 
-def test_backfill_batch_queues_no_embedding_work(env):
+def test_backfill_batch_queues_no_embedding_work(env, orders_embedded):
     """AC-DH46: no listener event and no bulk insert, for the DO or any of its lines."""
     res = _post(env, [_record()], backfill=True)
     assert _records(res)["db1:DO:900001"]["outcome"] == "created"
@@ -145,7 +150,7 @@ def test_backfill_false_still_relinks(env, monkeypatch):
     assert calls["relink"] == [{SO_NUMBER}]
 
 
-def test_plain_batch_still_queues_embeddings(env):
+def test_plain_batch_still_queues_embeddings(env, orders_embedded):
     """AC-DH46 baseline: the listener queues the DO and its lines."""
     _records(_post(env, [_record()]))
     ids = _landed_ids(env, 900001)
