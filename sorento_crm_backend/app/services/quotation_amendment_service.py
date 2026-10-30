@@ -644,15 +644,51 @@ def _floors_for(
     return floors
 
 
+def _totals(
+    db: Session, request: QuotationAmendmentRequest, rows: List[QuotationAmendmentRequestRow]
+) -> Tuple[Decimal, Decimal]:
+    """What the issue came to, and what it would come to with the ACCEPTED rows applied.
+
+    By the same rule every total uses (``line_amount``: a rate-only line adds nothing), so the
+    summary row cannot disagree with the draft Apply is about to write.
+    """
+    record = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.id == request.issue_id)
+        .first()
+    )
+    if record is None:
+        return Decimal("0.00"), Decimal("0.00")
+    accepted: Dict[str, Dict[str, Optional[Decimal]]] = {}
+    for row in rows:
+        if row.decision == "accepted":
+            accepted.setdefault(str(row.line_id), {})[row.field] = row.value_to
+    before = Decimal("0.00")
+    after = Decimal("0.00")
+    for line_id, (line, _pair) in _issued_lines(db, record).items():
+        amount = documents.line_amount(line)
+        before += amount
+        changes = accepted.get(line_id)
+        if not changes:
+            after += amount
+            continue
+        if FIELD_REMOVE in changes or line.is_rate_only:
+            continue
+        quantity = Decimal(changes.get(FIELD_QUANTITY) or line.quantity or 0)
+        price = Decimal(changes.get(FIELD_PRICE) or line.unit_price or 0)
+        after += (quantity * price).quantize(_CENTS)
+    return before, after
+
+
 def serialize_request(
-    db: Session, request: Optional[QuotationAmendmentRequest], *, with_floors: bool = True
+    db: Session, request: Optional[QuotationAmendmentRequest], *, staff: bool = True
 ) -> Optional[Dict[str, Any]]:
-    """The request and its rows. Staff get ``below_floor`` / ``floor_value`` on price rows; the
-    customer's page does not (``with_floors=False``), because a floor is internal pricing."""
+    """The request and its rows. Staff get ``below_floor`` / ``floor_value`` on price rows and the
+    totals; the customer's page does not (``staff=False``), because a floor is internal pricing."""
     if request is None:
         return None
     rows = _rows_of(db, request)
-    floors = _floors_for(db, rows) if with_floors else {}
+    floors = _floors_for(db, rows) if staff else {}
     serialized = []
     for row in rows:
         item: Dict[str, Any] = {
@@ -664,7 +700,7 @@ def serialize_request(
             "decision": row.decision,
             "decision_reason": row.decision_reason,
         }
-        if with_floors:
+        if staff:
             floor = floors.get(str(row.line_id)) if row.field == FIELD_PRICE else None
             item["floor_value"] = floor
             item["below_floor"] = bool(
@@ -673,7 +709,7 @@ def serialize_request(
                 and Decimal(row.value_to) < Decimal(floor)
             )
         serialized.append(item)
-    return {
+    payload: Dict[str, Any] = {
         "id": str(request.id),
         "status": request.status,
         "submitted_at": request.submitted_at,
@@ -682,3 +718,6 @@ def serialize_request(
         "applied_at": request.applied_at,
         "rows": serialized,
     }
+    if staff:
+        payload["total_issued"], payload["total_after"] = _totals(db, request, rows)
+    return payload

@@ -34,7 +34,7 @@ import type {
   StagedQuotationLine,
 } from '../../_shared/types/project.types';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
-import { QuotationLinesGrid } from './QuotationLinesGrid';
+import { QuotationLinesGrid, type QuotationLinesReview } from './QuotationLinesGrid';
 import {
   completeSetText,
   lineErrors,
@@ -110,8 +110,11 @@ export function QuotationVersionEditor({
   seriesId,
   edit,
   locked = false,
+  review,
 }: {
   project: Project;
+  /** The customer's suggestions to decide on the lines (QUOTE-CUSTOMER-AMEND). A read only. */
+  review?: QuotationLinesReview;
   /** The quotation is locked for approval: no per-scope revise is offered. */
   locked?: boolean;
   /**
@@ -593,6 +596,8 @@ export function QuotationVersionEditor({
           brandOptions={brandOptions}
           onStage={gridEditing ? stageLines : undefined}
           onToggleRemoved={gridEditing ? toggleRemoved : undefined}
+          // On the version the customer holds only: the suggestions name its lines.
+          review={!gridEditing && selected?.is_current ? review : undefined}
         />
       )}
 

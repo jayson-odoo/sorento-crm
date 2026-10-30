@@ -7,6 +7,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuotations } from '../../../../_shared/hooks/useProjects';
+import {
+  useQuotationAmendmentMutations,
+  useQuotationAmendmentRequest,
+} from '../../../../_shared/hooks/useQuotationDocuments';
+import type { QuotationLinesReview } from '../../../components/QuotationLinesGrid';
+import { QuotationAmendmentSummary } from './QuotationAmendmentSummary';
 import { OutcomePill } from '../../../../_shared/components/OutcomePill';
 import { QuotationOutcomeDialog } from '../../../components/QuotationOutcomeDialog';
 import { QuotationVersionEditor } from '../../../components/QuotationVersionEditor';
@@ -41,6 +47,25 @@ export function QuotationScopesTab() {
 
   const [decidingScopeId, setDecidingScopeId] = React.useState<string | null>(null);
 
+  // The customer's suggestions on the latest issue, decided in the grid's own cells. Only an
+  // OPEN request is offered for deciding; an answered one is history on the sign link.
+  const amendment = useQuotationAmendmentRequest(projectId, documentId, canEdit);
+  const amendments = useQuotationAmendmentMutations(projectId, documentId);
+  const openRequest = amendment.data?.status === 'open' ? amendment.data : null;
+  const decideRow = amendments.decide.mutate;
+  const review = React.useMemo<QuotationLinesReview | undefined>(
+    () =>
+      openRequest
+        ? {
+            rows: openRequest.rows,
+            disabled: amendments.decide.isPending || amendments.apply.isPending,
+            onDecide: (rowId, decision, reason) =>
+              decideRow({ requestId: openRequest.id, rowId, decision, reason }),
+          }
+        : undefined,
+    [amendments.apply.isPending, amendments.decide.isPending, decideRow, openRequest],
+  );
+
   const scopes = record.scopes ?? [];
   const activeScope = scopes.find((scope) => scope.id === activeScopeId) ?? scopes[0] ?? null;
   const activeQuotation =
@@ -68,6 +93,15 @@ export function QuotationScopesTab() {
 
   return (
     <div className="space-y-5">
+      {openRequest && (
+        <QuotationAmendmentSummary
+          request={openRequest}
+          canApply={canEdit && !isLockedForApproval(record)}
+          applying={amendments.apply.isPending}
+          onApply={() => amendments.apply.mutate(openRequest.id)}
+        />
+      )}
+
       <QuotationScopeTabs
         scopes={scopes}
         activeScopeId={activeScope?.id ?? ''}
@@ -119,6 +153,7 @@ export function QuotationScopesTab() {
               // Pending or approved: the whole quotation is locked, and the way out is the
               // header's Edit quotation (Revise with a reason), not a per-scope revise.
               locked={isLockedForApproval(record)}
+              review={review}
             />
           </CardContent>
         </Card>

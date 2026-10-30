@@ -2243,6 +2243,9 @@ class QuotationAmendmentResponse(BaseModel):
 
 class QuotationAmendmentStaffResponse(QuotationAmendmentResponse):
     rows: List[QuotationAmendmentStaffRowResponse] = Field(default_factory=list)
+    # The issue's total, and the total with the ACCEPTED rows applied (the summary row).
+    total_issued: Decimal = Decimal("0")
+    total_after: Decimal = Decimal("0")
 
 
 class QuotationAmendmentApplyResponse(BaseModel):

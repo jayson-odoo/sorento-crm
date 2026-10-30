@@ -6,12 +6,16 @@ import {
   ENTITY_DOWNLOADS_QUERY_KEY,
   MY_DOWNLOADS_QUERY_KEY,
 } from '@/services/myDownloadsService';
+import type { QuotationAmendmentDecision } from '../types/project.types';
 import {
   addQuotationScope,
+  applyQuotationAmendmentRequest,
   approveQuotationDocument,
   createQuotationDocument,
   createQuotationSignLink,
+  decideQuotationAmendmentRow,
   deleteQuotationDocument,
+  getQuotationAmendmentRequest,
   getQuotationApprovalGraph,
   getQuotationDocument,
   getQuotationLetterTemplates,
@@ -34,6 +38,7 @@ import {
 const DOCUMENTS_KEY = 'project-quotation-documents';
 const ISSUES_KEY = 'project-quotation-issues';
 const APPROVAL_GRAPH_KEY = ['quotation-approval-graph'];
+const AMENDMENT_KEY = 'project-quotation-amendment';
 
 export const quotationDocumentsKey = (projectId: string) => [DOCUMENTS_KEY, projectId];
 export const quotationDocumentKey = (projectId: string, documentId: string) => [
@@ -307,4 +312,69 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     issueXlsx,
     documentId,
   };
+}
+
+export const quotationAmendmentKey = (projectId: string, documentId: string) => [
+  AMENDMENT_KEY,
+  projectId,
+  documentId,
+];
+
+/** The customer's suggestions on this document's latest issue, or null (QUOTE-CUSTOMER-AMEND). */
+export function useQuotationAmendmentRequest(
+  projectId: string | undefined,
+  documentId: string | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: quotationAmendmentKey(projectId ?? '', documentId ?? ''),
+    queryFn: () => getQuotationAmendmentRequest(projectId as string, documentId as string),
+    enabled: Boolean(projectId && documentId) && enabled,
+  });
+}
+
+/**
+ * Deciding a suggestion and applying the decisions. A decision only rewrites the request, so it
+ * puts the answer straight into the cache; Apply opens draft versions, so it invalidates the
+ * scopes and their versions as an issue does.
+ */
+export function useQuotationAmendmentMutations(projectId: string, documentId: string) {
+  const queryClient = useQueryClient();
+  const key = quotationAmendmentKey(projectId, documentId);
+
+  const decide = useMutation({
+    mutationFn: ({
+      requestId,
+      rowId,
+      decision,
+      reason,
+    }: {
+      requestId: string;
+      rowId: string;
+      decision: QuotationAmendmentDecision;
+      reason?: string;
+    }) =>
+      decideQuotationAmendmentRow(projectId, documentId, requestId, rowId, { decision, reason }),
+    onSuccess: (request) => queryClient.setQueryData(key, request),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const apply = useMutation({
+    mutationFn: (requestId: string) =>
+      applyQuotationAmendmentRequest(projectId, documentId, requestId),
+    onSuccess: (result) => {
+      queryClient.setQueryData(key, result.request);
+      queryClient.invalidateQueries({ queryKey: [DOCUMENTS_KEY, projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project-quotations'] });
+      queryClient.invalidateQueries({ queryKey: ['project-quotation-versions'] });
+      toast.success(
+        result.version_ids.length > 0
+          ? 'Decisions applied. The revision is a draft for you to check and send.'
+          : 'Decisions applied. Nothing was accepted, so no revision was opened.',
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { decide, apply };
 }

@@ -133,7 +133,8 @@ Service (`app/services/quotation_amendment_service.py`, new module):
 
 Staff (`app/api/v1/projects/quotation_documents.py`, `require_permission(EDIT)`, `_editable_project`):
 
-- `GET /projects/{project_id}/quotation-documents/{document_id}/amendment-request` -> the serialized open or latest request of the latest issue, or `null`.
+- `GET /projects/{project_id}/quotation-documents/{document_id}/amendment-request` -> the serialized open or latest request of the latest issue, or `null`. Read right plus the edit right on the project (`require_any_permission(view)` + `_editable_project(write=False)`).
+- The staff serialization (GET, PUT, apply) also carries `total_issued` and `total_after` (the issue total, and the total with the ACCEPTED rows applied, rate-only lines excluded) for the summary row: a quantity row carries no price, so the browser cannot compute them from the rows. Added by the coder in Phase 2; the public page does not carry them.
 - `PUT /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/rows/{row_id}` body `{ "decision": "accepted"|"rejected"|"pending", "reason": str|null }` -> the serialized request.
 - `POST /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/apply` -> `{ "request": {...}, "version_ids": [...] }`.
 

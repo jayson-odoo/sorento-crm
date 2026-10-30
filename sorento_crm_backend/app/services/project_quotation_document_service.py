@@ -1499,7 +1499,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         "changes_requested_by_name": record.changes_requested_by_name,
         "is_changes_requested": record.changes_requested_at is not None,
         # Floors are internal pricing, so the customer's copy of the request carries none.
-        "amendment_request": amendments.serialize_request(db, asked, with_floors=False),
+        "amendment_request": amendments.serialize_request(db, asked, staff=False),
         "superseded_by_ref": newer.our_ref_text if newer is not None else None,
         "can_sign": blocked is None,
         "sign_blocked_reason": blocked,
