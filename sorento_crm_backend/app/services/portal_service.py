@@ -1102,9 +1102,6 @@ class PortalService:
         if payload:
             self._apply_payload(kind, row, payload)
             self._replace_request_lines_if_needed(kind, row, payload)
-        # A draft may be incomplete; a submission may not (FORM-REQUIRED-SERVER). Read
-        # off the row after the body above, so a resubmit of a saved draft is checked too.
-        portal_required_fields.require_complete(kind, row)
 
         # Status transition + notification.
         previous_status = row.status
@@ -1118,12 +1115,15 @@ class PortalService:
             if previous_approval_status == "rejected"
             else getattr(row, "rejection_reason", None)
         )
-        row.portal_draft_at = None
         if kind == "complaint":
             if previous_status not in ("draft", "rejected"):
                 raise handle_validation_error(
                     f"Cannot submit complaint with status {previous_status!r}."
                 )
+            # A draft may be incomplete; a submission may not (FORM-REQUIRED-SERVER). Read
+            # off the row after the body above, so a bare resubmit of a saved draft is
+            # checked too; before any write below, so a refusal leaves the row as it was.
+            portal_required_fields.require_complete(kind, row)
             row.status = submission_status.status_on_submit(
                 was_rejected=previous_status == "rejected"
             )
@@ -1134,6 +1134,7 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit stock inquiry with status {previous_status!r}."
                 )
+            portal_required_fields.require_complete(kind, row)
             # Portal submit mirrors the system "submit for project sales" flow:
             # advance directly to pending_project_sales so the Project Sales
             # team is queued for review (notification fires below). After a
@@ -1191,6 +1192,7 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit {kind} with status {previous_status!r}."
                 )
+            portal_required_fields.require_complete(kind, row)
             row.status = submission_status.status_on_submit(
                 was_rejected=previous_status == "rejected" or approval_rejected
             )
@@ -1206,6 +1208,8 @@ class PortalService:
                 row.approved_at = None
                 row.approved_by = None
                 row.approval_signature_ref = None
+
+        row.portal_draft_at = None
 
         # Document number generation (skip complaint - no number column).
         self._assign_document_number_if_missing(kind, row)
