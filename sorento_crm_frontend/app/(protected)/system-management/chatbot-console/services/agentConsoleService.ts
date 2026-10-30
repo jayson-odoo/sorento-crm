@@ -7,6 +7,7 @@
  * POST /api/v1/system/chatbot/agent/conversation/new   { contact_respond_id } -> { conversation_id }
  * POST /api/v1/system/chatbot/agent/actions/{id}/confirm { contact_respond_id } -> AgentActionResponse
  * POST /api/v1/system/chatbot/agent/actions/{id}/cancel  { contact_respond_id } -> AgentActionResponse
+ * POST /api/v1/system/chatbot/agent/actions/{id}/steps/{n}/withdraw { contact_respond_id } -> AgentActionResponse
  *   409 { detail: { code: "action_refused", reason } } when the proposal can no longer be decided.
  *
  * All of them need `system.chat_history.view`, like `/console/turn`.
@@ -78,6 +79,30 @@ async function decideAction(
         decision === 'confirm' ? 'Failed to confirm the changes' : 'Failed to cancel the changes',
       ),
     );
+  }
+  return response.json();
+}
+
+/** Withdraw a done step whose change still waits out its grace window (nothing applied, nobody told). */
+export async function withdrawAgentStep(
+  contactRespondId: string,
+  actionId: string,
+  index: number,
+): Promise<AgentActionResponse> {
+  const response = await apiFetch(
+    `${BASE}/actions/${encodeURIComponent(actionId)}/steps/${index}/withdraw`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contact_respond_id: contactRespondId }),
+    },
+  );
+  if (!response.ok) {
+    if (response.status === 409) {
+      const reason = await actionRefusalReason(response);
+      if (reason) throw new ActionRefusedError(reason);
+    }
+    throw new Error(await extractApiError(response, 'Failed to withdraw the change'));
   }
   return response.json();
 }

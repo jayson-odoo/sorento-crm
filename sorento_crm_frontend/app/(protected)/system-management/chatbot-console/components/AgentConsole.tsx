@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
+import { Check, Loader2, Plus, SendHorizonal, Undo2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -12,6 +12,7 @@ import {
 } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 import { WhatsAppText } from '@/components/chatbot/WhatsAppText';
+import { TakeoverCountdown } from '@/app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown';
 import { getRespondContactsOutbound } from '../../respond-contacts/services/respondContactOutboundService';
 import { useAgentConsole } from '../hooks/useAgentConsole';
 import {
@@ -23,6 +24,7 @@ import {
   type AgentConversationTurn,
   type AgentPendingAction,
   type AgentReplyMeta,
+  type AgentStepWaiting,
   type AgentSteps,
 } from '../types/agentConsole.types';
 
@@ -200,8 +202,61 @@ const OUTCOME_LABEL: Record<string, string> = {
   cancelled: 'Cancelled',
 };
 
+/** A done change still waiting out its grace window: the screen's countdown and its Undo. */
+function WaitingStep({
+  waiting,
+  busy,
+  onWithdraw,
+  onExpire,
+}: {
+  waiting: AgentStepWaiting;
+  busy: boolean;
+  onWithdraw: () => void;
+  onExpire: () => void;
+}) {
+  const [over, setOver] = useState(false);
+  if (over) return null;
+  return (
+    <div
+      className="mt-1 flex flex-col gap-1.5 sm:flex-row sm:items-center"
+      data-testid="agent-step-waiting"
+    >
+      <TakeoverCountdown
+        commitAt={waiting.commit_at}
+        windowSeconds={waiting.window_seconds}
+        onExpire={() => {
+          setOver(true);
+          onExpire();
+        }}
+        className="min-w-0 flex-1"
+      />
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="w-fit shrink-0 gap-1.5"
+        disabled={busy}
+        onClick={onWithdraw}
+      >
+        <Undo2 className="size-3.5" />
+        Undo
+      </Button>
+    </div>
+  );
+}
+
 /** What an action changed, kept with the turn that proposed it: status, each step and its field lines. */
-function ActionsBlock({ actions }: { actions: AgentConversationAction[] }) {
+function ActionsBlock({
+  actions,
+  withdrawing,
+  onWithdraw,
+  onExpire,
+}: {
+  actions: AgentConversationAction[];
+  withdrawing: boolean;
+  onWithdraw: (actionId: string, index: number) => void;
+  onExpire: () => void;
+}) {
   return (
     <div className="mt-2 space-y-2 border-t pt-2" data-testid="agent-actions">
       {actions.map((action) => (
@@ -230,6 +285,14 @@ function ActionsBlock({ actions }: { actions: AgentConversationAction[] }) {
                     {change.field}: {change.before} -&gt; {change.after}
                   </p>
                 ))}
+                {step.waiting ? (
+                  <WaitingStep
+                    waiting={step.waiting}
+                    busy={withdrawing}
+                    onWithdraw={() => onWithdraw(action.id, index)}
+                    onExpire={onExpire}
+                  />
+                ) : null}
               </li>
             ))}
           </ul>
@@ -353,7 +416,12 @@ export default function AgentConsole() {
                   <WhatsAppText text={turn.reply_text} />
                 </p>
                 {turn.actions && turn.actions.length > 0 ? (
-                  <ActionsBlock actions={turn.actions} />
+                  <ActionsBlock
+                    actions={turn.actions}
+                    withdrawing={agent.withdrawing}
+                    onWithdraw={agent.withdrawStep}
+                    onExpire={agent.refresh}
+                  />
                 ) : null}
                 {(() => {
                   const meta =
