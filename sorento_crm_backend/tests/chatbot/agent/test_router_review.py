@@ -290,14 +290,14 @@ def test_7_false_absent_or_blank_keeps_the_stored_key(extra):
 GLOBAL = "chatbot_agent_daily_turns_global"
 
 
-def test_8_get_carries_the_global_cap_default(settings_db, settings_client):
-    contact_id = _seed_contact(settings_db)
+def test_8_get_carries_the_global_cap_default(db, settings_client):
+    contact_id = _seed_contact(db)
     assert settings_client.get(f"{BASE}/{contact_id}").json()[GLOBAL] == 50
 
 
-def test_8_get_and_put_carry_the_system_setting_value(settings_db, settings_client):
-    _settings_row(settings_db, chatbot_agent_daily_turns=33)
-    contact_id = _seed_contact(settings_db)
+def test_8_get_and_put_carry_the_system_setting_value(db, settings_client):
+    _settings_row(db, chatbot_agent_daily_turns=33)
+    contact_id = _seed_contact(db)
     assert settings_client.get(f"{BASE}/{contact_id}").json()[GLOBAL] == 33
     resp = settings_client.put(f"{BASE}/{contact_id}/chatbot", json={"chatbot_agent_daily_turns": 4})
     assert resp.status_code == 200, resp.text
@@ -305,8 +305,8 @@ def test_8_get_and_put_carry_the_system_setting_value(settings_db, settings_clie
     assert resp.json()["chatbot_agent_daily_turns"] == 4
 
 
-def test_8_the_global_value_is_read_only_on_put(settings_db, settings_client):
-    _settings_row(settings_db, chatbot_agent_daily_turns=33)
-    contact_id = _seed_contact(settings_db)
+def test_8_the_global_value_is_read_only_on_put(db, settings_client):
+    _settings_row(db, chatbot_agent_daily_turns=33)
+    contact_id = _seed_contact(db)
     settings_client.put(f"{BASE}/{contact_id}/chatbot", json={GLOBAL: 5})
     assert settings_client.get(f"{BASE}/{contact_id}").json()[GLOBAL] == 33
