@@ -293,6 +293,10 @@ class RespondContact(Base):
     # CONTACT-BRAND-SCOPE: the brands this contact may see. NULL or empty = every brand.
     # Read only through app.services.contact_brand_scope.contact_brand_scope.
     brand_ids = Column(ARRAY(UUID(as_uuid=False)), nullable=True)
+    # ITEM-CLASS: `{brand_id: [item_class_id, ...]}` narrowing a brand in `brand_ids` to those
+    # classes. A brand absent from the map, or mapped to [], keeps every class. NULL = no class
+    # limit anywhere. Read only through contact_brand_scope.
+    brand_class_ids = Column(JSONB(astext_type=Text()), nullable=True)
     # Chatbot turn re-architecture (AC-1503): the Profile shelf, one JSONB blob
     # (tier, language, default ledgers - PLAN "Design > State"), written by explicit
     # picks (a WhatsApp pick, or the Contact > Access "Chatbot" card) and read as a
@@ -341,6 +345,8 @@ class RespondContact(Base):
     # WhatsApp message per file (today); on = link mode, one text with a short link per file
     # (`chatbot_file_links`). Default OFF: every contact starts in attachment mode (Q4 (a)).
     chatbot_files_as_links = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # AGENTIC-P1: explicit entry to the read-only agent (console Agent mode). Default OFF.
+    chatbot_agent_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)

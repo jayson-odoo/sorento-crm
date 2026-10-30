@@ -40,6 +40,8 @@ _TABLES = [
     ("units_of_measure", "uom_code"),
     ("products", "product_code"),
     ("brands", "brand_code"),
+    ("item_types", "item_type_code"),
+    ("item_classes", "item_class_code"),
 ]
 
 

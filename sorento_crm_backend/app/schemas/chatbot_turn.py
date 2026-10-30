@@ -205,3 +205,88 @@ class ConsoleMediaStatusResponse(BaseModel):
     status: str  # "pending" | "done" | "failed"
     text: str | None = None
     error: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# AGENTIC-P1: the console's Agent mode
+# --------------------------------------------------------------------------- #
+
+
+class AgentTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contact_respond_id: str = Field(min_length=1, max_length=64)
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class AgentUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    calls: int = 0
+
+
+class AgentToolCall(BaseModel):
+    name: str
+    status: str
+    ms: int = 0
+
+
+class AgentStepsToolCall(BaseModel):
+    name: str
+    status: str
+    ms: int = 0
+
+
+class AgentSteps(BaseModel):
+    """What a turn did, from its stored trace (the console shows it under the reply)."""
+
+    rounds: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    tool_calls: list[AgentStepsToolCall] = Field(default_factory=list)
+
+
+class AgentTurnResponse(BaseModel):
+    turn_id: str
+    conversation_id: str
+    reply_text: str
+    status: str
+    limit_hit: str | None = None
+    rounds: int = 0
+    usage: AgentUsage
+    tool_calls: list[AgentToolCall] = Field(default_factory=list)
+    steps: AgentSteps = Field(default_factory=AgentSteps)
+
+
+class AgentConversationToolCall(BaseModel):
+    name: str
+    status: str
+
+
+class AgentConversationTurn(BaseModel):
+    turn_id: str
+    text: str
+    reply_text: str
+    status: str
+    created_at: datetime
+    rounds: int | None = None
+    limit_hit: str | None = None
+    tool_calls: list[AgentConversationToolCall] = Field(default_factory=list)
+    steps: AgentSteps = Field(default_factory=AgentSteps)
+
+
+class AgentConversationResponse(BaseModel):
+    conversation_id: str | None = None
+    turns: list[AgentConversationTurn] = Field(default_factory=list)
+
+
+class AgentConversationNewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contact_respond_id: str = Field(min_length=1, max_length=64)
+
+
+class AgentConversationNewResponse(BaseModel):
+    conversation_id: str

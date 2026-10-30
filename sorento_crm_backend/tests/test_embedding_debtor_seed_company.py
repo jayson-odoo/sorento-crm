@@ -18,6 +18,7 @@ import uuid
 
 import pytest
 
+import app.services.embedding_settings as embedding_settings
 import app.services.embedding_worker as embedding_worker
 import app.services.entity_resolver as er
 from app.models.base import UNSET, set_company_scope
@@ -71,10 +72,10 @@ def _vectors(seed: int) -> tuple[list[float], list[float]]:
     return q, near
 
 
-def _seed_chunk(db, source_id: str, key: str, company_id, vec) -> None:
-    h = hashlib.sha256(f"customer:{source_id}".encode()).hexdigest()
+def _seed_chunk(db, source_id: str, key: str, company_id, vec, source_type: str = "promotion") -> None:
+    h = hashlib.sha256(f"{source_type}:{source_id}".encode()).hexdigest()
     doc = EmbeddingDocument(
-        source_type="customer",
+        source_type=source_type,
         source_id=source_id,
         source_key=key,
         title=key,
@@ -90,13 +91,13 @@ def _seed_chunk(db, source_id: str, key: str, company_id, vec) -> None:
     db.add(
         EmbeddingChunk(
             document_id=doc.id,
-            source_type="customer",
+            source_type=source_type,
             source_id=source_id,
             chunk_index=0,
             chunk_text=key,
             chunk_hash=h,
             embedding=vec,
-            model_name="zz-test",
+            model_name="text-embedding-3-small",
             model_version="1",
             embedding_provider="zz-test",
             source_hash=h,
@@ -147,7 +148,11 @@ def world(db, monkeypatch):
     )
     db.flush()
     q, near = _vectors(int(suffix, 16))
-    monkeypatch.setattr(embedding_worker, "_embed_text_chunks", lambda texts, *a, **k: [q for _ in texts])
+    # LOOKUP-EMBED-CENTRAL: readers embed the question through embed_search_texts and read only keep-set
+    # sources, so the debtor-seed scoping tests that go through a reader seed `promotion` rows (the seed id
+    # rule is by source_id prefix, not by source type) and the tests that call search_current keep `customer`.
+    monkeypatch.setattr(er, "_SEARCH_SEAMS", {})
+    monkeypatch.setattr(embedding_settings, "embed_search_texts", lambda texts, model, **k: [q for _ in texts])
     return {"a": a.id, "b": b.id, "suffix": suffix, "code": code, "master_code": master_code, "q": q, "near": near}
 
 
@@ -228,17 +233,17 @@ def test_worker_refuses_a_seed_whose_company_has_no_such_debtor(db, world):
 # ------------------------------------------------------------- search under a company scope
 
 
-def _seed_both(db, world) -> None:
+def _seed_both(db, world, source_type: str = "promotion") -> None:
     # B holds the EXACT vector, A the close one: an unscoped ranking puts B first.
-    _seed_chunk(db, debtor_seed_id(world["a"], world["code"]), f"debtor:{world['code']}", world["a"], world["near"])
-    _seed_chunk(db, debtor_seed_id(world["b"], world["code"]), f"debtor:{world['code']}", world["b"], world["q"])
+    _seed_chunk(db, debtor_seed_id(world["a"], world["code"]), f"debtor:{world['code']}", world["a"], world["near"], source_type)
+    _seed_chunk(db, debtor_seed_id(world["b"], world["code"]), f"debtor:{world['code']}", world["b"], world["q"], source_type)
 
 
 def test_rag_search_returns_own_company_seed_only(db, world):
     """`/external/rag/search`: red before the fix (every seed dropped under a scope)."""
     _seed_both(db, world)
     set_company_scope(db, frozenset({world["a"]}))
-    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="customer")
+    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="promotion")
     ids = {c.source_id for c, _, _ in rows}
     assert debtor_seed_id(world["a"], world["code"]) in ids
     assert debtor_seed_id(world["b"], world["code"]) not in ids
@@ -247,7 +252,7 @@ def test_rag_search_returns_own_company_seed_only(db, world):
 def test_rag_search_unset_scope_returns_no_seed(db, world):
     _seed_both(db, world)
     set_company_scope(db, UNSET)
-    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="customer")
+    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="promotion")
     assert not [c for c, _, _ in rows if c.source_id.startswith("debtor:")]
 
 
@@ -256,39 +261,37 @@ def test_rag_search_never_returns_a_company_less_debtor_seed(db, world):
     is not shared knowledge: no company scope sees it."""
     _seed_chunk(db, f"debtor:{world['code']}", f"debtor:{world['code']}", None, world["q"])
     set_company_scope(db, frozenset({world["a"]}))
-    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="customer")
+    rows = EmbeddingReadService(db).search_current(world["q"], top_k=10, source_type="promotion")
     assert f"debtor:{world['code']}" not in {c.source_id for c, _, _ in rows}
 
 
 def test_rag_phrase_resolves_own_company_debtor(db, world):
     """MCP filter path: red before the fix (the seed was dropped, the code unresolved)."""
-    _seed_both(db, world)
+    _seed_both(db, world, "promotion")
     set_company_scope(db, frozenset({world["a"]}))
-    hits = er._rag_resolve_phrase(db, f"zztsd alpha {world['suffix']}", frozenset({"customer"}))
-    debtor_hits = [h for h in hits if h.match_field == "debtor_code"]
-    assert [h.canonical_code for h in debtor_hits] == [world["code"]]
+    hits = er._rag_resolve_phrase(db, f"zztsd alpha {world['suffix']}", frozenset({"promotion"}))
+    # Changed: no customer entity maps any more, so the key comes back as stored (`debtor:<code>`), once.
+    assert [h.canonical_code for h in hits] == [f"debtor:{world['code']}"]
 
 
 def test_rag_phrase_never_returns_another_companys_debtor(db, world):
-    _seed_chunk(db, debtor_seed_id(world["b"], world["code"]), f"debtor:{world['code']}", world["b"], world["q"])
+    _seed_chunk(db, debtor_seed_id(world["b"], world["code"]), f"debtor:{world['code']}", world["b"], world["q"], "promotion")
     set_company_scope(db, frozenset({world["a"]}))
-    hits = er._rag_resolve_phrase(db, f"zztsd beta {world['suffix']}", frozenset({"customer"}))
-    assert world["code"] not in {h.canonical_code for h in hits}
+    hits = er._rag_resolve_phrase(db, f"zztsd beta {world['suffix']}", frozenset({"promotion"}))
+    assert not {h.canonical_code for h in hits}
 
 
 def test_fuzzy_resolver_expands_a_seed_to_its_own_companys_debtor_name(db, world, monkeypatch):
     """customer_query expansion: the seed resolves to the name A's orders carry, never
     B's name for the same code."""
-    import app.api.v1.external.rag as rag
     from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 
-    monkeypatch.setattr(rag, "_embed_query", lambda term: world["q"])
-    _seed_both(db, world)
+    _seed_both(db, world, "promotion")
     set_company_scope(db, frozenset({world["a"]}))
     _, values = resolve_via_embedding_then_ilike(
         db,
         "zztsd alpha",
-        source_type="customer",
+        source_type="promotion",
         ilike_columns=[Order.debtor_name],
         canonical_model=Customer,
         canonical_fields=("customer_name", "customer_code"),
@@ -301,16 +304,14 @@ def test_fuzzy_resolver_expands_a_seed_to_its_own_companys_debtor_name(db, world
 def test_fuzzy_resolver_without_scope_pairs_code_with_the_seed_company(db, world, monkeypatch):
     """Scope None (staff): only A's seed matches, so only A's name expands, never B's
     name for the same code (the ORM listener filters nothing here)."""
-    import app.api.v1.external.rag as rag
     from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 
-    monkeypatch.setattr(rag, "_embed_query", lambda term: world["q"])
-    _seed_chunk(db, debtor_seed_id(world["a"], world["code"]), f"debtor:{world['code']}", world["a"], world["q"])
+    _seed_chunk(db, debtor_seed_id(world["a"], world["code"]), f"debtor:{world['code']}", world["a"], world["q"], "promotion")
     set_company_scope(db, None)
     _, values = resolve_via_embedding_then_ilike(
         db,
         "zztsd alpha",
-        source_type="customer",
+        source_type="promotion",
         ilike_columns=[Order.debtor_name],
         canonical_model=Customer,
         canonical_fields=("customer_name", "customer_code"),
@@ -322,10 +323,10 @@ def test_fuzzy_resolver_without_scope_pairs_code_with_the_seed_company(db, world
 def test_tier3_one_code_seeded_in_two_companies_is_not_ambiguous_for_staff(db, world):
     """The migration reuses one vector per company, so identical seeds are expected.
     Staff (scope None) still get one confident debtor hit, as before the lane."""
-    _seed_chunk(db, debtor_seed_id(world["a"], world["code"]), f"debtor:{world['code']}", world["a"], world["q"])
-    _seed_chunk(db, debtor_seed_id(world["b"], world["code"]), f"debtor:{world['code']}", world["b"], world["q"])
+    _seed_chunk(db, debtor_seed_id(world["a"], world["code"]), f"debtor:{world['code']}", world["a"], world["q"], "promotion")
+    _seed_chunk(db, debtor_seed_id(world["b"], world["code"]), f"debtor:{world['code']}", world["b"], world["q"], "promotion")
     set_company_scope(db, None)
-    hits = er._tier3_embedding_lookup(db, f"zztsd t3 {world['suffix']}", frozenset({"customer"}))
+    hits = er._tier3_embedding_lookup(db, f"zztsd t3 {world['suffix']}", frozenset({"promotion"}))
     assert [h.canonical_code for h in hits] == [f"debtor:{world['code']}"]
 
 

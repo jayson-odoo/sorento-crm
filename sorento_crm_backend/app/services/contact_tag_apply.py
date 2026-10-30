@@ -84,6 +84,14 @@ def _w_columns(db: Session, contact, items, actor_id) -> None:
         section, key, want = item["section"], item["key"], item["_raw"]["expected"]
         if section == "brands":
             contact.brand_ids = None if want == ALL else sorted(want)
+            # ITEM-CLASS review S2: a class list for a brand the tag drops must not come back
+            # when a later write re-adds the brand (set_contact_brands applies the same rule).
+            kept = {
+                b: ids
+                for b, ids in (contact.brand_class_ids if isinstance(contact.brand_class_ids, dict) else {}).items()
+                if contact.brand_ids and b in {str(x) for x in contact.brand_ids} and ids
+            }
+            contact.brand_class_ids = kept or None
         elif section == "regions":
             contact.regions = [r for r in cts.REGIONS if r in want]
         elif section in ("requires_registered_project", "outbound_enabled"):

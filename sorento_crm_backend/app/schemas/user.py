@@ -92,6 +92,8 @@ class RespondContactResponse(RespondContactBase):
     chatbot_skip_period_questions: bool = False
     # PHOTO-SEND-CAP: send files as short links instead of attachments (default off).
     chatbot_files_as_links: bool = False
+    # AGENTIC-P1: explicit entry to the read-only agent. Default off.
+    chatbot_agent_enabled: bool = False
     # CONTACT-BULK-ACCESS (UAC A2.1): `chatbot_profile.tier` flattened, and whether the
     # contact holds the `purchase_orders.cost` reveal (filled by the list only; null on detail).
     chatbot_tier: Optional[str] = None

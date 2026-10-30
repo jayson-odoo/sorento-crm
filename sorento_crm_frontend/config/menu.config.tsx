@@ -618,6 +618,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'master_data.brands.view',
           },
           {
+            title: 'Item Classes',
+            path: '/master-data-management/item-classes',
+            permission: 'master_data.item_classes.view',
+          },
+          {
             title: 'Units of Measure',
             path: '/master-data-management/units-of-measure',
             permission: 'master_data.units_of_measure.view',
@@ -1170,6 +1175,11 @@ const STAFF_SIDEBAR: MenuConfig = [
           {
             title: 'Lookup Sets',
             path: '/master-data-management/lookup-sets',
+            permission: 'master_data.lookup_sets.view',
+          },
+          {
+            title: 'Embeddings',
+            path: '/system-management/embeddings',
             permission: 'master_data.lookup_sets.view',
           },
         ],
@@ -2001,6 +2011,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       permission: 'master_data.brands.view',
     },
     {
+      title: 'Item Classes',
+      path: '/master-data-management/item-classes',
+      permission: 'master_data.item_classes.view',
+    },
+    {
       title: 'Units of Measure',
       path: '/master-data-management/units-of-measure',
       permission: 'master_data.units_of_measure.view',
@@ -2558,6 +2573,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Lookup Sets',
         path: '/master-data-management/lookup-sets',
+        permission: 'master_data.lookup_sets.view',
+      },
+      {
+        title: 'Embeddings',
+        path: '/system-management/embeddings',
         permission: 'master_data.lookup_sets.view',
       },
       {

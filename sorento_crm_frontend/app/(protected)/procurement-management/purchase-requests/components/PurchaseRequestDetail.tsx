@@ -1247,7 +1247,9 @@ function StaffPurchaseRequestDetail({
                     <Badge variant="secondary">{typeLabel}</Badge>
                     {(() => {
                       const statusText =
-                        request.approval_status === 'pending'
+                        isVoided
+                          ? 'Voided'
+                          : request.approval_status === 'pending'
                           ? 'Pending approval'
                           : request.approval_status === 'approved'
                             ? (csFinalizeLabel ?? 'Approved')
@@ -1396,7 +1398,9 @@ function StaffPurchaseRequestDetail({
                     <Badge variant="secondary">{typeLabel}</Badge>
                     {(() => {
                       const statusText =
-                        request.approval_status === 'pending'
+                        isVoided
+                          ? 'Voided'
+                          : request.approval_status === 'pending'
                           ? 'Pending approval'
                           : request.approval_status === 'approved'
                             ? (csFinalizeLabel ?? 'Approved')

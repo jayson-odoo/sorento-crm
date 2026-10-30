@@ -7965,6 +7965,14 @@ class PurchaseRequestService:
         {"voided", "rejected", "closed", "processed_by_cs"}
     )
 
+    @staticmethod
+    def _refuse_if_voided(header, doing: str) -> None:
+        """Void is terminal (PLAN-form-void D3/D6): no approval step may touch a voided
+        request, whichever door it comes through (in-system buttons, the emailed link,
+        send for approval, reject before approval)."""
+        if (getattr(header, "status", None) or "").strip().lower() == "voided":
+            raise handle_conflict(f"This request has been voided and can no longer be {doing}.")
+
     def void_request(
         self,
         request_id: str,
@@ -7996,6 +8004,10 @@ class PurchaseRequestService:
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         header.status = "voided"
+        if approval == "pending":
+            # Close the open approval with the form, so no approval queue or filter
+            # still lists it as waiting on a decision.
+            header.approval_status = "voided"
         header.voided_by = actor_user_id
         header.voided_at = now_utc
         header.void_reason = reason
@@ -9265,7 +9277,16 @@ class PurchaseRequestService:
                         PurchaseRequestHeader.approval_status == "",
                     )
                 )
-            elif status_val in ("pending", "approved", "rejected"):
+            elif status_val == "pending":
+                # A row voided while pending before VOID-APPROVE-GUARD still carries
+                # approval_status 'pending'; it is not waiting on anyone.
+                status_clauses.append(
+                    and_(
+                        PurchaseRequestHeader.approval_status == "pending",
+                        PurchaseRequestHeader.status.is_distinct_from("voided"),
+                    )
+                )
+            elif status_val in ("approved", "rejected"):
                 status_clauses.append(PurchaseRequestHeader.approval_status == status_val)
             elif status_val == "resubmitted":
                 # A lifecycle status, not an approval one: what the list pill reads
@@ -9902,6 +9923,7 @@ class PurchaseRequestService:
         from app.services.error_handler import handle_conflict
 
         header = self.get_request(request_id)
+        self._refuse_if_voided(header, "sent for approval")
         current = (getattr(header, "approval_status", None) or "").strip().lower()
         if current == "rejected":
             raise handle_conflict(
@@ -9998,6 +10020,7 @@ class PurchaseRequestService:
             raise handle_validation_error("Rejection reason is required.")
 
         header = self.get_request(request_id)
+        self._refuse_if_voided(header, "rejected")
         current = (getattr(header, "approval_status", None) or "").strip().lower()
         if current and current not in ("", "draft"):
             raise handle_conflict(
@@ -10068,6 +10091,7 @@ class PurchaseRequestService:
         from app.models.user import User
 
         header = self.get_request(request_id)
+        self._refuse_if_voided(header, "sent for approval")
         if approver_user_id:
             header.approver_user_id = approver_user_id
             user = self.db.query(User).filter(User.id == approver_user_id).first()
@@ -10120,6 +10144,7 @@ class PurchaseRequestService:
         if approval_token.expires <= now:
             raise handle_conflict("This approval link has expired.")
         header = self.get_request(approval_token.entity_id)
+        self._refuse_if_voided(header, "approved or rejected")
         lines = []
         grand_total = None
         if getattr(header, "lines", None):
@@ -10378,6 +10403,7 @@ class PurchaseRequestService:
         runs the shared ``_apply_approval_decision``. Guards that the request is
         still awaiting a decision (approval_status == 'pending')."""
         header = self.get_request(request_id)
+        self._refuse_if_voided(header, "approved or rejected")
         appr = (getattr(header, "approval_status", None) or "").strip().lower()
         if appr in ("approved", "rejected"):
             raise handle_conflict(f"This request has already been {appr}.")
@@ -10421,6 +10447,7 @@ class PurchaseRequestService:
         if approval_token.expires <= now:
             raise handle_conflict("This approval link has expired.")
         header = self.get_request(approval_token.entity_id)
+        self._refuse_if_voided(header, "approved or rejected")
         approval_token.used_at = datetime.utcnow()
         return self._apply_approval_decision(
             header,
@@ -10449,6 +10476,7 @@ class PurchaseRequestService:
 
         if action not in ("approved", "rejected"):
             raise handle_conflict("action must be 'approved' or 'rejected'.")
+        self._refuse_if_voided(header, "approved or rejected")
 
         if action == "rejected":
             rejection_notes = (approval_comments or "").strip()

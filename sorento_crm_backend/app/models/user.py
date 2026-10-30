@@ -645,6 +645,11 @@ class SystemSetting(Base):
     # Chatbot media settings page applies on the next report. 0 means no limit.
     report_ask_rate_limit = Column(Integer, nullable=False, server_default="10", default=10)
     report_ask_rate_window_minutes = Column(Integer, nullable=False, server_default="10", default=10)
+    # AGENTIC-P1 budgets for one agent turn, read per turn (`app/services/chatbot/agent/loop.py`).
+    chatbot_agent_max_rounds = Column(Integer, nullable=False, server_default="8", default=8)
+    chatbot_agent_max_seconds = Column(Integer, nullable=False, server_default="45", default=45)
+    chatbot_agent_max_input_tokens = Column(Integer, nullable=False, server_default="150000", default=150000)
+    chatbot_agent_compact_tokens = Column(Integer, nullable=False, server_default="40000", default=40000)
     # R1 (H1): the corrected `check_stock` vocabulary makes two lanes reachable that
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
@@ -764,6 +769,13 @@ class SystemSetting(Base):
     chatbot_direct_ingress_mode = Column(
         String(16), nullable=False, server_default="off", default="off"
     )
+    # LOOKUP-EMBED-CENTRAL: the lookup embedder (`services/embedding_settings.resolve_embedder`), the
+    # model the records-search vectors were built with (written by the guard only, never the API) and
+    # the backfill rate in requests per minute.
+    embedding_provider = Column(String(32), nullable=True)
+    embedding_model = Column(String(128), nullable=True)
+    embedding_records_search_model = Column(String(128), nullable=True)
+    embedding_backfill_rpm = Column(Integer, nullable=True, server_default="20", default=20)
     chatbot_direct_ingress_contacts = Column(Text, nullable=True)
     # CLOSED-LISTS-INDEX-MODE: how a CLOSED LISTS parser version sees the closed lists.
     # `block` (today) renders every full list into the system prompt; `index` renders each

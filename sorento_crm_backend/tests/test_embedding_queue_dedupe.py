@@ -48,7 +48,7 @@ def _rows(db, source_type, source_id, status=None):
     return q.order_by(EmbeddingQueue.created_at).all()
 
 
-def _queue_row(db, source_type="order", source_id=None, *, status="pending", age=timedelta(0), payload=None):
+def _queue_row(db, source_type="promotion", source_id=None, *, status="pending", age=timedelta(0), payload=None):
     now = datetime.utcnow() - age
     row = EmbeddingQueue(
         id=str(uuid.uuid4()), source_type=source_type, source_id=source_id or str(uuid.uuid4()),
@@ -60,8 +60,12 @@ def _queue_row(db, source_type="order", source_id=None, *, status="pending", age
     return row
 
 
-def _order(db, number="ZZT-EQD-1") -> Order:
-    order = Order(order_number=number, order_date=date(2026, 10, 1), debtor_name="Debtor", remarks="r1")
+def _order(db, number="ZZT-EQD-1"):
+    """A keep-set source to queue against (named `order` from when this file used orders; orders no
+    longer queue). `description` is the embedded field, `expiry_notified_at` one that is not."""
+    from app.models.marketing import Promotion
+
+    order = Promotion(description="r1", start_date=date(2026, 10, 1), end_date=date(2026, 12, 1), is_active=True)
     db.add(order)
     db.flush()
     return order
@@ -104,32 +108,31 @@ def test_every_embedded_field_is_a_column_of_its_model():
 
 def test_insert_queues_one_row(db):
     order = _order(db)
-    assert len(_rows(db, "order", order.id, "pending")) == 1
+    assert len(_rows(db, "promotion", order.id, "pending")) == 1
 
 
 def test_update_of_a_non_embedded_field_queues_nothing(db):
     order = _order(db)
     _complete_all(db)
-    order.delivery_days = 4
-    order.updated_by = _USER
+    order.expiry_notified_at = datetime(2026, 10, 2)
     db.flush()
-    assert _rows(db, "order", order.id, "pending") == []
+    assert _rows(db, "promotion", order.id, "pending") == []
 
 
 def test_setting_an_embedded_field_to_its_current_value_queues_nothing(db):
     order = _order(db)
     _complete_all(db)
-    order.remarks = "r1"
+    order.description = "r1"
     db.flush()
-    assert _rows(db, "order", order.id, "pending") == []
+    assert _rows(db, "promotion", order.id, "pending") == []
 
 
 def test_update_of_an_embedded_field_queues_one_row(db):
     order = _order(db)
     _complete_all(db)
-    order.remarks = "r2"
+    order.description = "r2"
     db.flush()
-    assert len(_rows(db, "order", order.id, "pending")) == 1
+    assert len(_rows(db, "promotion", order.id, "pending")) == 1
 
 
 def test_spo_retirement_still_queues(db):
@@ -146,31 +149,31 @@ def test_spo_retirement_still_queues(db):
 def test_repeated_changes_keep_one_pending_row(db):
     order = _order(db)
     for i in range(5):
-        order.remarks = f"change {i}"
+        order.description = f"change {i}"
         db.flush()
-    assert len(_rows(db, "order", order.id, "pending")) == 1
+    assert len(_rows(db, "promotion", order.id, "pending")) == 1
 
 
 def test_a_processing_row_does_not_block_a_new_pending_row(db):
     """A claimed row may already have read the source; a later change needs its own row."""
     order = _order(db)
     db.query(EmbeddingQueue).update({"status": "processing"}, synchronize_session=False)
-    order.remarks = "after the claim"
+    order.description = "after the claim"
     db.flush()
-    assert len(_rows(db, "order", order.id, "pending")) == 1
+    assert len(_rows(db, "promotion", order.id, "pending")) == 1
 
 
 def test_bulk_enqueue_skips_sources_already_pending(db):
-    pending = _queue_row(db, "order")
+    pending = _queue_row(db, "promotion")
     fresh = str(uuid.uuid4())
-    inserted = bulk_enqueue_embedding_events(db, "order", [pending.source_id, fresh, fresh])
+    inserted = bulk_enqueue_embedding_events(db, "promotion", [pending.source_id, fresh, fresh])
     assert inserted == 1
-    assert len(_rows(db, "order", pending.source_id, "pending")) == 1
-    assert len(_rows(db, "order", fresh, "pending")) == 1
+    assert len(_rows(db, "promotion", pending.source_id, "pending")) == 1
+    assert len(_rows(db, "promotion", fresh, "pending")) == 1
 
 
 def test_queue_event_reuses_the_pending_row_and_takes_the_new_payload(db, monkeypatch):
-    """mcp_tool rows carry the text to embed in the payload, so the newest payload must win."""
+    """A queued row carries its payload; the newest payload must win (a keep-set `form` source stands in for the dropped mcp_tool)."""
     from app.services import embedding_service
 
     jobs = []
@@ -181,15 +184,15 @@ def test_queue_event_reuses_the_pending_row_and_takes_the_new_payload(db, monkey
     monkeypatch.setattr(embedding_service, "enqueue_job", lambda *a, **k: jobs.append(a) or _Job())
     svc = embedding_service.EmbeddingEventService(db)
     first = svc.queue_event(
-        source_type="mcp_tool", source_id="zzt_tool", event_type="mcp_tool.updated",
+        source_type="form", source_id="zzt_tool", event_type="form.updated",
         payload={"capability": {"body_text": "old"}},
     )
     second = svc.queue_event(
-        source_type="mcp_tool", source_id="zzt_tool", event_type="mcp_tool.updated",
+        source_type="form", source_id="zzt_tool", event_type="form.updated",
         payload={"capability": {"body_text": "new"}},
     )
     assert second.id == first.id
-    assert len(_rows(db, "mcp_tool", "zzt_tool")) == 1
+    assert len(_rows(db, "form", "zzt_tool")) == 1
     assert second.payload["payload"]["capability"]["body_text"] == "new"
     assert len(jobs) == 1  # the pending row already has its RQ job
 
@@ -198,9 +201,9 @@ def test_a_failed_row_does_not_absorb_a_new_change(db):
     """A row in retry backoff is one failure nearer dead_letter; the new change gets its own."""
     order = _order(db)
     db.query(EmbeddingQueue).update({"retry_count": 2}, synchronize_session=False)
-    order.remarks = "fresh change"
+    order.description = "fresh change"
     db.flush()
-    rows = _rows(db, "order", order.id, "pending")
+    rows = _rows(db, "promotion", order.id, "pending")
     assert sorted(r.retry_count for r in rows) == [0, 2]
 
 
@@ -214,9 +217,9 @@ def test_queue_event_enqueues_a_job_for_a_pending_row_that_has_none(db, monkeypa
         id = "job-2"
 
     monkeypatch.setattr(embedding_service, "enqueue_job", lambda *a, **k: jobs.append(a) or _Job())
-    listener_row = _queue_row(db, "mcp_tool", "zzt_tool_2")
+    listener_row = _queue_row(db, "form", "zzt_tool_2")
     item = embedding_service.EmbeddingEventService(db).queue_event(
-        source_type="mcp_tool", source_id="zzt_tool_2", event_type="mcp_tool.updated",
+        source_type="form", source_id="zzt_tool_2", event_type="form.updated",
         payload={"capability": {"body_text": "x"}},
     )
     assert item.id == listener_row.id
@@ -271,7 +274,7 @@ def two_sessions():
         admin.close()
 
 
-def _row_dict(source_id, source_type="order"):
+def _row_dict(source_id, source_type="promotion"):
     now = datetime.utcnow()
     return {
         "id": str(uuid.uuid4()), "source_type": source_type, "source_id": source_id,
@@ -358,9 +361,9 @@ def test_claim_and_backlog_dedupe_never_wait_on_a_held_row(two_sessions, monkeyp
 def test_claiming_a_retrying_row_keeps_the_fresh_rows(db, worker):
     order = _order(db)
     _complete_all(db)
-    retrying = _queue_row(db, "order", str(order.id), age=timedelta(minutes=9))
+    retrying = _queue_row(db, "promotion", str(order.id), age=timedelta(minutes=9))
     retrying.retry_count = 2
-    fresh = _queue_row(db, "order", str(order.id))
+    fresh = _queue_row(db, "promotion", str(order.id))
     db.flush()
     worker.process_embedding_queue_item(retrying.id)
     db.expire_all()
@@ -371,8 +374,8 @@ def test_backlog_dedupe_keeps_a_fresh_row_over_a_newer_retrying_one(db):
     from app.services.embedding_service import dedupe_pending_embedding_queue
 
     sid = str(uuid.uuid4())
-    fresh = _queue_row(db, "order", sid, age=timedelta(minutes=5))
-    retrying = _queue_row(db, "order", sid, age=timedelta(minutes=1))
+    fresh = _queue_row(db, "promotion", sid, age=timedelta(minutes=5))
+    retrying = _queue_row(db, "promotion", sid, age=timedelta(minutes=1))
     retrying.retry_count = 1
     db.flush()
     dedupe_pending_embedding_queue(db, batch_size=10, pause_seconds=0)
@@ -400,14 +403,14 @@ def worker(db, monkeypatch):
 def test_claim_supersedes_the_other_pending_rows_of_its_source(db, worker):
     order = _order(db)
     _complete_all(db)
-    old = [_queue_row(db, "order", str(order.id), age=timedelta(minutes=m)) for m in (3, 2, 1)]
+    old = [_queue_row(db, "promotion", str(order.id), age=timedelta(minutes=m)) for m in (3, 2, 1)]
     other_source = _queue_row(db, "order")
 
     result = worker.process_embedding_queue_item(old[0].id)
 
     assert result["status"] == "completed"
     db.expire_all()
-    statuses = {r.id: (r.status, r.last_error) for r in _rows(db, "order", order.id)}
+    statuses = {r.id: (r.status, r.last_error) for r in _rows(db, "promotion", order.id)}
     assert statuses[old[0].id][0] == "completed"
     assert statuses[old[1].id] == ("skipped", SUPERSEDED_ERROR)
     assert statuses[old[2].id] == ("skipped", SUPERSEDED_ERROR)
@@ -428,10 +431,10 @@ def test_claiming_an_older_mcp_tool_row_leaves_the_newer_payload_pending(db, wor
 def test_failed_run_does_not_go_back_to_pending_beside_a_newer_row(db, worker, monkeypatch):
     order = _order(db)
     _complete_all(db)
-    claimed = _queue_row(db, "order", str(order.id))
+    claimed = _queue_row(db, "promotion", str(order.id))
 
     def _fail(chunks, timeout=None):
-        order.remarks = "changed while the worker ran"
+        order.description = "changed while the worker ran"
         db.commit()  # another transaction's change: the listener queues a fresh pending row
         raise RuntimeError("provider down")
 
@@ -440,13 +443,13 @@ def test_failed_run_does_not_go_back_to_pending_beside_a_newer_row(db, worker, m
 
     db.expire_all()
     assert db.get(EmbeddingQueue, claimed.id).status == "skipped"
-    assert len(_rows(db, "order", order.id, "pending")) == 1
+    assert len(_rows(db, "promotion", order.id, "pending")) == 1
 
 
 def test_failed_run_retries_when_nothing_newer_is_pending(db, worker, monkeypatch):
     order = _order(db)
     _complete_all(db)
-    claimed = _queue_row(db, "order", str(order.id))
+    claimed = _queue_row(db, "promotion", str(order.id))
     monkeypatch.setattr(worker, "_embed_text_chunks", lambda chunks, timeout=None: (_ for _ in ()).throw(RuntimeError("x")))
     worker.process_embedding_queue_item(claimed.id)
     db.expire_all()
@@ -479,7 +482,7 @@ def _workbook(rows: list[list]) -> bytes:
     return buf.getvalue()
 
 
-def test_tracking_import_queues_only_orders_whose_embedded_fields_changed(db):
+def test_tracking_import_queues_no_order_embeddings_at_all(db):
     from app.services.order_service import OrderService
 
     for code, name in [("NEW", "New Order"), ("DELIVERED", "Delivered")]:
@@ -492,7 +495,9 @@ def test_tracking_import_queues_only_orders_whose_embedded_fields_changed(db):
     result = OrderService(db).import_excel_tracking(_workbook(rows), _USER)
     assert not result.get("errors"), result.get("errors")
     orders = {o.order_number: o for o in db.query(Order).filter(Order.order_number.like("ZZT-EQD-%"))}
-    assert all(len(_rows(db, "order", o.id, "pending")) == 1 for o in orders.values())
+    # Changed meaning (LOOKUP-EMBED-CENTRAL): orders left the keep set, so an import queues nothing for them,
+    # new or changed. The per-field "queue only on a real change" rule is exercised on a keep-set source above.
+    assert orders and all(_rows(db, "order", o.id) == [] for o in orders.values())
 
     _complete_all(db)
     db.commit()
@@ -500,8 +505,7 @@ def test_tracking_import_queues_only_orders_whose_embedded_fields_changed(db):
     result = OrderService(db).import_excel_tracking(_workbook(rows), _USER)
     assert not result.get("errors"), result.get("errors")
 
-    assert _rows(db, "order", orders["ZZT-EQD-A"].id, "pending") == []
-    assert len(_rows(db, "order", orders["ZZT-EQD-B"].id, "pending")) == 1
+    assert all(_rows(db, "order", o.id) == [] for o in orders.values())
 
 
 # --------------------------------------------------------------------------- #
@@ -515,11 +519,11 @@ def test_poll_takes_mcp_tool_first_then_oldest_up_to_the_batch(db, monkeypatch):
 
     picked: list[str] = []
     monkeypatch.setattr(embedding_worker, "process_embedding_queue_item", picked.append)
-    oldest = _queue_row(db, "order", age=timedelta(minutes=10))
-    _queue_row(db, "order", age=timedelta(minutes=5))
+    oldest = _queue_row(db, "promotion", age=timedelta(minutes=10))
+    _queue_row(db, "promotion", age=timedelta(minutes=5))
     tool = _queue_row(db, "mcp_tool", age=timedelta(minutes=1))
-    _queue_row(db, "order", status="completed", age=timedelta(hours=1))
-    _queue_row(db, "order", age=timedelta(minutes=-10))  # backing off, not available yet
+    _queue_row(db, "promotion", status="completed", age=timedelta(hours=1))
+    _queue_row(db, "promotion", age=timedelta(minutes=-10))  # backing off, not available yet
 
     result = task_scheduler._run_embedding_db_queue_fallback(db, max_jobs_per_run=2)
 
@@ -610,12 +614,12 @@ def test_backlog_dedupe_keeps_the_newest_pending_row_per_source(db):
     from app.services.embedding_service import dedupe_pending_embedding_queue
 
     sid = str(uuid.uuid4())
-    olds = [_queue_row(db, "order", sid, age=timedelta(minutes=m)).id for m in (5, 4, 3)]
-    newest = _queue_row(db, "order", sid, age=timedelta(minutes=1)).id
+    olds = [_queue_row(db, "promotion", sid, age=timedelta(minutes=m)).id for m in (5, 4, 3)]
+    newest = _queue_row(db, "promotion", sid, age=timedelta(minutes=1)).id
     tool_old = _queue_row(db, "mcp_tool", "zzt_tool", age=timedelta(minutes=9), payload={"v": 1}).id
     tool_new = _queue_row(db, "mcp_tool", "zzt_tool", age=timedelta(minutes=2), payload={"v": 2}).id
     single = _queue_row(db, "order").id
-    done = _queue_row(db, "order", sid, status="completed", age=timedelta(minutes=30)).id
+    done = _queue_row(db, "promotion", sid, status="completed", age=timedelta(minutes=30)).id
 
     result = dedupe_pending_embedding_queue(db, batch_size=2, max_batches=10, pause_seconds=0)
 
@@ -634,7 +638,7 @@ def test_backlog_dedupe_second_run_is_a_no_op(db):
 
     sid = str(uuid.uuid4())
     for m in (3, 2, 1):
-        _queue_row(db, "order", sid, age=timedelta(minutes=m))
+        _queue_row(db, "promotion", sid, age=timedelta(minutes=m))
     assert dedupe_pending_embedding_queue(db, batch_size=10, pause_seconds=0)["rows_skipped"] == 2
     assert dedupe_pending_embedding_queue(db, batch_size=10, pause_seconds=0) == {"rows_skipped": 0, "batches": 0}
 
@@ -644,11 +648,11 @@ def test_backlog_dedupe_resumes_after_a_capped_run(db):
 
     sid = str(uuid.uuid4())
     for m in range(6, 0, -1):
-        _queue_row(db, "order", sid, age=timedelta(minutes=m))
+        _queue_row(db, "promotion", sid, age=timedelta(minutes=m))
     first = dedupe_pending_embedding_queue(db, batch_size=2, max_batches=1, pause_seconds=0)
     second = dedupe_pending_embedding_queue(db, batch_size=2, max_batches=10, pause_seconds=0)
     assert (first["rows_skipped"], second["rows_skipped"]) == (2, 3)
-    assert len(_rows(db, "order", sid, "pending")) == 1
+    assert len(_rows(db, "promotion", sid, "pending")) == 1
 
 
 def test_scheduled_tasks_are_registered():

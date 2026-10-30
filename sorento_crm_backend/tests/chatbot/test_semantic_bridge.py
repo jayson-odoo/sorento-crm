@@ -47,30 +47,49 @@ def R(list_name, key, label, *texts):
 # ------------------------------------------------------------------------------------------------ fakes
 def _vec(text: str, dims: int) -> list[float]:
     digest = hashlib.sha1(text.encode()).digest()
-    return [1.0 + digest[i] / 255.0 for i in range(dims)]
+    return [1.0 + digest[i % len(digest)] / 255.0 for i in range(dims)]
 
 
 class GeminiFake:
-    """Records every batchEmbedContents call: the key, the path and the number of texts."""
+    """Stub of the one embeddings transport (httpx.Client.send, used by embedding_client.embed_texts).
+
+    Records every batchEmbedContents call (the key, the path, the body and the number of texts) and counts
+    OpenAI embeddings calls separately. Vectors are 1536 wide, the width the transport now enforces."""
 
     def __init__(self):
         self.batches: list[int] = []
         self.keys: list[str] = []
         self.paths: list[str] = []
+        self.bodies: list[dict] = []
+        self.openai_calls = 0
 
-    def request(self, provider_self, method, path, *, json_body=None, params=None, timeout=None):
-        self.paths.append(path)
-        self.keys.append(provider_self.api_key)
-        reqs = (json_body or {}).get("requests") or []
-        self.batches.append(len(reqs))
-        texts = ["".join(p.get("text", "") for p in r["content"]["parts"]) for r in reqs]
-        return {"embeddings": [{"values": _vec(t, 4)} for t in texts]}
+    def send(self, request):
+        import json
+
+        import httpx
+
+        body = json.loads(request.content)
+        url = str(request.url)
+        if url.endswith(":batchEmbedContents"):
+            self.paths.append(url.split("/models/", 1)[1] and "/models/" + url.split("/models/", 1)[1])
+            self.keys.append(request.headers.get("x-goog-api-key", ""))
+            self.bodies.append(body)
+            reqs = body.get("requests") or []
+            self.batches.append(len(reqs))
+            texts = ["".join(p.get("text", "") for p in r["content"]["parts"]) for r in reqs]
+            data = {"embeddings": [{"values": _vec(t, 1536)} for t in texts]}
+        else:
+            self.openai_calls += 1
+            data = {"data": [{"index": i, "embedding": _vec(t, 1536)} for i, t in enumerate(body["input"])]}
+        return httpx.Response(200, json=data, request=request)
 
 
 @pytest.fixture()
 def gemini(monkeypatch):
+    import httpx
+
     fake = GeminiFake()
-    monkeypatch.setattr(GeminiProvider, "_request", lambda self, *a, **kw: fake.request(self, *a, **kw))
+    monkeypatch.setattr(httpx.Client, "send", lambda self, request, **kw: fake.send(request))
     return fake
 
 
@@ -108,7 +127,7 @@ def test_ac_s3_1_gemini_label_with_a_key_gives_a_gemini_embedder(monkeypatch, ge
         assert emb is not None
         assert getattr(emb, "model", None) == GEM_MODEL
         got = emb.pieces(["zz gold"])
-        assert got.shape == (1, 4)
+        assert got.shape == (1, 1536)
         assert gemini.paths and all(p.endswith(":batchEmbedContents") for p in gemini.paths), gemini.paths
         assert set(gemini.keys) == {"ZZ-gemini-key"}
 
@@ -131,25 +150,7 @@ def test_ac_s3_1_gemini_label_without_a_gemini_key_is_spelling_only(monkeypatch,
 
 
 # ------------------------------------------------------------------------------------------------ AC-S3-2
-class OpenAIFake:
-    def __init__(self):
-        self.calls = 0
-
-    def client(self, provider_self, **kw):
-        outer = self
-
-        def create(model, input):
-            outer.calls += 1
-            return SimpleNamespace(data=[SimpleNamespace(embedding=_vec(t, 3)) for t in input])
-
-        return SimpleNamespace(embeddings=SimpleNamespace(create=create))
-
-
 def test_ac_s3_2_the_same_text_from_two_models_is_two_cache_entries(monkeypatch, gemini, fresh_cache):
-    from app.services.llm_provider import OpenAIProvider
-
-    fake = OpenAIFake()
-    monkeypatch.setattr(OpenAIProvider, "_client", lambda self, **kw: fake.client(self, **kw))
     text = "zz shared text"
     openai_embed = ll.provider_embedder("ZZ-openai-key")
     openai_embed([text])
@@ -163,7 +164,9 @@ def test_ac_s3_2_the_same_text_from_two_models_is_two_cache_entries(monkeypatch,
         assert gem.is_cached([text]) is True
         assert openai_embed.is_cached([text]) is True
     assert len(ll._cache) == 2
-    assert sorted(len(v) for v in ll._cache.values()) == [3, 4]
+    # Both models now answer 1536 wide (the old 3 vs 4 width difference is gone); two entries still prove the key.
+    assert sorted(len(v) for v in ll._cache.values()) == [1536, 1536]
+    assert gemini.openai_calls == 1
 
 
 def test_ac_s3_2_gemini_list_texts_are_embedded_in_batches(monkeypatch, gemini, fresh_cache):
