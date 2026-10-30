@@ -312,8 +312,37 @@ class ProductSetService:
     def delete(self, product_set_id: str) -> None:
         """Hard delete, per the CRUD standard. Members cascade; products do not."""
         product_set = self._require(product_set_id)
+        self._reject_if_on_quotation(product_set_id)
         self.db.delete(product_set)
         self.db.commit()
+
+    def _reject_if_on_quotation(self, product_set_id) -> None:
+        """A projects quotation line (any version, draft or issued) names this product set: refuse
+        with a 409 naming the first quotation by document number. The query is company scoped
+        like the product set itself, which belongs to one company, so no other company's line can
+        name it."""
+        from app.models.projects import (
+            ProjectQuotation,
+            ProjectQuotationDocument,
+            ProjectQuotationLine,
+            ProjectQuotationVersion,
+        )
+
+        row = (
+            self.db.query(ProjectQuotationDocument.document_no)
+            .join(ProjectQuotation, ProjectQuotation.document_id == ProjectQuotationDocument.id)
+            .join(ProjectQuotationVersion, ProjectQuotationVersion.quotation_id == ProjectQuotation.id)
+            .join(ProjectQuotationLine, ProjectQuotationLine.version_id == ProjectQuotationVersion.id)
+            .filter(ProjectQuotationLine.product_set_id == product_set_id)
+            .order_by(ProjectQuotationDocument.document_no.asc())
+            .first()
+        )
+        if row is not None:
+            raise AppException(
+                status_code=409,
+                message=f"This product set is on quotation {row[0]}, so it cannot be deleted.",
+                code="product_set_on_quotation",
+            )
 
     # ---------------------------------------------------------------- internals
 
