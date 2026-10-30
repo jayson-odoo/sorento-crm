@@ -254,8 +254,8 @@ class TestAc1gTail:
         stub_access()
         return engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-    def _post(self, client, api_key, turn):
-        body = {"item": turn.item, "ctx": turn.ctx}
+    def _post(self, client, api_key, turn, **fragments):
+        body = {"item": {**turn.item, **fragments.pop("item", {})}, "ctx": turn.ctx, **fragments}
         return client.post(
             f"/api/v1/external/chat/turn/{turn.turn_id}/complete", json=body, headers={"X-API-Key": api_key}
         )
@@ -278,9 +278,18 @@ class TestAc1gTail:
             raise RuntimeError("customer asks write failed")
 
         monkeypatch.setattr(engine_mod, "_record_customer_asks", boom)
-        resp = self._post(client, api_key, delegated)
+        # An offer_hold lane fragment: the tail composes its `clarify_text` into a real reply.
+        resp = self._post(
+            client,
+            api_key,
+            delegated,
+            item={"branch_kind": "offer_hold"},
+            offer_hold={"clarify_text": "Which one do you mean?"},
+        )
         assert resp.status_code == 200, resp.text
         body = resp.json()
+        reply = body["reply"]["text"]
+        assert reply == "Which one do you mean?", "a composed answer must exist before the failure"
         reply = body["reply"]["text"]
         T.assert_no_banned_text(reply)
         assert reply != T.H_ERROR, "the composed answer must be sent, the failure only logged"
@@ -323,7 +332,7 @@ def test_ac1h_a_contact_that_appears_on_the_reread_gets_a_normal_answer(
     assert result.reply["text"] != T.H_ERROR
 
 
-def test_ac1h_a_contact_still_missing_says_h_error(session_factory, stub_parser, stub_access, monkeypatch) -> None:
+def test_ac1h_a_contact_still_missing_says_h_error(session_factory, seeded, stub_parser, stub_access, monkeypatch) -> None:
     from app.services import conversation_variables_service as cvs
 
     def missing(db, *, respond_io_id):
@@ -360,7 +369,7 @@ def _fail_env(error: str, **over: Any) -> dict[str, Any]:
             T.AC2_ASK_SUBJECT.format(label="stock"),
         ),
         (
-            "attachments are not sent for a held set of 201 products (over the attachment cap)",
+            "crm_product_attachments_list needs a document or entity filter and none could be built",  # raised at app/services/chatbot/lanes/business/__init__.py:2454,
             T.AC2_ASK_PRODUCT.format(label="stock"),
         ),
         ("HTTP 403 customer_not_permitted", T.AC2_NOT_PERMITTED),
