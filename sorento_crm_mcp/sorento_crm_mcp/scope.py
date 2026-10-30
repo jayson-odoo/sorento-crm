@@ -66,7 +66,7 @@ def check_scope(spec: Any, query: dict[str, Any] | None, body: Any, ctx: Any) ->
     refusal is logged (tool, staff user id) so the follow-up that scopes the assistant to the
     staff user's own companies has the call data."""
     staff = is_staff_request(ctx)
-    if staff and is_scoped(spec) and _missing_scope(query, body):
+    if staff and staff_may_skip(spec) and is_scoped(spec) and _missing_scope(query, body):
         headers = _request_headers(ctx)
         logger.info(
             "staff-scope MCP call without a contact: tool=%s staff_user=%s",
@@ -76,9 +76,15 @@ def check_scope(spec: Any, query: dict[str, Any] | None, body: Any, ctx: Any) ->
     return scope_refusal(spec, query, body, staff=staff)
 
 
+def staff_may_skip(spec: Any) -> bool:
+    """The staff opt-out covers reads only: a GET, or a POST the catalog marks `read_only`.
+    A scoped write (`crm_sales_opportunity_log`) still needs the contact, even from staff."""
+    return spec.method == "GET" or bool(getattr(spec, "read_only", False))
+
+
 def scope_refusal(spec: Any, query: dict[str, Any] | None, body: Any, *, staff: bool) -> str | None:
     """The refusal to return instead of calling the backend, or None to go ahead."""
-    if staff or not is_scoped(spec):
+    if (staff and staff_may_skip(spec)) or not is_scoped(spec):
         return None
     missing = _missing_scope(query, body)
     if not missing:

@@ -129,6 +129,18 @@ def test_staff_opt_out_passes_an_unscoped_call():
     assert scope_refusal(_spec("crm_master_products_list"), {}, None, staff=True) is None
 
 
+def test_staff_opt_out_covers_a_read_only_post():
+    assert scope_refusal(_spec("crm_lookup_resolve"), {}, {"set_key": "x", "raw": "y"}, staff=True) is None
+
+
+def test_staff_opt_out_does_not_cover_a_scoped_write():
+    """The staff assistant must not log an opportunity as a salesperson the model picked."""
+    spec = _spec("crm_sales_opportunity_log")
+    assert spec.method != "GET" and not spec.read_only
+    refusal = scope_refusal(spec, {}, {"title": "x"}, staff=True)
+    assert refusal is not None and json.loads(refusal)["error"] == "scope_required"
+
+
 # --- SCOPE-1..4 through the compiled tool (the path every catalog call takes) --------------------
 
 
