@@ -545,3 +545,63 @@ describe('SignaturePad accessibility and touch', () => {
     expect(screen.getByRole('tab', { name: 'Type' })).toBeInTheDocument();
   });
 });
+
+describe('SignaturePad location opt-out (QUOTE-SIGN-PAGE AC7)', () => {
+  const signed: SignatureValue = {
+    dataUrl: STUB_PNG,
+    mode: 'draw',
+    typedText: null,
+    signedAt: '2026-08-04T02:15:00Z',
+    gpsLat: 3.13901,
+    gpsLng: 101.68685,
+  };
+
+  it('guard: a caller that passes nothing still prompts and shows the GPS row', () => {
+    stubGeolocation('granted');
+    render(<SignaturePad onChange={vi.fn()} />);
+
+    expect(navigator.geolocation.getCurrentPosition).toHaveBeenCalled();
+    expect(screen.getByText('GPS location')).toBeInTheDocument();
+  });
+
+  it('hideLocation hides the GPS row while capturing', () => {
+    stubGeolocation('granted');
+    render(<SignaturePad onChange={vi.fn()} requestGeolocation={false} hideLocation />);
+
+    expect(screen.queryByText('GPS location')).not.toBeInTheDocument();
+  });
+
+  it('hideLocation hides the GPS row when read-only', () => {
+    render(<SignaturePad readOnly onChange={vi.fn()} value={signed} hideLocation />);
+
+    expect(screen.queryByText('GPS location')).not.toBeInTheDocument();
+    expect(screen.queryByText('3.13901, 101.68685')).not.toBeInTheDocument();
+  });
+
+  it('read-only without hideLocation still shows the GPS row', () => {
+    render(<SignaturePad readOnly onChange={vi.fn()} value={signed} />);
+
+    expect(screen.getByText('GPS location')).toBeInTheDocument();
+  });
+});
+
+describe('aria-disabled styling lives on the pad, not the shared Button (CI-cost round)', () => {
+  it('the shared Button carries no aria-disabled opacity class', async () => {
+    const { Button } = await import('@/components/ui/button');
+    render(
+      <Button aria-disabled="true" data-testid="plain-button">
+        Plain
+      </Button>,
+    );
+
+    expect(screen.getByTestId('plain-button').className).not.toContain('aria-disabled:opacity-60');
+  });
+
+  it('the pad commit button is aria-disabled and carries the opacity class when not ready', () => {
+    render(<SignaturePad onChange={vi.fn()} onNotReadyAttempt={vi.fn()} />);
+
+    const commit = screen.getByRole('button', { name: 'Apply signature' });
+    expect(commit).toHaveAttribute('aria-disabled', 'true');
+    expect(commit.className).toContain('aria-disabled:opacity-60');
+  });
+});

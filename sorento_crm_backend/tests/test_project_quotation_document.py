@@ -456,7 +456,7 @@ def test_two_issues_of_one_document_can_never_share_a_revision_number():
                 company_id=company_id,
                 document_id=document.id,
                 issue_no=1,
-                our_ref_text=f"{document.document_no} (R1)",
+                our_ref_text=f"{document.document_no}-R1",
                 issued_by=owner,
                 cover_letter_rendered=None,
                 terms_rendered=None,
@@ -831,3 +831,32 @@ def test_the_original_per_scope_endpoint_still_works_and_gets_its_own_document()
         )
 
         assert scope.document_id is not None
+
+
+# ------------------------------------------------- QUOTE-SIGN-PAGE: quotation number
+
+
+def test_a_new_issue_stores_the_dashed_our_ref_and_the_draft_view_matches():
+    """AC2.4: `<document_no>-R<issue_no>` on the stored text and on the draft view."""
+    from app.services import project_quotation_document_service as qdocs
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        _quotation_numbering_rule(db, company_id, prefix=f"{MARKER}/Q/", next_value=1)
+        owner = _user(db, f"{MARKER} Baser")
+        project = _project(db, company_id, owner)
+        document = qdocs.create_document(db, project=project, actor_user_id=owner)
+        qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+
+        _sign(db, document, owner)
+        r1 = qdocs.issue(db, document=document, actor_user_id=owner)
+        assert r1.our_ref_text == f"{document.document_no}-R1"
+        assert qdocs.serialize_document(db, document)["our_ref"] == f"{document.document_no}-R1"
+
+        _sign(db, document, owner)
+        r2 = qdocs.issue(db, document=document, actor_user_id=owner)
+        assert r2.our_ref_text == f"{document.document_no}-R2"
+        assert qdocs.serialize_document(db, document)["our_ref"] == f"{document.document_no}-R2"
