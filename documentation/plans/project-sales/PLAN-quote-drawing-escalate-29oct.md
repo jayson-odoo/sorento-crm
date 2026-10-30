@@ -1,6 +1,6 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Plan, behaviour card v2 (owner answers 30 Oct folded in) filed, waiting on owner approval
+Status: Plan, behaviour card v3 (owner answers 30 Oct + dashboard note folded in) filed, waiting on owner approval
 (M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
 table, no migration)
 
@@ -80,10 +80,21 @@ Escalate on every line without a drawing.
 6. **The cell reads "Escalated <date>"** on every line of every quotation with that product,
    coloured by the task's deadline (neutral, amber under 4h, red overdue), hover "Escalated <date>
    by N people. Due <date>." After the team responds it reads "Responded <date>".
-7. **The team works it the normal SLA way** (Q4): the task lands on the assignee's My Pending
-   with **Respond** and then **Resolve** buttons (open question N1 for where), round-robin
-   assignee, working-hours deadline, overdue escalation up the tiers, extend, take-over, all as
-   today. The row links to the product's page, where the drawing is uploaded.
+7. **The team works it the normal SLA way** (Q4), on the home **Dashboards** page, "My pending
+   tasks" (owner note 30 Oct, mock v3). That widget (`MyPendingSLAWidget`, mounted at
+   `app/(protected)/(home)/page.tsx:30-33`) is where every form-SLA task already lands: its feed,
+   `sla_service.list_my_pending` (:1264), takes every open tracker assigned to the user with no
+   type filter, so the drawing task appears there with no new screen. The row is the existing
+   row component (`MyPendingSLAWidget.tsx:499-620`): "Product drawing . <product code>",
+   "Tier N . Respond|Resolve", "Respond by|Resolve by <date>", with a **Respond** button until
+   responded, then **Resolve** (open question N1), plus Extend. It also shows under My Team for
+   the team lead. Round-robin assignee, working-hours deadline, overdue escalation up the tiers,
+   extend and take-over all work as for any form-SLA task. Clicking the row opens the product
+   page (`/master-data-management/products/<id>`), where the drawing is uploaded. What has to be
+   added for this: the type in `FORM_SLA_TYPES` (`form_sla_service.py:33`), its label and route
+   in `ENTITY_ROUTES` (`MyPendingSLAWidget.tsx:82-87`), the product code as the row reference
+   (`sla_service._resolve_my_pending_references`, :2242, has no product mapping today), and the
+   two buttons for this type (hidden for form rows today, :704-740).
 8. **Adding a drawing does not close the task.** It notifies the assignee in-app ("Drawing added
    for <code>, resolve the request when done").
 9. **Resolving notifies every requester** in-app: "Drawing request for <code> resolved", linking
@@ -144,7 +155,7 @@ PDF counts as a drawing: counting PDFs would clear under 2% of the gap. Catalogu
 
 ### Open questions (v2, at most 4)
 
-**N1. Where does the assignee press Respond and Resolve?** (a) on the task's row in My Pending,
+**N1. Where does the assignee press Respond and Resolve?** (a) on the task's row in the dashboard's "My pending tasks",
 the same two buttons a conversation ticket has there today (`MyPendingSLAWidget.tsx:704-740`),
 shown for this type only; the row's link opens the product page to upload the drawing; (b) a
 Respond/Resolve banner on the product's page. **Recommendation: (a)**, it is where the team
@@ -164,8 +175,8 @@ quotation data.
 
 ## Mock
 
-`mockups/quote-drawing-escalate-29oct-mock.html` (v2): the cell states and the element-to-component
-map.
+`mockups/quote-drawing-escalate-29oct-mock.html` (v3): the cell states, the dashboard's "My pending
+tasks" rows, and the element-to-component map.
 
 ## Tests (red first, after approval)
 

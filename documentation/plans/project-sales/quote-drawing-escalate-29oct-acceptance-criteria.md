@@ -31,8 +31,9 @@ escalated it is told.
   `technical_drawing.escalation = {opened_at, responded_at, due_at, requester_count,
   last_resolved_at}`; the cell shows "Escalated <date>", or "Responded <date>" once responded,
   coloured by the governing deadline (neutral, amber under 4h, red overdue).
-- **AC-6 Normal SLA flow.** The task appears on the assignee's My Pending with Respond, then
-  Resolve; responding and resolving run through the step's configured events. Overdue escalation,
+- **AC-6 Normal SLA flow.** The task appears on the home Dashboards page, "My pending tasks" (My
+  Pending tab for the assignee, My Team tab for their lead), as "Product drawing . <product code>"
+  with Respond, then Resolve; responding and resolving run through the step's configured events. Overdue escalation,
   extend and take-over work as for any form-SLA task. The row opens the product page.
 - **AC-7 Adding a drawing does not resolve.** Linking a drawing (image or PDF) to a product with an
   open task leaves the task open and sends the assignee one in-app notification.

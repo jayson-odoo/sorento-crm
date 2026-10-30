@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drawing Escalate Mock v2</title>
+<title>Drawing Escalate Mock v3</title>
 <!-- QUOTE-DRAWING-ESCALATE mock (29 Oct). Static: the Drawing cell of the quotation lines grid
      in each state. Masked data only. Plan: ../PLAN-quote-drawing-escalate-29oct.md -->
 <style>
@@ -75,12 +75,32 @@
     border: 1px solid var(--border); background: var(--bg); color: var(--fg); cursor: pointer; }
   .btn.ghost { border-color: transparent; }
   .due-soon { color: var(--amber); font-weight: 600; }
+  .dash { border: 1px solid var(--border); border-radius: 10px; max-width: 760px; }
+  .dash-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 14px;
+    border-bottom: 1px solid var(--border); }
+  .dash-head h3 { font-size: 14px; margin: 0; }
+  .count { font-size: 11px; border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; color: var(--muted); }
+  .seg { margin-left: auto; display: inline-flex; border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+  .seg span { font-size: 12px; padding: 3px 10px; border-radius: 4px; }
+  .seg .on { background: var(--primary); color: #fff; }
+  .dash ul { list-style: none; margin: 0; padding: 4px 14px; }
+  .dash li { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .dash li:last-child { border-bottom: 0; }
+  .r1 { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; align-items: flex-start; }
+  .r1 .t { min-width: 0; flex: 1 1 260px; }
+  .r1 .t p { margin: 0; }
+  .r1 .t .ti { font-size: 14px; font-weight: 600; }
+  .r1 .t .sub { font-size: 12px; color: var(--muted); }
+  .due { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .new-row { outline: 2px dashed var(--primary); outline-offset: 4px; border-radius: 6px; }
+  .btns { margin-top: 6px; }
   @media (max-width: 480px) { body { padding: 16px; } }
 </style>
 </head>
 <body>
-<h1>Drawing cell: escalate a missing drawing (v2)</h1>
-<p class="lead">v2 folds in the owner's answers of 30 Oct. Quotation lines grid, Drawing column
+<h1>Drawing cell: escalate a missing drawing (v3)</h1>
+<p class="lead">v3 adds where the team sees the task: the home Dashboards page, "My pending tasks".
+v2 folded in the owner's answers of 30 Oct. Quotation lines grid, Drawing column
 (56px wide, unchanged). One row per state; hover text under each label. Product codes are masked.</p>
 
 <div class="wrap">
@@ -157,18 +177,34 @@
 </table>
 </div>
 
-<h2>The team's side: My Pending (N1)</h2>
-<div class="task">
-  <div>
-    <a href="#">Product drawing PRD-CCC-03</a>
-    <div class="meta">Tier 1 &middot; Respond &middot; 2 requesters &middot; <span class="due-soon">Due 30 Oct, 4:12 PM</span></div>
+<h2>The team's side: home Dashboards, "My pending tasks" (v3)</h2>
+<div class="dash">
+  <div class="dash-head">
+    <h3>My pending tasks</h3><span class="count">3</span>
+    <div class="seg"><span class="on">My Pending</span><span>My Team</span><span>Coverage</span></div>
   </div>
-  <div class="btns"><button class="btn">Respond</button><button class="btn ghost">Resolve</button><button class="btn ghost">Extend</button></div>
+  <ul>
+    <li>
+      <div class="r1"><div class="t"><p class="ti">Stock inquiry <span class="muted">&middot; SI-26-0001</span></p><p class="sub">Tier 1 &middot; Respond</p></div>
+      <span class="due">Respond by: 30 Oct 2026, 11:00 AM</span></div>
+    </li>
+    <li class="new-row">
+      <div class="r1"><div class="t"><p class="ti">Product drawing <span class="muted">&middot; PRD-CCC-03</span></p><p class="sub">Tier 1 &middot; Respond</p></div>
+      <span class="due due-soon">Respond by: 30 Oct 2026, 4:12 PM</span></div>
+      <div class="btns"><button class="btn">Respond</button><button class="btn ghost">Extend</button></div>
+    </li>
+    <li class="new-row">
+      <div class="r1"><div class="t"><p class="ti">Product drawing <span class="muted">&middot; PRD-DDD-04</span></p><p class="sub">Tier 1 &middot; Resolve</p></div>
+      <span class="due">Resolve by: 31 Oct 2026, 9:30 AM</span></div>
+      <div class="btns"><button class="btn">Resolve</button><button class="btn ghost">Extend</button></div>
+    </li>
+  </ul>
 </div>
-<p class="note">The same row and buttons a conversation ticket has today; Respond turns into Resolve
-once pressed. The title opens the product page, where the drawing is uploaded. The step's team,
-policy and events are set by the admin in SLA Management, Form SLA config (team set pre-filled
-<code>marketing_product</code>).</p>
+<p class="note">The real widget, same row component as every other task (dashed outline = the new
+rows; the outline is mock-only). A row shows Respond until responded, then Resolve, never both. Clicking
+the row opens the product page (<code>/master-data-management/products/&lt;id&gt;</code>), where the drawing is
+uploaded. The same row appears on the assignee's lead under My Team. Today form-SLA rows show no
+Respond/Resolve button; this type gets them (N1).</p>
 
 <h2>Feedback</h2>
 <div class="toast">Escalated: you will be told when the request is resolved</div>
@@ -188,7 +224,9 @@ escalated: added you to the request".</p>
     <tr><td>Escalate tile (dashed)</td><td>Same styling as the cell's "Choose" trigger, <code>QuotationLineFileCell.tsx</code> :170-178</td><td>New small component in the same folder.</td></tr>
     <tr><td>Escalated colour rule</td><td><code>AT_RISK_MS</code> + chip colours, <code>sla-management/conversation-sla-tracking/components/TicketSlaChips.tsx</code> :18, :51-57</td><td>Export <code>chipClass</code> and reuse it.</td></tr>
     <tr><td>PDF tile</td><td><code>lucide-react</code> <code>FileText</code>; signed URL from the drawing cell</td><td>New state <code>pdf</code> on <code>technical_drawing</code>.</td></tr>
-    <tr><td>Respond / Resolve on My Pending</td><td><code>MyPendingSLAWidget.tsx</code> :704-740 (buttons hidden for form rows today), <code>ENTITY_ROUTES</code> :82</td><td>Show them for <code>product_drawing</code> rows; add the type's route (product page) and label.</td></tr>
+    <tr><td>Dashboard row (title, subline, due)</td><td>Home Dashboards <code>app/(protected)/(home)/page.tsx</code> :30-33 mounts <code>MyPendingSLAWidget</code>; row renderer <code>MyPendingSLAWidget.tsx</code> :499-620; data <code>sla_service.list_my_pending</code> :1264 (every open tracker assigned to the user, no type filter)</td><td>No new component. Add <code>product_drawing</code> to <code>FORM_SLA_TYPES</code> (<code>form_sla_service.py</code> :33) so it is a form row.</td></tr>
+    <tr><td>Row title + reference</td><td><code>ENTITY_ROUTES</code> :82-87 (label + click target), <code>sla_service._resolve_my_pending_references</code> :2242 (no product mapping today)</td><td>Add <code>product_drawing: { base: '/master-data-management/products', label: 'Product drawing' }</code>; map the reference to the product code.</td></tr>
+    <tr><td>Respond / Resolve buttons</td><td><code>MyPendingSLAWidget.tsx</code> :704-740 (hidden for form rows today, <code>!form</code>)</td><td>Show for <code>product_drawing</code> rows: Respond until responded, then Resolve.</td></tr>
     <tr><td>Step setup</td><td><code>FormSLAConfigDialog.tsx</code> :123-129, <code>_shared/formSLAService.ts</code> :374, :386</td><td>Add type "Product drawing", its events (escalate, respond, resolve), pre-fill team set.</td></tr>
     <tr><td>Toast + error text</td><td><code>extractApiError</code> (<code>lib/api-client</code>), mutation-hook pattern</td><td>New <code>useEscalateDrawing</code>, invalidates the quotation lines query.</td></tr>
     <tr><td>Data</td><td><code>line.technical_drawing</code> from <code>project_quotation_service.py</code> :1519</td><td>Cell gains <code>escalation: {opened_at, responded_at, due_at, requester_count, last_resolved_at} | null</code>.</td></tr>
