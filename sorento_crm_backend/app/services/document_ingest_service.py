@@ -1404,6 +1404,9 @@ class DocumentIngestService(MasterRefResolver):
             for column in ("line_remark", "section_heading"):
                 if column in line.model_fields_set:
                     values[column] = (getattr(line, column) or "").strip() or None
+            # SO-LINE-DESC: AutoCount's line description rides as `product_name`.
+            if "product_name" in line.model_fields_set:
+                values["description"] = (line.product_name or "").strip() or None
         if "from_so_line_ref" in line.model_fields_set:
             values["from_so_line_ref"] = line.from_so_line_ref
         if "from_po_line_ref" in line.model_fields_set:
