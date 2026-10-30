@@ -429,7 +429,9 @@ def test_05_linking_or_unlinking_a_customer_of_another_agent_is_refused_for_edit
     w = make_world(db, slugs=(EDIT_OWN,))
     row = dealer(db, w, customers=(w.mine, w.theirs))
 
-    control, _ = _propose(db, w, {"contact_id": row.id, "link_customer_ids": [w.mine2.id]}, seen={row.id, w.mine2.id})
+    # R5 (review round 1): an `.edit_own` holder links only to undo a resign, so the control is an unlink
+    # of the user's own customer, which a resign needs.
+    control, _ = _propose(db, w, {"contact_id": row.id, "unlink_customer_ids": [w.mine.id]}, seen={row.id, w.mine.id})
     unlink, _ = _propose(db, w, {"contact_id": row.id, "unlink_customer_ids": [w.theirs.id]}, seen={row.id, w.theirs.id})
     link, _ = _propose(db, w, {"contact_id": row.id, "link_customer_ids": [w.theirs.id]}, seen={row.id, w.theirs.id})
 
