@@ -78,6 +78,9 @@ JPEG_QUALITY = 72
 #: markup a renderer would follow links out of, and an unknown format is no picture.
 EMBEDDABLE_FORMATS = ("PNG", "JPEG", "WEBP")
 
+#: Refused before decoding: a tiny palette PNG can claim hundreds of millions of pixels.
+MAX_IMAGE_PIXELS = 40_000_000
+
 
 #: The attachment type of a technical drawing. Matched on the name, as the Dealer Kit image
 #: ranking does (`dealer_kit/product_images.py`).
@@ -409,6 +412,14 @@ def _downscale(raw: bytes, attachment_id: Any) -> Optional[RenderedImage]:
         from PIL import Image
 
         with Image.open(io.BytesIO(raw), formats=EMBEDDABLE_FORMATS) as opened:
+            if opened.width * opened.height > MAX_IMAGE_PIXELS:
+                logger.warning(
+                    "product image: %s is %dx%d, over the pixel ceiling, left out",
+                    attachment_id,
+                    opened.width,
+                    opened.height,
+                )
+                return None
             opened.load()
             # Flattened onto white rather than converted straight to RGB: a PNG with alpha comes
             # out of a naive convert with black behind it, and a product cut out on transparency

@@ -66,6 +66,7 @@ from app.models.projects import (
 )
 from app.services import product_image_service as product_images
 from app.services import project_quotation_pdf_service as pdf
+from app.services.project_quotation_document_service import quotation_no
 
 logger = logging.getLogger(__name__)
 
@@ -307,10 +308,9 @@ def _write_letterhead(
         row += 1
 
     row += 1
-    # `our_ref_text` already carries the revision suffix, e.g. `SRT/Q/0141 (R1)`. That IS the
-    # reference the customer quotes back, so it is written whole rather than rebuilt here.
+    # Built from document_no + issue_no, the number the sign page and the PDF print.
     for label, value in (
-        ("Our Ref", _text(issue.our_ref_text)),
+        ("Quotation No.", quotation_no(document.document_no, issue.issue_no)),
         ("Your Ref", _text(document.your_ref)),
         ("Date", _date_text(document.doc_date or issue.issued_at)),
     ):
@@ -344,17 +344,16 @@ def _write_letterhead(
     return row + 1
 
 
-def _write_light_header(sheet: Worksheet, issue: ProjectQuotationIssue, row: int) -> int:
+def _write_light_header(
+    sheet: Worksheet, document: ProjectQuotationDocument, issue: ProjectQuotationIssue, row: int
+) -> int:
     """Enough for a sheet printed on its own: the reference it belongs to.
 
     Its scope label follows immediately below, written by the scope block itself, so a page found
     on a desk answers both "which quotation" and "which scope".
     """
-    ref = _text(issue.our_ref_text)
-    if ref:
-        _put(sheet, row, 1, f"Our Ref: {ref}")
-        row += 1
-    return row + 1
+    _put(sheet, row, 1, f"Quotation No.: {quotation_no(document.document_no, issue.issue_no)}")
+    return row + 2
 
 
 def _write_scope(
@@ -576,7 +575,7 @@ def build_issue_workbook(db: Session, issue: ProjectQuotationIssue) -> Workbook:
         row = (
             _write_letterhead(sheet, document, issue, sender, 1)
             if first
-            else _write_light_header(sheet, issue, 1)
+            else _write_light_header(sheet, document, issue, 1)
         )
         _write_scope(
             db, sheet, scope, row, grand_total=issue.grand_total if first else None
