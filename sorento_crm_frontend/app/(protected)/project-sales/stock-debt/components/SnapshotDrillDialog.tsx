@@ -35,6 +35,11 @@ import { decisionText } from './SnapshotDecisionPopover';
 
 const ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
 
+/** RESERVE-REQ-PICK AC-RP-6 (owner, 30 Oct): an OI row frozen on a line that reads Short 0
+ *  (covered or pinned) opens UNTICKED in "Request CS to reserve"; the operator can tick it
+ *  back. The OI page passes no such rows. Set false to offer them ticked like any other. */
+const PRE_UNTICK_COVERED_LINES = true;
+
 /** A line as one OI group shows it: the frozen line plus only that OI's rows. */
 type GroupLine = SnapshotLine & { group_oi_rows: SnapshotOiRow[] };
 
@@ -143,12 +148,15 @@ function buildColumns(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine
 function OiRequestDialog({
   oiId,
   frozenRowIds,
+  coveredRowIds,
   defaultWarehouseId,
   onOpenChange,
   onSent,
 }: {
   oiId: string;
   frozenRowIds: Set<string>;
+  /** Frozen rows whose line reads Short 0: they open unticked. */
+  coveredRowIds: string[];
   defaultWarehouseId: string | null;
   onOpenChange: (open: boolean) => void;
   onSent: () => void;
@@ -165,6 +173,7 @@ function OiRequestDialog({
     <RequestReserveDialog
       inquiryId={oiId}
       rows={rows}
+      untickedRowIds={coveredRowIds}
       defaultWarehouseId={defaultWarehouseId}
       open
       onOpenChange={onOpenChange}
@@ -195,6 +204,15 @@ function OiGroupGrid({
           line.group_oi_rows.filter((oi) => !oi.after_snapshot).map((oi) => oi.row_id),
         ),
       ),
+    [group.lines],
+  );
+  const coveredRowIds = React.useMemo(
+    () =>
+      PRE_UNTICK_COVERED_LINES
+        ? group.lines
+            .filter((line) => line.short_qty === 0)
+            .flatMap((line) => line.group_oi_rows.map((oi) => oi.row_id))
+        : [],
     [group.lines],
   );
   const requestable = group.lines.some((line) =>
@@ -237,6 +255,7 @@ function OiGroupGrid({
         <OiRequestDialog
           oiId={group.oiId}
           frozenRowIds={frozenRowIds}
+          coveredRowIds={coveredRowIds}
           defaultWarehouseId={defaultWarehouseId}
           onOpenChange={setRequestOpen}
           onSent={onRequested}

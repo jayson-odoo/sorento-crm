@@ -1,18 +1,25 @@
 'use client';
 
 import * as React from 'react';
-import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  type RowSelectionState,
+  useReactTable,
+} from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Checkbox } from '@/components/ui/checkbox';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
@@ -45,6 +52,11 @@ import type { OrderInquiryWorklistRow } from '../types/orderInquiry.types';
  * `listingKey` is passed), so unlike before, this dialog's own vitest suite now needs
  * a `QueryClientProvider` ancestor. No `listingKey` is passed, so the hook's own
  * `useQuery` stays disabled and issues no network read.
+ *
+ * RESERVE-REQ-PICK (`documentation/plans/scm/PLAN-reserve-request-pick-30oct.md`, owner
+ * 30 Oct): the grid's first column is the standard select column, so a line can be left
+ * out without closing the dialog. Every line opens ticked except `untickedRowIds`; only
+ * ticked lines are checked and sent, and the header counts them.
  */
 interface RequestReserveDialogRow {
   id: string;
@@ -68,10 +80,13 @@ export function RequestReserveDialog({
   open,
   onOpenChange,
   onSent,
+  untickedRowIds,
 }: {
   inquiryId: string;
   /** The inquiry's live worklist rows to name on the request. */
   rows: OrderInquiryWorklistRow[];
+  /** Rows that open unticked (the operator can still tick them). */
+  untickedRowIds?: string[];
   /** Preferred Location for every row that offers it (e.g. a snapshot decision's pool). */
   defaultWarehouseId?: string | null;
   open: boolean;
@@ -125,6 +140,7 @@ export function RequestReserveDialog({
   const [note, setNote] = React.useState('');
   const [sending, setSending] = React.useState(false);
   const [park, setPark] = React.useState(false);
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
 
   // S4 (reviewer round): keyed on a SIGNATURE, not the `rows` array itself - the
   // caller's own `useReserveRowOptions` (`_shared/hooks/useReserveRowOptions.ts`)
@@ -135,8 +151,13 @@ export function RequestReserveDialog({
   const rowsSignature = rows
     .map((row) => `${row.id}:${row.remaining}:${row.defaultLocation}`)
     .join('|');
+  const untickedSignature = (untickedRowIds ?? []).join('|');
   React.useEffect(() => {
     if (!open) return;
+    const unticked = new Set(untickedRowIds ?? []);
+    setRowSelection(
+      Object.fromEntries(rows.filter((row) => !unticked.has(row.id)).map((row) => [row.id, true])),
+    );
     setRequested(
       Object.fromEntries(rows.map((row) => [row.id, String(Number(row.remaining || '0'))])),
     );
@@ -145,7 +166,7 @@ export function RequestReserveDialog({
     setPark(false);
     setShowErrors(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, rowsSignature]);
+  }, [open, rowsSignature, untickedSignature]);
 
   // G6: `columns` must stay REFERENTIALLY STABLE across a keystroke - `flexRender`
   // renders a columnDef's own `cell` function AS the component type, so a `columns`
@@ -168,6 +189,10 @@ export function RequestReserveDialog({
 
   const columns = React.useMemo<ColumnDef<RequestReserveDialogRow>[]>(
     () => [
+      buildSelectColumn<RequestReserveDialogRow>({
+        selectAllRows: true,
+        rowLabel: (row) => `Select ${row.original.item_code ?? 'row'}`,
+      }),
       {
         id: 'product',
         header: 'Product',
@@ -206,6 +231,8 @@ export function RequestReserveDialog({
         header: 'Requested',
         cell: ({ row }) => {
           const remainingQty = Number(row.original.remaining || '0');
+          // An unticked line is not sent, so it is neither editable nor checked.
+          const included = row.getIsSelected();
           return (
             <>
               <Label htmlFor={`reserve-requested-${row.original.id}`} className="sr-only">
@@ -215,9 +242,10 @@ export function RequestReserveDialog({
                 id={`reserve-requested-${row.original.id}`}
                 min={1}
                 max={remainingQty}
+                disabled={!included}
                 value={stateRef.current.requested[row.original.id] ?? String(remainingQty)}
                 error={
-                  stateRef.current.showErrors
+                  stateRef.current.showErrors && included
                     ? requestedError(
                         stateRef.current.requested[row.original.id] ?? String(remainingQty),
                         remainingQty,
@@ -247,6 +275,7 @@ export function RequestReserveDialog({
             <SearchableSelect
               id={`reserve-location-${row.original.id}`}
               value={stateRef.current.location[row.original.id] ?? row.original.defaultLocation}
+              disabled={!row.getIsSelected()}
               onChange={(value) =>
                 setLocation((prev) => ({ ...prev, [row.original.id]: value }))
               }
@@ -270,13 +299,18 @@ export function RequestReserveDialog({
     data: rows,
     getRowId: (row) => row.id,
     getCoreRowModel: getCoreRowModel(),
+    enableRowSelection: true,
+    state: { rowSelection },
+    onRowSelectionChange: setRowSelection,
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
 
+  const ticked = rows.filter((row) => rowSelection[row.id]);
+
   async function handleSend() {
-    // Only the final values are checked: any row outside 1..remaining blocks the send.
-    const blocked = rows.some((row) =>
+    // Only the final values of TICKED rows are checked: any outside 1..remaining blocks the send.
+    const blocked = ticked.some((row) =>
       requestedError(requested[row.id] ?? row.remaining, Number(row.remaining || '0')),
     );
     if (blocked) {
@@ -286,7 +320,7 @@ export function RequestReserveDialog({
     setSending(true);
     try {
       await createMutation.mutateAsync({
-        rows: rows.map((row) => ({
+        rows: ticked.map((row) => ({
           row_id: row.id,
           qty_requested: Number(requested[row.id] ?? row.remaining ?? '0'),
           warehouse_id: location[row.id] ?? row.defaultLocation,
@@ -311,6 +345,9 @@ export function RequestReserveDialog({
       <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Request CS to reserve</DialogTitle>
+          <DialogDescription>
+            {ticked.length} of {rows.length} lines
+          </DialogDescription>
         </DialogHeader>
         <DialogBody className="flex-1 space-y-4 overflow-y-auto">
           {/* Round 4 review (24 Sep, AC-RS-89): no outer `overflow-x-auto` wrapper - the
@@ -357,7 +394,7 @@ export function RequestReserveDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={sending}>
               Cancel
             </Button>
-            <Button onClick={handleSend} disabled={sending || rows.length === 0}>
+            <Button onClick={handleSend} disabled={sending || ticked.length === 0}>
               {park ? 'Park request' : 'Send request'}
             </Button>
           </div>
