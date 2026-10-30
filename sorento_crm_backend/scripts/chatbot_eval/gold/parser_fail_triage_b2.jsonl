@@ -1,9 +1,9 @@
-{"id": "b2-size-01", "message": "SRTWC286200MM", "expect": {"product": "SRTWC286", "size": 200}}
-{"id": "b2-size-02", "message": "srtwc286-200mm stock", "expect": {"product": "SRTWC286", "size": 200}}
-{"id": "b2-size-03", "message": "SRTWC286 250MM", "expect": {"product": "SRTWC286", "size": 250}}
-{"id": "b2-size-04", "message": "do you have wc8066 150mm", "expect": {"product": "wc8066", "size": 150}}
-{"id": "b2-size-05", "message": "SRTWC8036 200 mm ready stock?", "expect": {"product": "SRTWC8036", "size": 200}}
-{"id": "b2-size-06", "message": "MWC8154 20cm", "expect": {"product": "MWC8154", "size": 200}}
+{"id": "b2-size-01", "message": "SRTWC286200MM", "expect": {"product_raw": "SRTWC286", "size": 200}}
+{"id": "b2-size-02", "message": "srtwc286-200mm stock", "expect": {"product_raw": "SRTWC286", "size": 200}}
+{"id": "b2-size-03", "message": "SRTWC286 250MM", "expect": {"product_raw": "SRTWC286", "size": 250}}
+{"id": "b2-size-04", "message": "do you have wc8066 150mm", "expect": {"product_raw": "wc8066", "size": 150}}
+{"id": "b2-size-05", "message": "SRTWC8036 200 mm ready stock?", "expect": {"product_raw": "SRTWC8036", "size": 200}}
+{"id": "b2-size-06", "message": "MWC8154 20cm", "expect": {"product_raw": "MWC8154", "size": 200}}
 {"id": "b2-size-07", "message": "SRTWC286-SH-200", "expect": {"size": null}}
 {"id": "b2-size-08", "message": "SRTWC286200", "expect": {"size": null}}
 {"id": "b2-size-09", "message": "CB2838 x10", "expect": {"size": null}}
@@ -30,3 +30,7 @@
 {"id": "b2-cost-06", "message": "我的成本 SRTWT5828", "expect": {"domain_hint": "purchase_cost", "intent_hint": "check_po_cost"}}
 {"id": "b2-cost-07", "message": "how much does SRTWC8122 cost", "expect": {"domain_hint": "master_products"}}
 {"id": "b2-cost-08", "message": "selling price SRTWC8122", "expect": {"domain_hint": "promotion"}}
+{"id": "b2-size-11", "message": "SRTWC8036150MM", "expect": {"product_raw": "SRTWC8036", "size": 150}}
+{"id": "b2-size-12", "message": "wc8066200mm got stock?", "expect": {"product_raw": "wc8066", "size": 200}}
+{"id": "b2-size-13", "message": "SRTKS1248300MM", "expect": {"product_raw": "SRTKS1248", "size": 300}}
+{"id": "b2-size-14", "message": "stock srtwt5828600mm", "expect": {"product_raw": "srtwt5828", "size": 600}}

@@ -1557,12 +1557,12 @@ B2_GOLD = "scripts/chatbot_eval/gold/parser_fail_triage_b2.jsonl"
 
 def test_b2_gold_file_loads():
     rows = pg.load_gold(B2_GOLD)
-    assert len(rows) == 32
+    assert len(rows) == 36
     assert len({r["id"] for r in rows}) == len(rows)
 
 
 def test_b2_new_expect_keys_are_known(tmp_path):
-    for key, val in (("portal_form", "price_tag_request"), ("suggested_team", None), ("size", 200)):
+    for key, val in (("portal_form", "price_tag_request"), ("suggested_team", None), ("size", 200), ("product_raw", "SRTWC286")):
         assert len(pg.load_gold(_write(tmp_path, [_row("a", "hi", {key: val})]))) == 1, key
     with pytest.raises(ValueError):
         pg.load_gold(_write(tmp_path, [_row("a", "hi", {"still_bogus": 1})]))
@@ -1602,3 +1602,12 @@ def test_size_null_means_no_size_specification_entity():
     assert pg.grade_parse({"entities": [{"hint": "product", "canonical_code": None}]}, {"size": None})[0] is True
     assert pg.grade_parse({"entities": [_size_ent(200)]}, {"size": None})[0] is False
     assert pg.grade_parse({"entities": [_size_ent(200, key="trap_length")]}, {"size": None})[0] is True
+
+
+def test_product_raw_is_the_folded_raw_of_a_product_entity():
+    v = {"entities": [{"hint": "product", "raw": "SRTWC286", "canonical_code": None}]}
+    assert pg.grade_parse(v, {"product_raw": "SRTWC286"})[0] is True
+    assert pg.grade_parse(v, {"product_raw": "srtwc-286"})[0] is True
+    assert pg.grade_parse(v, {"product_raw": "SRTWC287"})[0] is False
+    assert pg.grade_parse({"entities": [{"hint": "customer", "raw": "SRTWC286"}]}, {"product_raw": "SRTWC286"})[0] is False
+    assert pg.grade_parse({"entities": []}, {"product_raw": "SRTWC286"})[0] is False
