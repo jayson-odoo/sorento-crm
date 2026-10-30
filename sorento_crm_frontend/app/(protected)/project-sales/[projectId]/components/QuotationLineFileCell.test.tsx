@@ -1,0 +1,386 @@
+/**
+ * QUOTE-DRAWING-ESCALATE: the Drawing cell of a quotation line, one case per state of the mock
+ * (documentation/plans/project-sales/mockups/quote-drawing-escalate-29oct-mock.html, v3).
+ *
+ * Written BEFORE the component: every escalation case is red until `DrawingEscalation`, the
+ * `pdf` state and `technical_drawing.escalation` exist. The network edge is `apiFetch` from
+ * `@/lib/api` (what `projectService` calls), so the test pins the endpoint the click reaches
+ * without naming the service function or the hook.
+ *
+ * Masked data only: PRD-xxx-nn codes.
+ */
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type {
+  QuotationLine,
+  QuotationLineDrawing,
+} from '../../_shared/types/project.types';
+import { QuotationLineFileCell } from './QuotationLineFileCell';
+
+const apiFetch = vi.fn();
+vi.mock('@/lib/api', () => ({
+  apiFetch: (...args: unknown[]) => apiFetch(...args),
+}));
+
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+vi.mock('@/lib/toast', () => ({
+  toast: {
+    success: (...a: unknown[]) => toastSuccess(...a),
+    error: (...a: unknown[]) => toastError(...a),
+    warning: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+
+const HOUR = 3_600_000;
+// Midday UTC keeps the printed day stable in every timezone a CI box can have.
+const OPENED = '2026-10-29T06:00:00.000Z';
+const RESPONDED = '2026-10-29T09:03:00.000Z';
+
+function drawing(overrides: Record<string, unknown> = {}): QuotationLineDrawing {
+  return {
+    state: 'no_drawings',
+    url: null,
+    preview_url: null,
+    attachment_id: null,
+    filename: null,
+    candidate_count: 0,
+    candidates: [],
+    escalation: null,
+    ...overrides,
+  } as unknown as QuotationLineDrawing;
+}
+
+function escalation(overrides: Record<string, unknown> = {}) {
+  return {
+    tracking_id: 'trk-1',
+    opened_at: OPENED,
+    responded_at: null,
+    due_at: new Date(Date.now() + 10 * HOUR).toISOString(),
+    requester_count: 2,
+    last_resolved_at: null,
+    ...overrides,
+  };
+}
+
+function line(technical_drawing: QuotationLineDrawing, overrides: Partial<QuotationLine> = {}) {
+  return {
+    id: 'line-1',
+    version_id: 'version-1',
+    product_id: 'product-1',
+    product_code: 'PRD-CCC-03',
+    unit_price: '250.00',
+    quantity: '4',
+    line_total: '1000.00',
+    is_non_standard: false,
+    is_below_floor: false,
+    sort_order: 0,
+    technical_drawing,
+    ...overrides,
+  } as QuotationLine;
+}
+
+function renderCell(l: QuotationLine | null) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <QuotationLineFileCell
+        kind="drawing"
+        line={l}
+        label="PRD-CCC-03"
+        pickedId=""
+        editable={false}
+        onPick={() => {}}
+        onPreview={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+/** Class names of an element and the few ancestors inside the cell, so the colour rule is read
+ * wherever the component chooses to put it (the tile or its label). */
+function classesAround(el: HTMLElement): string {
+  const names: string[] = [];
+  let node: HTMLElement | null = el;
+  for (let depth = 0; node && depth < 4; depth += 1) {
+    names.push(node.className?.toString() ?? '');
+    node = node.parentElement;
+  }
+  return names.join(' ');
+}
+
+const escalateButton = () =>
+  screen.queryByRole('button', { name: /Escalate missing drawing for PRD-CCC-03/i });
+
+beforeEach(() => {
+  apiFetch.mockReset();
+  toastSuccess.mockReset();
+  toastError.mockReset();
+});
+
+describe('QuotationLineFileCell, drawing cell: what is on file', () => {
+  it('state 1: a drawing image shows the thumbnail and no Escalate', () => {
+    renderCell(
+      line(
+        drawing({
+          state: 'default',
+          url: 'https://cdn.test/signed/ts-0001.png',
+          preview_url: 'https://cdn.test/signed/ts-0001.png',
+          attachment_id: 'att-1',
+          filename: 'TS-0001.png',
+          candidate_count: 1,
+        }),
+      ),
+    );
+
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://cdn.test/signed/ts-0001.png');
+    expect(escalateButton()).not.toBeInTheDocument();
+    expect(screen.queryByText(/Escalated/)).not.toBeInTheDocument();
+  });
+
+  it('state 2: a PDF-only drawing is a tile that opens the file in a new tab, no Escalate', () => {
+    renderCell(
+      line(
+        drawing({
+          state: 'pdf',
+          url: 'https://cdn.test/signed/ts-0002.pdf',
+          filename: 'TS-0002.pdf',
+          attachment_id: 'att-2',
+        }),
+      ),
+    );
+
+    const tile = screen.getByRole('link', { name: /PDF/i });
+    expect(tile).toHaveAttribute('href', 'https://cdn.test/signed/ts-0002.pdf');
+    expect(tile).toHaveAttribute('target', '_blank');
+    expect(tile.getAttribute('rel') ?? '').toMatch(/noopener/);
+    expect(tile).toHaveAttribute('title', expect.stringContaining('TS-0002.pdf'));
+    expect(escalateButton()).not.toBeInTheDocument();
+    // A PDF is not an image: nothing may be drawn as a thumbnail.
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
+});
+
+describe('QuotationLineFileCell, drawing cell: no drawing, escalate', () => {
+  it('state 3: a saved catalogue line with no drawing offers Escalate, hover names the product', () => {
+    renderCell(line(drawing()));
+
+    const button = escalateButton();
+    expect(button).toBeInTheDocument();
+    expect(button).toHaveTextContent('Escalate');
+    expect(button).toHaveAttribute('title', 'Ask for a drawing of PRD-CCC-03');
+    expect(button).toBeEnabled();
+    // The old dead-end label is gone: Escalate replaces it.
+    expect(screen.queryByText('no drawing')).not.toBeInTheDocument();
+  });
+
+  it('a SET line (no product id of its own, a driver in its parts) offers Escalate too', () => {
+    renderCell(
+      line(drawing(), {
+        product_id: null,
+        product_set_id: 'set-1',
+        product_code: 'PRD-SET-01',
+        set_parts: [
+          { product_id: 'p-driver', product_code: 'PRD-CCC-03', quantity: '1', is_driver: true },
+        ],
+      }),
+    );
+
+    expect(screen.getByRole('button', { name: /Escalate missing drawing for/i })).toBeInTheDocument();
+  });
+
+  it('one click posts to the line drawing-escalation endpoint, with no dialog in between', async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ joined: false, escalation: escalation() }),
+    });
+    renderCell(line(drawing()));
+
+    fireEvent.click(escalateButton() as HTMLElement);
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+    const [url, init] = apiFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(
+      /\/quotation-versions\/version-1\/lines\/line-1\/drawing-escalation$/,
+    );
+    expect(init.method).toBe('POST');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+
+  it('state 4: while the request is in flight the tile is disabled and busy', async () => {
+    let release: (value: unknown) => void = () => {};
+    apiFetch.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    renderCell(line(drawing()));
+
+    fireEvent.click(escalateButton() as HTMLElement);
+
+    await waitFor(() => expect(escalateButton()).toBeDisabled());
+    expect(escalateButton()).toHaveAttribute('aria-busy', 'true');
+    // A second click while busy must not fire a second request.
+    fireEvent.click(escalateButton() as HTMLElement);
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    release({ ok: true, status: 200, json: async () => ({ joined: false, escalation: escalation() }) });
+  });
+
+  it('a refused escalate toasts the server message and returns to state 3', async () => {
+    apiFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: 'No team is set up for drawing requests',
+          code: 'drawing_requests_not_set_up',
+        }),
+        { status: 409, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    renderCell(line(drawing()));
+
+    fireEvent.click(escalateButton() as HTMLElement);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(String(toastError.mock.calls[0][0])).toContain('No team is set up for drawing requests');
+    await waitFor(() => expect(escalateButton()).toBeEnabled());
+  });
+
+  it('state 10: resolved without a drawing reads Escalate again, hover says when', () => {
+    renderCell(
+      line(
+        drawing({
+          escalation: escalation({
+            tracking_id: null,
+            opened_at: null,
+            responded_at: null,
+            due_at: null,
+            requester_count: 0,
+            last_resolved_at: '2026-10-30T06:00:00.000Z',
+          }),
+        }),
+      ),
+    );
+
+    const button = escalateButton();
+    expect(button).toBeInTheDocument();
+    expect(button).toBeEnabled();
+    expect(button?.getAttribute('title') ?? '').toMatch(/Last request resolved 30 Oct/);
+    expect(button?.getAttribute('title') ?? '').toMatch(/no drawing on file/);
+  });
+});
+
+describe('QuotationLineFileCell, drawing cell: already escalated', () => {
+  it('state 5: shows "Escalated <date>", names the people and the due date, and is not a button', () => {
+    renderCell(line(drawing({ escalation: escalation() })));
+
+    const label = screen.getByText(/Escalated/);
+    expect(label.textContent).toMatch(/29 Oct/);
+    expect(escalateButton()).not.toBeInTheDocument();
+    const hover = screen.getByTitle(/Escalated/);
+    expect(hover.getAttribute('title')).toMatch(/by 2 people/);
+    expect(hover.getAttribute('title')).toMatch(/Due /);
+    // Not clickable: nothing in the cell is a button or a link.
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('a single requester reads "by 1 person"', () => {
+    renderCell(line(drawing({ escalation: escalation({ requester_count: 1 }) })));
+    expect(screen.getByTitle(/Escalated/).getAttribute('title')).toMatch(/by 1 person\b/);
+  });
+
+  it('state 6: once the team responded it reads "Responded <date>" with the response date', () => {
+    renderCell(line(drawing({ escalation: escalation({ responded_at: RESPONDED }) })));
+
+    const label = screen.getByText(/Responded/);
+    expect(label.textContent).toMatch(/29 Oct/);
+    expect(screen.queryByText(/Escalated 29/)).not.toBeInTheDocument();
+    expect(screen.getByTitle(/Responded/).getAttribute('title')).toMatch(/Responded 29 Oct/);
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('colour follows the deadline: neutral with time to spare, amber under 4h, red overdue', () => {
+    const { unmount } = renderCell(
+      line(drawing({ escalation: escalation({ due_at: new Date(Date.now() + 10 * HOUR).toISOString() }) })),
+    );
+    let around = classesAround(screen.getByText(/Escalated/));
+    expect(around).not.toMatch(/amber/);
+    expect(around).not.toMatch(/destructive|red-/);
+    unmount();
+
+    const amber = renderCell(
+      line(drawing({ escalation: escalation({ due_at: new Date(Date.now() + 2 * HOUR).toISOString() }) })),
+    );
+    around = classesAround(screen.getByText(/Escalated/));
+    expect(around).toMatch(/amber/);
+    amber.unmount();
+
+    renderCell(
+      line(drawing({ escalation: escalation({ due_at: new Date(Date.now() - 1 * HOUR).toISOString() }) })),
+    );
+    around = classesAround(screen.getByText(/Escalated/));
+    expect(around).toMatch(/destructive|red-/);
+  });
+
+  it('the colour of a responded task follows the same deadline rule', () => {
+    renderCell(
+      line(
+        drawing({
+          escalation: escalation({
+            responded_at: RESPONDED,
+            due_at: new Date(Date.now() - 1 * HOUR).toISOString(),
+          }),
+        }),
+      ),
+    );
+    expect(classesAround(screen.getByText(/Responded/))).toMatch(/destructive|red-/);
+  });
+
+  it('state 9: a drawing added while the task is open shows the thumbnail, not the flag', () => {
+    renderCell(
+      line(
+        drawing({
+          state: 'default',
+          url: 'https://cdn.test/signed/ts-0005.png',
+          preview_url: 'https://cdn.test/signed/ts-0005.png',
+          attachment_id: 'att-5',
+          filename: 'TS-0005.png',
+          candidate_count: 1,
+          escalation: escalation(),
+        }),
+      ),
+    );
+
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://cdn.test/signed/ts-0005.png');
+    expect(screen.queryByText(/Escalated/)).not.toBeInTheDocument();
+    expect(escalateButton()).not.toBeInTheDocument();
+  });
+});
+
+describe('QuotationLineFileCell, drawing cell: nothing to escalate', () => {
+  it('state 11: an off-catalogue line reads a dash and offers nothing', () => {
+    renderCell(
+      line(drawing({ state: 'off_catalog' }), {
+        product_id: null,
+        product_code: null,
+      }),
+    );
+
+    expect(screen.getByText('-')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('an unsaved line (no server row yet) renders nothing at all', () => {
+    const { container } = renderCell(null);
+    expect(container).toBeEmptyDOMElement();
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+});

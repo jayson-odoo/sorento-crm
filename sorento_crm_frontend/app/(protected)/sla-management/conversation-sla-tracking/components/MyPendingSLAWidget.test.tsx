@@ -949,3 +949,104 @@ describe('MyPendingSLAWidget deadline urgency', () => {
     expect(chip).toHaveTextContent('Extended ×2');
   });
 });
+
+// QUOTE-DRAWING-ESCALATE (N1): a product_drawing task is a form-SLA row that, unlike every other
+// form row, carries its own Respond then Resolve buttons, because nothing on a product page
+// emits the stage's respond/resolve events. Red until the widget knows the type.
+describe('MyPendingSLAWidget product drawing rows', () => {
+  const drawingItem: MyPendingSLAItem = {
+    id: 'pd1',
+    source_entity_type: 'product_drawing',
+    source_entity_id: 'product-uuid',
+    is_form_sla: true,
+    reference: 'PRD-CCC-03',
+    respond_io_id: null,
+    next_action: 'Respond',
+    due_at: new Date(Date.now() + 3600_000).toISOString(),
+    due_at_resolution: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    active_due_at: new Date(Date.now() + 3600_000).toISOString(),
+    due_kind: 'respond',
+    is_responded: false,
+    current_tier: 1,
+    policy_name: 'Default',
+  } as MyPendingSLAItem;
+
+  beforeEach(() => {
+    getMyPendingSLA.mockReset();
+    getTeamPendingSLA.mockReset();
+    getVisibleUsers.mockReset();
+    getTakeoverState.mockReset();
+    push.mockReset();
+    searchParam = null;
+    extraParams = {};
+    deniedSlugs = new Set();
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    getVisibleUsers.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({});
+  });
+
+  it('titles the row "Product drawing" with the product code as its reference', async () => {
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await waitFor(() => expect(screen.getByText('Product drawing')).toBeInTheDocument());
+    expect(screen.getByText(/PRD-CCC-03/)).toBeInTheDocument();
+    expect(screen.getByText(/Tier 1/)).toBeInTheDocument();
+  });
+
+  it('shows Respond (and not Resolve) until the task has been responded to', async () => {
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    expect(getActionButton(/^Respond$/i)).toBeInTheDocument();
+    expect(hasActionButton(/^Resolve$/i)).toBe(false);
+  });
+
+  it('shows Resolve (and not Respond) once responded', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      {
+        ...drawingItem,
+        is_responded: true,
+        due_kind: 'resolve',
+        next_action: 'Resolve',
+        active_due_at: drawingItem.due_at_resolution,
+      },
+    ]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    expect(getActionButton(/^Resolve$/i)).toBeInTheDocument();
+    expect(hasActionButton(/^Respond$/i)).toBe(false);
+  });
+
+  it('clicking the row opens the product page, where the drawing is uploaded', async () => {
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    fireEvent.click(screen.getByText('Product drawing'));
+    expect(push).toHaveBeenCalledWith('/master-data-management/products/product-uuid');
+  });
+
+  it('every other form row still shows neither Respond nor Resolve', async () => {
+    getMyPendingSLA.mockResolvedValue([formItem, drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Purchase request');
+    await screen.findByText('Product drawing');
+    // Exactly one Respond: the drawing row's. The purchase request row has none.
+    expect(actionButtons(/^Respond$/i)).toHaveLength(1);
+    expect(hasActionButton(/^Resolve$/i)).toBe(false);
+  });
+
+  it('a conversation row keeps its own Resolve and gains no Respond', async () => {
+    getMyPendingSLA.mockResolvedValue([convoItem, drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Enquiry');
+    await screen.findByText('Product drawing');
+    expect(actionButtons(/^Resolve$/i)).toHaveLength(1);
+    expect(actionButtons(/^Respond$/i)).toHaveLength(1);
+  });
+});
