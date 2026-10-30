@@ -484,11 +484,18 @@ def test_so_edit_cancel_flags_an_acknowledged_row_changed(db, row_state):
 
 
 @pytest.mark.parametrize(
-    "row_ack,pre_changed_at",
-    [(ACK_AWAITING, None), (ACK_CHANGED, datetime(2026, 1, 1)), (ACK_REJECTED, None)],
+    "row_ack,pre_changed_at,expected",
+    [
+        (ACK_AWAITING, None, ACK_ACKNOWLEDGED),
+        (ACK_CHANGED, datetime(2026, 1, 1), ACK_ACKNOWLEDGED),
+        (ACK_REJECTED, None, ACK_REJECTED),
+    ],
 )
-def test_so_edit_cancel_leaves_non_acknowledged_rows_untouched(db, row_ack, pre_changed_at):
-    """AC-CL-6: a row already `awaiting`, `changed` or `rejected` is left as it is."""
+def test_so_edit_cancel_makes_awaiting_and_changed_rows_done_and_leaves_rejected(
+    db, row_ack, pre_changed_at, expected
+):
+    """AC-CL-6 / AC-AC-10e (owner 30 Oct): every live row on the cancelled line is done;
+    a `rejected` row is left as it is. No changed stamp either way."""
     so, _product, _line, row = _so_edit_chain(
         db, row_state=INQUIRY_RAISED, row_ack=row_ack, changed_at=pre_changed_at
     )
@@ -497,7 +504,7 @@ def test_so_edit_cancel_leaves_non_acknowledged_rows_untouched(db, row_ack, pre_
 
     db.expire_all()
     row = db.get(OrderInquiryRow, row.id)
-    assert row.ack_state == row_ack
+    assert row.ack_state == expected
     assert row.changed_at == pre_changed_at
 
 
@@ -626,12 +633,17 @@ def test_autocount_cancel_push_flags_an_acknowledged_row_changed(env, row_state)
 
 
 @pytest.mark.parametrize(
-    "row_ack,pre_changed_at",
-    [(ACK_AWAITING, None), (ACK_CHANGED, datetime(2026, 1, 1)), (ACK_REJECTED, None)],
+    "row_ack,pre_changed_at,expected",
+    [
+        (ACK_AWAITING, None, ACK_ACKNOWLEDGED),
+        (ACK_CHANGED, datetime(2026, 1, 1), ACK_ACKNOWLEDGED),
+        (ACK_REJECTED, None, ACK_REJECTED),
+    ],
 )
-def test_autocount_cancel_push_leaves_non_acknowledged_rows_untouched(env, row_ack, pre_changed_at):
-    """AC-CL-6 (write site 2): a row already `awaiting`, `changed` or `rejected` is
-    left as it is by the push too."""
+def test_autocount_cancel_push_makes_awaiting_and_changed_rows_done_and_leaves_rejected(
+    env, row_ack, pre_changed_at, expected
+):
+    """AC-CL-6 / AC-AC-10e (owner 30 Oct), write site 2: same as the sales order edit."""
     record, header, line, product_id = _create_then_prep_push(env)
     _mirror, row = _mirror_for_ingest_line(
         env, header["id"], line["id"], product_id, row_ack=row_ack, changed_at=pre_changed_at,
@@ -641,7 +653,7 @@ def test_autocount_cancel_push_leaves_non_acknowledged_rows_untouched(env, row_a
 
     env.db.expire_all()
     row = env.db.get(OrderInquiryRow, row.id)
-    assert row.ack_state == row_ack
+    assert row.ack_state == expected
     assert row.changed_at == pre_changed_at
 
 
