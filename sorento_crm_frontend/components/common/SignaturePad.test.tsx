@@ -584,3 +584,24 @@ describe('SignaturePad location opt-out (QUOTE-SIGN-PAGE AC7)', () => {
     expect(screen.getByText('GPS location')).toBeInTheDocument();
   });
 });
+
+describe('aria-disabled styling lives on the pad, not the shared Button (CI-cost round)', () => {
+  it('the shared Button carries no aria-disabled opacity class', async () => {
+    const { Button } = await import('@/components/ui/button');
+    render(
+      <Button aria-disabled="true" data-testid="plain-button">
+        Plain
+      </Button>,
+    );
+
+    expect(screen.getByTestId('plain-button').className).not.toContain('aria-disabled:opacity-60');
+  });
+
+  it('the pad commit button is aria-disabled and carries the opacity class when not ready', () => {
+    render(<SignaturePad onChange={vi.fn()} onNotReadyAttempt={vi.fn()} />);
+
+    const commit = screen.getByRole('button', { name: 'Apply signature' });
+    expect(commit).toHaveAttribute('aria-disabled', 'true');
+    expect(commit.className).toContain('aria-disabled:opacity-60');
+  });
+});
