@@ -2077,33 +2077,35 @@ def _product_family_order():
     return (Product.product_code, Product.id)
 
 
-def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
+def _code_prefix_then_substring(query, code_col, token: str, order_by) -> tuple[list, str]:
+    """The tier-2 code rule, ONE for every code-carrying entity (products and product sets,
+    CHATBOT-SET-STOCK owner ruling 31 Oct: "it should work same as how we resolve product code"):
+    the rows whose code (whitespace removed, case folded) starts with the token, else the rows
+    that hold it ("wc8826" inside SRTWC8826-P). `(rows, tier)`; no rows for a token of separators
+    only (an ILIKE '%' matches every code)."""
     # Strip whitespace from both sides so 'cgb9032b- new' matches 'CGB9032B-NEW'.
     norm_token = _strip_all_ws(token)
     if not re.sub(r"[^0-9A-Za-z]", "", norm_token):
-        return []  # separators only: nothing to probe a code with (an ILIKE '%' matches every code)
+        return [], "prefix"
     # LIKE wildcards in the token are literal characters, as `_code_candidates` autoescapes them.
     escaped = norm_token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    prefix = f"{escaped}%"
-    substr = f"%{escaped}%"
-    code_norm = _ws_insensitive_lower(Product.product_code)
-    rows = (
-        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-        .filter(code_norm.ilike(prefix, escape="\\"), chat_searchable_products())
-        .order_by(*_product_family_order())
-        .limit(PREFIX_LIMIT)
-        .all()
+    code_norm = _ws_insensitive_lower(code_col)
+    for pattern, tier in ((f"{escaped}%", "prefix"), (f"%{escaped}%", "substring")):
+        rows = query.filter(code_norm.ilike(pattern, escape="\\")).order_by(*order_by).limit(PREFIX_LIMIT).all()
+        if rows:
+            return rows, tier
+    return [], "substring"
+
+
+def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
+    rows, tier = _code_prefix_then_substring(
+        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active).filter(
+            chat_searchable_products()
+        ),
+        Product.product_code,
+        token,
+        _product_family_order(),
     )
-    tier = "prefix"
-    if not rows:
-        rows = (
-            db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-            .filter(code_norm.ilike(substr, escape="\\"), chat_searchable_products())
-            .order_by(*_product_family_order())
-            .limit(PREFIX_LIMIT)
-            .all()
-        )
-        tier = "substring"
     # Product resolution is CODE-ONLY by design: exact/prefix/substring probes
     # (and the trgm fallback) all match on product_code. Name/description
     # free-text matching was intentionally removed - a phrase like "basin" is
@@ -2122,30 +2124,23 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
 
 
 def _prefix_probe_product_set(db: Session, token: str) -> list[ResolvedEntity]:
-    """CHATBOT-SET-STOCK: the product sets whose code starts with the token.
+    """CHATBOT-SET-STOCK: the product sets a code token finds, by the product code rule
+    (`_code_prefix_then_substring`: prefix, else substring).
 
     The catalogue prints the family code (SRTWC7405, SRTWC8826) and the sets carry it as their
     head (SRTWC7405-RL-S-PJ, SRTWC8826-P), while their parts carry a role letter inside it
-    (SRTWCX7405-..., SRTWCY7405-...), so `_prefix_probe_product` finds only the seat cover. Same
-    prefix rule as products, over the set code; scoped by the ORM listener as `_probe_product_set`.
+    (SRTWCX7405-..., SRTWCY7405-...), so `_prefix_probe_product` finds only the seat cover.
+    Scoped by the ORM listener as `_probe_product_set`.
     """
     from app.models.product_set import ProductSet
 
-    norm_token = _strip_all_ws(token)
-    if not re.sub(r"[^0-9A-Za-z]", "", norm_token):
-        return []
-    escaped = norm_token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    rows = (
-        db.query(ProductSet)
-        .filter(
-            _ws_insensitive_lower(ProductSet.set_code).ilike(f"{escaped}%", escape="\\"),
-            ProductSet.is_active.is_(True),
-        )
-        .order_by(ProductSet.set_code, ProductSet.id)
-        .limit(PREFIX_LIMIT)
-        .all()
+    rows, tier = _code_prefix_then_substring(
+        db.query(ProductSet).filter(ProductSet.is_active.is_(True)),
+        ProductSet.set_code,
+        token,
+        (ProductSet.set_code, ProductSet.id),
     )
-    return [entity for _set, entity in _product_set_entities(db, rows, match_tier="prefix")]
+    return [entity for _set, entity in _product_set_entities(db, rows, match_tier=tier)]
 
 
 def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity]:
