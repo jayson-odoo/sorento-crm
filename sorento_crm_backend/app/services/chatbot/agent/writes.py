@@ -1465,14 +1465,18 @@ def _pr_summary(args: dict, before: dict) -> str:
     return text + ". The requester and the dealer contact will be told."
 
 
-def _pr_execute(db, user: dict, args: dict) -> dict:
+def _pr_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
     from starlette.requests import Request
     from fastapi.responses import JSONResponse
 
     from app.api.v1.procurement.purchase_requests import ApprovalDecisionRequest, decide_purchase_request_approval
 
+    from app.services.revision_fence import assert_revision_current
+
     rid = str(args["request_id"])
     _pr_scope(db, user, "POST", "/{request_id}/approval-decision", rid)
+    # The route's revision fence, with the revision the user confirmed.
+    assert_revision_current(db, "purchase_request", rid, confirmed.get("revision_no"))
     body = ApprovalDecisionRequest(action=_DECISIONS[args["decision"]], comments=_line(args.get("reason")) or None)
     # A person clicked Confirm in the console, so the browser channel: the screen's grace window applies.
     request = Request({"type": "http", "method": "POST", "headers": [], "path": PR_PREFIX})
@@ -1543,7 +1547,7 @@ WRITES[DECIDE_PR] = WriteDef(
     summary=_pr_summary,
     execute=_pr_execute,
     record_key="request_id",
-    changes=_pr_changes,
+    changes=_pr_changes,    execute_takes_before=True,
 )
 USER_READS[LIST_PRS] = UserRead(
     name=LIST_PRS,
@@ -1647,7 +1651,7 @@ def _undo_summary(args: dict, before: dict) -> str:
 
 def _undo_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
     from app.api.v1.sla.form_actions import _UndoRequest, cancel_form_action, undo_form_action
-    from app.services.error_handler import AppException, handle_conflict
+    from app.services.error_handler import handle_conflict
     from app.services.procurement_service import PurchaseRequestService
 
     rid = str(args["request_id"])
@@ -1658,9 +1662,8 @@ def _undo_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
     if before["state"] == "waiting":
         cancel_form_action(action_id=before["form_action"], current_user=user, db=db)
     else:
-        # The route's `require_permission` does not run on a direct call.
-        if not _permitted(db, str(user["id"]), FORM_UNDO):
-            raise AppException(status_code=403, message="You do not have permission to undo actions on this form.", code="FORBIDDEN")
+        # The route's `require_permission` does not run on a direct call: `_undo_read_before` above asked the
+        # undo guardrail with this user's own permission, which refuses without it.
         header = PurchaseRequestService(db).get_request(rid)
         body = _UndoRequest(source_entity_type=header.request_type, source_entity_id=rid, reason=_line(args["reason"]))
         undo_form_action(body=body, current_user=user, db=db)

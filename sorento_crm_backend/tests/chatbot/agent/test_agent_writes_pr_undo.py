@@ -417,3 +417,45 @@ def test_withdraw_with_the_sla_module_off_is_refused(db, sends, monkeypatch):
         actions.withdraw(db, w.respond_id, str(action.id), 0)
 
     assert [a.status for a in form_actions(db, pr.id)] == ["pending"]
+
+
+# ------------------------------------------------------------------ review round 1: execute-time guards
+
+
+def test_the_decide_execute_applies_the_scope_rule_itself(db, sends, monkeypatch):
+    """Belt and braces against a race after the confirm re-check: execute refuses a limited user."""
+    from app.services.chatbot.agent import writes
+
+    no_grace(monkeypatch)
+    w = make_world(db, slugs=("procurement.purchase_requests.view_own", "procurement.purchase_requests.approve"))
+    pr = make_request(db, w)
+
+    with pytest.raises(Exception) as exc:
+        writes.run_as_user(
+            db, ctx_of(db, w),
+            lambda user: writes.WRITES[DECIDE].execute(
+                db, user, {"request_id": pr.id, "decision": "approve"}, {"revision_no": 0}
+            ),
+        )
+
+    assert getattr(exc.value, "status_code", None) in (403, 404)
+    assert row_now(db, pr.id).approval_status == "pending"
+
+
+def test_the_undo_execute_checks_the_undo_slug_itself(db, sends, monkeypatch):
+    from app.services.chatbot.agent import writes
+    from tests.chatbot.agent.test_agent_writes import revoke
+
+    w = make_world(db, slugs=(*APPROVER, UNDO_SLUG))
+    pr, _ = decided(db, w, monkeypatch, parked=False)
+    res, step = propose_undo(db, w, {"request_id": pr.id, "reason": "Wrong one"})
+    assert res.status == "proposed", res.message
+    revoke(db, w.user_id, UNDO_SLUG)
+
+    with pytest.raises(Exception) as exc:
+        writes.run_as_user(
+            db, ctx_of(db, w), lambda user: writes.WRITES[UNDO].execute(db, user, step["args"], step["before"])
+        )
+
+    assert getattr(exc.value, "status_code", None) in (403, 409)
+    assert row_now(db, pr.id).approval_status == "approved"

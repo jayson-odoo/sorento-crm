@@ -123,6 +123,24 @@ describe('AgentConsole waiting changes', () => {
     await waitFor(() => expect(screen.queryByTestId('agent-step-waiting')).toBeNull());
   });
 
+  it('Undo on the second step withdraws step 1, not step 0', async () => {
+    const convo = conversation({ waiting: null });
+    convo.turns[0].actions[0].steps.push({
+      summary: 'Reject sponsorship form SF-1.',
+      status: 'done',
+      error: null,
+      changes: [],
+      waiting: { commit_at: inAMinute(), window_seconds: 60 },
+    } as never);
+    getAgentConversation.mockResolvedValue(convo);
+    withdrawAgentStep.mockResolvedValue({ action_id: 'a1', status: 'executed', reply_text: 'Withdrawn.', steps: [] });
+    renderConsole();
+
+    fireEvent.click(await screen.findByRole('button', { name: /undo/i }));
+
+    await waitFor(() => expect(withdrawAgentStep).toHaveBeenCalledWith('ZZT-1', 'a1', 1));
+  });
+
   it('a refused withdraw shows the reason in words', async () => {
     getAgentConversation.mockResolvedValue(
       conversation({ waiting: { commit_at: inAMinute(), window_seconds: 60 } }),

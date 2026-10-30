@@ -36,7 +36,7 @@ MAX_STEPS = 20
 
 class ActionRefused(Exception):
     """Nothing was written. `reason` is one of not_found, not_newest, expired, not_proposed,
-    entry_refused, changed, same_turn."""
+    entry_refused, changed, same_turn; a withdraw adds not_waiting and applied."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
