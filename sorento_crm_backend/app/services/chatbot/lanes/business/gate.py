@@ -71,9 +71,6 @@ def _roster_cap(
 # The matrices, verbatim.
 # --------------------------------------------------------------------------- #
 
-#: Domains where a product set (CHAT-CODE-LOOKUP R2) is read as its member products.
-_SET_MEMBER_DOMAINS = frozenset({"master_products", "inventory"})
-
 ALLOWED: dict[str, list[str]] = {
     "master_products": ["product", "category", "brand"],
     "product_attachment": [
@@ -439,8 +436,10 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     # CHAT-CODE-LOOKUP R2: a flyer code that is a product set answers as its member products
     # (product info and stock), the set's code riding on each as `set_code`. CHATBOT-SET-STOCK
     # (owner, 30 Oct 2026): with or without the CODE LOOKUP prompt, so a set the resolver finds
-    # by its catalogue code (`_prefix_probe_product_set`) shows every part.
-    set_members = domain in _SET_MEMBER_DOMAINS
+    # by its catalogue code (`_prefix_probe_product_set`) shows every part. Owner, card v4 Q1 (a):
+    # every domain that takes products (the matrix decides, no list of its own), so ETA, photos,
+    # orders and promotions run on the parts exactly as stock does.
+    set_members = "product" in (ALLOWED.get(domain) or ())
     for m in flat:
         if set_members and jsc.get(m, "entity_type") == "product_set" and (
             str(jsc.get(m, "uuid")) in {str(i) for i in resolver.get("visible_set_ids") or []}
@@ -646,6 +645,21 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         def is_prod(m: Any) -> bool:
             return jsc.js_string(jsc.get(m, "entity_type")).lower() == "product"
 
+        def set_parts(matches: list[Any]) -> list[dict[str, Any]]:
+            """CHATBOT-SET-STOCK (owner, card v4 Q3: "just show the product in the set"): the
+            parts of every visible set among `matches`, as the entities built above. A set is
+            never a choice to pick from; only products outside every matched set are."""
+            parts: list[dict[str, Any]] = []
+            for m in matches:
+                if set_members and jsc.get(m, "entity_type") == "product_set" and (
+                    str(jsc.get(m, "uuid")) in {str(i) for i in resolver.get("visible_set_ids") or []}
+                ):
+                    for member in jsc.array(jsc.get(jsc.get(m, "display"), "members")):
+                        held = by_uuid.get(jsc.get(member, "uuid"))
+                        if held is not None and held not in parts:
+                            parts.append(held)
+            return parts
+
         # OR-mode: per-token resolutions[]. AND-mode: flat intersection[].
         or_resolutions = (
             resolver.get("resolutions")
@@ -665,7 +679,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             # resolve straight through and are NEVER offered as a choice.
             still_ambiguous: list[dict[str, Any]] = []
             for r in or_resolutions:
-                matches = [m for m in jsc.array(jsc.get(r, "matches")) if is_compatible(m)]
+                parts = set_parts(jsc.array(jsc.get(r, "matches")))
+                exact_entities.extend(parts)
+                part_uuids = {p["uuid"] for p in parts}
+                matches = [
+                    m for m in jsc.array(jsc.get(r, "matches"))
+                    if is_compatible(m) and jsc.get(m, "uuid") not in part_uuids
+                ]
                 if len(matches) == 0:
                     continue
                 products = [m for m in matches if is_prod(m)]
@@ -824,7 +844,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
 
         elif and_matches is not None:
             # ── AND-MODE: tier is uninformative; exact = canonical_code EQUALS a token ──
-            compat_matches = [m for m in and_matches if jsc.truthy(m) and is_compatible(m)]
+            parts = set_parts(and_matches)
+            exact_entities.extend(parts)
+            part_uuids = {p["uuid"] for p in parts}
+            compat_matches = [
+                m for m in and_matches
+                if jsc.truthy(m) and is_compatible(m) and jsc.get(m, "uuid") not in part_uuids
+            ]
             non_products = [m for m in compat_matches if not is_prod(m)]
             for m in non_products:
                 exact_entities.append(
