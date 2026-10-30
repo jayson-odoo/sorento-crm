@@ -101,12 +101,10 @@ describe('QuotationLinePhoto', () => {
     expect(screen.getByRole('link')).toHaveAttribute('href', productPhotoHref('product-1'));
   });
 
-  it('never invites a choice on an off-catalog line', () => {
+  it('never invites a choice on a line whose product this company cannot see', () => {
     render(
       <QuotationLinePhoto
         line={line({
-          product_id: null,
-          product_code: null,
           product_image: {
             state: 'off_catalog',
             url: null,
@@ -117,7 +115,7 @@ describe('QuotationLinePhoto', () => {
       />,
     );
 
-    // There is no product, so there is no `product_attachments` row a flag could point at. A
+    // The product is unreadable here, so there is no `product_attachments` row a flag could point at. A
     // "choose a photo" link here would lead nowhere and would imply a second place a picture gets
     // decided, which is exactly the defect the single flag removes.
     expect(screen.queryByRole('link')).not.toBeInTheDocument();

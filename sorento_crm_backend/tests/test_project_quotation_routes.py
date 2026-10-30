@@ -312,28 +312,26 @@ def test_the_alert_counts_reach_the_client_from_the_current_version_only(api):
     assert listed[0]["below_floor_count"] == 0
 
 
-def test_an_off_catalog_line_needs_a_description_and_is_flagged_non_standard(api):
+def test_a_line_with_no_product_and_no_set_is_refused_whatever_its_description_says(api):
     client, _db, _company_id, _user_id, project = api
 
     quotation = _quotation(client, project.id)
     version_id = quotation["current_version_id"]
 
-    refused = client.post(
-        f"{BASE}/quotation-versions/{version_id}/lines",
-        json={"unit_price": "4000.00", "quantity": "1"},
-    )
-    assert refused.status_code == 422, refused.text
-
-    created = client.post(
-        f"{BASE}/quotation-versions/{version_id}/lines",
-        json={
+    for body in (
+        {"unit_price": "4000.00", "quantity": "1"},
+        {
             "description_snapshot": "Bespoke stone counter",
             "unit_price": "4000.00",
             "quantity": "1",
         },
-    )
-    assert created.status_code == 201, created.text
-    assert created.json()["is_non_standard"] is True
+    ):
+        refused = client.post(f"{BASE}/quotation-versions/{version_id}/lines", json=body)
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["code"] == "quotation_line_product_required"
+
+    listed = client.get(f"{BASE}/quotation-versions/{version_id}/lines").json()["data"]
+    assert listed == []
 
 
 def test_marking_a_quotation_lost_requires_a_configured_reason(api):

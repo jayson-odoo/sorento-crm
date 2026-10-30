@@ -302,17 +302,6 @@ def test_a_photo_of_another_product_a_deleted_one_or_a_non_image_is_refused(api)
         assert refused.json()["code"] == "quotation_line_image_invalid"
 
 
-def test_a_photo_on_a_line_with_no_product_is_refused(api):
-    client, db, env, make_product, version_id = _fixture_for_write(api)
-    product = make_product()
-    photo = _photo(db, env, product, "p.jpg")
-    db.commit()
-
-    refused = _bulk(client, version_id, [_line_body(None, image_attachment_id=photo.id)])
-    assert refused.status_code == 422, refused.text
-    assert refused.json()["code"] == "quotation_line_image_invalid"
-
-
 def test_a_bad_drawing_is_refused_with_its_own_code(api):
     client, db, env, make_product, version_id = _fixture_for_write(api)
     mine, other = make_product(), make_product()
@@ -326,12 +315,6 @@ def test_a_bad_drawing_is_refused_with_its_own_code(api):
         refused = _bulk(client, version_id, [_line_body(mine, drawing_attachment_id=bad)])
         assert refused.status_code == 422, refused.text
         assert refused.json()["code"] == "quotation_line_drawing_invalid"
-
-    no_product = _bulk(
-        client, version_id, [_line_body(None, drawing_attachment_id=theirs.id)]
-    )
-    assert no_product.status_code == 422, no_product.text
-    assert no_product.json()["code"] == "quotation_line_drawing_invalid"
 
 
 def test_an_unchanged_stored_id_is_not_rechecked(api):
@@ -426,10 +409,10 @@ def test_an_unpicked_drawing_defaults_to_the_oldest_upload_and_none_says_so(api)
     db.commit()
 
     saved = _bulk(
-        client, version_id, [_line_body(product), _line_body(bare), _line_body(None)]
+        client, version_id, [_line_body(product), _line_body(bare)]
     )
     assert saved.status_code == 200, saved.text
-    with_two, without, custom = saved.json()["data"]
+    with_two, without = saved.json()["data"]
 
     assert with_two["drawing_attachment_id"] is None
     assert with_two["technical_drawing"]["state"] == "default"
@@ -437,7 +420,6 @@ def test_an_unpicked_drawing_defaults_to_the_oldest_upload_and_none_says_so(api)
     assert with_two["technical_drawing"]["candidate_count"] == 2
     assert without["technical_drawing"]["state"] == "no_drawings"
     assert without["technical_drawing"]["candidates"] == []
-    assert custom["technical_drawing"]["state"] == "off_catalog"
 
 
 def test_a_picked_photo_wins_over_the_products_live_answer(api):
@@ -610,15 +592,15 @@ def test_the_workbook_anchors_the_drawing_in_technical_spec_and_stacks_legacy_te
 # ------------------------------------------------------------------ 7. wording
 
 
-def test_a_custom_line_without_a_description_says_custom_item(api):
+def test_a_line_with_no_product_and_no_set_says_every_line_needs_one(api):
     client, _db, _company_id, _user_id, project = api
     version_id = _quotation(client, project.id)["current_version_id"]
 
     refused = _bulk(client, version_id, [{"unit_price": "10.00", "quantity": "1"}])
     assert refused.status_code == 422, refused.text
     body = _refusal_text(refused)
-    assert refused.json()["code"] == "quotation_line_description_required"
-    assert "A non-standard item needs a description." in body
+    assert refused.json()["code"] == "quotation_line_product_required"
+    assert "Every line needs a catalogue product or product set." in body
     assert "off-catalog" not in body.lower()
 
 

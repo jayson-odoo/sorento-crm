@@ -1289,6 +1289,7 @@ class ProductService:
         product = self.get_product(product_id)
         self._reject_if_companion_rule_dependency(product_id)
         self._reject_if_new_product_application_link(product_id)
+        self._reject_if_on_quotation(product_id)
         # Capture children BEFORE delete so we can re-anchor them to the next
         # existing ancestor afterwards (DB ondelete=SET NULL orphans them).
         ex_children = self._variant_child_ids(product_id)
@@ -1320,6 +1321,32 @@ class ProductService:
             raise handle_conflict(
                 f"This product was opened for new product application {row[0]}. "
                 "Undo that line first."
+            )
+
+    def _reject_if_on_quotation(self, product_id) -> None:
+        """A projects quotation line (any version, draft or issued) names this product: refuse
+        with a 409 naming the first quotation by document number. The query is company scoped
+        like the product itself, which belongs to one company, so no other company's line can
+        name it."""
+        from app.models.projects import (
+            ProjectQuotation,
+            ProjectQuotationDocument,
+            ProjectQuotationLine,
+            ProjectQuotationVersion,
+        )
+
+        row = (
+            self.db.query(ProjectQuotationDocument.document_no)
+            .join(ProjectQuotation, ProjectQuotation.document_id == ProjectQuotationDocument.id)
+            .join(ProjectQuotationVersion, ProjectQuotationVersion.quotation_id == ProjectQuotation.id)
+            .join(ProjectQuotationLine, ProjectQuotationLine.version_id == ProjectQuotationVersion.id)
+            .filter(ProjectQuotationLine.product_id == product_id)
+            .order_by(ProjectQuotationDocument.document_no.asc())
+            .first()
+        )
+        if row is not None:
+            raise handle_conflict(
+                f"This product is on quotation {row[0]}, so it cannot be deleted."
             )
 
     def _reject_if_companion_rule_dependency(self, product_id: str) -> None:
@@ -1446,11 +1473,10 @@ class ProductService:
         if not product_ids:
             return {"message": "No products to delete", "deleted_count": 0}
         rows = self.db.query(Product).filter(Product.id.in_(product_ids)).all()
-        # TODO(#2020): add the "refuse delete while a quotation uses it" guard here too
-        # once that lane merges, if it is not already inside one of these.
         for product in rows:
             self._reject_if_companion_rule_dependency(product.id)
             self._reject_if_new_product_application_link(product.id)
+            self._reject_if_on_quotation(product.id)
         # Capture children of all deleted rows (excluding the deleted set itself)
         # so survivors re-anchor to their next existing ancestor.
         ex_children: List[str] = []
