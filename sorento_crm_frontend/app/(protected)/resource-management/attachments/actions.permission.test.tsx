@@ -1,7 +1,8 @@
 /**
  * ATTACH-DELETE-PERM: the record action set offers "Permanently delete" on a trashed file
  * only to a caller holding `resource.attachments.delete`, the slug the server checks.
- * "Move to trash" (archive) is not gated by it.
+ * ATTACH-PROJECT-WRITE: archive ("Move to trash") and Restore take the same slug server-side
+ * now, so they hide without it too.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
@@ -56,11 +57,18 @@ describe('useAttachmentActions delete gating', () => {
     hasPermission.mockReturnValue(false);
     const l = labels(true);
     expect(l).not.toContain('Permanently delete');
-    expect(l).toContain('Restore');
+    expect(l).not.toContain('Restore');
   });
 
-  it('a live file still offers Move to trash without the permission', () => {
+  it('a trashed file offers Restore with the permission', () => {
+    hasPermission.mockImplementation((slug) => slug === 'resource.attachments.delete');
+    expect(labels(true)).toContain('Restore');
+  });
+
+  it('a live file offers Move to trash only with the permission', () => {
     hasPermission.mockReturnValue(false);
+    expect(labels(false)).not.toContain('Move to trash');
+    hasPermission.mockImplementation((slug) => slug === 'resource.attachments.delete');
     expect(labels(false)).toContain('Move to trash');
   });
 });

@@ -124,8 +124,11 @@ export function SidebarMenu() {
     indicator: '',
   };
 
-  const buildMenu = (items: MenuConfig): JSX.Element[] => {
-    return items.map((item: MenuItem, index: number) => {
+  // `offset` keeps index-derived values unique across the two halves rendered below:
+  // both share one single-type accordion, so a repeated `root-N` opens two groups at once.
+  const buildMenu = (items: MenuConfig, offset = 0): JSX.Element[] => {
+    return items.map((item: MenuItem, i: number) => {
+      const index = offset + i;
       if (item.heading) {
         return buildMenuHeading(item, index);
       } else if (item.disabled) {
@@ -328,7 +331,7 @@ export function SidebarMenu() {
       >
         {buildMenu(menuBefore)}
         <QuickAccessBlock />
-        {buildMenu(menuAfter)}
+        {buildMenu(menuAfter, menuBefore.length)}
       </AccordionMenu>
     </div>
   );
