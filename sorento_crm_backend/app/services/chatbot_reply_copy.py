@@ -398,6 +398,13 @@ CHATBOT_REPLY_PORTAL_LINK_SPONSORSHIP_FORM = {
     "ms": "Berikut pautan portal anda untuk borang tajaan.",
     "zh": "这是您填写赞助表格的门户链接。",
 }
+# CHATBOT-FAIL-TRIAGE AC-3 / R1: the price tag request form is a portal link target
+# (`portal_service.LINK_TYPES`), so its link names the form like the four above.
+CHATBOT_REPLY_PORTAL_LINK_PRICE_TAG_REQUEST = {
+    "en": "Here is your portal link for a price tag request.",
+    "ms": "Berikut pautan portal anda untuk permintaan tanda harga.",
+    "zh": "这是您申请价格标签的门户链接。",
+}
 
 # Release gate #1829, round 7 (crew ruling): the one acknowledgement of a reset turn ("clear
 # all"). Nothing is looked up on that turn, so the sentence promises nothing.
@@ -416,6 +423,7 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "portal_link_stock_inquiry": (CHATBOT_REPLY_PORTAL_LINK_STOCK_INQUIRY, ()),
     "portal_link_purchase_request": (CHATBOT_REPLY_PORTAL_LINK_PURCHASE_REQUEST, ()),
     "portal_link_sponsorship_form": (CHATBOT_REPLY_PORTAL_LINK_SPONSORSHIP_FORM, ()),
+    "portal_link_price_tag_request": (CHATBOT_REPLY_PORTAL_LINK_PRICE_TAG_REQUEST, ()),
     "fallback_ack": (CHATBOT_REPLY_FALLBACK_ACK, ()),
     "reset_ack": (CHATBOT_REPLY_RESET_ACK, ()),
     "fallback_offer": (CHATBOT_REPLY_FALLBACK_OFFER, ()),

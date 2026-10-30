@@ -1642,18 +1642,20 @@ PORTAL_LINK_COPY = {
     "stock_inquiry": "portal_link_stock_inquiry",
     "purchase_request": "portal_link_purchase_request",
     "sponsorship_form": "portal_link_sponsorship_form",
+    "price_tag_request": "portal_link_price_tag_request",
 }
 
 
 def portal_submission_type(parse_output: dict[str, Any]) -> str | None:
     """The portal tab a portal_link ask names, or None. A code the portal cannot deep-link
-    (`portal_service.SUPPORTED_TYPES`) is the parser guessing and names no form."""
-    from app.services.portal_service import SUPPORTED_TYPES
+    (`portal_service.LINK_TYPES`: the four generic forms plus the price tag request form,
+    CHATBOT-FAIL-TRIAGE AC-3) is the parser guessing and names no form."""
+    from app.services.portal_service import LINK_TYPES
 
     if parse_output.get("domain_hint") != "portal_link":
         return None
     form = parse_output.get("portal_form")
-    return form if isinstance(form, str) and form in SUPPORTED_TYPES else None
+    return form if isinstance(form, str) and form in LINK_TYPES else None
 
 
 def _extract_envelope(j: Any) -> dict[str, Any]:
