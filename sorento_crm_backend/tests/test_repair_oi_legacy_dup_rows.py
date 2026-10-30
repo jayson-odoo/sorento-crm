@@ -286,8 +286,9 @@ def test_ac_5_apply_restates_the_copy_to_its_lines_own_instruction():
         assert copy.state == INQUIRY_RAISED
         assert copy.note.startswith(STAMP_2026)
         assert "APR 27 row 166" in copy.note and "OCT 26 row 630" in copy.note
-        # OI-AUTO-CONFIRM (#1986): the refresh re-derives the inquiry's rows by the rule, and
-        # an unlinked buy row nobody confirmed by hand is To order (`awaiting`), not Done.
+        # OI-AUTO-CONFIRM (#1986): the refresh's `derive_bundles` re-reads every row of the
+        # inquiry through `auto_confirm`, and an unlinked buy row nobody confirmed by hand is
+        # To order (`awaiting`), not Done.
         assert (sibling.qty, sibling.delivery_date, sibling.ack_state) == (
             Decimal("2"), OCT, ACK_AWAITING,
         )
