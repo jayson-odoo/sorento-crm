@@ -1,9 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { CheckCircle2, Link2Off, MessageSquareText } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Info, Link2Off, MessageSquareText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { SignaturePad } from '@/components/common/SignaturePad';
 import { signatureValueFrom } from '@/components/common/signatureValue';
+import { cn } from '@/lib/utils';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { sanitizedHtml } from '@/lib/sanitize';
 import { useQuotationSignMutations, useQuotationSignPage } from '../../hooks/useQuotationSign';
@@ -29,19 +31,41 @@ function addressLines(address: string | null): string[] {
     .filter((line) => line.length > 0);
 }
 
+/** The first non-blank name, trimmed; null when every candidate is blank. */
+function firstName(...names: Array<string | null | undefined>): string | null {
+  for (const name of names) {
+    if (name?.trim()) return name.trim();
+  }
+  return null;
+}
+
 /** The refs and the parties, in the order they sit on the printed quotation. */
 function Letterhead({ page }: { page: QuotationSignPage }) {
   const lines = addressLines(page.recipient_address);
   const docDate = page.doc_date ? formatDateInMalaysia(page.doc_date) : '';
+  const salesContact = [page.signatory_name, page.signatory_phone]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(', ');
 
   return (
     <Card>
       <CardContent className="space-y-5 py-5">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Quotation from
-          </p>
-          <p className="min-w-0 break-words text-base font-semibold">{text(page.sender_name)}</p>
+        <div className="flex min-w-0 items-center gap-3">
+          {page.sender_logo_url && (
+            <img
+              src={page.sender_logo_url}
+              alt={`${page.sender_name ?? 'Company'} logo`}
+              referrerPolicy="no-referrer"
+              className="h-12 w-auto max-w-[120px] shrink-0 object-contain"
+            />
+          )}
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Quotation from
+            </p>
+            <p className="min-w-0 break-words text-base font-semibold">{text(page.sender_name)}</p>
+          </div>
         </div>
 
         <div className="grid gap-5 border-t border-border pt-4 md:grid-cols-2">
@@ -67,17 +91,23 @@ function Letterhead({ page }: { page: QuotationSignPage }) {
 
           <div className="min-w-0 space-y-2 md:justify-self-end">
             <div className="flex gap-2 text-sm">
-              <span className="w-20 shrink-0 text-muted-foreground">Our Ref</span>
+              <span className="w-28 shrink-0 text-muted-foreground">Quotation No.</span>
               <span className="min-w-0 break-words font-medium">{text(page.our_ref)}</span>
             </div>
             <div className="flex gap-2 text-sm">
-              <span className="w-20 shrink-0 text-muted-foreground">Revision</span>
+              <span className="w-28 shrink-0 text-muted-foreground">Revision</span>
               <span className="font-medium">{`R${page.issue_no}`}</span>
             </div>
             <div className="flex gap-2 text-sm">
-              <span className="w-20 shrink-0 text-muted-foreground">Date</span>
+              <span className="w-28 shrink-0 text-muted-foreground">Date</span>
               <span className="font-medium">{docDate || '-'}</span>
             </div>
+            {salesContact && (
+              <div className="flex gap-2 text-sm">
+                <span className="w-28 shrink-0 text-muted-foreground">Sales contact</span>
+                <span className="min-w-0 break-words font-medium">{salesContact}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -136,6 +166,15 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
   const [asking, setAsking] = React.useState(false);
   const [note, setNote] = React.useState('');
   const named = signerName.trim().length > 0;
+  const hasTerms = Boolean(page.terms?.trim());
+  const [ticked, setTicked] = React.useState(false);
+  // Set once the customer taps Sign and accept (or the locked pad) before it is ready: the hint
+  // then turns to the warning colour until everything is in.
+  const [nudged, setNudged] = React.useState(false);
+  const nameRef = React.useRef<HTMLInputElement | null>(null);
+  const tickRef = React.useRef<HTMLButtonElement | null>(null);
+  const padRef = React.useRef<HTMLDivElement | null>(null);
+  const termsOk = !hasTerms || ticked;
   // Trimmed, so a box holding three spaces is still empty. An empty request is not a request:
   // the backend refuses it, and the button that would send it is never live.
   const written = note.trim().length > 0;
@@ -144,7 +183,9 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
     return (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="min-w-0 break-words text-sm">Your signature</CardTitle>
+          <CardTitle className="min-w-0 break-words text-sm">
+            {['Accepted by', page.customer_signature?.signer_name?.trim()].filter(Boolean).join(' ')}
+          </CardTitle>
           <Badge variant="success" appearance="light">
             <CheckCircle2 className="size-3.5" aria-hidden />
             Accepted
@@ -160,6 +201,8 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
             readOnly
             onChange={() => {}}
             value={signatureValueFrom(page.customer_signature)}
+            hideLocation
+            requestGeolocation={false}
             // The signer's own name heads their signature. Falls back to a label rather than to
             // `-`: a card titled "-" reads as a fault, and this one is not a data field.
             label={
@@ -210,6 +253,24 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
     );
   }
 
+  /** The first step still missing, named for the hint and the element to bring into view. */
+  function hintFor(hasContent: boolean): string | null {
+    if (!named) {
+      return hasTerms
+        ? 'Type your name and tick the terms box to accept.'
+        : 'Type your name to accept.';
+    }
+    if (!termsOk) return 'Tick to agree to the terms before you accept.';
+    return hasContent ? null : 'Draw your signature to accept.';
+  }
+
+  function showMissingStep() {
+    setNudged(true);
+    const target = !named ? nameRef.current : !termsOk ? tickRef.current : padRef.current;
+    target?.scrollIntoView?.({ block: 'center' });
+    if (!named || !termsOk) target?.focus();
+  }
+
   function sendRequest() {
     if (!written) return;
     requestChanges.mutate({
@@ -221,7 +282,7 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="min-w-0 break-words text-sm">Accept this quotation</CardTitle>
+        <CardTitle className="min-w-0 break-words text-sm">Accepted by</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 py-5">
         <p className="min-w-0 break-words text-sm text-muted-foreground">
@@ -232,37 +293,78 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
           <Label htmlFor="quotation-sign-name">Your name</Label>
           <Input
             id="quotation-sign-name"
+            ref={nameRef}
             value={signerName}
             autoComplete="name"
             placeholder="As it should read on the quotation"
             disabled={accept.isPending}
             onChange={(event) => setSignerName(event.target.value)}
           />
-          {!named && (
-            <p className="text-xs text-muted-foreground">Enter your name to sign.</p>
-          )}
         </div>
 
-        <SignaturePad
-          label="Sign here"
-          commitLabel="Sign and accept"
-          typedNameDefault={signerName}
-          // Locked until there is a name to put beside the ink. The pad owns its own Apply
-          // button, so gating it here is the only way to keep the two in the right order.
-          disabled={!named || accept.isPending}
-          onChange={(value) => {
-            if (!value) return;
-            accept.mutate({
-              signer_name: signerName.trim(),
-              mode: value.mode,
-              image_data_uri: value.dataUrl,
-              // Stringified rather than sent as JSON numbers: the column is NUMERIC(10,7) and a
-              // float round-trip is a needless chance to move the coordinate.
-              gps_lat: value.gpsLat === null ? null : String(value.gpsLat),
-              gps_lng: value.gpsLng === null ? null : String(value.gpsLng),
-            });
-          }}
-        />
+        {hasTerms && (
+          <div
+            data-attention={nudged && named && !ticked ? 'true' : undefined}
+            className="flex items-start gap-2 rounded-md border border-transparent p-2 data-[attention=true]:border-warning data-[attention=true]:bg-warning/10"
+          >
+            <Checkbox
+              id="quotation-sign-terms"
+              ref={tickRef}
+              checked={ticked}
+              disabled={accept.isPending}
+              onCheckedChange={(next) => setTicked(next === true)}
+            />
+            <Label htmlFor="quotation-sign-terms" className="min-w-0 break-words leading-snug">
+              I have read and agree to the Terms and conditions.
+            </Label>
+          </div>
+        )}
+
+        <div ref={padRef}>
+          <SignaturePad
+            label="Sign here"
+            hideLocation
+            requestGeolocation={false}
+            commitLabel="Sign and accept"
+            typedNameDefault={signerName}
+            // Locked until there is a name to put beside the ink. The pad owns its own Apply
+            // button, so gating it here is the only way to keep the two in the right order.
+            disabled={!named || !termsOk || accept.isPending}
+            onNotReadyAttempt={showMissingStep}
+            renderFooterHint={({ hasContent, hintId }) => {
+              const hint = hintFor(hasContent);
+              if (!hint) return null;
+              const HintIcon = nudged ? AlertCircle : Info;
+              return (
+                <p
+                  id={hintId}
+                  aria-live="polite"
+                  className={cn(
+                    'order-last flex min-w-0 basis-full items-start gap-1.5 text-sm sm:order-none sm:basis-0 sm:flex-1',
+                    nudged ? 'font-medium text-warning' : 'text-muted-foreground',
+                  )}
+                >
+                  <HintIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  {hint}
+                </p>
+              );
+            }}
+            onChange={(value) => {
+              if (!value) return;
+              accept.mutate({
+                signer_name: signerName.trim(),
+                mode: value.mode,
+                image_data_uri: value.dataUrl,
+                // Stringified rather than sent as JSON numbers: the column is NUMERIC(10,7) and a
+                // float round-trip is a needless chance to move the coordinate.
+                // The sign page never asks for location.
+                gps_lat: null,
+                gps_lng: null,
+                terms_accepted: ticked,
+              });
+            }}
+          />
+        </div>
 
         {accept.isPending && (
           <p className="text-sm text-muted-foreground">Saving your signature...</p>
@@ -417,6 +519,11 @@ export function QuotationSignClient({ token }: { token: string }) {
   }
 
   const page = query.data;
+  const preparedBy = firstName(
+    page.sorento_signature?.signer_name,
+    page.signatory_name,
+    page.sender_name,
+  );
 
   return (
     <PageShell testId="quotation-sign-page">
@@ -436,21 +543,30 @@ export function QuotationSignClient({ token }: { token: string }) {
         empty="No terms were included with this quotation."
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="min-w-0 break-words text-sm">Signed for Sorento</CardTitle>
-        </CardHeader>
-        <CardContent className="py-5">
-          <SignaturePad
-            readOnly
-            onChange={() => {}}
-            value={signatureValueFrom(page.sorento_signature)}
-            label={text(page.sorento_signature?.signer_name ?? page.signatory_name)}
-          />
-        </CardContent>
-      </Card>
+      {/* Side by side from 768px, Sorento first; stacked below it so a phone reads top down. */}
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        <Card className="min-w-0">
+          <CardHeader>
+            <CardTitle className="min-w-0 break-words text-sm">
+              {['Prepared by', preparedBy].filter(Boolean).join(' ')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="py-5">
+            <SignaturePad
+              readOnly
+              onChange={() => {}}
+              value={signatureValueFrom(page.sorento_signature)}
+              hideLocation
+              requestGeolocation={false}
+              label={preparedBy ?? 'Signature'}
+            />
+          </CardContent>
+        </Card>
 
-      <CustomerSignature page={page} token={token} />
+        <div className="min-w-0">
+          <CustomerSignature page={page} token={token} />
+        </div>
+      </div>
     </PageShell>
   );
 }
