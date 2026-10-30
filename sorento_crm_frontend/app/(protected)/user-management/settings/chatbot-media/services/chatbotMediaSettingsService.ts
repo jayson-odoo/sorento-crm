@@ -116,6 +116,11 @@ export interface ChatbotMediaSettings {
   report_ask_rate_limit: number;
   /** The report cap's window in minutes. Range 1-1440. */
   report_ask_rate_window_minutes: number;
+  /** AGENTIC-P1 budgets for one agent turn. Ranges 1-30, 5-300, 10000-2000000, 5000-500000. */
+  chatbot_agent_max_rounds: number;
+  chatbot_agent_max_seconds: number;
+  chatbot_agent_max_input_tokens: number;
+  chatbot_agent_compact_tokens: number;
 }
 
 const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
@@ -141,6 +146,10 @@ const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
   'low_stock_sync_wait_seconds',
   'report_ask_rate_limit',
   'report_ask_rate_window_minutes',
+  'chatbot_agent_max_rounds',
+  'chatbot_agent_max_seconds',
+  'chatbot_agent_max_input_tokens',
+  'chatbot_agent_compact_tokens',
 ];
 
 /** The plan's section 2.4 defaults, used when the settings row predates the columns. */
@@ -170,6 +179,10 @@ const FALLBACKS: ChatbotMediaSettings = {
   low_stock_sync_wait_seconds: 40,
   report_ask_rate_limit: 10,
   report_ask_rate_window_minutes: 10,
+  chatbot_agent_max_rounds: 8,
+  chatbot_agent_max_seconds: 45,
+  chatbot_agent_max_input_tokens: 150000,
+  chatbot_agent_compact_tokens: 40000,
 };
 
 /**
