@@ -196,9 +196,10 @@ class TestARequestNamingNoTeamKeepsTheDefaultRoutingThroughTheEngine:
 
 class TestATrulyColdRequestGetsTheRoutingTablesOwnDefault:
     """The other half of the B3 pin (review of #713). With NOTHING carried - a cold
-    session, no previous routing - the chain falls all the way to its hard default, and
-    THAT is where `customer_service` comes from. Stating both shapes in tests is what
-    stops "the routing table's default" and "the carried team" being confused again."""
+    session, no previous routing - the chain would fall all the way to its hard default
+    (`customer_service`), but CHATBOT-FAIL-TRIAGE AC-7c (owner, 30 Oct 2026) overrules
+    that: with no topic this turn and none held the bot asks ONE clarifying question
+    ("Which topic is this about") and assigns nobody. The hard default is never used."""
 
     @pytest.fixture()
     def cold(self, session_factory):
@@ -219,7 +220,7 @@ class TestATrulyColdRequestGetsTheRoutingTablesOwnDefault:
         db.commit()
         return db
 
-    def test_a_cold_request_for_a_human_is_assigned_to_customer_service(
+    def test_a_cold_request_for_a_human_asks_which_topic_and_assigns_nobody(
         self, cold, session_factory, monkeypatch
     ):
         qf = _parser_output(
