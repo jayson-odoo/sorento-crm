@@ -37,9 +37,15 @@ def summarise(rows: list[dict]) -> dict[str, Any]:
     chat = [r for r in rows if r["label"] == "chat"]
     per_language: dict[str, dict[str, Any]] = {}
     for r in rows:
-        lang = per_language.setdefault(r["language"], {"n": 0, "hits": 0})
+        lang = per_language.setdefault(r["language"], {"n": 0, "hits": 0, "agent": 0, "missed": 0, "chat": 0, "wasted": 0})
         lang["n"] += 1
         lang["hits"] += r["route"] == r["label"]
+        if r["label"] == "agent":
+            lang["agent"] += 1
+            lang["missed"] += r["route"] != "agent"
+        else:
+            lang["chat"] += 1
+            lang["wasted"] += r["route"] == "agent"
     times = [r["ms"] for r in rows]
     return {
         "n": len(rows),
@@ -47,8 +53,15 @@ def summarise(rows: list[dict]) -> dict[str, Any]:
         "missed_agent_rate": _rate(sum(r["route"] != "agent" for r in agent), len(agent)),
         "wasted_agent_rate": _rate(sum(r["route"] == "agent" for r in chat), len(chat)),
         "per_language": {
-            k: {"n": v["n"], "agreement": _rate(v["hits"], v["n"])} for k, v in sorted(per_language.items())
+            k: {
+                "n": v["n"],
+                "agreement": _rate(v["hits"], v["n"]),
+                "missed_agent_rate": _rate(v["missed"], v["agent"]),
+                "wasted_agent_rate": _rate(v["wasted"], v["chat"]),
+            }
+            for k, v in sorted(per_language.items())
         },
+        "failures": sum(r.get("reason") == "router_failed" for r in rows),
         "p50_ms": _percentile(times, 50),
         "p95_ms": _percentile(times, 95),
         "input_tokens": sum(r["input_tokens"] for r in rows),
@@ -79,40 +92,40 @@ def main(argv: list[str] | None = None, *, choose: Callable[..., dict] | None = 
     if args.limit is not None:
         items = items[: args.limit]
 
-    rows: list[dict] = []
-    spent = 0
-    for item in items:
-        if args.max_input_tokens is not None and spent >= args.max_input_tokens:
-            print(f"Spend guard: stopped after {len(rows)} items at {spent} input tokens.", file=sys.stderr)
-            break
-        history = [{**ex, "answered_by": ex.get("answered_by") or "bot"} for ex in item.get("previous_3") or []]
-        started = time.monotonic()
-        answer = call(
-            key,
-            state=router.build_state(item["text"], history),
-            instructions=instructions,
-            criteria=router.CRITERIA,
-        )
-        ms = (time.monotonic() - started) * 1000
-        score = float(answer["probabilities"]["agent"])
-        spent += int(answer.get("input_tokens") or 0)
-        rows.append(
-            {
-                "id": item["id"],
-                "label": item["label"],
-                "language": item.get("language") or "unknown",
-                "route": "agent" if score >= args.threshold else "chat",
-                "score": score,
-                "ms": ms,
-                "input_tokens": int(answer.get("input_tokens") or 0),
-            }
-        )
-
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "results.jsonl").write_text(
-        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8"
-    )
+    rows: list[dict] = []
+    spent = 0
+    # One line per item as it finishes, so a crash keeps the earlier rows.
+    with (out / "results.jsonl").open("w", encoding="utf-8") as results:
+        for item in items:
+            if args.max_input_tokens is not None and spent >= args.max_input_tokens:
+                print(f"Spend guard: stopped after {len(rows)} items at {spent} input tokens.", file=sys.stderr)
+                break
+            history = [{**ex, "answered_by": ex.get("answered_by") or "bot"} for ex in item.get("previous_3") or []]
+            base = {"id": item["id"], "label": item["label"], "language": item.get("language") or "unknown"}
+            started = time.monotonic()
+            try:
+                answer = call(
+                    key,
+                    state=router.build_state(item["text"], history),
+                    instructions=instructions,
+                    criteria=router.CRITERIA,
+                )
+                score = float(answer["probabilities"]["agent"])
+            except jev_client.JevError:
+                # The live router sends this to the bot as `router_failed`; the eval counts it the same way.
+                row = {**base, "route": "chat", "reason": "router_failed", "score": None,
+                       "ms": (time.monotonic() - started) * 1000, "input_tokens": 0}
+            else:
+                tokens = int(answer.get("input_tokens") or 0)
+                spent += tokens
+                row = {**base, "route": "agent" if score >= args.threshold else "chat", "reason": "jev",
+                       "score": score, "ms": (time.monotonic() - started) * 1000, "input_tokens": tokens}
+            rows.append(row)
+            results.write(json.dumps(row, ensure_ascii=False) + "\n")
+            results.flush()
+
     (out / "summary.json").write_text(
         json.dumps(summarise(rows), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

@@ -273,7 +273,11 @@ class AgentTurnResponse(BaseModel):
 
 
 class AutoTurnRequest(AgentTurnRequest):
-    pass
+    # As on `ConsoleTurnRequest`: the console conversation rides along, so the bot side of an
+    # Auto turn continues the same session. `session_vars` is membership-sensitive (`{}` is
+    # "remembers nothing", absent or null is "use the stored session").
+    session_vars: dict[str, Any] | None = None
+    run_id: str | None = None
 
 
 class AutoRoute(BaseModel):
@@ -282,6 +286,8 @@ class AutoRoute(BaseModel):
     route: Literal["chat", "agent"]
     score: float | None = None
     reason: str
+    # The refusal behind `not_eligible`; null otherwise.
+    detail: str | None = None
     provider: str | None = None
     ms: int = 0
     tokens_in: int = 0

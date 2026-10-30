@@ -41,7 +41,7 @@ def choose(
         resp = httpx.post(
             base + PATH, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=timeout
         )
-    except httpx.HTTPError as exc:
+    except Exception as exc:  # noqa: BLE001 - headers are built here too: a key that cannot be sent is a JevError
         raise JevError(f"Jev request failed: {type(exc).__name__}") from None
     if resp.status_code != 200:
         raise JevError(f"Jev answered HTTP {resp.status_code}")

@@ -25,6 +25,9 @@ DEFAULT_MODEL = "jev-latest"
 DEFAULT_MIN_SCORE = 0.7
 DEFAULT_DAILY_TURNS = 50
 HISTORY_EXCHANGES = 3
+# What Jev receives, cut to the sizes the gold set was extracted at.
+MESSAGE_CHARS = 500
+EXCHANGE_CHARS = 300
 
 CRITERIA = {
     "chat": (
@@ -46,6 +49,7 @@ class RouteDecision:
     provider: str | None = None
     ms: int = 0
     tokens_in: int = 0
+    detail: str | None = None  # the refusal behind `not_eligible`, set by the route
 
 
 def jev_key(db) -> str | None:
@@ -73,12 +77,28 @@ def _setting(db, column: str, default):
     return default if value is None else value
 
 
+def router_enabled(db) -> bool:
+    """`system_settings.chatbot_router_enabled`; off when there is no settings row."""
+    return bool(_setting(db, "chatbot_router_enabled", False))
+
+
 def _contact(db, ctx):
     from app.models.access import RespondContact
     from app.models.base import company_scope
 
     with company_scope(db, None):
         return db.query(RespondContact).filter(RespondContact.id == ctx.contact_pk).first()
+
+
+def _has_open_question(contact, session_vars: dict | None) -> bool:
+    """The bot's open question, read as the turn would load it: the supplied console session when
+    one came with the request (`{}` counts), else the stored row; an expired escalation offer is gone."""
+    from app.services.chatbot import session_state
+    from app.services.chatbot.turn import pending as turn_pending
+
+    raw = session_vars if session_vars is not None else (getattr(contact, "session_vars", None) or {})
+    wire = session_state.five_keys({"session_vars": raw}).get("open_question")
+    return turn_pending.tick(turn_pending.from_wire(wire)) is not None
 
 
 def _turns_today(db, contact_respond_id: str, now: datetime) -> int:
@@ -133,11 +153,11 @@ def build_state(text: str, history: list[dict]) -> str:
     lines: list[str] = []
     for i, ex in enumerate(recent, 1):
         lines.append(f"Exchange {i} ({ex.get('answered_by') or 'bot'} answered)")
-        lines.append(f"Staff: {ex.get('text') or ''}")
-        lines.append(f"Reply: {ex.get('reply') or ''}")
+        lines.append(f"Staff: {(ex.get('text') or '')[:EXCHANGE_CHARS]}")
+        lines.append(f"Reply: {(ex.get('reply') or '')[:EXCHANGE_CHARS]}")
     last = (recent[-1].get("answered_by") or "bot") if recent else "none"
     lines.append(f"last answered by: {last}")
-    lines.append(f"New message: {text}")
+    lines.append(f"New message: {text[:MESSAGE_CHARS]}")
     return "\n".join(lines)
 
 
@@ -149,6 +169,7 @@ def decide(
     history: list[dict],
     has_media: bool,
     now: datetime | None = None,
+    session_vars: dict | None = None,
     jev: Callable[..., dict[str, Any]] | None = None,
 ) -> RouteDecision:
     from app.services import ai_prompt_registry
@@ -158,7 +179,7 @@ def decide(
     if actions.pending_action(db, ctx.contact_respond_id, user_id=ctx.user_id) is not None:
         return RouteDecision("agent", None, "pending_action")
     contact = _contact(db, ctx)
-    if contact is not None and (contact.session_vars or {}).get("open_question"):
+    if (contact is not None or session_vars is not None) and _has_open_question(contact, session_vars):
         return RouteDecision("chat", None, "open_question")
     if has_media:
         return RouteDecision("chat", None, "media")
@@ -171,7 +192,9 @@ def decide(
     key = jev_key(db)
     if not key:
         return RouteDecision("chat", None, "router_failed")
-    model = ai_prompt_registry.agent_model(db, PROMPT_KEY)[1] or DEFAULT_MODEL
+    label_provider, label_model = ai_prompt_registry.agent_model(db, PROMPT_KEY)
+    # The label's model is a Jev model only when its provider is empty or jev.
+    model = label_model if label_model and (label_provider or PROVIDER) == PROVIDER else DEFAULT_MODEL
     instructions = ai_prompt_registry.get_prompt(db, PROMPT_KEY).text
     started = time.monotonic()
     try:
@@ -202,6 +225,6 @@ def decide(
     min_score = float(_setting(db, "chatbot_router_min_score", DEFAULT_MIN_SCORE))
     if score >= min_score:
         return RouteDecision("agent", score, "jev", PROVIDER, ms, tokens_in)
-    if score >= 0.5:
+    if score >= float(answer["probabilities"].get("chat", 1 - score)):
         return RouteDecision("chat", score, "low_confidence", PROVIDER, ms, tokens_in)
     return RouteDecision("chat", score, "jev", PROVIDER, ms, tokens_in)

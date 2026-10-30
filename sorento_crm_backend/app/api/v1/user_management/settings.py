@@ -1081,6 +1081,10 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "chatbot_unsupported_domains": default_unsupported_domains(),
         "chatbot_completed_lanes": [],
         "chatbot_stock_denial_enabled": False,
+        # AGENTIC-P2: repeat SystemSetting's own defaults (app/models/user.py).
+        "chatbot_router_enabled": False,
+        "chatbot_router_min_score": 0.7,
+        "chatbot_agent_daily_turns": 50,
         "local_buy_routing_enabled": False,
         "borrow_from_order_enabled": False,
         "chatbot_business_lane_enabled": False,

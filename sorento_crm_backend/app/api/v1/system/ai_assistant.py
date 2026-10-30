@@ -44,6 +44,7 @@ from app.api.v1.external.chat import (
     DryRunTurnRefused,
     run_prompt_dry_run_turn,
 )
+from app.services.error_handler import AppException
 from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.analytics_connector.prices import cost_sql
 from app.services.ai_prompt_service import AIPromptRegistryError, AIPromptService
@@ -167,6 +168,9 @@ def update_ai_assistant_config(
     user: dict = Depends(require_permission("system.ai_assistant_settings.edit")),
     db: Session = Depends(get_db),
 ):
+    if payload.jev_api_key is not None and not payload.jev_api_key.isascii():
+        # A header value must be ASCII; the key itself is never echoed back.
+        raise AppException(status_code=400, message="The Jev API key must use plain ASCII characters.")
     svc = AIAssistantConfigService(db)
     row = svc.update(payload, user_id=str(user["id"]))
     return AIAssistantConfigResponse(**svc.to_response_dict(row))

@@ -771,19 +771,24 @@ def auto_turn(
     user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
-    try:
-        ctx = build_context(db, payload.contact_respond_id)
-    except AgentRefused:
-        # A contact the agent may not serve never meets the router: today's bot, no model call.
-        decision = chatbot_router.RouteDecision("chat", None, "agent_off")
+    if not chatbot_router.router_enabled(db):
+        # The switch is off (the default): no Jev call, today's bot answers.
+        decision = chatbot_router.RouteDecision("chat", None, "routing_off")
     else:
-        decision = chatbot_router.decide(
-            db,
-            ctx,
-            payload.text,
-            history=chatbot_router.recent_exchanges(db, payload.contact_respond_id),
-            has_media=False,
-        )
+        try:
+            ctx = build_context(db, payload.contact_respond_id)
+        except AgentRefused as exc:
+            # A contact the agent may not serve never meets the router: today's bot, no model call.
+            decision = chatbot_router.RouteDecision("chat", None, "not_eligible", detail=exc.reason)
+        else:
+            decision = chatbot_router.decide(
+                db,
+                ctx,
+                payload.text,
+                history=chatbot_router.recent_exchanges(db, payload.contact_respond_id),
+                has_media=False,
+                session_vars=payload.session_vars,
+            )
     if decision.route == "agent":
         turn = _run_agent(db, user, payload.contact_respond_id, payload.text)
     else:
@@ -792,7 +797,8 @@ def auto_turn(
                 db,
                 contact_respond_id=payload.contact_respond_id,
                 text=payload.text,
-                run_id=str(uuid.uuid4()),
+                session_vars=payload.session_vars,
+                run_id=payload.run_id or str(uuid.uuid4()),
             )
         )
     return AutoTurnResponse(route=AutoRoute(**dataclasses.asdict(decision)), turn=turn)
