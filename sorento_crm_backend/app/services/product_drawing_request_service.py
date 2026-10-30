@@ -243,7 +243,10 @@ def _product_lock(db: Session, source: str, product_id: str):
 
     A row lock would not do: assigning the task commits (the round-robin cursor), which would
     release it before the tracker exists. The lock lives on ONE connection and is released on
-    that same connection. A pooled engine can hand the session a different connection after a
+    that same connection, inside the one transaction that connection keeps open from lock to
+    unlock (no COMMIT in between: behind a transaction-mode pooler a commit would hand the
+    connection back and the unlock would run on another one). The timeout is transaction-local,
+    so it ends with that transaction. A pooled engine can hand the session a different connection after a
     commit, so the lock gets a connection of its own; a session bound to a single connection
     (a test's) uses that connection, which never changes.
     """
@@ -257,13 +260,10 @@ def _product_lock(db: Session, source: str, product_id: str):
     runner = db if owned is None else owned
     try:
         runner.execute(
-            text("SELECT set_config('lock_timeout', :v, false)"),
+            text("SELECT set_config('lock_timeout', :v, true)"),
             {"v": f"{int(LOCK_TIMEOUT_SECONDS * 1000)}ms"},
         )
         runner.execute(text("SELECT pg_advisory_lock(hashtext(:k))"), key)
-        runner.execute(text("SELECT set_config('lock_timeout', '0', false)"))
-        if owned is not None:
-            owned.commit()
     except DBAPIError as exc:
         runner.rollback()
         if owned is not None:
@@ -335,7 +335,7 @@ def escalate(db: Session, *, version_id: str, line_id: str, user: dict, kind: st
 def _not_set_up() -> AppException:
     return AppException(
         status_code=409,
-        message="The marketing product team has no members for this company",
+        message="The marketing product team is not set up for this company",
         # Empty, not null: nothing more is said to the screen (the log has the detail).
         detail="",
         code="marketing_team_not_set_up",
@@ -625,6 +625,10 @@ def _notify_file_linked(db: Session, product_id: str, kind: str) -> None:
     """H3: a file of this kind was linked while its request is open. Tells the assignee; closes nothing."""
     noun = KIND_NOUN[kind]
     try:
+        # Only for a product this session can see: a file linked by another company's user must
+        # not prompt this company's assignee.
+        if db.query(Product.id).filter(Product.id == str(product_id)).first() is None:
+            return
         tracker = _open_tracker(db, str(product_id), SOURCE_TYPES[kind])
         if tracker is None or not tracker.assigned_to_id:
             return

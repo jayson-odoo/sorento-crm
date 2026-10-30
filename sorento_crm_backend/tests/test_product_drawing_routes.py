@@ -239,7 +239,7 @@ def test_a_missing_marketing_team_is_a_409_with_the_plain_message(scene):
 
     assert response.status_code == 409, response.text
     assert response.json()["code"] == "marketing_team_not_set_up"
-    assert "The marketing product team has no members for this company" in response.text
+    assert "The marketing product team is not set up for this company" in response.text
     assert s["team"]["team_set_code"] not in response.text
     assert s["team"]["agent_id"] not in response.text
     assert trackers_for(s["db"], s["product"].id) == []

@@ -63,7 +63,7 @@ PHOTOS = "Product Photos"
 FORM_SLA_NOTE_SOURCE = "form_sla_tracking"
 AGENT_CODE = "general_enquiries"
 DOMAIN_NAME = "product_attachment"
-NOT_SET_UP = "The marketing product team has no members for this company"
+NOT_SET_UP = "The marketing product team is not set up for this company"
 
 
 def _uid() -> str:
@@ -1806,31 +1806,69 @@ def test_an_unknown_kind_is_refused_and_creates_nothing(db, env):
     assert trackers_for(db, product.id, "drawing") == [] and trackers_for(db, product.id, "photo") == []
 
 
-def test_the_photo_lock_key_is_per_kind_and_product(db, env):
+def test_the_photo_lock_key_is_per_kind_and_product(db, env, monkeypatch):
     """A drawing escalation holds the drawing key, a photo one its own: two kinds of one product
-    must not make each other answer busy."""
-    seed_drawing_team(db)
-    product, version, line = quoted_product(db, env)
-    caller = _user(db, "zzt Sales One")
-    with captured_sql(db) as statements:
-        esc(db, version, line, caller, "photo")
-    assert any("pg_advisory_lock" in s.lower() for s in statements)
-    assert any("pg_advisory_unlock" in s.lower() for s in statements)
+    must not make each other answer busy. With the drawing key held by another connection, a
+    PHOTO escalation of the same product runs at once; a key without the kind would make it wait
+    out the timeout and answer busy."""
+    import time
 
     from app.database import engine as base_engine
 
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    caller = _user(db, "zzt Sales One")
     db.commit()
+    monkeypatch.setattr(_svc(), "LOCK_TIMEOUT_SECONDS", 3)
     holder = base_engine.connect()
     key = {"k": f"product_drawing:{product.id}"}
     holder.execute(text("SELECT pg_advisory_lock(hashtext(:k))"), key)
     try:
-        # The drawing key is held by someone else; the photo escalation of the same product runs.
-        second = _user(db, "zzt Sales Two")
-        out = esc(db, version, line, second, "photo")
+        started = time.monotonic()
+        out = esc(db, version, line, caller, "photo")
+        waited = time.monotonic() - started
     finally:
         holder.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), key)
         holder.close()
-    assert out["joined"] is True
+    assert out["joined"] is False
+    assert waited < 2.5, f"the photo escalation waited {waited:.1f}s on the DRAWING key"
+
+
+def test_the_lock_connection_keeps_one_transaction_from_lock_to_unlock(sent):
+    """Behind a transaction-mode pooler a COMMIT between lock and unlock would hand the connection
+    back and the unlock would run elsewhere. The lock's own connection must run lock and unlock
+    inside one open transaction: no COMMIT between them."""
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    from ._pg_fixture import blank_schema_engine
+
+    engine = blank_schema_engine()
+    log: list[tuple] = []
+
+    def on_sql(conn, cursor, statement, parameters, context, executemany):
+        log.append(("sql", id(conn), statement.lower()))
+
+    def on_commit(conn):
+        log.append(("commit", id(conn), ""))
+
+    event.listen(engine, "before_cursor_execute", on_sql)
+    event.listen(engine, "commit", on_commit)
+    session = Session(bind=engine)
+    try:
+        with _svc()._product_lock(session, "product_drawing", _uid()):
+            pass
+    finally:
+        session.close()
+        event.remove(engine, "before_cursor_execute", on_sql)
+        event.remove(engine, "commit", on_commit)
+
+    lock = next(i for i, e in enumerate(log) if e[0] == "sql" and "pg_advisory_lock" in e[2])
+    unlock = next(i for i, e in enumerate(log) if e[0] == "sql" and "pg_advisory_unlock" in e[2])
+    lock_conn = log[lock][1]
+    assert log[unlock][1] == lock_conn, "unlock ran on another connection"
+    commits = [e for e in log[lock:unlock] if e[0] == "commit" and e[1] == lock_conn]
+    assert commits == [], "a COMMIT ran on the lock connection between lock and unlock"
 
 
 # ---------------------------------------------------------------------------------- per-kind state
@@ -2156,3 +2194,23 @@ def test_a_not_chosen_photo_cell_keeps_todays_behaviour_with_no_escalation(db, e
 
     assert cell["state"] == "not_chosen"
     assert cell.get("escalation") is None
+
+
+# ---------------------------------------------------- final fix round: H3 only for a visible product
+
+
+def test_a_file_linked_by_another_companys_session_does_not_notify_this_companys_assignee(db, env):
+    from app.models.base import company_scope
+    from app.models.product import Product
+
+    seed = seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    esc(db, version, line, _user(db, "zzt Sales One"), "drawing")
+    other = _second_company(db)
+    db.query(Product).filter(Product.id == product.id).update({"company_id": other})
+    db.commit()
+
+    with company_scope(db, frozenset({env["company_id"]})):
+        _svc().notify_drawing_linked(db, product.id)
+
+    assert _drawing_added_notes(db, seed["assignee"]) == []
