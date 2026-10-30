@@ -167,3 +167,36 @@ the router; the console Auto mode shows the route badge; settings bounds; casset
 
 - The owner's Jev sign-up and data agreement (crew-ask on #2009, 30 Oct).
 - The gold set (crew).
+
+## Review round 1 (30 Oct): reviewer NOT READY, security SECURE with should-fixes
+
+J1. **Auto keeps the console conversation** (reviewer B1). `AutoTurnRequest` gains optional `session_vars` and
+    `run_id` exactly as `ConsoleTurnRequest`; both pass through to `run_console_turn`. State rule 2 reads the open
+    question from the supplied `session_vars` when present (else the stored row), through
+    `session_state.five_keys(...)["open_question"]` and `turn/pending.tick(from_wire(...))`, so an expired
+    escalation offer does not hold the contact on the bot. Note: business and roster questions never expire
+    (R22), so once the bot asks one, messages go to the bot until the bot closes it; that is the rule as written.
+J2. **Console Auto mode** (reviewer B2; the plan's slice 1): a third console tab `Auto` beside `Bot` and `Agent`.
+    It keeps the bot side's `session_vars` / `run_id` like the Bot tab, calls `auto-turn`, shows the reply of the
+    side chosen (agent replies with their steps / actions as in the Agent tab), and a small route badge per reply:
+    `Agent` or `Bot`, plus `low confidence`, `daily cap`, `router failed`, `routing off` or `not eligible` when
+    that decided it. Service -> hook -> UI, extractApiError, usable at 375 and 1280.
+J3. **Off switch** (security should-fix 1; reviewer should-fix 4): `chatbot_router_enabled` gates Jev in the
+    console: off -> the bot answers with reason `routing_off` and no Jev call. Default off; the settings switch
+    stays, labelled for the console. WhatsApp routing remains a later slice.
+J4. **Trim what Jev receives** (security should-fix 2): in `build_state` the new message is cut to 500
+    characters, each earlier text and reply to 300, matching the gold-set extraction.
+J5. **Eval survives a failed call** (reviewer should-fix 3): a `JevError` per item is recorded as route `chat`,
+    reason `router_failed`, counted in the summary (`failures`); `results.jsonl` is written line by line; the
+    summary also gives missed-agent and wasted-agent rates per language.
+J6. **Key rotation** (reviewer should-fix 2): `scripts/reencrypt_field_secrets.py` `COLUMNS` gains
+    `("ai_assistant_configs", "jev_api_key_ciphertext", True)`.
+J7. **Reason name** (reviewer should-fix 5): a contact the agent cannot serve -> reason `not_eligible`, with the
+    refusal's own reason in `detail`.
+J8. **Model on the label** (reviewer should-fix 6): the `chatbot_router` label's model is used only when its
+    provider is empty or `jev`; else `jev-latest`.
+J9. **Key with a non-ASCII character** (security nit): headers are built inside the client's error handling, so
+    any failure is a `JevError` without the key; the AI settings save refuses a non-ASCII Jev key.
+J10. **Nits**: low confidence = P(agent) >= P(chat) but < min_score (a 0.5 tie is low confidence, as now, but
+    defined against P(chat)); the three new settings columns join `_CHATBOT_COLUMN_DEFAULTS` so an explicit
+    null saves the default instead of a 500.
