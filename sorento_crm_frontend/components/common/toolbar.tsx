@@ -43,7 +43,7 @@ export const ToolbarActions = ({ children }: ToolbarActionsProps) => {
   return (
     <div
       data-slot="toolbar-actions"
-      className="flex items-center flex-wrap gap-1.5 lg:gap-3.5"
+      className="flex items-center flex-wrap gap-1.5 lg:gap-3.5 empty:hidden"
     >
       {children}
     </div>

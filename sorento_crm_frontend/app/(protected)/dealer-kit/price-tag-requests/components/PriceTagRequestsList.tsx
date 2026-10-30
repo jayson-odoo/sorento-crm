@@ -39,6 +39,8 @@ import {
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { AUTO_UPDATE_STATUSES } from '@/lib/dealer-kit/product-data-changes';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import {
   listPriceTagRequests,
   claimPriceTagRequest,
@@ -57,7 +59,20 @@ const STATUS_OPTIONS = [
   { value: 'void', label: 'Void' },
 ];
 
+/** A saved, unsent request keeps status `new`; `portal_draft_at` is what makes it a draft. */
+const displayStatus = (row: PriceTagRequestSummary) => (row.portal_draft_at ? 'draft' : row.status);
+
+/**
+ * A salesperson limited to their own price tag requests gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function PriceTagRequestsList() {
+  const { limited } = useRequestScope('price_tag_request');
+  if (limited) return <MyRequestPortalList kind="price_tag_request" />;
+  return <StaffPriceTagRequestsList />;
+}
+
+function StaffPriceTagRequestsList() {
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -205,8 +220,6 @@ export default function PriceTagRequestsList() {
       },
       {
         accessorKey: 'contact_name',
-        // Resolved per page rather than stored, so the query cannot order by it.
-        enableSorting: false,
         header: ({ column }) => (
           <DataGridColumnHeader title="Salesperson" column={column} />
         ),
@@ -228,7 +241,7 @@ export default function PriceTagRequestsList() {
         ),
         size: 140,
         cell: ({ row }) => {
-          const status = row.original.status;
+          const status = displayStatus(row.original);
           if (!status) return '-';
           return (
             <span
@@ -260,8 +273,6 @@ export default function PriceTagRequestsList() {
       },
       {
         accessorKey: 'line_count',
-        // Resolved per page rather than stored, so the query cannot order by it.
-        enableSorting: false,
         header: ({ column }) => (
           <DataGridColumnHeader title="Lines" column={column} />
         ),
@@ -289,8 +300,6 @@ export default function PriceTagRequestsList() {
       },
       {
         accessorKey: 'assigned_to_name',
-        // Resolved per page rather than stored, so the query cannot order by it.
-        enableSorting: false,
         header: ({ column }) => (
           <DataGridColumnHeader title="Assigned To" column={column} />
         ),
@@ -303,7 +312,8 @@ export default function PriceTagRequestsList() {
               </span>
             );
           }
-          if (row.original.status === 'new') {
+          // Unassigned and not a portal draft: marketing can claim it.
+          if (row.original.status === 'new' && !row.original.portal_draft_at) {
             return (
               <Button
                 variant="ghost"
@@ -325,9 +335,6 @@ export default function PriceTagRequestsList() {
       },
       {
         accessorKey: 'data_changed_tag_count',
-        // Stored, refreshed for a touched row only (AC-D4) - the query
-        // cannot order by a value that is not always current.
-        enableSorting: false,
         header: ({ column }) => (
           <DataGridColumnHeader title="Product data" column={column} />
         ),

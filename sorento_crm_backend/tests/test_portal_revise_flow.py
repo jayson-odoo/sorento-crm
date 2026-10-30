@@ -18,6 +18,7 @@ from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine, S
 from app.services.portal_revision_service import PortalRevisionService
 from tests._pg_fixture import blank_session
 from tests._revision_harness import (
+    CONTACT_SPACE,
     REVISABLE_TYPES,
     seed_config,
     seed_contact,
@@ -372,20 +373,22 @@ def test_revise_re_checks_the_policy_server_side(db, kind):
     assert "used all 2 revisions" in str(exc.value.detail)
 
 
-def test_complaint_cannot_be_revised(db):
+def test_complaint_is_revised_like_the_others_when_the_setting_allows(db):
+    """Owner Q6 a: complaint has a revision adapter; the per-type setting governs it."""
+    seed_system_settings(db, cap=3)
     seed_config(db, "complaint", is_enabled=True, allowed_statuses=["submitted"])
     contact = seed_contact(db)
     from app.models.complaints import Complaint
 
-    complaint = Complaint(id=str(uuid.uuid4()), status="submitted", contact_id=contact.id)
+    complaint = Complaint(
+        id=str(uuid.uuid4()), status="submitted", contact_id=contact.id, space_id=CONTACT_SPACE
+    )
     db.add(complaint)
     db.commit()
-    with pytest.raises(HTTPException) as exc:
-        PortalRevisionService(db).revise(
-            seed_token(contact), "complaint", str(complaint.id), {}, "Because reasons", 0
-        )
-    assert exc.value.status_code == 422
-    assert "cannot be revised" in str(exc.value.detail)
+    out = PortalRevisionService(db).revise(
+        seed_token(contact), "complaint", str(complaint.id), {}, "Because reasons", 0
+    )
+    assert out["revision_no"] == 1
 
 
 # -------------------------------------------------------------------- ownership

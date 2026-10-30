@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -41,11 +42,14 @@ async function EditPurchaseRequestWrapper({
         }
       />
       <div className="mt-6">
-        <PurchaseRequestForm
-          requestId={id}
-          expectedRequestType="purchase_request"
-          successRedirectUrl={`/procurement-management/purchase-requests/${id}`}
-        />
+        {/* A salesperson's own form reads ?from= / ?revise= (useSearchParams). */}
+        <Suspense fallback={null}>
+          <PurchaseRequestForm
+            requestId={id}
+            expectedRequestType="purchase_request"
+            successRedirectUrl={`/procurement-management/purchase-requests/${id}`}
+          />
+        </Suspense>
       </div>
     </>
   );

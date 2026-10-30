@@ -73,6 +73,27 @@ export function filterOrphanHeadings(items: MenuConfig): MenuConfig {
   });
 }
 
+/** Audience and portal-kind gate: a salesperson sees `salesperson` and untagged items, staff see `staff` and untagged. */
+export function filterMenuByAudience(
+  items: MenuConfig,
+  salesperson: { portalKinds: string[] } | null | undefined,
+): MenuConfig {
+  const out: MenuConfig = [];
+  for (const item of items) {
+    if (item.audience === 'salesperson' && !salesperson) continue;
+    if (item.audience === 'staff' && salesperson) continue;
+    if (item.portalKind && !salesperson?.portalKinds.includes(item.portalKind)) continue;
+    if (item.children?.length) {
+      const children = filterMenuByAudience(item.children, salesperson);
+      if (children.length === 0) continue;
+      out.push({ ...item, children });
+    } else {
+      out.push(item);
+    }
+  }
+  return out;
+}
+
 export type MenuAccess = {
   /** The EFFECTIVE user's flag (the impersonation target's while viewing as). `null` while loading. */
   isSuperadmin: boolean | null;
@@ -83,14 +104,19 @@ export type MenuAccess = {
   /** Enabled tenant module keys. `null` = still loading / error - show all. */
   enabledModuleKeys: Set<string> | null;
   modulesLoading: boolean;
+  /** Set only for a salesperson (from /users/me): the portal kinds their contact may use. */
+  salesperson?: { portalKinds: string[] } | null;
 };
 
-/** Superadmin, then permission, then module, then orphan headings: the order the sidebar renders in. */
+/** Audience, then superadmin, then permission, then module, then orphan headings: the order the sidebar renders in. */
 export function applyMenuAccess(
   menu: MenuConfig,
   access: MenuAccess,
 ): MenuConfig {
-  const bySuper = filterMenuBySuperadmin(menu, access.isSuperadmin);
+  const bySuper = filterMenuBySuperadmin(
+    filterMenuByAudience(menu, access.salesperson),
+    access.isSuperadmin,
+  );
   if (access.isLoading) return filterOrphanHeadings(bySuper);
   const byPerm = filterMenuByPermission(bySuper, access.permissionSet);
   if (access.modulesLoading) return filterOrphanHeadings(byPerm);

@@ -3,14 +3,22 @@
 Sales teams (#1260, plan 3.7) and the chatbot's sales analysis
 (PLAN-retail-sales-reports-26sep S1). The two report SCREENS are the reports kernel's own
 routes (`/reports/{key}`)."""
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.v1._request_own_scope import sales_opportunity_own_scope
 from app.api.v1.sales import analysis, customer_asks, opportunities, set_apart, target_progress, targets, teams
 
 router = APIRouter()
 router.include_router(teams.router, prefix="/teams", tags=["sales-teams"])
 router.include_router(targets.router, prefix="/targets", tags=["sales-targets"])
-router.include_router(opportunities.router, prefix="/opportunities", tags=["sales-opportunities"])
+# A salesperson limited to their own opportunities reads here and writes through
+# /api/v1/my-requests (PORTAL-P4-REQUESTS S6): the guard refuses them every staff write.
+router.include_router(
+    opportunities.router,
+    prefix="/opportunities",
+    tags=["sales-opportunities"],
+    dependencies=[Depends(sales_opportunity_own_scope)],
+)
 router.include_router(customer_asks.router, prefix="/customer-asks", tags=["sales-customer-asks"])
 router.include_router(set_apart.router, prefix="/set-apart-customers", tags=["sales-set-apart"])
 router.include_router(analysis.router)

@@ -16,6 +16,7 @@ import {
 import { signOut, useSession } from 'next-auth/react';
 import { useTheme } from 'next-themes';
 import { clearCachedAuthToken, revokeCurrentSession } from '@/lib/api';
+import { endPortalSession } from '@/lib/portal-session-end';
 import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { useLanguage } from '@/providers/i18n-provider';
 import { Badge } from '@/components/ui/badge';
@@ -244,6 +245,7 @@ export function DropdownMenuUser({ trigger }: { trigger: ReactNode }) {
             className="w-full"
             onClick={async () => {
               await revokeCurrentSession();
+              await endPortalSession();
               clearCachedAuthToken();
               signOut();
             }}
