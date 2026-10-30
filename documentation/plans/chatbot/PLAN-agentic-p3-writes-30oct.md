@@ -531,3 +531,19 @@ requester notification recorded by the service; reject without reason invalid; n
 lock held by someone else -> denied; R9 narrow operator refused; grace configured -> step parked with
 commit_at, request still pending, cancel tool proposes and confirm cancels the parked action; changed since
 proposal -> rejected; change lines in words with no UUID.
+
+### Slice 7 review round 1 (30 Oct)
+
+Reviewer NOT READY and security NOT SECURE on the same blocker. The procurement router's own-scope guard
+(`purchase_request_own_scope`, `app/api/v1/_request_own_scope.py:66-80,170-180`) refuses the approval POST for a
+user who only has `view_own`, but the agent checked only the GET row, so a `view_own` approver could approve a
+request their own contact submitted. Fix: `read_before` runs the guard's own check for
+`POST /{request_id}/approval-decision` for both people (proposal and confirm). The cancel tool only picks a
+parked `pr.approval_decision` action. Its proposal is refused for a non-requester, non-admin.
+
+Accepted, not fixed: when a parked decision commits after the grace window, the form-action sweep commits it as
+the requester (`form_action_service.py:266` records `actor_id` only), so the commit-time audit row lacks
+`auth_method=agent` and the operator. The park-time row carries them (actor user = linked user, real user =
+operator, `auth_method=agent`), as for any screen click that is parked. Carrying the agent actor through the
+sweep would change shared form-action code for every module; trigger to revisit: an audit question that needs
+the commit-time row to name the agent.
