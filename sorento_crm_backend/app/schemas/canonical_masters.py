@@ -20,7 +20,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.ingest_extras import INGEST_MODEL_CONFIG, note_unknown_fields
 
@@ -102,6 +102,13 @@ class CanonicalItemClass(_Canonical):
     name: str = Field(..., min_length=1, max_length=150)
     description: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator("code")
+    @classmethod
+    def _not_reserved(cls, v: str) -> str:
+        from app.schemas.item_class import refuse_reserved_code
+
+        return refuse_reserved_code(v)
 
 
 class CanonicalUnitOfMeasure(_Canonical):
@@ -225,3 +232,11 @@ class CanonicalProduct(_Canonical):
     # concatenated into `description` the way the xlsx import's Desc 2
     # handling does. See migration 475_products_remark.
     remark: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("item_class_code")
+    @classmethod
+    def _class_not_reserved(cls, v: Optional[str]) -> Optional[str]:
+        # TAG-BRAND-CLASS: "__NONE__" means "No class" in contact access, never a real class.
+        from app.schemas.item_class import refuse_reserved_code
+
+        return refuse_reserved_code(v)
