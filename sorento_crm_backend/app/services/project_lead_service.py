@@ -1069,43 +1069,6 @@ def is_own_lead(lead: ProjectLead, user_id: str) -> bool:
     return bool(user_id) and lead.owner_user_id == user_id
 
 
-def lead_for_registration(
-    db: Session,
-    lead_id: str,
-    *,
-    actor_user_id: str,
-    own_leads_only: bool,
-    permissions: Optional[Set[str]] = None,
-) -> ProjectLead:
-    """The lead a registration names: 404 when missing, and for a submit-only salesperson
-    also when it is not their own (the same answer, so nothing leaks). Given the caller's
-    permissions, an edit holder who may not edit the lead is refused here too, before any
-    customer is compared against it (LGR-E7)."""
-    from app.services.uuid_path_param import validate_uuid_path
-
-    validate_uuid_path(lead_id, resource="Lead")
-    lead = db.query(ProjectLead).filter(ProjectLead.id == lead_id).first()
-    if lead is None or (own_leads_only and not is_own_lead(lead, actor_user_id)):
-        raise AppException(status_code=404, message="Lead not found.", code="lead_not_found")
-    if not own_leads_only and permissions is not None:
-        assert_can_edit_lead(lead, actor_user_id, permissions)
-    return lead
-
-
-def customer_from_lead(lead: ProjectLead, requested: Optional[str]) -> Optional[str]:
-    """The lead governs the project's customer: its own when it has one (a different one
-    asked for is refused), else whatever was asked for."""
-    if not lead.customer_id:
-        return requested
-    if requested and requested != lead.customer_id:
-        raise AppException(
-            status_code=422,
-            message="The project's customer is the lead's customer.",
-            code="project_customer_not_lead_customer",
-        )
-    return lead.customer_id
-
-
 def fill_lead_customer(
     db: Session,
     project: Project,
