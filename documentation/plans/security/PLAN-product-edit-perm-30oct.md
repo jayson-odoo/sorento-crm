@@ -1,6 +1,6 @@
 # PLAN: permission gates on the product write routes
 
-Status: built, in review (full track, size S: RBAC change, no migration)
+Status: review passed (reviewer READY, security-reviewer CLEAN); awaiting owner merge (full track, size S: RBAC change, no migration)
 UAC: `product-edit-perm-acceptance-criteria.md`
 Lane: PRODUCT-EDIT-PERM
 
