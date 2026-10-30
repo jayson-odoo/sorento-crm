@@ -791,6 +791,16 @@ def crm_register(
     agents = agents_for_contact(db, contact_id) if contact_id else []
     details = {k: payload[k] for k in _CRM_DETAIL_KEYS if k in payload}
     developer_party_id = payload.get("developer_party_id")
+    if submit:
+        # The Check runs on the server too, so a client that skips it is still refused
+        # (PS-REGISTER-CHECK-FIRST S1). Drafts stay free.
+        project_service.assert_no_blocking_clash(
+            db,
+            company_id=company_id,
+            actor_user_id=user_id,
+            developer_party_id=developer_party_id,
+            title=title,
+        )
     try:
         with db.begin_nested():
             project = Project(
@@ -868,6 +878,13 @@ def crm_submit(
         raise AppException(
             status_code=422, message="A project title is required.", code="project_title_required"
         )
+    project_service.assert_no_blocking_clash(
+        db,
+        company_id=project.company_id,
+        actor_user_id=user_id,
+        developer_party_id=project.developer_party_id,
+        title=project.title,
+    )
     resubmitted = _to_pending(project)
     leads.mark_qualified(db, db.get(leads.ProjectLead, project.lead_id))
     return resubmitted

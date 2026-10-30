@@ -243,6 +243,37 @@ def _describe_blockers(
     )
 
 
+def assert_no_blocking_clash(
+    db: Session,
+    *,
+    company_id: str,
+    actor_user_id: Optional[str],
+    developer_party_id: Optional[str],
+    title: str,
+    surface_threshold: Optional[float] = None,
+    block_threshold: Optional[float] = None,
+) -> None:
+    """409 when an open project under the developer is the same development."""
+    blockers = [
+        candidate
+        for candidate in find_clashes(
+            db,
+            company_id=company_id,
+            developer_party_id=developer_party_id,
+            title=title,
+            surface_threshold=surface_threshold,
+            block_threshold=block_threshold,
+        )
+        if candidate.blocks
+    ]
+    if blockers:
+        raise AppException(
+            status_code=409,
+            message=_describe_blockers(db, blockers, actor_user_id),
+            code="project_already_registered",
+        )
+
+
 def register_project(
     db: Session,
     *,
@@ -279,27 +310,15 @@ def register_project(
     # `skip_clash_check` (PROJECT-REG-PORTAL D7): a possible duplicate is the caller's call,
     # and only an exact developer + title repeat is refused (by the DB identity index). Staff
     # registration keeps its lock.
-    blockers = (
-        []
-        if skip_clash_check
-        else [
-            candidate
-            for candidate in find_clashes(
-                db,
-                company_id=company_id,
-                developer_party_id=developer_party_id,
-                title=clean_title,
-                surface_threshold=surface_threshold,
-                block_threshold=block_threshold,
-            )
-            if candidate.blocks
-        ]
-    )
-    if blockers:
-        raise AppException(
-            status_code=409,
-            message=_describe_blockers(db, blockers, actor_user_id),
-            code="project_already_registered",
+    if not skip_clash_check:
+        assert_no_blocking_clash(
+            db,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            developer_party_id=developer_party_id,
+            title=clean_title,
+            surface_threshold=surface_threshold,
+            block_threshold=block_threshold,
         )
 
     project = Project(
@@ -1377,6 +1396,42 @@ def set_critical(project: Project, critical: bool) -> None:
     project.is_critical = critical
 
 
+def project_has_live_document(db: Session, project: Project) -> bool:
+    """True when at least one non-deleted attachment of any type is linked to the project."""
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+
+    return (
+        db.query(EntityAttachmentLink.id)
+        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
+        .filter(
+            EntityAttachmentLink.entity_type == "project",
+            EntityAttachmentLink.entity_id == str(project.id),
+            Attachment.is_deleted.is_(False),
+        )
+        .first()
+        is not None
+    )
+
+
+def _assert_requirements_uploaded(db: Session, project: Project, to_status_id: str) -> None:
+    """Registered -> Spec In needs a requirements document on the project."""
+    rows = {
+        str(s.id): s.key
+        for s in db.query(Status).filter(Status.id.in_([project.status_id, to_status_id])).all()
+    }
+    if (
+        rows.get(str(project.status_id)) == "registered"
+        and rows.get(str(to_status_id)) == "specified"
+        and not project_has_live_document(db, project)
+    ):
+        raise AppException(
+            status_code=422,
+            message="Upload the requirements document before moving this project to Spec In.",
+            code="project_requirements_missing",
+        )
+
+
 def change_status(
     db: Session,
     project: Project,
@@ -1417,6 +1472,7 @@ def change_status(
         status_service.assert_transition_allowed(
             db, entity_type, project.status_id, to_status_id, scope_id=scope_id
         )
+        _assert_requirements_uploaded(db, project, to_status_id)
 
     project.status_id = to_status_id
     db.flush()
