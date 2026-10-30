@@ -446,6 +446,9 @@ export default function SampleRequestForm({
           <CardTitle className="text-base">Items</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {request?.quotation_ref && (
+            <p className="text-sm text-muted-foreground">Quotation: {request.quotation_ref}</p>
+          )}
           <SampleRequestQuotationPicker
             documents={prefill.documents}
             value={prefill.documentId ?? ''}
