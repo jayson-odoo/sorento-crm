@@ -121,7 +121,7 @@ export interface StagedReserveEntry {
  * chip behind "+N" - never lost to a de-dup by document number. */
 /** The status pill keeps the text's own case ("To order \u00b7 220 left"), so no capitalize. */
 const ACK_PILL_BASE =
-  'inline-block max-w-full truncate rounded-full px-2 py-0.5 text-xs font-semibold';
+  'inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold';
 
 function ackPalette(row: Parameters<typeof ackStateOf>[0]): string {
   const state = ackStateOf(row);
@@ -824,6 +824,9 @@ export function useOrderInquiryHeaderLinesColumns({
         // the icons is choosing that, and can drag it back out again (owner, 24 Sep).
         // OI-BULK-RESERVE: +28 for the x between the tick and the pen.
         size: canReserve ? 438 : 220,
+        // The pill never shrinks, so a narrow saved width is clamped; the wide reserve layout
+        // (438) stays free to narrow (AC-RS-83c).
+        ...(canReserve ? {} : { minSize: 190 }),
         meta: { headerTitle: 'State' },
         cell: ({ row }) => {
           const line = lineOf(row.original);
@@ -879,7 +882,7 @@ export function useOrderInquiryHeaderLinesColumns({
           if (!canReserve || line.liveRows.length === 0) {
             return (
               <div className="flex min-w-0 items-center gap-1">
-                <span className="min-w-0">{pill}</span>
+                <span className="shrink-0">{pill}</span>
                 {history}
                 {coreLineId ? (
                   <SoLineAttachmentsButton
@@ -894,7 +897,7 @@ export function useOrderInquiryHeaderLinesColumns({
           }
           return (
             <div className="flex min-w-0 items-center gap-1">
-              <span className="min-w-0">{pill}</span>
+              <span className="shrink-0">{pill}</span>
               {history}
               {coreLineId ? (
                 <SoLineAttachmentsButton
