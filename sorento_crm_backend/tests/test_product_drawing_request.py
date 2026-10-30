@@ -690,12 +690,26 @@ def test_a_pdf_drawing_also_refuses_the_escalation(db, env):
     assert trackers_for(db, product.id) == []
 
 
+def _typed_line(db, env, scope):
+    """A line with no catalogue product, as one typed before QUOTE-NO-FREE-TEXT would be.
+
+    The write paths refuse such a line now (#2020), so it is saved with a product and then
+    stripped of it underneath them: the escalate guard is what is under test, not the editor.
+    """
+    line = _priced_line(db, env, scope)
+    line.product_id = None
+    line.set_parts_snapshot = None
+    line.description_snapshot = "zzt bespoke feature wall"
+    db.flush()
+    return line
+
+
 def test_an_off_catalogue_line_is_refused_and_nothing_is_created(db, env):
     from app.services import project_quotation_service as quotes
 
     seed_drawing_team(db)
     _document, scope = _scope(db, env)
-    line = _priced_line(db, env, scope)  # no product: a typed description
+    line = _typed_line(db, env, scope)
     version = quotes.current_version(db, scope.id)
     db.commit()
     caller = _user(db, "zzt Sales One")
@@ -1783,7 +1797,7 @@ def test_an_off_catalogue_line_is_refused_for_a_photo_too(db, env):
 
     seed_drawing_team(db)
     _document, scope = _scope(db, env)
-    line = _priced_line(db, env, scope)  # no product: a typed description
+    line = _typed_line(db, env, scope)
     version = quotes.current_version(db, scope.id)
     db.commit()
 
