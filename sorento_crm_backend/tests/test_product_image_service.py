@@ -472,3 +472,48 @@ def test_choosing_the_photo_that_is_already_chosen_leaves_it_chosen():
         db.refresh(link)
         assert link.is_primary is True
         assert images.chosen_attachment_id(db, product.id) == link.attachment_id
+
+
+# ------------------------------------------------ QUOTE-SIGN-PAGE S4: decompression bombs
+
+
+def _png_of(size, mode="P") -> bytes:
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new(mode, size).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_the_pixel_ceiling_is_forty_million():
+    from app.services import product_image_service as images
+
+    assert images.MAX_IMAGE_PIXELS == 40_000_000
+
+
+def test_an_image_over_the_pixel_ceiling_is_refused_before_it_is_decoded(monkeypatch):
+    """A tiny palette PNG can claim hundreds of millions of pixels; the size is read from the
+    header and refused before `load()` allocates anything."""
+    from PIL import Image
+
+    from app.services import product_image_service as images
+
+    monkeypatch.setattr(images, "MAX_IMAGE_PIXELS", 1_000_000, raising=False)
+    # Built before the spy: writing the PNG calls load() itself.
+    data = _png_of((1100, 1100))
+    loaded = []
+    real_load = Image.Image.load
+    monkeypatch.setattr(
+        Image.Image, "load", lambda self, *a, **k: loaded.append(1) or real_load(self, *a, **k)
+    )
+
+    assert images._downscale(data, "x") is None
+    assert loaded == []
+
+
+def test_an_image_under_the_pixel_ceiling_still_re_encodes():
+    from app.services import product_image_service as images
+
+    rendered = images._downscale(_png_of((800, 800), mode="RGB"), "x")
+
+    assert rendered is not None and rendered.mime_type == "image/jpeg"

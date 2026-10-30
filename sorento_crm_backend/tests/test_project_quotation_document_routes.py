@@ -735,7 +735,7 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
     assert first.status_code == 201, first.text
     r1 = first.json()
     assert r1["issue_no"] == 1
-    assert r1["our_ref_text"] == f"{document['document_no']} (R1)"
+    assert r1["our_ref_text"] == f"{document['document_no']}-R1"
     assert _money(r1["grand_total"]) == TOWNHOUSE_TOTAL
 
     # A revision re-prices the scope, then goes out as R2.
@@ -754,7 +754,7 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
     assert second.status_code == 201, second.text
     r2 = second.json()
     assert r2["issue_no"] == 2
-    assert r2["our_ref_text"] == f"{document['document_no']} (R2)"
+    assert r2["our_ref_text"] == f"{document['document_no']}-R2"
     assert _money(r2["grand_total"]) == Decimal("240580.00")  # 1046 x 230
 
     history = client.get(f"{root}/{document['id']}/issues")
@@ -822,6 +822,7 @@ def test_the_customers_answer_reaches_the_wire_on_the_document_and_in_the_list(a
 
     qdocs.accept_issue(
         db,
+        terms_accepted=True,
         record=record,
         signer_name=f"{MARKER} Kelly",
         mode="draw",
@@ -1213,3 +1214,23 @@ def test_malformed_ids_on_the_whatsapp_log_route_are_answered_not_crashed(api):
             assert 400 <= response.status_code < 500, (
                 f"{url} produced {response.status_code}: {response.text}"
             )
+
+
+@pytest.mark.parametrize("kind", ["pdf", "xlsx"])
+def test_the_pending_download_is_named_from_document_no_and_issue_no(api, monkeypatch, kind):
+    """AC2.6: same Quotation No. as the sign page, also for an old `(R1)` stored text."""
+    from app.models.projects import ProjectQuotationIssue
+    from app.services import queue_service
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: None)
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+    row = db.get(ProjectQuotationIssue, issue["id"])
+    row.our_ref_text = f"{document['document_no']} (R{row.issue_no})"
+    db.commit()
+
+    response = client.post(f"{root}/{document['id']}/issues/{issue['id']}/export/{kind}")
+
+    assert response.status_code in (200, 201, 202), response.text
+    expected = f"quotation-{document['document_no']}-R{row.issue_no}.{kind}".replace("/", "-")
+    assert response.json()["filename"] == expected

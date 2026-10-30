@@ -1,7 +1,14 @@
 'use client';
 
 import * as React from 'react';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
 // The one decimal-exact money formatter in the repo. Imported rather than re-implemented: a
 // second formatter is how the public page and the PDF end up disagreeing by a cent, and the
 // customer reading this screen is the person who would notice.
@@ -114,7 +121,11 @@ function ScopeTable({ lines }: { lines: QuotationSignLine[] }) {
 }
 
 /**
- * Every scope the issue carried, each with its own total, then the grand total.
+ * Every scope the issue carried as one card: a row per section that opens to its lines, then the
+ * grand total as the last row.
+ *
+ * A lone section opens on load, because hiding the only thing there is to read behind a tap is
+ * friction; two or more start closed so a long quotation reads as a short list of totals first.
  *
  * Rendered even when the issue carries none: a quotation with no scopes is a state somebody can
  * produce, and a section that vanishes reads as a broken page to the person being asked to sign.
@@ -126,51 +137,61 @@ export function QuotationSignScopes({
   scopes: QuotationSignScope[];
   grandTotal: string;
 }) {
-  return (
-    <div className="space-y-4">
-      {scopes.length === 0 ? (
-        <Card>
-          <CardContent className="px-4 py-8 text-center">
-            <p className="text-sm text-muted-foreground">
-              This quotation has no priced items on it.
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        scopes.map((scope, index) => (
-          <Card key={`${scope.scope_label}-${index}`}>
-            <CardHeader>
-              <CardTitle className="min-w-0 break-words text-sm">
-                {text(scope.scope_label)}
-              </CardTitle>
-            </CardHeader>
-            {/* min-w-0 on the content, or the wide table refuses to shrink and the page itself
-                scrolls sideways on a phone. */}
-            <CardContent className="min-w-0 space-y-3 px-3 py-4 sm:px-6">
-              {scope.lines.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No items under this section.</p>
-              ) : (
-                <ScopeTable lines={scope.lines} />
-              )}
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-sm">
-                <span className="text-muted-foreground">Section total</span>
-                <span className="font-semibold tabular-nums">
-                  {formatMyrExact(scope.scope_total)}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-        ))
-      )}
+  const keys = scopes.map((_, index) => `scope-${index}`);
+  const [open, setOpen] = React.useState<string[]>(scopes.length === 1 ? keys : []);
 
-      <Card>
-        <CardContent className="flex flex-wrap items-center justify-between gap-2 py-4">
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="min-w-0 break-words text-sm">Quotation</CardTitle>
+      </CardHeader>
+      <CardContent className="min-w-0 px-3 py-0 sm:px-6">
+        {scopes.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            This quotation has no priced items on it.
+          </p>
+        ) : (
+          <Accordion type="multiple" value={open} onValueChange={setOpen}>
+            {scopes.map((scope, index) => (
+              <AccordionItem key={`${scope.scope_label}-${index}`} value={keys[index]}>
+                <AccordionTrigger>
+                  <span className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-left text-sm">
+                    <span className="min-w-0 break-words font-medium">{text(scope.scope_label)}</span>
+                    <span className="flex items-center gap-3">
+                      <span className="text-muted-foreground">
+                        {scope.lines.length === 1 ? '1 item' : `${scope.lines.length} items`}
+                      </span>
+                      <span className="font-semibold tabular-nums">
+                        {formatMyrExact(scope.scope_total)}
+                      </span>
+                    </span>
+                  </span>
+                </AccordionTrigger>
+                {/* min-w-0 on the content, or the wide table refuses to shrink and the page
+                    itself scrolls sideways on a phone. */}
+                <AccordionContent className="min-w-0">
+                  {scope.lines.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No items under this section.</p>
+                  ) : (
+                    <ScopeTable lines={scope.lines} />
+                  )}
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        )}
+        <div
+          className={cn(
+            'flex flex-wrap items-center justify-between gap-2 py-4',
+            scopes.length > 0 && 'border-t border-border',
+          )}
+        >
           <span className="text-sm font-semibold uppercase tracking-wide">Total amount</span>
           <span className="text-base font-semibold tabular-nums">
             {formatMyrExact(grandTotal)}
           </span>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

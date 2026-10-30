@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quotation sign page and PDF (mockup v2)</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/set-quote-line */
+:root{--background:#fff;--foreground:#09090b;--card:#fff;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-fg:#fff;--primary-soft:#eff6ff;--success:#15803d;--success-soft:#f0fdf4;--radius:8px;--page:#f7f7f8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:920px}
+.nav{position:sticky;top:0;z-index:5;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:900px}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--primary);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px;font-weight:600;vertical-align:middle}
+.desk{width:1280px;max-width:100%;flex:none;background:var(--page);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.phone{width:375px;flex:none;background:var(--page);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.phone .screen{height:760px;overflow:auto}
+.cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px;border-top:1px solid var(--border);background:#fff}
+.shell{padding:24px;display:flex;flex-direction:column;gap:16px}
+.phone .shell{padding:16px;gap:12px}
+.card{background:#fff;border:1px solid var(--border);border-radius:12px}
+.card .hd{padding:14px 18px 0;font-size:13px;font-weight:600}
+.card .bd{padding:14px 18px}
+.phone .card .bd,.phone .card .hd{padding-left:14px;padding-right:14px}
+.small{font-size:12px;color:var(--muted-fg)}
+.lh{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.from{display:flex;gap:12px;align-items:center}
+.logo{width:56px;height:56px;border-radius:8px;border:1px dashed #93c5fd;background:var(--primary-soft);color:#1d4ed8;font-size:10px;display:flex;align-items:center;justify-content:center;text-align:center;flex:none}
+.phone .logo{width:44px;height:44px}
+.refs{display:flex;flex-direction:column;gap:4px;min-width:260px}
+.refs>div{display:flex;gap:8px;font-size:13px}
+.refs>div>span:first-child{width:110px;flex:none;color:var(--muted-fg)}
+.refs>div>span:last-child{font-weight:500}
+.subj{font-weight:600;letter-spacing:.03em;text-transform:uppercase;margin-top:12px;font-size:13px}
+.prose{font-size:13px;color:#3f3f46}
+.prose p{margin:0 0 6px}
+.ph{display:block;height:9px;border-radius:4px;background:var(--muted);margin:6px 0}
+.sec{border-top:1px solid var(--border)}
+.sec:first-child{border-top:0}
+.trig{display:flex;align-items:center;gap:10px;padding:12px 18px;font-size:13.5px}
+.phone .trig{padding:12px 14px}
+.trig .chev{color:var(--muted-fg);font-size:12px;width:12px}
+.trig .name{font-weight:600;flex:1;min-width:0}
+.trig .cnt{color:var(--muted-fg);font-size:12px}
+.trig .amt{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.secbody{padding:0 18px 14px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{border-bottom:1px solid var(--border);padding:7px 8px;text-align:left;vertical-align:top}
+th{font-size:11.5px;color:var(--muted-fg);font-weight:500;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.tot{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-top:2px solid var(--foreground);font-weight:600}
+.phone .tot{padding:12px 14px}
+.tot .k{font-size:12.5px;text-transform:uppercase;letter-spacing:.04em}
+.tot .v{font-size:16px;font-variant-numeric:tabular-nums}
+.sigs{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.phone .sigs{grid-template-columns:1fr}
+.pad{height:120px;border:1px dashed var(--border);border-radius:8px;background:#fafafa;display:flex;align-items:center;justify-content:center;color:var(--muted-fg);font-size:12px}
+.pad.signed{background:#fff;font:italic 28px/1 "Brush Script MT",cursive;color:#1e3a8a}
+.tabs{display:flex;gap:4px;margin-bottom:6px}
+.tabs span{font-size:11.5px;padding:2px 8px;border-radius:6px;border:1px solid var(--border);color:var(--muted-fg)}
+.tabs span.on{background:var(--muted);color:var(--foreground)}
+.inp{border:1px solid var(--border);border-radius:6px;height:32px;padding:6px 10px;font-size:13px;color:var(--muted-fg);margin:4px 0 10px}
+.lbl{font-size:12.5px;font-weight:500}
+.chk{display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:4px 0 10px}
+.box{width:16px;height:16px;border:1px solid #a1a1aa;border-radius:4px;flex:none;margin-top:2px}
+.btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--border);background:#fff;font-size:12.5px;font-weight:500}
+.btn.pri{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn.off{opacity:.45}
+.acts{display:flex;justify-content:space-between;gap:8px;margin-top:10px;flex-wrap:wrap}
+.note{border-left:3px solid var(--primary);background:var(--primary-soft);padding:6px 10px;font-size:12px;border-radius:0 6px 6px 0;margin:8px 0 0;max-width:900px}
+/* PDF: A4 landscape, 297 x 210 mm at 96 dpi = 1123 x 794 px */
+.a4wrap{overflow:auto;max-width:100%}
+.a4{width:1123px;height:794px;background:#fff;border:1px solid var(--border);box-shadow:0 4px 18px rgba(0,0,0,.08);padding:45px 38px;font:11px/1.35 Arial,Helvetica,sans-serif;color:#111;position:relative}
+.a4 .top{display:flex;justify-content:space-between}
+.a4 .from{gap:10px}
+.a4 .logo{width:64px;height:64px}
+.a4 .co{font-weight:700;font-size:14px}
+.a4 table.r{width:auto}
+.a4 table.r td{border:0;padding:1px 6px;font-size:11px}
+.a4 table.r td:first-child{color:#555}
+.a4 .to{margin-top:14px}
+.a4 .sub{margin:10px 0 8px;font-weight:700;text-decoration:underline}
+.a4 table.lines th{background:#e5e7eb;color:#111;border:1px solid #9ca3af;font-size:10px;padding:4px 5px}
+.a4 table.lines td{border:1px solid #d1d5db;font-size:10px;padding:4px 5px}
+.a4 .band td{background:#f3f4f6;font-weight:700}
+.a4 .ta{text-align:right;font-weight:700;font-size:12px;margin:8px 0}
+.a4 .terms{font-size:10px;color:#333}
+.a4 .so{display:grid;grid-template-columns:1fr 1fr;gap:40px;position:absolute;left:38px;right:38px;bottom:40px}
+.a4 .so .img{height:48px;border-bottom:1px solid #111;margin:6px 0 4px;font:italic 24px/48px "Brush Script MT",cursive;color:#1e3a8a}
+.a4 .so .blank{height:48px;border-bottom:1px solid #111;margin:6px 0 4px}
+.map{font-size:12.5px;border:1px solid var(--border);background:#fff;border-radius:8px}
+.map td{padding:6px 10px;vertical-align:top}
+.map td:first-child{white-space:nowrap}
+.chk.alert{border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;padding:8px;box-shadow:0 0 0 3px rgba(245,158,11,.18)}
+.box.on{background:var(--primary);border-color:var(--primary);color:#fff;font-size:11px;line-height:14px;text-align:center}
+.inp.filled{color:var(--foreground)}
+.hint{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted-fg)}
+.hint.warn{color:#b45309;font-weight:500}
+.hint i{font-style:normal;display:inline-flex;width:16px;height:16px;border-radius:8px;border:1.5px solid currentColor;font-size:10px;font-weight:700;align-items:center;justify-content:center;flex:none}
+.pad.ready{background:#fff;border-style:solid;border-color:#cbd5e1;color:var(--muted-fg)}
+.acts .right{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.states{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.states .lab{font-size:12px;font-weight:600;margin:0 0 6px}
+.states .card .pad{height:70px}
+.tapcue{display:inline-block;font-size:11px;color:#b45309;border:1px dashed #f59e0b;border-radius:6px;padding:1px 6px;margin-left:6px}
+.map code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Quotation sign page and PDF, mockup v2</h1>
+<p class="intro">Lane QUOTE-SIGN-PAGE, owner team meeting 29 Oct 15:40. Shows the AFTER state with crew's recommendations from the
+behaviour card (<code>documentation/plans/project-sales/CARD-quote-sign-page-29oct.md</code>) applied. Data: real shape of
+quotation PRJQ-2026-0003 on the dev copy (one section "Townhouse", 2 lines, RM 800.00); recipient, contact and salesperson
+names are masked. Blue numbered dots = the five meeting items. Cover letter and terms show as grey lines because the dev
+quotation has none written.</p>
+<p class="intro"><b>v2 (owner answers 29 Oct ~22:45):</b> "Quotation No. PRJQ-2026-0003-R1" AND the Revision row stays;
+the accept form always says why "Sign and accept" is not ready yet (hint next to the button, names the next missing step),
+and tapping the disabled button or pad highlights and jumps to the missing step (see <a href="#states">Accept form, step by step</a>).</p>
+<div class="nav"><a href="#desk">Sign page 1280</a><a href="#states">Accept form, step by step</a><a href="#phone">Sign page 375</a><a href="#pdf">PDF (A4)</a><a href="#map">What each part reuses</a></div>
+
+<section id="desk">
+<h2>Sign page, desktop 1280px (customer opens the link)</h2>
+<p class="why"><span class="nb">1</span>logo &nbsp; <span class="nb">2</span>one number &nbsp; <span class="nb">3</span>one card: sections + total &nbsp; <span class="nb">4</span>terms checkbox &nbsp; <span class="nb">5</span>signatures side by side, salesperson at the top</p>
+<div class="desk"><div class="shell">
+
+  <div class="card"><div class="bd">
+    <div class="lh">
+      <div>
+        <div class="from"><div class="logo"><span><span class="nb">1</span><br>Company logo</span></div>
+          <div><div class="small">Quotation from</div><div style="font-weight:600;font-size:15px">Sorento</div></div></div>
+        <div style="margin-top:12px;font-size:13px"><div class="small">To</div><b>CUSTOMER A</b><br>ADDRESS LINE 1, ADDRESS LINE 2<br>Attn: CONTACT B</div>
+      </div>
+      <div class="refs">
+        <div><span><span class="nb">2</span>Quotation No.</span><span>PRJQ-2026-0003-R1</span></div>
+        <div><span>Revision</span><span>R1</span></div>
+        <div><span>Your Ref</span><span>-</span></div>
+        <div><span>Date</span><span>14 Oct 2026</span></div>
+        <div><span><span class="nb">5</span>Sales contact</span><span>SALES REP A, +60100000001</span></div>
+      </div>
+    </div>
+    <div class="subj">Subject title of the quotation</div>
+  </div></div>
+
+  <div class="card"><div class="hd">Cover letter</div><div class="bd prose"><i class="ph" style="width:70%"></i><i class="ph" style="width:92%"></i><i class="ph" style="width:55%"></i></div></div>
+
+  <div class="card">
+    <div class="hd" style="padding-bottom:4px"><span class="nb">3</span>Quotation</div>
+    <div class="sec">
+      <div class="trig"><span class="chev">&#9662;</span><span class="name">Townhouse</span><span class="cnt">2 items</span><span class="amt">RM 800.00</span></div>
+      <div class="secbody"><table>
+        <thead><tr><th>Item</th><th>Technical spec</th><th>Description</th><th>Brand</th><th>Product code</th><th class="num">Qty</th><th class="num">Unit rate</th><th>Complete set</th><th class="num">Amount</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td></td><td>32MM TAIL PIECE COUPLING (CHROME) FOR BOTTLE TRAP</td><td>TP ENTERPRISE</td><td>32MM TAIL PIECE COUPLING</td><td class="num">1 EA</td><td class="num">RM 300.00</td><td></td><td class="num">RM 300.00</td></tr>
+          <tr><td>2</td><td></td><td>BRAVAT WASTE BRAC73080604-0001</td><td>BRAVAT</td><td>BRAC73080604-0001</td><td class="num">1 EA</td><td class="num">RM 500.00</td><td></td><td class="num">RM 500.00</td></tr>
+        </tbody></table></div>
+    </div>
+    <div class="tot"><span class="k">Total amount</span><span class="v">RM 800.00</span></div>
+  </div>
+
+  <div class="card"><div class="hd">Terms and conditions</div><div class="bd prose"><i class="ph" style="width:80%"></i><i class="ph" style="width:66%"></i><i class="ph" style="width:74%"></i></div></div>
+
+  <div class="sigs">
+    <div class="card"><div class="hd"><span class="nb">5</span>Signed for Sorento</div><div class="bd">
+      <div class="pad signed">Sales Rep A</div>
+      <div style="margin-top:8px;font-size:13px"><b>SALES REP A</b><br><span class="small">+60100000001</span></div>
+    </div></div>
+    <div class="card"><div class="hd">Accept this quotation</div><div class="bd">
+      <div class="lbl">Your name</div><div class="inp filled">CONTACT B</div>
+      <div class="chk alert"><span class="box"></span><span><span class="nb">4</span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+      <div class="tabs"><span class="on">Draw</span><span>Type</span><span>Initials</span></div>
+      <div class="pad">Tick the terms box above to sign</div>
+      <div class="acts"><span class="btn">Request changes</span><span class="right"><span class="btn pri off">Sign and accept</span><span class="hint warn"><i>!</i>Tick to agree to the terms before you accept.</span></span></div>
+    </div></div>
+  </div>
+
+</div><div class="cap">Customer typed a name, did not tick, and tapped "Sign and accept": the tick row lights up amber and gets focus, the hint turns amber.</div></div>
+<p class="note">One section, so it opens expanded (card Q3 rec a). A quotation with several sections shows one closed row per
+section ("Townhouse . 2 items . RM 800.00"), as in the phone view below; tapping a row opens its line table.</p>
+</section>
+
+<section id="states">
+<h2><span class="nb">4</span>Accept form, step by step</h2>
+<p class="why">"Sign and accept" is never silently grey: one hint line beside it names the next missing step (name, then
+tick, then signature). Tapping the grey button, or the locked signature pad, highlights that step, scrolls it into view
+and puts the cursor on it.</p>
+<div class="states">
+  <div><p class="lab">A. Page opened</p><div class="card"><div class="bd">
+    <div class="lbl">Your name</div><div class="inp">Type your full name</div>
+    <div class="chk"><span class="box"></span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+    <div class="pad">Type your name and tick the box to sign</div>
+    <div class="acts" style="justify-content:flex-end"><span class="right"><span class="btn pri off">Sign and accept</span><span class="hint"><i>i</i>Type your name and tick the terms box to accept.</span></span></div>
+  </div></div></div>
+  <div><p class="lab">B. Name typed, not ticked, tapped the button <span class="tapcue">tap</span></p><div class="card"><div class="bd">
+    <div class="lbl">Your name</div><div class="inp filled">CONTACT B</div>
+    <div class="chk alert"><span class="box"></span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+    <div class="pad">Tick the terms box above to sign</div>
+    <div class="acts" style="justify-content:flex-end"><span class="right"><span class="btn pri off">Sign and accept</span><span class="hint warn"><i>!</i>Tick to agree to the terms before you accept.</span></span></div>
+  </div></div></div>
+  <div><p class="lab">C. Ticked, pad unlocked</p><div class="card"><div class="bd">
+    <div class="lbl">Your name</div><div class="inp filled">CONTACT B</div>
+    <div class="chk"><span class="box on">&#10003;</span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+    <div class="pad ready">Draw your signature here</div>
+    <div class="acts" style="justify-content:flex-end"><span class="right"><span class="btn pri off">Sign and accept</span><span class="hint"><i>i</i>Draw your signature to accept.</span></span></div>
+  </div></div></div>
+  <div><p class="lab">D. Signed, ready</p><div class="card"><div class="bd">
+    <div class="lbl">Your name</div><div class="inp filled">CONTACT B</div>
+    <div class="chk"><span class="box on">&#10003;</span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+    <div class="pad signed">Contact B</div>
+    <div class="acts" style="justify-content:flex-end"><span class="right"><span class="btn pri">Sign and accept</span></span></div>
+  </div></div></div>
+</div>
+<p class="note">Unticking after signing takes the form back to B (button grey, hint back). A quotation issued with no terms
+shows no tick box and the hint skips that step. The server also refuses an accept without the tick.</p>
+</section>
+
+<section id="phone">
+<h2>Sign page, phone 375px</h2>
+<p class="why">Same page; the two signature cards stack, the section row is shown closed (tap to open).</p>
+<div class="row">
+<div class="phone"><div class="screen"><div class="shell">
+  <div class="card"><div class="bd">
+    <div class="from"><div class="logo"><span>Logo</span></div><div><div class="small">Quotation from</div><div style="font-weight:600">Sorento</div></div></div>
+    <div class="refs" style="margin-top:12px;min-width:0">
+      <div><span>Quotation No.</span><span>PRJQ-2026-0003-R1</span></div>
+      <div><span>Revision</span><span>R1</span></div>
+      <div><span>Date</span><span>14 Oct 2026</span></div>
+      <div><span>Sales contact</span><span>SALES REP A, +60100000001</span></div>
+    </div>
+    <div style="margin-top:10px;font-size:13px"><div class="small">To</div><b>CUSTOMER A</b><br>Attn: CONTACT B</div>
+  </div></div>
+  <div class="card">
+    <div class="hd" style="padding-bottom:4px">Quotation</div>
+    <div class="sec"><div class="trig"><span class="chev">&#9656;</span><span class="name">Townhouse</span><span class="cnt">2 items</span><span class="amt">RM 800.00</span></div></div>
+    <div class="tot"><span class="k">Total amount</span><span class="v">RM 800.00</span></div>
+  </div>
+  <div class="card"><div class="hd">Terms and conditions</div><div class="bd prose"><i class="ph" style="width:80%"></i><i class="ph" style="width:60%"></i></div></div>
+  <div class="sigs">
+    <div class="card"><div class="hd">Signed for Sorento</div><div class="bd"><div class="pad signed" style="height:80px">Sales Rep A</div><div style="margin-top:6px;font-size:13px"><b>SALES REP A</b></div></div></div>
+    <div class="card"><div class="hd">Accept this quotation</div><div class="bd">
+      <div class="lbl">Your name</div><div class="inp">Type your full name</div>
+      <div class="chk"><span class="box"></span><span>I have read and agree to the <u>Terms and conditions</u>.</span></div>
+      <div class="pad" style="height:90px">Type your name and tick the box to sign</div>
+      <div class="acts"><span class="btn">Request changes</span><span class="btn pri off">Sign and accept</span></div>
+      <div class="hint" style="margin-top:8px"><i>i</i>Type your name and tick the terms box to accept.</div>
+    </div></div>
+  </div>
+</div></div><div class="cap">375px</div></div>
+</div>
+</section>
+
+<section id="pdf">
+<h2>Issued PDF, A4 landscape (same orientation as today)</h2>
+<p class="why">Letterhead gains the logo and the sales contact; one "Quotation No." row; sign-off becomes two columns.
+Shown as accepted (both signatures). Before acceptance the right column prints blank signature, name and date lines.</p>
+<div class="a4wrap"><div class="a4">
+  <div class="top">
+    <div class="from"><div class="logo"><span><span class="nb">1</span><br>Logo</span></div>
+      <div><div class="co">Sorento</div><div>Company address line 1<br>Company address line 2<br>Tel: company phone</div></div></div>
+    <table class="r"><tr><td><span class="nb">2</span>Quotation No.</td><td><b>PRJQ-2026-0003-R1</b></td></tr><tr><td>Your Ref</td><td>-</td></tr><tr><td>Date</td><td>14 Oct 2026</td></tr><tr><td><span class="nb">5</span>Sales contact</td><td>SALES REP A, +60100000001</td></tr></table>
+  </div>
+  <div class="to">To: <b>CUSTOMER A</b><br>ADDRESS LINE 1, ADDRESS LINE 2<br>Attn: CONTACT B</div>
+  <div class="sub">SUBJECT TITLE OF THE QUOTATION</div>
+  <table class="lines">
+    <thead><tr><th>Item</th><th>Technical spec</th><th>Description</th><th>Brand</th><th>Product code</th><th>Qty</th><th>Unit rate</th><th>Complete set</th><th>Amount</th></tr></thead>
+    <tbody>
+      <tr class="band"><td colspan="9">TOWNHOUSE</td></tr>
+      <tr><td>1</td><td></td><td>32MM TAIL PIECE COUPLING (CHROME) FOR BOTTLE TRAP</td><td>TP ENTERPRISE</td><td>32MM TAIL PIECE COUPLING</td><td>1 EA</td><td>300.00</td><td></td><td style="text-align:right">300.00</td></tr>
+      <tr><td>2</td><td></td><td>BRAVAT WASTE BRAC73080604-0001</td><td>BRAVAT</td><td>BRAC73080604-0001</td><td>1 EA</td><td>500.00</td><td></td><td style="text-align:right">500.00</td></tr>
+      <tr><td colspan="8" style="text-align:right;font-weight:700">TOTAL</td><td style="text-align:right;font-weight:700">800.00</td></tr>
+    </tbody>
+  </table>
+  <div class="ta">TOTAL AMOUNT RM 800.00</div>
+  <div class="terms"><b>TERMS &amp; CONDITIONS</b><br>1. (the quotation's Terms template text)<br>2. ...</div>
+  <div class="so">
+    <div><b>For Sorento</b><div class="img">Sales Rep A</div>SALES REP A<br>+60100000001</div>
+    <div><b>Accepted by</b><div class="img">Contact B</div>CONTACT B<br>Date: 30 Oct 2026</div>
+  </div>
+</div></div>
+</section>
+
+<section id="map">
+<h2>What each part reuses (no new components)</h2>
+<table class="map">
+<tr><td><span class="nb">1</span>Logo</td><td>Letterhead in <code>sorento_crm_frontend/app/(auth)/quotation-sign/[token]/components/QuotationSignClient.tsx:33-92</code> gets an <code>&lt;img&gt;</code>; source <code>companies.logo_url</code> (<code>sorento_crm_backend/app/models/company.py:38</code>, set on System &gt; Companies). PDF inlines it like product photos (<code>app/services/product_image_service.py</code> <code>data_uri</code>, used at <code>project_quotation_pdf_service.py:186-207</code>).</td></tr>
+<tr><td><span class="nb">2</span>Quotation No.</td><td>Same refs rows (<code>QuotationSignClient.tsx:68-81</code>) and PDF refs table (<code>project_quotation_pdf_service.py:304-349</code>); the sign page keeps its Revision row (owner 29 Oct); the PDF has no Revision row today and gets none.</td></tr>
+<tr><td><span class="nb">3</span>One card</td><td><code>components/ui/card.tsx</code> (Card) holding <code>components/ui/accordion.tsx</code> (Accordion, AccordionItem, AccordionTrigger, AccordionContent); the line table inside is today's table from <code>QuotationSignScopes.tsx:50-114</code>, unchanged; amounts via <code>formatMyrExact</code> (<code>app/(protected)/project-sales/_shared/lib/money.ts</code>).</td></tr>
+<tr><td><span class="nb">4</span>Terms tick</td><td><code>components/ui/checkbox.tsx</code> + <code>components/ui/label.tsx</code>; gates the existing <code>components/common/SignaturePad.tsx</code> through its <code>disabled</code> prop (<code>QuotationSignClient.tsx:252</code>); hint line = text with the lucide <code>Info</code> / <code>AlertCircle</code> icon from <code>lucide-react</code> (the page already imports its icons from there, <code>QuotationSignClient.tsx:4</code>); tap on the grey button or pad focuses the first missing step (name <code>Input</code> or the checkbox). Terms panel = existing ProsePanel (<code>QuotationSignClient.tsx:100-118</code>).</td></tr>
+<tr><td><span class="nb">5</span>Side by side</td><td>The two existing cards ("Signed for Sorento" <code>QuotationSignClient.tsx:439-451</code>, CustomerSignature <code>:133-339</code>) in a two-column grid that stacks below 768px; PDF sign-off (<code>project_quotation_pdf_service.py:505-542</code>) as a two-column block. Sales contact = quotation signatory name + phone.</td></tr>
+</table>
+</section>
+</div>
+</body>
+</html>

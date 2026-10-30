@@ -77,6 +77,10 @@ type Draft = {
   lowStockWaitSeconds: string;
   reportRateLimit: string;
   reportRateWindowMinutes: string;
+  agentMaxRounds: string;
+  agentMaxSeconds: string;
+  agentMaxInputTokens: string;
+  agentCompactTokens: string;
 };
 
 function toDraft(settings: ChatbotMediaSettings): Draft {
@@ -103,6 +107,10 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     lowStockWaitSeconds: String(settings.low_stock_sync_wait_seconds),
     reportRateLimit: String(settings.report_ask_rate_limit),
     reportRateWindowMinutes: String(settings.report_ask_rate_window_minutes),
+    agentMaxRounds: String(settings.chatbot_agent_max_rounds),
+    agentMaxSeconds: String(settings.chatbot_agent_max_seconds),
+    agentMaxInputTokens: String(settings.chatbot_agent_max_input_tokens),
+    agentCompactTokens: String(settings.chatbot_agent_compact_tokens),
   };
 }
 
@@ -132,6 +140,10 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     // Blank is "no limit", stored as 0 (`Number('')` is 0).
     report_ask_rate_limit: Number(draft.reportRateLimit.trim()),
     report_ask_rate_window_minutes: Number(draft.reportRateWindowMinutes.trim()),
+    chatbot_agent_max_rounds: Number(draft.agentMaxRounds.trim()),
+    chatbot_agent_max_seconds: Number(draft.agentMaxSeconds.trim()),
+    chatbot_agent_max_input_tokens: Number(draft.agentMaxInputTokens.trim()),
+    chatbot_agent_compact_tokens: Number(draft.agentCompactTokens.trim()),
   };
 }
 
@@ -156,6 +168,10 @@ const NUMBER_BOUNDS = {
   lowStockWaitSeconds: [5, 90],
   reportRateLimit: [0, 1000],
   reportRateWindowMinutes: [1, 1440],
+  agentMaxRounds: [1, 30],
+  agentMaxSeconds: [5, 300],
+  agentMaxInputTokens: [10000, 2000000],
+  agentCompactTokens: [5000, 500000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 type NumberKey = keyof typeof NUMBER_BOUNDS;
@@ -365,6 +381,42 @@ export default function ChatbotMediaSettingsPage() {
             value={draft.reportRateWindowMinutes}
             error={numberError.reportRateWindowMinutes}
             onChange={(v) => set('reportRateWindowMinutes', v)}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b border-border">
+          <CardTitle>Agent budgets</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-5 py-5 sm:grid-cols-2">
+          <NumberField
+            id="agent-max-rounds"
+            label="Tool rounds"
+            value={draft.agentMaxRounds}
+            error={numberError.agentMaxRounds}
+            onChange={(v) => set('agentMaxRounds', v)}
+          />
+          <NumberField
+            id="agent-max-seconds"
+            label="Seconds per turn"
+            value={draft.agentMaxSeconds}
+            error={numberError.agentMaxSeconds}
+            onChange={(v) => set('agentMaxSeconds', v)}
+          />
+          <NumberField
+            id="agent-max-input-tokens"
+            label="Input tokens per turn"
+            value={draft.agentMaxInputTokens}
+            error={numberError.agentMaxInputTokens}
+            onChange={(v) => set('agentMaxInputTokens', v)}
+          />
+          <NumberField
+            id="agent-compact-tokens"
+            label="Compact history above (tokens)"
+            value={draft.agentCompactTokens}
+            error={numberError.agentCompactTokens}
+            onChange={(v) => set('agentCompactTokens', v)}
           />
         </CardContent>
       </Card>

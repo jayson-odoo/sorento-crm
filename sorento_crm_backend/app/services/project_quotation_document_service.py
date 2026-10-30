@@ -113,6 +113,15 @@ def _item_number(line: ProjectQuotationLine, position: int) -> str:
     return item_number(line, position)
 
 
+def quotation_no(document_no: Optional[str], issue_no: int) -> str:
+    """The "Quotation No." every surface prints: `<document_no>-R<issue_no>`.
+
+    Built, never read back from `our_ref_text`, so an issue stored with the old `(R1)` text still
+    shows the same number on the sign page, the PDF, the workbook and the download name.
+    """
+    return f"{document_no}-R{issue_no}"
+
+
 # ------------------------------------------------------------------ create
 
 
@@ -551,7 +560,7 @@ def issue(
         company_id=document.company_id,
         document_id=document.id,
         issue_no=issue_no,
-        our_ref_text=f"{document.document_no} (R{issue_no})",
+        our_ref_text=quotation_no(document.document_no, issue_no),
         issued_at=datetime.utcnow(),
         issued_by=actor_user_id,
         cover_letter_rendered=document.cover_letter_html,
@@ -698,7 +707,7 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         "project_id": str(document.project_id),
         "document_no": document.document_no,
         "our_ref": (
-            f"{document.document_no} (R{latest.issue_no})"
+            quotation_no(document.document_no, latest.issue_no)
             if latest is not None
             else document.document_no
         ),
@@ -959,11 +968,17 @@ def sign_as_sorento(
     Kept on the document rather than demanded at issue time so the signing and the issuing are
     separate acts: a person signs once and can then issue, which is the order the journey has.
     """
+    from app.models.user import User
+
+    signer_name = (payload.get("signer_name") or "").strip() or (document.signatory_name or "").strip()
+    if not signer_name:
+        user = db.query(User).filter(User.id == actor_user_id).first()
+        signer_name = ((user.name if user else None) or "").strip()
     signature = record_signature(
         db,
         company_id=document.company_id,
         owner_kind="user",
-        signer_name=payload.get("signer_name") or document.signatory_name,
+        signer_name=signer_name or None,
         mode=payload.get("mode") or "draw",
         image_data_uri=payload.get("image_data_uri"),
         user_id=actor_user_id,
@@ -1082,6 +1097,7 @@ def accept_issue(
     user_agent: Optional[str] = None,
     gps_lat: Optional[str] = None,
     gps_lng: Optional[str] = None,
+    terms_accepted: bool = False,
 ) -> ProjectQuotationIssue:
     """The customer counter-signs, and that WINS the quotation.
 
@@ -1096,9 +1112,18 @@ def accept_issue(
     Idempotent: signing twice keeps the FIRST signature and the first accepted_at. A customer who
     double-taps has not signed two different things, and overwriting would lose the timestamp that
     matters.
+
+    An issue that carries terms needs `terms_accepted`; the public route passes what the customer
+    ticked (false when missing), so the box is enforced server-side and not only by the page.
     """
     if record.accepted_at is not None:
         return record
+    if (record.terms_rendered or "").strip() and terms_accepted is not True:
+        raise AppException(
+            status_code=422,
+            message="Tick the box to agree to the terms before you accept.",
+            code="quotation_terms_not_accepted",
+        )
 
     signature = record_signature(
         db,
@@ -1401,6 +1426,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
     )
 
     company_name = None
+    company_logo_url = None
     if document is not None and document.company_id:
         from app.models.company import Company
 
@@ -1408,19 +1434,26 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
             db.query(Company).filter(Company.id == document.company_id).first()
         )
         company_name = company.name if company else None
+        company_logo_url = company.logo_url if company else None
 
     return {
-        "our_ref": record.our_ref_text,
+        "our_ref": (
+            quotation_no(document.document_no, record.issue_no)
+            if document is not None
+            else record.our_ref_text
+        ),
         "issue_no": record.issue_no,
         "doc_date": document.doc_date if document else None,
         "subject_title": document.subject_title if document else None,
         "sender_name": company_name,
+        "sender_logo_url": company_logo_url,
         "recipient_name": document.recipient_name_snapshot if document else None,
         "recipient_address": document.recipient_address_snapshot if document else None,
         "attn_name": document.attn_name if document else None,
         "cover_letter": record.cover_letter_rendered,
         "terms": record.terms_rendered,
         "signatory_name": document.signatory_name if document else None,
+        "signatory_phone": document.signatory_phone if document else None,
         "scopes": scopes,
         "grand_total": Decimal(record.grand_total or 0),
         "sorento_signature": _serialize_signature(sorento),
