@@ -1580,10 +1580,12 @@ describe('QuotationVersionEditor photo and drawing picker (QUOTATION-UX)', () =>
     expect(await screen.findByTestId('attachment-preview-modal')).toBeInTheDocument();
   });
 
-  it('says no drawing when the product has none', async () => {
+  it('offers Escalate when the product has no drawing', async () => {
     listQuotationLines.mockResolvedValue([ext({ product_id: 'p1', product_image: PHOTO({ candidates: [], candidate_count: 1 }), technical_drawing: { state: 'no_drawings', candidate_count: 0, candidates: [] } })]);
     renderEditor();
-    expect(await screen.findByText('no drawing')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Escalate missing drawing for SRT-WC-01' }),
+    ).toBeInTheDocument();
   });
 
   it('offers Change photo and Change drawing when several candidates exist, and stages the pick', async () => {
@@ -1872,6 +1874,38 @@ describe('QuotationVersionEditor fix round 2 (QUOTATION-UX)', () => {
       expect(stagedBody()[1]).toMatchObject({ product_id: 'p9', image_attachment_id: 'a2' }),
     );
     expectNothingWritten();
+  });
+
+  // QUOTE-DRAWING-ESCALATE owner hand test (30 Oct): Escalate on a row whose product was picked
+  // in this session posted to /quotation-versions//lines/<row key>/... and answered "Not Found".
+  // A drawing or photo request is for a SAVED line's product, so an unsaved row offers none.
+  it('offers no Escalate on a new line whose picked product has no drawing or photo', async () => {
+    getQuotationLineImages.mockResolvedValue({
+      product_image: PHOTO({ state: 'no_photos', url: null, preview_url: null, attachment_id: null, filename: null, candidates: [], candidate_count: 0 }),
+      technical_drawing: { state: 'no_drawings', candidate_count: 0, candidates: [] },
+    });
+    await renderEditing();
+    fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Product on line 2' }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    await waitFor(() => expect(getQuotationLineImages).toHaveBeenCalledWith('p9'));
+
+    expect(await screen.findByText('no drawing')).toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /^Escalate missing/ })).toHaveLength(0);
+  });
+
+  it('offers no Escalate on a saved line whose product was changed and not saved', async () => {
+    getQuotationLineImages.mockResolvedValue({
+      product_image: PHOTO({ state: 'no_photos', url: null, preview_url: null, attachment_id: null, filename: null, candidates: [], candidate_count: 0 }),
+      technical_drawing: { state: 'no_drawings', candidate_count: 0, candidates: [] },
+    });
+    await renderEditing();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    await waitFor(() => expect(getQuotationLineImages).toHaveBeenCalledWith('p9'));
+
+    expect(await screen.findByText('no drawing')).toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /^Escalate missing/ })).toHaveLength(0);
   });
 
   it('a product change on a saved line resolves the new product\'s cells from the route (defect 2)', async () => {

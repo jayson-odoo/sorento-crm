@@ -14,9 +14,12 @@ import {
   SampleRequestError,
   type SampleRequestDetail,
   type SampleRequestProductHit,
+  type SampleRequestProductSource,
+  type SampleRequestQuotationPrefill,
   type SampleRequestRow,
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
+import { productSearchQuery } from '@/lib/sample-request-form';
 import { portalFetch, type PortalSubmissionSummary } from './portal-client';
 
 const BASE = '/api/v1/public/portal/submissions/sample_request';
@@ -62,11 +65,25 @@ export function makeSampleRequestService(fetcher: typeof portalFetch) {
 
   async function searchSampleRequestProducts(
     q: string,
+    source?: SampleRequestProductSource,
   ): Promise<SampleRequestProductHit[]> {
     const res = await fetcher(
-      `/api/v1/public/portal/sample-request/products?q=${encodeURIComponent(q)}`,
+      `/api/v1/public/portal/sample-request/products?${productSearchQuery(q, source)}`,
     );
     return unwrapNamingField<SampleRequestProductHit[]>(res, 'Failed to search products');
+  }
+
+  /** The rows a new request on one of the contact's projects starts with (SAMPLE-FROM-QUOTE). */
+  async function getSampleRequestQuotationPrefill(
+    projectId: string,
+    documentId?: string,
+  ): Promise<SampleRequestQuotationPrefill> {
+    const usp = new URLSearchParams({ project_id: projectId });
+    if (documentId) usp.set('document_id', documentId);
+    const res = await fetcher(
+      `/api/v1/public/portal/sample-request/quotation-prefill?${usp.toString()}`,
+    );
+    return unwrapNamingField<SampleRequestQuotationPrefill>(res, 'Failed to load the quotation');
   }
 
   async function listSampleRequests(q?: string): Promise<SampleRequestRow[]> {
@@ -158,6 +175,7 @@ export function makeSampleRequestService(fetcher: typeof portalFetch) {
   return {
     lookupSampleRequestCustomers,
     searchSampleRequestProducts,
+    getSampleRequestQuotationPrefill,
     listSampleRequests,
     listSampleRequestsAsSummaries,
     getSampleRequest,
@@ -174,6 +192,7 @@ export type SampleRequestService = ReturnType<typeof makeSampleRequestService>;
 export const {
   lookupSampleRequestCustomers,
   searchSampleRequestProducts,
+  getSampleRequestQuotationPrefill,
   listSampleRequests,
   listSampleRequestsAsSummaries,
   getSampleRequest,
