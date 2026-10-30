@@ -563,6 +563,8 @@ describe('QuotationVersionEditor', () => {
 
     expect(await screen.findByText('Bespoke vanity top')).toBeInTheDocument();
     expect(screen.queryByTitle('Not a catalogue product')).toBeNull();
+    // AC-20: no product and no set, so no Non-standard pill either, though the server flagged it.
+    expect(screen.queryByText('Non-standard')).toBeNull();
     expect(screen.queryByText(/Not a catalogue product/i)).toBeNull();
     expect(screen.queryByText('Off-catalog')).toBeNull();
     expect(screen.queryByText(/custom/i)).toBeNull();

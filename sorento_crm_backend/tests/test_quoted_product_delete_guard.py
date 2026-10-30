@@ -160,3 +160,77 @@ def test_ac15_a_product_and_a_set_on_no_quotation_still_delete(api):
     db.expire_all()
     assert db.get(Product, product.id) is None
     assert db.get(ProductSet, product_set.id) is None
+
+
+# ------------------------------------------------------------------ AC-17 bulk delete
+
+
+def test_ac17_a_bulk_delete_with_one_quoted_product_is_refused_and_deletes_nothing(api):
+    client, db, _company_id, _user_id, project, _party = api
+    quoted = _seed_product(db)
+    free = _seed_product(db)
+    document = _quoted(client, db, project.id, product_id=quoted.id)
+
+    response = client.request(
+        "DELETE",
+        "/api/v1/master-data/products/bulk",
+        json={"ids": [quoted.id, free.id]},
+    )
+
+    assert response.status_code == 409, response.text
+    assert PRODUCT_MESSAGE.format(no=document["document_no"]) in response.text
+    db.expire_all()
+    assert db.get(Product, quoted.id) is not None
+    assert db.get(Product, free.id) is not None
+    assert _line_count(db, product_id=quoted.id) == 1
+
+
+# ------------------------------------------------------------------ AC-18 ordering + issued
+
+
+def test_ac18_the_409_names_the_lowest_document_no_not_the_first_created(api):
+    from .test_project_quotation_document_routes import _current_version_id
+
+    client, db, _company_id, _user_id, project, _party = api
+    product = _seed_product(db)
+    # Lowest number, created FIRST but given its product line LAST.
+    low = client.post(
+        f"{BASE}/projects/{project.id}/quotation-documents",
+        json={"scopes": [{"scope_label": f"{MARKER} Low"}]},
+    )
+    assert low.status_code == 201, low.text
+    high = _quoted(client, db, project.id, product_id=product.id)
+    low_body = low.json()
+    assert low_body["document_no"] < high["document_no"]
+    version_id = _current_version_id(db, low_body["scopes"][0]["id"])
+    added = client.post(
+        f"{BASE}/quotation-versions/{version_id}/lines",
+        json={"product_id": product.id, "unit_price": "10.00", "quantity": "1"},
+    )
+    assert added.status_code == 201, added.text
+    # Make insertion order differ from number order: the product's FIRST line row belongs to
+    # the higher-numbered document, so an unsorted query names the wrong quotation.
+    response = client.delete(f"/api/v1/master-data/products/{product.id}")
+
+    assert response.status_code == 409, response.text
+    assert PRODUCT_MESSAGE.format(no=low_body["document_no"]) in response.text
+    assert high["document_no"] not in response.text
+
+
+def test_ac18_a_product_used_only_on_an_issued_version_is_still_refused(api):
+    from .test_project_quotation_document_routes import _sign
+
+    client, db, _company_id, _user_id, project, _party = api
+    product = _seed_product(db)
+    document = _quoted(client, db, project.id, product_id=product.id)
+    root = f"{BASE}/projects/{project.id}/quotation-documents"
+    _sign(client, root, document["id"])
+    issued = client.post(f"{root}/{document['id']}/issue")
+    assert issued.status_code == 201, issued.text
+
+    response = client.delete(f"/api/v1/master-data/products/{product.id}")
+
+    assert response.status_code == 409, response.text
+    assert PRODUCT_MESSAGE.format(no=document["document_no"]) in response.text
+    db.expire_all()
+    assert db.get(Product, product.id) is not None

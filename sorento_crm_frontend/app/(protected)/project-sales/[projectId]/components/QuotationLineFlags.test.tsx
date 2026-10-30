@@ -14,8 +14,9 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { QuotationLine } from '../../_shared/types/project.types';
 
+const useLineVerdict = vi.hoisted(() => vi.fn((..._args: unknown[]) => ({ data: undefined as unknown })));
 vi.mock('../../_shared/hooks/useProjects', () => ({
-  useLineVerdict: () => ({ data: undefined }),
+  useLineVerdict,
 }));
 vi.mock('./QuotationsPanel', () => ({
   formatMyr: (value: string) => `RM ${value}`,
@@ -75,6 +76,33 @@ describe('LineFlags', () => {
     );
     expect(screen.queryByText(/Not a catalogue product/i)).toBeNull();
     expect(screen.queryByTitle('Not a catalogue product')).toBeNull();
+  });
+
+  it('AC-20: a row with neither product nor set never shows Non-standard, even when the stored line says so', () => {
+    render(
+      <LineFlags
+        quotationId="q1"
+        line={line({ is_non_standard: true })}
+        draft={draftOf()}
+      />,
+    );
+    expect(screen.queryByText('Non-standard')).toBeNull();
+  });
+
+  it('AC-20: an edited row with neither product nor set shows no pill and asks no series verdict', () => {
+    useLineVerdict.mockClear();
+    useLineVerdict.mockReturnValue({ data: { is_non_standard: true, is_below_floor: false } });
+    render(
+      <LineFlags
+        quotationId="q1"
+        line={line()}
+        draft={draftOf({ description: 'Bespoke basin test', unit_price: '123.00' })}
+      />,
+    );
+    expect(screen.queryByText('Non-standard')).toBeNull();
+    // Third argument is `enabled`: no request may be armed for a row with no product or set.
+    expect(useLineVerdict.mock.calls.every((call) => call[2] === false)).toBe(true);
+    useLineVerdict.mockReturnValue({ data: undefined });
   });
 
   it('shows exactly one Non-standard pill for a non-standard product line', () => {

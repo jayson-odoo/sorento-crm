@@ -341,3 +341,100 @@ def test_ac6_a_product_line_a_set_line_and_an_edited_description_all_still_save(
         },
     )
     assert form.status_code == 201, form.text
+
+
+# ------------------------------------------------------------------ AC-16 (review round 1)
+
+
+def _foreign_product(db, template) -> str:
+    """A product owned by ANOTHER company, by raw SQL so the scope layer cannot stamp it ours."""
+    import uuid as _uuid
+
+    from sqlalchemy import text
+
+    other = str(_uuid.uuid4())
+    db.execute(
+        text("INSERT INTO companies (id, code, name, is_active) VALUES (:id, :code, :name, true)"),
+        {"id": other, "code": f"ZZT{_uuid.uuid4().hex}", "name": f"{MARKER} Mocha"},
+    )
+    product_id = str(_uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO products (id, company_id, product_code, product_name, category_id, "
+            "base_uom_id, list_price, is_active, is_discontinued) "
+            "VALUES (:id, :company, :code, :name, :cat, :uom, 10.00, true, false)"
+        ),
+        {
+            "id": product_id,
+            "company": other,
+            "code": f"ZZTF-{product_id[:8]}",
+            "name": f"{MARKER} their product",
+            "cat": template.category_id,
+            "uom": template.base_uom_id,
+        },
+    )
+    db.commit()
+    return product_id
+
+
+def _not_found(response) -> None:
+    assert response.status_code == 404, response.text
+    body = response.json()
+    assert body.get("code") == "product_not_found", response.text
+    assert "That product was not found." in response.text
+
+
+def test_ac16_a_product_id_that_does_not_exist_is_a_404_and_writes_nothing(api):
+    import uuid as _uuid
+
+    client, db, _company_id, _user_id, project, _party = api
+    version_id = _scope_version(client, project.id)
+    before = _lines(client, version_id)
+
+    _not_found(
+        client.post(
+            f"{BASE}/quotation-versions/{version_id}/lines",
+            json={"product_id": str(_uuid.uuid4()), "unit_price": "10.00", "quantity": "1"},
+        )
+    )
+    assert _lines(client, version_id) == before
+
+
+def test_ac16_another_companys_product_is_a_404_and_writes_nothing(api):
+    client, db, _company_id, _user_id, project, _party = api
+    version_id = _scope_version(client, project.id)
+    foreign = _foreign_product(db, _seed_product(db))
+    before = _lines(client, version_id)
+
+    _not_found(
+        client.post(
+            f"{BASE}/quotation-versions/{version_id}/lines",
+            json={"product_id": foreign, "unit_price": "10.00", "quantity": "1"},
+        )
+    )
+    assert _lines(client, version_id) == before
+
+
+def test_ac16_the_bulk_save_and_the_form_refuse_an_unknown_product_too(api):
+    import uuid as _uuid
+
+    client, db, _company_id, _user_id, project, _party = api
+    version_id = _scope_version(client, project.id)
+    product = _seed_product(db)
+    assert _bulk(
+        client, version_id, [{"product_id": product.id, "unit_price": "5.00", "quantity": "1"}]
+    ).status_code == 200
+    before = _lines(client, version_id)
+    ghost = {"product_id": str(_uuid.uuid4()), "unit_price": "10.00", "quantity": "1"}
+
+    _not_found(_bulk(client, version_id, [{"id": before[0]["id"]}, ghost]))
+    assert _lines(client, version_id) == before
+
+    docs_before = len(_docs(db, project.id))
+    _not_found(
+        client.post(
+            f"{BASE}/projects/{project.id}/quotation-documents",
+            json={"scopes": [{"scope_label": f"{MARKER} Ghost", "lines": [ghost]}]},
+        )
+    )
+    assert len(_docs(db, project.id)) == docs_before
