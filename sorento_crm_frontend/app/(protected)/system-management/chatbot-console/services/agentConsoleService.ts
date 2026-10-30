@@ -5,13 +5,18 @@
  *   409 { detail: { code: "agent_refused", reason } } when the contact may not use the agent.
  * GET  /api/v1/system/chatbot/agent/conversation?contact_respond_id=  -> AgentConversationResponse
  * POST /api/v1/system/chatbot/agent/conversation/new   { contact_respond_id } -> { conversation_id }
+ * POST /api/v1/system/chatbot/agent/actions/{id}/confirm { contact_respond_id } -> AgentActionResponse
+ * POST /api/v1/system/chatbot/agent/actions/{id}/cancel  { contact_respond_id } -> AgentActionResponse
+ *   409 { detail: { code: "action_refused", reason } } when the proposal can no longer be decided.
  *
- * All three need `system.chat_history.view`, like `/console/turn`.
+ * All of them need `system.chat_history.view`, like `/console/turn`.
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import {
+  ACTION_REFUSAL_MESSAGES,
   AGENT_REFUSAL_MESSAGES,
+  type AgentActionResponse,
   type AgentConversationResponse,
   type AgentTurnResponse,
 } from '../types/agentConsole.types';
@@ -27,6 +32,62 @@ export class AgentRefusedError extends Error {
     this.name = 'AgentRefusedError';
     this.reason = reason;
   }
+}
+
+/** The proposal can no longer be confirmed or cancelled; `message` is plain words. */
+export class ActionRefusedError extends Error {
+  reason: string;
+
+  constructor(reason: string) {
+    super(ACTION_REFUSAL_MESSAGES[reason] ?? 'This proposal can no longer be decided.');
+    this.name = 'ActionRefusedError';
+    this.reason = reason;
+  }
+}
+
+async function actionRefusalReason(response: Response): Promise<string | null> {
+  try {
+    const detail = (await response.clone().json())?.detail;
+    if (detail && detail.code === 'action_refused' && typeof detail.reason === 'string') {
+      return detail.reason;
+    }
+  } catch {
+    // Not JSON: fall through to the generic error.
+  }
+  return null;
+}
+
+async function decideAction(
+  contactRespondId: string,
+  actionId: string,
+  decision: 'confirm' | 'cancel',
+): Promise<AgentActionResponse> {
+  const response = await apiFetch(`${BASE}/actions/${encodeURIComponent(actionId)}/${decision}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contact_respond_id: contactRespondId }),
+  });
+  if (!response.ok) {
+    if (response.status === 409) {
+      const reason = await actionRefusalReason(response);
+      if (reason) throw new ActionRefusedError(reason);
+    }
+    throw new Error(
+      await extractApiError(
+        response,
+        decision === 'confirm' ? 'Failed to confirm the changes' : 'Failed to cancel the changes',
+      ),
+    );
+  }
+  return response.json();
+}
+
+export function confirmAgentAction(contactRespondId: string, actionId: string) {
+  return decideAction(contactRespondId, actionId, 'confirm');
+}
+
+export function cancelAgentAction(contactRespondId: string, actionId: string) {
+  return decideAction(contactRespondId, actionId, 'cancel');
 }
 
 async function refusalReason(response: Response): Promise<string | null> {

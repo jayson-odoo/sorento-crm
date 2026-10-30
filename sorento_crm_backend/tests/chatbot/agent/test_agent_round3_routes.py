@@ -71,7 +71,7 @@ def test_get_conversation_is_read_only_and_null_when_none(client, session_factor
     db.commit()
     resp = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]})
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"conversation_id": None, "turns": []}
+    assert resp.json() == {"conversation_id": None, "turns": [], "pending_action": None}
     from app.models.chatbot_agent import AgentConversation
 
     assert db.query(AgentConversation).filter_by(contact_respond_id=contact["respond_id"]).count() == 0

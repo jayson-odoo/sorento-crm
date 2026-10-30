@@ -2,7 +2,16 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+#: Reserved for "No class" in a contact's allowed item classes (TAG-BRAND-CLASS); never a code.
+RESERVED_ITEM_CLASS_CODE = "__NONE__"
+
+
+def refuse_reserved_code(value: Optional[str]) -> Optional[str]:
+    if value is not None and value.strip().upper() == RESERVED_ITEM_CLASS_CODE:
+        raise ValueError(f"{RESERVED_ITEM_CLASS_CODE} is reserved")
+    return value
 
 
 class ItemClassBase(BaseModel):
@@ -10,6 +19,8 @@ class ItemClassBase(BaseModel):
     item_class_name: str = Field(..., min_length=1, max_length=150)
     description: Optional[str] = None
     is_active: bool = True
+
+    _reserved = field_validator("item_class_code")(refuse_reserved_code)
 
 
 class ItemClassCreate(ItemClassBase):
@@ -21,6 +32,8 @@ class ItemClassUpdate(BaseModel):
     item_class_name: Optional[str] = Field(None, min_length=1, max_length=150)
     description: Optional[str] = None
     is_active: Optional[bool] = None
+
+    _reserved = field_validator("item_class_code")(refuse_reserved_code)
 
 
 class ItemClassResponse(ItemClassBase):
