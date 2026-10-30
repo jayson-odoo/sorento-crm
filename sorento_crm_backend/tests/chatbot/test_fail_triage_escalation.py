@@ -1095,3 +1095,116 @@ def test_r3_b3_a_failed_draw_for_a_parser_free_string_team_names_no_team(
     assert seams.errors(), "the draw fails"
     assert "0123" not in said and "refund" not in said.lower(), said
     assert said == T.H_ESC_NEUTRAL, said
+
+
+# =========================================================================== #
+# Review round 4 (NOT READY): an offer's stored ROUTING agent is not a picked pair
+# =========================================================================== #
+
+
+def _both_customer_service_agents(session_factory, phone: str) -> None:
+    company = _seed_company(session_factory, "ZZT Company Both")
+    _seed_contact(session_factory, phone=phone, company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="general_enquiries", team_code="customer_service")
+    _seed_pair(session_factory, company_id=company, agent_code="order_enquiries", team_code="customer_service")
+
+
+def _minted_with_default_agent(values: dict[str, Any], outcome: dict[str, Any] | None = None) -> dict[str, Any]:
+    """An open question minted by the real `engine._question_offered` on a turn whose routing
+    agent was the code default fill (`with_routing_agent_default`), as production stores it."""
+    ctx = {
+        "parse": {
+            "output": {
+                "routing": {"suggested_team": "customer_service", "suggested_agent": DEFAULT_SUGGESTED_AGENT}
+            }
+        },
+        "session": {},
+    }
+    question = engine_mod._question_offered(ctx, values, outcome or {}, {})
+    assert question is not None
+    return pending_mod.to_wire(question)
+
+
+def test_r4_a_team_question_pick_never_draws_the_default_agent_the_option_stored(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    _both_customer_service_agents(session_factory, "+60970000023")
+    wire = _minted_with_default_agent(
+        {
+            "clarify": {
+                "clarify_team": True,
+                "clarify_text": "Which team should I pass this to - customer service or warehouse?",
+                "clarify_team_options": [
+                    {"team": "customer_service", "label": "customer service"},
+                    {"team": "warehouse", "label": "warehouse"},
+                ],
+            }
+        }
+    )
+    assert (wire["options"][0].get("payload") or {}).get("agent") == DEFAULT_SUGGESTED_AGENT, wire
+    _set_open_question(session_factory, wire)
+    seams = _observe(monkeypatch)
+    stub_parser(_pick(1))
+    stub_access()
+
+    result = engine_mod.run_turn(_say("r4-1", "1"), session_factory=session_factory)
+
+    assert seams.pairs() == [DOMAIN_PAIR["order"]], (
+        f"a routing (default) agent stored on a team option never goes ahead of the team's map "
+        f"agent: {seams.assignee!r}"
+    )
+    assert _assigned(result), result.actions
+
+
+def test_r4_yes_to_an_offer_storing_the_default_agent_draws_the_held_topics_pair(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    _both_customer_service_agents(session_factory, "+60970000024")
+    wire = _minted_with_default_agent({}, {"escalate-catalog": {"is_escalate_offer": True}})
+    assert wire["kind"] == "team_pick" and wire.get("team") == "customer_service", wire
+    assert (wire.get("payload") or {}).get("agent") == DEFAULT_SUGGESTED_AGENT, wire
+    # The order answer that made the offer left the order topic in the focus.
+    _set_open_question(session_factory, wire, focus={"domains": ["order"]})
+    seams = _observe(monkeypatch)
+    stub_parser(_yes())
+    stub_access()
+
+    result = engine_mod.run_turn(_say("r4-2", "Yes"), session_factory=session_factory)
+
+    assert seams.pairs() == [DOMAIN_PAIR["order"]], (
+        f"the 'Yes' draws the held order topic's pair, not the offer's stored default agent: {seams.assignee!r}"
+    )
+    assert _assigned(result), result.actions
+
+
+def test_r4_pin_the_escalation_lane_item_a_real_turn_builds_carries_no_team_key(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    """Security pin (passes today): the engine's failure reply reads `lane_item["team"]`
+    unfiltered, so the item a real turn hands the lane must never carry a `team` key."""
+    company = _seed_company(session_factory, "ZZT Company Order")
+    _seed_contact(session_factory, phone="+60970000025", company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="order_enquiries", team_code="customer_service")
+    _observe(monkeypatch)
+    items: list[dict[str, Any]] = []
+    real_lane = engine_mod.run_escalation_lane
+
+    def spy(ctx, item, *, dry_run=False, session_factory=None):
+        items.append(dict(item))
+        return real_lane(ctx, item, dry_run=dry_run, session_factory=session_factory)
+
+    monkeypatch.setattr(engine_mod, "run_escalation_lane", spy)
+    stub_parser(
+        _help(
+            domain_hint="order",
+            user_goal=f"escalate to the {FREE_TEAM} team",
+            routing={"suggested_team": FREE_TEAM, "suggested_agent": None},
+            escalation={"is_escalation_confirmation": True, "escalation_declined": None, "company_pick": None},
+        )
+    )
+    stub_access()
+
+    engine_mod.run_turn(_say("r4-3", f"escalate to the '{FREE_TEAM}' team"), session_factory=session_factory)
+
+    assert len(items) == 1, items
+    assert "team" not in items[0], items[0]
