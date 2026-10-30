@@ -385,6 +385,7 @@ def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Tra
     # the escalation lane routes by - the picked option's when the roster offered
     # several, the offer's own when it was a single-team yes/no.
     trace.team = option_payload.get("team") or pending.team
+    trace.agent = option_payload.get("agent") or pending.payload.get("agent")
     # AC-1700: a POSITION over a `member_offer` names that SPECIFIC member -
     # `option["uuid"]` (a real `users.id`), never `option.payload.respond_user_id`
     # (hand pass 12 Phase 3 finding P2: `escalation_context` and
@@ -1023,6 +1024,7 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             # customer who said yes got nothing.
             trace.lane = "escalation"
             trace.team = pending.team
+            trace.agent = pending.payload.get("agent")
             return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
 
@@ -3041,6 +3043,7 @@ def apply(
         plan.trace.lane = "escalation_barred"
     if plan.trace.lane == "escalation_barred":
         plan.trace.team = None
+        plan.trace.agent = None
         plan.trace.assignee = None
         plan.trace.company = None
     return new_state, plan

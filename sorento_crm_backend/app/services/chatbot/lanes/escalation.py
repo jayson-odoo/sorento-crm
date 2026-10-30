@@ -829,8 +829,9 @@ def _route_pair(
     default: a pair is drawn only when `agent_teams` links it for the contact's company.
 
     * A team with a source (`_team_source`) keeps its team; its agent is, in order, the
-      topic's own pair agent, the team's R-X-08 agents, the routing agent (which may be the
-      code default, S2), else the one agent the company links to it.
+      accepted offer's own agent, the topic's own pair agent, the team's R-X-08 agents, the
+      routing agent (which may be the code default, S2), else the one agent the company
+      links to it.
     * Otherwise, and after a parser-only team the company cannot reach, the topic routes:
       this turn's domain, else the one held from earlier turns (`topic_domains`, the
       turn's focus), each domain's candidate pairs in order (S4).
@@ -856,9 +857,13 @@ def _route_pair(
         candidates += [(agent, team)] if jsc.truthy(agent) else []
         candidates += [p for p in on_map if p[1] == team]
     elif source is not None:
-        # S2: the routing agent may be the code default (`with_routing_agent_default` fills
-        # it before `_parser_raw` is taken, so no snapshot tells the two apart): it comes
+        # Review round 3: an accepted offer's own agent (`accepted_agent`, the engine's
+        # `plan.trace.agent`) is the pair the customer picked, so it draws first. S2: the
+        # routing agent may be the code default (`with_routing_agent_default` fills it
+        # before `_parser_raw` is taken, so no snapshot tells the two apart): it comes
         # after the team's own map agents.
+        accepted_agent = jsc.get(context_item, "accepted_agent")
+        candidates += [(accepted_agent, team)] if jsc.truthy(accepted_agent) else []
         candidates += [p for p in on_topic if p[1] == team]
         candidates += [p for p in on_map if p[1] == team]
         candidates += [(agent, team)] if jsc.truthy(agent) else []

@@ -8759,6 +8759,7 @@ def _run_stages_body(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             recalled=recalled,
             accepted_team=plan.trace.team,
+            accepted_agent=plan.trace.agent,
         )
 
     if branch_kind == "low_signal" and completes_here:
@@ -10469,6 +10470,7 @@ def _run_escalation_arm(
     contact_respond_id: str | None = None,
     recalled: list[dict[str, Any]] | None = None,
     accepted_team: str | None = None,
+    accepted_agent: str | None = None,
 ) -> TurnResult:
     """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
 
@@ -10494,6 +10496,7 @@ def _run_escalation_arm(
         # accepted offer named; `lanes/escalation._route_pair` reads both.
         "topic_domains": _escalation_topics(verdict, state),
         "accepted_team": accepted_team,
+        "accepted_agent": accepted_agent,
     }
     # CHAT-INBOX-QUEUE (IQ-27): the lane commits an SLA row and a round-robin draw it cannot
     # undo, so on the inbox drain the turn gives way to an earlier-sent message HERE.
