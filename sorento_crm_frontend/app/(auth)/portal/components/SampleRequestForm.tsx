@@ -27,6 +27,11 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { SampleRequestLines } from '@/components/common/SampleRequestLines';
 import { SampleRequestFooterFields } from '@/components/common/SampleRequestFooterFields';
 import {
+  SampleRequestPrefillNote,
+  SampleRequestQuotationPicker,
+} from '@/components/common/SampleRequestQuotationSource';
+import { useSampleRequestPrefill } from '@/hooks/useSampleRequestPrefill';
+import {
   EMPTY_FORM,
   blankLine,
   payloadFromState,
@@ -121,6 +126,18 @@ export default function SampleRequestForm({
       clientService(client, 'sampleRequest', portalSampleRequest).searchSampleRequestProducts(q),
     [client],
   );
+  // A NEW request starts from its project's quotation (SAMPLE-FROM-QUOTE); a draft never refills.
+  const prefill = useSampleRequestPrefill({
+    enabled: !requestId,
+    projectId: state.project_id,
+    state,
+    patch,
+    fetchPrefill: (projectId, documentId) =>
+      clientService(client, 'sampleRequest', portalSampleRequest).getSampleRequestQuotationPrefill(
+        projectId,
+        documentId,
+      ),
+  });
 
   useEffect(() => {
     if (!requestId) return;
@@ -429,6 +446,12 @@ export default function SampleRequestForm({
           <CardTitle className="text-base">Items</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          <SampleRequestQuotationPicker
+            documents={prefill.documents}
+            value={prefill.documentId ?? ''}
+            onPick={prefill.pickDocument}
+            disabled={readOnly}
+          />
           <SampleRequestLines
             value={state}
             onChange={patch}
@@ -437,6 +460,7 @@ export default function SampleRequestForm({
             errors={errors}
             disabled={readOnly}
           />
+          <SampleRequestPrefillNote note={prefill.note} />
           <Button
             type="button"
             variant="outline"

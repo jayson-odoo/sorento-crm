@@ -45,6 +45,8 @@ export function useSampleRequestPrefill({
   const [documents, setDocuments] = useState<SampleRequestQuotationOption[]>([]);
   const [documentId, setDocumentId] = useState<string | undefined>(undefined);
   const [note, setNote] = useState<string | null>(null);
+  // The document the last read answered with: the server's default until one is picked.
+  const [answered, setAnswered] = useState<string | null>(null);
 
   // Read at response time, not at request time: the person may edit rows while the read is out.
   const latest = useRef(state);
@@ -66,17 +68,28 @@ export function useSampleRequestPrefill({
     if (!projectId) {
       setDocuments([]);
       setNote(null);
+      setAnswered(null);
       if (latest.current.quotation_document_id || latest.current.prefill_signature) {
         patchRef.current(NO_SOURCE);
       }
       return;
     }
     let cancelled = false;
-    fetcher
-      .current(projectId, documentId)
-      .then((prefill) => {
+    // Through a resolved promise, so a fetcher that throws outright still lands in .catch.
+    Promise.resolve()
+      .then(() => fetcher.current(projectId, documentId))
+      .then((answer) => {
         if (cancelled) return;
+        // A malformed answer pre-fills nothing rather than breaking the form.
+        const prefill: SampleRequestQuotationPrefill = {
+          documents: answer?.documents ?? [],
+          document_id: answer?.document_id ?? null,
+          issue_id: answer?.issue_id ?? null,
+          lines: answer?.lines ?? [],
+          skipped: answer?.skipped ?? [],
+        };
         setDocuments(prefill.documents);
+        setAnswered(prefill.document_id);
         if (linesUntouched(latest.current)) {
           patchRef.current(prefillFromQuotation(prefill));
           setNote(prefillNote(prefill));
@@ -94,8 +107,8 @@ export function useSampleRequestPrefill({
   return {
     /** The project's quotation documents; the form shows a picker only for more than one. */
     documents,
-    /** The picked document, or undefined for the server's default. */
-    documentId,
+    /** The picked document, else the one the server defaulted to. */
+    documentId: documentId ?? answered ?? undefined,
     pickDocument: setDocumentId,
     /** One line naming the quotation lines that did not become rows, or null. */
     note,
