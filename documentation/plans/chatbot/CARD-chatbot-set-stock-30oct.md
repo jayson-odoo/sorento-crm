@@ -1,5 +1,116 @@
 # Behaviour card: a stock ask for a set answers SET availability first (CHATBOT-SET-STOCK)
 
+## v4 (30 Oct ~22:30): owner hand test = CHANGE REQUEST. FILED for the owner's answers; no code until answered.
+
+Owner, hand test #2013, verbatim: "shouldn't apply to stock only, any ask like eta, photos, delivery also
+should be included; how it works is basically expand the set to multiple product codes under the set and
+pass to behind." And: "if I ask like this should it be 1 for each, just thinking will this break our
+general rule, make our code too customized logic, too hard to maintain."
+
+His screenshots (prompt v148):
+- "srtwc8826 eta" answered `SRTWC8826-SC: ETA 03/11/2026, 08/11/2026 / Please refer to your salesman.`,
+  the seat cover only.
+- "check stock stock srtwc8826" asked `How many units for each? 1. SRTWC8826-SC 2. SRTWCX8826-P
+  3. SRTWCY8826 4. SRTWCX8826-S`. He typed `1`. The reply was `SRTWC8826-SC x 1: Got stock.`: the `1` was
+  read as line 1, not as one set.
+
+### What the code does today (head 5235f08e77)
+
+1. The expansion step he describes ALREADY EXISTS, and it is generic: `run_gate` replaces a visible set
+   with its member products, each carrying `set_code` (`lanes/business/gate.py:441-462`). Every handler
+   after it sees plain product codes.
+2. It runs for two domains only: `_SET_MEMBER_DOMAINS = {"master_products", "inventory"}`
+   (`gate.py:75`). For any other domain the set entity is not a kind that domain accepts, so it is
+   dropped, and only the product codes that contain the typed code survive (SRTWC8826-SC). That is why the
+   ETA reply named the seat cover only.
+3. Ten domains accept product entities (`ALLOWED`, `gate.py:77-140`): master_products,
+   product_attachment (photos, drawings, certificates), promotion, inventory, order, sales (delivery,
+   orders), incoming (ETA), spo_allocation, purchase_cost, purchase_order.
+4. The reply groups member rows under "Set <code>" by the row's `Product Code` field
+   (`lanes/business/fetch.py:1875-1902`, called at `:3338`). The stock, incoming, attachment, promotion
+   and order presenters all print that field (`sorento_crm_mcp/presenters.py`, `Product Code` at :503,
+   :534, :589, :640, :910, :947, :1089, :1122, :1165, :1418, :1478).
+5. The quantity question is ONE function: one numbered line per product slot under "How many units for
+   each?" (`turn/task.py:381-405`); slots come from `with_owed` (`turn/task.py:1059-1075`). A set's
+   members become four product slots, so the bot asks per part, and a bare `1` reads as a line pick.
+
+### The rule (proposed)
+
+- R1. One step, already there: a set code resolves to its member products (code and quantity per set)
+  at the gate, for EVERY domain that accepts products. The domain list goes; the matrix decides. Every
+  intent (stock, ETA, photos, delivery and orders, price, promotion, SPO, last cost) runs on the expanded
+  codes through its existing handler. The reply groups them under "Set <code>" (exists).
+- R2. Quantity for a set ask: one question, "How many sets of SRTWC8826-S?", one number, no numbered
+  list. Each part is checked at sets x quantity per set (all 1 today). The verdict line names the set:
+  `SRTWC8826-S x 6 sets: Got stock.`, or the short part when one is short.
+- R3. Nothing is per intent. The set is known in three places, all keyed by `product_sets` data: the gate
+  (expand), the reply (group), the quantity question (sets). No word lists, no code shapes.
+
+### Answer to "too customized, too hard to maintain?"
+
+No. This REMOVES a special case: today expansion is limited to a hand-kept list of two domains (`gate.py:75`);
+R1 deletes that list. Handlers stay set-blind; they receive product codes as for any multi-code ask. Set
+knowledge stays in three places, all reading the same `product_sets` rows. A new intent tomorrow gets
+sets for free if it accepts products. The one genuinely new behaviour is the quantity question (R2), which
+lives in the existing quantity task.
+
+### Real examples (dev rows, prod copy 20 Oct; crew copy figures differ slightly)
+
+1. "srtwc8826 eta": both sets, under Set SRTWC8826-P and Set SRTWC8826-S, with the ETA of SRTWCX8826-P,
+   SRTWCX8826-S, SRTWCY8826 and SRTWC8826-SC (today: SC only, 03/11 and 08/11).
+2. "photo srtwc8826-s": the photos of SRTWCX8826-S, SRTWCY8826 and SRTWC8826-SC under one heading.
+3. "check stock srtwc8826-s" (availability contact): "How many sets of SRTWC8826-S?", then `6`: each part
+   checked at 6 (on hand SRTWCX8826-S 343, SRTWCY8826 422, SRTWC8826-SC 671), reply
+   `SRTWC8826-S x 6 sets: Got stock.`
+4. "srtwc7405-rl-s-pj x 6 sets" (availability): one number already given, no question; checks
+   SRTWCX7405-RL-S-PJ (1456), SRTWCY7405-PJ (1482), SRTWC7405-SC (2132) at 6 each.
+5. "delivery srtwc8608-rl" (staff): the open sales-order lines of SRTWCX8608-RL, SRTWCY8608 and
+   SRTWC8608-SC under Set SRTWC8608-RL.
+
+### Edge cases
+
+- A member hidden from the contact (not chat-searchable, brand scope) or discontinued: the set is not
+  expanded (visibility rule, `head/candidates.py:298-315`); the code answers as products. A member can
+  never be missing from the catalogue: `product_set_members.product_id` is a RESTRICT foreign key
+  (`app/models/product_set.py:99-106`).
+- Set plus loose items in one ask ("srtwc8826-s and srtwt6201"): the set's parts under its heading, the
+  loose product on its own; quantity per Q3.
+- A catalogue code naming several sets (srtwc8826 = -P and -S) when a quantity must be judged: per Q2.
+- "Complete sets: N (limited by <part>)" line: still the owner's yes/no from v3 (crew recommendation yes).
+  For an availability contact R2's verdict already says it in words, no number.
+- Price: a set member's price stays dropped in a set reply (today's rule, `fetch.py:1869-1893`); the set
+  price is the product-sets screen's (derived) and is not part of this lane.
+
+### Questions (4, with recommendations)
+
+Q1. Which asks expand a set. (a) every domain that accepts products (the matrix, 10 domains: stock,
+ETA, photos and files, promotion, orders and delivery, SPO, last cost, PO, product info); (b) only stock,
+ETA, photos, delivery. Recommendation: (a), one rule with no list to keep; (b) is the hand-kept list that
+caused this.
+
+Q2. A catalogue code that names several sets, when a quantity is needed ("check stock srtwc8826" for an
+availability contact): (a) ask which set first ("Which set: SRTWC8826-P (P-trap) or SRTWC8826-S
+(S-trap)?"), then "How many sets?"; (b) one number for all of them. Recommendation: (a), the two sets share
+the bowl and seat cover, so one number for both checks the shared parts once at the wrong quantity. Staff
+asks with numbers visible need no quantity and show both sets, as today.
+
+Q3. Set plus loose items with no quantity given: (a) one line per subject, named, not numbered
+("SRTWC8826-S: how many sets?" / "SRTWT6201: how many units?"); (b) ask the set first, then the loose
+items. Recommendation: (a), one reply, and a named line cannot be read as a line pick.
+
+Q4. Numbered quantity lists for plain products (today's "1. CODE -" list, outside sets): (a) leave as
+is in this lane; (b) also drop the numbers there so "1" is never a pick. Recommendation: (a), it is the
+general quantity rule and changing it touches every multi-product stock ask; file it as its own lane if
+you want it.
+
+Eval: parser gold rows for "srtwc8826 eta", "photo srtwc8826-s", "delivery srtwc8608-rl", "check stock
+srtwc8826-s" then "6", Malay variants; engine tests per domain (one per handler family) asserting the
+member ids reach each tool; red first.
+
+---
+
+(v3 and earlier below)
+
 Status: ANSWERED (owner, 30 Oct ~17:35): Q1 resolver change (not the prompt), Q2 the existing product
 logic, Q3 show every product under its set (no set maths), Q4 today's long-answer behaviour, Q5 no
 prompt change. The "S" rules below that add a set block or set counts are NOT built; the build follows

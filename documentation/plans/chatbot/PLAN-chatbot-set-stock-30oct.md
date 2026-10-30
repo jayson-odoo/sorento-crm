@@ -1,6 +1,6 @@
 # PLAN: CHATBOT-SET-STOCK - a stock ask for a set code answers SET availability first
 
-Status: Build (owner answered card v3, 30 Oct ~17:35: resolver change, show every part under its set, today's
+Status: Waiting on owner (card v4 after the hand-test change request, 30 Oct ~22:30). Before: Build (owner answered card v3, 30 Oct ~17:35: resolver change, show every part under its set, today's
 format, no prompt change). Red tests bb03573e, fix fa9fdcbe. Track: small fix (backend only, no migration, no
 auth or ingest change). Size M, owner-visible chatbot change.
 
