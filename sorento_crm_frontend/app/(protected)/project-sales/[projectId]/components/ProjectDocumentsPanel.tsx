@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Download, Eye, Trash2, Upload } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -26,10 +26,10 @@ import {
   type ProjectDocument,
   type UploadConflictChoice,
   deleteProjectDocument,
-  listProjectDocuments,
   resolveProjectDocumentTypeId,
   uploadProjectDocument,
 } from '../../_shared/services/projectDocumentService';
+import { useProjectDocuments } from '../../_shared/hooks/useProjectDocuments';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import type { Project } from '../../_shared/types/project.types';
 import { canWorkOnProject } from '../../_shared/lib/projectApproval';
@@ -58,10 +58,7 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
   const holdsDelete = useHasPermission('resource.attachments.delete');
   const canDelete = project.can_edit && holdsDelete;
 
-  const documents = useQuery({
-    queryKey: ['project-documents', project.id],
-    queryFn: () => listProjectDocuments(project.id),
-  });
+  const documents = useProjectDocuments(project.id);
 
   const remove = useMutation({
     mutationFn: (attachmentId: string) => deleteProjectDocument(attachmentId),
@@ -290,14 +287,17 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
  * concurrent multipart POSTs of tender drawings is how you get a timeout on the slowest one
  * with no way to tell the user WHICH failed. Each result is reported by name.
  */
-function UploadDialog({
+export function UploadDialog({
   projectId,
   onDone,
   onUploaded,
+  requirement = false,
 }: {
   projectId: string;
   onDone: () => void;
   onUploaded: () => void;
+  /** The header's "Upload requirement" use: same upload, its own title and plain Upload label. */
+  requirement?: boolean;
 }) {
   const [files, setFiles] = React.useState<File[]>([]);
   const [busy, setBusy] = React.useState(false);
@@ -415,7 +415,7 @@ function UploadDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Upload documents</DialogTitle>
+          <DialogTitle>{requirement ? 'Upload requirement' : 'Upload documents'}</DialogTitle>
         </DialogHeader>
         <DialogBody className="max-h-[60vh] overflow-y-auto">
           <FileDropzone
@@ -439,7 +439,7 @@ function UploadDialog({
             Cancel
           </Button>
           <Button type="button" onClick={submit} disabled={files.length === 0 || busy}>
-            {busy ? 'Uploading…' : `Upload ${files.length || ''}`.trim()}
+            {busy ? 'Uploading…' : requirement ? 'Upload' : `Upload ${files.length || ''}`.trim()}
           </Button>
         </DialogFooter>
       </DialogContent>

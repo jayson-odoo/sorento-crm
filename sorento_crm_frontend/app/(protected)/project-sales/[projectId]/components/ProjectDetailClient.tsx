@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ClipboardList,
   Clock,
@@ -56,7 +57,7 @@ import {
   useRejectProject,
 } from '../../_shared/hooks/useProjects';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
-import { isProjectApproved } from '../../_shared/lib/projectApproval';
+import { canWorkOnProject, isProjectApproved } from '../../_shared/lib/projectApproval';
 import {
   ApprovalStatePill,
   isAwaitingDecision,
@@ -71,7 +72,8 @@ import {
 } from './ProjectStatusAction';
 import { ProjectStatusPill } from './ProjectStatusPill';
 import { ProjectActivityPanel } from './ProjectActivityPanel';
-import { ProjectDocumentsPanel } from './ProjectDocumentsPanel';
+import { ProjectDocumentsPanel, UploadDialog } from './ProjectDocumentsPanel';
+import { projectDocumentsKey, useProjectDocuments } from '../../_shared/hooks/useProjectDocuments';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
 import { ReassignProjectDialog } from './ReassignProjectDialog';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
@@ -136,6 +138,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const { data: project, isLoading, isError, error } = useProject(projectId);
   const graph = useProjectStatusGraph('project', project?.template_id ?? null);
   const move = useChangeProjectStatus();
+  const documents = useProjectDocuments(projectId, {
+    enabled: project?.status_key === 'registered',
+  });
+  const queryClient = useQueryClient();
+  const [uploadingRequirement, setUploadingRequirement] = React.useState(false);
   const remove = useDeleteProject();
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [reassigning, setReassigning] = React.useState(false);
@@ -202,7 +209,17 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const canDecide = mayApprove && isAwaitingReview(project.approval_state, 'pending');
   const moves =
     project.can_edit && !waiting ? availableStatusMoves(graph.data, project.status_id) : [];
-  const { secondary: secondaryMoves } = splitStatusMoves(moves);
+  // A Registered project needs a document before Spec In (server rule, 422 otherwise): with
+  // none, Spec In is hidden and the header offers the upload instead. A failed read falls back
+  // to today's header; the server still refuses.
+  const specInMove = moves.find((option) => option.toKey === 'specified');
+  const gatedOnDocument = project.status_key === 'registered' && Boolean(specInMove);
+  const needsRequirement =
+    gatedOnDocument && documents.isSuccess && (documents.data ?? []).length === 0;
+  const awaitingDocuments = gatedOnDocument && documents.isLoading;
+  const secondaryMoves = splitStatusMoves(moves).secondary.filter(
+    (option) => !(needsRequirement && option.toKey === 'specified'),
+  );
   // The gear's items, each with its own rule; the gear itself shows only when one applies,
   // so an approver deciding a registration (Edit in the header, no Reassign, no Delete,
   // no stage moves) never opens an empty menu.
@@ -384,7 +401,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               <Button type="button" onClick={() => router.push(`/project-sales/${project.id}/edit`)}>
                 Submit for approval
               </Button>
-            ) : (
+            ) : needsRequirement ? (
+              canWorkOnProject(project) ? (
+                <Button type="button" onClick={() => setUploadingRequirement(true)}>
+                  Upload Requirement
+                </Button>
+              ) : null
+            ) : awaitingDocuments ? null : (
               <ProjectStatusAction
                 moves={moves}
                 isPending={move.isPending}
@@ -394,6 +417,17 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           }
         />
       </header>
+
+      {uploadingRequirement && (
+        <UploadDialog
+          requirement
+          projectId={project.id}
+          onDone={() => setUploadingRequirement(false)}
+          onUploaded={() =>
+            queryClient.invalidateQueries({ queryKey: projectDocumentsKey(project.id) })
+          }
+        />
+      )}
 
       {/* Read-only metadata of a portal registration, directly under the header (R7). */}
       {project.registration && <RegistrationFacts project={project} />}
