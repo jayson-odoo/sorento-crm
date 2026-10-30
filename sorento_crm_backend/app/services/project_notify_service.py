@@ -205,8 +205,8 @@ def notify_interest_registered(
         db,
         user_ids=sorted(recipients),
         notif_type="project_interest_registered",
-        title=f"{requester_name} registered interest in {label}",
-        body=f"{requester_name} registered interest in {label}: {project.title}",
+        title=f"{requester_name} registered as secondary lead on {label}",
+        body=f"{requester_name} registered as secondary lead on {label}: {project.title}",
         data={
             "project_id": str(project.id),
             "project_code": project.project_code,

@@ -79,6 +79,15 @@ FIELDS = {
     "defect_description": "Tiles chipped on arrival",
     "product_code": "ZZT-TILE-1",
     "quantity": 12,
+    # The rest of the fields the portal form requires on submit (FORM-REQUIRED-SERVER).
+    "contact_person": "ZZT Ali",
+    "contact_number": "0123456789",
+    "customer_type": "dealer",
+    "complaint_date": "2026-10-30",
+    "within_warranty": "yes",
+    "defects_discovered": "upon_delivery",
+    "complaint_type": "product_defect",
+    "salesperson": "ZZT Aminah",
 }
 
 

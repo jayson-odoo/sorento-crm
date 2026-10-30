@@ -75,7 +75,6 @@ import { DeliverySchedulesPanel } from './DeliverySchedulesPanel';
 import { ProjectDocumentsPanel } from './ProjectDocumentsPanel';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { SalesOrdersPanel } from './SalesOrdersPanel';
-import { SamplesPanel } from './SamplesPanel';
 import { StakeholdersPanel } from './StakeholdersPanel';
 
 function project(over: Partial<Project> = {}): Project {
@@ -99,7 +98,6 @@ function project(over: Partial<Project> = {}): Project {
 
 const PANELS: [string, (p: Project) => React.ReactElement, RegExp][] = [
   ['StakeholdersPanel', (p) => <StakeholdersPanel project={p} />, /Add stakeholder/],
-  ['SamplesPanel', (p) => <SamplesPanel project={p} />, /Record a sample/],
   ['DeliverySchedulesPanel', (p) => <DeliverySchedulesPanel project={p} />, /Upload a schedule/],
   ['PurchaseOrdersPanel', (p) => <PurchaseOrdersPanel project={p} />, /Upload a PO document/],
   ['SalesOrdersPanel', (p) => <SalesOrdersPanel project={p} />, /Build drafts/],

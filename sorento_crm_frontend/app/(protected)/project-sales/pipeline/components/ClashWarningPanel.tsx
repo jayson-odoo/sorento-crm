@@ -12,7 +12,7 @@ import type { ClashCandidate } from '../../_shared/types/project.types';
  * One line per candidate (PROJECT-REGISTER-V2 D2/D3), in two visually distinct halves:
  *
  * - A BLOCKING match means someone else owns this pursuit. The user cannot register; the
- *   form's one primary becomes "Register interest in <code>", so the line carries no
+ *   form's one primary becomes "Register as secondary lead on <code>", so the line carries no
  *   button of its own.
  * - A CONTEXT match means "this looks similar, is it the same one?". The user registers
  *   normally. Rendering these identically is what trains people to dismiss the warning

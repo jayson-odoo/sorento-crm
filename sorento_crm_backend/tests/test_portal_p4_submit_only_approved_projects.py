@@ -107,20 +107,35 @@ def _lead_of(w, pid: str):
     return w.db.get(Project, pid).lead_id
 
 
-def test_pp4_submit_only_owner_can_link_their_own_lead_on_an_approved_project(v2):
+def _lead_outcome(w, lead_id):
+    from app.models.projects import ProjectLead
+
+    w.db.expire_all()
+    row = w.db.get(ProjectLead, lead_id)
+    return row.outcome, row.qualified_at, row.customer_id
+
+
+def test_pp4_submit_only_owner_edit_ignores_their_own_lead_id_ac_l5(v2):
     pid = _approved_own(v2)
+    before = _lead_of(v2, pid)
     lead = seed_lead(v2, v2.sub_a)
     v2.db.commit()
+    state = _lead_outcome(v2, lead.id)
+    baseline = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"location": "Puchong"})
     res = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"lead_id": lead.id})
-    assert res.status_code == 200, res.text
-    assert _lead_of(v2, pid) == lead.id
+    assert res.status_code == baseline.status_code, (res.text, baseline.text)
+    assert _lead_of(v2, pid) == before
+    assert _lead_outcome(v2, lead.id) == state
 
 
-def test_pp4_submit_only_owner_cannot_link_another_users_lead_on_an_approved_project(v2):
+def test_pp4_submit_only_owner_edit_never_links_another_users_lead_ac_l5(v2):
     pid = _approved_own(v2)
     before = _lead_of(v2, pid)
     foreign = seed_lead(v2, v2.sub_b)
     v2.db.commit()
+    state = _lead_outcome(v2, foreign.id)
+    baseline = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"location": "Puchong"})
     res = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"lead_id": foreign.id})
-    assert res.status_code == 404, res.text
+    assert res.status_code == baseline.status_code, (res.text, baseline.text)
     assert _lead_of(v2, pid) == before
+    assert _lead_outcome(v2, foreign.id) == state
