@@ -221,9 +221,18 @@ def _describe_blockers(
         db, str(actor_user_id), own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN
     ):
         return "This development is already registered. Ask a sales manager about it."
+    # A user without the view grant (a salesperson who may only submit) is told WHICH project,
+    # so they can register as a secondary lead on it, but never who holds it.
+    can_see_holder = True
+    if actor_user_id:
+        from app.services.user_service import UserPermissionService
+
+        can_see_holder = own_scope.PROJECTS_VIEW in set(
+            UserPermissionService(db).get_user_permission_slugs(str(actor_user_id)) or ()
+        )
     owner_ids = [b.owner_user_id for b in blockers if b.owner_user_id]
     names = {}
-    if owner_ids:
+    if owner_ids and can_see_holder:
         from app.models.user import User
 
         names = {
@@ -234,12 +243,13 @@ def _describe_blockers(
     parts = []
     for blocker in blockers:
         who = names.get(blocker.owner_user_id) or "an unassigned owner"
-        parts.append(f'"{blocker.title}" ({blocker.project_code}), held by {who}')
+        held = f", held by {who}" if can_see_holder else ""
+        parts.append(f'"{blocker.title}" ({blocker.project_code}){held}')
 
     joined = "; ".join(parts)
     return (
         f"This development is already registered as {joined}. "
-        "Ask to join the project, or raise a dispute for a manager to decide."
+        "Ask to join the project, or register as a secondary lead for a manager to decide."
     )
 
 

@@ -269,3 +269,60 @@ def test_ac_g9_a_project_already_past_registered_is_not_blocked_or_rewritten(v2)
     assert res.status_code == 200, res.text
     assert _status_key(v2, project) == "specified"
     assert _move(v2, project, "quoted").status_code == 200
+
+
+# ------------------------------------------------------------------ G3 the REAL upload path
+#
+# The Documents tab posts to /api/resource-management/attachments/ with entity_type='project' and
+# entity_id=<project id>. The route (attachments.py ~:1129-1130) hands those to
+# AttachmentService.create_attachment, which writes them onto the attachments row itself and
+# creates NO entity_attachment_links row. Listing filters on the same two columns
+# (resources_service.py :840-841). The gate must count what that path writes.
+
+
+def _real_upload(w, project):
+    from app.schemas.resources import AttachmentCreate
+    from app.services.resources_service import AttachmentService
+
+    kind = _kind(w.db, DOC_CODE, "Project Document")
+    return AttachmentService(w.db).create_attachment(
+        AttachmentCreate(
+            attachment_type_id=kind.id,
+            original_filename="zzt-real.pdf",
+            stored_filename=f"zzt-{uuid.uuid4().hex}.pdf",
+            file_path="zzt/real.pdf",
+            file_size_bytes=10,
+            mime_type="application/pdf",
+            entity_type="project",
+            entity_id=str(project.id),
+        ),
+        w.owner,
+    )
+
+
+def test_ac_g3_real_upload_document_counts_over_http(v2):
+    project = _at(v2, "registered")
+    _real_upload(v2, project)
+    res = _move(v2, project, "specified")
+    assert res.status_code == 200, res.text
+    assert _status_key(v2, project) == "specified"
+
+
+def test_ac_g3_real_upload_document_counts_in_the_service(v2):
+    project = _at(v2, "registered")
+    _real_upload(v2, project)
+    _service_move(v2, project, "specified")
+    assert _stage_key(v2, project.status_id) == "specified"
+
+
+def test_ac_g3_real_upload_document_stops_counting_once_archived(v2):
+    """Guard: the Files screen's delete (soft) removes it from the gate again."""
+    from app.services.error_handler import AppException
+    from app.services.resources_service import AttachmentService
+
+    project = _at(v2, "registered")
+    att = _real_upload(v2, project)
+    AttachmentService(v2.db).archive_attachment(att.id, v2.owner)
+    with pytest.raises(AppException) as exc:
+        _service_move(v2, project, "specified")
+    assert exc.value.code == "project_requirements_missing"
