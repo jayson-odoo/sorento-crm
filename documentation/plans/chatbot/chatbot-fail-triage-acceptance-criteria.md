@@ -127,7 +127,9 @@ Should-fix:
   pair ahead of the team's map agents (`escalation.py:820`).
 - S3 a dry run (console) shows the same failure a live turn would (`escalation.py:1530`).
 - S4 AC-7a "cover it": Mocha product info routes to general_enquiries / purchasing_product.
-- S5 the R2 ask keys on why the set was withheld, when the envelope carries that reason.
+- S5 (lead decision, no change): the R2 ask keys on the product count. The only withholding is
+  the over-cap rule (`lanes/business/fetch.py:3949`, `set_withheld`, never carried to compose),
+  so count and reason select the same sets today; a second withholding reason pays for keying on it.
 - AC-3 gating (security nit): a contact without the price tag form grant gets "That form is not
   available on your account." and no link (the portal tab would refuse it,
   `public/portal_price_tag.py:69-77`).
