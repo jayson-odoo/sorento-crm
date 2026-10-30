@@ -49,7 +49,6 @@ def _kind(db, code: str, name: str):
 
 
 def _file(w, project, code: str = DOC_CODE, name: str = "Project Document", deleted: bool = False):
-    from app.models.entity_attachment import EntityAttachmentLink
     from app.models.resources import Attachment
 
     kind = _kind(w.db, code, name)
@@ -61,16 +60,10 @@ def _file(w, project, code: str = DOC_CODE, name: str = "Project Document", dele
         stored_filename=f"zzt-{uuid.uuid4().hex}.pdf",
         file_path="zzt/req.pdf",
         entity_type="project",
-        entity_id=project.id,
+        entity_id=str(project.id),
         is_deleted=deleted,
     )
     w.db.add(att)
-    w.db.flush()
-    w.db.add(
-        EntityAttachmentLink(
-            id=str(uuid.uuid4()), entity_type="project", entity_id=str(project.id), attachment_id=att.id
-        )
-    )
     w.db.flush()
     return att
 
@@ -165,20 +158,15 @@ def test_ac_g3_a_project_document_kind_file_counts(v2):
 
 
 def test_ac_g3_a_document_with_no_attachment_type_counts(v2):
-    from app.models.entity_attachment import EntityAttachmentLink
     from app.models.resources import Attachment
 
     project = _at(v2, "registered")
     att = Attachment(
         id=str(uuid.uuid4()), company_id=v2.company_id, attachment_type_id=None,
         original_filename="zzt.pdf", stored_filename=f"zzt-{uuid.uuid4().hex}.pdf",
-        file_path="zzt/x.pdf", entity_type="project", entity_id=project.id,
+        file_path="zzt/x.pdf", entity_type="project", entity_id=str(project.id),
     )
     v2.db.add(att)
-    v2.db.flush()
-    v2.db.add(EntityAttachmentLink(
-        id=str(uuid.uuid4()), entity_type="project", entity_id=str(project.id), attachment_id=att.id
-    ))
     v2.db.flush()
     _service_move(v2, project, "specified")
     assert _stage_key(v2, project.status_id) == "specified"
