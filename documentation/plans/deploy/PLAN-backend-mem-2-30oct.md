@@ -1,7 +1,7 @@
 # Backend memory, round 2 (BACKEND-MEM-2)
 
-Status: in review (2026-10-30). Crew chose S1 + S2 + S3 in this PR; all three built red-first and measured
-(see "Built" below). Track: small fix track (no migration, no auth/RBAC, no ingest surface).
+Status: in review (2026-10-30), PR #2007: S1 + S2 + S3 built red-first and measured; reviewer READY, security
+re-check clear. Ships in a release. Track: small fix track (no migration, no auth/RBAC, no ingest surface).
 Lane: `crew/backend-mem-2` (sandbox branch `claude/backend-mem-investigation-o09ezl`), PR #2007.
 Previous round: `PLAN-backend-memory-28oct.md`, PR #1950 (gc.freeze, graceful TTOU).
 
