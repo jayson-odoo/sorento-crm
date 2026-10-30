@@ -41,6 +41,8 @@ class WriteDef:
     execute: Callable[[Any, dict, dict], dict]
     #: The arg naming the record ("ask_id"); "" for a create.
     record_key: str
+    #: (args, before, after, shown) -> [{record, field, before, after}] in words, for what really changed.
+    changes: Callable[[dict, dict, dict, dict], list[dict]] | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,23 @@ def _line(value: Any) -> str:
     """A value placed in a summary: whitespace (newlines, tabs) collapsed to single spaces, so a name or
     a note cannot start a second proposal line."""
     return " ".join(str(value if value is not None else "").split())
+
+
+def _word(value: Any) -> str:
+    """A value as a person reads it in a change line: whitespace collapsed, free text cut at 200 characters."""
+    text = _line(value)
+    if not text:
+        return "none"
+    return text if len(text) <= SUMMARY_NOTE_CHARS else f"{text[:SUMMARY_NOTE_CHARS]} ({len(text)} characters)"
+
+
+def _diff(record: str, pairs: list[tuple[str, Any, Any]]) -> list[dict]:
+    """[{record, field, before, after}] for the (label, before, after) triples whose words differ."""
+    out = []
+    for field, was, now in pairs:
+        if _word(was) != _word(now):
+            out.append({"record": _line(record), "field": field, "before": _word(was), "after": _word(now)})
+    return out
 
 
 def _body(model, data: dict):
@@ -226,6 +245,20 @@ def _ask_summary(args: dict, before: dict) -> str:
     return f"{' and '.join([first, *changes[1:]])} on {target}"
 
 
+_STATE_WORDS = {"open": "Open", "done": "Done"}
+
+
+def _ask_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    who = before.get("customer_name") or before.get("contact_name") or ""
+    record = f"{who} {before.get('product_code') or ''}".strip()
+    pairs = []
+    if "state" in after:
+        pairs.append(("State", _STATE_WORDS.get(before.get("state"), before.get("state")), _STATE_WORDS.get(after["state"], after["state"])))
+    if "note" in after:
+        pairs.append(("Note", before.get("note"), after["note"]))
+    return _diff(record, pairs)
+
+
 def _ask_execute(db, user: dict, args: dict) -> dict:
     from app.api.v1.sales.customer_asks import customer_asks_update
     from app.schemas.stock_ask import StockAskUpdate
@@ -263,6 +296,7 @@ WRITES: dict[str, WriteDef] = {
         summary=_ask_summary,
         execute=_ask_execute,
         record_key="ask_id",
+        changes=_ask_changes,
     ),
 }
 
@@ -454,7 +488,9 @@ def propose_step(db, ctx, name: str, args: Any, *, seen_ids: set[str]) -> tuple[
     # `_show` holds what the summary needs but the re-check must not compare (names looked up now).
     shown = before.pop("_show", {})
     summary = _line(definition.summary(args, {**before, **shown}))
-    step = {"tool": name, "args": dict(args), "before": before, "summary": summary, "status": "proposed"}
+    step = {
+        "tool": name, "args": dict(args), "before": before, "shown": shown, "summary": summary, "status": "proposed",
+    }
     return ToolResult("proposed", data={"summary": summary}), step
 
 
@@ -620,6 +656,18 @@ def _opp_update_execute(db, user: dict, args: dict) -> dict:
     return {"id": out["id"], "after": {k: _plain(out.get(k)) for k in _OPP_KEYS}}
 
 
+_OPP_FIELD_LABELS = (
+    ("title", "Title"), ("stage_label", "Stage"), ("customer_code", "Customer"), ("prospect_name", "Prospect"),
+    ("sales_agent_label", "Sales agent"), ("expected_close_date", "Close date"), ("expected_amount", "Amount"),
+    ("lost_reason", "Lost reason"),
+)
+
+
+def _opp_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    record = before.get("title") or after.get("title") or ""
+    return _diff(record, [(label, before.get(key), after.get(key)) for key, label in _OPP_FIELD_LABELS if key in after])
+
+
 def _opp_list(db, ctx, args: dict) -> ToolResult:
     from app.api.v1.sales.opportunities import list_opportunities
 
@@ -693,6 +741,7 @@ WRITES[CREATE_OPP] = WriteDef(
     summary=_opp_create_summary,
     execute=_opp_create_execute,
     record_key="",
+    changes=_opp_changes,
 )
 WRITES[UPDATE_OPP] = WriteDef(
     name=UPDATE_OPP,
@@ -722,6 +771,7 @@ WRITES[UPDATE_OPP] = WriteDef(
     summary=_opp_update_summary,
     execute=_opp_update_execute,
     record_key="opportunity_id",
+    changes=_opp_changes,
 )
 USER_READS[LIST_OPPS] = UserRead(
     name=LIST_OPPS,
@@ -1023,9 +1073,16 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     lines += [f"linked to {codes[c]}" for c in link] + [f"unlinked from {codes[c]}" for c in unlink_ids]
     if not lines:
         raise AppException(status_code=422, message=f"Nothing to change for {phone}.", code="VALIDATION_ERROR")
+    from app.models.order import Customer
+
+    known: dict = {}
+    if facts["links"]:
+        with _users_scope(db, uid):
+            known = dict(db.query(Customer.id, Customer.customer_code).filter(Customer.id.in_(facts["links"])).all())
     return {
         "contact": contact, "facts": facts, "add": add, "remove": remove, "ai": ai,
         "link": link, "unlink": list(unlink_ids), "codes": codes, "lines": lines, "phone": phone,
+        "link_codes": {**{str(k): v for k, v in known.items()}, **codes},
     }
 
 
@@ -1041,12 +1098,41 @@ def _contact_read_before(db, user: dict, args: dict) -> dict:
     contact = plan["contact"]
     return {
         **_contact_state(contact, plan["facts"]),
-        "_show": {"phone": plan["phone"], "name": contact.name or "", "changes": plan["lines"]},
+        "_show": {
+            "phone": plan["phone"], "name": contact.name or "", "changes": plan["lines"],
+            "link_codes": plan["link_codes"],
+        },
     }
 
 
 def _contact_summary(args: dict, before: dict) -> str:
     return f"{_line(before['phone'])} {_line(before['name'])}: " + "; ".join(_line(c) for c in before["changes"])
+
+
+def _on_off(value: Any) -> str:
+    return "On" if value else "Off"
+
+
+def _link_words(ids: list, codes: dict) -> str:
+    return ", ".join(sorted(codes.get(str(i), "a customer") for i in ids)) or "none"
+
+
+def _contact_words(state: dict, codes: dict) -> dict:
+    """A contact's access state in words: the role, AI replies On / Off, and the linked customers by code."""
+    return {
+        "Role": _role_label(state["role"], state["owner_companies"]),
+        "AI replies": _on_off(state["chatbot_allowed"]),
+        "Customer links": _link_words(state["links"], codes),
+    }
+
+
+def _contact_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    codes = shown.get("link_codes") or {}
+    record = f"{shown.get('phone') or ''} {shown.get('name') or ''}".strip()
+    if not {"role", "owner_companies", "chatbot_allowed", "links"} <= set(after):
+        return []
+    was, now = _contact_words(before, codes), _contact_words(after, codes)
+    return _diff(record, [(field, was[field], now[field]) for field in was])
 
 
 def _contact_execute(db, user: dict, args: dict) -> dict:
@@ -1077,14 +1163,21 @@ def _contact_execute(db, user: dict, args: dict) -> dict:
     db.flush()
     db.expire(contact)
     after = _contact_state(contact, _contact_facts(db, contact, uid))
+    from app.audit_context import get_actor
+    from app.models.user import User
+
+    codes = plan["link_codes"]
+    was, now = _contact_words(before, codes), _contact_words(after, codes)
+    actor = get_actor(db)
+    operator = db.query(User.name).filter(User.id == str(actor.real_user_id if actor else uid)).scalar()
     audit_service.record(
         db,
         event=CONTACT_EVENT,
         entity_type="respond_contacts",
         entity_id=contact.id,
-        old_values={k: v for k, v in before.items() if v != after[k]},
-        new_values={k: v for k, v in after.items() if v != before[k]},
-        description="Contact access set by the agent",
+        old_values={k: v for k, v in was.items() if v != now[k]},
+        new_values={k: v for k, v in now.items() if v != was[k]},
+        description=f"Agent change for {contact.phone_number} by {operator or 'the agent user'}",
     )
     db.commit()
     return {"id": str(args["contact_id"]), "after": after, "unlinked_customer_ids": removed}
@@ -1182,6 +1275,7 @@ WRITES[UPDATE_CONTACT] = WriteDef(
     summary=_contact_summary,
     execute=_contact_execute,
     record_key="contact_id",
+    changes=_contact_changes,
 )
 USER_READS[FIND_CONTACTS] = UserRead(
     name=FIND_CONTACTS,

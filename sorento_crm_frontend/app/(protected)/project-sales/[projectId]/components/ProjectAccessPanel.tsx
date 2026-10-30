@@ -23,7 +23,10 @@ import {
   useTakeoverMutations,
   useTakeoverRequests,
 } from '../../_shared/hooks/useProjects';
-import type { Project } from '../../_shared/types/project.types';
+import type { ColumnDef } from '@tanstack/react-table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import type { Project, TakeoverRequest } from '../../_shared/types/project.types';
 import { isProjectApproved } from '../../_shared/lib/projectApproval';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
 
@@ -42,15 +45,111 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
   const canManage = useHasPermission('projects.projects.manage');
   const [requesting, setRequesting] = React.useState<'join' | 'dispute' | null>(null);
 
-  // An interest is the existing dispute request, shown to everyone; join requests stay
-  // under Open requests for the owner to rule on.
-  const interested = (requests.data ?? []).filter(
-    (request) => request.status === 'pending' && request.kind === 'dispute',
-  );
+  // A secondary lead is the existing dispute request, shown to everyone as a table (pending
+  // and decided); join requests stay under Open requests for the owner to rule on.
+  const secondaryLeads = (requests.data ?? []).filter((request) => request.kind === 'dispute');
   const pending = (requests.data ?? []).filter(
     (request) => request.status === 'pending' && request.kind !== 'dispute',
   );
-  const decided = (requests.data ?? []).filter((request) => request.status !== 'pending');
+  const decided = (requests.data ?? []).filter(
+    (request) => request.status !== 'pending' && request.kind !== 'dispute',
+  );
+
+  const columns = React.useMemo<ColumnDef<TakeoverRequest>[]>(
+    () => [
+      {
+        id: 'requester_name',
+        accessorFn: (row) => row.requester_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Salesperson" column={column} />,
+        cell: ({ row }) => {
+          const name = row.original.requester_name ?? 'Someone';
+          return (
+            <span className="truncate text-sm font-medium" title={name}>
+              {name}
+            </span>
+          );
+        },
+        size: 160,
+        meta: { headerTitle: 'Salesperson' },
+      },
+      {
+        id: 'created_at',
+        accessorFn: (row) => row.created_at ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Date" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm">
+            {row.original.created_at ? formatDateInMalaysia(row.original.created_at) : '-'}
+          </span>
+        ),
+        size: 120,
+        meta: { headerTitle: 'Date' },
+      },
+      {
+        id: 'reason',
+        accessorFn: (row) => row.reason,
+        header: ({ column }) => <DataGridColumnHeader title="How they found it" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm" title={row.original.reason}>
+            {row.original.reason}
+          </span>
+        ),
+        size: 260,
+        meta: { headerTitle: 'How they found it' },
+      },
+      {
+        id: 'status',
+        accessorFn: (row) => row.status,
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        cell: ({ row }) => {
+          const status = row.original.status;
+          const label =
+            status === 'pending' ? 'Pending' : status === 'approved' ? 'Reassigned' : 'Dismissed';
+          const variant =
+            status === 'pending' ? 'warning' : status === 'approved' ? 'success' : 'secondary';
+          return (
+            <Badge variant={variant} appearance="light">
+              {label}
+            </Badge>
+          );
+        },
+        size: 120,
+        meta: { headerTitle: 'Status' },
+      },
+      ...(canManage
+        ? [
+            {
+              id: 'actions',
+              header: () => null,
+              enableSorting: false,
+              cell: ({ row }: { row: { original: TakeoverRequest } }) =>
+                row.original.status === 'pending' ? (
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={decide.isPending}
+                      onClick={() => decide.mutate({ id: row.original.id, approve: true })}
+                    >
+                      Reassign to {row.original.requester_name ?? 'requester'}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={decide.isPending}
+                      onClick={() => decide.mutate({ id: row.original.id, approve: false })}
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                ) : null,
+              size: 300,
+            } satisfies ColumnDef<TakeoverRequest>,
+          ]
+        : []),
+    ],
+    [canManage, decide],
+  );
 
   return (
     <>
@@ -94,59 +193,22 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                   Ask to join
                 </Button>
                 <Button type="button" size="sm" variant="ghost" onClick={() => setRequesting('dispute')}>
-                  Register interest
+                  Register as secondary lead
                 </Button>
               </div>
             </div>
           )}
 
-          <div>
-            <p className="text-xs text-muted-foreground">Interested</p>
-            {interested.length === 0 ? (
-              <p className="text-sm text-muted-foreground">-</p>
-            ) : (
-              <ul className="mt-1 space-y-2">
-                {interested.map((request) => (
-                  <li key={request.id} className="rounded-md border border-border p-2.5">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                      <span className="text-sm font-medium">
-                        {request.requester_name ?? 'Someone'}
-                      </span>
-                      {request.created_at && (
-                        <span className="text-xs text-muted-foreground">
-                          {formatDateInMalaysia(request.created_at)}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1 break-words text-sm text-muted-foreground">
-                      {request.reason}
-                    </p>
-                    {canManage && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={decide.isPending}
-                          onClick={() => decide.mutate({ id: request.id, approve: true })}
-                        >
-                          Reassign to {request.requester_name ?? 'requester'}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={decide.isPending}
-                          onClick={() => decide.mutate({ id: request.id, approve: false })}
-                        >
-                          Dismiss
-                        </Button>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <PanelDataGrid
+            title="Secondary leads"
+            columns={columns}
+            rows={secondaryLeads}
+            getRowId={(row) => row.id}
+            listingKey="projects.projects.view::project-secondary-leads"
+            isLoading={requests.isLoading}
+            error={requests.isError ? requests.error : undefined}
+            emptyTitle="No secondary leads"
+          />
 
           <div>
             <p className="text-xs text-muted-foreground">Open requests</p>
@@ -206,7 +268,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                         {request.status}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
-                        {request.kind === 'dispute' ? 'Interest' : 'Join'} by{' '}
+                        Join by{' '}
                         {request.requester_name ?? 'someone'}
                         {request.decided_by_name ? ` · decided by ${request.decided_by_name}` : ''}
                       </span>
@@ -256,7 +318,7 @@ function RequestDialog({
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
           <DialogTitle>
-            {isJoin ? 'Ask to join this project' : `Register interest in ${projectCodeLabel(project)}`}
+            {isJoin ? 'Ask to join this project' : `Register as secondary lead on ${projectCodeLabel(project)}`}
           </DialogTitle>
           <DialogDescription>
             {isJoin
@@ -297,7 +359,7 @@ function RequestDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!reason.trim() || request.isPending}>
-              {isJoin ? 'Send request' : 'Register interest'}
+              {isJoin ? 'Send request' : 'Register as secondary lead'}
             </Button>
           </DialogFooter>
         </form>

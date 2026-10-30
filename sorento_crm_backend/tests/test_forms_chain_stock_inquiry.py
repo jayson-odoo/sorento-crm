@@ -77,7 +77,10 @@ def _setup(w, *, approve_grace=None):
 
 
 def _draft(w):
-    res = w.as_contact(w.contact).post(f"{SUB}/{KIND}", json={"fields": FIELDS})
+    # The salesperson pick is the one field the portal form requires (FORM-REQUIRED-SERVER).
+    res = w.as_contact(w.contact).post(
+        f"{SUB}/{KIND}", json={"fields": {**FIELDS, "salesperson_contact_id": w.contact}}
+    )
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "draft"
     return res.json()["id"]

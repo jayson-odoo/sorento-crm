@@ -287,26 +287,6 @@ def test_rw8_once_approved_it_moves_through_the_funnel_like_any_project(world):
     assert res.status_code != 409 or res.json()["code"] != "project_not_approved", res.text
 
 
-def test_rw8_a_lead_cannot_be_linked_to_an_unapproved_project(world):
-    from app.models.projects import ProjectLead
-    from app.services.error_handler import AppException
-    from app.services.project_lead_service import set_project_lead
-
-    pend = project(world.db, world.company_id, "Lead target", approval_state="pending", owner=world.root)
-    lead = ProjectLead(
-        id=uid(), company_id=world.company_id, lead_code=f"LD-ZZT-{uid()[:6]}", title="A sighting",
-        normalised_title="a sighting", outcome="open", owner_user_id=world.root,
-    )
-    world.db.add(lead)
-    world.db.flush()
-    with pytest.raises(AppException) as exc:
-        set_project_lead(world.db, pend, lead.id, actor_user_id=world.root, permissions={"projects.projects.manage"})
-    assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "project_not_approved"
-    world.db.refresh(lead)
-    assert lead.outcome == "open"
-
-
 def test_rw8_the_project_form_cannot_link_a_lead_to_an_unapproved_project_over_http(world):
     from app.models.projects import ProjectLead
 
@@ -317,9 +297,17 @@ def test_rw8_the_project_form_cannot_link_a_lead_to_an_unapproved_project_over_h
     )
     world.db.add(lead)
     world.db.flush()
+    world.db.commit()
+    baseline = as_user(world, world.root).put(f"{STAFF}/{pend.id}", json={"mukim": "x"})
     res = as_user(world, world.root).put(f"{STAFF}/{pend.id}", json={"lead_id": lead.id})
-    assert res.status_code == 409, res.text
-    assert res.json()["code"] == "project_not_approved"
+    # AC-L5: lead_id on an edit is ignored, so the answer is the one a PUT without it gets,
+    # and nothing is linked.
+    assert res.status_code == baseline.status_code, (res.text, baseline.text)
+    world.db.expire_all()
+    from app.models.projects import Project
+
+    assert world.db.get(Project, pend.id).lead_id is None
+    assert world.db.get(ProjectLead, lead.id).outcome == "open"
 
 
 def test_rw8_qualifying_a_lead_is_not_blocked_by_an_unapproved_project_of_the_same_title(world):
