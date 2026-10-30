@@ -39,18 +39,44 @@ import {
 } from '../hooks/useNewProductApplications';
 import NewProductApplicationAttachments from './NewProductApplicationAttachments';
 import { searchStockInquiryOptions } from '../services/newProductApplicationService';
+import PortalNewProductApplicationForm from '@/app/(auth)/portal/components/NewProductApplicationForm';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import { useRequestScope } from '@/hooks/useRequestScope';
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
-export default function NewProductApplicationForm({
-  applicationId,
-  stockInquiryId,
-}: {
+interface NewProductApplicationFormProps {
   /** Edit mode: the application to change. */
   applicationId?: string;
   /** New mode: a responded stock inquiry to copy the text from. */
   stockInquiryId?: string;
-}) {
+}
+
+/**
+ * A salesperson limited to their own applications (PORTAL-P4-REQUESTS R3, form parity) creates and
+ * edits in the portal's own form, through My Requests; `?stock_inquiry_id=` starts it from that
+ * inquiry as the portal's own picker does. A create-only applicant is staff: the staff form,
+ * unchanged.
+ */
+export default function NewProductApplicationForm(props: NewProductApplicationFormProps) {
+  const { limited } = useRequestScope('new_product_application');
+  if (limited) {
+    return (
+      <MyRequestClientProvider>
+        <PortalNewProductApplicationForm
+          applicationId={props.applicationId}
+          startFromInquiryId={props.applicationId ? undefined : props.stockInquiryId}
+        />
+      </MyRequestClientProvider>
+    );
+  }
+  return <StaffNewProductApplicationForm {...props} />;
+}
+
+function StaffNewProductApplicationForm({
+  applicationId,
+  stockInquiryId,
+}: NewProductApplicationFormProps) {
   const router = useRouter();
   const { create, update, submit } = useNewProductApplicationMutations();
   const existing = useNewProductApplicationQuery(applicationId ?? null);

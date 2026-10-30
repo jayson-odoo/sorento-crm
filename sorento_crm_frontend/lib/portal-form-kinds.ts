@@ -109,6 +109,16 @@ export const LANDING_KINDS: readonly PortalLandingKind[] = [
 ] as const;
 
 /**
+ * The landing's order for a set of kinds: Stock Inquiry first (the dealers' main form, the one
+ * deliberate exception), everything else in `LANDING_KINDS` order. One rule for the portal
+ * dropdown and the CRM's MY REQUESTS menu.
+ */
+export function orderLandingKinds(kinds: readonly string[]): PortalLandingKind[] {
+  const rest = LANDING_KINDS.filter((k) => k !== 'stock_inquiry' && kinds.includes(k));
+  return kinds.includes('stock_inquiry') ? ['stock_inquiry', ...rest] : rest;
+}
+
+/**
  * Every contact already gets `SUBMISSION_KINDS` (the base default,
  * PLAN-portal-forms-market-segment D3) - a market segment can only grant more
  * on top of that base, never take a base kind away. This is what the Market

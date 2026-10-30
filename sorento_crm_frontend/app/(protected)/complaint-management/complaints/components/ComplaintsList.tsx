@@ -26,6 +26,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useComplaintRootCausesSelect } from '../../complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks/useComplaintResolutions';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -44,8 +45,31 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 
+const STATUS_OPTIONS = [
+  { value: 'new', label: 'New' },
+  { value: 'submitted', label: 'Submitted' },
+  { value: 'resubmitted', label: APPEALED_LABEL },
+  { value: 'updated', label: 'Updated' },
+  { value: 'responded', label: 'Responded' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'settled_on_site', label: 'Settled on site' },
+];
+
+/**
+ * A salesperson limited to their own complaints gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function ComplaintsList() {
+  const { limited } = useRequestScope('complaint');
+  if (limited) return <MyRequestPortalList kind="complaint" />;
+  return <StaffComplaintsList />;
+}
+
+function StaffComplaintsList() {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -298,7 +322,6 @@ export default function ComplaintsList() {
           </span>
         ),
         size: 160,
-        enableSorting: false,
         meta: { headerTitle: 'Handled By', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
@@ -391,7 +414,7 @@ export default function ComplaintsList() {
       }
     >
       <Plus />
-      Create Complaint
+      Create
     </Button>
   );
 
@@ -457,16 +480,7 @@ export default function ComplaintsList() {
                     <SearchableMultiSelect
                       value={splitMulti(statusFilter)}
                       onChange={(v) => setStatusFilter(joinMulti(v))}
-                      options={[
-                        { value: 'new', label: 'New' },
-                        { value: 'submitted', label: 'Submitted' },
-                        { value: 'resubmitted', label: 'Appealed' },
-                        { value: 'updated', label: 'Updated' },
-                        { value: 'responded', label: 'Responded' },
-                        { value: 'approved', label: 'Approved' },
-                        { value: 'rejected', label: 'Rejected' },
-                        { value: 'settled_on_site', label: 'Settled on site' },
-                      ]}
+                      options={STATUS_OPTIONS}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
                       clearable

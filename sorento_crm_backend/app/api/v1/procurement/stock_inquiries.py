@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
 
+from app.api.v1._request_own_scope import RequestScope, empty_page, stock_inquiry_own_scope
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
@@ -61,9 +62,19 @@ def get_stock_inquiries(
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    own: Optional[RequestScope] = Depends(stock_inquiry_own_scope),
 ):
-    """Get stock inquiries with pagination and search."""
+    """Get stock inquiries with pagination and search.
+
+    A user with ``view_own`` alone gets the rows their own contact submitted, drafts included.
+    """
+    contact_id = None
+    if own is not None:
+        narrowed = own.list_filter()
+        if narrowed is None:
+            return empty_page(page, limit)
+        contact_id = narrowed[1]
     try:
         service = StockInquiryService(db)
         sort_field = (sort and sort.strip()) or "created_at"
@@ -75,7 +86,7 @@ def get_stock_inquiries(
             query=query,
             sort_field=sort_field,
             sort_dir=sort_dir,
-            contact_id=None,
+            contact_id=contact_id,
             space_id=None,
             statuses=statuses,
             viewer_user_id=(current_user or {}).get("id"),

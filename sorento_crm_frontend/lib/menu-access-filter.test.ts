@@ -19,6 +19,16 @@ function collectPaths(items: MenuConfig): string[] {
   return out;
 }
 
+function collectPathsWithoutSalesperson(items: MenuConfig): string[] {
+  const out: string[] = [];
+  for (const item of items) {
+    if (item.audience === 'salesperson') continue;
+    if (item.path) out.push(item.path);
+    if (item.children) out.push(...collectPathsWithoutSalesperson(item.children));
+  }
+  return out;
+}
+
 /** Every slug any entry of the tree names, so a holder of all of them is "all permissions". */
 function collectSlugs(items: MenuConfig): Set<string> {
   const out = new Set<string>();
@@ -82,7 +92,12 @@ describe('applyMenuAccess on the real MENU_SIDEBAR', () => {
       isSuperadmin: true,
       permissionSet: collectSlugs(MENU_SIDEBAR),
     });
-    expect(collectPaths(menu)).toEqual(collectPaths(MENU_SIDEBAR));
+    // Every path except the items with audience 'salesperson' (a superadmin is staff).
+    const expected = collectPathsWithoutSalesperson(MENU_SIDEBAR);
+    expect(expected.length).toBeLessThan(collectPaths(MENU_SIDEBAR).length);
+    const visible = collectPaths(menu);
+    expect(visible.filter((p) => p.startsWith('/my-requests'))).toEqual([]);
+    expect(visible).toEqual(expected);
   });
 
   it('shows everything that is not superadmin-only while permissions are still loading', () => {

@@ -21,7 +21,7 @@ export default async function NewProductApplicationDetailPage({
       <PageHeader
         title="New Product Application"
         actions={
-          <BackToList
+          <BackToList hideForLimited="new_product_application"
             listPath="/procurement-management/new-product-applications"
             label="Back to new product applications"
           />

@@ -21,7 +21,7 @@ export default function PurchaseRequestDetailPage({
       <PageHeader
         title="Purchase Request"
         actions={
-          <BackToList
+          <BackToList hideForLimited="purchase_request"
             listPath="/procurement-management/purchase-requests"
             label="Back to purchase requests"
           />

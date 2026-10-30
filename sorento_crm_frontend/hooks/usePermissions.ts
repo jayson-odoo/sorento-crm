@@ -8,8 +8,21 @@ import { fetchMyPermissions } from '@/lib/permissions-service';
 const PERMISSIONS_QUERY_KEY = ['my-permissions'];
 const NO_PERMISSIONS: string[] = [];
 
+/**
+ * `useSession()`, read as signed out where no SessionProvider wraps the tree instead of throwing,
+ * so a component that only branches on a slug renders in isolation (FormComments reads the context
+ * for the same reason). Under the app shell a provider is always there and nothing changes.
+ */
+function useSessionOrSignedOut(): Pick<ReturnType<typeof useSession>, 'data' | 'status'> {
+  try {
+    return useSession();
+  } catch {
+    return { data: null, status: 'unauthenticated' };
+  }
+}
+
 export function usePermissions() {
-  const { status } = useSession();
+  const { status } = useSessionOrSignedOut();
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: PERMISSIONS_QUERY_KEY,
     queryFn: fetchMyPermissions,
@@ -32,7 +45,7 @@ export function usePermissions() {
 
 export function useHasPermission(slug: string): boolean {
   const { permissionSet, isLoading } = usePermissions();
-  const { data: session, status } = useSession();
+  const { data: session, status } = useSessionOrSignedOut();
   if (status !== 'authenticated' || !session || isLoading) return false;
   if (!slug) return true;
   return permissionSet.has(slug);
@@ -40,7 +53,7 @@ export function useHasPermission(slug: string): boolean {
 
 export function useHasAnyPermission(slugs: string[]): boolean {
   const { permissionSet, isLoading } = usePermissions();
-  const { data: session, status } = useSession();
+  const { data: session, status } = useSessionOrSignedOut();
   if (status !== 'authenticated' || !session || isLoading) return false;
   if (!slugs.length) return true;
   return slugs.some((s) => permissionSet.has(s));

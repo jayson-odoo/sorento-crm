@@ -20,7 +20,6 @@ import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchableSelect } from "@/components/common/SearchableSelect";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import LookupBoundField from "@/components/common/LookupBoundField";
 import {
   useCreateComplaint,
@@ -48,6 +47,9 @@ import ListPager from '@/components/common/ListPager';
 import { complaintsPagerQuery } from '../hooks/useComplaints';
 import ComplaintManualAttachmentsSection from "./ComplaintManualAttachmentsSection";
 import { usePublicViewLinksEnabled } from "@/hooks/usePublicViewLinksEnabled";
+import { useRequestScope } from "@/hooks/useRequestScope";
+import MyRequestPortalForm from "@/components/common/MyRequestPortalForm";
+import { useComplaintFulfilmentTabs } from './useComplaintFulfilmentTabs';
 
 interface ComplaintFormProps {
   complaintId?: string;
@@ -109,7 +111,19 @@ function cleanProductLines(
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
-export default function ComplaintForm({
+/**
+ * A salesperson limited to their own complaints (PORTAL-P4-REQUESTS R1, form parity) creates and
+ * edits in the portal's own form, written through My Requests; everyone else the staff form,
+ * unchanged.
+ */
+export default function ComplaintForm(props: ComplaintFormProps) {
+  const { limited } = useRequestScope("complaint");
+  const fulfilmentTabs = useComplaintFulfilmentTabs(props.complaintId);
+  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} extraTabs={fulfilmentTabs} />;
+  return <StaffComplaintForm {...props} />;
+}
+
+function StaffComplaintForm({
   complaintId,
   onSuccess,
 }: ComplaintFormProps) {

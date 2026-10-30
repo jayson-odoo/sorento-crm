@@ -11,6 +11,7 @@ import type {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
 
 export type ComplaintsListParams = DataGridApiFetchParams & {
   assigned_to?: string;
@@ -55,6 +56,16 @@ export async function getComplaint(id: string): Promise<ComplaintDetail> {
   );
   if (!response.ok) throw new Error('Failed to fetch complaint');
   return response.json();
+}
+
+/** Revision lineage for the office Revisions tab (the portal history's own payload). */
+export async function getComplaintRevisions(id: string): Promise<FormRevisionEntry[]> {
+  const response = await apiFetch(`/api/v1/complaints-management/complaints/${id}/revisions`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load revisions'));
+  }
+  const data = await response.json();
+  return (data?.items ?? []) as FormRevisionEntry[];
 }
 
 export async function createComplaint(

@@ -299,10 +299,21 @@ def rate_limited_minutes_message(retry_after_seconds: int) -> str:
     return f"Too many tries. Try again in {minutes} {word}."
 
 
+def is_salesperson(db: Session, user: User) -> bool:
+    """An active, untrashed salesperson (roles within salesperson + portal_user) with a linked contact."""
+    from app.services.user_service import UserPermissionService
+
+    if user.status != "ACTIVE" or user.is_trashed or not user.respond_contact_id:
+        return False
+    role_slugs = UserPermissionService(db).get_user_role_slugs(str(user.id))
+    return "salesperson" in role_slugs and role_slugs <= {"salesperson", "portal_user"}
+
+
 def home_path_for_user(db: Session, user: User) -> str:
     """AC-28: a `callbackUrl` (frontend concern) always wins; otherwise -
 
-    - `salesperson` role + a linked contact -> that contact's portal home;
+    - an active salesperson (see `is_salesperson`) -> "/my-requests", inside the CRM;
+    - `salesperson` plus another role + a linked contact -> that contact's portal home;
     - any admin role or CRM permission -> the CRM home ("/");
     - a linked contact -> its portal home;
     - else -> "/".
@@ -320,6 +331,12 @@ def home_path_for_user(db: Session, user: User) -> str:
             .filter(RespondContact.id == user.respond_contact_id)
             .first()
         )
+
+    if is_salesperson(db, user):
+        # Mint the contact's portal slug now, so /users/me and the verify page find it.
+        if contact is not None:
+            PortalService(db).get_or_create_slug(contact)
+        return "/my-requests"
 
     if "salesperson" in role_slugs and contact is not None:
         return f"/portal/c/{PortalService(db).get_or_create_slug(contact)}"
