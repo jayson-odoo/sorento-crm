@@ -181,7 +181,9 @@ export default function MediaRequestDrawer({
                 disabled={!request?.can_resolve || isResolved || busy}
                 title={
                   !isResolved && request && !request.can_resolve
-                    ? `Assigned to ${request.assignee_name ?? 'someone else'}`
+                    ? request.is_assignee
+                      ? 'Your role cannot resolve SLA tasks'
+                      : `Assigned to ${request.assignee_name ?? 'someone else'}`
                     : undefined
                 }
                 onClick={() => setConfirmResolve(true)}

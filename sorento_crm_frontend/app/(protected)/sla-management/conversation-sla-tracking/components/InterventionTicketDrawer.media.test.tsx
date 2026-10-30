@@ -272,6 +272,15 @@ describe('InterventionTicketDrawer media variant: Respond and Resolve', () => {
     expect(button).toHaveAttribute('title', 'Assigned to Aina');
   });
 
+  it('says the permission is missing, not whose it is, when the assignee cannot resolve', () => {
+    mountDetail(detail({ can_resolve: false, is_assignee: true }));
+    renderDrawer();
+
+    const button = screen.getByRole('button', { name: /Resolve ticket/ });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Your role cannot resolve SLA tasks');
+  });
+
   it('stays open in the Resolved state with the badge, and offers no Respond or Resolve', () => {
     mountDetail(
       detail({ is_resolved: true, is_responded: true, resolved_at: FUTURE }),
