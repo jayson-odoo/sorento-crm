@@ -104,6 +104,39 @@ Nits: `scripts/chatbot_load.py:231,546` counts by old text; `api/v1/external/cha
 drops `send_attachments` (reuse `_send_actions`); stale comments `llm_call.py:39`,
 `casual.py:337`, `head/parser.py:61,87`; `compose.py:407` label stays English.
 
+### Review round 2 findings (30 Oct, reviewer + security-reviewer on e84c0f3686)
+
+Security: ready, three nits (folded in below). Reviewer: NOT READY.
+
+Blockers:
+- B1 `tests/chatbot/test_dev_failures_portal_form.py:52` still pins `price_tag_request` as no form
+  (red on HEAD); it moves to the named forms (owner Q5, R1 code side).
+- B2 a team the contact names is lost when it equals the team the routing chain filled
+  (`escalation.py:1269`, `_team_is_explicit` `escalation.py:771`): "escalate to the customer
+  service team" asks the topic instead of routing.
+- B3 AC-4: the clarify question's topic names, the " or " joiner (`escalation.py:853`) and the
+  quick replies stay English for MS / ZH contacts; the new texts need catalog coverage.
+- B4 `exc.escalation_team` (`escalation.py:1564`) is not pinned by any test.
+
+Should-fix:
+- S1 + security nit: H-ESC names a team only when it is a topic-map team reachable for the
+  company. A parser free-string team (`head/parser.py:421`), a team the company lacks, or the code
+  default gets the neutral text "I could not pass this to our team just now. Please contact us
+  directly." (MS / ZH in the catalog).
+- S2 the routing-filled agent (can be the code default, `turn_runtime.py:1910`) never picks the
+  pair ahead of the team's map agents (`escalation.py:820`).
+- S3 a dry run (console) shows the same failure a live turn would (`escalation.py:1530`).
+- S4 AC-7a "cover it": Mocha product info routes to general_enquiries / purchasing_product.
+- S5 the R2 ask keys on why the set was withheld, when the envelope carries that reason.
+- AC-3 gating (security nit): a contact without the price tag form grant gets "That form is not
+  available on your account." and no link (the portal tab would refuse it,
+  `public/portal_price_tag.py:69-77`).
+- Retry (security nit): `crm_sales_analysis` joins the never-retried tools.
+- Nit: `sorento_crm_mcp/catalog.py:1250` portal tool description lists the price tag form.
+
+Local note: an "out of shared memory" error under `-n 2` is the shared dev Postgres lock table
+(`max_locks_per_transaction` 64) during blank-schema `create_all`, not a test defect.
+
 ## Batch 2 (after its own red tests; eval gate; prompt via md5 pin, owner publishes)
 
 ### AC-5 Dealer cost = dealer promotion (Q2)
