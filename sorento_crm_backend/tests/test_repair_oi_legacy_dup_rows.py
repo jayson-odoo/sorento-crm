@@ -219,6 +219,22 @@ def test_ac_3b_a_duplicate_whose_twin_is_not_on_the_sheets_line_is_not_found():
         assert _found(db, w) == []
 
 
+def test_ac_3c_two_rows_from_the_same_sheet_row_are_not_twins():
+    """Plan 2.2: the twin comes from ANOTHER sheet row. One sheet row that created two rows
+    is not the tab stating the instruction twice."""
+    with _world() as (db, w):
+        oct_line = _line(db, w, 2, OCT)
+        apr_line = _line(db, w, 26, APR)
+        job = _job(db, w, filename="JAN - DEC 2026 ORDERabc.xlsx", at=T0)
+        _created(db, w, job, oct_line, sheet="OCT 26", sheet_row=630, qty=2, due=OCT)
+        _created(db, w, job, apr_line, sheet="OCT 26", sheet_row=630, qty=2, due=OCT)
+        later = _job(db, w, filename="JAN - DEC ORDER 2027.xlsx", at=T0 + timedelta(minutes=4))
+        _skipped(db, w, later, sheet="APR 27", sheet_row=166, qty=26, due=APR)
+        db.commit()
+
+        assert _found(db, w) == []
+
+
 def test_ac_3_a_duplicate_with_no_skipped_row_for_its_line_is_not_found():
     with _world() as (db, w):
         _m9713ss(db, w, skipped=False)
