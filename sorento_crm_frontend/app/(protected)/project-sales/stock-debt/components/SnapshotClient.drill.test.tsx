@@ -728,3 +728,60 @@ describe('AC-F6 the shared RequestReserveDialog opened from a group', () => {
     await waitFor(() => expect(getSnapshotRowLines.mock.calls.length).toBeGreaterThan(before));
   });
 });
+
+describe('RESERVE-REQ-PICK AC-RP-6: a frozen line already covered (Short 0) opens unticked', () => {
+  // The M9713SS / OI-2609-0676 shape (crew finding 30 Oct, point 1): an OI row the OI page
+  // would still accept, frozen on a line that reads Short 0 (its PO landed, pinned).
+  const COVERED_LINE = line({
+    so_number: 'SO409325',
+    required_date: '2026-10-07',
+    bucket: '2026-10',
+    short_qty: 0,
+    qty_ordered: 2,
+    open_qty: 2,
+    status: 'pinned',
+    oi_rows: [oiRow({ row_id: 'row-17p', qty: 2, remaining: 2, state: 'placed', delivery_date: '2026-10-07' })],
+    now: { so_status: 'open', open_qty: 2 },
+  });
+  const COVERED_LIVE_ROW = {
+    ...OI17_LIVE_ROWS[0],
+    id: 'row-17p',
+    delivery_date: '2026-10-07',
+    qty: '2',
+  };
+
+  async function openRequest() {
+    getSnapshotRowLines.mockResolvedValue({ lines: [...LINES, COVERED_LINE] });
+    getOrderInquiryHeaderLines.mockResolvedValue([...OI17_LIVE_ROWS, COVERED_LIVE_ROW]);
+    renderPage();
+    const dialog = await openAllMonths();
+    await within(dialog).findAllByText('SO383872');
+    fireEvent.click(
+      within(groupOf(dialog, 'OI-2609-0417')).getByRole('button', { name: /request cs to reserve/i }),
+    );
+    const heading = await screen.findByRole('heading', { name: /request cs to reserve/i });
+    return heading.closest('[role="dialog"]') as HTMLElement;
+  }
+
+  it('lists the covered row unticked and the short rows ticked: "3 of 4 lines"', async () => {
+    const request = await openRequest();
+    const table = await within(request).findByRole('table');
+    await within(table).findByText('07/10/2026');
+    const covered = rowWith(table, '07/10/2026');
+    expect(within(covered).getByRole('checkbox')).not.toBeChecked();
+    for (const date of ['07/01/2027', '20/01/2027', '01/01/2027']) {
+      expect(within(rowWith(table, date)).getByRole('checkbox')).toBeChecked();
+    }
+    expect(within(request).getByText('3 of 4 lines')).toBeInTheDocument();
+  });
+
+  it('Send leaves the covered row out', async () => {
+    const request = await openRequest();
+    const table = await within(request).findByRole('table');
+    await within(table).findByText('07/10/2026');
+    fireEvent.click(within(request).getByRole('button', { name: /send request/i }));
+    await waitFor(() => expect(createReserveRequest).toHaveBeenCalledTimes(1));
+    const [, payload] = createReserveRequest.mock.calls[0] as [string, { rows: Array<{ row_id: string }> }];
+    expect(payload.rows.map((r) => r.row_id).sort()).toEqual(['row-17a', 'row-17b', 'row-17c']);
+  });
+});
