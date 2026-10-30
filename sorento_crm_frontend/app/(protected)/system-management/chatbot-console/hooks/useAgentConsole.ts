@@ -71,7 +71,6 @@ export function useAgentConsole() {
     queryKey,
     queryFn: () => getAgentConversation(contactId as string),
     enabled: Boolean(contactId),
-    refetchOnWindowFocus: false,
     retry: false,
   });
   // A contact the agent may not run for is told in words, not left as an empty thread.
