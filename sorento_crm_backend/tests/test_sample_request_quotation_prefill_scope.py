@@ -83,6 +83,18 @@ def test_b1_limited_rep_cannot_record_another_owners_quotation_by_update(world):
     assert res.json()["code"] == "SAMPLE_REQUEST_PROJECT_NOT_ALLOWED"
 
 
+def test_k12_limited_rep_cannot_search_another_owners_quotation(world):
+    """Re-review K12: the product search names a quotation only of the rep's own projects."""
+    w = world
+    owner = s.make_user(w.sc.db, perms=["projects.projects.view"], name="ZZT foreign owner")
+    rep = w.person("Limited", perms=LIMITED)
+    _, doc = _quoted_project(w, owner.id)
+
+    res = rep.me.call("GET", "/sample-request/products", params={"q": "", "quotation_document_id": doc.id})
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "SAMPLE_REQUEST_PROJECT_NOT_ALLOWED"
+
+
 def test_n1_my_requests_read_needs_create(world):
     w = world
     viewer = w.person("Viewer", perms=[SR_VIEW_OWN, "projects.projects.view_own"])

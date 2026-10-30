@@ -230,5 +230,29 @@ describe('SFQ-27 owner hand test: Add row offers only the quotation products', (
       }),
     );
   });
+
+  it('lists the quotation products when the box is opened without typing (phone)', async () => {
+    renderForm({ projectId: 'proj-1' });
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    fireEvent.click(screen.getByRole('button', { name: /^\+?\s*add item$/i }));
+    const box = within(rows()[2]).getByRole('combobox', { name: /item code/i });
+    fireEvent.focus(box);
+    await waitFor(() =>
+      expect(searchSampleRequestProducts).toHaveBeenCalledWith('', {
+        quotation_document_id: 'doc-1',
+        quotation_issue_id: 'iss-1',
+      }),
+    );
+  });
+
+  it('without a source an empty box asks nothing (the catalogue is searched only by typing)', async () => {
+    renderForm();
+    fireEvent.click(await screen.findByRole('button', { name: /^\+?\s*add item$/i }));
+    const all = rows();
+    const box = within(all[all.length - 1]).getByRole('combobox', { name: /item code/i });
+    fireEvent.focus(box);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(searchSampleRequestProducts).not.toHaveBeenCalled();
+  });
 });
 

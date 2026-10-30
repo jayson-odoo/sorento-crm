@@ -590,3 +590,72 @@ def test_sfq_27_portal_search_is_limited_to_its_own_project_quotation(portal):
 
     refused = _as(p, p.granted).get(url, params={"q": "", "quotation_document_id": foreign.doc.id})
     assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "SAMPLE_REQUEST_QUOTATION_INVALID"
+
+
+def test_sfq_27_portal_search_refuses_a_quotation_of_a_project_it_may_not_pick(portal):
+    """Re-review K10: a same-company project the portal may not pick (a registration still waiting
+    for approval) gives its quotation's products to no one."""
+    from app.services.project_service import APPROVAL_PENDING
+
+    p = portal
+    product = make_product(p.db)
+    waiting = make_project(p.db, p.company_id, _owner(p), "zzt-sr waiting tower")
+    q = _document(p.db, waiting, _owner(p))
+    _line(p.db, q.scopes[0].v1, product=product)
+    waiting.approval_state = APPROVAL_PENDING
+    p.db.commit()
+
+    res = _as(p, p.granted).get(
+        "/api/v1/public/portal/sample-request/products",
+        params={"q": "", "quotation_document_id": q.doc.id},
+    )
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "SAMPLE_REQUEST_PROJECT_NOT_ALLOWED"
+
+
+def test_sfq_27_staff_search_keeps_a_limited_user_to_their_own_projects(world):
+    """Re-review K13: the staff search applies the own-project rule to the quotation's project."""
+    w = world
+    limited = make_user_with(w, {"projects.projects.view_own", "projects.sample_requests.create"})
+    on_quote = make_product(w.db)
+    _, doc = _quote_of(w, on_quote)  # the admin's project
+
+    res = w.api.as_(limited).get(f"{SR}/products", params={"q": "", "quotation_document_id": doc.id})
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "SAMPLE_REQUEST_PROJECT_INVALID"
+
+
+def make_user_with(w, perms):
+    from ._sample_request_seed import make_user
+
+    user = make_user(w.db, "zzt-sr limited staff")
+    w.perms[user] = set(perms)
+    w.db.commit()
+    return user
+
+
+def test_sfq_28_a_product_the_draft_already_holds_may_stay(world):
+    """Review should-fix: a never-issued quotation that later drops a product does not lock the
+    draft that already holds it; only NEW products must be on the quotation."""
+    from app.models.projects import ProjectQuotationLine
+
+    w = world
+    kept, other = make_product(w.db), make_product(w.db)
+    project, doc = _quote_of(w, kept, other)
+    created = w.api.as_(w.sales).post(
+        SR,
+        json=full_payload(
+            product_id=kept.id, project_id=project.id, project_title=None,
+            quotation_document_id=doc.id,
+        ),
+    )
+    assert created.status_code == 201, created.text
+    w.db.query(ProjectQuotationLine).filter(ProjectQuotationLine.product_id == kept.id).delete()
+    w.db.commit()
+
+    res = w.api.as_(w.sales).put(
+        f"{SR}/{created.json()['id']}",
+        json={"lines": [{"product_id": kept.id, "qty": 2}, {"product_id": other.id, "qty": 1}]},
+    )
+    assert res.status_code == 200, res.text
