@@ -1,8 +1,9 @@
 # PLAN SAMPLE-FROM-QUOTE: a sample request starts from the project's quotation
 
 Status: owner hand test 30 Oct FAIL fixed (line products only from the source quotation, SFQ-27/28) and owner Q3
-answered (free text never becomes a row; the switch is gone); reviewer, browser pass and hand test re-run pending.
-PR #1985. S1 (portal read breadth) asked of crew. Track: M lane (migration, portal read surface).
+answered (free text never becomes a row; no switch); reviewer READY, browser pass PASS; owner re-test pending. S1
+closed (crew, 30 Oct): the portal pre-fill and product reads keep the portal project picker's company-wide rule.
+PR #1985. Track: M lane (migration, portal read surface).
 
 Card: `CARD-sample-from-quote-29oct.md`. UAC: `sample-from-quote-29oct-acceptance-criteria.md`.
 

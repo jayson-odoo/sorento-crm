@@ -1,7 +1,7 @@
 # CARD SAMPLE-FROM-QUOTE: a sample request starts from the project's quotation
 
-Status: owner answered 30 Oct (Q3 pending); the build is tracked in `PLAN-sample-from-quote-29oct.md`. Track: M lane
-(not small-fix: a new read endpoint on the portal surface, possibly a migration, see Q5).
+Status: owner answered 30 Oct (Q3: free text never becomes a row); S1 closed by crew 30 Oct (portal reads keep the
+company-wide portal project rule). The build is tracked in `PLAN-sample-from-quote-29oct.md`. Track: M lane
 
 Source: owner team meeting 29 Oct 15:40 (Project Sales). A sample request pulls ALL items of the
 project's quotation into its item list by default; the user deletes the lines not needed instead of
