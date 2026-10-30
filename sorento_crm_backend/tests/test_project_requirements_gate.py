@@ -118,6 +118,7 @@ def _service_move(w, project, to_key: str):
 
 def test_ac_g2_registered_to_spec_in_without_a_document_refused(v2):
     project = _at(v2, "registered")
+    v2.db.commit()  # the route rolls back on a refusal; a flush-only seed would vanish
     res = _move(v2, project, "specified")
     assert res.status_code == 422, res.text
     body = res.json()

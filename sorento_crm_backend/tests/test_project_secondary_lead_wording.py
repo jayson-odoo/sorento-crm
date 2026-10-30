@@ -31,4 +31,4 @@ def test_ac_r1_dispute_notice_reads_registered_as_secondary_lead(v2):
     name = v2.db.get(User, v2.sub_a).name
     for n in rows:
         assert n.title == f"{name} registered as secondary lead on {row.project_code}", n.title
-        assert n.message == f"{name} registered as secondary lead on {row.project_code}: {row.title}", n.message
+        assert n.body == f"{name} registered as secondary lead on {row.project_code}: {row.title}", n.body
