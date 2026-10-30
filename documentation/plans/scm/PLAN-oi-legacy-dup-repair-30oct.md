@@ -1,7 +1,9 @@
 # PLAN: OI-LEGACY-DUP-REPAIR - legacy sheet rows squatting another SO line
 
-Status: Build (small fix track: data-repair script + tests, no migration, no UI, no auth). Owner
-approved a repair script 30 Oct ~09:30.
+Status: Review (small fix track: data-repair script + tests, no migration, no UI, no auth). Owner
+approved a repair script 30 Oct ~09:30. Rehearsed 30 Oct on `sorento_prod_1028` in one rolled-back
+transaction (crew ruling: no full copy): 12 restated, re-run 0. Prod apply waits for the owner's go
+and his ruling on the 6 held rows.
 
 UAC: `oi-legacy-dup-repair-acceptance-criteria.md` beside this file.
 
@@ -79,7 +81,7 @@ On `sorento_prod_1028`: 12 restated (all OI-2609-0676), 6 held.
   (both sheet rows, the skipped row, line, links) and its verdict (`restate` / hold reason).
 - dry run is the default and prints every row. `--apply --expect N` writes, and refuses unless the
   restate count found at apply time equals N (the dry run's count). Idempotent: a restated row no
-  longer carries the sheet values, so a second run finds it held as `edited`, never re-written.
+  longer carries the sheet values, so a second run reports it "already restated", never re-written.
 
 ## 5. Tests (red first)
 
@@ -88,6 +90,16 @@ One test per UAC item.
 
 ## 6. Rehearsal
 
-Scratch copy of `sorento_prod_1028` (never prod, never the shared dev DB): dry run, apply, counts
-before/after, re-run finds 0 to restate, OI-2609-0676 and Stock Debt read right for M9713SS.
-Crew asks the owner before anything touches prod.
+Crew ruling (30 Oct): no full scratch copy (disk), so apply inside ONE transaction on
+`sorento_prod_1028`, read through the real routes, then ROLLBACK. Result (PR #1996 crew-note): found 18,
+restated 12, second apply 0; OI-2609-0676 rows off their line 15 -> 3, ack `changed` 0 -> 10; Lines tab
+shows M9713SS 26 on 2027-04-07 with Was 2 on 2026-10-07; the Stock Debt drill's live remaining for the
+2027-04-07 line goes 2 -> 26 (its frozen "OI row" figure stays 2 until the next snapshot). Nothing
+persisted. Crew asks the owner before anything touches prod.
+
+## 7. Detector speed
+
+The first detector was one statement self-joining `import_job_rows` on JSONB expressions; it ran past
+ten minutes on the 27 GB copy. It is now staged: a window count over one scan of the created job rows,
+an IN-list load of their inquiry rows, one scan of the `already_raised` rows for the SOs involved.
+3 s on the same copy.
