@@ -61,6 +61,17 @@ const updateProject = vi.fn();
 let projectFixture: Project;
 let canManage = true;
 
+// PS-REGISTER-CHECK-FIRST: a Registered project with no document hides Spec In. These tests
+// are about what Spec In does, so the project has one document.
+vi.mock('../../_shared/hooks/useProjectDocuments', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../_shared/hooks/useProjectDocuments')>()),
+  useProjectDocuments: () => ({
+    isSuccess: true,
+    isLoading: false,
+    data: [{ id: 'd1', original_filename: 'brief.pdf', stored_filename: 'brief.pdf' }],
+  }),
+}));
+
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => (slug === 'projects.projects.manage' ? canManage : true),
 }));
