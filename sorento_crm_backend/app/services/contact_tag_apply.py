@@ -84,14 +84,10 @@ def _w_columns(db: Session, contact, items, actor_id) -> None:
         section, key, want = item["section"], item["key"], item["_raw"]["expected"]
         if section == "brands":
             contact.brand_ids = None if want == ALL else sorted(want)
-            # ITEM-CLASS review S2: a class list for a brand the tag drops must not come back
-            # when a later write re-adds the brand (set_contact_brands applies the same rule).
-            kept = {
-                b: ids
-                for b, ids in (contact.brand_class_ids if isinstance(contact.brand_class_ids, dict) else {}).items()
-                if contact.brand_ids and b in {str(x) for x in contact.brand_ids} and ids
-            }
-            contact.brand_class_ids = kept or None
+        elif section == "item_classes":
+            from app.services.contact_brand_scope import normalise_class_codes
+
+            contact.allowed_item_class_codes = None if want == ALL else normalise_class_codes(want)
         elif section == "regions":
             contact.regions = [r for r in cts.REGIONS if r in want]
         elif section in ("requires_registered_project", "outbound_enabled"):
@@ -277,7 +273,7 @@ def _w_policy(db: Session, contact, items, actor_id) -> None:
 _WRITERS: dict[str, Callable] = {
     "access_types": _w_pivot_codes, "market_segments": _w_pivot_codes, "companies": _w_pivot_codes,
     "attachment_types": _w_pivot_codes,
-    "brands": _w_columns, "regions": _w_columns, "chatbot": _w_columns,
+    "brands": _w_columns, "item_classes": _w_columns, "regions": _w_columns, "chatbot": _w_columns,
     "requires_registered_project": _w_columns, "outbound_enabled": _w_columns,
     "portal_forms": _w_portal_forms, "field_reveals": _w_field_reveals, "agents": _w_agents,
     "agent_fields": _w_agent_fields, "media": _w_media,

@@ -2170,7 +2170,8 @@ class QuotationSignatureRequest(BaseModel):
 
 
 class QuotationSignAcceptRequest(QuotationSignatureRequest):
-    pass
+    # The customer ticked "I have read and agree to the Terms and conditions."
+    terms_accepted: bool = False
 
 
 class QuotationSignChangesRequest(BaseModel):
@@ -2254,12 +2255,14 @@ class QuotationSignPageResponse(BaseModel):
     doc_date: Optional[date] = None
     subject_title: Optional[str] = None
     sender_name: Optional[str] = None
+    sender_logo_url: Optional[str] = None
     recipient_name: Optional[str] = None
     recipient_address: Optional[str] = None
     attn_name: Optional[str] = None
     cover_letter: Optional[str] = None
     terms: Optional[str] = None
     signatory_name: Optional[str] = None
+    signatory_phone: Optional[str] = None
     scopes: List[QuotationSignScope] = Field(default_factory=list)
     grand_total: Decimal = Decimal("0")
     sorento_signature: Optional[QuotationSignatureResponse] = None

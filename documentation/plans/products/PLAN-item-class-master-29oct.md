@@ -79,9 +79,12 @@ every run is a full-list pull, and a class gone from the list goes to `/deletion
   neither widens nor narrows anyone. The Brands card select omits inactive classes, but a saved
   one stays on the card. This is the same as a manual deactivate on the Item Classes screen.
 - **D5b Accepted (security L1):** a re-push of a known `source_ref` with a different `code`
-  renames that row, and contacts narrowed to its id follow the rename. This matches brands and
-  a rename on the Item Classes screen. The SS ref is `<book>:<ItemClass>`, so the ref and the
-  code never diverge in practice.
+  renames that row. Since TAG-BRAND-CLASS contact access is keyed by class CODE
+  (`allowed_item_class_codes`), such a rename changes what contacts limited by class see; the
+  Item Classes screen refuses that rename while products carry the class
+  (`PLAN-tag-brand-class-30oct.md` D7), the ingest does not. Accepted because the SS ref is
+  `<book>:<ItemClass>`, so the ref and the code never diverge in practice; another integration
+  pushing a new code under an old ref would bypass the guard.
 - **D6 Contract 2.11**: `item_classes` joins `entities`; `fields_added.item_classes` lists the
   record keys. Additive.
 - **D7 No per-brand mapping** in the master: AutoCount ItemClass is flat. The Brands card keeps

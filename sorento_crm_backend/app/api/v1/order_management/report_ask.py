@@ -32,7 +32,7 @@ from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
 from app.services import contact_asker
 from app.schemas.report_ask import ReportAskChatResponse, ReportAskResponse
-from app.services.contact_brand_scope import contact_brand_scope
+from app.services.contact_brand_scope import contact_brand_scope, limits_brands
 from app.services.error_handler import AppException, handle_not_found
 from app.services.reports import ask, spec_set
 from app.services.sales_report_service import TOP_SELLING_N_CEILING, _resolve_products
@@ -450,8 +450,10 @@ def report_ask(
     brand_scope = contact_brand_scope(db, contact_id, space_id)
     if brand_scope:
         set_brand_scope(db, brand_scope)
-        if basis_norm == "unpaid":
+        if basis_norm == "unpaid" and limits_brands(brand_scope):
             # A document has no brand: a brand-scoped contact cannot be held to its brands here.
+            # A class-only limit names no brand and an invoice total names no product, so it stays
+            # (TAG-BRAND-CLASS crew ruling (b)).
             raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
     per_document = basis_norm == "unpaid"
     hidden: set[str] = set()

@@ -1,7 +1,8 @@
 """The Conversations inbox list (UAC AC-N1).
 
 One screen: every contact we have ever exchanged a message with, newest
-conversation first, filtered by a tab and an optional name / phone search. The
+conversation first, filtered by a tab and an optional search over the contact's
+name / phone and the text of their stored messages. The
 thread itself is never loaded here - the caller picks a row and then calls the
 contact-keyed thread endpoints.
 
@@ -42,9 +43,11 @@ from sqlalchemy import (
     DateTime,
     Text,
     and_,
+    case,
     cast,
     func,
     literal,
+    not_,
     null,
     or_,
     select,
@@ -58,6 +61,8 @@ from app.models.chat_history import ChatHistory
 from app.models.sla import ConversationSLATracking
 from app.models.ticket_comment import ConversationTicketComment
 from app.services.error_handler import handle_validation_error
+from app.services.conversation_thread_service import ThreadContact
+from app.services.otp_redaction import OTP_TEXT_RE, mask_otp_text
 
 TAB_MINE = "mine"
 TAB_MENTIONED = "mentioned"
@@ -68,6 +73,11 @@ TABS = (TAB_MINE, TAB_MENTIONED, TAB_UNASSIGNED, TAB_ALL)
 DEFAULT_LIMIT = 30
 MAX_LIMIT = 100
 SNIPPET_MAX = 160
+#: Characters kept before / after a search hit in a message match's snippet. The
+#: lead is short because the row is one truncated line (~40 characters at 375px):
+#: a long lead pushes the highlighted term behind the ellipsis.
+MATCH_SNIPPET_LEAD = 16
+MATCH_SNIPPET_TAIL = 100
 
 
 # --------------------------------------------------------------------------- #
@@ -158,6 +168,60 @@ def _mentions_cte(viewer_user_id: str):
     )
 
 
+def _message_match_cte(needle: str, pattern: str):
+    """The newest WhatsApp message per contact whose text contains the search term.
+
+    The ``ILIKE`` is what ``ix_chat_histories_message_trgm`` (alembic 327) serves.
+    Channel is pinned to the thread's own (``ThreadContact.channel``): a match the
+    thread cannot open by id is not a result, and neither is a row with no
+    ``message_id``.
+
+    A sign-in code must never be findable by its digits (the in-thread search rule).
+    The mask only rewrites a run of digits after "code is", so a term with no digit
+    cannot hit it and needs no check. Do NOT "simplify" this into an always-on
+    ``regexp_replace(...) ILIKE`` re-check: Postgres has no statistics for that
+    expression, a phrase then estimates at one row, and the planner picks a nested
+    loop that took 7.6 s at 400k messages (review of #2003). A term WITH a digit
+    skips OTP-shaped messages outright instead, which estimates sanely.
+    """
+    conditions = [
+        ChatHistory.channel == ThreadContact.channel,
+        ChatHistory.message_id.isnot(None),
+        ChatHistory.message.ilike(pattern, escape="\\"),
+    ]
+    if any(ch.isdigit() for ch in needle):
+        conditions.append(not_(ChatHistory.message.regexp_match(OTP_TEXT_RE.pattern, flags="i")))
+    return (
+        select(
+            ChatHistory.contact_id.label("contact_key"),
+            ChatHistory.sent_at.label("match_at"),
+            ChatHistory.message.label("match_message"),
+            ChatHistory.message_id.label("match_message_id"),
+            ChatHistory.type.label("match_direction"),
+        )
+        .where(*conditions)
+        .distinct(ChatHistory.contact_id)
+        .order_by(
+            ChatHistory.contact_id,
+            ChatHistory.sent_at.desc(),
+            ChatHistory.id.desc(),
+        )
+        .cte("msg_match")
+    )
+
+
+def _match_snippet(body: Optional[str], needle: str) -> str:
+    """A window around the first hit, whitespace collapsed, OTP masked."""
+    text = " ".join(mask_otp_text(body or "").split())
+    idx = text.lower().find(needle.lower())
+    if idx < 0:
+        return _snippet(text) or ""
+    start = max(0, idx - MATCH_SNIPPET_LEAD)
+    end = min(len(text), idx + len(needle) + MATCH_SNIPPET_TAIL)
+    out = text[start:end].strip()
+    return ("…" if start > 0 else "") + out + ("…" if end < len(text) else "")
+
+
 def _snippet(body: Optional[str]) -> Optional[str]:
     text = (body or "").strip()
     if not text:
@@ -234,6 +298,26 @@ def list_conversations(
             )
             sort_at = func.coalesce(last_msg.c.last_at, RespondContact.created_at)
 
+    # Search: a name / phone hit reads exactly as it always has. Otherwise the
+    # contact's newest matching MESSAGE (inbound or outbound) is the reason it is
+    # on the list: it rides on the row as `match`, and those rows sort by when
+    # that message was sent, so the freshest hit is on top. Mentioned keeps its
+    # own clock - that tab is defined by mention order.
+    needle = (q or "").strip()
+    name_hit = msg_match = None
+    if needle:
+        pattern = _like_pattern(needle)
+        name_hit = or_(
+            RespondContact.name.ilike(pattern, escape="\\"),
+            RespondContact.phone_number.ilike(pattern, escape="\\"),
+        )
+        msg_match = _message_match_cte(needle, pattern)
+        source = source.outerjoin(
+            msg_match, msg_match.c.contact_key == RespondContact.respond_io_id
+        )
+        if tab != TAB_MENTIONED:
+            sort_at = case((name_hit, sort_at), else_=msg_match.c.match_at)
+
     conditions = []
     if tab == TAB_MINE:
         conditions.append(
@@ -261,15 +345,8 @@ def list_conversations(
     if contact_ids is not None:
         conditions.append(RespondContact.id.in_(contact_ids))
 
-    needle = (q or "").strip()
     if needle:
-        pattern = _like_pattern(needle)
-        conditions.append(
-            or_(
-                RespondContact.name.ilike(pattern, escape="\\"),
-                RespondContact.phone_number.ilike(pattern, escape="\\"),
-            )
-        )
+        conditions.append(or_(name_hit, msg_match.c.contact_key.isnot(None)))
 
     if after is not None:
         conditions.append(
@@ -288,6 +365,17 @@ def list_conversations(
             last_msg.c.last_direction.label("last_direction"),
             mentioned_at.label("mentioned_at"),
             sort_at.label("sort_at"),
+            *(
+                (
+                    name_hit.label("name_hit"),
+                    msg_match.c.match_at,
+                    msg_match.c.match_message,
+                    msg_match.c.match_message_id,
+                    msg_match.c.match_direction,
+                )
+                if needle
+                else ()
+            ),
         )
         .select_from(source)
         .where(*conditions)
@@ -328,6 +416,14 @@ def list_conversations(
     items = []
     for row in rows:
         my_count = int(row["my_open_ticket_count"] or 0)
+        match = None
+        if needle and not row["name_hit"] and row["match_message_id"]:
+            match = {
+                "message_id": str(row["match_message_id"]),
+                "sent_at": _iso(row["match_at"]),
+                "direction": row["match_direction"],
+                "snippet": _match_snippet(row["match_message"], needle),
+            }
         items.append(
             {
                 "contact_ref": row["respond_io_id"] or row["phone"],
@@ -343,6 +439,9 @@ def list_conversations(
                 # Ambiguous at two: the reply route would have to guess which
                 # enquiry the message answers, so nothing is offered.
                 "my_open_ticket_id": row["my_open_ticket_id"] if my_count == 1 else None,
+                # Non-null only when a MESSAGE, not the name or phone, is why
+                # this contact matched the search.
+                "match": match,
             }
         )
 
