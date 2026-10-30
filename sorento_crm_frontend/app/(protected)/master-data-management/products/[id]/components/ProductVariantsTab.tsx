@@ -273,36 +273,36 @@ export default function ProductVariantsTab({
               </Badge>
             )}
             {canEdit && (
-            <div className="ms-auto flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setParentPickerOpen(true)}
-              >
-                <CornerLeftUp className="size-4" />
-                {variantOf ? 'Change parent' : 'Set parent'}
-              </Button>
-              {variantOf && (
+              <div className="ms-auto flex flex-wrap items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setUnlinkConfirmOpen(true)}
+                  onClick={() => setParentPickerOpen(true)}
                 >
-                  <Link2Off className="size-4" />
-                  Unlink
+                  <CornerLeftUp className="size-4" />
+                  {variantOf ? 'Change parent' : 'Set parent'}
                 </Button>
-              )}
-              {variantLinkManual && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setResetConfirmOpen(true)}
-                >
-                  <RotateCcw className="size-4" />
-                  Reset to auto
-                </Button>
-              )}
-            </div>
+                {variantOf && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setUnlinkConfirmOpen(true)}
+                  >
+                    <Link2Off className="size-4" />
+                    Unlink
+                  </Button>
+                )}
+                {variantLinkManual && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setResetConfirmOpen(true)}
+                  >
+                    <RotateCcw className="size-4" />
+                    Reset to auto
+                  </Button>
+                )}
+              </div>
             )}
           </div>
           {variantOf ? (

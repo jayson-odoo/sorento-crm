@@ -19,8 +19,10 @@ Structure:
   for real against a scratch schema except the attachment field-links POST,
   whose `set_links` is recorded (it needs a stored attachment).
 * UAC3 - structural: every non-GET route on the products router is gated by
-  plain `require_permission` on a `master_data.products.*` slug, so a new
-  ungated write fails here.
+  plain `require_permission` on a products WRITE slug (not `.view` or
+  `.export`), so a new ungated or read-gated write fails here.
+* The promotion line PUT writes `products.list_price`, so a CHANGED list price
+  there needs `.edit`; an unchanged one (the price editor always sends it) does not.
 
 Dependency-override + `allow`-set monkeypatch pattern copied from
 tests/test_contact_write_gates.py.
@@ -51,6 +53,8 @@ EDIT = "master_data.products.edit"
 DELETE = "master_data.products.delete"
 BULK_DELETE = "master_data.products.bulk_delete"
 IMPORT = "master_data.products.import"
+# A write is gated on one of these; `.view` / `.export` do not count.
+WRITE_SLUGS = {ADD, EDIT, DELETE, BULK_DELETE, IMPORT}
 ALL_PRODUCT_SLUGS = {
     "master_data.products.view",
     ADD,
@@ -333,8 +337,95 @@ def test_every_product_write_route_requires_a_products_permission():
                 continue
             for cell in call.__closure__:
                 val = cell.cell_contents
-                if isinstance(val, str) and val.startswith("master_data.products."):
+                if isinstance(val, str) and val in WRITE_SLUGS:
                     slugs.append(val)
         if not slugs:
             ungated.append((sorted(methods), route.path))
     assert not ungated, f"ungated product write routes: {ungated}"
+
+
+# ------------------------------------------------- promotion line list price
+#
+# `PUT /marketing/promotions/{id}/products/{line_id}` writes `products.list_price`
+# when the body carries a changed `list_price`, so that one field needs
+# `master_data.products.edit`. The price editor always sends it back, so an
+# unchanged value (a promo-price-only edit) must keep working without it.
+
+
+def _promotion_line(db, w) -> tuple[str, str, str]:
+    from datetime import date, timedelta
+
+    from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+
+    pid = w.product()
+    promotion = Promotion(
+        id=str(uuid.uuid4()),
+        description=unique_code("ZZT promo"),
+        start_date=date.today() - timedelta(days=1),
+        end_date=date.today() + timedelta(days=30),
+        is_active=True,
+        access_levels=["dealer", "end_user"],
+        company_id=DEFAULT_COMPANY_ID,
+    )
+    db.add(promotion)
+    db.flush()
+    group = PromotionGroup(promotion_id=promotion.id, group_name="ZZT group", sort_order=0)
+    db.add(group)
+    db.flush()
+    line = PromotionProduct(
+        id=str(uuid.uuid4()),
+        promotion_id=promotion.id,
+        promotion_group_id=str(group.id),
+        product_id=pid,
+        promo_selling_price=Decimal("8.00"),
+        company_id=DEFAULT_COMPANY_ID,
+    )
+    db.add(line)
+    db.commit()
+    return str(promotion.id), str(line.id), pid
+
+
+def _line_url(promotion_id: str, line_id: str) -> str:
+    return f"/api/v1/marketing/promotions/{promotion_id}/products/{line_id}"
+
+
+def test_promotion_line_list_price_change_without_products_edit_is_403(db, api):
+    client, allow, _calls = api
+    promotion_id, line_id, pid = _promotion_line(db, _World(db))
+    allow.update(ALL_PRODUCT_SLUGS - {EDIT})
+
+    resp = client.put(
+        _line_url(promotion_id, line_id),
+        json={"promotion_price": 8, "dealer_discount_percent": None, "list_price": 99},
+    )
+
+    assert resp.status_code == 403, resp.text
+    assert EDIT in resp.text
+    assert _row(db, pid).list_price == Decimal("10.00")
+
+
+def test_promotion_line_unchanged_list_price_without_products_edit_still_saves(db, api):
+    client, _allow, _calls = api
+    promotion_id, line_id, pid = _promotion_line(db, _World(db))
+
+    resp = client.put(
+        _line_url(promotion_id, line_id),
+        json={"promotion_price": 7, "dealer_discount_percent": None, "list_price": 10},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert _row(db, pid).list_price == Decimal("10.00")
+
+
+def test_promotion_line_list_price_change_with_products_edit_succeeds(db, api):
+    client, allow, _calls = api
+    promotion_id, line_id, pid = _promotion_line(db, _World(db))
+    allow.add(EDIT)
+
+    resp = client.put(
+        _line_url(promotion_id, line_id),
+        json={"promotion_price": 8, "dealer_discount_percent": None, "list_price": 99},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert _row(db, pid).list_price == Decimal("99.00")

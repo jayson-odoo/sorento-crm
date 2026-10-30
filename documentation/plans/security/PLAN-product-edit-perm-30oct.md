@@ -23,6 +23,14 @@ Ten write routes in `sorento_crm_backend/app/api/v1/master_data/products.py` dep
 | `POST /products/{id}/variant-reset` | 509 | `master_data.products.edit` |
 | `POST /products/{id}/attachments/{aid}/field-links` | 595 | `master_data.products.edit` |
 
+One more route writes a product outside this file: `PUT /marketing/promotions/{id}/products/{line_id}`
+(`app/api/v1/marketing/promotions.py`) sets `products.list_price` when its body carries
+`list_price` (`marketing_service.py` `update_promotion_product`). It now requires
+`master_data.products.edit` when that value CHANGES; the promotions price editor always sends the
+current list price back, so a promo-price-only edit keeps working without it (same rule as
+`guard_chatbot_limits_edit`). Gating the route itself on a `marketing.promotion_products.*` slug
+would change marketing access and is left as a follow-up.
+
 Every other product mutation route is already gated: `family-code` / `family-code-reset` in the
 same file, and the sibling routers `product_alternatives`, `product_attachments`,
 `product_barcode_import`, `product_combos`, `product_companions`, `product_compatibility`,
@@ -53,10 +61,12 @@ Roles are data, not code. The last measured snapshot of the dev copy of producti
 `warehouse_executive` is the one provisioned role that can open the product screens but holds
 no product write slug: it loses create / edit / delete / variant-link / field-link writes it
 could make before. `admin` and `superadmin` bypass. Holders of `.import` and `.bulk_delete`
-were not in that snapshot and need measuring on the live DB.
+were not in that snapshot and need measuring on the live DB. `.bulk_delete` only guards the
+direct `DELETE /products/bulk` route; the list's bulk Delete runs one `product.delete` record
+action per row, which checks `.delete`.
 
 ## Tests
 
-Backend `tests/test_product_write_gates.py` (21 tests, all 11 gate assertions red on main
-ff7231e9 and green after). Fixtures of seven existing product tests now grant the slug their
+Backend `tests/test_product_write_gates.py` (24 tests: the 10 per-route 403 tests, the structural test and the
+promotion list-price 403 test are red on main ff7231e9 and green after). Fixtures of six existing product test files now grant the slug their
 writes need.
