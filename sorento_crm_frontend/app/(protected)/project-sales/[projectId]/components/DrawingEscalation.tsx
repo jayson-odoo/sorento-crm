@@ -60,6 +60,8 @@ export function DrawingEscalation({
   const escalate = useEscalateDrawing(line.version_id);
   const state = line.technical_drawing?.escalation ?? null;
   const open = state?.tracking_id && state.opened_at ? state : null;
+  const driver =
+    line.set_parts?.find((part) => part.is_driver)?.product_code ?? null;
 
   if (open) {
     const responded = Boolean(open.responded_at);
@@ -79,28 +81,35 @@ export function DrawingEscalation({
         (open.due_at ? `. Due ${whenShort(open.due_at)}.` : '.')
       : `Escalated ${when(open.opened_at as string, true)} by ${people} ${people === 1 ? 'person' : 'people'}` +
         (open.due_at ? `. Due ${whenShort(open.due_at)}.` : '.');
+    // The tile joins the open request (the server records each person once), so a later
+    // salesperson on any quotation with this product is added as a requester.
+    const joinLabel = `Join the drawing request for ${driver ?? code ?? 'this product'}`;
     return (
-      <span
+      <button
+        type="button"
         title={hover}
+        aria-label={joinLabel}
+        aria-busy={escalate.isPending}
+        disabled={escalate.isPending}
+        onClick={() => escalate.mutate(line.id)}
         className={cn(
-          'flex aspect-square max-h-48 w-full flex-col items-center justify-center gap-0.5 rounded border p-0.5 text-center text-2xs leading-tight',
+          'flex aspect-square max-h-48 w-full flex-col items-center justify-center gap-0.5 overflow-hidden rounded border px-0 py-0.5 text-center text-2xs leading-tight tracking-tight',
           tone,
+          escalate.isPending && 'cursor-progress opacity-60',
         )}
       >
         <Flag className="size-3.5" aria-hidden="true" />
-        {responded ? 'Responded' : 'Escalated'}
+        {responded ? 'Replied' : 'Escalated'}
         <br />
         {when(
           (responded ? open.responded_at : open.opened_at) as string,
           false,
         )}
-      </span>
+      </button>
     );
   }
 
   const lastResolved = state?.last_resolved_at ?? null;
-  const driver =
-    line.set_parts?.find((part) => part.is_driver)?.product_code ?? null;
   const name = driver ?? code ?? 'this product';
   const ask = `Ask for a drawing of ${name}`;
   return (

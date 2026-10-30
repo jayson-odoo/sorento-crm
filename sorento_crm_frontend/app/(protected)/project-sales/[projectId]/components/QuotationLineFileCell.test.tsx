@@ -278,7 +278,7 @@ describe('QuotationLineFileCell, drawing cell: no drawing, escalate', () => {
 });
 
 describe('QuotationLineFileCell, drawing cell: already escalated', () => {
-  it('state 5: shows "Escalated <date>", names the people and the due date, and is not a button', () => {
+  it('state 5: shows "Escalated <date>", names the people and the due date, as a Join button', () => {
     renderCell(line(drawing({ escalation: escalation() })));
 
     const label = screen.getByText(/Escalated/);
@@ -287,9 +287,29 @@ describe('QuotationLineFileCell, drawing cell: already escalated', () => {
     const hover = screen.getByTitle(/Escalated/);
     expect(hover.getAttribute('title')).toMatch(/by 2 people/);
     expect(hover.getAttribute('title')).toMatch(/Due /);
-    // Not clickable: nothing in the cell is a button or a link.
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    // The tile itself is the Join control: one button, no link.
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Join the drawing request for PRD-CCC-03' })).toBeEnabled();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('clicking the Escalated tile joins: it posts the drawing-escalation route, disabled while in flight', async () => {
+    let release: (value: unknown) => void = () => {};
+    apiFetch.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    renderCell(line(drawing({ escalation: escalation() })));
+    const tile = () => screen.getByRole('button', { name: 'Join the drawing request for PRD-CCC-03' });
+
+    fireEvent.click(tile());
+
+    await waitFor(() => expect(tile()).toBeDisabled());
+    expect(tile()).toHaveAttribute('aria-busy', 'true');
+    fireEvent.click(tile());
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = apiFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/quotation-versions\/version-1\/lines\/line-1\/drawing-escalation$/);
+    expect(init.method).toBe('POST');
+    release({ ok: true, status: 200, json: async () => ({ joined: true, escalation: escalation() }) });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Already escalated: added you to the request'));
   });
 
   it('a single requester reads "by 1 person"', () => {
@@ -297,14 +317,23 @@ describe('QuotationLineFileCell, drawing cell: already escalated', () => {
     expect(screen.getByTitle(/Escalated/).getAttribute('title')).toMatch(/by 1 person\b/);
   });
 
-  it('state 6: once the team responded it reads "Responded <date>" with the response date', () => {
+  it('state 6: once the team responded the tile reads "Replied <date>", the hover keeps "Responded"', () => {
     renderCell(line(drawing({ escalation: escalation({ responded_at: RESPONDED }) })));
 
-    const label = screen.getByText(/Responded/);
+    const label = screen.getByText(/Replied/);
     expect(label.textContent).toMatch(/29 Oct/);
     expect(screen.queryByText(/Escalated 29/)).not.toBeInTheDocument();
     expect(screen.getByTitle(/Responded/).getAttribute('title')).toMatch(/Responded 29 Oct/);
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    // It still joins: a later requester is added to the open request.
+    expect(screen.getByRole('button', { name: 'Join the drawing request for PRD-CCC-03' })).toBeEnabled();
+  });
+
+  it('the label sits inside a 48px tile: tight tracking, no side padding, no wrapping surprises', () => {
+    renderCell(line(drawing({ escalation: escalation({ responded_at: RESPONDED }) })));
+    const tile = screen.getByRole('button', { name: /Join the drawing request/ });
+    expect(tile.className).toMatch(/tracking-tight/);
+    expect(tile.className).toMatch(/px-0/);
+    expect(tile.className).toMatch(/overflow-hidden/);
   });
 
   it('colour follows the deadline: neutral with time to spare, amber under 4h, red overdue', () => {
@@ -341,7 +370,7 @@ describe('QuotationLineFileCell, drawing cell: already escalated', () => {
         }),
       ),
     );
-    expect(classesAround(screen.getByText(/Responded/))).toMatch(/destructive|red-/);
+    expect(classesAround(screen.getByText(/Replied/))).toMatch(/destructive|red-/);
   });
 
   it('state 9: a drawing added while the task is open shows the thumbnail, not the flag', () => {

@@ -29,7 +29,7 @@ escalated it is told.
   caller twice is recorded once. Two concurrent escalations create one task.
 - **AC-5 Escalated state.** Every saved line whose product has an open task carries
   `technical_drawing.escalation = {opened_at, responded_at, due_at, requester_count,
-  last_resolved_at}`; the cell shows "Escalated <date>", or "Responded <date>" once responded,
+  last_resolved_at}`; the cell shows "Escalated <date>", or "Replied <date>" once responded (hover "Responded <date>"), as a Join button,
   coloured by the governing deadline (neutral, amber under 4h, red overdue).
 - **AC-6 Normal SLA flow.** The task appears on the home Dashboards page, "My pending tasks" (My
   Pending tab for the assignee, My Team tab for their lead), as "Product drawing . <product code>"

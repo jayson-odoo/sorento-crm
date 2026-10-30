@@ -79,7 +79,9 @@ Escalate on every line without a drawing.
    requester (an event-log row on the tracker naming them and the quotation); no second task.
 6. **The cell reads "Escalated <date>"** on every line of every quotation with that product,
    coloured by the task's deadline (neutral, amber under 4h, red overdue), hover "Escalated <date>
-   by N people. Due <date>." After the team responds it reads "Responded <date>".
+   by N people. Due <date>." After the team responds the tile reads "Replied <date>" (hover
+   "Responded <date>. Due <date>."; a longer word does not fit the 48px tile). The tile is a
+   button: clicking it joins the open request (owner Q3), recorded once per person.
 7. **The team works it the normal SLA way** (Q4), on the home **Dashboards** page, "My pending
    tasks" (owner note 30 Oct, mock v3). That widget (`MyPendingSLAWidget`, mounted at
    `app/(protected)/(home)/page.tsx:30-33`) is where every form-SLA task already lands: its feed,
