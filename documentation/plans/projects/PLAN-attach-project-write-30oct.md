@@ -1,6 +1,6 @@
 # PLAN: attachment writes respect project edit rights (ATTACH-PROJECT-WRITE)
 
-Status: in review (small fix track: no migration; one UI change, below)
+Status: review done, reviewer READY + security-reviewer findings fixed (small fix track: no migration; one UI change, below)
 
 ## Gap
 
@@ -41,6 +41,17 @@ it up before Approve, R8), and `change_status` does the same.
   server refuses. Users without the slug lose Move to trash / Restore.
 - Collision: when `entity_type` + `entity_id` are given, only files on that same entity
   collide (upload and the `collision-check` read).
+
+Security review round (all fixed in this lane): `bulk-move` plus folder delete / restore /
+permanent-delete reached another project's file (now checked, `directories.py`); bulk attachment
+type, bulk company (`attachment_ids`) and bulk access levels now checked; a plain Files upload
+no longer collides with a project document; the existing-row check reads the project outside the
+company scope and the draft filter, and a file on a deleted project is not locked. Helpers live in
+`app/services/attachment_entity_access.py`.
+
+Follow-ups (not in this lane): the `attachment.set_company` deferred action
+(`record_actions.py`) and `bulk-company` with `directory_ids` can still move a project file to
+another company; `reorder` and `resubmit` take no entity check (sort order, webhook re-fire).
 
 Other entity types with an existing edit helper (not changed here, listed for follow-up):
 `project_task_service.assert_can_edit_task` (`project_task_service.py:82`),
