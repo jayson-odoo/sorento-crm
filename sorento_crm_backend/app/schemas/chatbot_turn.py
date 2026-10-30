@@ -248,6 +248,15 @@ class AgentSteps(BaseModel):
     tool_calls: list[AgentStepsToolCall] = Field(default_factory=list)
 
 
+class AgentPendingAction(BaseModel):
+    """The changes a turn proposed, waiting for the user's yes (AGENTIC-P3)."""
+
+    id: str
+    turn_id: str
+    lines: list[str] = Field(default_factory=list)
+    expires_at: str
+
+
 class AgentTurnResponse(BaseModel):
     turn_id: str
     conversation_id: str
@@ -258,6 +267,7 @@ class AgentTurnResponse(BaseModel):
     usage: AgentUsage
     tool_calls: list[AgentToolCall] = Field(default_factory=list)
     steps: AgentSteps = Field(default_factory=AgentSteps)
+    pending_action: AgentPendingAction | None = None
 
 
 class AgentConversationToolCall(BaseModel):
@@ -280,6 +290,8 @@ class AgentConversationTurn(BaseModel):
 class AgentConversationResponse(BaseModel):
     conversation_id: str | None = None
     turns: list[AgentConversationTurn] = Field(default_factory=list)
+    #: The contact's current proposal waiting for a yes, so a reloaded console can still show it.
+    pending_action: AgentPendingAction | None = None
 
 
 class AgentConversationNewRequest(BaseModel):
@@ -290,3 +302,22 @@ class AgentConversationNewRequest(BaseModel):
 
 class AgentConversationNewResponse(BaseModel):
     conversation_id: str
+
+
+class AgentActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contact_respond_id: str = Field(min_length=1, max_length=64)
+
+
+class AgentActionStep(BaseModel):
+    summary: str | None = None
+    status: str
+    error: str | None = None
+
+
+class AgentActionResponse(BaseModel):
+    action_id: str
+    status: str
+    reply_text: str
+    steps: list[AgentActionStep] = Field(default_factory=list)
