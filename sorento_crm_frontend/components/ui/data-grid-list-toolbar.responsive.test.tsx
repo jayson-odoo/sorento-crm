@@ -128,3 +128,39 @@ describe('DataGridListToolbar: the primary action stays on the filter row', () =
     expect(row).toHaveClass('w-full');
   });
 });
+
+/**
+ * PORTAL-P4-REQUESTS review round: (1) `.sm:ml-0` compiles after `.ms-auto`, so the right cluster must not
+ * carry `sm:ml-0` when `alignActionsEnd` is set (the actions would jump to the left edge at sm+);
+ * (2) a list with no searchSlot must not leave an empty search div taking a full row on phones.
+ */
+describe('DataGridListToolbar: right cluster alignment and empty search slot', () => {
+  const clusterOf = (container: HTMLElement) =>
+    screen.getByRole('button', { name: 'Create thing' }).closest('div.shrink-0.flex-wrap') as HTMLElement;
+
+  it('alignActionsEnd: the right cluster has ms-auto and NOT sm:ml-0', () => {
+    const { container } = render(<Harness toolbarProps={{ ...toolbarProps, alignActionsEnd: true }} />);
+    const cluster = clusterOf(container);
+    expect(cluster).toBeTruthy();
+    expect(cluster).toHaveClass('ms-auto');
+    expect(cluster).not.toHaveClass('sm:ml-0');
+  });
+
+  it('default: the right cluster keeps ml-auto sm:ml-0', () => {
+    const { container } = render(<Harness toolbarProps={toolbarProps} />);
+    const cluster = clusterOf(container);
+    expect(cluster).toBeTruthy();
+    expect(cluster).toHaveClass('ml-auto');
+    expect(cluster).toHaveClass('sm:ml-0');
+  });
+
+  it('no searchSlot: the search slot is not rendered or carries empty:hidden', () => {
+    const { searchSlot: _omit, ...noSearch } = toolbarProps;
+    const { container } = render(<Harness toolbarProps={noSearch} />);
+    const slot = container.querySelector('[data-slot="data-grid-list-toolbar-search"]');
+    if (slot) {
+      expect(slot).toHaveClass('empty:hidden');
+      expect(slot.childNodes.length).toBe(0);
+    }
+  });
+});
