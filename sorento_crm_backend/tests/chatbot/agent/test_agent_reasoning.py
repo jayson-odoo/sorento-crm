@@ -253,3 +253,13 @@ def test_steps_from_an_older_trace_still_read():
     assert steps["reasoning"] == []
     assert steps["tool_calls"] == [{"name": STOCK, "status": "ok", "ms": 4, "round": 1}]
 
+
+
+def test_reasoning_carries_none_of_the_contacts_own_ids(db, contact):
+    from app.services.chatbot.agent import memory
+
+    script = [_reasoned(answer("Hello."), f"The contact {contact['respond_id']} asked about stock.")]
+    result = run(db, contact, ScriptedProvider(script))
+    (entry,) = memory.steps_for_turn(db, result.turn_id)["reasoning"]
+    assert contact["respond_id"] not in entry["text"]
+    assert entry["text"].startswith("The contact ")

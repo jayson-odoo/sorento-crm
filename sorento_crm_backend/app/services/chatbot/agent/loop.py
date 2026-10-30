@@ -50,7 +50,9 @@ MCP_CALL_TIMEOUT = 10.0
 NOT_VERIFIED = "(not verified)"
 #: Per-call ceilings. Every call also counts against the turn's max_seconds.
 ROUND_CALL_CAP = 60.0
-# The most of one round's reasoning a turn keeps for the console (8 rounds stay under the trace's 32 KB entry cap).
+# The most of one round's reasoning a turn keeps for the console. Each round is its own trace entry, under the
+# trace's 32 KB per-entry cap for any text short of emoji (JSON escapes non-ASCII; an entry over the cap is
+# replaced by an "omitted" note, never stored in part).
 REASONING_CHARS = 4000
 SIDE_CALL_CAP = 30.0
 #: The final no-tools answer may overrun the turn by this much, so a limit still gets a reply.
@@ -869,8 +871,10 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 "tool_calls": len(result.tool_calls or []),
             },
         )
-        thought = reasoning_for_steps(getattr(result, "reasoning_text", ""))
-        if thought and kind != "compaction":
+        thought = "" if kind == "compaction" else reasoning_for_steps(
+            redact_ids(getattr(result, "reasoning_text", "") or "", (str(ctx.contact_respond_id), str(ctx.contact_pk)))
+        )
+        if thought:
             # For the console's steps only: never the reply, the history or a log line. A round's call
             # comes before its count goes up, and the forced final answer follows the last round.
             trace.add("agent_reasoning", {"kind_of_call": kind, "round": run.rounds + 1, "text": thought})
