@@ -101,7 +101,7 @@ describe('AgentConsole proposals', () => {
     renderConsole();
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm 2 changes' }));
 
-    expect(confirmAgentAction).toHaveBeenCalledWith('ZZT-1', 'a1');
+    await waitFor(() => expect(confirmAgentAction).toHaveBeenCalledWith('ZZT-1', 'a1'));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled());
 
     getAgentConversation.mockResolvedValue(decided);
@@ -129,7 +129,7 @@ describe('AgentConsole proposals', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
     getAgentConversation.mockResolvedValue(decided);
 
-    expect(cancelAgentAction).toHaveBeenCalledWith('ZZT-1', 'a1');
+    await waitFor(() => expect(cancelAgentAction).toHaveBeenCalledWith('ZZT-1', 'a1'));
     expect(await screen.findByText('Cancelled. Nothing was changed.')).toBeInTheDocument();
   });
 
