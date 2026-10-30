@@ -62,6 +62,8 @@ export interface CatalogOption {
 export interface SettingsCatalog {
   access_types: CatalogOption[];
   brands: CatalogOption[];
+  /** Allowed item class codes, "No class" (__NONE__) first (TAG-BRAND-CLASS). */
+  item_classes?: CatalogOption[];
   market_segments: CatalogOption[];
   attachment_types: CatalogOption[];
   /** Absent when the viewer may not read them (stock / agents / companies). */

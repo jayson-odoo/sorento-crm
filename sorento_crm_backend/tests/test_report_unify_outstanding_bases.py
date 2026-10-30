@@ -533,6 +533,22 @@ def test_s6_a_brand_scoped_contact_is_refused_unpaid_because_an_invoice_has_no_b
     assert api.get("/api/v1/order-management/report-ask", world.scoped, basis="outstanding", **window).status_code == 200
 
 
+def test_tbc_a_class_only_contact_keeps_unpaid(world, api, db) -> None:
+    """TAG-BRAND-CLASS crew ruling (b): a contact limited by item class alone (All brands + "No class",
+    the Serene tag) names no brand, and an invoice total names no product: unpaid is answered."""
+    from app.models.access import RespondContact
+    from tests._brand_scope_seed import contact
+
+    window = {"date_from": "2026-01-01", "date_to": "2026-12-31"}
+    class_only = contact(db, access_code=world.access_code)
+    db.query(RespondContact).filter(RespondContact.id == class_only.id).update(
+        {"allowed_item_class_codes": ["__NONE__"]}, synchronize_session=False
+    )
+    db.commit()
+    resp = api.get("/api/v1/order-management/report-ask", class_only, basis="unpaid", **window)
+    assert resp.status_code == 200, resp.text
+
+
 # ================================================================ the year dimension (crew 28 Oct): rows sum to the total
 
 

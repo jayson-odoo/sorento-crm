@@ -57,6 +57,8 @@ from app.schemas.chat_topic_audit import (
     VerdictRequest,
 )
 from app.schemas.chatbot_turn import (
+    AgentActionRequest,
+    AgentActionResponse,
     AgentConversationNewRequest,
     AgentConversationNewResponse,
     AgentConversationResponse,
@@ -74,6 +76,7 @@ from app.schemas.chatbot_turn import (
     FailedContactListResponse,
     RetryTurnResponse,
 )
+from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import memory as agent_memory
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
 from app.services.chatbot.agent.loop import AgentBusy, run_agent_turn
@@ -741,7 +744,54 @@ def agent_turn(
         usage=result.usage,
         tool_calls=result.tool_calls,
         steps=agent_memory.steps_for_turn(db, result.turn_id),
+        pending_action=result.pending_action,
     )
+
+
+def _action_response(outcome) -> AgentActionResponse:
+    return AgentActionResponse(
+        action_id=outcome.action_id, status=outcome.status, reply_text=outcome.reply_text, steps=outcome.steps
+    )
+
+
+def _action_refused(exc: agent_actions.ActionRefused) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": "action_refused", "reason": exc.reason},
+    )
+
+
+@router.post("/agent/actions/{action_id}/confirm", response_model=AgentActionResponse)
+def agent_action_confirm(
+    action_id: str,
+    payload: AgentActionRequest,
+    user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Carry out the changes the agent proposed, from the console's Confirm button."""
+    try:
+        return _action_response(
+            agent_actions.confirm(
+                db, payload.contact_respond_id, action_id, via="console", operator_user_id=str(user["id"])
+            )
+        )
+    except agent_actions.ActionRefused as exc:
+        raise _action_refused(exc)
+
+
+@router.post("/agent/actions/{action_id}/cancel", response_model=AgentActionResponse)
+def agent_action_cancel(
+    action_id: str,
+    payload: AgentActionRequest,
+    user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    try:
+        return _action_response(
+            agent_actions.cancel(db, payload.contact_respond_id, action_id, operator_user_id=str(user["id"]))
+        )
+    except agent_actions.ActionRefused as exc:
+        raise _action_refused(exc)
 
 
 def _agent_refused(exc: AgentRefused) -> HTTPException:
@@ -762,9 +812,11 @@ def agent_conversation(
         ctx = build_context(db, contact_respond_id)
     except AgentRefused as exc:
         raise _agent_refused(exc)
+    waiting = agent_actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+    pending = agent_actions.pending_dict(waiting) if waiting is not None else None
     conv = agent_memory.latest_conversation(db, contact_respond_id)
     if conv is None or not agent_memory.belongs_to(conv, ctx.user_id, grants_hash(ctx)):
-        return AgentConversationResponse(conversation_id=None, turns=[])
+        return AgentConversationResponse(conversation_id=None, turns=[], pending_action=pending)
     turns = []
     for row in agent_memory.conversation_turns(db, conv):
         envelope = row.envelope if isinstance(row.envelope, dict) else {}
@@ -786,7 +838,7 @@ def agent_conversation(
                 steps=agent_memory.steps_from_trace(row.trace),
             )
         )
-    return AgentConversationResponse(conversation_id=str(conv.id), turns=turns)
+    return AgentConversationResponse(conversation_id=str(conv.id), turns=turns, pending_action=pending)
 
 
 @router.post("/agent/conversation/new", response_model=AgentConversationNewResponse)
