@@ -1,0 +1,97 @@
+# Console cases for CHATBOT-FAIL-TRIAGE-B2: a code plus a size narrows its family, and the
+# named-team and portal-form routing, graded as conversations.
+#
+# HOW TO RUN (by hand, never in CI; every case is `live_only`), against a crew test copy:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-10-31-fail-triage-b2.yaml --live \
+#       --base-url http://127.0.0.1:<be port> --sleep-seconds 8
+#
+# NEEDS #2018 ON THE COPY: the price tag form case ("give me link to request pricetag") and
+# the "escalate marketing" clarify case rely on code that lives in PR #2018 (the portal
+# `price_tag_request` form and the named-team clarify). Without it those two are red for a
+# known reason, not a defect of this batch.
+#
+# The code-plus-size cases need a copy whose catalogue holds the SRTWC286 family with
+# SRTWC286-SH-200 variants (a family_code SRTWC286, trap_length 200 and 250). The "no variant
+# holds it" case asserts only the negatives: its wording is not decided yet. Dealer cost cases
+# are NOT in this file (AC-5 is undecided). Every case carries the banned failure texts as
+# negatives (owner rule, 30 Oct 2026). No real conversation, customer name or phone is
+# quoted; this file is for a PUBLIC repo.
+
+contact: "900000008"
+
+cases:
+  - name: glued code and size narrows to the matching variants
+    live_only: true
+    cold: true
+    turns:
+      - text: "SRTWC286200MM"
+        expect:
+          reply_contains: ["SRTWC286-SH-200"]
+          reply_not_contains: ["Couldn't find", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: dashed code and size narrows to the matching variants
+    live_only: true
+    cold: true
+    turns:
+      - text: "srtwc286-200mm"
+        expect:
+          reply_contains: ["SRTWC286-SH-200"]
+          reply_not_contains: ["Couldn't find", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: spaced code and size narrows to the matching variants
+    live_only: true
+    cold: true
+    turns:
+      - text: "SRTWC286 250MM"
+        expect:
+          reply_contains: ["SRTWC286-SH"]
+          reply_not_contains: ["Couldn't find", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: a size no variant holds is not a not-found
+    live_only: true
+    cold: true
+    # The wording for this case is not decided: only the failure texts are graded.
+    turns:
+      - text: "SRTWC286 300MM"
+        expect:
+          reply_not_contains: ["Couldn't find", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: named product marketing team routes there
+    live_only: true
+    cold: true
+    turns:
+      - text: "Please escalate to product marketing team"
+        expect:
+          reply_not_contains: ["Which topic is this about", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: a word that maps to several marketing teams asks which team
+    live_only: true
+    cold: true
+    # Needs #2018 on the copy (the named-team clarify).
+    turns:
+      - text: "escalate marketing"
+        expect:
+          reply_contains: ["marketing"]
+          reply_not_contains: ["busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: price tag request link
+    live_only: true
+    cold: true
+    # Needs #2018 on the copy (the `price_tag_request` portal form).
+    turns:
+      - text: "give me link to request pricetag"
+        expect:
+          reply_contains: ["portal"]
+          reply_not_contains: ["Could not find portal link", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: complaint form link still answers the complaint form
+    live_only: true
+    cold: true
+    turns:
+      - text: "link for complaint form"
+        expect:
+          reply_contains: ["portal"]
+          reply_not_contains: ["Could not find portal link", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true

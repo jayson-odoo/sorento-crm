@@ -162,3 +162,112 @@ def test_ground_bare_grounds_the_parsers_size_with_any_keys_and_no_candidate_lin
     g = ground_bare(db, entity, [entity], None, None)
     assert g is not None and g.value == 200 and g.unit == "mm", g
     assert "trap_length" in (g.any_keys or []), g
+
+
+# --------------------------------------------------------------------------- #
+# AC-6 gaps: short head, head with variant letters, non-stock asks, fresh keys  #
+# --------------------------------------------------------------------------- #
+
+SHORT_HEAD = "ZZSRTWC287"  # the family prefix; "wc287" is its short form, as "wc286" is of SRTWC286-SH
+
+
+@pytest.fixture
+def srt_wc(world):
+    """Same family shape under a longer letter prefix, so the typed "wc287" is a SUBSTRING of every code."""
+    for suffix, length in TRAP.items():
+        world.product(f"{SHORT_HEAD}-{suffix}", f"SORENTO WATER CLOSET {suffix}", stock=1)
+        _set_values(world, f"{SHORT_HEAD}-{suffix}", {"trap_length": length})
+    return world
+
+
+def _wc(*suffixes):
+    return sorted(f"{SHORT_HEAD}-{s}" for s in suffixes)
+
+
+def _route(client, head, specs, query):
+    body = {
+        "query": query, "tokens": [head], "raw_tokens": [head], "allowed_entity_types": ["product"],
+        "match_mode": "and", "spec_fallback": True, "exact_match": True, "extracted_specs": specs, "dry_run": True,
+    }
+    response = client.post(ENDPOINT, json=body)
+    assert response.status_code == 200, response.text
+    return _route_codes(response.json())
+
+
+# a. short head
+def test_short_head_unit_level_narrows_to_the_200_variants(srt_wc):
+    assert _sorted(_narrow(srt_wc, "wc287", [_size(200)])) == _wc("SH-200", "SH-NEW-200")
+
+
+def test_short_head_resolve_route_narrows_to_the_200_variants(client, srt_wc):
+    assert _route(client, "wc287", [_size(200)], "wc287 200mm") == _wc("SH-200", "SH-NEW-200")
+
+
+# b. a head that already carries variant letters
+def test_head_with_variant_letters_plus_size_narrows_under_it(srt):
+    assert _sorted(_narrow(srt, "ZZSRT286-SH-NEW", [_size(200)])) == [_code("SH-NEW-200")]
+
+
+def test_head_with_variant_letters_plus_size_the_exact_code_holds_is_not_replaced(srt):
+    """SH holds 250 itself: the exact code is its own answer, never a pick among its siblings.
+    RED today: the narrowing correctly leaves it alone, but the route then answers the whole SH* family."""
+    assert _narrow(srt, "ZZSRT286-SH", [_size(250)]) is None
+
+
+def test_route_exact_code_that_holds_the_size_answers_that_code(client, srt):
+    assert _route(client, "ZZSRT286-SH", [_size(250)], "ZZSRT286-SH 250mm") == [_code("SH")]
+
+
+# d. fresh anti-overfit: dim_length and diameter, short head
+@pytest.fixture
+def pipes(world):
+    for suffix, values in (
+        ("A", {"dim_length": 900}), ("B", {"dim_length": 900, "dim_width": 50}), ("C", {"diameter": 900}),
+        ("D", {"dim_length": 450}), ("E", {"diameter": 110}),
+    ):
+        world.product(f"ZZSRTPP731-{suffix}", f"SORENTO PIPE {suffix}", stock=1)
+        _set_values(world, f"ZZSRTPP731-{suffix}", values)
+    return world
+
+
+PIPE_ANY = ["dim_height", "dim_length", "dim_width", "diameter"]
+
+
+def test_size_under_dim_length_or_diameter_with_a_short_head(pipes):
+    got = _narrow(pipes, "pp731", [_size(900, PIPE_ANY)])
+    assert _sorted(got) == ["ZZSRTPP731-A", "ZZSRTPP731-B", "ZZSRTPP731-C"]
+
+
+def test_size_under_dim_length_or_diameter_with_the_full_head(pipes):
+    got = _narrow(pipes, "ZZSRTPP731", [_size(900, PIPE_ANY)])
+    assert _sorted(got) == ["ZZSRTPP731-A", "ZZSRTPP731-B", "ZZSRTPP731-C"]
+
+
+# c. non-stock asks through the turn path
+def _called_ids(calls) -> set[str]:
+    import json
+    import re
+
+    blob = json.dumps(calls, default=str)
+    return set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", blob))
+
+
+@pytest.mark.parametrize(
+    "intent, domain",
+    [("check_product", "master_products"), ("check_price", "master_products")],
+)
+def test_non_stock_ask_head_plus_size_names_the_matching_variants(session_factory, seeded, stub_access, monkeypatch, intent, domain):  # noqa: F811
+    from tests.chatbot.test_closed_lists_spec_over_held import _turns
+    from tests.chatbot.test_engine import _parser_output
+
+    ids = _seed(session_factory, tuple((_code(s), WC, {"trap_length": v}) for s, v in TRAP.items()))
+    verdict = _parser_output(
+        intent_hint=intent, domain_hint=domain, user_goal=intent,
+        entities=[_ent(HEAD, "product"), _spec("200MM", "size", 200)],
+    )
+    [(r, calls)] = _turns(session_factory, stub_access, monkeypatch, [("ZZSRT286200MM", verdict)], gate=True)
+    text = ((r.reply or {}).get("text") or "")
+    assert "Couldn't find" not in text, text
+    wanted = {ids[_code("SH-200")], ids[_code("SH-NEW-200")]}
+    unwanted = {v for k, v in ids.items() if k not in (_code("SH-200"), _code("SH-NEW-200"))}
+    assert wanted <= _called_ids(calls) and not (unwanted & _called_ids(calls)), (text, calls)
