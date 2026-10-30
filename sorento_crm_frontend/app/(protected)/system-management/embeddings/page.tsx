@@ -23,8 +23,8 @@ import { LIST_TABS, arrowTabs } from './lib';
 export default function EmbeddingsPage() {
   const [mode, setMode] = useState<EmbeddingsMode>('lookup');
   const [list, setList] = useState('category');
+  const overview = useEmbeddingsOverview({ poll: mode === 'records' });
 
-  const overview = useEmbeddingsOverview();
   const words = useLookupWords(list);
   const tryPhrase = useTryPhrase();
   const embedMissing = useEmbedMissing();
