@@ -60,6 +60,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
         "title": "Top selling items",
       },
       {
+        "path": "/sales/sales-and-outstanding",
+        "title": "Sales & outstanding",
+      },
+      {
         "path": "/sales/set-apart-customers",
         "title": "Set-apart customers",
       },
@@ -387,6 +391,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           {
             "path": "/master-data-management/brands",
             "title": "Brands",
+          },
+          {
+            "path": "/master-data-management/item-classes",
+            "title": "Item Classes",
           },
           {
             "path": "/master-data-management/units-of-measure",
@@ -792,6 +800,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           {
             "path": "/master-data-management/lookup-sets",
             "title": "Lookup Sets",
+          },
+          {
+            "path": "/system-management/embeddings",
+            "title": "Embeddings",
           },
         ],
         "title": "Configuration",
