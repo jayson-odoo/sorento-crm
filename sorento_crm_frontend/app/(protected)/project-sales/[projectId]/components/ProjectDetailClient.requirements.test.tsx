@@ -37,6 +37,7 @@ Element.prototype.releasePointerCapture = vi.fn();
 const push = vi.fn();
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
+  usePathname: () => '/project-sales/p1',
   useSearchParams: () => new URLSearchParams(),
 }));
 

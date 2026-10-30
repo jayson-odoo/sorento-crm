@@ -17,6 +17,7 @@ import type { Project } from '../../_shared/types/project.types';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/project-sales/p1',
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('next-auth/react', () => ({

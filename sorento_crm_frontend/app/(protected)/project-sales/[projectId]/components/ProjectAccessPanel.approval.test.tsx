@@ -4,7 +4,8 @@
  * pending or rejected one. The server answers 409 `project_not_approved` for the same request.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render as rtlRender, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../_shared/types/project.types';
 
@@ -30,7 +31,17 @@ vi.mock('../../_shared/hooks/useProjects', () => ({
   }),
 }));
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/project-sales/p1',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 import { ProjectAccessPanel } from './ProjectAccessPanel';
+
+// The Secondary leads table is a PanelDataGrid, which reads the query client.
+const render = (node: React.ReactElement) =>
+  rtlRender(<QueryClientProvider client={new QueryClient()}>{node}</QueryClientProvider>);
 
 function project(over: Partial<Project> = {}): Project {
   return {
