@@ -24,13 +24,9 @@ from .test_order_inquiry_handshake import api, world  # noqa: F401  (fixtures)
 
 
 def _person_confirm(db, row, user_id):
-    db.execute(
-        text(
-            f"UPDATE {_bundles.P}.order_inquiry_rows SET ack_state = 'acknowledged', "
-            "acknowledged_by = :u, acknowledged_at = :at WHERE id = :i"
-        ),
-        {"u": user_id, "at": STAMP, "i": row.id},
-    )
+    row.ack_state = ACK_ACKNOWLEDGED
+    row.acknowledged_by = user_id
+    row.acknowledged_at = STAMP
     db.flush()
 
 
