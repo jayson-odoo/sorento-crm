@@ -66,3 +66,20 @@ fulfilment planning and the OI email.
 CRM release first, then check the ss connection's `sorento_contract_version` (v2 needed), then one ss
 Repush of sales orders (Q4 = a; measure load first, crew-note it). Migration SQL for the crew copy:
 `crew/state/migrations/SO-LINE-DESC.sql` (`ADD COLUMN IF NOT EXISTS`).
+
+## Repush load (Q4 = a, measured from shared-service code, origin/main)
+
+- Repush (`POST /{company_id}/entities/sales_order/etl-task/repush`, ss `routers/companies.py:850-882`) clears
+  the SO row hashes; the next reconcile re-sends EVERY SO with `DocDate >= task.fromDate`, cancelled included
+  (ss `sql_source/source.py:296-322, 466-468`). No date / doc / open-only parameter.
+- Size: prod SO task `fromDate` 2023-09-01 = 148,068 SOs, ~621k lines in Sep 2026
+  (ss `documentation/plans/sprint-5/03-autocount-bulk-document-load.md:9-10`); today's count UNVERIFIED.
+- Pace: extract 2,000 headers/page within a 600 s budget per tick; push 5,000 rows per run in POSTs of 200,
+  concurrency 1 (ss `app/config.py:447-501`, `repositories/autocount_repository.py:639`). About 30 runs for
+  ~150k SOs; precedent reconcile of 148,068 took 20 ticks / 4,220 s (ss sprint-5 test report :57-69).
+- CRM cost: every re-sent SO takes the full ingest path (the quiet `backfill` mode is DO-only, ss
+  `sinks_sorento.py:1416-1421`). Whether the CRM short-circuits an unchanged SO is UNVERIFIED (check before release).
+- Measure before: `SELECT COUNT(*) FROM dbo.SO WHERE DocDate >= '<fromDate>'` via ss `POST /autocount/sql/preview`
+  (ss `routers/sql.py:121`). After: repush response `clearedCount`, Runs tab `pushed`.
+- Lever if the count is too heavy: temporarily raise the task `fromDate` (e.g. to the oldest SO still open)
+  for the repush, then restore it. Owner decides at release with the measured count; crew-note it then.
