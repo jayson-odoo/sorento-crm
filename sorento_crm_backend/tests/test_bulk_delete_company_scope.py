@@ -43,6 +43,7 @@ _SLUGS = (
     "marketing.promotions.delete",
     "inventory.stock.delete",
     "master_data.products.delete",
+    "dealer_kit.price_tag_requests.process",
 )
 
 
@@ -366,6 +367,53 @@ def test_parking_on_own_companys_record_still_works(api, action_key, entity_type
 
     with TestClient(app) as client:
         res = _park(client, action_key, entity_type, mine)
+    assert res.status_code == 202, res.text
+    assert _parked(db, mine) == 1
+
+
+def _price_tag(db) -> str:
+    """A tag on a request of the current company. The tag and its line carry no company
+    of their own: the request does."""
+    from app.models.price_tag import PriceTagRequest, PriceTagRequestLine, PriceTagRequestTag
+    from app.models.access import RespondContact
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()), phone_number=f"+60{uuid.uuid4().hex[:9]}", name=unique_code("contact")
+    )
+    db.add(contact)
+    db.flush()
+    request = PriceTagRequest(id=str(uuid.uuid4()), contact_id=contact.id, doc_number=unique_code("PT")[:30])
+    db.add(request)
+    db.flush()
+    line = PriceTagRequestLine(
+        id=str(uuid.uuid4()), request_id=request.id, line_type="product", product_id=_product(db), quantity=1
+    )
+    db.add(line)
+    db.flush()
+    tag = PriceTagRequestTag(id=str(uuid.uuid4()), line_id=line.id, sort_order=0, quantity=1, choices={})
+    db.add(tag)
+    db.commit()
+    return tag.id
+
+
+def test_parking_a_tag_delete_on_another_companys_request_is_not_found(api):
+    db, _in_company, other = api
+    _in_company(other)
+    theirs = _price_tag(db)
+    _in_company(_SORENTO)
+
+    with TestClient(app) as client:
+        res = _park(client, "price_tag_request_tag.delete", "price_tag_request_tag", theirs)
+    assert res.status_code == 404, res.text
+    assert _parked(db, theirs) == 0
+
+
+def test_parking_a_tag_delete_on_own_companys_request_still_works(api):
+    db, _in_company, _other = api
+    mine = _price_tag(db)
+
+    with TestClient(app) as client:
+        res = _park(client, "price_tag_request_tag.delete", "price_tag_request_tag", mine)
     assert res.status_code == 202, res.text
     assert _parked(db, mine) == 1
 
