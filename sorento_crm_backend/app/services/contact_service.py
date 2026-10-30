@@ -1101,6 +1101,7 @@ class ContactService:
             "chatbot_files_as_links": bool(getattr(contact, "chatbot_files_as_links", False)),
             # AGENTIC-P1: the per-contact switch for the read-only agent, default OFF.
             "chatbot_agent_enabled": bool(getattr(contact, "chatbot_agent_enabled", False)),
+            "chatbot_agent_daily_turns": getattr(contact, "chatbot_agent_daily_turns", None),
             # CONTACT-BRAND-SCOPE: listed by hand like every field above. The list endpoint
             # fills it for a whole page in one query; here, one contact when a session is given.
             "brands": brands,

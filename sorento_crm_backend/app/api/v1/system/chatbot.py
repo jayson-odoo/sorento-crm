@@ -80,7 +80,7 @@ from app.schemas.chatbot_turn import (
 from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import memory as agent_memory
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
-from app.services.chatbot.agent.loop import AgentBusy, run_agent_turn
+from app.services.chatbot.agent.loop import AgentBusy, enforce_agent_rate_limit, run_agent_turn
 from app.services.chatbot import console_service
 from app.services.chatbot.analytics import topic_audit
 from app.services.chatbot.contracts import TURN_STAGES
@@ -663,7 +663,7 @@ def _log_retry(
 @router.post("/console/turn", response_model=ConsoleTurnResponse)
 def console_turn(
     payload: ConsoleTurnRequest,
-    _user: dict = Depends(require_permission(VIEW)),
+    user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     """Run one dry-run chatbot turn for the console page, in process (D14: is_test=True,
@@ -681,6 +681,7 @@ def console_turn(
         run_id=payload.run_id,
         media=payload.media.model_dump() if payload.media is not None else None,
         reply_to=payload.reply_to.model_dump() if payload.reply_to is not None else None,
+        operator_user_id=user.get("id"),
     )
     return ConsoleTurnResponse(
         turn_id=result.turn_id,
@@ -697,6 +698,8 @@ def console_turn(
         prompt_version=result.prompt_version,
         actions=result.actions,
         message_id=result.message_id,
+        route=result.route,
+        agent=result.agent,
     )
 
 
@@ -715,15 +718,7 @@ def agent_turn(
     """One turn of the agent for a contact whose Agent switch is on and which has a linked
     active user. A refusal is a 409 carrying the reason; a second turn for the same contact
     while one runs is a 409 agent_busy."""
-    from app.services import rate_limit
-
-    # Each turn can spend a dozen model calls: limited per operator (fail-open without Redis).
-    if not rate_limit.hit("agent_turn", str(user["id"]), limit=30, window_seconds=600).allowed:
-        raise AppException(
-            status_code=429,
-            message="Too many agent messages, wait a few minutes.",
-            code="agent_turn_rate_limited",
-        )
+    enforce_agent_rate_limit(user["id"])
     try:
         result = run_agent_turn(
             db,

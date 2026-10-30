@@ -19,6 +19,7 @@ unreachable or a row is missing.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -1076,6 +1077,49 @@ def _chatbot_agent_fallback() -> str:
     )
 
 
+def _chatbot_router_fallback() -> str:
+    """The console router's question to Jev (AGENTIC-P2-ROUTE): JSON with `instructions` and the
+    `criteria` of the two sides, sent as the typed `choice` question. The production label's
+    provider is `typesafe` and its model pins the Jev model. No dashes: the text is read by a model."""
+    return json.dumps(
+        {
+            "instructions": (
+                "A staff member or a dealer sent the latest message to the company's WhatsApp sales-support "
+                "assistant. Two sides can answer it. Decide which side should answer the latest message, "
+                "reading the recent exchanges for context."
+            ),
+            "criteria": {
+                "chat": {
+                    "what": (
+                        "The quick-lookup bot. One lookup about a named product code (or a list of product codes), "
+                        "where each answer is one simple fact: stock, incoming or ETA, last arrival, a customer's "
+                        "orders or deliveries, outstanding orders, list price or cost, a form, a product file, "
+                        "drawing, certificate or picture, a promotion, a catalogue."
+                    ),
+                    "also": (
+                        "Greetings, thanks, casual talk, a menu answer such as a number or an option name, a short "
+                        "follow-up to the bot's last answer, and anything too unclear to act on."
+                    ),
+                    "not_for": "Totals, rankings, comparisons, breakdowns or anything that needs several facts combined.",
+                },
+                "agent": {
+                    "what": (
+                        "The analyst agent with tools. The ask needs several facts combined or calculated: totals or "
+                        "counts over a period, a ranking such as top 10, a comparison, a breakdown per salesperson, "
+                        "customer, supplier or month, a list of which customers, dealers or salespeople match "
+                        "something, a why or an explanation drawn from the records, or a question that names a "
+                        "product category, product type, brand or supplier instead of a product code, so the "
+                        "products must be found first."
+                    ),
+                    "also": "A follow-up to the agent's own previous answer, and any request to change, update, approve or record something.",
+                    "not_for": "A plain stock, ETA, price or file check, even for many products at once.",
+                },
+            },
+        },
+        indent=2,
+    )
+
+
 def _chatbot_clarifier_fallback() -> str:
     """System prompt for the WhatsApp chatbot's clarifier (`chatbot_clarifier`).
 
@@ -1308,6 +1352,14 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_chatbot_agent_fallback,
+    ),
+    "chatbot_router": PromptKeySpec(
+        name="chatbot_router",
+        role="Chatbot router - instructions and criteria for Jev, which picks the bot or the agent for a console message (JSON)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_chatbot_router_fallback,
     ),
     "synthesizer": PromptKeySpec(
         name="synthesizer",

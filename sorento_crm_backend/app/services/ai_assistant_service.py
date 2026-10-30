@@ -465,6 +465,8 @@ class AIAssistantConfigService:
             row.gemini_api_key_ciphertext = data.gemini_api_key.strip()
         if data.openai_api_key is not None and data.openai_api_key.strip():
             row.openai_api_key_ciphertext = data.openai_api_key.strip()
+        if data.typesafe_api_key is not None and data.typesafe_api_key.strip():
+            row.typesafe_api_key_ciphertext = data.typesafe_api_key.strip()
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -480,6 +482,7 @@ class AIAssistantConfigService:
             "anthropic_api_key_masked": _mask_key(row.anthropic_api_key_ciphertext),
             "gemini_api_key_masked": _mask_key(row.gemini_api_key_ciphertext),
             "openai_api_key_masked": _mask_key(row.openai_api_key_ciphertext),
+            "typesafe_api_key_masked": _mask_key(row.typesafe_api_key_ciphertext),
             "enabled_tools": list(row.enabled_tools or []),
             "rag_enabled": bool(row.rag_enabled),
             "is_enabled": bool(row.is_enabled),

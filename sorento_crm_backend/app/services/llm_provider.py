@@ -205,6 +205,15 @@ def resolve_api_key(cfg: Any, provider_name: str) -> str:
     )
 
 
+def resolve_typesafe_key(cfg: Any) -> str:
+    """The TypeSafe (Jev) key of the AI assistant config row; "" when none is stored.
+
+    No environment fallback and no generic-column fallback: Jev is the console router's
+    classifier, not a chat provider, and only the key saved on the AI settings page counts.
+    """
+    return (getattr(cfg, "typesafe_api_key_ciphertext", None) if cfg is not None else "") or ""
+
+
 class LLMProvider(Protocol):
     name: str
 

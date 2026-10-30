@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -50,9 +51,13 @@ from app.database import SessionLocal
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import run_turn
+from app.services.chatbot.agent.loop import AgentBusy, enforce_agent_rate_limit, run_agent_turn
 from app.services.chatbot.contracts import BRANCH_KINDS, TurnRequest
 from app.services.chatbot.lanes.escalation import routing_line
+from app.services.chatbot.router import RouteDecision, decide_route, trace_record
 from app.services.error_handler import AppException
+
+logger = logging.getLogger(__name__)
 
 # S8a's own key (`ai_prompt_versions.name` for the chatbot's semantic parser), restated
 # here rather than imported from `head.parser` for the same reason the script restates it:
@@ -109,6 +114,10 @@ class ConsoleTurnResult:
         # AC-QR-23: the respond message id of the customer message this turn ran on, so the
         # console can quote it later as the dealer's own message.
         "message_id",
+        # AGENTIC-P2-ROUTE: the router's decision (`ConsoleRoute` shape), and the agent's turn
+        # block (`AgentTurnResponse` shape) when it chose the agent.
+        "route",
+        "agent",
     )
 
     def __init__(self, **kwargs: Any) -> None:
@@ -457,6 +466,7 @@ def run_console_turn(
     run_id: str,
     media: dict[str, Any] | None = None,
     reply_to: dict[str, Any] | None = None,
+    operator_user_id: str | None = None,
 ) -> ConsoleTurnResult:
     """Run one dry-run turn for the in-app console page, in process.
 
@@ -483,6 +493,16 @@ def run_console_turn(
             reply_to=reply_to,
         )
 
+    # AGENTIC-P2-ROUTE: the router picks the side once per text turn. Media stayed on the bot above.
+    decision = decide_route(
+        db, contact_respond_id=contact_respond_id, text=text, session_vars=session_vars, has_media=False
+    )
+    if decision.side == "agent":
+        return _run_agent_side(
+            db, contact_respond_id=contact_respond_id, text=text, decision=decision,
+            operator_user_id=operator_user_id,
+        )
+
     base = _borrow_envelope(db, contact_respond_id)
     # Same rule `chat.py`'s `/turn` route states and applies before calling `run_turn`:
     # the read above left `db` mid-transaction, and holding that open for the whole turn
@@ -506,7 +526,9 @@ def run_console_turn(
     body = result.as_dict()
 
     reply_text, send_messages = _customer_texts(body)
+    _stamp_route(db, body.get("turn_id"), decision)
     return ConsoleTurnResult(
+        route=decision.as_response(),
         turn_id=body.get("turn_id"),
         branch_kind=body.get("branch_kind"),
         reply_text=reply_text,
@@ -517,6 +539,84 @@ def run_console_turn(
         prompt_version=_turn_prompt_version(db, body.get("turn_id")),
         actions=body.get("actions"),
         message_id=envelope_dict["message"]["message"]["messageId"],
+    )
+
+
+AGENT_BUSY_REPLY = "The agent is busy with an earlier message for this contact. Try again in a moment."
+AGENT_FAILED_REPLY = "The agent could not answer this message. Try again."
+
+
+def _stamp_route(db: Session, turn_id: str | None, decision: RouteDecision) -> None:
+    """Record the decision on the turn it routed: the Jev usage row (written before the turn
+    existed) pointed at it, and a `route` stage on its trace. Telemetry: never fails the turn."""
+    if not turn_id:
+        return
+    if decision.usage_id:
+        try:
+            from app.models.ai_assistant import AIAssistantUsageLog
+
+            db.query(AIAssistantUsageLog).filter(AIAssistantUsageLog.id == decision.usage_id).update(
+                {"chatbot_turn_id": str(turn_id)}
+            )
+            db.commit()
+        except Exception:  # noqa: BLE001
+            logger.warning("console: route usage link failed for turn %s", turn_id, exc_info=True)
+            db.rollback()
+    try:
+        uuid.UUID(str(turn_id))
+        row = db.get(ChatbotTurn, turn_id)
+        if row is not None:
+            row.trace = [*(row.trace or []), trace_record(decision)]
+            db.commit()
+    except ValueError:
+        return  # not a turn row (a stand-in id)
+    except Exception:  # noqa: BLE001
+        logger.warning("console: route trace stamp failed for turn %s", turn_id, exc_info=True)
+        db.rollback()
+
+
+def _run_agent_side(
+    db: Session, *, contact_respond_id: str, text: str, decision: RouteDecision, operator_user_id: str | None
+) -> ConsoleTurnResult:
+    """The router chose the agent: run it, and never fall back to the bot (card rule 6). A busy or
+    failed agent says so in the reply."""
+    from app.services.chatbot.agent import memory as agent_memory
+
+    if operator_user_id:
+        enforce_agent_rate_limit(operator_user_id)
+    try:
+        result = run_agent_turn(
+            db, contact_respond_id=contact_respond_id, text=text, operator_user_id=operator_user_id
+        )
+    except AgentBusy:
+        return ConsoleTurnResult(
+            route=decision.as_response(), reply_text=AGENT_BUSY_REPLY, quick_replies=[], send_messages=[], trace_summary={}
+        )
+    except Exception:  # noqa: BLE001 - the model, a tool or a refusal: one honest line, no bot re-run
+        logger.warning("console: routed agent turn failed for %s", contact_respond_id, exc_info=True)
+        return ConsoleTurnResult(
+            route=decision.as_response(), reply_text=AGENT_FAILED_REPLY, quick_replies=[], send_messages=[], trace_summary={}
+        )
+    _stamp_route(db, result.turn_id, decision)
+    return ConsoleTurnResult(
+        route=decision.as_response(),
+        turn_id=result.turn_id,
+        reply_text=result.reply_text,
+        quick_replies=[],
+        send_messages=[],
+        trace_summary={},
+        agent={
+            "turn_id": result.turn_id,
+            "conversation_id": result.conversation_id,
+            "reply_text": result.reply_text,
+            "status": result.status,
+            "limit_hit": result.limit_hit,
+            "rounds": result.rounds,
+            "usage": result.usage,
+            "tool_calls": result.tool_calls,
+            "steps": agent_memory.steps_for_turn(db, result.turn_id),
+            "pending_action": result.pending_action,
+        },
     )
 
 
