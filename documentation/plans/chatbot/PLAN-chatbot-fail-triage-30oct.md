@@ -19,8 +19,13 @@ Owner answered Q1-Q5 on 30 Oct ~21:15; Q1 escalation routing evidence filed as a
 ## Batches
 
 - Batch 1 (now): AC-1 (every generic / busy path, C2 C4 C6 C8 included), AC-2 (F3), AC-3 (F7), AC-4.
-- Batch 1b (after the Q1 answer): escalation picks agent + team as one reachable pair, default
-  general_enquiries -> marketing_product, assignee uuid only from an assignee option.
+- Batch 1 escalation (owner Q1 answer 30 Oct ~22:05, UAC AC-7): NO default team; clarify when
+  there is no topic; carry the topic from earlier turns; agent + team as one reachable pair per
+  company; honest failure text; assignee uuid only from an assignee option. AC-7f (named team in
+  the parser) is a prompt change. Owner still to answer: marketing_form SLA (config).
+- Review round 1 (30 Oct): NOT READY, findings R1-R7 + nits in the UAC file. Next round: tester red
+  tests for R1, R2, R3, R4, R5, R6, R7 and AC-7a..e, then coder (escalation slice on Opus: tangled
+  routing state), then reviewer + security-reviewer again.
 - Batch 2: AC-5 dealer promotion cost, AC-6 code + size (parser prompt via md5 pin, owner publishes,
   eval gate).
 - Outside this repo: C7, the n8n `sub-error-logger` text "Sorry, I couldn't process that just now"

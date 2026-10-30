@@ -51,6 +51,59 @@ the chat portal tool accepts only complaint / stock_inquiry / purchase_request /
 
 Every new text has MS and ZH entries in `label_catalog.py`, and a test asserts the catalog covers it.
 
+### AC-7 Escalation routes to a reachable team, never a default (owner, 30 Oct ~22:05)
+
+Owner: "we shouldn't do no topic escalate to marketing product, we should clarify". No default team.
+Evidence (17 failed escalations, backup 1028): 1 truly topic-less, 2 named team missed by the
+parser, 2 topic in the message with parser routing null, 5 follow-ups whose topic was in earlier
+turns, 3 unroutable agent+team pairs, 3 marketing_form SLA missing (config, owner), 1 company uuid
+sent as assignee.
+
+- AC-7a agent + team are chosen as ONE pair from the topic's domain (the parser's R-X-08 map:
+  order -> order_enquiries/customer_service, incoming -> incoming_stock_enquiries/purchasing,
+  master_products -> general_enquiries/purchasing, inventory -> general_enquiries/warehouse,
+  product_attachment -> general_enquiries/marketing_product, promotion ->
+  general_enquiries/marketing_promotion, forms -> marketing_form/marketing_form), and a pair is
+  offered only when it exists in `agent_teams` for the contact's company (Mocha:
+  general_enquiries has purchasing_product, not purchasing; cover it).
+- AC-7b the topic is carried from earlier turns: a follow-up ("Yes" to an offer, "9" picking from an
+  order list, "Eta" after a PO line, "mocha mch" after a DO reply) routes by the held topic.
+- AC-7c no topic this turn and none held: the bot asks one short clarifying question with the
+  reachable topics as quick replies (orders & delivery, stock & ETA, product info, promotions,
+  forms) and routes from the answer. Never DEFAULT_SUGGESTED_TEAM (`contracts.py:264`) and never a
+  default agent (`contracts.py:282`) for the route.
+- AC-7d failure text names the OFFERED team and is localized (H-ESC; review finding 6).
+- AC-7e a company pick never becomes `preferred_assignee_id`: `turn/apply.py:393` takes a uuid
+  only from an assignee option.
+- AC-7f (prompt, md5 pin, owner publishes, eval gate) the parser fills a team the user names:
+  "Please escalate to product marketing team" -> marketing_product; "escalate marketing" ->
+  ambiguous marketing team -> AC-7c clarify among the marketing teams.
+
+### Review round 1 findings (30 Oct, reviewer + security-reviewer on b5345cb5c6)
+
+Blockers:
+- R1 AC-3 never reaches WhatsApp: `lanes/business/fetch.py:1648-1656` `portal_submission_type`
+  filters on SUPPORTED_TYPES; `PORTAL_LINK_COPY` (`fetch.py:1640`) lacks price_tag_request; the
+  prompt addendum `alembic/data/chatbot_semantic_parser.portal-form.addendum.txt` lists four forms
+  (prompt change: md5 pin + owner publish). The `schemas/ai_semantic_parser.py` change is the
+  in-app assistant's schema, not the chatbot's. Needs a chatbot-path test.
+- R2 AC-2c real case: the 201-product turn ran `crm_master_product_attachments_list` and answered
+  with a withheld over-cap set; the reply comes from `turn/compose.py:760` (never-stuck arm). Word
+  that arm ("which product?"), test with a 201-set fixture.
+Should-fix:
+- R3 AC-1b `engine.py:10178,10185`: language unset on failure, MS/ZH contacts get English; call
+  `_fallback_language(...)` first.
+- R4 AC-1f `engine.py:3971` `_worker_failed`: callers 3895/3901 (job returned no turn / crashed)
+  must say H-ERROR; H-QUEUE only for the timeout at 3915.
+- R5 retry `lanes/business/services.py:279,366-372`: skip for side-effecting tools on the
+  read-only allowlist (`crm_low_stock_report` creates a run + workbook, `crm_portal_link_get`
+  mints a token) and when the agent loop passes `timeout_seconds` (`agent/loop.py:1057`).
+- R6 AC-1d `engine.py:10505`: pass `item=lane_item` so the reply localizes; prefer the offered team.
+- R7 `lanes/casual.py:62`: setup failure still sends "Sorry, I can't reply to that right now"; H-AI.
+Nits: `scripts/chatbot_load.py:231,546` counts by old text; `api/v1/external/chat.py:572-578`
+drops `send_attachments` (reuse `_send_actions`); stale comments `llm_call.py:39`,
+`casual.py:337`, `head/parser.py:61,87`; `compose.py:407` label stays English.
+
 ## Batch 2 (after its own red tests; eval gate; prompt via md5 pin, owner publishes)
 
 ### AC-5 Dealer cost = dealer promotion (Q2)
