@@ -1,6 +1,6 @@
 # PLAN: server enforces required fields on form submit (FORM-REQUIRED-SERVER)
 
-Status: Review (small fix track: no migration, no RBAC change, no new ingest surface;
+Status: Merge-ready (small fix track: no migration, no RBAC change, no new ingest surface;
 backend only). Lane FORM-REQUIRED-SERVER, PR #2008. UAC: `form-required-server-acceptance-criteria.md`.
 
 ## Problem
@@ -44,7 +44,9 @@ SubmissionForm read it instead of its own flags.
   "Cannot submit X with status Y" still wins) and before any write; `portal_draft_at = None`
   moved below the branches so a refusal leaves the row as it was.
 - `PortalRevisionService.revise`: called after the payload is applied, beside the
-  sponsorship unit-price check.
+  sponsorship unit-price check, skipping the adapter's `frozen_on_revise` fields
+  (security-review finding: the requestor is frozen, so demanding it would refuse a row
+  created without one on every revise with no way out).
 - Draft saves are never checked.
 
 ## Entry points and integrations checked
@@ -58,7 +60,11 @@ SubmissionForm read it instead of its own flags.
 
 ## Tests
 
-- Red 7f5ebcde, fix 00e202df + 0daf0bb5. `tests/test_form_required_server.py` 27 tests.
-- 71 existing tests in 11 files submitted incomplete forms; their fixtures now carry the
+- Red 7f5ebcde, fix 00e202df + 0daf0bb5, revise frozen-field skip f2ec101b.
+  `tests/test_form_required_server.py` 28 tests.
+- 71 existing tests submitted incomplete forms; their fixtures (9 files) now carry the
   required fields (no assertion changed). Portal set 1789 passed; wider set 4584 passed,
   5 failed, all 5 failing on main too.
+- Reviewer READY (kill tests per code path and per form drift); security reviewer CLEAN.
+- Diff is about 510 lines, but about 90 are app code; the rest is tests and docs, so the small
+  fix track holds in spirit.

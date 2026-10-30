@@ -12,7 +12,10 @@ sponsorship_form.
 - R5. A submit whose body fills the missing fields goes through (the check reads the row after
   the body is applied).
 - R6. Saving a draft never checks required fields.
-- R7. A portal revise that would leave a required field empty is refused the same way.
+- R7. A portal revise refuses an empty required field the contact can edit; fields frozen on
+  revise (the requestor) are exempt, since the contact cannot fill them there. On main the
+  revisable kinds' only required field is frozen, so this bites once #1953 adds the complaint
+  revise.
 - R8. A row that cannot be submitted for its status keeps its own refusal ("Cannot submit ...").
 - R9. The server list equals SubmissionForm's `required: true` flags per kind; a drift fails CI.
 - R10. External / chatbot / MCP create paths are unchanged.

@@ -259,7 +259,11 @@ _FE_FORM = (
 
 
 def _fe_required_by_kind() -> dict[str, list[str]]:
-    """`required: true` field names per kind, read from SubmissionForm's FIELDS literal."""
+    """`required: true` field names per kind, read from SubmissionForm's FIELDS literal.
+
+    Static flags only: a `requiredWhen` (per-contact) field is not read. The one there is,
+    sponsorship `project_id`, has its own server check (`assert_project_requirement`).
+    """
     src = _FE_FORM.read_text()
     block = src[src.index("const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {"):]
     block = block[: block.index("\n};\n")]
