@@ -99,18 +99,39 @@ registry, so trap length needs no naming. Two variants matching: stays a pick be
 
 ## Prompt edits (one version, base = production text, F1)
 
-- P1 `== LAST PURCHASE COST ==` (line 553): add "my cost", "dealer cost", "costing".
-- P2 `== THE specification ENTITY ==` (line 781): a size stuck to a code, or after it, is two entities: the code head as
-  the product and reserved `size` with the number and its unit, with or without a candidate line (F7).
-- P3 `== ROUTING ==` (line 265): a named team maps to the enum when it is exactly one team; when it maps to several or
-  none, emit the user's own word, lowercased (`head/parser.py:410-428` already documents this).
-- P4 new `== PORTAL FORM ==` section + `portal_form` output key, five forms (F2).
+Candidate md5 59146557 (production md5 57d7d412 + the three edits below, 10 changed lines), text kept with crew at
+`crew/state/eval/fail-triage-b2/texts/B.txt`.
+
+- P1 dropped. The 8 cost gold rows already pass on the production text ("my cost", "dealer cost", "costing", "cost price",
+  MS and ZH paraphrases read as `purchase_cost`; the negatives stay out). A rule would add nothing. Only applies if Q1 = (a).
+- P2 new line after `A BARE FAMILY CODE`: a size stuck on a code's end is two entities, code + reserved `size`, even with
+  no candidate line; the specification rule gets the one exception (F7). Dash and space forms already parse right on
+  production, because the `Size` candidate line exists for them; only the glued form was failing.
+- P3 `== ROUTING ==`: a named team maps to the enum when it is exactly one team; when it fits several or none, emit the
+  user's own word, lowercased, agent null (`head/parser.py:410-428` already documents this). Output key text says so.
+- P4 `portal_link` domain line gains price tag request, never the price tag template document; `portal_form` output key
+  with five forms (F2). Measured wider than R1: on production `portal_form` is null even for "link for complaint form".
+
+## Gate (crew answers 31 Oct: USD 2.60 for this gate, DB `sorento_prod_1020` read-only and rolled back, version 2247a9af)
+
+Harness outside the repo at `crew/state/eval/fail-triage-b2`: gemini-3.5-flash-lite, span extractor v1, startup check
+refuses unless the connection is read-only. Crew runs the hidden split on the arm handed over; hidden stays sealed here.
+
+| Run | Text | Result | USD |
+|---|---|---|---|
+| Arm A, TRAIN 118 | 57d7d412 | 118 of 118 ran, baseline | 0.3774 |
+| Gold 32 | 57d7d412 | 17/32 | 0.0949 |
+| Gold 32, first draft | 85c286c4 | 26/32: team, portal, cost all pass | 0.0940 |
+| Gold 7 glued + negatives | 59146557 | 6/7, glued 4/5, no-unit and exact-code negatives hold | 0.0221 |
+
+`sorento_prod_1020` alembic_version is `adp_0001_pcs_attach_delete`, not head `sfq_0001_sample_request_source`; crew
+migrates lane schema into it by SQL, and the columns the parser reads are present.
 
 ## Code slices
 
-- S1 AC-6: `narrow_code_tokens_by_specs` honours `any_keys`; the no-variant reply (Q3).
-- S2 AC-5: the grant-gate split, in-process dealer cost read, reply wording, MS + ZH in `label_catalog.py`.
-- S3 prompt text P1-P4 + gold rows (fresh paraphrases included), gate.
+- S1 AC-6 done: `narrow_code_tokens_by_specs` honours `any_keys` (c71a780945). The no-variant reply waits on Q3.
+- S2 AC-5: the grant-gate split, in-process dealer cost read, reply wording, MS + ZH in `label_catalog.py`. Waits on Q1, Q2.
+- S3 prompt text, gold rows `scripts/chatbot_eval/gold/parser_fail_triage_b2.jsonl`, grader keys done; arm B and full gold next.
 
 ## Decisions (lead)
 
