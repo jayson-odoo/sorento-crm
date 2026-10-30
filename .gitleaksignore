@@ -30,3 +30,7 @@ dbcc51b9b06fb995636e2f843c86ef2c85490ed3:sorento_crm_backend/tests/test_inbox_qu
 27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:54
 27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:68
 27afd5ad2d46d52ec1be38b9ffdb2f95bc51445c:sorento_crm_frontend/app/(protected)/system-management/embeddings/__tests__/embeddingsStubs.ts:generic-api-key:79
+# AGENTIC-P2-ROUTE (#2025): test_router.py:26 JEV_KEY and test_router_settings_key.py:26 KEY are made-up
+# 23-char test fixtures (fake/test/dummy words, never a real or dev key, never read from any env or DB).
+31fce57a5143cd45ea15050fd1a0eae3efa3626d:sorento_crm_backend/tests/chatbot/agent/test_router.py:generic-api-key:26
+31fce57a5143cd45ea15050fd1a0eae3efa3626d:sorento_crm_backend/tests/chatbot/agent/test_router_settings_key.py:generic-api-key:26
