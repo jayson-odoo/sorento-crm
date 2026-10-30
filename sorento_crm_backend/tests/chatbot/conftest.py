@@ -233,3 +233,15 @@ def _stub_casual_llm(request, monkeypatch):
     monkeypatch.setattr(casual_mod, "resolve_clarifier_config", _fake_resolve_clarifier_config)
     monkeypatch.setattr(casual_mod, "call_clarifier", _fake_call_clarifier)
     yield calls
+
+
+@pytest.fixture(autouse=True)
+def _reset_lookup_warm_give_up():
+    """LOOKUP-WARM-STORM: a failed lookup warm holds off a retry of the same texts for 900 s
+    (`lookup_lists._gave_up`, a process global); a test whose warm fails on a shared model
+    would suppress a later test's warm of that model. Lives here, not in `tests/conftest.py`,
+    because only this tree may import the chatbot package (`test_import_boundary.py`)."""
+    yield
+    from app.services.chatbot.head import lookup_lists
+
+    lookup_lists._gave_up.clear()

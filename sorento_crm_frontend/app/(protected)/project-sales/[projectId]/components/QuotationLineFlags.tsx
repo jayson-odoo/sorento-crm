@@ -108,16 +108,23 @@ export function MinimumPriceFlag({
 
   return (
     <div className="mt-1 space-y-0.5 text-end">
-      {/* No icon and tight padding: the Rate cell is narrow, and "Minimum" must fit on a line. */}
-      <Badge
-        variant="destructive"
-        className="h-auto whitespace-normal rounded-md px-1.5 py-0.5 text-start text-2xs leading-tight"
-        title={floor.source}
-      >
-        {floor.value ? `Minimum price ${formatMyr(floor.value)}` : 'Minimum price'}
-      </Badge>
+      <MinimumPriceBadge value={floor.value} title={floor.source} />
       <p className="whitespace-normal break-words text-2xs text-destructive">{floor.source}</p>
     </div>
+  );
+}
+
+/** The "Minimum price RM x" pill itself, shared with a customer's suggested price in review. */
+export function MinimumPriceBadge({ value, title }: { value: string | null; title?: string }) {
+  return (
+    // No icon and tight padding: the Rate cell is narrow, and "Minimum" must fit on a line.
+    <Badge
+      variant="destructive"
+      className="h-auto whitespace-normal rounded-md px-1.5 py-0.5 text-start text-2xs leading-tight"
+      title={title}
+    >
+      {value ? `Minimum price ${formatMyr(value)}` : 'Minimum price'}
+    </Badge>
   );
 }
 
