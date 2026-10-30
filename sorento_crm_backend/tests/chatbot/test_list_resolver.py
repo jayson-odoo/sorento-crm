@@ -284,7 +284,8 @@ def test_only_span_extract_and_the_engine_import_list_resolver():
     root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
     assert (root / "head" / "list_resolver.py").is_file()
     assert (root / "head" / "span_extract.py").is_file(), "AC-S2-9: the span pass module must exist"
-    assert _importers(root) == ["agent/tools.py", "engine.py", "head/span_extract.py"]
+    # LOOKUP-WARM-STORM: the lookup-word sync stores the spec-name rows (`spec_key_rows`) the start-up warm loads.
+    assert _importers(root) == ["agent/tools.py", "engine.py", "head/lookup_word_store.py", "head/span_extract.py"]
 
 
 # AC-S1-6 guard: the margin itself (a zero margin must fail this)
@@ -367,6 +368,7 @@ def test_nothing_else_in_app_references_list_resolver():
     assert _importers(root) == [
         "services/chatbot/agent/tools.py",
         "services/chatbot/engine.py",
+        "services/chatbot/head/lookup_word_store.py",
         "services/chatbot/head/span_extract.py",
     ]
 

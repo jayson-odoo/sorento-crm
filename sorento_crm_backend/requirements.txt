@@ -44,7 +44,12 @@ pytest-split>=0.10  # CI shards the backend suite across runners (--splits/--gro
 # for the issue each guards against.
 pytest-rerunfailures>=14.0
 pgvector
-PyMuPDF>=1.24
+# LOOKUP-WARM-STORM: below 2.0. PyMuPDF 2.0 (19 Oct 2026) builds an onnxruntime layout model at
+# `import fitz`, so the preloading gunicorn master owns its thread pool and a forked worker that
+# exits hangs in onnxruntime's exit handler (`std::thread::join` on a thread only the master has)
+# until WORKER TIMEOUT kills it 120 s later; its replacement boots only then. The app never uses
+# the layout model. tests/test_gunicorn_conf.py guards it.
+PyMuPDF>=1.24,<2
 opencv-python-headless>=4.9
 openai>=1.40.0
 py-spy
