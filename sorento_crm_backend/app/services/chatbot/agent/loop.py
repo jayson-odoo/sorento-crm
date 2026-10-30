@@ -46,6 +46,9 @@ PROMPT_KEY = "chatbot_agent"
 FEATURE = "chatbot_agent"
 DEFAULT_PROVIDER = "gemini"
 DEFAULT_MODEL = "gemini-3.5-flash"
+# The effort the agent thinks at when its label sets none (owner, 31 Oct): without one a flash model gets a
+# one-token thinking budget, so it barely thinks and the console has no reasoning to show.
+DEFAULT_EFFORT = "low"
 MCP_CALL_TIMEOUT = 10.0
 NOT_VERIFIED = "(not verified)"
 #: Per-call ceilings. Every call also counts against the turn's max_seconds.
@@ -653,7 +656,7 @@ def _resolve_provider(db) -> tuple[Any, str, str, str | None]:
         name, model = DEFAULT_PROVIDER, DEFAULT_MODEL
     elif not model:
         model = DEFAULT_MODEL if name == DEFAULT_PROVIDER else None
-    effort = ai_prompt_registry.agent_reasoning_effort(db, PROMPT_KEY)
+    effort = ai_prompt_registry.agent_reasoning_effort(db, PROMPT_KEY) or DEFAULT_EFFORT
     cfg = db.query(AIAssistantConfig).order_by(AIAssistantConfig.created_at.asc()).first()
     key = resolve_api_key(cfg, name)
     if not key:
@@ -902,7 +905,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         if provider is None:
             provider, provider_name, model, effort = _resolve_provider(db)
         else:
-            effort = ai_prompt_registry.agent_reasoning_effort(db, PROMPT_KEY)
+            effort = ai_prompt_registry.agent_reasoning_effort(db, PROMPT_KEY) or DEFAULT_EFFORT
             name, picked = ai_prompt_registry.agent_model(db, PROMPT_KEY)
             provider_name, model = name or DEFAULT_PROVIDER, picked or DEFAULT_MODEL
         send = provider.chat
