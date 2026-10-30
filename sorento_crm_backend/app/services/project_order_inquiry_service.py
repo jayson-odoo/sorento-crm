@@ -1179,23 +1179,19 @@ def auto_confirm_rows_on_spo_allocations(db: Session, spo_allocation_ids: Sequen
 def flag_rows_for_cancelled_lines(
     db: Session, core_line_ids: Sequence[Any]
 ) -> int:
-    """PLAN-oi-cancelled-line-used-confirm.md (AC-CL-6/7, C1): a sales order line just
-    transitioned to `cancelled` - every LIVE order inquiry row of that line (state not
-    `cancelled`, ACTIONED included) that purchasing had already acknowledged goes back
-    to To confirm, `changed_at` set, the SAME handshake `_settle_row_in_place` uses when
-    CS amends a row purchasing had already taken on.
+    """AC-AC-10e (owner 30 Oct): a sales order line just transitioned to `cancelled`. Every
+    LIVE, non-rejected order inquiry row of that line (state not `cancelled`, ACTIONED
+    included) goes through ONE batched `auto_confirm` and ends done (`acknowledged`, by
+    NULL); a manual Unconfirm still holds. Nothing is stamped `changed` and nothing is
+    queued for purchasing (no handover, notify or changed-with-links notice).
 
-    ONE function, called from the two write sites (`SalesOrderService._upsert_lines`,
+    Called from the two write sites (`SalesOrderService._upsert_lines`,
     `document_ingest_service`) with only the core line ids THAT CALL'S OWN write just
-    cancelled - never every cancelled line in the company. That is what makes AC-CL-7
-    true: a second push of an already-cancelled document, or an edit that leaves a
-    cancelled line cancelled, names no transitioned id at all, so this is never called
-    for it and a row purchasing has re-confirmed does not come back.
+    cancelled, never every cancelled line in the company, so a second push of an
+    already-cancelled document names no transitioned id and never reaches this.
 
-    A row already `awaiting`, `changed` or `rejected` is left as it is - there is
-    nothing new to tell purchasing about a row it has not yet confirmed, or has already
-    been told about, or CS has already re-decided. A row whose OWN state is `cancelled`
-    is left alone too - a dead row is nobody's work either way.
+    The return value and the "flagged" log line count every such row on the line, not the
+    rows whose state changed; callers ignore it.
     """
     ids = [cid for cid in core_line_ids if cid]
     if not ids:
@@ -6179,7 +6175,8 @@ class ProjectOrderInquiryService:
         line gets no `cancelled_at` / `cancelled_by_id` / `cancel_reason`: those mean the CS
         board. The ONE sequence the ingest and `scripts/release_removed_autocount_lines.py`
         share. Handover lines are queued only for lines whose rows actually retired. Call
-        before `flag_rows_for_cancelled_lines`, which then only meets actioned rows.
+        before `flag_rows_for_cancelled_lines`, which then meets the rows still live on the line
+        (actioned ones) and runs them through `auto_confirm`.
 
         `notify=False` (AC-RL-44, the reconciliation script: weeks-old removals): whatever this
         call queued for after the commit, the purchasing handover and the changed-with-links
