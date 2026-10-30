@@ -22,7 +22,7 @@ from app.main import app  # noqa: E402
 from app.models.base import company_scope
 from app.models.inventory import Stock, Warehouse
 from app.models.marketing import Promotion
-from app.models.order import Order
+from app.models.order import Order, OrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.sla import SlaFormAction
 from tests._pg_fixture import blank_session, unique_code
@@ -248,16 +248,75 @@ def test_promotion_and_order_deletes_need_the_delete_permission(api):
     app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
 
     order = _order(db)
+    line_order, line_ids = _order_with_lines(db)
 
     with TestClient(app) as client:
         res = _bulk_delete(client, PROMOTIONS_BULK, [mine])
         single = client.delete(f"/api/v1/marketing/promotions/{mine}")
         single_order = client.delete(f"/api/v1/order-management/orders/{order}")
+        lines = _bulk_delete_lines(client, line_order, line_ids)
+        one_line = client.delete(f"/api/v1/order-management/orders/{line_order}/lines/{line_ids[0]}")
     assert res.status_code == 403, res.text
     assert single.status_code == 403, single.text
     assert single_order.status_code == 403, single_order.text
+    assert lines.status_code == 403, lines.text
+    assert one_line.status_code == 403, one_line.text
+    assert _line_ids(db, line_order) == set(line_ids)
     assert _exists(db, Promotion, mine)
     assert _exists(db, Order, order)
+
+
+def _order_with_lines(db, n: int = 2) -> tuple[str, list[str]]:
+    order_id = _order(db)
+    warehouse = Warehouse(id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:50], warehouse_name="ZZT WH")
+    db.add(warehouse)
+    db.flush()
+    line_ids = []
+    for sequence in range(1, n + 1):
+        line = OrderLine(
+            id=str(uuid.uuid4()),
+            order_id=order_id,
+            line_sequence=sequence,
+            product_id=_product(db),
+            warehouse_id=warehouse.id,
+        )
+        db.add(line)
+        line_ids.append(line.id)
+    db.commit()
+    return order_id, line_ids
+
+
+def _line_ids(db, order_id: str) -> set[str]:
+    db.expire_all()
+    with company_scope(db, None):
+        return {r.id for r in db.query(OrderLine).filter(OrderLine.order_id == order_id).all()}
+
+
+def _bulk_delete_lines(client: TestClient, order_id: str, ids):
+    return client.request("DELETE", f"/api/v1/order-management/orders/{order_id}/lines/bulk-delete", json={"ids": ids})
+
+
+def test_order_line_bulk_delete_refuses_another_companys_order(api):
+    db, _in_company, other = api
+    _in_company(other)
+    theirs, their_lines = _order_with_lines(db)
+    _in_company(_SORENTO)
+
+    with TestClient(app) as client:
+        res = _bulk_delete_lines(client, theirs, their_lines)
+    assert res.status_code == 404, res.text
+    assert _line_ids(db, theirs) == set(their_lines)
+
+
+def test_order_line_bulk_delete_still_deletes_own_lines(api):
+    db, _in_company, _other = api
+    mine, (gone, kept) = _order_with_lines(db)
+
+    with TestClient(app) as client:
+        res = _bulk_delete_lines(client, mine, [gone])
+    assert res.status_code == 200, res.text
+    assert res.json()["deleted_count"] == 1
+    assert _line_ids(db, mine) == {kept}
 
 
 # --------------------------------------------------------------------------- #
