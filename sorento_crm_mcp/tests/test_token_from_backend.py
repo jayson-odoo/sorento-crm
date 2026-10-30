@@ -90,8 +90,22 @@ def test_enforce_switched_on_applies_after_the_cache_ttl(clock):
         assert _post(c, _bearer(NEW)).status_code == 200
 
 
-def test_a_new_token_is_accepted_at_once_through_the_refresh_on_a_miss(clock):
-    """The backend switches to a new token within seconds; the MCP cache must not refuse it."""
+def test_an_unknown_bearer_inside_the_miss_interval_is_refused_without_a_fetch(clock):
+    """Why the backend waits SEND_NEW_AFTER_SECONDS (10 s, `app/services/mcp_auth_token.py`)
+    before sending a freshly rotated token: inside MISS_REFRESH_SECONDS of the last fetch, an
+    unknown bearer is refused without asking the backend again (review S1)."""
+    backend = FakeBackend([OLD], enforce=True)
+    with TestClient(create_http_app(_settings(), token_fetcher=backend)) as c:
+        assert _post(c, _bearer(OLD)).status_code == 200
+        backend.tokens = [NEW, OLD]
+        clock.now += 1.0
+        assert _post(c, _bearer(NEW)).status_code == 401
+        assert auth.MISS_REFRESH_SECONDS < 10.0, "the backend's send-new delay must exceed this"
+
+
+def test_a_new_token_is_accepted_through_the_refresh_on_a_miss(clock):
+    """Past the miss interval (the backend's send-new delay guarantees that), the MCP cache must
+    not refuse a rotated token."""
     backend = FakeBackend([OLD], enforce=True)
     with TestClient(create_http_app(_settings(), token_fetcher=backend)) as c:
         assert _post(c, _bearer(OLD)).status_code == 200

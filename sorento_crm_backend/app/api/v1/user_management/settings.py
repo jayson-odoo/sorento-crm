@@ -1,6 +1,6 @@
 """System settings API routes."""
 import logging
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Literal, Optional
@@ -766,12 +766,14 @@ def get_mcp_token(
 
 @router.post("/mcp-token/rotate")
 def rotate_mcp_token(
+    response: Response,
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
 ):
     """Generate (first time) or rotate the token. The new token is in this answer only."""
     from app.services import mcp_auth_token
 
+    response.headers["Cache-Control"] = "no-store"
     token = mcp_auth_token.rotate(db, _actor_id(db, current_user))
     return {**mcp_auth_token.describe(db), "token": token}
 

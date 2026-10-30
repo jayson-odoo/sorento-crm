@@ -85,7 +85,8 @@ export default function McpTokenCard() {
   const rotate = useRotateMcpToken();
   const enforce = useSetMcpEnforce();
   const revoke = useRevokePreviousMcpToken();
-  // The only place the plain token lives in the browser; gone on Hide or on leaving the page.
+  // The only place the plain token lives in the browser (the hook keeps it out of the query
+  // cache and the mutation is reset): gone on Hide or on leaving the page.
   const [newToken, setNewToken] = useState<string | null>(null);
 
   if (query.isLoading) {
@@ -143,7 +144,11 @@ export default function McpTokenCard() {
                 disabled={busy}
                 onClick={() =>
                   rotate.mutate(undefined, {
-                    onSuccess: (r) => setNewToken(r.token),
+                    onSuccess: (r) => {
+                      setNewToken(r.token);
+                      // The mutation's own data would keep the token after Hide.
+                      rotate.reset();
+                    },
                   })
                 }
               >
@@ -188,7 +193,7 @@ export default function McpTokenCard() {
               id="mcp-token-enforce"
               aria-label="Enforce"
               checked={data.enforce}
-              disabled={!data.configured || busy}
+              disabled={!data.configured || data.unreadable || busy}
               onCheckedChange={(v) => enforce.mutate(v)}
             />
           </div>

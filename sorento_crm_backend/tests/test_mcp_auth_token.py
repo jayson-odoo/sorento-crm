@@ -64,6 +64,13 @@ def _row(db):
     return db.query(SystemSetting).first()
 
 
+def _age(db, seconds=60):
+    """Move the last rotate into the past, past the send-new delay (SEND_NEW_AFTER_SECONDS)."""
+    row = _row(db)
+    row.mcp_auth_token_rotated_at = row.mcp_auth_token_rotated_at - timedelta(seconds=seconds)
+    db.commit()
+
+
 def _audit_rows(db):
     from app.models.audit import AuditLog
 
@@ -92,6 +99,8 @@ def test_generate_stores_ciphertext_only_and_returns_a_long_random_token(db, act
     assert len(token) >= 32
     row = _row(db)
     assert row.mcp_auth_token_ciphertext and token not in row.mcp_auth_token_ciphertext
+    assert m.current_token(db) is None, "not sent before the MCP server can have seen it"
+    _age(db)
     assert m.current_token(db) == token
     assert m.mcp_answer(db) == {"enforce": False, "token_sha256": [_sha(token)]}
     assert m.describe(db)["masked"] == f"****{token[-4:]}"
@@ -104,8 +113,10 @@ def test_rotate_keeps_the_previous_token_valid_for_the_grace_window(db, actor):
 
     old = m.rotate(db, actor.id)
     new = m.rotate(db, actor.id)
+    assert m.current_token(db) == old, "the previous token is sent until the MCP can know the new one"
+    assert m.mcp_answer(db)["token_sha256"] == [_sha(new), _sha(old)], "the MCP accepts both at once"
+    _age(db)
     assert m.current_token(db) == new
-    assert m.mcp_answer(db)["token_sha256"] == [_sha(new), _sha(old)]
     until = datetime.fromisoformat(m.describe(db)["previous_valid_until"])
     expected = datetime.now(timezone.utc) + timedelta(hours=m.GRACE_HOURS)
     assert abs((until - expected).total_seconds()) < 60
@@ -135,6 +146,19 @@ def test_revoke_previous_ends_the_grace_window_now(db, actor):
 def test_enforce_needs_a_token_first(db, actor):
     from app.services import mcp_auth_token as m
 
+    with pytest.raises(m.EnforceWithoutToken):
+        m.set_enforce(db, True, actor.id)
+    assert m.mcp_answer(db)["enforce"] is False
+
+
+def test_enforce_refuses_a_token_that_no_longer_decrypts(db, actor):
+    """Review S2: the backend could not send it, so Enforce would refuse every caller."""
+    from app.services import mcp_auth_token as m
+
+    m.rotate(db, actor.id)
+    row = _row(db)
+    row.mcp_auth_token_ciphertext = "not-a-fernet-token"
+    db.commit()
     with pytest.raises(m.EnforceWithoutToken):
         m.set_enforce(db, True, actor.id)
     assert m.mcp_answer(db)["enforce"] is False
@@ -173,9 +197,25 @@ def test_every_action_is_audited_without_a_value(db, actor):
     actions = [r.new_values["action"] for r in sorted(rows, key=lambda r: r.changed_at)]
     assert actions == ["generated", "rotated", "enforce_on", "previous_revoked"]
     dumped = json.dumps([[r.old_values, r.new_values] for r in rows], default=str)
-    for secret in (old, new, _sha(old), _sha(new)):
+    row = _row(db)
+    for secret in (old, new, _sha(old), _sha(new), row.mcp_auth_token_ciphertext):
         assert secret not in dumped
     assert all(str(r.user_id) == str(actor.id) for r in rows)
+
+
+def test_each_action_writes_exactly_one_audit_row(db, actor):
+    """No second generic-listener row for the same flush (the skip_audit_for marker)."""
+    from app.models.audit import AuditLog
+    from app.services import mcp_auth_token as m
+
+    m.rotate(db, actor.id)
+    row_id = str(_row(db).id)
+    m.rotate(db, actor.id)
+    m.set_enforce(db, True, actor.id)
+    db.expire_all()
+    rows = db.query(AuditLog).filter(AuditLog.entity_type == "system_settings", AuditLog.entity_id == row_id).all()
+    assert len(rows) == 3
+    assert {r.event for r in rows} == {"MCP_AUTH_TOKEN"}
 
 
 def test_an_enforce_no_op_writes_no_audit_row(db, actor):
@@ -191,6 +231,7 @@ def test_current_token_without_a_session_is_cached(db, actor, monkeypatch):
     from app.services import mcp_auth_token as m
 
     token = m.rotate(db, actor.id)
+    _age(db)
     reads = []
 
     class FakeSession:
@@ -268,6 +309,7 @@ def test_rotate_returns_the_token_once_and_get_never_does(api):
     allow.add(SECRETS_SLUG)
     resp = client.post(SETTINGS + "/rotate")
     assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "no-store"
     token = resp.json()["token"]
     assert len(token) >= 32
     assert resp.json()["configured"] is True
@@ -377,3 +419,44 @@ def test_mcp_auth_route_carries_the_integration_key_dependency():
     route = next(r for r in probe.routes if getattr(r, "path", "") == MCP_AUTH)
     deps = [d.call for d in route.dependant.dependencies]
     assert get_external_api_user in deps
+
+
+# --------------------------------------------------------------------------- the migration seed
+
+
+def _migration():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "mcp_tok_0001_settings_token.py"
+    spec = importlib.util.spec_from_file_location("mcp_tok_0001", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_revision_id_fits_the_stamped_column():
+    assert len(_migration().revision) <= 32
+
+
+def test_the_release_seeds_a_first_token_so_the_staff_assistant_keeps_its_scope(db, actor):
+    """Review B1: with no token the backend sends no header, and the MCP strips the staff opt-out
+    from a headerless call. The migration therefore leaves a token, Enforce off."""
+    from app.models.user import SystemSetting
+    from app.services import mcp_auth_token as m
+
+    if _row(db) is None:
+        db.add(SystemSetting(id=str(uuid.uuid4())))
+        db.commit()
+    _migration()._seed_first_token(db.connection())
+    db.commit()
+    seeded = _row(db).mcp_auth_token_ciphertext
+    assert seeded
+    _age(db)
+    token = m.current_token(db)
+    assert token and len(token) >= 32
+    assert m.mcp_answer(db) == {"enforce": False, "token_sha256": [_sha(token)]}
+
+    _migration()._seed_first_token(db.connection())  # a re-run never overwrites
+    db.commit()
+    assert _row(db).mcp_auth_token_ciphertext == seeded

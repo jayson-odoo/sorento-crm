@@ -39,11 +39,16 @@ logger = logging.getLogger(__name__)
 AUDIT_EVENT = "MCP_AUTH_TOKEN"
 GRACE_HOURS = 24
 CACHE_TTL_SECONDS = 5.0
+# After a rotate this process keeps sending the previous token (or none, after a first
+# generate) for this long. The MCP server re-fetches on an unknown bearer at most every
+# 5 s (`sorento_crm_mcp/auth.py` MISS_REFRESH_SECONDS); a new token sent sooner can meet a
+# list fetched just before the rotate and be refused (review S1).
+SEND_NEW_AFTER_SECONDS = 10.0
 TOKEN_BYTES = 32  # 43 url-safe characters, over the 32-character floor SEC-MCP-AUTH set
 
 
 class EnforceWithoutToken(ValueError):
-    """Enforce cannot be switched on before a token exists: it would refuse every caller."""
+    """Enforce cannot be switched on without a readable token: it would refuse every caller."""
 
 
 def _now() -> datetime:
@@ -89,11 +94,22 @@ def clear_cache() -> None:
         _cache = (_cache[0] + 1, float("-inf"), None)
 
 
+def _token_to_send(row: Optional[SystemSetting]) -> Optional[str]:
+    if row is None:
+        return None
+    rotated = _aware(row.mcp_auth_token_rotated_at)
+    if rotated is not None and (_now() - rotated).total_seconds() < SEND_NEW_AFTER_SECONDS:
+        # Still inside the window the MCP server may not have seen the new token in.
+        if not row.mcp_auth_previous_token_ciphertext:
+            return None
+        return _decrypt(row.mcp_auth_previous_token_ciphertext)[0]
+    return _decrypt(row.mcp_auth_token_ciphertext)[0]
+
+
 def current_token(db: Optional[Session] = None) -> Optional[str]:
     """The token this process sends to the MCP server, or None (send no header)."""
     if db is not None:
-        row = _row(db)
-        return _decrypt(row.mcp_auth_token_ciphertext)[0] if row else None
+        return _token_to_send(_row(db))
     global _cache
     generation, at, cached = _cache
     now = time.monotonic()
@@ -102,8 +118,7 @@ def current_token(db: Optional[Session] = None) -> Optional[str]:
     try:
         session = SessionLocal()
         try:
-            row = _row(session)
-            token = _decrypt(row.mcp_auth_token_ciphertext)[0] if row else None
+            token = _token_to_send(_row(session))
         finally:
             session.close()
     except Exception:  # noqa: BLE001 - keep the last value rather than drop the header
@@ -161,14 +176,16 @@ def describe(db: Session) -> dict[str, Any]:
 
 def _locked_row(db: Session) -> tuple[SystemSetting, tuple[str, str]]:
     row = db.query(SystemSetting).with_for_update().first()
-    if row is None:
+    created = row is None
+    if created:
         row = SystemSetting(id=str(uuid.uuid4()))
-        db.add(row)
-        db.flush()
     # This action's audit is the one MCP_AUTH_TOKEN row written below; the generic listener
-    # would add a second one for the same flush.
+    # would add a second one for the same flush (an INSERT row, when the singleton is created).
     skip = ("system_settings", str(row.id))
     db.info.setdefault("skip_audit_for", []).append(skip)
+    if created:
+        db.add(row)
+        db.flush()
     return row, skip
 
 
@@ -216,12 +233,14 @@ def rotate(db: Session, actor_user_id: Optional[str]) -> str:
 
 def set_enforce(db: Session, enforce: bool, actor_user_id: Optional[str]) -> None:
     row, skip = _locked_row(db)
-    no_token = enforce and not row.mcp_auth_token_ciphertext
+    # A token that no longer decrypts counts as none: the backend could not send it, so Enforce
+    # would refuse every caller (review S2).
+    no_token = enforce and _decrypt(row.mcp_auth_token_ciphertext)[0] is None
     if no_token or bool(row.mcp_auth_enforce) == enforce:
         db.rollback()
         _release(db, skip)
         if no_token:
-            raise EnforceWithoutToken("Generate a token before switching Enforce on.")
+            raise EnforceWithoutToken("Generate or rotate the token before switching Enforce on.")
         return
     row.mcp_auth_enforce = enforce
     _finish(db, row, skip, "enforce_on" if enforce else "enforce_off", actor_user_id)

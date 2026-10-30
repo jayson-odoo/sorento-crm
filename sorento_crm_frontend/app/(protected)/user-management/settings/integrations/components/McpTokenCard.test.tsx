@@ -10,10 +10,15 @@ const mockQuery = vi.fn();
 const mockRotate = vi.fn();
 const mockEnforce = vi.fn();
 const mockRevoke = vi.fn();
+const mockReset = vi.fn();
 
 vi.mock('../hooks/useMcpToken', () => ({
   useMcpToken: () => mockQuery(),
-  useRotateMcpToken: () => ({ mutate: mockRotate, isPending: false }),
+  useRotateMcpToken: () => ({
+    mutate: mockRotate,
+    isPending: false,
+    reset: mockReset,
+  }),
   useSetMcpEnforce: () => ({ mutate: mockEnforce, isPending: false }),
   useRevokePreviousMcpToken: () => ({ mutate: mockRevoke, isPending: false }),
 }));
@@ -83,6 +88,8 @@ describe('McpTokenCard', () => {
       (screen.getByLabelText('New MCP token') as HTMLInputElement).value,
     ).toBe(FAKE);
     expect(screen.getByRole('button', { name: 'Copy MCP token' })).toBeTruthy();
+    // The mutation's own data must not keep the token.
+    expect(mockReset).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Hide token' }));
     expect(screen.queryByLabelText('New MCP token')).toBeNull();
     expect(screen.queryByDisplayValue(FAKE)).toBeNull();
@@ -138,6 +145,8 @@ describe('McpTokenCard', () => {
     });
     render(<McpTokenCard />);
     expect(screen.getByText('Saved token unreadable, rotate it')).toBeTruthy();
+    const enforce = screen.getByRole('switch', { name: 'Enforce' });
+    expect(enforce.hasAttribute('disabled')).toBe(true);
   });
 
   it('renders the load error with a Retry', () => {
