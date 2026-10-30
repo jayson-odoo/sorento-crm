@@ -118,6 +118,11 @@ from app.models.projects import (
     ProjectTask,
 )
 from app.services.error_handler import AppException
+from app.services.oi_auto_confirm_backfill import (
+    cancelled_line_stmt,
+    compute_done,
+    live_cover_stmt,
+)
 from app.services.scm import goods_chain, order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.pool_predicate import is_project_reserve, is_site_pool
@@ -147,6 +152,8 @@ from app.services.project_order_inquiry_engine import (
 logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
+OVERRIDE_CONFIRMED = "confirmed"
+OVERRIDE_UNCONFIRMED = "unconfirmed"
 #: Every date the inquiry number is minted by is Asia/Kuala_Lumpur (S1, R3) - matches
 #: `app.models.project_so`'s own `_MY_TZ`.
 _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
@@ -1135,31 +1142,60 @@ def next_inquiry_no(db: Session, company_id: str, ref_date: Optional[date] = Non
     return _next_inquiry_no(db, company_id, ref_date)
 
 
+def auto_confirm_rows_on_po_lines(db: Session, po_line_ids: Sequence[Any]) -> None:
+    """OI-AUTO-CONFIRM: a PO line was cancelled or reopened, so every row linked to it
+    re-reads its own done-ness (`ProjectOrderInquiryService.auto_confirm`)."""
+    ids = [line_id for line_id in po_line_ids if line_id]
+    if not ids:
+        return
+    row_ids = [
+        row_id
+        for (row_id,) in db.query(OrderInquiryLink.row_id)
+        .filter(OrderInquiryLink.po_line_id.in_(ids))
+        .distinct()
+        .all()
+    ]
+    if row_ids:
+        ProjectOrderInquiryService(db).auto_confirm(row_ids)
+
+
+def auto_confirm_rows_on_spo_allocations(db: Session, spo_allocation_ids: Sequence[Any]) -> None:
+    """OI-AUTO-CONFIRM: an SPO allocation was retired or revived, so every row linked to it
+    re-reads its own done-ness."""
+    ids = [alloc_id for alloc_id in spo_allocation_ids if alloc_id]
+    if not ids:
+        return
+    row_ids = [
+        row_id
+        for (row_id,) in db.query(OrderInquiryLink.row_id)
+        .filter(OrderInquiryLink.spo_allocation_id.in_(ids))
+        .distinct()
+        .all()
+    ]
+    if row_ids:
+        ProjectOrderInquiryService(db).auto_confirm(row_ids)
+
+
 def flag_rows_for_cancelled_lines(
     db: Session, core_line_ids: Sequence[Any]
 ) -> int:
-    """PLAN-oi-cancelled-line-used-confirm.md (AC-CL-6/7, C1): a sales order line just
-    transitioned to `cancelled` - every LIVE order inquiry row of that line (state not
-    `cancelled`, ACTIONED included) that purchasing had already acknowledged goes back
-    to To confirm, `changed_at` set, the SAME handshake `_settle_row_in_place` uses when
-    CS amends a row purchasing had already taken on.
+    """AC-AC-10e (owner 30 Oct): a sales order line just transitioned to `cancelled`. Every
+    LIVE, non-rejected order inquiry row of that line (state not `cancelled`, ACTIONED
+    included) goes through ONE batched `auto_confirm` and ends done (`acknowledged`, by
+    NULL); a manual Unconfirm still holds. Nothing is stamped `changed` and nothing is
+    queued for purchasing (no handover, notify or changed-with-links notice).
 
-    ONE function, called from the two write sites (`SalesOrderService._upsert_lines`,
+    Called from the two write sites (`SalesOrderService._upsert_lines`,
     `document_ingest_service`) with only the core line ids THAT CALL'S OWN write just
-    cancelled - never every cancelled line in the company. That is what makes AC-CL-7
-    true: a second push of an already-cancelled document, or an edit that leaves a
-    cancelled line cancelled, names no transitioned id at all, so this is never called
-    for it and a row purchasing has re-confirmed does not come back.
+    cancelled, never every cancelled line in the company, so a second push of an
+    already-cancelled document names no transitioned id and never reaches this.
 
-    A row already `awaiting`, `changed` or `rejected` is left as it is - there is
-    nothing new to tell purchasing about a row it has not yet confirmed, or has already
-    been told about, or CS has already re-decided. A row whose OWN state is `cancelled`
-    is left alone too - a dead row is nobody's work either way.
+    The return value and the "flagged" log line count every such row on the line, not the
+    rows whose state changed; callers ignore it.
     """
     ids = [cid for cid in core_line_ids if cid]
     if not ids:
         return 0
-    now = datetime.utcnow()
     rows = (
         db.query(OrderInquiryRow)
         .join(
@@ -1169,15 +1205,16 @@ def flag_rows_for_cancelled_lines(
         .filter(
             ProjectSalesOrderLine.core_sales_order_line_id.in_(ids),
             OrderInquiryRow.state != INQUIRY_CANCELLED,
-            OrderInquiryRow.ack_state == ACK_ACKNOWLEDGED,
+            OrderInquiryRow.ack_state != ACK_REJECTED,
         )
         .all()
     )
-    for row in rows:
-        row.ack_state = ACK_CHANGED
-        row.changed_at = now
     if rows:
         db.flush()
+        # Owner 30 Oct: every live row on a cancelled SO line is done (acknowledged by
+        # NULL), linked or not; nothing is stamped `changed` and nothing is queued for
+        # purchasing. ONE batched `auto_confirm`; a manual Unconfirm still holds.
+        ProjectOrderInquiryService(db).auto_confirm([row.id for row in rows])
     logger.info(
         "flag_rows_for_cancelled_lines: %d core line id(s), %d row(s) flagged",
         len(ids),
@@ -2994,9 +3031,7 @@ class ProjectOrderInquiryService:
             # confirm nobody pressed. A row still AWAITING is left alone and says nothing: CS
             # is free to change what nobody has read, and marking it would ask purchasing to
             # re-read something they never read.
-            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-                row.changed_at = datetime.utcnow()
-                row.ack_state = ACK_CHANGED
+            self._amended_by_cs(row)
         self._retire_settled_cancel_balance(rows, decision, actor_user_id=actor_user_id)
         self.refresh_link_state([row])
         self.db.flush()
@@ -3062,6 +3097,7 @@ class ProjectOrderInquiryService:
         if not new_item_code:
             return None
         moved: List[OrderInquiryRow] = []
+        amended: List[Tuple[OrderInquiryRow, Any, bool, bool]] = []
         old_code: Optional[str] = None
         for row in rows:
             if row.item_code == new_item_code or not self._is_catalogue_code(row.item_code):
@@ -3071,13 +3107,12 @@ class ProjectOrderInquiryService:
             row.item_code = new_item_code
             product_note = f"Was item {old_code}"
             row.note = f"{row.note}; {product_note}" if row.note else product_note
-            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-                row.changed_at = datetime.utcnow()
-                row.ack_state = ACK_CHANGED
+            self._amended_by_cs(row, batch=amended)
             moved.append(row)
         if not moved:
             return None
         self.db.flush()
+        self._settle_amended(amended)
         for row in moved:
             self._dispatch_changed_with_links(
                 inquiry, row, had_link=bool(self._links_of(row.id))
@@ -3218,6 +3253,7 @@ class ProjectOrderInquiryService:
                 row for row in targets if row.state != INQUIRY_RAISED
             ] or targets
         previous_date = handover_pool[0].delivery_date
+        amended: List[Tuple[OrderInquiryRow, Any, bool, bool]] = []
         for row in targets:
             previous_qty = _dec(row.qty)
             row_previous_date = row.delivery_date
@@ -3246,10 +3282,9 @@ class ProjectOrderInquiryService:
             # stamp on an awaiting row would answer it about a row nobody had read. The
             # Was/Now table is unaffected: it reads `previous_qty` /
             # `previous_delivery_date`, which every stamped row gets either way.
-            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-                row.changed_at = datetime.utcnow()
-                row.ack_state = ACK_CHANGED
+            self._amended_by_cs(row, batch=amended)
         self.db.flush()
+        self._settle_amended(amended)
         # Batched (round 3, nit): one grouped load for every target's links rather than
         # one query per row - the same `_links_by_row` the raise/settle paths above
         # already reach for once a caller is walking a SET rather than one row.
@@ -3478,9 +3513,7 @@ class ProjectOrderInquiryService:
         # confirm the SAME shape `_settle_row_in_place` above uses for a row CS amends
         # under purchasing. A row still `awaiting` is left alone: nothing new for
         # purchasing to be told about a row nobody has read yet.
-        if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-            row.changed_at = datetime.utcnow()
-            row.ack_state = ACK_CHANGED
+        self._amended_by_cs(row)
         # Cached for `_release_fragment` (an ad-hoc attribute, not a mapped column) -
         # the fresh row's own Was/Now note reuses exactly what this call already found
         # (the links AND their receipt dates) rather than re-querying either.
@@ -6054,9 +6087,7 @@ class ProjectOrderInquiryService:
         # `_is_borrow_order_back` reads its prefix.
         base_note = entry.get("note") or row.note
         row.note = f"{base_note}; {was_note}" if base_note else was_note
-        if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-            row.changed_at = datetime.utcnow()
-            row.ack_state = ACK_CHANGED
+        self._amended_by_cs(row)
         self._record_handover(
             row, kind="settled", was=dict(moves), actor_user_id=actor_user_id,
             borrow_hole=True,
@@ -6144,7 +6175,8 @@ class ProjectOrderInquiryService:
         line gets no `cancelled_at` / `cancelled_by_id` / `cancel_reason`: those mean the CS
         board. The ONE sequence the ingest and `scripts/release_removed_autocount_lines.py`
         share. Handover lines are queued only for lines whose rows actually retired. Call
-        before `flag_rows_for_cancelled_lines`, which then only meets actioned rows.
+        before `flag_rows_for_cancelled_lines`, which then meets the rows still live on the line
+        (actioned ones) and runs them through `auto_confirm`.
 
         `notify=False` (AC-RL-44, the reconciliation script: weeks-old removals): whatever this
         call queued for after the commit, the purchasing handover and the changed-with-links
@@ -6902,6 +6934,7 @@ class ProjectOrderInquiryService:
         that is cut into the plan's remaining rows at their dates, its links following the
         quantity (`_split_row`), a moved date sending a row purchasing had taken on back to
         them (AC-E1). An explicit cancel split is purchasing's CANCEL BALANCE."""
+        amended: List[Tuple[OrderInquiryRow, Any, bool, bool]] = []
         for line_id, plan in acted.items():
             line = plan["line"]
             want = list(plan["rows"])
@@ -6954,9 +6987,7 @@ class ProjectOrderInquiryService:
                     source.previous_qty = source.qty
                     source.qty = first_qty
                     source.supply_decision_id = decision.id
-                    if source.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-                        source.changed_at = datetime.utcnow()
-                        source.ack_state = ACK_CHANGED
+                    self._amended_by_cs(source, batch=amended)
                     self.refresh_link_state([source])
                 if placed:
                     # Purchasing placed it: a split never sends it back to raised.
@@ -6967,9 +6998,7 @@ class ProjectOrderInquiryService:
                     # OI-SPLIT-VIEW (UAC A5): filed under this revision like a moved qty, so
                     # the Confirm's preview (and Simulate) lists the row it moved.
                     source.supply_decision_id = decision.id
-                    if source.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-                        source.changed_at = datetime.utcnow()
-                        source.ack_state = ACK_CHANGED
+                    self._amended_by_cs(source, batch=amended)
             # AC-G17: each plan row keeps links only up to its own qty; the rest goes back.
             for row in self._split_line_rows(line_id):
                 linked = sum((_dec(link.qty) for link in self._links_of(row.id)), _ZERO)
@@ -7003,6 +7032,7 @@ class ProjectOrderInquiryService:
                         )
                     )
             self.db.flush()
+        self._settle_amended(amended)
 
     def _cut_rows_in_place(
         self,
@@ -7026,14 +7056,14 @@ class ProjectOrderInquiryService:
         pairs = [(row, by_date.get(row.delivery_date)) for row in rows]
         if any(plan is None or plan[0] > _dec(row.qty) for row, plan in pairs):
             return False
+        amended: List[Tuple[OrderInquiryRow, Any, bool, bool]] = []
         for row, (qty, _when) in pairs:
             # No links, so the row's state (raised, or placed by hand) stands as it is.
             row.previous_qty = row.qty
             row.qty = qty
             row.supply_decision_id = decision.id
-            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-                row.changed_at = datetime.utcnow()
-                row.ack_state = ACK_CHANGED
+            self._amended_by_cs(row, batch=amended)
+        self._settle_amended(amended)
         return True
 
     def _apply_pure_splits(
@@ -7389,9 +7419,7 @@ class ProjectOrderInquiryService:
                     # a row purchasing had taken on goes back to them, as a settle does.
                     row.previous_qty = qty
                     row.previous_delivery_date = source.delivery_date
-                    if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-                        row.changed_at = datetime.utcnow()
-                        row.ack_state = ACK_CHANGED
+                    self._amended_by_cs(row, rederive=False)
                 self.db.add(row)
             self.db.flush()
             new_rows.append(row)
@@ -8340,6 +8368,8 @@ class ProjectOrderInquiryService:
         links_by_row = self.links_for_rows([row.id for row in rows])
         suggested_links_by_row = self.suggested_links_for_rows([row.id for row in rows])
         linked_by_row = self._linked_qty_by_row([row.id for row in rows])
+        open_qty_by_row = self.open_qty_by_row(rows)
+        reserve_label_by_row = self.reserve_labels_for_rows([row.id for row in rows])
         # OI-LINE-SPLIT (UAC D3): the splits of each row's line (origin view), one read.
         splits_by_line = self.splits_for_lines([row.so_line_id for row in rows])
         # OI-SPLIT-VIEW (UAC B1 to B5): each row's line split popup, one batched read.
@@ -8431,6 +8461,8 @@ class ProjectOrderInquiryService:
                     # carries nothing suggested.
                     "suggested_links": suggested_links_by_row.get(row.id, []),
                     "linked_qty": _qty_str(linked_by_row.get(row.id, _ZERO)),
+                    "open_qty": _qty_str(open_qty_by_row.get(row.id, _ZERO)),
+                    "reserve_label": reserve_label_by_row.get(row.id),
                     "has_link_candidate": self.has_link_candidate(
                         row.verb, product_by_row.get(row.id), candidates
                     ),
@@ -8445,6 +8477,9 @@ class ProjectOrderInquiryService:
                     "ack_state": row.ack_state,
                     "acknowledged_by_name": names.get(row.acknowledged_by),
                     "acknowledged_at": row.acknowledged_at,
+                    "ack_override": row.ack_override,
+                    "ack_override_at": row.ack_override_at,
+                    "ack_override_by_name": names.get(row.ack_override_by),
                     "rejected_by_name": names.get(row.rejected_by),
                     "rejected_at": row.rejected_at,
                     "rejected_reason": row.rejected_reason,
@@ -9032,7 +9067,9 @@ class ProjectOrderInquiryService:
             [
                 user_id
                 for row in rows
-                for user_id in (row.actioned_by, row.acknowledged_by, row.rejected_by)
+                for user_id in (
+                    row.actioned_by, row.acknowledged_by, row.rejected_by, row.ack_override_by
+                )
                 if user_id
             ],
         )
@@ -9227,6 +9264,7 @@ class ProjectOrderInquiryService:
             [row for row in rows if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED)]
         )
         self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
+        self.auto_confirm([row.id for row in rows])
         return self.serialize_rows(rows)
 
     # ----------------------------------------------------------- the handshake
@@ -9297,6 +9335,8 @@ class ProjectOrderInquiryService:
             )
         now = datetime.utcnow()
         transitioned = 0
+        confirmed_ids: List[str] = []
+        prior_states: List[Dict[str, Any]] = []
         for row in rows:
             # Already acknowledged: left untouched rather than re-stamped, so a repeated
             # press cannot move who took the row on or when. Both AWAITING (never
@@ -9304,10 +9344,38 @@ class ProjectOrderInquiryService:
             # Confirm is the one press that takes either kind of To-confirm row on.
             if row.ack_state == ACK_ACKNOWLEDGED:
                 continue
+            prior_states.append({"id": str(row.id), "ack_state": row.ack_state})
             row.ack_state = ACK_ACKNOWLEDGED
             row.acknowledged_by = actor_user_id
             row.acknowledged_at = now
+            row.ack_override = OVERRIDE_CONFIRMED
+            row.ack_override_by = actor_user_id
+            row.ack_override_at = now
+            confirmed_ids.append(str(row.id))
             transitioned += 1
+        if confirmed_ids:
+            # One audit row per batch (the generic listener never sees this model), the same
+            # manual-event pattern `unacknowledge_rows` uses.
+            from app.audit_context import get_audit_context
+            from app.services.audit_service import log_audit
+
+            _, ip_address = get_audit_context()
+            log_audit(
+                self.db,
+                "project_order_inquiry_rows",
+                confirmed_ids[0],
+                "UPDATE",
+                old_values={"rows": prior_states},
+                new_values={"ack_state": ACK_ACKNOWLEDGED, "row_ids": confirmed_ids},
+                user_id=actor_user_id,
+                company_id=rows[0].company_id,
+                ip_address=ip_address,
+                description=f"Confirm: {len(confirmed_ids)} row(s) marked Done by hand",
+            )
+        if confirmed_ids:
+            # Companions bundled to a row just marked Done by hand follow it.
+            self.db.flush()
+            self.auto_confirm(confirmed_ids)
         transitioned += self._acknowledge_used_rows_of(
             rows, actor_user_id=actor_user_id, now=now
         )
@@ -9449,9 +9517,14 @@ class ProjectOrderInquiryService:
             row.ack_state = ACK_AWAITING
             row.acknowledged_by = None
             row.acknowledged_at = None
+            row.ack_override = OVERRIDE_UNCONFIRMED
+            row.ack_override_by = actor_user_id
+            row.ack_override_at = datetime.utcnow()
             touched_ids.append(row_id)
             updated += 1
         if touched_ids:
+            self.db.flush()
+            self.auto_confirm(touched_ids)  # companions follow their host back to To order
             from app.audit_context import get_audit_context
             from app.services.audit_service import log_audit
 
@@ -9783,6 +9856,9 @@ class ProjectOrderInquiryService:
             self.refresh_link_state([row])
             self.db.flush()
         row.ack_state = ACK_REJECTED
+        row.ack_override = None
+        row.ack_override_by = None
+        row.ack_override_at = None
         row.rejected_by = actor_user_id
         row.rejected_at = datetime.utcnow()
         row.rejected_reason = reason
@@ -9792,6 +9868,16 @@ class ProjectOrderInquiryService:
         self._drop_suggested_links([row])
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
+        # AC-AC-10a: a rejected host no longer carries its companions; recompute them and
+        # let the rule decide the row and everyone bundled to it.
+        companion_ids = [
+            cid
+            for (cid,) in self.db.query(OrderInquiryRow.id).filter(
+                OrderInquiryRow.bundled_with_row_id == row.id
+            )
+        ]
+        self.derive_bundles(row.order_inquiry_id)
+        self.auto_confirm([row.id, *companion_ids])
 
     def _uncover_rejected_lines(
         self, rows: Sequence[OrderInquiryRow], *, actor_user_id: str
@@ -10044,6 +10130,168 @@ class ProjectOrderInquiryService:
                 to_drop.append(row)
         if to_drop:
             self._drop_suggested_links(to_drop)
+        self.auto_confirm([row.id for row in rows])
+
+    def _live_cover(self, row_ids: Sequence[str]) -> Dict[str, Tuple[Decimal, Any, int]]:
+        """`row id -> (live covered qty, newest live link time, live link count)`; the ONE
+        reading of "live cover" (`live_cover_stmt`), shared with the backfill."""
+        if not row_ids:
+            return {}
+        return {
+            str(row_id): (_dec(qty), newest, int(count))
+            for row_id, qty, newest, count in self.db.execute(live_cover_stmt(list(row_ids)))
+        }
+
+    def open_qty_by_row(self, rows: Sequence[OrderInquiryRow]) -> Dict[str, Decimal]:
+        """`max(qty - live cover - bundled_qty, 0)` per row, the figure "N left" prints.
+        Reserve links count as cover (they are links)."""
+        cover = self._live_cover([row.id for row in rows])
+        return {
+            row.id: max(
+                _dec(row.qty) - cover.get(row.id, (_ZERO, None, 0))[0] - _dec(row.bundled_qty),
+                _ZERO,
+            )
+            for row in rows
+        }
+
+    def reserve_labels_for_rows(self, row_ids: Sequence[str]) -> Dict[str, str]:
+        """`row id -> "Reserved @ <warehouse code>"` for rows holding a CS reserve."""
+        wanted = [row_id for row_id in row_ids if row_id]
+        if not wanted:
+            return {}
+        labels: Dict[str, List[str]] = {}
+        for row_id, document in (
+            self.db.query(OrderInquiryLink.row_id, OrderInquiryLink.document)
+            .filter(
+                OrderInquiryLink.row_id.in_(wanted),
+                OrderInquiryLink.reserve_request_row_id.isnot(None),
+            )
+            .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+        ):
+            if document and document not in labels.setdefault(row_id, []):
+                labels[row_id].append(document)
+        return {row_id: ", ".join(docs) for row_id, docs in labels.items() if docs}
+
+    def _amended_by_cs(
+        self,
+        row: OrderInquiryRow,
+        *,
+        rederive: bool = True,
+        batch: Optional[List[Tuple[OrderInquiryRow, Any, bool, bool]]] = None,
+    ) -> None:
+        """OI-AUTO-CONFIRM: THE writer for "CS amended this row". It clears a manual
+        override (the amendment is news the press did not cover), stamps `changed` /
+        `changed_at` on a row that was acknowledged, then lets the rule decide: a row still
+        covered (or used, or information-only) goes straight back to Done with no changed
+        stamp, unless a person's manual Confirm was just cleared (that person is told);
+        one that is not covered stays `changed` (To order).
+
+        A caller walking many rows passes a `batch` list and ends the walk with
+        `_settle_amended(batch)`: one `auto_confirm` for the lot instead of one per row."""
+        had_override = row.ack_override is not None
+        if had_override:
+            row.ack_override = None
+            row.ack_override_by = None
+            row.ack_override_at = None
+        was_read = row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED)
+        prior_changed_at = row.changed_at
+        if was_read:
+            row.changed_at = datetime.utcnow()
+            row.ack_state = ACK_CHANGED
+        if not rederive or not (was_read or had_override):
+            return
+        if batch is not None:
+            # One entry per row: a second call for the same source keeps the FIRST call's
+            # prior stamp, so a covered row still gets its old `changed_at` back.
+            if all(entry[0] is not row for entry in batch):
+                batch.append((row, prior_changed_at, was_read, had_override))
+            return
+        self._settle_amended([(row, prior_changed_at, was_read, had_override)])
+
+    def _settle_amended(self, batch: Sequence[Tuple[OrderInquiryRow, Any, bool, bool]]) -> None:
+        """The second half of `_amended_by_cs`: one `auto_confirm` for the whole batch, then
+        a row that went straight back to Done with no override cleared keeps its old stamp."""
+        if not batch:
+            return
+        self.auto_confirm([row.id for row, *_rest in batch])
+        for row, prior_changed_at, was_read, had_override in batch:
+            if was_read and not had_override and row.ack_state == ACK_ACKNOWLEDGED:
+                row.changed_at = prior_changed_at
+
+    def auto_confirm(self, row_ids: Iterable[str]) -> None:
+        """OI-AUTO-CONFIRM: the ONE writer of `ack_state` between acknowledged and awaiting.
+
+        A person's Confirm / Unconfirm is a manual override (`ack_override`) the rule respects.
+        A row is DONE when purchasing has nothing left to
+        do on it: its LIVE links (PO line not cancelled, SPO allocation not retired,
+        reserve) cover its qty, or it is `actioned`, or its verb is not a buy verb, or it
+        was redirected to the pool, or it is a companion whose own links plus bundled qty
+        cover it AND whose host is done. DONE -> `acknowledged` (by NULL, at now, stamped
+        once); not done and `acknowledged` -> `awaiting`; `awaiting` / `changed` not done
+        and `rejected` are left alone. Companions bundled to a row in `row_ids` (and the
+        hosts of those) are re-evaluated in the same call.
+        """
+        ids = [row_id for row_id in dict.fromkeys(row_ids) if row_id]
+        if not ids:
+            return
+        self.db.flush()
+        rows: Dict[str, OrderInquiryRow] = {
+            row.id: row
+            for row in self.db.query(OrderInquiryRow)
+            .filter(
+                or_(
+                    OrderInquiryRow.id.in_(ids),
+                    OrderInquiryRow.bundled_with_row_id.in_(ids),
+                )
+            )
+            .all()
+        }
+        host_ids = {
+            row.bundled_with_row_id
+            for row in rows.values()
+            if row.bundled_with_row_id and row.bundled_with_row_id not in rows
+        }
+        if host_ids:
+            for host in self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(host_ids)).all():
+                rows[host.id] = host
+        cover = self._live_cover(list(rows))
+        linked = {row_id: qty for row_id, (qty, _newest, _count) in cover.items()}
+        counts = {row_id: count for row_id, (_qty, _newest, count) in cover.items()}
+        cancelled = {
+            str(row_id)
+            for (row_id,) in self.db.execute(cancelled_line_stmt(list(rows)))
+        }
+        # An Unconfirm holds until a link newer than the press arrives, which hands the row
+        # back to the rule: released here so every verdict below reads the same override.
+        for row in rows.values():
+            if row.ack_override == OVERRIDE_UNCONFIRMED:
+                newest = cover.get(row.id, (None, None, 0))[1]
+                if newest is not None and row.ack_override_at is not None and newest > row.ack_override_at:
+                    row.ack_override = None
+                    row.ack_override_by = None
+                    row.ack_override_at = None
+        done = compute_done(rows, linked, counts, cancelled)
+
+        now = datetime.utcnow()
+        for row in rows.values():
+            if row.state == INQUIRY_CANCELLED or row.ack_state == ACK_REJECTED:
+                continue
+            # A person's press outranks the rule (read by `compute_done`): leave the row.
+            if row.ack_override is not None:
+                continue
+            if done[row.id]:
+                if row.ack_state != ACK_ACKNOWLEDGED:
+                    row.ack_state = ACK_ACKNOWLEDGED
+                    row.acknowledged_by = None
+                    row.acknowledged_at = now
+            elif row.ack_state == ACK_ACKNOWLEDGED:
+                row.ack_state = ACK_AWAITING
+                row.acknowledged_by = None
+                row.acknowledged_at = None
+            elif row.ack_state == ACK_CHANGED and row.acknowledged_by is None:
+                # A stamp the system made says nothing once the row is not done any more.
+                row.acknowledged_at = None
+        self.db.flush()
 
     @staticmethod
     def _coverage_state(qty: Decimal, linked: Decimal, bundled: Decimal) -> str:
@@ -10253,6 +10501,7 @@ class ProjectOrderInquiryService:
             row.state = self._coverage_state(_dec(row.qty), linked, bundled)
 
         self.db.flush()
+        self.auto_confirm([row.id for row in rows])
 
     def _companion_rule_supplier_matches(
         self, rule: ProductCompanionRule, host_rows_per_host: Sequence[Sequence[OrderInquiryRow]]

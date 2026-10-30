@@ -86,6 +86,8 @@ export interface PortalContact {
   attachment_allowed_extensions?: string[];
   /** The contact's first active sales agent as a name (project registration's read-only field). */
   sales_agent_name?: string | null;
+  /** Set on an admin's impersonation token of a salesperson's contact: that user's id (their CRM view). */
+  crm_user_id?: string | null;
 }
 
 export interface PortalSubmissionSummary {
@@ -376,18 +378,27 @@ function absoluteApiUrl(path: string): string {
   return path;
 }
 
+/**
+ * A 401 ends the token the request carried, no other: an impersonation token (this tab's
+ * sessionStorage) is dropped alone, so the admin's own stored sign-in survives; a normal token
+ * is cleared as ever. `wasImpersonation` is read BEFORE the request.
+ */
+function dropRefusedToken(wasImpersonation: boolean): never {
+  if (wasImpersonation) clearImpersonationToken();
+  else clearPortalToken();
+  throw new PortalUnauthorizedError();
+}
+
 export async function portalFetch(
   input: string,
   init: RequestInit = {},
 ): Promise<Response> {
   const token = readPortalToken();
+  const wasImpersonation = isImpersonationToken();
   const headers = new Headers(init.headers || {});
   if (token) headers.set('X-Portal-Token', token);
   const res = await fetch(input, { ...init, headers });
-  if (res.status === 401) {
-    clearPortalToken();
-    throw new PortalUnauthorizedError();
-  }
+  if (res.status === 401) dropRefusedToken(wasImpersonation);
   return res;
 }
 
@@ -396,6 +407,7 @@ async function portalMultipartFetch(
   form: FormData,
 ): Promise<Response> {
   const token = readPortalToken();
+  const wasImpersonation = isImpersonationToken();
   const url = absoluteApiUrl(path);
   // IMPORTANT: do NOT pass a Content-Type header. fetch must auto-set
   // 'multipart/form-data; boundary=...' when body is FormData. Passing a
@@ -411,10 +423,7 @@ async function portalMultipartFetch(
     init.credentials = 'omit';
   }
   const res = await fetch(url, init);
-  if (res.status === 401) {
-    clearPortalToken();
-    throw new PortalUnauthorizedError();
-  }
+  if (res.status === 401) dropRefusedToken(wasImpersonation);
   return res;
 }
 
@@ -835,6 +844,7 @@ export async function fetchPortalAttachmentBytes(
   downloadUrl: string,
 ): Promise<Response> {
   const token = readPortalToken();
+  const wasImpersonation = isImpersonationToken();
   const url = absoluteApiUrl(downloadUrl);
   const init: RequestInit = {
     method: 'GET',
@@ -845,10 +855,7 @@ export async function fetchPortalAttachmentBytes(
     init.credentials = 'omit';
   }
   const res = await fetch(url, init);
-  if (res.status === 401) {
-    clearPortalToken();
-    throw new PortalUnauthorizedError();
-  }
+  if (res.status === 401) dropRefusedToken(wasImpersonation);
   return res;
 }
 

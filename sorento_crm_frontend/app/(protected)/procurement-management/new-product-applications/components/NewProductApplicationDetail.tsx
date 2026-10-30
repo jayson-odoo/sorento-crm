@@ -32,6 +32,9 @@ import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import PortalNewProductApplicationForm from '@/app/(auth)/portal/components/NewProductApplicationForm';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { numberFieldError } from '@/lib/number-field';
 import { isAwaitingReview, submitVerb } from '@/lib/submission-status';
@@ -277,7 +280,28 @@ function OpenedAs({
   );
 }
 
+/**
+ * A salesperson limited to their own applications (PORTAL-P4-REQUESTS R3, form parity) views theirs
+ * in the portal's own form, read-only exactly as the portal shows it, with its own Revise, Cancel
+ * and files; everyone else the staff detail, unchanged.
+ */
 export default function NewProductApplicationDetail({
+  applicationId,
+}: {
+  applicationId: string;
+}) {
+  const { limited } = useRequestScope('new_product_application');
+  if (limited) {
+    return (
+      <MyRequestClientProvider>
+        <PortalNewProductApplicationForm applicationId={applicationId} />
+      </MyRequestClientProvider>
+    );
+  }
+  return <StaffNewProductApplicationDetail applicationId={applicationId} />;
+}
+
+function StaffNewProductApplicationDetail({
   applicationId,
 }: {
   applicationId: string;

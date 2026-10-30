@@ -20,7 +20,7 @@ export default async function SalesOpportunityPage({
       <Container>
         <PageHeader
           title="Sales Opportunity"
-          actions={<BackToList listPath="/sales/opportunities" label="Back to opportunities" />}
+          actions={<BackToList hideForLimited="sales_opportunity" listPath="/sales/opportunities" label="Back to opportunities" />}
         />
       </Container>
       <Container>

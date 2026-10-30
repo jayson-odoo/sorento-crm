@@ -4,7 +4,7 @@ row set is `app.services.scm.demand.run_scope_oi_rows`.
 **Contract as of the Lane A review (captain ruling, landing on `fix/order-sheet-cells` and
 reaching this branch on its next merge):** `run_scope_oi_rows` reads the ENGINE's own
 predicate, not "state <> cancelled / ack <> rejected" - `verb IN ('ORDER', 'ORDER_BACK')`,
-`state IN ('raised', 'partly_linked')`, `ack_state IN ('acknowledged', 'changed')`,
+`state IN ('raised', 'partly_linked')`, `ack_state IN ('awaiting', 'changed')` (OI-AUTO-CONFIRM Q4 b: the To order rows),
 `redirected_to_pool = FALSE`, and owed (`qty - linked`) `> 0`. The returned `qty` is the
 OWED figure (`qty - linked`), not the row's raw `qty`. Product comes off the CORE sales
 order line (`sol.product_id`, via `psl.core_sales_order_line_id`), not the project line.
@@ -48,7 +48,7 @@ def _by_id(rows: list[dict], row_id: str) -> dict | None:
 
 def _engine_row(
     db, *, product, wh, qty, delivery=None, verb="ORDER", state="raised",
-    ack_state="acknowledged", so_number=None, redirected=False, linked_qty=None,
+    ack_state="awaiting", so_number=None, redirected=False, linked_qty=None,
     core_product=None,
 ):
     """A seeded Order Inquiry row shaped for the ENGINE predicate above: a REAL core
@@ -121,7 +121,7 @@ def _engine_row(
 # The engine predicate itself
 # --------------------------------------------------------------------------------- #
 
-def test_c2_a_raised_acknowledged_unlinked_row_is_present_with_its_full_qty_owed(db, chain):
+def test_c2_a_raised_to_order_unlinked_row_is_present_with_its_full_qty_owed(db, chain):
     f = chain
     leg = _engine_row(db, product=f["product"], wh=f["bin"], qty=7, delivery=date(2026, 10, 1))
     db.flush()
@@ -158,12 +158,12 @@ def test_c2_an_actioned_row_is_absent(db, chain):
     assert leg["row"].id not in _ids(rows), rows
 
 
-def test_c2_an_awaiting_ack_row_is_absent(db, chain):
-    """`ack_state='awaiting'` - purchasing has not read the instruction yet; buying against
-    it is buying against something that may still be amended or refused."""
+def test_c2_a_done_ack_row_is_absent(db, chain):
+    """`ack_state='acknowledged'` (Done) - purchasing has nothing left to order on it, so
+    the worksheet prints nothing for it (OI-AUTO-CONFIRM Q4 b)."""
     f = chain
     leg = _engine_row(db, product=f["product"], wh=f["bin"], qty=4, delivery=date(2026, 10, 1),
-                      ack_state="awaiting")
+                      ack_state="acknowledged")
     db.flush()
 
     rows = run_scope_oi_rows(db, [f["product"].id])
@@ -186,7 +186,7 @@ def test_c2_a_redirected_row_is_absent(db, chain):
 
 def test_c2_a_changed_ack_row_is_present(db, chain):
     """`ack_state='changed'` (amended after acknowledgement) counts the same as
-    'acknowledged' - the ONE other state `PLANNED_ACK_STATES` names."""
+    'awaiting' - the ONE other state `PLANNED_ACK_STATES` names."""
     f = chain
     leg = _engine_row(db, product=f["product"], wh=f["bin"], qty=9, delivery=date(2026, 10, 1),
                       ack_state="changed")

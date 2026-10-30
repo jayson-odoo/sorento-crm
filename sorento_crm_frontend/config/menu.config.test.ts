@@ -375,8 +375,12 @@ describe('filterOrphanHeadings', () => {
 // ---------------------------------------------------------------------------
 
 describe('menu.config - section headings', () => {
-  it('has exactly 7 headings in order', () => {
+  it('has exactly 9 headings in order: the 7 staff ones first, the two salesperson ones LAST', () => {
     const headings = MENU_SIDEBAR.filter((i) => i.heading).map((i) => i.heading);
+    expect(MENU_SIDEBAR.filter((i) => i.heading && i.audience === 'salesperson').map((i) => i.heading)).toEqual([
+      'MY WORK',
+      'MY REQUESTS',
+    ]);
     expect(headings).toEqual([
       'OVERVIEW',
       'SALES',
@@ -386,6 +390,8 @@ describe('menu.config - section headings', () => {
       'CATALOGUE',
       'OPERATIONS',
       'ADMINISTRATION',
+      'MY WORK',
+      'MY REQUESTS',
     ]);
   });
 });

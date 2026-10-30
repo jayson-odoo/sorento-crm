@@ -33,6 +33,7 @@ from app.services.job_service import JobService, active_company_id_from_scope
 from app.services.queue_service import enqueue_job
 from app.services.scm import order_link_service
 from app.services.scm.upload_intake import RetainedUpload, read_upload, read_upload_retained
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -103,6 +104,7 @@ def _queue(db: Session, *, upload: RetainedUpload, job_type: str, task, user_id:
 # Project Sales owns what these two routes call (ADR 0010). The path stays under /scm so the
 # FE upload dialog is unaffected by the ownership move.
 @router.post("/order-inquiry/preview")
+@heavy
 def preview_order_inquiry(
     file: UploadFile = File(..., description="Order Inquiry sheet"),
     _user: dict = Depends(_WRITE),
@@ -118,6 +120,7 @@ def preview_order_inquiry(
 
 
 @router.post("/order-inquiry/apply", status_code=status.HTTP_202_ACCEPTED)
+@heavy
 def apply_order_inquiry(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     validate_only: bool = Query(

@@ -344,6 +344,12 @@ class UserUpdate(BaseModel):
         return normalize_msisdn(v)
 
 
+class SalespersonMeOut(BaseModel):
+    portal_kinds: List[str] = []
+    portal_slug: str
+    contact_id: Optional[str] = None
+
+
 class UserResponse(UserBase):
     id: str
     # Optional on the way out (identity S0): one phone-only user must not break the
@@ -368,6 +374,8 @@ class UserResponse(UserBase):
     # user. Populated by every manual UserResponse builder (see users.py) - the
     # field is not an ORM attribute, so inheritance alone would never fill it.
     product_discontinued_scopes: List[ProductDiscontinuedScopeOut] = []
+    # PORTAL-P3-ROLE-MENU: set only for a salesperson (see is_salesperson), else null.
+    salesperson: Optional[SalespersonMeOut] = None
     # The Sign-in section's five fields (S3 1.7). Populated by
     # `app.services.user_contact_link.sign_in_summary` in BOTH manual dict
     # builders (`get_user`, `get_current_user_profile`) - like the scopes above,

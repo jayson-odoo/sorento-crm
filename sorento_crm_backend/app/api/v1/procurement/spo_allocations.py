@@ -4,6 +4,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body, File, UploadFile
 from sqlalchemy.orm import Session
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 from app.utils.multi_value import multi_uuids
@@ -270,6 +271,7 @@ def get_spo_document(
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
+@heavy
 def import_spo_allocations(
     files: List[UploadFile] = File(..., description="One or more Excel files (.xlsx). Filename = SPO number."),
     validate_only: bool = Query(False, description="If true, validate all uploaded files and return aggregated errors/warnings (no import)."),

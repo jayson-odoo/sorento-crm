@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
 import { APPEALED_LABEL, isAwaitingReview, RESUBMITTED } from '@/lib/submission-status';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -217,7 +219,27 @@ function PurchaseRequestLineItemsGrid({
   );
 }
 
-export default function PurchaseRequestDetail({
+/**
+ * A salesperson limited to their own rows (PORTAL-P4-REQUESTS R2, form parity) views their request
+ * in the portal's own form, read-only exactly as the portal shows it; everyone else the staff
+ * detail, unchanged.
+ */
+export default function PurchaseRequestDetail(props: PurchaseRequestDetailProps) {
+  const { requestId, basePath = DEFAULT_BASE_PATH } = props;
+  const isValidId = requestId && requestId !== 'new' && requestId !== 'edit';
+  // The staff detail's own read (one request between them): a sponsorship row is a sponsorship
+  // form whichever list opened it.
+  const { data: request } = usePurchaseRequest(isValidId ? requestId : null);
+  const kind =
+    request?.request_type === 'sponsorship_form' || basePath.includes('sponsorship-forms')
+      ? 'sponsorship_form'
+      : 'purchase_request';
+  const { limited } = useRequestScope(kind);
+  if (limited) return <MyRequestPortalForm key={kind} kind={kind} submissionId={requestId} />;
+  return <StaffPurchaseRequestDetail {...props} />;
+}
+
+function StaffPurchaseRequestDetail({
   requestId,
   basePath = DEFAULT_BASE_PATH,
 }: PurchaseRequestDetailProps) {
@@ -1307,6 +1329,10 @@ export default function PurchaseRequestDetail({
                   <div>
                     <p className="text-sm text-muted-foreground">Expected date to receive PO</p>
                     <p className="font-medium">{expectedPoDisplay || ' - '}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">External reference</p>
+                    <p className="font-medium">{request.external_reference || ' - '}</p>
                   </div>
                   {(request.approver_email || request.approver_user_id) && !request.approved_at && (
                     <div className="sm:col-span-2">

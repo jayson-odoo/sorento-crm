@@ -42,6 +42,7 @@ from app.services.reports import engine, registry as reg
 from app.services.reports.views_service import PUBLISH_PERMISSION, ReportViewsService
 from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +232,7 @@ def _params_of(body: ReportRunRequest) -> dict:
 
 
 @router.post("/{key}/run", response_model=ReportResult)
+@heavy
 def run_report(
     key: str,
     body: ReportRunRequest,

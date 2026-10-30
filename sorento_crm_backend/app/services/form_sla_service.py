@@ -122,7 +122,7 @@ def _working_due_naive(db: Session, start_dt: datetime, hours: float) -> datetim
 # The third flag says whether the table has the denormalized `revision_no` column,
 # so the number can be rendered at its revision (UAC N1/N5).
 _ENTITY_NUMBER_SOURCE: dict = {
-    "complaint": ("complaints", "complaint_number", False),
+    "complaint": ("complaints", "complaint_number", True),
     "stock_inquiry": ("stock_inquiries", "inquiry_number", True),
     "purchase_request": ("purchase_requests", "request_number", True),
     "sponsorship_form": ("purchase_requests", "request_number", True),

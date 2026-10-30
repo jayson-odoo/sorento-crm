@@ -21,7 +21,7 @@ re-measure before reusing the number.
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any, Callable
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
@@ -83,88 +83,99 @@ def _ext(filename: str | None, mime: str | None) -> str:
     return ""
 
 
-@router.get("/ai-extract/schema")
-def ai_extract_schema(
-    form_key: Annotated[str, Query(min_length=1)],
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-) -> dict:
-    _require_form_key_visible(db, token, form_key)
-    try:
-        return AIExtractService(db).get_schema_with_guidance(form_key)
-    except KeyError:
-        raise handle_validation_error(f"Unknown form_key: {form_key}")
+def register_ai_extract_routes(router: APIRouter, token_dependency: Callable[..., Any]) -> None:
+    """Register the two AI extract routes on ``router``, the caller resolved by ``token_dependency``.
 
-
-@router.post("/ai-extract", response_model=ExtractResult)
-def ai_extract(
-    form_key: Annotated[str, Form(min_length=1)],
-    files: Annotated[list[UploadFile], File(...)],
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-) -> ExtractResult:
-    """Extract structured fields out of what the contact uploaded.
-
-    Plain ``def``, so FastAPI runs the whole handler in a thread rather than on
-    the event loop: ``AIExtractService.extract`` is synchronous and slow (PDF
-    render plus LLM), and as an ``async def`` it blocked every concurrent
-    request on the worker. ``async`` bought nothing else here, because each file
-    is read whole before the running total is checked, so there was never any
-    streaming size enforcement to keep. That is the difference from the flyer
-    upload route, which stays ``async def`` precisely so it can refuse oversized
-    bytes as they arrive. Sibling fix: PR #164.
+    Same split as ``portal.register_submission_routes`` (PORTAL-P4-REQUESTS R1): the portal mounts
+    them below with ``get_portal_token``; ``app/api/v1/my_requests.py`` mounts them on
+    ``/api/v1/my-requests`` for the portal's own form inside a CRM page.
     """
-    _require_form_key_visible(db, token, form_key)
-    if form_key == "portal.project_registration":
-        from app.services import portal_rate_limit
 
-        portal_rate_limit.project_registration_extract(token.contact_id)
-    if not files:
-        raise handle_validation_error("Upload at least one file.")
-    if len(files) > _MAX_FILES:
-        raise handle_validation_error(
-            f"Too many files; maximum is {_MAX_FILES} per extract request."
-        )
+    @router.get("/ai-extract/schema")
+    def ai_extract_schema(
+        form_key: Annotated[str, Query(min_length=1)],
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ) -> dict:
+        _require_form_key_visible(db, token, form_key)
+        try:
+            return AIExtractService(db).get_schema_with_guidance(form_key)
+        except KeyError:
+            raise handle_validation_error(f"Unknown form_key: {form_key}")
 
-    payload: list[ExtractFile] = []
-    total = 0
-    for f in files:
-        ext = _ext(f.filename, f.content_type)
-        if ext not in _ALLOWED_EXTS:
+
+    @router.post("/ai-extract", response_model=ExtractResult)
+    def ai_extract(
+        form_key: Annotated[str, Form(min_length=1)],
+        files: Annotated[list[UploadFile], File(...)],
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ) -> ExtractResult:
+        """Extract structured fields out of what the contact uploaded.
+
+        Plain ``def``, so FastAPI runs the whole handler in a thread rather than on
+        the event loop: ``AIExtractService.extract`` is synchronous and slow (PDF
+        render plus LLM), and as an ``async def`` it blocked every concurrent
+        request on the worker. ``async`` bought nothing else here, because each file
+        is read whole before the running total is checked, so there was never any
+        streaming size enforcement to keep. That is the difference from the flyer
+        upload route, which stays ``async def`` precisely so it can refuse oversized
+        bytes as they arrive. Sibling fix: PR #164.
+        """
+        _require_form_key_visible(db, token, form_key)
+        if form_key == "portal.project_registration":
+            from app.services import portal_rate_limit
+
+            portal_rate_limit.project_registration_extract(token.contact_id)
+        if not files:
+            raise handle_validation_error("Upload at least one file.")
+        if len(files) > _MAX_FILES:
             raise handle_validation_error(
-                f"Unsupported file type: {f.filename}. Allowed: "
-                f"{', '.join(sorted(_ALLOWED_EXTS))}."
+                f"Too many files; maximum is {_MAX_FILES} per extract request."
             )
-        data = f.file.read()
-        total += len(data)
-        if total > _MAX_TOTAL_BYTES:
-            raise handle_validation_error(
-                "Combined file size exceeds 150 MB. Remove a file and try again."
-            )
-        payload.append(
-            ExtractFile(
-                filename=f.filename or f"upload.{ext or 'bin'}",
-                mime=(f.content_type or "").lower(),
-                data=data,
-            )
-        )
 
-    service = AIExtractService(db)
-    try:
-        # Browser check finding: the router-level `apply_company_scope`
-        # dependency scopes a portal token to the CONTACT'S companies
-        # (plural - `RespondContactCompany`), not the one company this
-        # request belongs to. A code that exists in two of them (the same
-        # product master shared across Sorento/Mocha-style setups) came back
-        # ambiguous under that wider scope and the extract read "Not found"
-        # for something that does exist. Narrowed here exactly like
-        # `portal_lookup_product_combos` narrows the sibling combos lookup.
-        with company_scope(db, frozenset({_resolve_company(db, token)})):
-            return service.extract(
-                form_key,
-                payload,
-                user_id=None,
-                portal_contact_id=token.contact_id,
+        payload: list[ExtractFile] = []
+        total = 0
+        for f in files:
+            ext = _ext(f.filename, f.content_type)
+            if ext not in _ALLOWED_EXTS:
+                raise handle_validation_error(
+                    f"Unsupported file type: {f.filename}. Allowed: "
+                    f"{', '.join(sorted(_ALLOWED_EXTS))}."
+                )
+            data = f.file.read()
+            total += len(data)
+            if total > _MAX_TOTAL_BYTES:
+                raise handle_validation_error(
+                    "Combined file size exceeds 150 MB. Remove a file and try again."
+                )
+            payload.append(
+                ExtractFile(
+                    filename=f.filename or f"upload.{ext or 'bin'}",
+                    mime=(f.content_type or "").lower(),
+                    data=data,
+                )
             )
-    except KeyError:
-        raise handle_validation_error(f"Unknown form_key: {form_key}")
+
+        service = AIExtractService(db)
+        try:
+            # Browser check finding: the router-level `apply_company_scope`
+            # dependency scopes a portal token to the CONTACT'S companies
+            # (plural - `RespondContactCompany`), not the one company this
+            # request belongs to. A code that exists in two of them (the same
+            # product master shared across Sorento/Mocha-style setups) came back
+            # ambiguous under that wider scope and the extract read "Not found"
+            # for something that does exist. Narrowed here exactly like
+            # `portal_lookup_product_combos` narrows the sibling combos lookup.
+            with company_scope(db, frozenset({_resolve_company(db, token)})):
+                return service.extract(
+                    form_key,
+                    payload,
+                    user_id=None,
+                    portal_contact_id=token.contact_id,
+                )
+        except KeyError:
+            raise handle_validation_error(f"Unknown form_key: {form_key}")
+
+
+register_ai_extract_routes(router, get_portal_token)

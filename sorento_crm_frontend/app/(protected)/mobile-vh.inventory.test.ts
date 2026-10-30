@@ -75,7 +75,7 @@ const FRACTIONAL_VH_FOLLOWUP = 'fractional vh, follow-up #567';
 const FRACTIONAL_VH_FILES = [
   'components/common/ai-extract/AIExtractDialog.tsx',
   'app/(auth)/portal/components/AttachmentDropzone.tsx',
-  'app/(auth)/portal/components/PortalLanding.tsx',
+  'app/(auth)/portal/components/SubmissionList.tsx',
   'app/(auth)/portal/ticket-draft/[token]/page.tsx',
   'app/(protected)/complaint-management/_shared/LinkedComplaintsChip.tsx',
   'app/(protected)/complaint-management/complaints/components/ComplaintConversationPanel.tsx',

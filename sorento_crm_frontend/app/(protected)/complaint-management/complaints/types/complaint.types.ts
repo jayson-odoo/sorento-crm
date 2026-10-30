@@ -85,6 +85,9 @@ export interface Complaint {
    * has no rule for.
    */
   response_write_allowed?: boolean | null;
+  /** Contact-initiated revisions; `> 0` = the record has a revision lineage. */
+  revision_no?: number | null;
+  last_revised_at?: string | null;
   product_lines?: ComplaintProductLine[];
   attachments: ComplaintAttachment[];
 }

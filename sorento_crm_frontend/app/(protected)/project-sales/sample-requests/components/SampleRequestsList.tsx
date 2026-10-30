@@ -1,5 +1,7 @@
 'use client';
 
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
@@ -44,7 +46,8 @@ import { useSampleRequestsQuery } from '../hooks/useSampleRequests';
 
 const BASE_PATH = '/project-sales/sample-requests';
 
-/** Nothing chosen is the server default, the coordinator queue (the open statuses). */
+/** Nothing chosen is the server default: the coordinator queue (the open statuses) for staff,
+ *  every status for a salesperson who sees only their own (PORTAL-P4-REQUESTS S4). */
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
@@ -58,7 +61,17 @@ export function deliveryText(row: Pick<SampleRequestRow, 'delivery_date'>) {
   return row.delivery_date ? formatDateInMalaysia(row.delivery_date) : '-';
 }
 
+/**
+ * A salesperson limited to their own sample requests gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function SampleRequestsList() {
+  const { limited } = useRequestScope('sample_request');
+  if (limited) return <MyRequestPortalList kind="sample_request" />;
+  return <StaffSampleRequestsList />;
+}
+
+function StaffSampleRequestsList() {
   const router = useRouter();
   const canCreate = useHasPermission('projects.sample_requests.create');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
@@ -143,7 +156,6 @@ export default function SampleRequestsList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         size: 150,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className={`${STATUS_PILL_BASE} ${statusPillClass(row.original.status)}`}>
             {row.original.status_label}
@@ -178,7 +190,6 @@ export default function SampleRequestsList() {
         accessorKey: 'project_name',
         header: ({ column }) => <DataGridColumnHeader title="Project Title" column={column} />,
         size: 220,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.project_name ?? undefined}>
             {row.original.project_name || '-'}
@@ -190,7 +201,6 @@ export default function SampleRequestsList() {
         accessorKey: 'delivery_mode',
         header: ({ column }) => <DataGridColumnHeader title="Mode" column={column} />,
         size: 140,
-        enableSorting: false,
         cell: ({ row }) =>
           row.original.delivery_mode ? DELIVERY_MODE_LABELS[row.original.delivery_mode] : '-',
         meta: { headerTitle: 'Mode', skeleton: <Skeleton className="h-4 w-24" /> },
@@ -199,7 +209,6 @@ export default function SampleRequestsList() {
         accessorKey: 'salesperson_name',
         header: ({ column }) => <DataGridColumnHeader title="Salesperson" column={column} />,
         size: 150,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.salesperson_name ?? undefined}>
             {row.original.salesperson_name || '-'}

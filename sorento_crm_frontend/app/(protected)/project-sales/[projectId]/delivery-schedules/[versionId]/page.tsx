@@ -2,6 +2,7 @@ import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { DeliveryScheduleReviewClient } from '../components/DeliveryScheduleReviewClient';
+import { PROJECT_VIEW_PERMISSIONS } from '@/app/(protected)/project-sales/_shared/projectViewPermissions';
 
 export const metadata: Metadata = {
   title: 'Delivery schedule',
@@ -23,7 +24,7 @@ export default async function DeliveryScheduleReviewPage({
 }) {
   const { projectId, versionId } = await params;
   return (
-    <RequireAccess permission="projects.projects.view">
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-4">
         <DeliveryScheduleReviewClient projectId={projectId} versionId={versionId} />
       </Container>

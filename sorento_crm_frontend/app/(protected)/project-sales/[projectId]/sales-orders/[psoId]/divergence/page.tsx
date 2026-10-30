@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { DivergenceReviewClient } from './components/DivergenceReviewClient';
+import { PROJECT_VIEW_PERMISSIONS } from '@/app/(protected)/project-sales/_shared/projectViewPermissions';
 
 export const metadata: Metadata = {
   title: 'AutoCount differences',
@@ -18,7 +19,7 @@ export default async function ProjectSalesOrderDivergencePage({
 }) {
   const { projectId, psoId } = await params;
   return (
-    <RequireAccess permission="projects.projects.view">
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-6">
         <PageHeader
           title="AutoCount Differences"

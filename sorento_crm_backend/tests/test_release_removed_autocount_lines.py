@@ -38,6 +38,7 @@ from app.models.procurement import (
 )
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_PLACED,
@@ -407,10 +408,12 @@ def test_ac_rl_42_apply_releases_exactly_what_the_ingest_releases_and_leaves_the
 
     db.expire_all()
     live_links = _link_ids(db)
-    # PO line removed: link gone, row placed -> raised (AC-RL-01/02), ack untouched (03).
+    # PO line removed: link gone, row placed -> raised (AC-RL-01/02); OI-AUTO-CONFIRM
+    # (AC-AC-9): it lost its cover, so it is To order again (AC-RL-03's "ack untouched" is
+    # the old model).
     assert str(w.link_po_removed.id) not in live_links
     assert _row_state(db, w.row_po_removed) == INQUIRY_RAISED
-    assert db.get(OrderInquiryRow, w.row_po_removed.id).ack_state == ACK_ACKNOWLEDGED
+    assert db.get(OrderInquiryRow, w.row_po_removed.id).ack_state == ACK_AWAITING
     # open claim on a removed line is DELETED, not stamped resolved (AC-RL-04).
     assert db.get(OrderLinkClaim, w.claim_only.id) is None
     # AC-RL-04 / 41: a claim-only line (resolved claim, no link) is selected and its claim
