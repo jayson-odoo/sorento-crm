@@ -41,7 +41,7 @@ into a problem understanding".
 1. Layer. AC-5: routing + code after the parser. AC-6: prompt + shared spec narrowing. AC-7f, R1: prompt.
 2. Shared mechanism changed. `narrow_code_tokens_by_specs` honours `any_keys`, the OR rule `held_family.py:120-175`
    already uses, so every code-family + size ask narrows, not one shape. The grant gate reads a domain by who asks, the
-   way `reads_customer_po_refs` (`turn/state.py:271`) reads "PO" by audience.
+   way `reads_customer_po_refs` (`turn/state.py:269`) reads "PO" by audience.
 3. Other classes fixed (UNVERIFIED until measured). Code + any dimension for tanks, basins, mirrors; a size said beside a
    code with a space; the 39 customer denials of "cost price".
 4. Special cases removed. The "not allowed to access purchase cost" reply stops reaching dealers and end users. No word
@@ -94,7 +94,7 @@ registry, so trap length needs no naming. Two variants matching: stays a pick be
 | Message | Parser | Result |
 |---|---|---|
 | "Please escalate to product marketing team" | `suggested_team` marketing_product | routes there |
-| "escalate marketing" | `suggested_team` "marketing" (own word) | clarify among the marketing teams (`escalation._catalogue_teams`, #2018 AC-7c) |
+| "escalate marketing" | `suggested_team` "marketing" (own word) | clarify among the marketing teams (`lanes/escalation.py:1222,1254`, already on main) |
 | "give me link to request pricetag" | portal_link, `portal_form` price_tag_request | portal link on the price tag form (#2018 code) |
 
 ## Prompt edits (one version, base = production text, F1)
