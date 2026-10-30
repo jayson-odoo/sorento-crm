@@ -7,6 +7,7 @@ first failure. The same functions serve the console buttons and the chat tools.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
 import uuid
 from dataclasses import dataclass
@@ -72,14 +73,16 @@ def _expires_at(action: AgentAction) -> datetime:
     return action.created_at + timedelta(minutes=ACTION_TTL_MINUTES)
 
 
-def pending_action(db, contact_respond_id: str, *, now: datetime | None = None) -> AgentAction | None:
-    """The newest `proposed` action of the contact, unless it has expired."""
-    row = (
-        db.query(AgentAction)
-        .filter(AgentAction.contact_respond_id == contact_respond_id, AgentAction.status == "proposed")
-        .order_by(AgentAction.created_at.desc(), AgentAction.id.desc())
-        .first()
+def pending_action(
+    db, contact_respond_id: str, *, now: datetime | None = None, user_id: str | None = None
+) -> AgentAction | None:
+    """The newest `proposed` action of the contact (of this linked user, when given), unless it has expired."""
+    query = db.query(AgentAction).filter(
+        AgentAction.contact_respond_id == contact_respond_id, AgentAction.status == "proposed"
     )
+    if user_id is not None:
+        query = query.filter(AgentAction.user_id == str(user_id))
+    row = query.order_by(AgentAction.created_at.desc(), AgentAction.id.desc()).first()
     if row is None or _expires_at(row) < (now or _now()):
         return None
     return row
@@ -113,6 +116,8 @@ def _recheck(db, ctx, step: dict) -> str | None:
         return "This change is no longer available."
     if not writes.holds(db, ctx.user_id, definition.user_permission):
         return "You no longer have permission for this change."
+    if not writes.holds_ctx(db, ctx, definition.user_permission):
+        return "You do not have permission for this change."
     try:
         now = writes.run_as_user(
             db, ctx, lambda user: definition.read_before(db, user, step["args"]), tool_name=step["tool"]
@@ -157,9 +162,17 @@ def _load(db, contact_respond_id: str, action_id: str) -> AgentAction:
     return row
 
 
+def operator_may_decide(db, ctx, action: AgentAction) -> bool:
+    """Does the console operator (if any) hold the slug of every step of this action?"""
+    return all(
+        (d := writes.WRITES.get(step.get("tool"))) is not None and writes.holds_ctx(db, ctx, d.user_permission)
+        for step in action.steps or []
+    )
+
+
 def confirm(
     db, contact_respond_id: str, action_id: str, *, via: str, turn_id: str | None = None,
-    now: datetime | None = None,
+    now: datetime | None = None, operator_user_id: str | None = None,
 ) -> ActionOutcome:
     action = _load(db, contact_respond_id, action_id)
     if action.status != "proposed":
@@ -182,6 +195,9 @@ def confirm(
         raise ActionRefused("entry_refused")
     if str(ctx.user_id) != str(action.user_id):
         raise ActionRefused("entry_refused")
+    if operator_user_id and str(operator_user_id) != str(ctx.user_id):
+        ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
+    decider = str(operator_user_id or action.user_id)
 
     steps = copy.deepcopy(action.steps or [])
     for step in steps:
@@ -191,12 +207,16 @@ def confirm(
             for other in steps:
                 if other is not step:
                     other["status"] = "skipped"
-            return _finish(db, action, "rejected", steps, via=via, turn_id=turn_id, expect="proposed")
+            return _finish(
+                db, action, "rejected", steps, via=via, turn_id=turn_id, expect="proposed", decider=decider
+            )
 
     claimed = db.execute(
         update(AgentAction)
         .where(AgentAction.id == action.id, AgentAction.status == "proposed")
-        .values(status="executing", via=via, confirm_turn_id=turn_id, decided_at=_now())
+        .values(
+            status="executing", via=via, confirm_turn_id=turn_id, decided_at=_now(), decided_by_user_id=decider
+        )
     ).rowcount
     db.commit()
     if not claimed:
@@ -213,6 +233,8 @@ def confirm(
                 db, ctx, lambda user: definition.execute(db, user, step["args"]), tool_name=step["tool"]
             )
             step.update(status="done", result_id=result.get("id"), after=result.get("after"), error=None)
+            if "unlinked_customer_ids" in result:
+                step["unlinked_customer_ids"] = result["unlinked_customer_ids"]
         except Exception as exc:  # noqa: BLE001 - a route refusal stops the run
             db.rollback()
             if not isinstance(exc, writes.HTTPException):
@@ -223,10 +245,12 @@ def confirm(
     return _finish(db, action, status, steps, via=via, turn_id=turn_id, expect="executing")
 
 
-def _finish(db, action, status: str, steps: list[dict], *, via, turn_id, expect: str) -> ActionOutcome:
+def _finish(
+    db, action, status: str, steps: list[dict], *, via, turn_id, expect: str, decider: str | None = None
+) -> ActionOutcome:
     values = {"status": status, "steps": steps, "finished_at": _now()}
     if expect == "proposed":
-        values.update(via=via, confirm_turn_id=turn_id, decided_at=_now())
+        values.update(via=via, confirm_turn_id=turn_id, decided_at=_now(), decided_by_user_id=decider)
     changed = db.execute(
         update(AgentAction).where(AgentAction.id == action.id, AgentAction.status == expect).values(**values)
     ).rowcount
@@ -239,12 +263,15 @@ def _finish(db, action, status: str, steps: list[dict], *, via, turn_id, expect:
 # ------------------------------------------------------------------ cancel
 
 
-def cancel(db, contact_respond_id: str, action_id: str) -> ActionOutcome:
+def cancel(db, contact_respond_id: str, action_id: str, *, operator_user_id: str | None = None) -> ActionOutcome:
     action = _load(db, contact_respond_id, action_id)
     changed = db.execute(
         update(AgentAction)
         .where(AgentAction.id == action.id, AgentAction.status == "proposed")
-        .values(status="cancelled", decided_at=_now(), finished_at=_now())
+        .values(
+            status="cancelled", decided_at=_now(), finished_at=_now(),
+            decided_by_user_id=str(operator_user_id or action.user_id),
+        )
     ).rowcount
     db.commit()
     if not changed:

@@ -8,6 +8,7 @@ turn's tool results.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -451,7 +452,8 @@ CONFIRM_ACTION = "confirm_action"
 CANCEL_ACTION = "cancel_action"
 
 
-def _decision_schema(name: str, text: str) -> dict:
+def _decision_schema(name: str, text: str, action_id: str) -> dict:
+    """`action_id` can only be the pending action's id."""
     return {
         "type": "function",
         "function": {
@@ -459,22 +461,34 @@ def _decision_schema(name: str, text: str) -> dict:
             "description": text,
             "parameters": {
                 "type": "object",
-                "properties": {"action_id": {"type": "string"}},
+                "properties": {"action_id": {"type": "string", "enum": [action_id]}},
                 "required": ["action_id"],
             },
         },
     }
 
 
-CONFIRM_SCHEMA = _decision_schema(
-    CONFIRM_ACTION,
-    "Carry out the pending proposed changes, only when the user's latest message clearly says yes to them. "
-    "action_id is the one from the proposal.",
-)
-CANCEL_SCHEMA = _decision_schema(
-    CANCEL_ACTION,
-    "Drop the pending proposed changes, when the user's latest message says no or asks to stop.",
-)
+def decision_schemas(action_id: str) -> list[dict]:
+    return [
+        _decision_schema(
+            CONFIRM_ACTION,
+            "Carry out the pending proposed changes, only when the user's latest message clearly says yes to them.",
+            action_id,
+        ),
+        _decision_schema(
+            CANCEL_ACTION,
+            "Drop the pending proposed changes, when the user's latest message says no or asks to stop.",
+            action_id,
+        ),
+    ]
+
+
+def waiting_line(action) -> str:
+    """The system prompt line that tells a later turn which change is waiting for a decision."""
+    return (
+        f"A change is waiting for the user's decision (action {action.id}): "
+        + "; ".join(actions.proposal_lines(action))
+    )
 
 
 def proposal_block(lines: list[str]) -> str:
@@ -496,18 +510,21 @@ def _propose(db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str
     )
 
 
-def _decide(db, ctx, name: str, args: Any, steps: list[dict], turn_id: str) -> ToolResult:
+def _decide(db, ctx, name: str, args: Any, turn_id: str) -> ToolResult:
     """`confirm_action` / `cancel_action`: the model read the user's message; the server limits are `actions`."""
     action_id = args.get("action_id") if isinstance(args, dict) else None
     if not isinstance(action_id, str) or not action_id.strip():
         return ToolResult("invalid", message="action_id is required.")
-    if steps:
-        return ToolResult("invalid", message="Changes proposed in this turn can be confirmed only in a later turn.")
     try:
         if name == CONFIRM_ACTION:
-            outcome = actions.confirm(db, ctx.contact_respond_id, action_id.strip(), via="chat", turn_id=turn_id)
+            outcome = actions.confirm(
+                db, ctx.contact_respond_id, action_id.strip(), via="chat", turn_id=turn_id,
+                operator_user_id=ctx.operator_user_id,
+            )
         else:
-            outcome = actions.cancel(db, ctx.contact_respond_id, action_id.strip())
+            outcome = actions.cancel(
+                db, ctx.contact_respond_id, action_id.strip(), operator_user_id=ctx.operator_user_id
+            )
     except actions.ActionRefused as exc:
         return ToolResult("invalid", message=f"Not done: {exc.reason.replace('_', ' ')}.")
     return ToolResult(
@@ -832,14 +849,20 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         if remaining() >= SIDE_CALL_MIN:
             memory.maybe_compact(db, conv, summarize=summarize, threshold_tokens=budgets.compact_tokens)
 
-        messages: list[dict] = [{"role": "system", "content": _system_prompt(db, ctx.user_name)}]
+        if operator_user_id and str(operator_user_id) != str(ctx.user_id):
+            ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
+        waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+        system = _system_prompt(db, ctx.user_name)
+        if waiting is not None:
+            system = f"{system}\n\n{waiting_line(waiting)}"
+        messages: list[dict] = [{"role": "system", "content": system}]
         messages.extend(memory.history_messages(db, conv))
         messages.append({"role": "user", "content": text})
         schemas = tool_schemas(permitted_tools(db, ctx), catalog)
         schemas += [r.schema for r in writes.permitted_user_reads(db, ctx)]
         schemas += [w.schema for w in writes.permitted_writes(db, ctx)]
-        if actions.pending_action(db, contact_respond_id) is not None:
-            schemas += [CONFIRM_SCHEMA, CANCEL_SCHEMA]
+        if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
+            schemas += decision_schemas(str(waiting.id))
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
         action_id = str(uuid.uuid4())
         plan_parts: list[str] = []
@@ -969,7 +992,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
-                    out = _decide(db, ctx, name, args, steps, turn_id)
+                    out = _decide(db, ctx, name, args, turn_id)
                 else:
                     out = dispatch(
                         db, ctx, name, args,

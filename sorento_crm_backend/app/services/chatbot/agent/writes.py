@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -20,7 +21,7 @@ from app.services.chatbot.agent.tools import ToolResult, _check_ids, _collect_uu
 logger = logging.getLogger(__name__)
 
 MAX_NOTE_CHARS = 4000
-SUMMARY_NOTE_CHARS = 80
+SUMMARY_NOTE_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,19 @@ def holds(db, user_id: str, permission: str | tuple[str, ...]) -> bool:
         return True
     slugs = (permission,) if isinstance(permission, str) else permission
     return any(_permitted(db, user_id, slug) for slug in slugs)
+
+
+def holds_ctx(db, ctx, permission: str | tuple[str, ...]) -> bool:
+    """The linked user holds it, and so does the console operator acting for them (when there is one)."""
+    return holds(db, ctx.user_id, permission) and (
+        not getattr(ctx, "operator_user_id", None) or holds(db, ctx.operator_user_id, permission)
+    )
+
+
+def _line(value: Any) -> str:
+    """A value placed in a summary: whitespace (newlines, tabs) collapsed to single spaces, so a name or
+    a note cannot start a second proposal line."""
+    return " ".join(str(value if value is not None else "").split())
 
 
 def _body(model, data: dict):
@@ -96,7 +110,7 @@ def run_as_user(db, ctx, fn: Callable[[dict], Any], *, tool_name: str | None = N
     actor = AuditActor(
         actor_type="user",
         user_id=str(ctx.user_id),
-        real_user_id=str(ctx.user_id),
+        real_user_id=str(getattr(ctx, "operator_user_id", None) or ctx.user_id),
         auth_method="agent",
         contact_id=str(ctx.contact_pk),
         tool_name=tool_name,
@@ -160,9 +174,13 @@ def _ask_read_before(db, user: dict, args: dict) -> dict:
     return _ask_row(stock_ask_service.serialize(db, [ask])[0])
 
 
-def _clip(text: str, limit: int) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "..."
+def _quoted(value: Any) -> str:
+    """Free text as a person reads it in a summary: quoted, in full up to 200 characters, else the
+    first 200 and the length."""
+    text = _line(value)
+    if len(text) <= SUMMARY_NOTE_CHARS:
+        return f'"{text}"'
+    return f'"{text[:SUMMARY_NOTE_CHARS]}" ({len(text)} characters)'
 
 
 def _ask_summary(args: dict, before: dict) -> str:
@@ -172,11 +190,11 @@ def _ask_summary(args: dict, before: dict) -> str:
     elif args.get("state") == "open":
         changes.append("reopen")
     if args.get("note") is not None:
-        note = _clip(str(args["note"]), SUMMARY_NOTE_CHARS)
-        changes.append(f'set the note to "{note}"' if note else "clear the note")
-    who = before.get("customer_name") or before.get("contact_name")
-    target = f"the ask for {before.get('product_code')}" + (f" from {who}" if who else "")
-    return f"{' and '.join(changes).capitalize()} on {target}"
+        changes.append(f"set the note to {_quoted(args['note'])}" if _line(args["note"]) else "clear the note")
+    who = _line(before.get("customer_name") or before.get("contact_name"))
+    target = f"the ask for {_line(before.get('product_code'))}" + (f" from {who}" if who else "")
+    first = changes[0][:1].upper() + changes[0][1:]
+    return f"{' and '.join([first, *changes[1:]])} on {target}"
 
 
 def _ask_execute(db, user: dict, args: dict) -> dict:
@@ -249,7 +267,7 @@ def _recent_actions(db, ctx, args: dict) -> ToolResult:
         return ToolResult("invalid", message="This tool takes no arguments.")
     rows = (
         db.query(AgentAction)
-        .filter(AgentAction.contact_respond_id == ctx.contact_respond_id)
+        .filter(AgentAction.contact_respond_id == ctx.contact_respond_id, AgentAction.user_id == str(ctx.user_id))
         .order_by(AgentAction.created_at.desc(), AgentAction.id.desc())
         .limit(10)
         .all()
@@ -259,7 +277,7 @@ def _recent_actions(db, ctx, args: dict) -> ToolResult:
             "status": r.status,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "steps": [
-                {k: s.get(k) for k in ("summary", "status", "error", "record_id", "before", "after")}
+                {k: s.get(k) for k in ("tool", "args", "summary", "status", "error", "result_id", "before", "after")}
                 for s in r.steps or []
             ],
         }
@@ -311,11 +329,11 @@ USER_READS: dict[str, UserRead] = {
 
 def permitted_writes(db, ctx) -> list[WriteDef]:
     """WRITES the linked user holds the slug for, in registry order."""
-    return [w for w in WRITES.values() if holds(db, ctx.user_id, w.user_permission)]
+    return [w for w in WRITES.values() if holds_ctx(db, ctx, w.user_permission)]
 
 
 def permitted_user_reads(db, ctx) -> list[UserRead]:
-    return [r for r in USER_READS.values() if holds(db, ctx.user_id, r.user_permission)]
+    return [r for r in USER_READS.values() if holds_ctx(db, ctx, r.user_permission)]
 
 
 def run_user_read(db, ctx, name: str, args: Any, seen_ids: set[str]) -> ToolResult:
@@ -323,7 +341,7 @@ def run_user_read(db, ctx, name: str, args: Any, seen_ids: set[str]) -> ToolResu
     read = USER_READS.get(name)
     if read is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
-    if not holds(db, ctx.user_id, read.user_permission):
+    if not holds_ctx(db, ctx, read.user_permission):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not isinstance(args, dict):
         return ToolResult("invalid", message="Arguments must be an object of named values.")
@@ -369,7 +387,7 @@ def propose_step(db, ctx, name: str, args: Any, *, seen_ids: set[str]) -> tuple[
     definition = WRITES.get(name) if isinstance(name, str) else None
     if definition is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use."), None
-    if not holds(db, ctx.user_id, definition.user_permission):
+    if not holds_ctx(db, ctx, definition.user_permission):
         return ToolResult("denied", message=f"{name} is outside this user's access."), None
     problem = _args_problem(definition, args)
     if problem:
@@ -383,7 +401,7 @@ def propose_step(db, ctx, name: str, args: Any, *, seen_ids: set[str]) -> tuple[
         return _route_failure(exc), None
     # `_show` holds what the summary needs but the re-check must not compare (names looked up now).
     shown = before.pop("_show", {})
-    summary = definition.summary(args, {**before, **shown})
+    summary = _line(definition.summary(args, {**before, **shown}))
     step = {"tool": name, "args": dict(args), "before": before, "summary": summary, "status": "proposed"}
     return ToolResult("proposed", data={"summary": summary}), step
 
@@ -453,7 +471,7 @@ def _opp_create_read_before(db, user: dict, args: dict) -> dict:
 
 
 def _opp_create_summary(args: dict, before: dict) -> str:
-    return f'Create opportunity "{args["title"]}" for {before["target"]}, close {args["expected_close_date"]}'
+    return f'Create opportunity "{_line(args["title"])}" for {_line(before["target"])}, close {_line(args["expected_close_date"])}'
 
 
 def _opp_create_execute(db, user: dict, args: dict) -> dict:
@@ -498,7 +516,7 @@ def _opp_update_summary(args: dict, before: dict) -> str:
             parts.append(f"customer {was(before.get('customer'))} -> {before['new_customer']}")
         else:
             parts.append(f"{_OPP_LABELS.get(key, key)} {was(before.get(key))} -> {value}")
-    return f'Opportunity "{before["title"]}": ' + "; ".join(parts)
+    return f'Opportunity "{_line(before["title"])}": ' + "; ".join(_line(p) for p in parts)
 
 
 def _opp_update_execute(db, user: dict, args: dict) -> dict:
@@ -668,11 +686,21 @@ def _own_agent_ids(db, user_id: str) -> list[str]:
     return [str(a.id) for a in agents_for_contact(db, contact_id)] if contact_id else []
 
 
+@contextmanager
+def _users_scope(db, user_id: str):
+    """The user's company scope for the body, whatever scope the session carries (restored after)."""
+    from app.models.base import company_scope
+    from app.services import company_scope_resolver
+
+    with company_scope(db, company_scope_resolver._scope_for_user(db, user_id, None)):
+        yield
+
+
 def contact_in_scope(db, user_id: str, contact_pk: str) -> bool:
     """May this user change this dealer contact's access? The `.edit` holder: any contact; otherwise a
-    contact linked to a customer of the user's own active sales agents. Never the user's own contact."""
+    contact linked to a customer of the user's own active sales agents, within the user's companies.
+    Never the user's own contact."""
     from app.models.access import RespondContactCustomer
-    from app.models.base import company_scope
     from app.models.order import Customer
     from app.models.user import User
 
@@ -683,7 +711,7 @@ def contact_in_scope(db, user_id: str, contact_pk: str) -> bool:
     agents = _own_agent_ids(db, user_id)
     if not agents:
         return False
-    with company_scope(db, None):
+    with _users_scope(db, user_id):
         return (
             db.query(RespondContactCustomer.id)
             .join(Customer, Customer.id == RespondContactCustomer.customer_id)
@@ -706,10 +734,10 @@ def _company_label(code: str) -> str:
     return names.get(code, code).removesuffix(" Sdn Bhd")
 
 
-def _contact_facts(db, contact) -> dict:
-    """The contact as the access tools see it: access types, company codes, role and links."""
+def _contact_facts(db, contact, user_id: str) -> dict:
+    """The contact as the access tools see it: access types, company codes, role, the companies that
+    hold an owner type, and the links the user can see."""
     from app.models.access import RespondContactCustomer
-    from app.models.base import company_scope
     from app.models.company import Company, RespondContactCompany
     from app.services.contact_access_sheet_service import TEMPLATE
 
@@ -720,46 +748,61 @@ def _contact_facts(db, contact) -> dict:
         .filter(RespondContactCompany.respond_contact_id == contact.id)
     )
     template_codes = [c for c in codes if c in TEMPLATE["owner_types"]]
-    owner = types & _owner_types(template_codes)
-    role = "owner" if owner else ("employee" if TEMPLATE["base_type"] in types else "none")
-    with company_scope(db, None):
+    owner_codes = [c for c in template_codes if types & _owner_types([c])]
+    role = "owner" if owner_codes else ("employee" if TEMPLATE["base_type"] in types else "none")
+    with _users_scope(db, user_id):
         links = sorted(
             str(cid) for (cid,) in db.query(RespondContactCustomer.customer_id)
             .filter(RespondContactCustomer.contact_id == contact.id)
         )
-    return {"types": types, "codes": codes, "template_codes": template_codes, "role": role, "links": links}
+    return {
+        "types": types, "codes": codes, "template_codes": template_codes, "owner_codes": owner_codes,
+        "role": role, "links": links,
+    }
 
 
-def _role_label(role: str, template_codes: list[str]) -> str:
+def _role_label(role: str, owner_codes: list[str]) -> str:
     if role == "owner":
-        return f"Business owner ({', '.join(_company_label(c) for c in template_codes)})"
+        return f"Business owner ({', '.join(_company_label(c) for c in owner_codes)})"
     return "Employee" if role == "employee" else "No role"
 
 
-def _relinkable(db, user_id: str, contact_id: str, customer_id: str) -> bool:
-    """Did this user's own executed action unlink this contact from this customer (the undo of a resign)?"""
+def _latest_link_change(db, contact_id: str, customer_id: str):
+    """The newest executed agent step that linked or unlinked this customer on this contact, as
+    (user id, whether it was an unlink that removed the link), or None."""
     from app.models.chatbot_agent import AgentAction
 
     rows = (
-        db.query(AgentAction.steps)
-        .filter(AgentAction.user_id == str(user_id), AgentAction.status.in_(("executed", "partial")))
-        .order_by(AgentAction.created_at.desc())
-        .limit(200)
+        db.query(AgentAction.user_id, AgentAction.steps)
+        .filter(
+            AgentAction.status.in_(("executed", "partial")),
+            AgentAction.steps.contains([{"args": {"contact_id": str(contact_id)}}]),
+        )
+        .order_by(AgentAction.finished_at.desc(), AgentAction.id.desc())
         .all()
     )
-    return any(
-        step.get("tool") == UPDATE_CONTACT
-        and step.get("status") == "done"
-        and (step.get("args") or {}).get("contact_id") == str(contact_id)
-        and str(customer_id) in ((step.get("args") or {}).get("unlink_customer_ids") or [])
-        for (steps,) in rows
-        for step in steps or []
-    )
+    for user_id, steps in rows:
+        for step in reversed(steps or []):
+            args = step.get("args") or {}
+            if step.get("tool") != UPDATE_CONTACT or step.get("status") != "done" or args.get("contact_id") != str(contact_id):
+                continue
+            if str(customer_id) in (args.get("link_customer_ids") or []):
+                return str(user_id), False
+            if str(customer_id) in (args.get("unlink_customer_ids") or []):
+                return str(user_id), str(customer_id) in (step.get("unlinked_customer_ids") or [])
+    return None
+
+
+def _relinkable(db, user_id: str, contact_id: str, customer_id: str) -> bool:
+    """The undo of a resign: this user's own executed unlink of exactly this customer from this contact
+    is still the latest change to that link."""
+    latest = _latest_link_change(db, contact_id, customer_id)
+    return latest is not None and latest[0] == str(user_id) and latest[1]
 
 
 def _own_customer_codes(db, user_id: str, ids: list[str]) -> dict[str, str]:
-    """{customer id: code} for customers of the user's own agents (any customer for a `.edit` holder)."""
-    from app.models.base import company_scope
+    """{customer id: code} for customers of the user's own agents (any customer for a `.edit` holder),
+    within the user's companies."""
     from app.models.order import Customer
     from app.services.error_handler import AppException, handle_not_found
 
@@ -767,7 +810,7 @@ def _own_customer_codes(db, user_id: str, ids: list[str]) -> dict[str, str]:
         return {}
     broad = _permitted(db, user_id, CONTACT_EDIT)
     agents = _own_agent_ids(db, user_id)
-    with company_scope(db, None):
+    with _users_scope(db, user_id):
         rows = {
             str(r.id): r
             for r in db.query(Customer.id, Customer.customer_code, Customer.sales_agent_id).filter(Customer.id.in_(ids))
@@ -786,6 +829,7 @@ def _own_customer_codes(db, user_id: str, ids: list[str]) -> dict[str, str]:
 def _contact_plan(db, user: dict, args: dict) -> dict:
     """What the call would change, after every scope check. Raises the route-shaped error otherwise."""
     from app.models.access import RespondContact
+    from app.services.contact_access_sheet_service import TEMPLATE
     from app.services.error_handler import AppException, handle_not_found
 
     contact = db.get(RespondContact, str(args["contact_id"]))
@@ -796,53 +840,66 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     link_ids, unlink_ids = list(args.get("link_customer_ids") or []), list(args.get("unlink_customer_ids") or [])
     if set(link_ids) & set(unlink_ids):
         raise AppException(status_code=422, message="A customer cannot be both linked and unlinked.", code="VALIDATION_ERROR")
-    if not contact_in_scope(db, uid, contact.id):
-        # Only the undo of this user's own resign: put the AI replies and the links back.
-        undo = bool(link_ids) and not unlink_ids and role is None and all(
-            _relinkable(db, uid, contact.id, c) for c in link_ids
-        )
-        if not undo:
-            raise AppException(status_code=403, message="That contact is not one of yours.", code="FORBIDDEN")
+    refused = AppException(status_code=403, message="That contact is not one of yours.", code="FORBIDDEN")
+    in_scope = contact_in_scope(db, uid, contact.id)
+    # Linking is the `.edit` holder's right; an `.edit_own` holder links only to undo their own resign.
+    undo = bool(link_ids) and all(_relinkable(db, uid, contact.id, c) for c in link_ids)
+    if link_ids and not undo and not _permitted(db, uid, CONTACT_EDIT):
+        raise AppException(status_code=403, message="You can only restore a link you removed.", code="FORBIDDEN")
+    if not in_scope and not (undo and not unlink_ids and role is None and ai in (None, True)):
+        raise refused
     codes = _own_customer_codes(db, uid, [*link_ids, *unlink_ids])
-    facts = _contact_facts(db, contact)
+    facts = _contact_facts(db, contact, uid)
+    for c in unlink_ids:
+        if c not in facts["links"]:
+            raise AppException(status_code=422, message=f"{codes[c]} was not linked.", code="VALIDATION_ERROR")
     phone = contact.phone_number
     add: set[str] = set()
     remove: set[str] = set()
     lines: list[str] = []
-    if role is not None and role != facts["role"]:
-        if not facts["codes"]:
+    template_codes = facts["template_codes"]
+    if role is not None:
+        lacking = [c for c in template_codes if c not in facts["owner_codes"]]
+        changes = bool(lacking) if role == "owner" else role != facts["role"]
+        if changes:
+            if not facts["codes"]:
+                raise AppException(
+                    status_code=422, message="This contact has no company, so its role cannot be set.", code="VALIDATION_ERROR"
+                )
+            if not template_codes:
+                raise AppException(
+                    status_code=422, message="This contact's companies have no owner role to set.", code="VALIDATION_ERROR"
+                )
+            if role == "owner":
+                add = {TEMPLATE["base_type"]} | _owner_types(lacking)
+                new_label = _role_label("owner", template_codes)
+            else:
+                add, remove = {TEMPLATE["base_type"]}, _owner_types(template_codes)
+                new_label = _role_label("employee", [])
+            lines.append(f"{_role_label(facts['role'], facts['owner_codes'])} -> {new_label}")
+        elif not facts["codes"] and role != facts["role"]:
             raise AppException(
                 status_code=422, message="This contact has no company, so its role cannot be set.", code="VALIDATION_ERROR"
             )
-        if not facts["template_codes"]:
-            raise AppException(
-                status_code=422, message="This contact's companies have no owner role to set.", code="VALIDATION_ERROR"
-            )
-        from app.services.contact_access_sheet_service import TEMPLATE
-
-        owner = _owner_types(facts["template_codes"])
-        add = {TEMPLATE["base_type"]} | (owner if role == "owner" else set())
-        remove = owner if role == "employee" else set()
-        lines.append(
-            f"{_role_label(facts['role'], facts['template_codes'])} -> {_role_label(role, facts['template_codes'])}"
-        )
     if ai is not None and ai != bool(contact.chatbot_allowed):
         lines.append(f"AI replies {'on' if contact.chatbot_allowed else 'off'} -> {'on' if ai else 'off'}")
     else:
         ai = None
     link = [c for c in link_ids if c not in facts["links"]]
-    unlink = [c for c in unlink_ids if c in facts["links"]]
-    lines += [f"linked to {codes[c]}" for c in link] + [f"unlinked from {codes[c]}" for c in unlink]
+    lines += [f"linked to {codes[c]}" for c in link] + [f"unlinked from {codes[c]}" for c in unlink_ids]
     if not lines:
         raise AppException(status_code=422, message=f"Nothing to change for {phone}.", code="VALIDATION_ERROR")
     return {
         "contact": contact, "facts": facts, "add": add, "remove": remove, "ai": ai,
-        "link": link, "unlink": unlink, "lines": lines, "phone": phone,
+        "link": link, "unlink": list(unlink_ids), "codes": codes, "lines": lines, "phone": phone,
     }
 
 
 def _contact_state(contact, facts: dict) -> dict:
-    return {"role": facts["role"], "chatbot_allowed": bool(contact.chatbot_allowed), "links": facts["links"]}
+    return {
+        "role": facts["role"], "owner_companies": facts["owner_codes"],
+        "chatbot_allowed": bool(contact.chatbot_allowed), "links": facts["links"],
+    }
 
 
 def _contact_read_before(db, user: dict, args: dict) -> dict:
@@ -855,7 +912,7 @@ def _contact_read_before(db, user: dict, args: dict) -> dict:
 
 
 def _contact_summary(args: dict, before: dict) -> str:
-    return f"{before['phone']} {before['name']}: ".replace("  ", " ") + "; ".join(before["changes"])
+    return f"{_line(before['phone'])} {_line(before['name'])}: " + "; ".join(_line(c) for c in before["changes"])
 
 
 def _contact_execute(db, user: dict, args: dict) -> dict:
@@ -866,6 +923,7 @@ def _contact_execute(db, user: dict, args: dict) -> dict:
 
     plan = _contact_plan(db, user, args)
     contact, facts = plan["contact"], plan["facts"]
+    uid = str(user["id"])
     before = _contact_state(contact, facts)
     if plan["add"] or plan["remove"]:
         wanted = (facts["types"] | plan["add"]) - plan["remove"]
@@ -876,12 +934,15 @@ def _contact_execute(db, user: dict, args: dict) -> dict:
     if plan["ai"] is not None:
         contact.chatbot_allowed = plan["ai"]
     for customer_id in plan["link"]:
-        link_customer(db, contact.id, customer_id, source="agent", linked_by=str(user["id"]))
+        link_customer(db, contact.id, customer_id, source="agent", linked_by=uid)
+    removed = []
     for customer_id in plan["unlink"]:
-        unlink_customer(db, contact.id, customer_id)
+        if not unlink_customer(db, contact.id, customer_id):
+            raise AppException(status_code=422, message=f"{plan['codes'][customer_id]} was not linked.", code="VALIDATION_ERROR")
+        removed.append(customer_id)
     db.flush()
     db.expire(contact)
-    after = _contact_state(contact, _contact_facts(db, contact))
+    after = _contact_state(contact, _contact_facts(db, contact, uid))
     audit_service.record(
         db,
         event=CONTACT_EVENT,
@@ -892,12 +953,11 @@ def _contact_execute(db, user: dict, args: dict) -> dict:
         description="Contact access set by the agent",
     )
     db.commit()
-    return {"id": str(args["contact_id"]), "after": after}
+    return {"id": str(args["contact_id"]), "after": after, "unlinked_customer_ids": removed}
 
 
 def _contacts_find(db, ctx, args: dict) -> ToolResult:
     from app.models.access import RespondContact, RespondContactCustomer
-    from app.models.base import company_scope
     from app.models.order import Customer
     from app.services.contact_setup_engine import _find_contacts, normalise_phone
 
@@ -927,8 +987,8 @@ def _contacts_find(db, ctx, args: dict) -> ToolResult:
             out.append({"status": "not_yours", "phone": phone})
         else:
             contact = db.get(RespondContact, found[n].id)
-            facts = _contact_facts(db, contact)
-            with company_scope(db, None):
+            facts = _contact_facts(db, contact, ctx.user_id)
+            with _users_scope(db, ctx.user_id):
                 accounts = [
                     {"customer_id": str(c.id), "code": c.customer_code, "name": c.customer_name}
                     for c in db.query(Customer)

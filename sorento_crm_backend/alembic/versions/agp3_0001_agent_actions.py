@@ -26,6 +26,7 @@ def upgrade() -> None:
         "confirm_turn_id uuid, "
         "contact_respond_id varchar(64) NOT NULL, "
         "user_id varchar NOT NULL, "
+        "decided_by_user_id varchar, "
         "status varchar(16) NOT NULL, "
         "steps jsonb NOT NULL DEFAULT '[]'::jsonb, "
         "via varchar(16), "
@@ -33,6 +34,8 @@ def upgrade() -> None:
         "decided_at timestamptz, "
         "finished_at timestamptz)"
     )
+    # The table may already exist from an earlier run of this revision.
+    op.execute("ALTER TABLE chatbot.agent_actions ADD COLUMN IF NOT EXISTS decided_by_user_id varchar")
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_agent_actions_contact "
         "ON chatbot.agent_actions (contact_respond_id)"

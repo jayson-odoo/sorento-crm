@@ -61,6 +61,8 @@ class AgentAction(Base):
     confirm_turn_id = Column(UUID(as_uuid=False), nullable=True)
     contact_respond_id = Column(String(64), nullable=False)
     user_id = Column(String, nullable=False)
+    # Who confirmed or cancelled: the console operator, else the linked user (a chat decision).
+    decided_by_user_id = Column(String, nullable=True)
     # proposed | executing | executed | partial | rejected | cancelled | expired
     status = Column(String(16), nullable=False, default="proposed")
     steps = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"), default=list)
