@@ -1540,9 +1540,13 @@ def test_ac12_the_public_route_is_rate_limited_per_ip_and_per_token(public, monk
     assert ok.status_code == 200, ok.text
     assert hits, "the route never asked the rate limiter"
     assert all("quotation_amendment" in bucket for bucket, _ident in hits)
+    from app.api.v1.public.quotation_sign import token_bucket_ident
+
     idents = {ident for _bucket, ident in hits}
-    assert token in idents
-    assert any(ident != token for ident in idents), "no per-IP hit"
+    # Per token, keyed by a digest: the raw token is a live credential and must not reach Redis.
+    assert token_bucket_ident(token) in idents
+    assert token not in idents
+    assert any(ident != token_bucket_ident(token) for ident in idents), "no per-IP hit"
 
 
 def test_ac12_over_the_limit_answers_429_and_stores_nothing(public, monkeypatch):

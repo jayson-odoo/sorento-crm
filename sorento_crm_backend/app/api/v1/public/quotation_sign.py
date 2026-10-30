@@ -9,6 +9,7 @@ anybody guessing that a token exists.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -115,6 +116,11 @@ def request_quotation_changes(
 AMENDMENT_BUCKET = "quotation_amendment"
 
 
+def token_bucket_ident(token: str) -> str:
+    """The rate-limit key for a sign token: a digest, never the token itself."""
+    return hashlib.sha256(token.encode()).hexdigest()[:32]
+
+
 def _amendment_rate_limited(token: str, request: Request) -> None:
     """Per token and per client IP, through the shared fail-open limiter.
 
@@ -128,7 +134,8 @@ def _amendment_rate_limited(token: str, request: Request) -> None:
     window = app_settings.rate_limit_quotation_amendment_window_seconds
     ip = client_ip(request) or (request.client.host if request.client else None)
     for bucket, ident in (
-        (f"{AMENDMENT_BUCKET}_token", token),
+        # Hashed: the sign token is the customer's whole credential and must not sit in Redis.
+        (f"{AMENDMENT_BUCKET}_token", token_bucket_ident(token)),
         (f"{AMENDMENT_BUCKET}_ip", ip),
     ):
         gate = rate_limit.hit(bucket, ident, limit=limit, window_seconds=window)
