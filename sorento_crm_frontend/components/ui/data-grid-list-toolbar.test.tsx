@@ -297,7 +297,9 @@ describe('DataGridListToolbar', () => {
     // The row that holds the two clusters is the one that has to wrap; at 375 it
     // is already a column, so the rule only bites at a narrow desktop width.
     const clusterRow = toolbar!.firstElementChild;
-    expect(clusterRow).toHaveClass('flex-wrap');
+    // Owner ruling a25895124 Q3 a (Create stays on the filter row on phones): the row no
+    // longer wraps below sm (`flex-nowrap`), it wraps from sm up.
+    expect(clusterRow).toHaveClass('sm:flex-wrap');
     expect(clusterRow).toHaveClass('sm:flex-row');
   });
 });
