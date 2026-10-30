@@ -343,3 +343,35 @@ def test_a_set_the_contact_may_not_see_is_never_expanded(domain):
 
     got = {e.get("uuid") for e in out.get("compatible_entities") or []}
     assert not got & {ids["ZZSTWCX8826-P"], ids["ZZSTWCX8826-S"], ids["ZZSTWCY8826"]}, (domain, got)
+
+
+@pytest.mark.parametrize("mode", ["and", "or"])
+def test_set_parts_never_join_the_picker_beside_a_loose_product(mode):
+    """Reviewer v4 should-fix: one set (its seat cover also matched as a product) plus one loose
+    product that holds the code. The parts resolve and the loose product is the only other
+    subject, so there is nothing to pick; without the part exclusion the gate printed a one-line
+    "Which product do you mean?" for the loose product and dropped the parts from scope."""
+    import uuid as _uuid
+
+    from app.services.chatbot.lanes.business.gate import run_gate
+
+    ids = {c: str(_uuid.uuid4()) for c in ("ZZSTWCX8826-P", "ZZSTWCY8826", "ZZSTWC8826-SC", "ZZSTWC8826-LOOSE1")}
+    set_id = str(_uuid.uuid4())
+    tier = "and" if mode == "and" else "prefix"
+    rows = [
+        {"uuid": ids["ZZSTWC8826-SC"], "entity_type": "product", "canonical_code": "ZZSTWC8826-SC", "match_tier": tier},
+        {"uuid": ids["ZZSTWC8826-LOOSE1"], "entity_type": "product", "canonical_code": "ZZSTWC8826-LOOSE1", "match_tier": tier},
+        {"uuid": set_id, "entity_type": "product_set", "canonical_code": "ZZSTWC8826-P", "match_tier": tier,
+         "display": {"members": [{"product_code": c, "uuid": ids[c], "quantity": 1.0}
+                                 for c in ("ZZSTWCX8826-P", "ZZSTWCY8826", "ZZSTWC8826-SC")]}},
+    ]
+    payload: dict[str, Any] = {"tokens": [STEM_8826.lower()], "visible_set_ids": [set_id]}
+    if mode == "and":
+        payload["intersection"] = rows
+    else:
+        payload["resolutions"] = [{"token": STEM_8826.lower(), "matches": rows}]
+
+    out = run_gate(dict(payload), parser={"domain_hint": "incoming", "entities": []}, resolver=payload)
+
+    assert "Which product do you mean" not in str(out.get("gate_clarification") or ""), out.get("gate_clarification")
+    assert set(ids.values()) <= {e.get("uuid") for e in out.get("compatible_entities") or []}, out.get("compatible_entities")
