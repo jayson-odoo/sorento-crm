@@ -246,6 +246,9 @@ export interface PriceTagRequestSummary {
    *  route only for a row a cheap query says was touched since its last
    *  check - never resolved per row on every page load. */
   data_changed_tag_count?: number;
+  /** Set while the request is a saved, unsent portal draft (status stays `new`). Only a
+   *  salesperson's own list carries drafts (PORTAL-P4-REQUESTS S7). */
+  portal_draft_at?: string | null;
 }
 
 export interface PriceTagRequestDetail extends PriceTagRequestSummary {

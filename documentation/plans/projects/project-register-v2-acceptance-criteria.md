@@ -155,7 +155,9 @@ BE = `sorento_crm_backend/app`.
 - J3 The draft is visible (list with a "Draft" pill, detail, edit) to its owner only; another salesperson and staff
   lists do not show it; `GET /projects/<id>` by anyone else -> 404. The draft's page shows its fields with Edit and
   Submit for approval only: no Access card, no data tabs, and no error toast (nothing else is queried).
-- J3b A submit-only user sees Edit only on their own draft or rejected registration (not on pending or approved).
+- J3b A submit-only user sees Edit only on their own draft or rejected registration (not on pending or resubmitted).
+  Amended 29 Oct (PORTAL-P4-REQUESTS, owner ruling a54382059): on a staff project or an approved one, J3b does not
+  apply; the general edit rule decides (owner, approved collaborator, manager).
 - J3c For a submit-only user the form has no Lead field (a lead links only to an approved project).
 - J4 Submit (new or from a draft): `approval_state = 'pending'`, `submitted_at` set, decided_* and reject_reason
   cleared; required fields enforced (A5); exactly the portal's "submitted" notice: an in-app notification of type

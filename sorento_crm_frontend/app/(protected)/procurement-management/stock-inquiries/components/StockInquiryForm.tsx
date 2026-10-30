@@ -22,15 +22,12 @@ import {
   FormItem,
   FormMessage,
 } from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import {
   ProductInquiryFormLayout,
   InquiryFormTableRow,
 } from './ProductInquiryFormLayout';
-import { PRODUCT_INQUIRY_REMARK_HINT } from '../productInquiryFormConstants';
 import {
   useCreateStockInquiry,
   useUpdateStockInquiry,
@@ -45,6 +42,9 @@ import {
 } from '../forms/stock-inquiry-schema';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
+import StockInquiryFieldRows from './StockInquiryFieldRows';
+import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
 
@@ -53,7 +53,17 @@ interface StockInquiryFormProps {
   onSuccess?: () => void;
 }
 
-export default function StockInquiryForm({
+/**
+ * A salesperson limited to their own rows (PORTAL-P4-REQUESTS R1, form parity) creates and edits
+ * in the portal's own form, written through My Requests; everyone else the staff form, unchanged.
+ */
+export default function StockInquiryForm(props: StockInquiryFormProps) {
+  const { limited } = useRequestScope('stock_inquiry');
+  if (limited) return <MyRequestPortalForm kind="stock_inquiry" submissionId={props.inquiryId} />;
+  return <StaffStockInquiryForm {...props} />;
+}
+
+function StaffStockInquiryForm({
   inquiryId,
   onSuccess,
 }: StockInquiryFormProps) {
@@ -239,199 +249,30 @@ export default function StockInquiryForm({
             </p>
           </InquiryFormTableRow>
 
-          <InquiryFormTableRow label="Sales person">
-            <FormField
-              control={form.control}
-              name="salesperson_contact_id"
-              render={({ field }) => (
-                <FormItem className="space-y-1">
-                  <FormControl>
-                    <RequestorContactSelect
-                      value={field.value}
-                      onChange={field.onChange}
-                      submitterContactId={inquiry?.contact_id}
-                      savedContactId={inquiry?.salesperson_contact_id}
-                      savedContactName={inquiry?.salesperson_contact_name ?? inquiry?.salesperson}
-                      placeholder="Select sales person"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </InquiryFormTableRow>
-
-          <InquiryFormTableRow label="Product code">
-            <FormField
-              control={form.control}
-              name="product_code"
-              render={({ field }) => (
-                <FormItem className="space-y-1">
-                  <FormControl>
-                    <Input
-                      className="h-9"
-                      placeholder="Code"
-                      {...field}
-                      value={field.value || ''}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </InquiryFormTableRow>
-
-          <InquiryFormTableRow label="Item description" labelClassName="items-start pt-3">
-            <FormField
-              control={form.control}
-              name="item_description"
-              render={({ field }) => (
-                <FormItem className="space-y-1">
-                  <FormControl>
-                    <Textarea
-                      placeholder="Description"
-                      {...field}
-                      value={field.value || ''}
-                      rows={3}
-                      className="min-h-[4.5rem] resize-y"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </InquiryFormTableRow>
-
-          <InquiryFormTableRow label="Project customer">
-            <FormField
-              control={form.control}
-              name="project_customer"
-              render={({ field }) => (
-                <FormItem className="space-y-1">
-                  <FormControl>
-                    <Input
-                      className="h-9"
-                      placeholder="Customer / site"
-                      {...field}
-                      value={field.value || ''}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </InquiryFormTableRow>
-
-          <InquiryFormTableRow label="Project name">
-            <FormField
-              control={form.control}
-              name="project_name"
-              render={({ field }) => (
-                <FormItem className="space-y-1">
-                  <FormControl>
-                    <Input
-                      className="h-9"
-                      placeholder="Project name"
-                      {...field}
-                      value={field.value || ''}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </InquiryFormTableRow>
-
-          <InquiryFormTableRow label="Qty">
-            <FormField
-              control={form.control}
-              name="quantity"
-              render={({ field }) => (
-                <FormItem className="space-y-1">
-                  <FormControl>
-                    <NumberInput
-                      className="h-9"
-                      min={0}
-                      step="any"
-                      inputMode="decimal"
-                      placeholder="Quantity"
-                      {...field}
-                      value={field.value ?? ''}
-                      onChange={(e) => field.onChange(e.target.value)}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </InquiryFormTableRow>
-
-          <InquiryFormTableRow label="Delivery date">
-            <FormField
-              control={form.control}
-              name="delivery_date"
-              render={({ field }) => (
-                <FormItem className="space-y-1">
-                  <FormControl>
-                    <Input
-                      className="h-9"
-                      placeholder="e.g. MOCK UP - MAY 2026, BALANCE BY AUG/SEPT 2026"
-                      {...field}
-                      value={field.value ?? ''}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </InquiryFormTableRow>
-
-          <InquiryFormTableRow label="Remark" labelClassName="items-start pt-3">
-            <div className="space-y-2">
+          <StockInquiryFieldRows
+            form={form}
+            salesperson={
               <FormField
                 control={form.control}
-                name="remark"
+                name="salesperson_contact_id"
                 render={({ field }) => (
                   <FormItem className="space-y-1">
                     <FormControl>
-                      <Textarea
-                        placeholder="Remarks"
-                        {...field}
-                        value={field.value ?? ''}
-                        rows={6}
-                        className="min-h-[8rem] resize-y font-normal"
+                      <RequestorContactSelect
+                        value={field.value}
+                        onChange={field.onChange}
+                        submitterContactId={inquiry?.contact_id}
+                        savedContactId={inquiry?.salesperson_contact_id}
+                        savedContactName={inquiry?.salesperson_contact_name ?? inquiry?.salesperson}
+                        placeholder="Select sales person"
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <p className="text-xs text-muted-foreground leading-snug">
-                {PRODUCT_INQUIRY_REMARK_HINT}
-              </p>
-            </div>
-          </InquiryFormTableRow>
-
-          <InquiryFormTableRow label="Additional remark" labelClassName="items-start pt-3">
-            <FormField
-              control={form.control}
-              name="additional_remark"
-              render={({ field }) => (
-                <FormItem className="space-y-1">
-                  <FormControl>
-                    <Textarea
-                      placeholder="Additional notes"
-                      {...field}
-                      value={field.value || ''}
-                      rows={4}
-                      className="min-h-[6rem] resize-y"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </InquiryFormTableRow>
+            }
+          />
 
           {inquiry?.respond_inbox_url && (
             <InquiryFormTableRow label="Respond inbox">

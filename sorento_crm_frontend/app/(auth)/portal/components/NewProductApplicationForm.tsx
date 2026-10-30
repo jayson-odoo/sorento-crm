@@ -5,9 +5,12 @@
  * view (NEW-PRODUCT-APP v4). The same paper sheet as the staff pages; COST, LEADTIME and the
  * supplier are purchasing's and read-only here (PQ1). Approval and the opening of codes are
  * staff work; the portal only shows their result.
+ *
+ * A salesperson's application on the CRM is this same form (PORTAL-P4-REQUESTS R3): every call and
+ * path goes through the injected client (`lib/submission-client`), the portal's own without one.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Download, Loader2, XCircle } from 'lucide-react';
@@ -49,23 +52,20 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import type { NewProductApplicationDetail } from '@/types/newProductApplication';
 import { portalBase } from '../lib/portal-paths';
 import { isAwaitingReview } from '@/lib/submission-status';
-import { submitVerb, uploadAttachment, type PortalAttachment } from '../lib/portal-client';
-import {
-  cancelNewProductApplication,
-  createNewProductApplication,
-  downloadNewProductApplicationExcel,
-  getNewProductApplication,
-  getNewProductApplicationPrefill,
-  listMyRespondedInquiries,
-  lookupNewProductApplication,
-  lookupNewProductApplicationCustomers,
-  reviseNewProductApplication,
-  submitNewProductApplication,
-  updateNewProductApplication,
-  type PortalCustomerHit,
-  type PortalInquiryHit,
-  type PortalLookupKind,
+import { submitVerb, type PortalAttachment } from '../lib/portal-client';
+import * as portalNewProductApplication from '../lib/new-product-application-service';
+import type {
+  NewProductApplicationService,
+  PortalCustomerHit,
+  PortalInquiryHit,
+  PortalLookupKind,
 } from '../lib/new-product-application-service';
+import {
+  clientEmbedded,
+  clientPaths,
+  clientService,
+  useSubmissionClient,
+} from '../lib/submission-client';
 import { AsyncCombobox } from './AsyncCombobox';
 import { AttachmentDropzone } from './AttachmentDropzone';
 
@@ -75,17 +75,16 @@ const LOCK_SENTENCE =
 /** The select fetcher for one portal lookup list (the server filters by `q`). */
 const portalLookup =
   (
+    service: () => NewProductApplicationService,
     kind: PortalLookupKind,
     label: (hit: { code: string; name: string }) => string,
   ): LookupFetcher =>
   async (q) =>
-    (await lookupNewProductApplication(kind, q)).map((hit) => ({
+    (await service().lookupNewProductApplication(kind, q)).map((hit) => ({
       value: hit.id,
       label: label(hit),
       code: hit.code,
     }));
-
-const BRANDS: LookupFetcher = portalLookup('brands', (h) => h.name);
 
 function ReasonDialog({
   title,
@@ -147,11 +146,30 @@ function ReasonDialog({
 export default function NewProductApplicationForm({
   slug,
   applicationId,
+  startFromInquiryId,
 }: {
   slug?: string;
   applicationId?: string;
+  /** A new application started from this inquiry, as picking it does: the CRM's
+   *  `?stock_inquiry_id=`; the portal never passes it. */
+  startFromInquiryId?: string;
 }) {
   const router = useRouter();
+  const client = useSubmissionClient();
+  const service = () =>
+    clientService(client, 'newProductApplication', portalNewProductApplication);
+  const paths = clientPaths(client);
+  // Inside a CRM page its header carries the title and Back.
+  const embedded = clientEmbedded(client);
+  const brands = useMemo<LookupFetcher>(
+    () =>
+      portalLookup(
+        () => clientService(client, 'newProductApplication', portalNewProductApplication),
+        'brands',
+        (h) => h.name,
+      ),
+    [client],
+  );
   const [application, setApplication] =
     useState<NewProductApplicationDetail | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
@@ -168,7 +186,10 @@ export default function NewProductApplicationForm({
   const [saving, setSaving] = useState(false);
   const [asking, setAsking] = useState<'revise' | 'cancel' | null>(null);
 
-  const backPath = `${portalBase(slug)}?type=new_product_application`;
+  const backPath = paths
+    ? paths.home('new_product_application')
+    : `${portalBase(slug)}?type=new_product_application`;
+  const shell = embedded ? 'space-y-4' : 'min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4';
   const set = useCallback(
     <K extends keyof FormState>(key: K, value: FormState[K]) =>
       setState((prev) => ({ ...prev, [key]: value })),
@@ -187,7 +208,8 @@ export default function NewProductApplicationForm({
   useEffect(() => {
     if (!applicationId) return;
     let cancelled = false;
-    getNewProductApplication(applicationId)
+    clientService(client, 'newProductApplication', portalNewProductApplication)
+      .getNewProductApplication(applicationId)
       .then((d) => {
         if (!cancelled) load(d);
       })
@@ -201,7 +223,7 @@ export default function NewProductApplicationForm({
     return () => {
       cancelled = true;
     };
-  }, [applicationId, load]);
+  }, [applicationId, load, client]);
 
   const status = application?.status ?? 'draft';
   const editable = !application || status === 'draft' || status === 'rejected';
@@ -233,14 +255,14 @@ export default function NewProductApplicationForm({
     const body = payloadFromState(state);
     const id = application?.id ?? savedId;
     const saved = id
-      ? await updateNewProductApplication(id, body)
-      : await createNewProductApplication(body);
+      ? await service().updateNewProductApplication(id, body)
+      : await service().createNewProductApplication(body);
     setSavedId(saved.id);
     adopt(saved);
     // Files dropped before the application existed go up now (as the Price Tag Request does).
     for (const file of pendingFiles) {
       try {
-        const uploaded = await uploadAttachment(
+        const uploaded = await client.uploadAttachment(
           'new_product_application',
           saved.id,
           file,
@@ -261,7 +283,7 @@ export default function NewProductApplicationForm({
   const downloadExcel = async () => {
     if (!application) return;
     try {
-      await downloadNewProductApplicationExcel(application.id);
+      await service().downloadNewProductApplicationExcel(application.id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to download');
     }
@@ -288,7 +310,9 @@ export default function NewProductApplicationForm({
       toast.success('Draft saved');
       if (!applicationId) {
         router.replace(
-          `${portalBase(slug)}/new_product_application/${saved.id}`,
+          paths
+            ? paths.detail('new_product_application', saved.id)
+            : `${portalBase(slug)}/new_product_application/${saved.id}`,
         );
       }
     } catch (e) {
@@ -305,7 +329,7 @@ export default function NewProductApplicationForm({
     setSaving(true);
     try {
       const saved = await save();
-      await submitNewProductApplication(saved.id);
+      await service().submitNewProductApplication(saved.id);
       toast.success(
         submitVerb(status) === 'Appeal' ? 'Application appealed' : 'Application submitted',
       );
@@ -322,11 +346,11 @@ export default function NewProductApplicationForm({
     setSaving(true);
     try {
       if (asking === 'revise') {
-        load(await reviseNewProductApplication(application.id, value));
+        load(await service().reviseNewProductApplication(application.id, value));
         toast.success('Back to draft');
       } else {
         load(
-          await cancelNewProductApplication(application.id, value || undefined),
+          await service().cancelNewProductApplication(application.id, value || undefined),
         );
         toast.success('Application cancelled');
       }
@@ -344,7 +368,7 @@ export default function NewProductApplicationForm({
   const startFromInquiry = async (inquiryId: string) => {
     try {
       setState(
-        stateFromPrefill(await getNewProductApplicationPrefill(inquiryId)),
+        stateFromPrefill(await service().getNewProductApplicationPrefill(inquiryId)),
       );
       setErrors({});
     } catch (e) {
@@ -356,14 +380,21 @@ export default function NewProductApplicationForm({
 
   const fetchInquiries = async (q: string) => {
     const needle = q.trim().toLowerCase();
-    return (await listMyRespondedInquiries()).filter(
+    return (await service().listMyRespondedInquiries()).filter(
       (i) => !needle || inquiryText(i).toLowerCase().includes(needle),
     );
   };
 
+  useEffect(() => {
+    if (applicationId || !startFromInquiryId) return;
+    void startFromInquiry(startFromInquiryId);
+    // Once, for the inquiry the page was opened with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applicationId, startFromInquiryId]);
+
   if (loading) {
     return (
-      <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
+      <div className={shell}>
         <Skeleton className="h-8 w-40" />
         <Skeleton className="h-64 w-full" />
       </div>
@@ -372,70 +403,78 @@ export default function NewProductApplicationForm({
 
   if (notFound) {
     return (
-      <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6">
+      <div className={embedded ? undefined : 'min-h-dvh max-w-7xl mx-auto px-4 py-6'}>
         <div className="rounded-lg border border-dashed px-6 py-12 text-center">
           <h2 className="text-base font-semibold">Application not found</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             It may have been removed, or it belongs to another account.
           </p>
-          <Link
-            href={backPath}
-            className="mt-4 inline-block text-sm text-primary hover:underline"
-          >
-            Back
-          </Link>
+          {!embedded && (
+            <Link
+              href={backPath}
+              className="mt-4 inline-block text-sm text-primary hover:underline"
+            >
+              Back
+            </Link>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="shrink-0"
-          onClick={() => router.push(backPath)}
+    <div className={shell}>
+      {(!embedded || application) && (
+        <div
+          className={`flex items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}
         >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back
-        </Button>
-        {application && (
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="min-w-0 truncate text-sm text-muted-foreground">
-              {application.application_no}
-            </span>
-            {canRevise && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={saving}
-                onClick={() => setAsking('revise')}
-              >
-                Revise
-              </Button>
-            )}
-            <DetailActionsMenu ariaLabel="Application actions">
-              <DropdownMenuItem onSelect={() => void downloadExcel()}>
-                <Download className="size-4" />
-                <span>Download Excel</span>
-              </DropdownMenuItem>
-              {canCancel && (
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => setAsking('cancel')}
+          {!embedded && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0"
+              onClick={() => router.push(backPath)}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+          )}
+          {application && (
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="min-w-0 truncate text-sm text-muted-foreground">
+                {application.application_no}
+              </span>
+              {canRevise && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={saving}
+                  onClick={() => setAsking('revise')}
                 >
-                  <XCircle className="size-4" />
-                  <span>Cancel application</span>
-                </DropdownMenuItem>
+                  Revise
+                </Button>
               )}
-            </DetailActionsMenu>
-          </div>
-        )}
-      </div>
+              <DetailActionsMenu ariaLabel="Application actions">
+                <DropdownMenuItem onSelect={() => void downloadExcel()}>
+                  <Download className="size-4" />
+                  <span>Download Excel</span>
+                </DropdownMenuItem>
+                {canCancel && (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => setAsking('cancel')}
+                  >
+                    <XCircle className="size-4" />
+                    <span>Cancel application</span>
+                  </DropdownMenuItem>
+                )}
+              </DetailActionsMenu>
+            </div>
+          )}
+        </div>
+      )}
 
-      {!application && (
+      {!application && !embedded && (
         <h1 className="text-lg font-semibold">New Product Application</h1>
       )}
       {application?.created_at && (
@@ -522,7 +561,7 @@ export default function NewProductApplicationForm({
                       }))
                     }
                     fetchOptions={(q) =>
-                      lookupNewProductApplicationCustomers(q)
+                      service().lookupNewProductApplicationCustomers(q)
                     }
                     optionValue={(o) => o.debtor_name}
                     optionLabel={(o) => o.debtor_name}
@@ -542,7 +581,7 @@ export default function NewProductApplicationForm({
             <NewProductApplicationLines
               lines={state.lines}
               onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
-              brands={BRANDS}
+              brands={brands}
               errors={errors}
               readOnly={readOnly}
               showCost={Boolean(application)}

@@ -5,11 +5,13 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, B
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
+from app.api.v1._request_own_scope import RequestScope, complaint_own_scope, empty_page
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
     get_current_user,
     get_current_user_or_api_key,
+    require_any_permission_with_api_key,
     require_permission,
     require_permission_with_api_key,
 )
@@ -38,6 +40,14 @@ from app.modules.runtime.guards import require_public_view_links_enabled
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+#: The list and the detail open to `view_own` too; the router guard (`complaint_own_scope`)
+#: narrows a holder of `view_own` alone to their own complaints. The complaint's
+#: fulfilment-orders row read (a salesperson's read-only DO list) is open to them on their own row.
+_VIEW_OR_VIEW_OWN = [
+    "complaint_management.complaints.view",
+    "complaint_management.complaints.view_own",
+]
 
 _COMPLAINT_DO_LOOKUP_FIELDS: tuple[str, ...] = (
     "customer_name",
@@ -265,10 +275,20 @@ def get_complaints(
     space_id: Optional[str] = Query(
         None, description="Respond.io workspace id, required together with contact_id."
     ),
-    current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.view")),
-    db: Session = Depends(get_db)
+    current_user: dict = Depends(require_any_permission_with_api_key(_VIEW_OR_VIEW_OWN)),
+    db: Session = Depends(get_db),
+    own: Optional[RequestScope] = Depends(complaint_own_scope),
 ):
-    """Get complaints with pagination, search, assignee/status/root-cause/resolution filters, and sorting."""
+    """Get complaints with pagination, search, assignee/status/root-cause/resolution filters, and sorting.
+
+    A user with ``view_own`` alone gets the complaints their own contact submitted, drafts included.
+    """
+    own_contact_id = None
+    if own is not None:
+        narrowed = own.list_filter()
+        if narrowed is None:
+            return empty_page(page, limit)
+        own_contact_id = narrowed[1]
     try:
         customer_names = _scoped_customer_names(db, contact_id, space_id)
         service = ComplaintService(db)
@@ -280,7 +300,7 @@ def get_complaints(
             status=status,
             sort_field=sort or "complaint_date",
             sort_dir=dir or "asc",
-            contact_id=None,
+            contact_id=own_contact_id,
             space_id=None,
             viewer_user_id=(current_user or {}).get("id"),
             root_cause_ids=_csv_ids(root_cause_ids),
@@ -548,7 +568,7 @@ router.include_router(
 @router.get("/{complaint_id}/fulfilment-orders")
 def get_complaint_fulfilment_orders(
     complaint_id: str,
-    current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.view")),
+    current_user: dict = Depends(require_any_permission_with_api_key(_VIEW_OR_VIEW_OWN)),
     db: Session = Depends(get_db),
 ):
     """Replacement / fulfilment Delivery Orders linked to this complaint (newest
@@ -565,10 +585,32 @@ def get_complaint_fulfilment_orders(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{complaint_id}/revisions")
+async def get_complaint_revisions(
+    complaint_id: str,
+    current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.view")),
+    db: Session = Depends(get_db),
+):
+    """Revision lineage for the office Revisions tab: the same payload the portal history
+    reads, one service, one shape. Read-only. A salesperson limited to their own complaints
+    reads theirs through My Requests (``/api/v1/my-requests/submissions/complaint/{id}/revisions``).
+    """
+    try:
+        validate_uuid_path(complaint_id, resource="Complaint")
+        from app.services.portal_revision_service import PortalRevisionService
+
+        ComplaintService(db).get_complaint(complaint_id)  # 404 if missing
+        return {"items": PortalRevisionService(db).list_revisions("complaint", complaint_id)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{complaint_id}", response_model=ComplaintResponse)
 def get_complaint(
     complaint_id: str,
-    current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.view")),
+    current_user: dict = Depends(require_any_permission_with_api_key(_VIEW_OR_VIEW_OWN)),
     db: Session = Depends(get_db)
 ):
     """Get a single complaint by ID."""

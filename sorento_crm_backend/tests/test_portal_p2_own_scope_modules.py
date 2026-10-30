@@ -86,8 +86,7 @@ def test_opportunity_pickers_offer_only_their_customers_and_agents(scene):
     with acting(db, w.a, OPP_LIMITED) as client:
         customers = client.get(f"{OPP}/customer-options", params={"q": MARKER}).json()["items"]
         assert {c["customer_id"] for c in customers} == {w.cust_a.id}
-        agents = client.get(f"{OPP}/agent-options").json()["data"]
-        assert {a["id"] for a in agents} == {w.ag_a.id}
+        assert client.get(f"{OPP}/agent-options").status_code == 403
 
 
 def test_opportunities_unchanged_for_a_view_holder(scene):
@@ -337,9 +336,7 @@ def test_sales_order_options_offer_only_their_customers_orders(scene):
     prospect = _opportunity(db, w, w.ag_a.id, None, prospect_name=f"{MARKER} prospect")
     with acting(db, w.a, OPP_LIMITED) as client:
         response = client.get(f"{OPP}/{prospect}/sales-order-options")
-        assert response.status_code == 200, response.text
-        ids = {row["id"] for row in response.json()["data"]}
-        assert mine in ids and theirs not in ids
+        assert response.status_code == 403, response.text
     with acting(db, w.a, {OPP_VIEW}) as client:
         ids = {row["id"] for row in client.get(f"{OPP}/{prospect}/sales-order-options").json()["data"]}
         assert {mine, theirs} <= ids
@@ -414,8 +411,7 @@ def test_a_limited_project_user_cannot_file_a_sample_request_on_a_foreign_projec
     perms = {"projects.projects.view_own", SR_OWN, SR_CREATE}
     with acting(db, w.a, perms) as client:
         response = client.post(SR, json={"project_id": foreign.id})
-        assert response.status_code == 422, response.text
-        assert "SAMPLE_REQUEST_PROJECT_INVALID" in response.text
+        assert response.status_code == 403, response.text
 
 
 # ------------------------------------------------------------------ list layout (browser pass finding)

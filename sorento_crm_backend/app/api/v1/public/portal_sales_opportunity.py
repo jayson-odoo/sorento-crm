@@ -17,7 +17,7 @@ a new opportunity goes to the agent whose customer it is (a prospect: the first 
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -134,131 +134,147 @@ def _reraise(db: Session, exc: Exception):
     raise handle_internal_error()
 
 
-@router.get("/sales-opportunities")
-def portal_list_sales_opportunities(
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    # The gate runs unwrapped (LESSONS: a bare `db.rollback()` on a savepoint-mode test
-    # session discards every uncommitted fixture the caller set up, not just this
-    # request's own writes - reads never write, so there is nothing here to roll back).
-    agents = _require_agents(db, token)
-    rows, _total = svc.list_opportunities(db, sales_agent_id=[a.id for a in agents], limit=1000)
-    return {"items": svc.serialize_list(db, rows)}
+# ---------- The contact's opportunity routes, shared with the CRM ----------
 
 
-# Declared before `/sales-opportunities/{opportunity_id}`, which would otherwise capture them.
-@router.get("/sales-opportunities/meta", response_model=SalesOpportunityMeta)
-def portal_opportunity_meta(
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _require_agents(db, token)
-    return svc.meta(db)
+def register_sales_opportunity_routes(router: APIRouter, token_dependency: Callable[..., Any]) -> None:
+    """Register the opportunity routes on ``router``, the caller resolved by ``token_dependency``.
+
+    ONE body per route for two surfaces (PORTAL-P4-REQUESTS S6), the shape of
+    ``portal.register_submission_routes``: the portal mounts them below with ``get_portal_token``;
+    ``app/api/v1/my_requests.py`` mounts them on ``/api/v1/my-requests`` with a transient portal
+    token built from a CRM session, so a salesperson logs and moves their own opportunities through
+    exactly the code a portal contact does (the default agent for a prospect included).
+    """
+
+    @router.get("/sales-opportunities")
+    def portal_list_sales_opportunities(
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        # The gate runs unwrapped (LESSONS: a bare `db.rollback()` on a savepoint-mode test
+        # session discards every uncommitted fixture the caller set up, not just this
+        # request's own writes - reads never write, so there is nothing here to roll back).
+        agents = _require_agents(db, token)
+        rows, _total = svc.list_opportunities(db, sales_agent_id=[a.id for a in agents], limit=1000)
+        return {"items": svc.serialize_list(db, rows)}
 
 
-@router.get("/sales-opportunities/my-targets", response_model=PortalMyTargets)
-def portal_my_targets(
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """The logging agents' own active targets with achieved, gap and the open opportunities
-    closing before each end date (fix lane round 2, F2), every linked agent's together."""
-    from app.services.sales import target_service
-
-    progress = [target_service.agent_progress(db, agent.id) for agent in _require_agents(db, token)]
-    targets = sorted(
-        (target for one in progress for target in one["targets"]),
-        key=lambda target: (target["end_date"], target["name"]),
-    )
-    return {"today": progress[0]["today"], "targets": targets}
+    # Declared before `/sales-opportunities/{opportunity_id}`, which would otherwise capture them.
+    @router.get("/sales-opportunities/meta", response_model=SalesOpportunityMeta)
+    def portal_opportunity_meta(
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _require_agents(db, token)
+        return svc.meta(db)
 
 
-@router.get(
-    "/sales-opportunities/customer-options", response_model=SalesOpportunityCustomerOptionsResponse
-)
-def portal_customer_options(
-    q: Optional[str] = Query(None),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    agents = _require_agents(db, token)
-    return svc.customer_options(db, q=q, sales_agent_id=[a.id for a in agents])
+    @router.get("/sales-opportunities/my-targets", response_model=PortalMyTargets)
+    def portal_my_targets(
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """The logging agents' own active targets with achieved, gap and the open opportunities
+        closing before each end date (fix lane round 2, F2), every linked agent's together."""
+        from app.services.sales import target_service
 
-
-@router.post("/sales-opportunities", status_code=status.HTTP_201_CREATED)
-def portal_create_sales_opportunity(
-    payload: PortalSalesOpportunityCreate,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    # Gated before the try: same reasoning as the reads above - nothing has been
-    # written yet, so a gate failure must never roll the session back.
-    agents = _require_agents(db, token)
-    try:
-        body = payload.model_dump(exclude_unset=True)
-        # The agent whose customer it is; a prospect (no customer) goes to the first by code
-        # that the request's scope can see.
-        agent = svc.agent_owning_customer(db, agents, body.get("customer_id")) or svc.default_portal_agent(
-            db, agents
+        progress = [target_service.agent_progress(db, agent.id) for agent in _require_agents(db, token)]
+        targets = sorted(
+            (target for one in progress for target in one["targets"]),
+            key=lambda target: (target["end_date"], target["name"]),
         )
-        company_id = svc.resolve_company(db, customer_id=body.get("customer_id"), agent=agent)
-        with company_scope(db, frozenset({company_id})):
-            opportunity = svc.create_opportunity(
-                db,
-                company_id=company_id,
-                payload=body,
-                sales_agent_id=agent.id,
-                source="portal",
-                created_by_contact_id=token.contact_id,
-                restrict_customer_to_agent_id=[a.id for a in agents],
+        return {"today": progress[0]["today"], "targets": targets}
+
+
+    @router.get(
+        "/sales-opportunities/customer-options", response_model=SalesOpportunityCustomerOptionsResponse
+    )
+    def portal_customer_options(
+        q: Optional[str] = Query(None),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        agents = _require_agents(db, token)
+        return svc.customer_options(db, q=q, sales_agent_id=[a.id for a in agents])
+
+
+    @router.post("/sales-opportunities", status_code=status.HTTP_201_CREATED)
+    def portal_create_sales_opportunity(
+        payload: PortalSalesOpportunityCreate,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        # Gated before the try: same reasoning as the reads above - nothing has been
+        # written yet, so a gate failure must never roll the session back.
+        agents = _require_agents(db, token)
+        try:
+            body = payload.model_dump(exclude_unset=True)
+            # The agent whose customer it is; a prospect (no customer) goes to the first by code
+            # that the request's scope can see.
+            agent = svc.agent_owning_customer(db, agents, body.get("customer_id")) or svc.default_portal_agent(
+                db, agents
             )
-        db.commit()
-        db.refresh(opportunity)
+            company_id = svc.resolve_company(db, customer_id=body.get("customer_id"), agent=agent)
+            with company_scope(db, frozenset({company_id})):
+                opportunity = svc.create_opportunity(
+                    db,
+                    company_id=company_id,
+                    payload=body,
+                    sales_agent_id=agent.id,
+                    source="portal",
+                    created_by_contact_id=token.contact_id,
+                    restrict_customer_to_agent_id=[a.id for a in agents],
+                )
+            db.commit()
+            db.refresh(opportunity)
+            return svc.serialize(db, opportunity)
+        except Exception as exc:
+            _reraise(db, exc)
+
+
+    @router.get("/sales-opportunities/{opportunity_id}")
+    def portal_get_sales_opportunity(
+        opportunity_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        opportunity_id = validate_uuid_path(opportunity_id, resource="Sales Opportunity")
+        agents = _require_agents(db, token)
+        opportunity = svc.get_opportunity_for_agent_or_404(db, opportunity_id, [a.id for a in agents])
         return svc.serialize(db, opportunity)
-    except Exception as exc:
-        _reraise(db, exc)
 
 
-@router.get("/sales-opportunities/{opportunity_id}")
-def portal_get_sales_opportunity(
-    opportunity_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    opportunity_id = validate_uuid_path(opportunity_id, resource="Sales Opportunity")
-    agents = _require_agents(db, token)
-    opportunity = svc.get_opportunity_for_agent_or_404(db, opportunity_id, [a.id for a in agents])
-    return svc.serialize(db, opportunity)
+    @router.patch("/sales-opportunities/{opportunity_id}")
+    def portal_update_sales_opportunity(
+        opportunity_id: str,
+        payload: PortalSalesOpportunityUpdate,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        opportunity_id = validate_uuid_path(opportunity_id, resource="Sales Opportunity")
+        agents = _require_agents(db, token)
+        agent_ids = [a.id for a in agents]
+        opportunity = svc.get_opportunity_for_agent_or_404(db, opportunity_id, agent_ids)
+        try:
+            body = payload.model_dump(exclude_unset=True)
+            # Moved to another linked agent's customer: the opportunity follows the customer to
+            # that agent, the same rule a create stamps by.
+            owner = svc.agent_owning_customer(db, agents, body.get("customer_id"))
+            if owner is not None and owner.id != opportunity.sales_agent_id:
+                body["sales_agent_id"] = owner.id
+            with company_scope(db, frozenset({opportunity.company_id})):
+                svc.update_opportunity(
+                    db,
+                    opportunity,
+                    body,
+                    restrict_customer_to_agent_id=agent_ids,
+                )
+            db.commit()
+            db.refresh(opportunity)
+            return svc.serialize(db, opportunity)
+        except Exception as exc:
+            _reraise(db, exc)
 
 
-@router.patch("/sales-opportunities/{opportunity_id}")
-def portal_update_sales_opportunity(
-    opportunity_id: str,
-    payload: PortalSalesOpportunityUpdate,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    opportunity_id = validate_uuid_path(opportunity_id, resource="Sales Opportunity")
-    agents = _require_agents(db, token)
-    agent_ids = [a.id for a in agents]
-    opportunity = svc.get_opportunity_for_agent_or_404(db, opportunity_id, agent_ids)
-    try:
-        body = payload.model_dump(exclude_unset=True)
-        # Moved to another linked agent's customer: the opportunity follows the customer to
-        # that agent, the same rule a create stamps by.
-        owner = svc.agent_owning_customer(db, agents, body.get("customer_id"))
-        if owner is not None and owner.id != opportunity.sales_agent_id:
-            body["sales_agent_id"] = owner.id
-        with company_scope(db, frozenset({opportunity.company_id})):
-            svc.update_opportunity(
-                db,
-                opportunity,
-                body,
-                restrict_customer_to_agent_id=agent_ids,
-            )
-        db.commit()
-        db.refresh(opportunity)
-        return svc.serialize(db, opportunity)
-    except Exception as exc:
-        _reraise(db, exc)
+register_sales_opportunity_routes(router, get_portal_token)

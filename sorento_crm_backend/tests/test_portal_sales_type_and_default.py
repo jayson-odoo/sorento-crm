@@ -19,10 +19,29 @@ from fastapi import HTTPException
 
 # MUST be first app import - resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: F401,E402
-from app.api.v1.public.portal import lookup_set_options
+from app.api.v1.public.portal import router as portal_router
 from app.models.lookup import LookupBinding, LookupOption, LookupSet
 from app.services.portal_service import PortalService
 from tests._pg_fixture import blank_session
+
+
+def _portal_lookup_set_options():
+    """The portal router's GET .../lookups/sets/{set_key} handler.
+
+    The handler is registered inside register_profile_routes (shared with
+    /my-requests), so it is no longer a module-level name; resolve it from the
+    portal router's routes.
+    """
+    for route in portal_router.routes:
+        if (
+            getattr(route, "path", "").endswith("/lookups/sets/{set_key}")
+            and "GET" in getattr(route, "methods", set())
+        ):
+            return route.endpoint
+    raise AssertionError("portal lookups/sets/{set_key} GET route not found")
+
+
+lookup_set_options = _portal_lookup_set_options()
 
 
 @pytest.fixture

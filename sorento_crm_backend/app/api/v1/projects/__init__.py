@@ -1,5 +1,7 @@
 """Project Sales API routes."""
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.api.v1._request_own_scope import sample_request_own_scope
 
 from app.api.v1.projects import (
     allocations,
@@ -58,7 +60,13 @@ router.include_router(status_graphs.router, tags=["project-status-graphs"])
 router.include_router(samples_pos.router, tags=["project-samples-pos"])
 # Sample requests (SR-CORE): `/sample-requests/...` and `/projects/{id}/sample-requests`, root-mounted
 # ahead of the projects router for the same reason as the routers above.
-router.include_router(sample_requests.router, tags=["project-sample-requests"])
+# A salesperson limited to their own sample requests reads here and writes through
+# /api/v1/my-requests (PORTAL-P4-REQUESTS S4): the guard refuses them every staff write.
+router.include_router(
+    sample_requests.router,
+    tags=["project-sample-requests"],
+    dependencies=[Depends(sample_request_own_scope)],
+)
 # Phase 2 document intake. Root-mounted for the same reason as the three above: a PO
 # version, a schedule version and an SO draft are each listed under a project but
 # addressed directly by id. All three MUST precede the projects router.

@@ -7,8 +7,23 @@
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { selectOption } from '@/test-utils';
+
+// Staff: the modal reads the permission scope; a staff user (holds .view) is unchanged.
+vi.mock('@/hooks/usePermissions', () => {
+  const held = new Set(['sales.opportunities.view', 'sales.opportunities.add', 'sales.opportunities.edit']);
+  return {
+    useHasPermission: (slug: string) => held.has(slug),
+    useHasAnyPermission: (slugs: string[]) => slugs.some((s) => held.has(s)),
+    usePermissions: () => ({ permissionSet: held, permissions: [...held], isLoading: false, isError: false }),
+  };
+});
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
