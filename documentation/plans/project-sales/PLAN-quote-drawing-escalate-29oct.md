@@ -1,6 +1,6 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Review READY (reviewer + security-reviewer, browser pass 1280/375), waiting on CI and the owner hand test; standard track, no migration (card + mock v3 approved by the owner 30 Oct 10:00, N1-N4 = recommendations)
+Status: Build: rework round (owner hand-test note 30 Oct 13:40, answers 13:50: 1a 2a 3a); standard track, no migration. The rework section below supersedes the Phase 2 contract where they differ.
 (M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
 table, no migration)
 
@@ -282,6 +282,64 @@ non-assignee refused; line read carries `escalation` and `pdf`; my-pending row r
 code and is_form_sla true; overdue scan escalates a product_drawing tracker (H2 rows).
 FE: cell states (Escalate, escalating, Escalated, Responded, PDF tile, thumbnail, off-catalogue
 blank, unsaved blank); widget Respond/Resolve on a product_drawing row only.
+
+## Rework (owner hand-test note 30 Oct 13:40; answers 13:50: 1a, 2a, 3a)
+
+Owner: "the drawing escalate is not just drawing it is also applicable for photo, it should be the
+same team in marketing product in general enquiries ... use the same route and function cause the
+brand distinction also is there". Answers: Q1 (a) one open task per product per kind; Q2 (a) the
+team comes from the chatbot `product_attachment` domain; Q3 (a) photo Escalate only when the
+product has no photo at all.
+
+### The route reused (file:line)
+
+- Team: agent `general_enquiries` with the team set in `chatbot_domains` row `product_attachment`,
+  column `escalation_team_code` (`app/models/chatbot_policy.py:40`; today `marketing_product`,
+  edited in `app/api/v1/system/chatbot_config.py:173,200`). The bot's product-attachment asks use
+  this same pair (`app/services/chatbot/lanes/business/sub_answer.py:173-178`).
+- Brand: `focus_product_origin(db, [product_id])["brand"]`
+  (`app/services/chatbot/lanes/escalation_services.py`), what the bot's escalation reads.
+- Assignee: what `POST /external/next-assignee` does (`app/api/v1/external/next_assignee.py:375`):
+  the tier-1 team of the team set in the product's company, then
+  `AccessAgentService.get_next_assignee(agent_id, team_id, brand_code=<brand>)` (:537), then the
+  coverage redirect. The route itself cannot be called (it needs a customer phone, :409-413), nor
+  `create_tracking` (needs a Respond contact, `sla_service.py:4019-4031`).
+- Policy: `AccessAgentService.resolve_policy_id_for(agent_id, team_set_code)` as
+  `create_tracking` does (`sla_service.py:~4115`).
+
+### Contract changes
+
+- Kinds: `product_drawing` and `product_photo`, both in `FORM_SLA_TYPES` (My pending tasks and the
+  overdue scan, no config row). One open task per (kind, product). Lock key per kind and product.
+- Photo trigger: the photo cell state is `no_photos` (`product_image_service.py:67`). Not
+  `not_chosen`, not `off_catalog`. "Has a photo" = what `files_for`/`images_for` count as a photo.
+- Escalate creates the tracker itself: `source_entity_type` = kind, `source_entity_id` = product,
+  `agent_id` = general_enquiries, `team_set_code` = the domain's team set, `brand_code` = the
+  product's brand, `company_id` = the product's company, `policy_id` from the binding,
+  `current_tier` 1 (or the tier fallback), due dates on the working calendar as
+  `_start_for_config` computes them, then `FormSLAOrchestrator._notify_assignee(tracker, "assigned")`.
+- No setup: errors are 409 `marketing_team_not_set_up` ("The marketing product team has no
+  members for this company") when the agent, team, member or policy is missing, with detail only
+  in the log. No `form_sla_configs` lookup; the `company_id` keyword on `_start_for_config` is
+  reverted.
+- Tier escalation keeps the brand: `_escalate_tracker` passes `brand_code=tracker.brand_code` to
+  `get_next_assignee`.
+- Endpoint: `POST .../lines/{line_id}/media-escalation` with body `{"kind": "drawing"|"photo"}`
+  replaces `drawing-escalation` (allowed-routes file updated); respond/resolve routes become
+  `media-respond` / `media-resolve` and accept both kinds. The photo cell gains `escalation` like
+  the drawing cell.
+- H3 for photo: attaching a photo (image, not typed Technical Specifications) to a product with an
+  open photo task notifies its assignee.
+- Notices: titles and bodies name the kind ("Product photo" / "Product drawing" request for <code>).
+- Deleted: the "Product Drawing" form type, its events and the `marketing_product` pre-fill in
+  `FormSLAConfigDialog.tsx` / `formSLAService.ts`.
+- UI: unchanged states (Escalate / escalating / Escalated / Replied, click to join, My pending
+  tasks row "Product drawing" / "Product photo"), now also in the Photo column.
+
+### Hand-test setup
+
+None. It uses the existing general-enquiries marketing-product team, members, brand tags and SLA
+policy.
 
 ## Mock
 
