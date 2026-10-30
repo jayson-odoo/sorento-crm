@@ -57,6 +57,8 @@ function line(overrides: Partial<QuotationLine>): QuotationLine {
   return {
     id: 'l1',
     version_id: 'v1',
+    // A catalogue line: the grid prints the code in view mode only for a line with a product.
+    product_id: 'p-fake',
     product_code: 'ZZT-WC-1001',
     description: 'One-piece WC',
     unit_price: '400.00',
