@@ -365,8 +365,9 @@ def test_current_hides_a_keyless_row_whose_requester_is_granted_another_company(
 
 
 def test_parking_on_another_companys_counting_down_record_does_not_echo_it(api):
-    """A same-key park on a record another company is counting down answers 409, not
-    that company's action id and timing."""
+    """A same-key park on a record another company is counting down does not answer with
+    that company's action id and timing. Since the park-time visibility check
+    (tests/test_bulk_delete_company_scope.py) the record itself is not found."""
     db, _in_company, other = api
     _in_company(other)
     theirs = _brand(db)
@@ -377,5 +378,5 @@ def test_parking_on_another_companys_counting_down_record_does_not_echo_it(api):
             "/api/v1/pending-actions",
             json={"action_key": "brand.delete", "entity_type": "brand", "entity_id": theirs, "payload": {}},
         )
-    assert res.status_code == 409, res.text
+    assert res.status_code == 404, res.text
     assert their_action not in res.text

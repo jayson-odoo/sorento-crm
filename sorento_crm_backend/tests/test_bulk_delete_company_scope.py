@@ -232,9 +232,9 @@ def test_bulk_delete_still_deletes_own_company_rows(api, case):
     assert not _exists(db, model, b)
 
 
-def test_promotion_bulk_delete_needs_the_delete_permission(api):
-    """The route was gated on sign-in alone; it now asks for `marketing.promotions.delete`,
-    the slug the screen already hides the button behind."""
+def test_promotion_and_order_deletes_need_the_delete_permission(api):
+    """These routes were gated on sign-in alone; they now ask for the `.delete` slug the
+    screen already hides the single delete behind."""
     from app.dependencies import get_current_user, get_current_user_or_api_key
     from app.models.user import User
 
@@ -247,12 +247,17 @@ def test_promotion_bulk_delete_needs_the_delete_permission(api):
     app.dependency_overrides[get_current_user] = lambda: principal
     app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
 
+    order = _order(db)
+
     with TestClient(app) as client:
         res = _bulk_delete(client, PROMOTIONS_BULK, [mine])
         single = client.delete(f"/api/v1/marketing/promotions/{mine}")
+        single_order = client.delete(f"/api/v1/order-management/orders/{order}")
     assert res.status_code == 403, res.text
     assert single.status_code == 403, single.text
+    assert single_order.status_code == 403, single_order.text
     assert _exists(db, Promotion, mine)
+    assert _exists(db, Order, order)
 
 
 # --------------------------------------------------------------------------- #
@@ -288,6 +293,12 @@ def test_parking_on_another_companys_record_is_not_found(api, action_key, entity
     assert _parked(db, theirs) == 0
 
 
+def test_parking_with_a_malformed_id_is_not_found(api):
+    with TestClient(app) as client:
+        res = _park(client, "order.delete", "order", "not-a-uuid")
+    assert res.status_code == 404, res.text
+
+
 @pytest.mark.parametrize(
     "action_key,entity_type,make",
     [("order.delete", "order", _order), ("product.delete", "product", _product)],
@@ -306,6 +317,8 @@ def test_every_record_action_is_classified_for_park_time_visibility():
     """A new record action must say how its record is checked at park time: through the
     scoped model read, or by name in the reviewed list of keys that are not."""
     from app.api.v1.system import pending_actions
+    from sqlalchemy.dialects.postgresql import UUID
+
     from app.models.base import CompanyScopedMixin
     from app.services.form_action_registry import REGISTRY
 
@@ -317,3 +330,5 @@ def test_every_record_action_is_classified_for_park_time_visibility():
     assert (scoped | exempt) - record_keys == set()
     for key, model in pending_actions._PARK_SCOPED_MODELS.items():
         assert issubclass(model, CompanyScopedMixin), key
+        # The id is format-checked as a UUID before the read.
+        assert isinstance(model.__table__.c.id.type, UUID), key

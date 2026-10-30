@@ -1261,7 +1261,7 @@ def bulk_delete_orders(
 @router.delete("/{order_id}", status_code=status.HTTP_200_OK)
 def delete_order(
     order_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("order_management.orders.delete")),
     db: Session = Depends(get_db)
 ):
     """Delete an order permanently (hard delete). Use archive for retention."""

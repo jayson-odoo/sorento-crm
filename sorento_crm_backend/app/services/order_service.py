@@ -2627,11 +2627,19 @@ class OrderService:
         return {"message": "Order deleted successfully"}
 
     def bulk_delete_orders(self, order_ids: list[str]):
-        """Delete multiple orders by ID. Returns count of deleted."""
+        """Delete multiple orders by ID. Returns count of deleted.
+
+        Row by row through the ORM read, like `delete_order`, never `query(...).delete()`:
+        the company scope filter covers SELECTs only, so an id from another company is
+        not found and not counted here.
+        """
         if not order_ids:
             return {"message": "No orders to delete", "deleted_count": 0}
-        deleted = self.db.query(Order).filter(Order.id.in_(order_ids)).delete(synchronize_session=False)
+        rows = self.db.query(Order).filter(Order.id.in_(order_ids)).all()
+        for order in rows:
+            self.db.delete(order)
         self.db.commit()
+        deleted = len(rows)
         return {"message": f"Deleted {deleted} order(s)", "deleted_count": deleted}
 
     def bulk_import_orders(self, orders_data: list[dict], user_id: str):
