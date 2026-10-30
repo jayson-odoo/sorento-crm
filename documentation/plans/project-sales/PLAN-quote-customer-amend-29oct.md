@@ -1,6 +1,6 @@
 # PLAN: Customer amendment requests on the quotation link (QUOTE-CUSTOMER-AMEND)
 
-Status: Build, Phase 2 (red-first tests) - mock v3 approved by the owner (30 Oct 10:28). BE + staff-grid tests now; sign-page code and its FE tests after QUOTE-SIGN-PAGE (#1987) merges. Track: full (migration + new public write path, security review mandatory).
+Status: Merge-ready pending the owner's hand test (PR #1984) - built, reviewer READY (kill test clean), security review done (deploy precondition: TRUSTED_PROXIES), browser pass 1280/375 done. Track: full (migration qca1_0001 + new public write path).
 
 Source: owner team meeting 29 Oct 15:40 (Project Sales module); owner answer Q3 29 Oct 22:45 (an accepted amendment produces the next revision under the QUOTE-SIGN-PAGE numbering); owner answers to this card's Q1-Q5, 30 Oct ~00:30 (see Decisions).
 
