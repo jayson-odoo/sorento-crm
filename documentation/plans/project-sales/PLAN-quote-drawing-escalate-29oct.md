@@ -1,6 +1,6 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Build: coder green (card + mock v3 approved by the owner 30 Oct 10:00, N1-N4 = recommendations)
+Status: Review READY (reviewer + security-reviewer, browser pass 1280/375), waiting on CI and the owner hand test; standard track, no migration (card + mock v3 approved by the owner 30 Oct 10:00, N1-N4 = recommendations)
 (M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
 table, no migration)
 
