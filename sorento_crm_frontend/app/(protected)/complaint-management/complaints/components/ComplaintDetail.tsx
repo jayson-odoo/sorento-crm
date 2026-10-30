@@ -57,6 +57,9 @@ import {
   useUploadComplaintResponseAttachments,
 } from '../hooks/useComplaints';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
+import { useComplaintFulfilmentTabs } from './useComplaintFulfilmentTabs';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -97,7 +100,20 @@ interface ComplaintDetailProps {
 const statusPillClass = complaintStatusPillClass;
 const statusLabel = complaintStatusLabel;
 
-export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
+/**
+ * A salesperson limited to their own complaints (PORTAL-P4-REQUESTS R1, form parity) views theirs in
+ * the portal's own form, read-only exactly as the portal shows it, its fulfilment DOs in a tab of
+ * that form (L3); everyone else the staff detail, unchanged (every action, and the root cause /
+ * resolution / technical response edits).
+ */
+export default function ComplaintDetail(props: ComplaintDetailProps) {
+  const { limited } = useRequestScope('complaint');
+  const fulfilmentTabs = useComplaintFulfilmentTabs(props.complaintId);
+  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} extraTabs={fulfilmentTabs} />;
+  return <StaffComplaintDetail {...props} />;
+}
+
+function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const router = useRouter();
   const backHref = useBackToListHref('/complaint-management/complaints');
   // Edit carries the list state too: the edit screen has a pager of its own.

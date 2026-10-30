@@ -22,7 +22,7 @@ export default async function SampleRequestDetailPage({
       <PageHeader
         title="Sample Request"
         actions={
-          <BackToList listPath="/project-sales/sample-requests" label="Back to sample requests" />
+          <BackToList hideForLimited="sample_request" listPath="/project-sales/sample-requests" label="Back to sample requests" />
         }
       />
       <div className="mt-6">

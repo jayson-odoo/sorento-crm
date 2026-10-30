@@ -70,6 +70,8 @@ import {
 import { toast } from '@/lib/toast';
 import { formatDate } from '@/lib/helpers';
 import { isAwaitingReview, SI_REVIEW_STAGE } from '@/lib/submission-status';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -88,7 +90,18 @@ interface StockInquiryDetailProps {
   inquiryId: string;
 }
 
-export default function StockInquiryDetail({
+/**
+ * A salesperson limited to their own rows (PORTAL-P4-REQUESTS R1, form parity) views their inquiry
+ * in the portal's own form, read-only exactly as the portal shows it; everyone else the staff
+ * detail, unchanged.
+ */
+export default function StockInquiryDetail(props: StockInquiryDetailProps) {
+  const { limited } = useRequestScope('stock_inquiry');
+  if (limited) return <MyRequestPortalForm kind="stock_inquiry" submissionId={props.inquiryId} />;
+  return <StaffStockInquiryDetail {...props} />;
+}
+
+function StaffStockInquiryDetail({
   inquiryId,
 }: StockInquiryDetailProps) {
   const router = useRouter();

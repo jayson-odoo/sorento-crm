@@ -2,6 +2,7 @@ import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { POIntakeConfirmClient } from '../../components/POIntakeConfirmClient';
+import { PROJECT_VIEW_PERMISSIONS } from '@/app/(protected)/project-sales/_shared/projectViewPermissions';
 
 export const metadata: Metadata = {
   title: 'Customer PO',
@@ -21,7 +22,7 @@ export default async function PurchaseOrderVersionPage({
 }) {
   const { projectId, versionId } = await params;
   return (
-    <RequireAccess permission="projects.projects.view">
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-4">
         <POIntakeConfirmClient projectId={projectId} versionId={versionId} />
       </Container>

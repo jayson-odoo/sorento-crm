@@ -3,6 +3,7 @@ import { Container } from '@/components/common/container';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { QuotationDocumentClient } from '../components/QuotationDocumentClient';
 import { QuotationDocumentPageHeader } from '../components/QuotationDocumentPageHeader';
+import { PROJECT_VIEW_PERMISSIONS } from '@/app/(protected)/project-sales/_shared/projectViewPermissions';
 
 export const metadata: Metadata = {
   title: 'Quotation document',
@@ -32,7 +33,7 @@ export default async function ProjectQuotationDocumentLayout({
 }) {
   const { projectId, documentId } = await params;
   return (
-    <RequireAccess permission="projects.projects.view">
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-6 pb-64">
         <QuotationDocumentPageHeader projectId={projectId} documentId={documentId} />
         <QuotationDocumentClient projectId={projectId} documentId={documentId}>

@@ -14,8 +14,11 @@
  *
  * No `useRouter` - this component is unit-tested without a Next.js router context, so
  * navigation is plain `<Link>`s throughout, same as `SalesOpportunityPortalList`.
+ *
+ * Every call and link goes through the injected client (`lib/submission-client`, PORTAL-P4-REQUESTS
+ * R3): a salesperson's opportunity on the CRM is this same detail, the portal's own without one.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, LoaderCircleIcon, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -33,12 +36,14 @@ import { SearchableSelect, type SearchableSelectOption } from '@/components/comm
 import { toast } from '@/lib/toast';
 import { formatCurrency, formatDate } from '@/lib/helpers';
 import { portalHomePath } from '../../lib/portal-paths';
+import * as portalSalesOpportunity from '../../lib/sales-opportunity-service';
+import type { PortalSalesOpportunity } from '../../lib/sales-opportunity-service';
 import {
-  getPortalOpportunityMeta,
-  getPortalSalesOpportunity,
-  updatePortalSalesOpportunity,
-  type PortalSalesOpportunity,
-} from '../../lib/sales-opportunity-service';
+  clientEmbedded,
+  clientPaths,
+  clientService,
+  useSubmissionClient,
+} from '../../lib/submission-client';
 import {
   BLOCKED_VALUE,
   NO_CUSTOMERS_MESSAGE,
@@ -56,6 +61,19 @@ import {
 import { codeWithName, distinctName } from '@/lib/product-display';
 
 export default function SalesOpportunityPortalDetail({ id, slug }: { id: string; slug?: string }) {
+  const client = useSubmissionClient();
+  const service = () => clientService(client, 'salesOpportunity', portalSalesOpportunity);
+  const paths = clientPaths(client);
+  // Inside a CRM page its header carries Back.
+  const embedded = clientEmbedded(client);
+  const fetchCustomerOptions = useCallback(
+    (query: string) =>
+      fetchCustomerOrProspectOptions(
+        clientService(client, 'salesOpportunity', portalSalesOpportunity),
+        query,
+      ),
+    [client],
+  );
   const [opportunity, setOpportunity] = useState<PortalSalesOpportunity | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -88,7 +106,8 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
   const load = () => {
     setLoading(true);
     setLoadError(false);
-    getPortalSalesOpportunity(id)
+    service()
+      .getPortalSalesOpportunity(id)
       .then(setOpportunity)
       .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
@@ -98,7 +117,8 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
     load();
     // The reason picker just falls back to an empty list on failure - Lost still works,
     // it only offers nothing to pick until a retry succeeds.
-    getPortalOpportunityMeta()
+    service()
+      .getPortalOpportunityMeta()
       .then((meta) =>
         setLostReasonOptions(meta.lost_reasons.map((r) => ({ value: r.value, label: r.label }))),
       )
@@ -215,7 +235,7 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
     }
     setSaving(true);
     try {
-      await updatePortalSalesOpportunity(id, {
+      await service().updatePortalSalesOpportunity(id, {
         title: title.trim(),
         expected_amount: expectedAmount,
         expected_close_date: expectedCloseDate,
@@ -249,7 +269,7 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
   const applyStatus = async (toStatusId: string, extra?: { lost_reason: string }): Promise<boolean> => {
     setSaving(true);
     try {
-      await updatePortalSalesOpportunity(id, { status_id: toStatusId, ...extra });
+      await service().updatePortalSalesOpportunity(id, { status_id: toStatusId, ...extra });
       toast.success('Opportunity updated');
       load();
       return true;
@@ -304,11 +324,17 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 px-3 pb-8 pt-4">
-      <Button variant="ghost" size="sm" asChild>
-        <Link href={portalHomePath({ slug, type: 'sales_opportunity' })}>
-          <ArrowLeft className="mr-1 size-4" /> Back
-        </Link>
-      </Button>
+      {!embedded && (
+        <Button variant="ghost" size="sm" asChild>
+          <Link
+            href={
+              paths ? paths.home('sales_opportunity') : portalHomePath({ slug, type: 'sales_opportunity' })
+            }
+          >
+            <ArrowLeft className="mr-1 size-4" /> Back
+          </Link>
+        </Button>
+      )}
 
       <Card>
         <CardContent className="flex flex-col gap-2 py-4">
@@ -341,7 +367,7 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
                 value={customerOrProspect}
                 onChange={setCustomerOrProspect}
                 onOptionChange={(option) => setEditCustomerOption(option ?? undefined)}
-                fetchOptions={fetchCustomerOrProspectOptions}
+                fetchOptions={fetchCustomerOptions}
                 renderTriggerLabel={customerTriggerLabel}
                 selectedOption={editCustomerOption}
                 placeholder="Search customer or prospect..."

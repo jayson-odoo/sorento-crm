@@ -16,7 +16,14 @@ read asks the same question for one id:
 - opportunities: the sales agent is one of theirs;
 - sample requests: the salesperson is them, or the portal contact is theirs;
 - new product applications: the applicant is them, or the portal contact is theirs;
-- conversations: contacts linked to their agents' customers (the portal Conversations rule).
+- conversations: contacts linked to their agents' customers (the portal Conversations rule);
+- the four request forms (PORTAL-P4-REQUESTS, ``REQUEST_KINDS``): the row's ``contact_id`` is
+  their contact, the portal's own rule. A requestor named on someone else's row does not count,
+  and the space is not matched;
+- sample requests and opportunities as MY REQUESTS forms (``MODULE_REQUEST_KINDS``): the module
+  rule above, so the staff page shows exactly what the portal shows them;
+- price tag requests (``MODULE_REQUEST_KINDS``, S7): the row's ``contact_id`` is their contact,
+  the portal's own rule (``portal_price_tag._require_own_request``).
 """
 from __future__ import annotations
 
@@ -34,8 +41,46 @@ SAMPLE_REQUESTS_VIEW = "projects.sample_requests.view"
 SAMPLE_REQUESTS_VIEW_OWN = "projects.sample_requests.view_own"
 NPA_VIEW = "procurement.new_product_applications.view"
 NPA_VIEW_OWN = "procurement.new_product_applications.view_own"
+NPA_APPROVE = "procurement.new_product_applications.approve"
+NPA_OPEN_CODE = "procurement.new_product_applications.open_code"
 CONVERSATIONS_VIEW = "sla_management.conversations.view"
 CONVERSATIONS_VIEW_OWN = "sla_management.conversations.view_own"
+PRICE_TAG_VIEW = "dealer_kit.price_tag_requests.view"
+PRICE_TAG_VIEW_OWN = "dealer_kit.price_tag_requests.view_own"
+
+#: Request form kind -> (view, view_own). Purchase requests and sponsorship forms share one
+#: table and one staff router; the row's ``request_type`` is its kind.
+REQUEST_KINDS = {
+    "stock_inquiry": ("procurement.stock_inquiries.view", "procurement.stock_inquiries.view_own"),
+    "complaint": (
+        "complaint_management.complaints.view",
+        "complaint_management.complaints.view_own",
+    ),
+    "purchase_request": (
+        "procurement.purchase_requests.view",
+        "procurement.purchase_requests.view_own",
+    ),
+    "sponsorship_form": (
+        "procurement.sponsorship_forms.view",
+        "procurement.sponsorship_forms.view_own",
+    ),
+}
+
+
+#: The MY REQUESTS forms with a staff router of their own that a salesperson writes through that
+#: form's own portal router (PORTAL-P4-REQUESTS S4, S5, S6, S7): kind -> (view, view_own). Their
+#: rows are theirs by the module rule (``sample_request_clause``, ``npa_clause``,
+#: ``opportunity_clause``, ``price_tag_clause``), which narrows the staff reads.
+MODULE_REQUEST_KINDS = {
+    "sample_request": (SAMPLE_REQUESTS_VIEW, SAMPLE_REQUESTS_VIEW_OWN),
+    "new_product_application": (NPA_VIEW, NPA_VIEW_OWN),
+    "sales_opportunity": (OPPORTUNITIES_VIEW, OPPORTUNITIES_VIEW_OWN),
+    "price_tag_request": (PRICE_TAG_VIEW, PRICE_TAG_VIEW_OWN),
+}
+
+#: Grants that see every row of a kind besides its ``view``: a new product application's
+#: approvers and purchasing (``new_product_application_service.actor_from_slugs``).
+VIEW_ALL_ALSO = {"new_product_application": (NPA_APPROVE, NPA_OPEN_CODE)}
 
 
 def is_limited(perms: Iterable[str], view: str, view_own: str) -> bool:
@@ -137,12 +182,93 @@ def npa_clause(m: Me):
     return or_(*conditions)
 
 
+def price_tag_clause(m: Me):
+    """Price tag requests that are theirs: raised by their contact. No contact, none."""
+    from app.models.price_tag import PriceTagRequest
+
+    if not m.contact_id:
+        return false()
+    return PriceTagRequest.contact_id == m.contact_id
+
+
 def conversation_contact_ids(m: Me):
     """``respond_contacts.id`` of every contact linked to one of their agents' customers,
     as a subquery; empty without agents."""
     from app.services.portal_conversation_service import agent_contact_ids
 
     return agent_contact_ids(list(m.agent_ids))
+
+
+# ------------------------------------------------------------------ request forms
+
+
+def request_access(perms: Iterable[str], kind: str) -> Optional[str]:
+    """``"all"`` with the kind's ``view``, ``"own"`` with only its ``view_own``, else None.
+    ``kind`` is one of ``REQUEST_KINDS`` or ``MODULE_REQUEST_KINDS``."""
+    view, view_own = REQUEST_KINDS.get(kind) or MODULE_REQUEST_KINDS[kind]
+    slugs = set(perms or ())
+    if view in slugs or slugs & set(VIEW_ALL_ALSO.get(kind, ())):
+        return "all"
+    return "own" if view_own in slugs else None
+
+
+def _request_model(kind: str):
+    from app.models.complaints import Complaint
+    from app.models.procurement import PurchaseRequestHeader, StockInquiry
+
+    if kind == "stock_inquiry":
+        return StockInquiry
+    if kind == "complaint":
+        return Complaint
+    return PurchaseRequestHeader
+
+
+def request_clause(model, m: Me):
+    """Rows of a request form that are theirs: submitted by their contact. No contact, none."""
+    if not m.contact_id:
+        return false()
+    return model.contact_id == m.contact_id
+
+
+def request_in_scope(db: Session, kind: str, row_id: Optional[str], m: Me) -> bool:
+    """Is this row of ``kind`` theirs? A sponsorship form is not a purchase request."""
+    import uuid
+
+    try:
+        uuid.UUID(str(row_id))
+    except (TypeError, ValueError):
+        # Never compared to the uuid column: the cast error would abort the transaction.
+        return False
+    model = _request_model(kind)
+    q = db.query(model.id).filter(model.id == str(row_id), request_clause(model, m))
+    if model.__tablename__ == "purchase_requests":
+        q = q.filter(model.request_type == kind)
+    return q.first() is not None
+
+
+def module_row_in_scope(db: Session, kind: str, row_id: Optional[str], m: Me) -> bool:
+    """Is this row of a ``MODULE_REQUEST_KINDS`` kind theirs, by that module's rule?"""
+    import uuid
+
+    from app.models.new_product_application import NewProductApplication
+    from app.models.price_tag import PriceTagRequest
+    from app.models.sales import SalesOpportunity
+    from app.models.sample_request import SampleRequest
+
+    try:
+        uuid.UUID(str(row_id))
+    except (TypeError, ValueError):
+        # Never compared to the uuid column: the cast error would abort the transaction.
+        return False
+    if kind == "sample_request":
+        model, clause = SampleRequest, sample_request_clause(m)
+    elif kind == "new_product_application":
+        model, clause = NewProductApplication, npa_clause(m)
+    elif kind == "price_tag_request":
+        model, clause = PriceTagRequest, price_tag_clause(m)
+    else:
+        model, clause = SalesOpportunity, opportunity_clause(m)
+    return db.query(model.id).filter(model.id == str(row_id), clause).first() is not None
 
 
 # ------------------------------------------------------------------ deferred actions

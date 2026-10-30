@@ -19,3 +19,13 @@ export function saveBlobAs(blob: Blob, filename: string): void {
   // click runs - the download then fails with nothing on the console to say why.
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+
+/** `attachment; filename="tags.pdf"` -> `tags.pdf`, or null when absent. Moved out of the portal's
+ *  price tag service once the CRM request page saved the same PDF (PORTAL-P4-REQUESTS S7b). */
+export function filenameFromContentDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const quoted = /filename\*?=(?:UTF-8'')?"([^"]+)"/i.exec(header);
+  if (quoted?.[1]) return decodeURIComponent(quoted[1]);
+  const bare = /filename\*?=(?:UTF-8'')?([^;]+)/i.exec(header);
+  return bare?.[1] ? decodeURIComponent(bare[1].trim()) : null;
+}

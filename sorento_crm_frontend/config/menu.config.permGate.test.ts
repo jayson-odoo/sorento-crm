@@ -91,7 +91,9 @@ describe('menu.config - permission gates (MENU-PERM-GATE)', () => {
           item.path &&
           !item.permission &&
           !item.permissionsAny?.length &&
-          !item.superadminOnly
+          !item.superadminOnly &&
+          // MY REQUESTS items are gated by the server's per-contact kind list.
+          !(item.portalKind && item.audience === 'salesperson')
         ) {
           ungated.push(item.path);
         }

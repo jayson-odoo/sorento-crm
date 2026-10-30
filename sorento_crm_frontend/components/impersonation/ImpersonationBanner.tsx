@@ -6,6 +6,8 @@ import { ChevronDown, ChevronUp, LogOut, UserCog } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useImpersonation } from '@/hooks/useImpersonation';
+import { clearImpersonationToken, isImpersonationToken } from '@/app/(auth)/portal/lib/portal-client';
+import { stopContactImpersonation } from '@/services/contactImpersonationService';
 
 const BANNER_HEIGHT = 40;
 const COLLAPSE_KEY = 'sorento.impersonationBannerCollapsed';
@@ -43,6 +45,13 @@ export function ImpersonationBanner() {
 
   const onExit = async () => {
     try {
+      // A salesperson impersonation also holds a contact one: end it (best effort) and drop
+      // this tab's portal token. The admin's own stored token and slug are never touched.
+      // Only when this tab holds a portal impersonation token (a plain staff view-as has none).
+      if (isImpersonationToken()) {
+        await stopContactImpersonation().catch(() => {});
+        clearImpersonationToken();
+      }
       await stop();
     } finally {
       if (typeof window !== 'undefined') {
@@ -78,28 +87,31 @@ export function ImpersonationBanner() {
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <UserCog className="size-4 shrink-0" aria-hidden />
-          <span className="truncate">
-            You are currently impersonating{' '}
+          <span className="min-w-0 truncate">
+            <span className="hidden sm:inline">You are currently impersonating </span>
             <Link
               href={`/user-management/users/${session.targetUser.id}`}
               className="font-semibold underline underline-offset-2 hover:text-amber-950"
             >
               {targetName}
             </Link>
-            . Records you create or modify are still attributed to you.
+            <span className="hidden sm:inline">
+              . Records you create or modify are still attributed to you.
+            </span>
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             variant="outline"
             size="sm"
             onClick={onExit}
             disabled={stopping}
             className="border-amber-400 bg-white text-amber-900 hover:bg-amber-50"
+            aria-label="Exit impersonation"
             data-testid="impersonation-exit"
           >
-            <LogOut className="mr-1 size-3.5" />
-            Exit Impersonation
+            <LogOut className="size-3.5 sm:mr-1" />
+            <span className="hidden sm:inline">Exit Impersonation</span>
           </Button>
           <Button
             variant="ghost"

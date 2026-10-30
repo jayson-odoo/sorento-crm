@@ -11,6 +11,8 @@
  * token or OTP).
  */
 
+import { myRequestStaffPath } from '@/lib/my-requests-staff-pages';
+
 const SLUG_KEY = 'sorento.portalSlug';
 
 export function readPortalSlug(): string | null {
@@ -28,6 +30,17 @@ export function clearPortalSlug(): void {
   window.localStorage.removeItem(SLUG_KEY);
 }
 
+/** The CRM tree a salesperson uses the portal forms in (PORTAL-P3-ROLE-MENU). */
+const MY_REQUESTS_BASE = '/my-requests';
+
+function isInMyRequests(): boolean {
+  if (typeof window === 'undefined') return false;
+  const prefix = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+  let path = window.location.pathname;
+  if (prefix && path.startsWith(prefix)) path = path.slice(prefix.length);
+  return path === MY_REQUESTS_BASE || path.startsWith(`${MY_REQUESTS_BASE}/`);
+}
+
 /**
  * Base path for the active tree: `/portal/c/{slug}` or legacy `/portal`.
  *
@@ -39,6 +52,7 @@ export function clearPortalSlug(): void {
  *   slug, or the verify page would show the wrong contact's identity.
  */
 export function portalBase(slug?: string | null): string {
+  if (isInMyRequests()) return MY_REQUESTS_BASE;
   const s = slug === undefined ? readPortalSlug() : slug;
   return s ? `/portal/c/${encodeURIComponent(s)}` : '/portal';
 }
@@ -105,3 +119,25 @@ export function portalRevisePath(kind: string, id: string, slug?: string | null)
 }
 
 export { waMeUrl } from '@/lib/wa-me';
+
+/**
+ * The STAFF page (PORTAL-P4-REQUESTS S8) a salesperson's slug-tree portal link opens in the CRM:
+ * the kind's list, `/new` or detail page. The portal token never travels. The verify page, an
+ * unknown kind and every legacy or non-portal path have no twin (null).
+ */
+export function crmPathForPortalPath(path: string): string | null {
+  const m = /^\/portal\/c\/[^/?#]+((?:\/[^?#]*)?)(?:\?([^#]*))?/.exec(path);
+  if (!m) return null;
+  const rest = (m[1] ?? '').replace(/\/+$/, '');
+  const qs = new URLSearchParams(m[2] ?? '');
+  const parts = rest.split('/').filter(Boolean);
+  if (parts[0] === 'verify') return null;
+  const kind = parts.length === 0 ? qs.get('type') || 'stock_inquiry' : parts[0];
+  const list = myRequestStaffPath(kind);
+  if (!list) return null;
+  if (parts.length === 0) return list;
+  if (parts.length === 1) return list;
+  // An opportunity is created in a modal on its list; there is no `/new` page.
+  if (parts[1] === 'new') return kind === 'sales_opportunity' ? list : `${list}/new`;
+  return `${list}/${parts[1]}`;
+}

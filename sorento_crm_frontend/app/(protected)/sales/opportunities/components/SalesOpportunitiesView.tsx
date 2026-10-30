@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   ColumnDef,
   PaginationState,
+  SortingState,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
@@ -28,6 +29,8 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { formatCurrency, formatDate } from '@/lib/helpers';
 import { getSalesOpportunityCustomerOptions } from '../services/salesOpportunityService';
@@ -44,13 +47,39 @@ import SalesOpportunityModal from './SalesOpportunityModal';
  *
  * DataGrid with fixed layout and resizable columns: number, title, customer or prospect,
  * agent, stage `Badge`, amount, close date, Source (Portal/CRM). `rowHref` to the detail
- * page; `Log opportunity` is the header's one primary action, gated on
- * `sales.opportunities.add`. Filters (Stage, Agent, Customer, close date range) and paging
- * are server-side - `manualPagination`, `recordCount` from the API's own total.
+ * page; `Create` (the Log opportunity modal) is the header's one primary action, gated on
+ * `sales.opportunities.add`. Filters (Stage, Agent, Customer, close date range), sorting on every
+ * column and paging are server-side - `manualPagination`, `recordCount` from the API's own total.
  */
 const SOURCE_LABEL: Record<string, string> = { portal: 'Portal', crm: 'CRM', chat: 'Chat' };
 
+/**
+ * A salesperson limited to their own opportunities gets the portal's own list body, through My
+ * Requests (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a), its Create opening the Log opportunity
+ * modal; everyone else the staff view below, unchanged.
+ */
 export default function SalesOpportunitiesView() {
+  const { limited } = useRequestScope('sales_opportunity');
+  if (limited) return <OwnSalesOpportunitiesView />;
+  return <StaffSalesOpportunitiesView />;
+}
+
+function OwnSalesOpportunitiesView() {
+  const [modalOpen, setModalOpen] = useState(false);
+  return (
+    <>
+      <Container>
+        <PageHeader title="Opportunities" />
+      </Container>
+      <Container>
+        <MyRequestPortalList kind="sales_opportunity" onCreate={() => setModalOpen(true)} />
+      </Container>
+      <SalesOpportunityModal open={modalOpen} onOpenChange={setModalOpen} />
+    </>
+  );
+}
+
+function StaffSalesOpportunitiesView() {
   const canAdd = useHasPermission('sales.opportunities.add');
   const [modalOpen, setModalOpen] = useState(false);
   const {
@@ -61,6 +90,7 @@ export default function SalesOpportunitiesView() {
   } = useDebouncedSearch();
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  const [sorting, setSorting] = useState<SortingState>([]);
   const [statusId, setStatusId] = useState('');
   const [salesAgentId, setSalesAgentId] = useState('');
   const [customerId, setCustomerId] = useState('');
@@ -101,7 +131,7 @@ export default function SalesOpportunitiesView() {
   const { data, isLoading, isFetching, isPlaceholderData, isError, refetch } = useSalesOpportunities({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
-    sorting: [],
+    sorting,
     searchQuery: debouncedSearch,
     statusId: statusId || undefined,
     salesAgentId: salesAgentId || undefined,
@@ -115,7 +145,7 @@ export default function SalesOpportunitiesView() {
   const addButton = (
     <Button variant="primary" onClick={() => setModalOpen(true)}>
       <Plus className="size-4" />
-      Log opportunity
+      Create
     </Button>
   );
 
@@ -150,9 +180,9 @@ export default function SalesOpportunitiesView() {
       },
       {
         id: 'customer',
+        accessorFn: (row) => row.customer_name ?? row.prospect_name ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
         size: 180,
-        enableSorting: false,
         cell: ({ row }) => {
           const label = row.original.customer_name ?? row.original.prospect_name ?? '-';
           return (
@@ -165,9 +195,9 @@ export default function SalesOpportunitiesView() {
       },
       {
         id: 'agent',
+        accessorFn: (row) => row.sales_agent_label ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
         size: 150,
-        enableSorting: false,
         cell: ({ row }) => {
           const label = row.original.sales_agent_label ?? 'Unassigned';
           return (
@@ -182,7 +212,6 @@ export default function SalesOpportunitiesView() {
         accessorKey: 'stage_label',
         header: ({ column }) => <DataGridColumnHeader title="Stage" column={column} />,
         size: 130,
-        enableSorting: false,
         cell: ({ row }) => (
           <Badge status={row.original.stage_key} appearance="light">
             {row.original.stage_label}
@@ -206,9 +235,9 @@ export default function SalesOpportunitiesView() {
       },
       {
         id: 'source',
+        accessorFn: (row) => row.source,
         header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
         size: 100,
-        enableSorting: false,
         cell: ({ row }) => SOURCE_LABEL[row.original.source] ?? row.original.source,
         meta: { headerTitle: 'Source', skeleton: <Skeleton className="h-4 w-14" /> },
       },
@@ -221,12 +250,13 @@ export default function SalesOpportunitiesView() {
     data: rows,
     pageCount: Math.ceil(total / pagination.pageSize) || 1,
     getRowId: (row) => row.id,
-    state: { pagination },
+    state: { pagination, sorting },
     onPaginationChange: setPagination,
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    enableSorting: false,
+    manualSorting: true,
     manualPagination: true,
     manualFiltering: true,
     columnResizeMode: 'onChange',

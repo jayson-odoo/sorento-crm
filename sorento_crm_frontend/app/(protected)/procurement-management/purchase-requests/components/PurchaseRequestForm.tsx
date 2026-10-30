@@ -65,6 +65,11 @@ import { purchaseRequestNumberFieldLabel, purchaseRequestNumberReplyPhrase } fro
 import LookupBoundField from '@/components/common/LookupBoundField';
 import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
 import { cn } from '@/lib/utils';
+import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import { useProject } from '@/app/(protected)/project-sales/_shared/hooks/useProjects';
+import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import type { SubmissionInitialValues } from '@/app/(auth)/portal/components/SubmissionForm';
 
 const PURCHASE_REQUESTS_EDIT = "/procurement-management/purchase-requests";
 const SPONSORSHIP_FORMS_EDIT = "/procurement-management/sponsorship-forms";
@@ -86,7 +91,57 @@ interface PurchaseRequestFormProps {
   defaultProjectId?: string;
 }
 
-export default function PurchaseRequestForm({
+/**
+ * A salesperson limited to their own rows (PORTAL-P4-REQUESTS R2, form parity) creates and edits
+ * in the portal's own form, written through My Requests; everyone else the staff form, unchanged.
+ */
+export default function PurchaseRequestForm(props: PurchaseRequestFormProps) {
+  const kind = props.expectedRequestType ?? props.defaultRequestType ?? "purchase_request";
+  const { limited } = useRequestScope(kind);
+  if (limited) {
+    return props.requestId ? (
+      <MyRequestPortalForm kind={kind} submissionId={props.requestId} />
+    ) : (
+      <NewOwnRequestForm kind={kind} projectId={props.defaultProjectId} />
+    );
+  }
+  return <StaffPurchaseRequestForm {...props} />;
+}
+
+/**
+ * A new one of their own. A project's Sponsorship stage action (`?project_id=`) starts it with
+ * that project and its title (owner ruling (a)); the form waits for the project so the seed is
+ * there on first paint. A project they cannot read starts an empty form.
+ */
+function NewOwnRequestForm({
+  kind,
+  projectId,
+}: {
+  kind: "purchase_request" | "sponsorship_form";
+  projectId?: string;
+}) {
+  const { data: project, isLoading } = useProject(projectId);
+  const initialValues = useMemo<SubmissionInitialValues | undefined>(
+    () =>
+      project
+        ? {
+            fields: { project_id: project.id, project_title: project.title ?? "" },
+            labels: { project_code: projectCodeLabel(project) },
+          }
+        : undefined,
+    [project],
+  );
+  if (projectId && isLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <LoaderCircleIcon className="size-6 animate-spin" />
+      </div>
+    );
+  }
+  return <MyRequestPortalForm kind={kind} initialValues={initialValues} />;
+}
+
+function StaffPurchaseRequestForm({
   requestId,
   defaultRequestType = "purchase_request",
   expectedRequestType,

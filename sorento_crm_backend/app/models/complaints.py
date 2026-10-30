@@ -68,6 +68,10 @@ class Complaint(Base):
     assigned_to = Column(Text, nullable=True)  # Respond.io assignee user id; display name resolved via User.respond_user_id
     portal_draft_at = Column(DateTime(timezone=False), nullable=True)  # set while user is editing in submission portal; cleared on Submit
     required_on_site_support = Column(Boolean, nullable=False, server_default="false")
+    # Portal submission revisions, denormalized (see StockInquiry.revision_no): contact-initiated
+    # revisions only, the cap counter; the full lineage lives in portal_form_revisions.
+    revision_no = Column(Integer, nullable=False, server_default="0", default=0)
+    last_revised_at = Column(DateTime(timezone=False), nullable=True)
 
     attachments = relationship("ComplaintAttachment", back_populates="complaint")
     root_cause = relationship("ComplaintRootCause", foreign_keys=[root_cause_id])

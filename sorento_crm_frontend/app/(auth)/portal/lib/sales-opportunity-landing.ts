@@ -5,12 +5,17 @@
  *
  * The opportunity list route takes no search term (an agent holds tens of rows, not
  * thousands), so the landing's search is applied here, over the fields a card shows.
+ *
+ * `list` is the rows' call: the portal's own, or the injected client's (a CRM list, L2).
  */
 import type { PortalSubmissionSummary } from './portal-client';
 import { listPortalSalesOpportunities } from './sales-opportunity-service';
 
-export async function listOpportunitiesAsSummaries(q?: string): Promise<PortalSubmissionSummary[]> {
-  const rows = await listPortalSalesOpportunities();
+export async function listOpportunitiesAsSummaries(
+  q?: string,
+  list: typeof listPortalSalesOpportunities = listPortalSalesOpportunities,
+): Promise<PortalSubmissionSummary[]> {
+  const rows = await list();
   const needle = (q ?? '').trim().toLowerCase();
   return rows
     .map((r) => ({

@@ -16,8 +16,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { getSession } from 'next-auth/react';
 import { AlertCircle, MessageCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { impersonationStore, useImpersonationSession } from '@/lib/impersonation-store';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,11 +37,23 @@ import {
 import { isSubmissionKind } from '../lib/portal-client';
 import {
   clearPortalSlug,
+  crmPathForPortalPath,
   portalDetailPath,
   portalHomePath,
   waMeUrl,
   writePortalSlug,
 } from '../lib/portal-paths';
+
+/** The CRM home the fresh session names when it is a salesperson's (`/my-requests`), else null. */
+async function salespersonHomePath(): Promise<string | null> {
+  try {
+    const session = await getSession();
+    const home = (session?.user as { homePath?: unknown } | undefined)?.homePath;
+    return typeof home === 'string' && home.startsWith('/my-requests') ? home : null;
+  } catch {
+    return null;
+  }
+}
 
 const SENT_KEY_PREFIX = 'sorento.portal.otpSent.';
 const RESEND_COOLDOWN_S = 60;
@@ -61,6 +75,8 @@ const WA_TEXT = 'Hi, I need my portal link.';
 interface Props {
   /** Stable contact slug - present on the slug tree, absent on legacy. */
   slug?: string;
+  /** Request a code on mount (default). False inside the CRM while an admin views as the salesperson. */
+  autoSend?: boolean;
 }
 
 type CardState =
@@ -71,9 +87,11 @@ type CardState =
   | 'request-link' // "Not your number?" - ask for own portal link
   | 'lookup-failed'; // transient slug-info/token-info failure - offer retry
 
-export function PortalVerifyCard({ slug }: Props) {
+export function PortalVerifyCard({ slug, autoSend = true }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Viewing as the salesperson: "Not your number?" would clear the admin's own device sign-in.
+  const viewingAs = useImpersonationSession() !== null;
   const reason = searchParams?.get('reason');
   const isLogout = reason === 'logout';
   // Submission kind from the deep-link verify redirect - its presence means the
@@ -131,7 +149,7 @@ export function PortalVerifyCard({ slug }: Props) {
 
     const autoFire = async (cid: string, sid: string, guardKey: string) => {
       const reasonNow = searchParams?.get('reason');
-      if (reasonNow === 'logout') return;
+      if (reasonNow === 'logout' || !autoSend) return;
       const sentKey = SENT_KEY_PREFIX + guardKey;
       const alreadyFired =
         typeof window !== 'undefined' && window.sessionStorage.getItem(sentKey) === '1';
@@ -236,11 +254,21 @@ export function PortalVerifyCard({ slug }: Props) {
     setPending(true);
     try {
       const result = await verifyOtp(contactId, spaceId, code.trim());
-      writePortalToken(result.token);
-      if (slug) writePortalSlug(slug);
+      // An admin viewing as the salesperson (CRM impersonation): the token is this tab's only, the
+      // device's stored token and slug and the admin's CRM session are never replaced.
+      const viewingAs = impersonationStore.getState() !== null;
+      writePortalToken(result.token, { impersonation: viewingAs });
+      if (slug && !viewingAs) writePortalSlug(slug);
       // A contact with a CRM user also gets a CRM session (PORTAL-P1-SESSION-LINK).
       // Before navigating, so the NextAuth cookie is set when the page is left.
-      if (result.portal_link_secret) await openCrmSession(result.portal_link_secret);
+      let crmHome: string | null = viewingAs ? '/my-requests' : null;
+      if (
+        !viewingAs &&
+        result.portal_link_secret &&
+        (await openCrmSession(result.portal_link_secret))
+      ) {
+        crmHome = await salespersonHomePath();
+      }
       if (typeof window !== 'undefined') {
         window.sessionStorage.setItem('sorento.portalTokenWrittenAt', String(Date.now()));
         Object.keys(window.sessionStorage)
@@ -253,10 +281,17 @@ export function PortalVerifyCard({ slug }: Props) {
       // Deep link → land back on that exact form. Otherwise the type index /
       // portal home. Slug tree keeps the stable URL; legacy /portal resolves the
       // slug and redirects, keeping the address bar bookmarkable.
-      const target =
+      // A salesperson lands in the CRM shell instead (PORTAL-P3-ROLE-MENU).
+      const portalTarget =
         desiredId && desiredType && isSubmissionKind(desiredType)
           ? portalDetailPath(desiredType, desiredId, slug ?? null)
           : portalHomePath({ slug: slug ?? null, type: desiredType });
+      // Already under /my-requests when this card runs inside the CRM verify page.
+      const target = crmHome
+        ? portalTarget.startsWith('/my-requests')
+          ? portalTarget
+          : (crmPathForPortalPath(portalTarget) ?? '/my-requests')
+        : portalTarget;
       // Hard-navigate so the fresh storage values are guaranteed visible.
       if (typeof window !== 'undefined') {
         window.location.assign(target);
@@ -411,7 +446,7 @@ export function PortalVerifyCard({ slug }: Props) {
         </p>
       )}
 
-      {slug && (
+      {slug && !viewingAs && (
         <button
           type="button"
           onClick={() => {

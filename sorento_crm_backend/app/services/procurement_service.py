@@ -5553,6 +5553,7 @@ class StockInquiryService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
+        viewer_user_id: Optional[str] = None,
     ):
         """Build the filtered + sorted stock-inquiry query shared by ``list_inquiries``
         and ``neighbours`` so the two can never drift.
@@ -5560,6 +5561,11 @@ class StockInquiryService:
         The ORDER BY always appends ``StockInquiry.id`` as a deterministic tie-breaker
         so offset position and prev/next neighbours are unambiguous when the primary
         sort column has equal (or null) values.
+
+        Every grid column sorts (PORTAL-P4-REQUESTS P4-23), the derived ones by the same
+        rule that fills them: Assigned To / Handled By read the latest open form-SLA tracker
+        (``_attach_sla_handlers``), Print Count the viewer's own downloads
+        (``_attach_print_counts``).
         """
         q = self.db.query(StockInquiry)
         if contact_id is not None:
@@ -5607,7 +5613,14 @@ class StockInquiryService:
             "last_activity_at": func.coalesce(
                 StockInquiry.last_revised_at, StockInquiry.created_at
             ),
+            "revision_no": StockInquiry.revision_no,
         }
+        if sort_field in ("assigned_to_name", "handled_by_name"):
+            sort_map[sort_field] = self._sla_person_name_sort(
+                "assigned_to_id" if sort_field == "assigned_to_name" else "handled_by_id"
+            )
+        elif sort_field == "print_count":
+            sort_map[sort_field] = self._print_count_sort(viewer_user_id)
         sort_column = sort_map.get(sort_field, StockInquiry.created_at)
 
         if sort_dir not in ("asc", "desc"):
@@ -5644,6 +5657,7 @@ class StockInquiryService:
             contact_id=contact_id,
             space_id=space_id,
             statuses=statuses,
+            viewer_user_id=viewer_user_id,
         )
 
         total = q.count()
@@ -5659,6 +5673,50 @@ class StockInquiryService:
             "pagination": PaginationResponse(total=total, page=page, limit=limit),
             "empty": total == 0
         }
+
+    @staticmethod
+    def _sla_person_name_sort(user_column: str):
+        """Name (or email) of the user in ``user_column`` on the inquiry's latest open
+        form-SLA tracker: the value ``_attach_sla_handlers`` shows, as a sort key."""
+        from app.models.sla import ConversationSLATracking
+        from app.services.sla_scope import open_tracker_scope
+
+        latest = (
+            select(getattr(ConversationSLATracking, user_column))
+            .where(
+                ConversationSLATracking.source_entity_type == "stock_inquiry",
+                ConversationSLATracking.source_entity_id == StockInquiry.id,
+                *open_tracker_scope(),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .limit(1)
+            .correlate(StockInquiry)
+            .scalar_subquery()
+        )
+        return (
+            select(func.coalesce(User.name, User.email))
+            .where(User.id == latest)
+            .scalar_subquery()
+        )
+
+    @staticmethod
+    def _print_count_sort(viewer_user_id: Optional[str]):
+        """How many PDFs the viewer took of the inquiry (``_attach_print_counts``); 0 for
+        everyone when there is no viewer."""
+        if not viewer_user_id:
+            return literal(0)
+        from app.models.download import UserDownload
+
+        return (
+            select(func.count(UserDownload.id))
+            .where(
+                UserDownload.user_id == str(viewer_user_id),
+                UserDownload.source_entity_type == "stock_inquiry",
+                UserDownload.source_entity_id == StockInquiry.id,
+            )
+            .correlate(StockInquiry)
+            .scalar_subquery()
+        )
 
     def _attach_print_counts(self, items, viewer_user_id: Optional[str]) -> None:
         """Set `print_count` on each inquiry: how many PDF exports the viewing user
@@ -9252,13 +9310,53 @@ class PurchaseRequestService:
             "created_at": PurchaseRequestHeader.created_at,
             "customer_name": PurchaseRequestHeader.customer_name,
             "project_title": PurchaseRequestHeader.project_title,
+            # Every column of the list sorts (PORTAL-P4-REQUESTS P4-23). The Status column id is
+            # `status` and shows the approval decision, so that is what it orders by.
+            "request_number": PurchaseRequestHeader.request_number,
+            "revision_no": PurchaseRequestHeader.revision_no,
+            "status": PurchaseRequestHeader.approval_status,
+            "sales_type": PurchaseRequestHeader.sales_type,
+            "requested_by": PurchaseRequestHeader.requested_by,
+            "purpose": PurchaseRequestHeader.purpose,
+            "sponsor_subject": PurchaseRequestHeader.sponsor_subject,
         }
+        if sort_field in ("assigned_to_name", "handled_by_name"):
+            sort_map[sort_field] = self._request_sla_person_name_sort(
+                "assigned_to_id" if sort_field == "assigned_to_name" else "handled_by_id"
+            )
         sort_col = sort_map.get(sort_field, PurchaseRequestHeader.submitted_at)
         if sort_dir == "desc":
             q = q.order_by(sort_col.desc().nullslast(), PurchaseRequestHeader.id.asc())
         else:
             q = q.order_by(sort_col.asc().nullsfirst(), PurchaseRequestHeader.id.asc())
         return q
+
+    @staticmethod
+    def _request_sla_person_name_sort(user_column: str):
+        """Name (or email) of the user in ``user_column`` on the request's latest open form-SLA
+        tracker: the value ``_attach_sla_assignees`` shows, as a sort key."""
+        from app.models.sla import ConversationSLATracking
+        from app.services.sla_scope import open_tracker_scope
+
+        latest = (
+            select(getattr(ConversationSLATracking, user_column))
+            .where(
+                ConversationSLATracking.source_entity_type.in_(
+                    ("purchase_request", "sponsorship_form")
+                ),
+                ConversationSLATracking.source_entity_id == PurchaseRequestHeader.id,
+                *open_tracker_scope(),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .limit(1)
+            .correlate(PurchaseRequestHeader)
+            .scalar_subquery()
+        )
+        return (
+            select(func.coalesce(User.name, User.email))
+            .where(User.id == latest)
+            .scalar_subquery()
+        )
 
     def list_requests(
         self,

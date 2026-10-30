@@ -29,6 +29,13 @@ export interface MenuItem {
    * permission slug once the backend defines one - see PLAN-multi-company-isolation.md.
    */
   superadminOnly?: boolean;
+  /**
+   * Who the entry is for. `salesperson` = only a salesperson (MY WORK / MY REQUESTS); `staff` =
+   * everyone but a salesperson; unset = both. Applied before every other access filter.
+   */
+  audience?: 'salesperson' | 'staff';
+  /** Portal form kind a salesperson entry opens; hidden unless the contact may use that kind. */
+  portalKind?: string;
 }
 
 export type MenuConfig = MenuItem[];

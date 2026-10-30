@@ -1,6 +1,6 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
-import PriceTagRequestDetail from '../components/PriceTagRequestDetail';
+import PriceTagRequestPage from '../components/PriceTagRequestPage';
 
 export const metadata: Metadata = {
   title: 'Price Tag Request Details',
@@ -19,7 +19,7 @@ export default async function PriceTagRequestDetailPage({
   // component holds only the id, which is a UUID and may never reach a screen.
   return (
     <Container>
-      <PriceTagRequestDetail requestId={id} />
+      <PriceTagRequestPage requestId={id} />
     </Container>
   );
 }
