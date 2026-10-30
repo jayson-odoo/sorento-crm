@@ -82,8 +82,8 @@ questions V1-V3 = (a). BE = `sorento_crm_backend/app`, FE = `sorento_crm_fronten
   lead on <code>" (opens the dialog, AC-R2); Next never shows.
 - AC-W5. Check fails or times out -> "The check did not finish. Try again."; the forward action stays Check.
 - AC-W6. Editing title or developer after a Check clears the result and the action returns to Check.
-- AC-W7. Next opens step 2 Details: today's Details and "Lead, customer and salesperson" sections and fields, with
-  today's required rules; Register project (staff) or Save draft + Submit for approval (submit-only) bottom right;
+- AC-W7. Next opens step 2 Details: today's Details section and a "Customer and salesperson" section (AC-L1), with
+  today's other required rules; Register project (staff) or Save draft + Submit for approval (submit-only) bottom right;
   Back left returns to step 1 keeping every value typed.
 - AC-W8. AI extract on step 1 fills title and developer and keeps the other extracted values for step 2.
 - AC-W9. Edit mode: no wizard and no step strip; every section shows; Check runs as today but shows the same
@@ -101,3 +101,19 @@ questions V1-V3 = (a). BE = `sorento_crm_backend/app`, FE = `sorento_crm_fronten
 - AC-T3. Samples tab removed with `SamplesPanel.tsx` and `SampleDialog.tsx`; `?tab=samples` opens Samples Request;
   `?tab=orders` (and the legacy `pos`, `schedules`) opens PO; the SO tab's id is `sales-orders`, so `?tab=sales-orders`
   opens SO, and the sales order pages' "back to project" links use it. Stored samples and BE endpoints untouched.
+
+## L. No lead on registration (owner ruling 30 Oct ~13:55: "a"; replaces the 29 Oct "lead governs register" rule)
+
+- AC-L1. The project form (create and edit, staff and submit-only) has no Lead field and no "Create lead" option. Step 2's
+  section reads "Customer and salesperson". Customer is the server-search picker (`listCustomerOptions`,
+  `FE/_shared/services/projectService.ts:249-261`), always editable, required to Register / Submit for approval as today
+  (`require_customer`); Save draft may leave it empty as today.
+- AC-L2. Staff `POST /api/v1/project-sales/projects/` without `lead_id` and with a customer -> 201; no
+  `project_lead_required` refusal anywhere. The project's customer is the one sent (no customer-from-lead rule).
+- AC-L3. Submit-only `crm_register` (draft and submit) and `crm_submit` need no lead; submit still needs a customer.
+- AC-L4. Registering never links or changes a lead: no `projects.lead_id` is set, and no lead's outcome / qualified_at /
+  status changes, even if a `lead_id` is sent (it is ignored). Leads qualify only through the lead page's Qualify.
+- AC-L5. Editing an existing project that already has a lead keeps that link untouched (the form no longer sends
+  `lead_id`); its customer is the editable picker.
+- AC-L6. Unchanged: the lead pages and their Qualify, the Check, the Spec In document gate, secondary leads, AI extract
+  (it does not fill Customer).
