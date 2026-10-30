@@ -335,20 +335,20 @@ def test_lost_without_a_reason_fails_the_step_with_the_routes_message_and_change
 
 
 def test_an_own_scope_user_cannot_move_an_opportunity_onto_another_agents_customer(db):
-    """The route's `_assert_still_theirs` stays authoritative; its message becomes the step error."""
-    from app.services.chatbot.agent import actions
+    """The route's own-customer rule (`_assert_still_theirs`) is applied at proposal since review round 3
+    (R13), with the route's own message; nothing is stored or written."""
+    from app.services.chatbot.agent import writes
 
     w = make_world(db, slugs=OWN_ONLY)
     opp = make_opp(db, w)
-    _, row = propose_and_store(
-        db, w, [(UPDATE, {"opportunity_id": opp.id, "customer_id": w.theirs.id})], seen={opp.id, w.theirs.id}
+
+    res, step = writes.propose_step(
+        db, ctx_of(db, w), UPDATE, {"opportunity_id": opp.id, "customer_id": w.theirs.id},
+        seen_ids={opp.id, w.theirs.id},
     )
 
-    outcome = actions.confirm(db, w.respond_id, str(row.id), via="console")
-
-    assert outcome.status == "partial"
-    assert outcome.steps[0]["status"] == "failed"
-    assert "Pick one of your own customers or sales agents." in (outcome.steps[0]["error"] or "")
+    assert res.status == "denied" and step is None
+    assert "Pick one of your own customers or sales agents." in res.message
     assert str(opp_now(db, opp.id).customer_id) == w.mine.id
 
 
