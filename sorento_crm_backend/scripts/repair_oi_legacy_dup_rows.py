@@ -58,8 +58,8 @@ from typing import List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import Date, Numeric, String, cast, func  # noqa: E402
-from sqlalchemy.orm import Session, aliased  # noqa: E402
+from sqlalchemy import Date, Numeric, cast, func  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
 
 from app.database import SessionLocal  # noqa: E402
 from app.models.job import ImportJob, ImportJobRow  # noqa: E402
@@ -119,84 +119,59 @@ def _date(job_row):
     return cast(func.nullif(_text(job_row, "delivery_date"), ""), Date)
 
 
-def _candidates(db: Session, inquiry_id: Optional[str]):
-    """One result row per (squatter, twin, skipped row), squatter first; twins unchecked.
+def _imported(db: Session, code: str, *extra):
+    """Sheet-import job rows with `code`, read through their identity. One scan."""
+    j = ImportJobRow
+    return (
+        db.query(
+            j.entity_id, j.row_number, ImportJob.created_at,
+            _text(j, "sheet"), _text(j, "doc_no"), _text(j, "item_code"), _qty(j), _date(j),
+        )
+        .join(ImportJob, ImportJob.id == j.import_job_id)
+        .filter(ImportJob.job_type == _JOB_TYPE, j.code == code, _date(j).isnot(None), *extra)
+    )
 
-    ORM constructs rather than raw SQL so a test's scratch schema translates the
-    `projects.` tables too (`tests/_pg_fixture.py`, `blank_session`). The two
-    company-scoped classes appear ONCE each, unaliased: the scope listener adapts to one
-    occurrence of a class per statement (`app/api/v1/scm/order_inquiry_conflicts.py`), so
-    the twin's own row and line are read by `_twins_on_their_lines` instead.
+
+def _twin_groups(db: Session) -> List[list]:
+    """Created rows whose job + tab + SO + item + qty + date occurs on more than one sheet row.
+
+    A window count over one scan of the created job rows, rather than a self-join of a
+    100k-row table on JSONB expressions (measured: the self-join ran past ten minutes on
+    the 28 Oct prod copy).
     """
-    cj, sj, bj = aliased(ImportJobRow), aliased(ImportJobRow), aliased(ImportJobRow)
-    cjob, bjob = aliased(ImportJob), aliased(ImportJob)
-    line = ProjectSalesOrderLine
-
-    query = (
-        db.query(
-            OrderInquiryRow, OrderInquiry.inquiry_no, line.line_no, line.qty, line.delivery_date,
-            _text(cj, "sheet"), cj.row_number, _qty(cj), _date(cj),
-            sj.entity_id, sj.row_number, _text(bj, "sheet"), bj.row_number,
-        )
-        .select_from(cj)
-        .join(cjob, cjob.id == cj.import_job_id)
-        .join(OrderInquiryRow, cj.entity_id == cast(OrderInquiryRow.id, String))
-        .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
-        .join(line, line.id == OrderInquiryRow.so_line_id)
-        # the twin: same job, same tab, same identity, a different sheet row
-        .join(
-            sj,
-            (sj.import_job_id == cj.import_job_id)
-            & (sj.id != cj.id)
-            & (sj.code == "created")
-            & (sj.entity_type == "order_inquiry_row")
-            & (_text(sj, "sheet") == _text(cj, "sheet"))
-            & (_text(sj, "doc_no") == _text(cj, "doc_no"))
-            & (_text(sj, "item_code") == _text(cj, "item_code"))
-            & (_qty(sj) == _qty(cj))
-            & (_date(sj) == _date(cj)),
-        )
-        # the blocked instruction: a sheet row read at or after this one, naming this
-        # row's line exactly, skipped because this row already sat there
-        .join(
-            bj,
-            (bj.code == "already_raised")
-            & (_text(bj, "doc_no") == _text(cj, "doc_no"))
-            & (_text(bj, "item_code") == _text(cj, "item_code"))
-            & (_date(bj) == line.delivery_date)
-            & (_qty(bj) == line.qty),
-        )
-        .join(bjob, bjob.id == bj.import_job_id)
-        .filter(
-            cjob.job_type == _JOB_TYPE,
-            bjob.job_type == _JOB_TYPE,
-            bjob.created_at >= cjob.created_at,
-            cj.code == "created",
-            cj.entity_type == "order_inquiry_row",
-            line.qty != _qty(cj),
-            line.delivery_date != _date(cj),
-        )
-        .order_by(OrderInquiryRow.id, sj.row_number, bjob.created_at, bj.row_number)
+    j = ImportJobRow
+    key = (j.import_job_id, _text(j, "sheet"), _text(j, "doc_no"), _text(j, "item_code"), _qty(j), _date(j))
+    inner = (
+        _imported(db, "created", j.entity_type == "order_inquiry_row")
+        .add_columns(j.import_job_id, func.count().over(partition_by=key).label("n"))
+        .subquery()
     )
-    if inquiry_id is not None:
-        query = query.filter(OrderInquiryRow.order_inquiry_id == inquiry_id)
-    return query.all()
-
-
-def _twins_on_their_lines(db: Session, twin_ids) -> dict:
-    """{twin row id: (so_line_id, line qty, line date)} for the twins `_candidates` named."""
-    if not twin_ids:
-        return {}
-    rows = (
-        db.query(
-            OrderInquiryRow.id, OrderInquiryRow.so_line_id,
-            ProjectSalesOrderLine.qty, ProjectSalesOrderLine.delivery_date,
+    groups: dict = {}
+    for entity_id, sheet_row, job_at, sheet, doc_no, item, qty, due, job_id, n in (
+        db.query(inner).filter(inner.c.n > 1).all()
+    ):
+        groups.setdefault((job_id, sheet, doc_no, item, qty, due), []).append(
+            (entity_id, sheet_row, job_at, sheet, doc_no, item, qty, due)
         )
-        .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
-        .filter(OrderInquiryRow.id.in_(sorted(twin_ids)))
-        .all()
-    )
-    return {str(rid): (str(so_line_id), qty, due) for rid, so_line_id, qty, due in rows}
+    return [sorted(members, key=lambda m: (m[1] is None, m[1])) for members in groups.values()]
+
+
+def _rows_on_lines(db: Session, row_ids, inquiry_id: Optional[str]) -> dict:
+    """{row id: (row, inquiry_no, line)} for the rows the job rows created, if they exist."""
+    out: dict = {}
+    ids = sorted(row_ids)
+    for i in range(0, len(ids), 1000):
+        query = (
+            db.query(OrderInquiryRow, OrderInquiry.inquiry_no, ProjectSalesOrderLine)
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
+            .filter(OrderInquiryRow.id.in_(ids[i:i + 1000]))
+        )
+        if inquiry_id is not None:
+            query = query.filter(OrderInquiryRow.order_inquiry_id == inquiry_id)
+        for row, inquiry_no, line in query.all():
+            out[str(row.id)] = (row, inquiry_no, line)
+    return out
 
 
 def _verdict(db: Session, row: OrderInquiryRow, sheet_qty, sheet_date, restate_qty, restate_date) -> str:
@@ -225,33 +200,67 @@ def _verdict(db: Session, row: OrderInquiryRow, sheet_qty, sheet_date, restate_q
 
 def find_squatters(db: Session, *, inquiry_id: Optional[str] = None) -> List[Squatter]:
     """Every squatter (see the module docstring), with its evidence and verdict. Read-only."""
+    groups = _twin_groups(db)
+    placed = _rows_on_lines(db, {m[0] for members in groups for m in members}, inquiry_id)
+
+    pending = []  # (member, row, inquiry_no, line, twin member, twin row)
+    for members in groups:
+        on_sheet_line = [
+            (m, placed[m[0]][0]) for m in members
+            if m[0] in placed
+            and (placed[m[0]][2].qty, placed[m[0]][2].delivery_date) == (m[6], m[7])
+        ]
+        for m in members:
+            if m[0] not in placed:
+                continue
+            row, inquiry_no, line = placed[m[0]]
+            # neither the sheet's qty nor its date: a line this sheet row was never for
+            if line.qty == m[6] or line.delivery_date == m[7]:
+                continue
+            twin = next(
+                ((t, trow) for t, trow in on_sheet_line if trow.so_line_id != row.so_line_id),
+                None,
+            )
+            if twin is not None:
+                pending.append((m, row, inquiry_no, line, twin[0], twin[1]))
+    if not pending:
+        return []
+
+    # the blocked instruction: a sheet row read at or after the duplicate, naming its
+    # line exactly, skipped because the duplicate already sat there
+    docs = sorted({m[4] for m, *_ in pending})
+    skipped = sorted(
+        _imported(db, "already_raised", _text(ImportJobRow, "doc_no").in_(docs)).all(),
+        key=lambda b: (b[2], b[1] is None, b[1]),
+    )
     found: List[Squatter] = []
     seen = set()
-    candidates = _candidates(db, inquiry_id)
-    twins = _twins_on_their_lines(db, {str(c[9]) for c in candidates if c[9]})
-    for (
-        row, inquiry_no, line_no, line_qty, line_date, sheet, sheet_row, sheet_qty, sheet_date,
-        twin_id, twin_sheet_row, skipped_sheet, skipped_sheet_row,
-    ) in candidates:
-        twin = twins.get(str(twin_id))
-        # the twin must sit on ANOTHER line that is exactly what the sheet said
-        if row.id in seen or twin is None or twin[0] == str(row.so_line_id):
+    for m, row, inquiry_no, line, twin, twin_row in pending:
+        if row.id in seen:
             continue
-        if (twin[1], twin[2]) != (sheet_qty, sheet_date):
+        hit = next(
+            (
+                b for b in skipped
+                if (b[4], b[5], b[6], b[7]) == (m[4], m[5], line.qty, line.delivery_date)
+                and b[2] >= m[2]
+            ),
+            None,
+        )
+        if hit is None:
             continue
         seen.add(row.id)
         found.append(
             Squatter(
                 row_id=str(row.id), inquiry_no=inquiry_no, item_code=row.item_code,
-                state=row.state, qty=row.qty, delivery_date=row.delivery_date, line_no=line_no,
-                sheet=sheet, sheet_row=sheet_row, sibling_row_id=str(twin_id),
-                sibling_sheet_row=twin_sheet_row, skipped_sheet=skipped_sheet,
-                skipped_sheet_row=skipped_sheet_row, sheet_qty=sheet_qty, sheet_date=sheet_date,
-                restate_qty=line_qty, restate_date=line_date,
-                verdict=_verdict(db, row, sheet_qty, sheet_date, line_qty, line_date),
+                state=row.state, qty=row.qty, delivery_date=row.delivery_date,
+                line_no=line.line_no, sheet=m[3], sheet_row=m[1],
+                sibling_row_id=str(twin_row.id), sibling_sheet_row=twin[1],
+                skipped_sheet=hit[3], skipped_sheet_row=hit[1], sheet_qty=m[6],
+                sheet_date=m[7], restate_qty=line.qty, restate_date=line.delivery_date,
+                verdict=_verdict(db, row, m[6], m[7], line.qty, line.delivery_date),
             )
         )
-    return found
+    return sorted(found, key=lambda f: (f.inquiry_no or "", f.item_code or "", f.line_no))
 
 
 def _num(value: Decimal):
