@@ -3,9 +3,9 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook } from '@testing-library/react';
+import { fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { QuotationDocument } from '../../_shared/services/quotationDocumentService';
+import type { QuotationDocument, QuotationIssue } from '../../_shared/services/quotationDocumentService';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -15,6 +15,18 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/toast', () => ({
   toast: { custom: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn(), dismiss: vi.fn() },
 }));
+const listQuotationIssues = vi.fn();
+const createQuotationSignLink = vi.fn();
+vi.mock('../../_shared/services/quotationDocumentService', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../_shared/services/quotationDocumentService')
+  >();
+  return {
+    ...actual,
+    listQuotationIssues: (...args: unknown[]) => listQuotationIssues(...args),
+    createQuotationSignLink: (...args: unknown[]) => createQuotationSignLink(...args),
+  };
+});
 vi.mock('@/hooks/useDeferredAction', () => ({
   useDeferredAction: () => ({ start: vi.fn(), isPending: false, countdown: null }),
 }));
@@ -76,5 +88,51 @@ describe('useQuotationDocumentActions Send via WhatsApp', () => {
 
   it('returns openWhatsApp for the send menu (AC-E3)', () => {
     expect(typeof run(doc(), true).openWhatsApp).toBe('function');
+  });
+
+  function Harness({ latestIssue }: { latestIssue?: QuotationIssue }) {
+    const { actions, dialogs } = useQuotationDocumentActions({
+      projectId: 'p1',
+      document: doc(),
+      canEdit: true,
+      latestIssue,
+    });
+    const action = actions.find((a) => a.key === 'quotation_document.whatsapp')!;
+    return (
+      <>
+        <button type="button" onClick={() => void action.run?.()}>
+          go
+        </button>
+        {dialogs}
+      </>
+    );
+  }
+
+  function renderHarness(latestIssue?: QuotationIssue) {
+    createQuotationSignLink.mockReturnValue(new Promise(() => {}));
+    return render(
+      <QueryClientProvider client={new QueryClient()}>
+        <Harness latestIssue={latestIssue} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('opens the prompt for the given latest revision (AC-A4)', async () => {
+    const latestIssue = { id: 'i3', document_id: 'd1', issue_no: 3 } as unknown as QuotationIssue;
+    renderHarness(latestIssue);
+    fireEvent.click(screen.getByText('go'));
+    expect(await screen.findByText('Send R3 via WhatsApp')).toBeInTheDocument();
+    expect(listQuotationIssues).not.toHaveBeenCalled();
+  });
+
+  it('looks up the first issue when none is given (AC-A4)', async () => {
+    listQuotationIssues.mockResolvedValue([
+      { id: 'i2', document_id: 'd1', issue_no: 2 },
+      { id: 'i1', document_id: 'd1', issue_no: 1 },
+    ]);
+    renderHarness();
+    fireEvent.click(screen.getByText('go'));
+    expect(await screen.findByText('Send R2 via WhatsApp')).toBeInTheDocument();
+    expect(listQuotationIssues).toHaveBeenCalledWith('p1', 'd1');
   });
 });

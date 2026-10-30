@@ -1910,6 +1910,14 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
     expect(screen.queryByText('Send R1 via WhatsApp')).toBeNull();
   });
 
+  it('E2: Email confirms with the sent-to-customer toast', async () => {
+    const user = await openSendMenu();
+    await user.click(await screen.findByRole('menuitem', { name: 'Email' }));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('Sent to the customer as SRT/Q/2026/0141 (R1)'),
+    );
+  });
+
   it('E3: WhatsApp sends once, then opens the prompt for the returned revision', async () => {
     const user = await openSendMenu();
     await user.click(await screen.findByRole('menuitem', { name: 'WhatsApp' }));

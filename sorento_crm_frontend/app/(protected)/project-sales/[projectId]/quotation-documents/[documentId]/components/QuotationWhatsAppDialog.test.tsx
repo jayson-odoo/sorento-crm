@@ -17,6 +17,11 @@ vi.mock('@/lib/toast', () => ({
   toast: { custom: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn(), dismiss: vi.fn() },
 }));
 
+const copyTextToClipboard = vi.fn();
+vi.mock('@/lib/clipboard', () => ({
+  copyTextToClipboard: (...args: unknown[]) => copyTextToClipboard(...args),
+}));
+
 const createQuotationSignLink = vi.fn();
 const logQuotationWhatsAppOpened = vi.fn();
 
@@ -92,6 +97,7 @@ beforeEach(() => {
     expires_at: null,
   });
   logQuotationWhatsAppOpened.mockResolvedValue(undefined);
+  copyTextToClipboard.mockResolvedValue(true);
 });
 
 describe('QuotationWhatsAppDialog', () => {
@@ -201,5 +207,111 @@ describe('QuotationWhatsAppDialog', () => {
     await waitFor(() => expect(logQuotationWhatsAppOpened).toHaveBeenCalledTimes(1));
     await new Promise((r) => setTimeout(r, 20));
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  // --- fix round 1 ---
+
+  async function readMessage(document?: QuotationDocument) {
+    renderDialog(document ? { document } : {});
+    const message = (await screen.findByLabelText('Message')) as HTMLTextAreaElement;
+    await waitFor(() => expect(message.value).not.toBe(''));
+    return message;
+  }
+
+  it('signs off with the signed-in signer when the quotation names no signatory (AC-D1)', async () => {
+    const message = await readMessage({
+      ...document_,
+      signatory_name: null,
+      signatory_signature: { signer_name: 'SALES REP A' },
+    } as unknown as QuotationDocument);
+    expect(message.value.endsWith('Thank you,\nSALES REP A')).toBe(true);
+  });
+
+  it('prefers the named signatory over the signer (AC-D1)', async () => {
+    const message = await readMessage({
+      ...document_,
+      signatory_name: 'SIGNATORY A',
+      signatory_signature: { signer_name: 'SALES REP A' },
+    } as unknown as QuotationDocument);
+    expect(message.value.endsWith('Thank you,\nSIGNATORY A')).toBe(true);
+  });
+
+  it('ends at "Thank you," when neither signatory nor signer is known (AC-D1)', async () => {
+    const message = await readMessage({
+      ...document_,
+      signatory_name: '  ',
+      signatory_signature: { signer_name: ' ' },
+    } as unknown as QuotationDocument);
+    expect(message.value.endsWith('Thank you,')).toBe(true);
+  });
+
+  it('selects the link and asks for a manual copy when copying fails (AC-B7)', async () => {
+    copyTextToClipboard.mockResolvedValue(false);
+    const user = userEvent.setup();
+    const message = await readMessage();
+    await user.click(screen.getByRole('button', { name: 'Copy link' }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Press Ctrl/Cmd+C to copy the selected link'),
+    );
+    expect(document.activeElement).toBe(message);
+    const start = message.value.indexOf(LINK());
+    expect(message.selectionStart).toBe(start);
+    expect(message.selectionEnd).toBe(start + LINK().length);
+  });
+
+  it('ticks and raises no toast when copying works (AC-B7)', async () => {
+    const user = userEvent.setup();
+    await readMessage();
+    await user.click(screen.getByRole('button', { name: 'Copy link' }));
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+    expect(copyTextToClipboard).toHaveBeenCalledWith(LINK());
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+    expect(toast.custom).not.toHaveBeenCalled();
+  });
+
+  it('mints the link once under StrictMode (AC-B9)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <React.StrictMode>
+        <QueryClientProvider client={client}>
+          <QuotationWhatsAppDialog
+            projectId="p1"
+            document={document_}
+            issue={issue}
+            onOpenChange={vi.fn()}
+          />
+        </QueryClientProvider>
+      </React.StrictMode>,
+    );
+    const message = (await screen.findByLabelText('Message')) as HTMLTextAreaElement;
+    await waitFor(() => expect(message.value).not.toBe(''));
+    expect(createQuotationSignLink).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts from the template again after close and reopen (AC-B5)', async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (open: QuotationIssue | null) => (
+      <QueryClientProvider client={client}>
+        <QuotationWhatsAppDialog
+          projectId="p1"
+          document={document_}
+          issue={open}
+          onOpenChange={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree(issue));
+    const first = (await screen.findByLabelText('Message')) as HTMLTextAreaElement;
+    await waitFor(() => expect(first.value).toBe(expectedMessage()));
+    await user.clear(first);
+    await user.type(first, 'Edited text');
+    rerender(tree(null));
+    await waitFor(() => expect(screen.queryByLabelText('Message')).toBeNull());
+    rerender(tree(issue));
+    const again = (await screen.findByLabelText('Message')) as HTMLTextAreaElement;
+    await waitFor(() => expect(again.value).toBe(expectedMessage()));
   });
 });

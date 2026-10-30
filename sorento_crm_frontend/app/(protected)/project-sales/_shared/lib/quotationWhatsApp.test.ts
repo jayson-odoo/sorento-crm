@@ -27,6 +27,16 @@ describe('toWaDigits', () => {
   });
 });
 
+describe('toWaDigits typed numbers (AC-C5)', () => {
+  it('reads +60 with a leading 0 as 60...', () => {
+    expect(toWaDigits('+60 012-000 0001')).toBe('60120000001');
+  });
+  it('reads a mobile typed without the trunk 0 as Malaysian', () => {
+    expect(toWaDigits('12-000 0001')).toBe('60120000001');
+    expect(toWaDigits('11-0000 0001')).toBe('601100000001');
+  });
+});
+
 describe('pickMobile', () => {
   it('returns wa digits for a mobile, local or international', () => {
     expect(pickMobile('012-000 0001')).toBe('60120000001');
