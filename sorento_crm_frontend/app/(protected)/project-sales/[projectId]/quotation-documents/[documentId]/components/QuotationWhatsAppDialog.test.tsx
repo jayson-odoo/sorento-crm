@@ -314,4 +314,16 @@ describe('QuotationWhatsAppDialog', () => {
     const again = (await screen.findByLabelText('Message')) as HTMLTextAreaElement;
     await waitFor(() => expect(again.value).toBe(expectedMessage()));
   });
+
+  it('shows the link in the fallback dialog when copying fails and the message has no link (AC-B7)', async () => {
+    copyTextToClipboard.mockResolvedValue(false);
+    const user = userEvent.setup();
+    const message = await readMessage();
+    await user.clear(message);
+    await user.type(message, 'No link here');
+    await user.click(screen.getByRole('button', { name: 'Copy link' }));
+    const shown = (await screen.findByLabelText('Counter-sign link')) as HTMLInputElement;
+    expect(shown.value).toBe(LINK());
+    expect(toast.error).not.toHaveBeenCalledWith('Press Ctrl/Cmd+C to copy the selected link');
+  });
 });

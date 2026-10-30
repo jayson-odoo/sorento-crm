@@ -123,3 +123,22 @@ describe('whatsAppMessage', () => {
     expect(whatsAppMessage({ ...base, signatory: ' ' }).endsWith('Thank you,')).toBe(true);
   });
 });
+
+describe('fix round 2: toll-free numbers and the 0060 prefix', () => {
+  it('does not take a toll-free or business number on the recipient field for a mobile', () => {
+    expect(pickMobile('1300-00-0001')).toBe('');
+    expect(pickMobile('1800-00-0001')).toBe('');
+    expect(pickMobile('1700-00-0001')).toBe('');
+  });
+  it('still picks the real mobile beside a toll-free number', () => {
+    expect(pickMobile('1300-00-0001 / 012-000 0001')).toBe('60120000001');
+  });
+  it('strips 00 before folding the 600 prefix', () => {
+    expect(toWaDigits('0060 012-000 0001')).toBe('60120000001');
+  });
+  it('keeps the typed mobile fold and leaves a typed toll-free number as typed', () => {
+    expect(toWaDigits('12-000 0001')).toBe('60120000001');
+    expect(toWaDigits('1300-00-0001')).toBe('1300000001');
+  });
+});
+
