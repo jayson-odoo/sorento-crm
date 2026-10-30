@@ -116,6 +116,8 @@ questions V1-V3 = (a). BE = `sorento_crm_backend/app`, FE = `sorento_crm_fronten
 - AC-L5. Editing an existing project that already has a lead keeps that link untouched (the form no longer sends
   `lead_id`); its customer is the editable picker. An edit (PUT) that does send `lead_id` ignores it, like register:
   the link, the lead and its customer stay as they were, and the project's customer is the one sent (no
-  customer-from-lead rule, no `project_customer_not_lead_customer` refusal).
+  customer-from-lead rule, no `project_customer_not_lead_customer` refusal). An edit that sends `customer_id: null`
+  clears the project's customer, as main does for a project without a lead (reviewer, 30 Oct: never keep it silently);
+  a linked lead and its customer are never touched by a project edit.
 - AC-L6. Unchanged: the lead pages and their Qualify, the Check, the Spec In document gate, secondary leads, AI extract
   (it does not fill Customer).
