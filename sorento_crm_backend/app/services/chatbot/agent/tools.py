@@ -538,9 +538,12 @@ def _list_matches(db: Any, ctx: Any, terms: list[str], kinds: list[str]) -> dict
         if r.list_name in names and not str(r.key).startswith("type:")
     ]
     if ctx.brand_scope is not None:
-        # A scope token is a whole brand id or `<brand>/<item class>` for a class-narrowed brand.
-        brands = {str(t).split("/")[0] for t in ctx.brand_scope}
-        rows = [r for r in rows if r.list_name != "brand" or str(r.key) in brands]
+        from app.services.contact_brand_scope import scope_brand_ids
+
+        # A scope holding only item class tokens limits classes, not brands: every brand stays.
+        brands = scope_brand_ids(ctx.brand_scope)
+        if brands:
+            rows = [r for r in rows if r.list_name != "brand" or str(r.key) in brands]
     out: dict[str, list[dict]] = {t: [] for t in terms}
     if not rows:
         return out
