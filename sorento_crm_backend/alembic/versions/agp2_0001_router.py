@@ -1,7 +1,7 @@
 """AGENTIC-P2-ROUTE: router settings, per-contact agent cap, Jev key, Jev price and the router prompt
 
 Revision ID: agp2_0001_router
-Revises: oihr_0011_item_code_wrap
+Revises: sfq_0001_sample_request_source
 Create Date: 2026-10-30 00:00:00.000000
 
 Additive and idempotent. Two system settings (the router's confidence floor and the daily agent
@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.services.analytics_connector import prices
 
 revision = "agp2_0001_router"
-down_revision = "oihr_0011_item_code_wrap"
+down_revision = "sfq_0001_sample_request_source"
 branch_labels = None
 depends_on = None
 
