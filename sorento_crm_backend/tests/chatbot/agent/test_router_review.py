@@ -248,7 +248,7 @@ def test_6_a_media_turn_carries_a_media_route_and_the_trace_stage(
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["route"] == {"side": "chat", "reason": "media", "score": None, "model": None, "ms": None}
+    assert body["route"] == {"side": "chat", "reason": "media", "score": None, "model": None, "ms": None, "error": None}
     assert console_jev.calls == [] and agent_calls.calls == []
     db.expire_all()
     stages = [s for s in (db.get(ChatbotTurn, turn.id).trace or []) if s.get("stage") == "route"]
