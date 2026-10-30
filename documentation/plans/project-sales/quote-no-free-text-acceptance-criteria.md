@@ -56,6 +56,21 @@ neither is refused with HTTP 422, code `quotation_line_product_required`, messag
   (`procurement.new_product_applications.create`), purchasing opens the code, then it is quoted like any product.
   No inline create in the editor. User guide note on request (guide-writer).
 
+## Review round 1 (reviewer + security-reviewer + browser pass, 30 Oct)
+
+- AC-16 A line naming a product id the caller's company cannot see (another company's product, or an id that does
+  not exist) is refused 404 `product_not_found` "That product was not found." before anything is written (today: a
+  foreign id is stored with no snapshot; a random id is a 500 at flush). Mirrors the set check
+  (`project_quotation_service.py:882-890`).
+- AC-17 Bulk product delete (`DELETE .../master-data/products/bulk`, `product_service.py:1464`) refuses the whole
+  batch with the AC-13 409 when any product in it is on a quotation; nothing is deleted.
+- AC-18 The AC-13 / AC-14 409 names the FIRST quotation in document_no order when several use the product / set,
+  and a product used only on an issued (frozen) version is refused too.
+- AC-19 Quotation form: Save with a description-only line shows "One line still needs a catalogue product or set."
+  and sends nothing (`QuotationFormClient.tsx:349-352`).
+- AC-20 A row with neither product nor set never shows the "Non-standard" pill and asks the server for no series
+  verdict; the row error "Pick a catalogue product or set" wraps instead of clipping at 375px.
+
 ## Out of scope
 
 - Legacy free-text lines: none exist (prod not live), so no read-only or migration logic.
