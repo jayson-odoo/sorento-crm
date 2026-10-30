@@ -524,6 +524,8 @@ class SalesOrderService:
                 "source": _source_label(ln.source_system),
                 "sku": ln.product.product_code if ln.product else "",
                 "product_name": ln.product.product_name if ln.product else "",
+                # SO-LINE-DESC: AutoCount's line description, `None` when none was sent.
+                "description": ln.description,
                 "qty_ordered": qo,
                 "qty_delivered": max(qd - qc, 0.0),
                 "qty_cancelled": qc,

@@ -624,6 +624,8 @@ class BoardContribution(BaseModel):
     #: FULFIL-SO-REMARK: the line reads as a mockup line (note, line remark or heading says MOCK).
     is_mockup: bool = False
     item_code: str
+    #: SO-LINE-DESC: AutoCount's line description on the core line, `None` when none was sent.
+    description: Optional[str] = None
     qty: str
     #: What the customer ordered on this line, what has gone out, and what is still owed.
     #: Three names rather than one `qty`, because they differ the moment a delivery is
