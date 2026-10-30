@@ -115,8 +115,10 @@ companies, to walk through B5.
 - **D4 New classes** are hidden until ticked (that is what an allow list means).
 - **D5 Tag merge.** Across a contact's tags the class lists INTERSECT, as Brands do; an empty
   result is a conflict that is written by neither (`_m_regions`). Unset is neutral.
-- **D6 Retire #1972's per-brand picker** and `brand_class_ids` (column dropped in the migration;
-  the scope tokens `<brand>/<class>` go with it), the contact card loses its per-brand rows,
-  and access copy carries the new column instead.
+- **D6 Retire #1972's per-brand picker** (crew ruling 30 Oct, option b): `brand_class_ids` STAYS
+  in the schema but nothing reads or writes it any more. The scope tokens `<brand>/<class>` go,
+  the contact card loses its per-brand rows, and access copy carries the new column instead. No
+  DROP in this lane: crew cannot prove the column is NULL on prod, and a drop needs the owner.
+  Follow-up: a later cleanup PR drops the column once prod is checked.
 - **D7 One shared FE block** "Brands + Allowed item classes", used by the contact Brands card and
   the tag Access settings Brands row.
