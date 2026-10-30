@@ -2573,16 +2573,25 @@ class OrderService:
         return {"message": "Order line deleted"}
 
     def bulk_delete_order_lines(self, order_id: str, line_ids: list[str]):
-        """Delete multiple lines from an order by line IDs."""
+        """Delete multiple lines from an order by line IDs.
+
+        The order is read through the scoped `get_order` (404 outside the caller's
+        company) and the lines row by row, never `query(...).delete()`: the company
+        scope filter covers SELECTs only.
+        """
         if not line_ids:
             return {"message": "No order lines to delete", "deleted_count": 0}
-        self._reject_autocount_line_edit(order_id)
-        deleted = (
+        order = self.get_order(order_id)
+        reject_autocount_line_edit(order)
+        rows = (
             self.db.query(OrderLine)
-            .filter(OrderLine.order_id == order_id, OrderLine.id.in_(line_ids))
-            .delete(synchronize_session=False)
+            .filter(OrderLine.order_id == order.id, OrderLine.id.in_(line_ids))
+            .all()
         )
+        for line in rows:
+            self.db.delete(line)
         self.db.commit()
+        deleted = len(rows)
         return {"message": f"Deleted {deleted} order line(s)", "deleted_count": deleted}
 
     def get_order_by_order_number(self, order_number: str):

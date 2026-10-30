@@ -1312,6 +1312,24 @@ def update_order_line(
         raise handle_internal_error(str(e))
 
 
+# Declared before `/{order_id}/lines/{line_id}`: below it, "bulk-delete" matched as a line id.
+@router.delete("/{order_id}/lines/bulk-delete", status_code=status.HTTP_200_OK)
+def bulk_delete_order_lines(
+    order_id: str,
+    body: BulkDeleteOrderLinesRequest = Body(...),
+    current_user: dict = Depends(require_permission("order_management.orders.delete")),
+    db: Session = Depends(get_db),
+):
+    """Delete multiple order lines from one order."""
+    try:
+        service = OrderService(db)
+        return service.bulk_delete_order_lines(order_id, body.ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.delete("/{order_id}/lines/{line_id}", status_code=status.HTTP_200_OK)
 def delete_order_line(
     order_id: str,
@@ -1323,23 +1341,6 @@ def delete_order_line(
     try:
         service = OrderService(db)
         return service.delete_order_line(order_id, line_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.delete("/{order_id}/lines/bulk-delete", status_code=status.HTTP_200_OK)
-def bulk_delete_order_lines(
-    order_id: str,
-    body: BulkDeleteOrderLinesRequest = Body(...),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Delete multiple order lines from one order."""
-    try:
-        service = OrderService(db)
-        return service.bulk_delete_order_lines(order_id, body.ids)
     except HTTPException:
         raise
     except Exception as e:
