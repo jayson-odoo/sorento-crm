@@ -32,6 +32,8 @@ from app.models.base import company_scope
 from app.models.procurement import PurchaseRequestHeader
 from app.models.sla import SlaFormAction
 from app.models.user import User
+from sqlalchemy import text
+
 from tests._forms_chain_support import (
     FORM_ACTIONS,
     PR_BASE,
@@ -465,3 +467,126 @@ def test_a_turn_lists_the_waiting_requests_then_proposes_a_decision_and_commits_
     assert result.pending_action is not None
     assert number(w) in result.reply_text and NOTIFIES in result.reply_text
     assert header(w).approval_status == "pending" and sends(w) == before
+
+
+# ------------------------------------------------------------------ security: the route's own-scope guard, per person
+
+
+def own_scene(world, slugs):
+    """A request submitted by the agent contact's OWN contact, whose linked user holds `slugs`."""
+    w = _setup(world, KIND)
+    w.rid = _submitted(w)
+    _to_pending_approval(w, w.rid)
+    w.db.execute(
+        text("UPDATE respond_contacts SET chatbot_allowed = true, chatbot_agent_enabled = true WHERE id = :i"),
+        {"i": w.contact},
+    )
+    respond_id = w.db.execute(text("SELECT respond_io_id FROM respond_contacts WHERE id = :i"), {"i": w.contact}).scalar()
+    linked = user(w.db, "own-request approver")
+    grant(w.db, linked, *slugs)
+    w.db.query(User).filter(User.id == linked).one().respond_contact_id = w.contact
+    w.db.commit()
+    w.respond_id, w.user_id, w.agent_contact = respond_id, linked, {"pk": w.contact, "respond_id": respond_id}
+    return copy.copy(w)
+
+
+def test_a_view_own_approver_cannot_decide_a_request_their_own_contact_submitted(world):
+    """The approval-decision route refuses a user holding only view_own (403), so the agent must too."""
+    limited = own_scene(world, (APPROVE, VIEW_OWN))
+    broad = own_scene(world, (APPROVE, VIEW))
+
+    ok, step = propose(broad.db, broad, None, DECIDE, decide_args(broad), broad.rid)
+    no, none = propose(limited.db, limited, None, DECIDE, decide_args(limited), limited.rid)
+
+    assert ok.status == "proposed" and step is not None  # a view holder approves fine
+    assert refused(no, none)
+
+
+@pytest.mark.parametrize("narrowed, expected", [(True, "rejected"), (False, "executed")])
+def test_narrowing_the_linked_user_to_view_own_before_confirm_rejects_the_decision(world, narrowed, expected):
+    w = own_scene(world, (APPROVE, VIEW))
+    action = store(w.db, w, None, [(DECIDE, decide_args(w))], {w.rid})
+    if narrowed:
+        revoke(w.db, w.user_id, VIEW)
+        grant_more(w.db, w.user_id, VIEW_OWN)
+
+    outcome = chat_confirm(w, action)
+
+    assert outcome.status == expected
+    assert header(w).approval_status == ("pending" if narrowed else "approved")
+
+
+def test_a_view_own_console_operator_cannot_decide_their_own_request_through_a_linked_user_with_view(world):
+    w = scene(world)  # the linked user holds view; the request was submitted by `w.contact`
+    limited = operator(w, APPROVE, VIEW_OWN)
+    w.db.query(User).filter(User.id == limited).one().respond_contact_id = w.contact
+    w.db.commit()
+    wide = operator(w, APPROVE, VIEW)
+
+    ok, step = propose(w.db, w, wide, DECIDE, decide_args(w), w.rid)
+    no, none = propose(w.db, w, limited, DECIDE, decide_args(w), w.rid)
+
+    assert ok.status == "proposed" and step is not None  # control: a view operator
+    assert refused(no, none)
+
+
+@pytest.mark.parametrize("narrowed, expected", [(True, "rejected"), (False, "executed")])
+def test_narrowing_the_console_operator_to_view_own_before_confirm_rejects_the_decision(world, narrowed, expected):
+    w = scene(world)
+    op = operator(w, APPROVE, VIEW)
+    w.db.query(User).filter(User.id == op).one().respond_contact_id = w.contact
+    w.db.commit()
+    action = store(w.db, w, op, [(DECIDE, decide_args(w))], {w.rid})
+    if narrowed:
+        revoke(w.db, op, VIEW)
+        grant_more(w.db, op, VIEW_OWN)
+
+    outcome = console_confirm(w.db, w, action, op)
+
+    assert outcome.status == expected
+    assert header(w).approval_status == ("pending" if narrowed else "approved")
+
+
+# ------------------------------------------------------------------ the cancel tool only picks a parked DECISION
+
+
+def test_the_cancel_tool_ignores_a_parked_action_of_another_kind(world):
+    from datetime import datetime
+
+    w = scene(world, grace=60)
+    other = SlaFormAction(
+        id=str(uuid.uuid4()), action_key="pr.reject_submitted", source_entity_type=KIND, source_entity_id=w.rid,
+        event_name="reject_submitted", payload_json={"rejection_reason": "no"}, prior_state_json={},
+        requested_by_id=w.user_id, channel="ui", status="pending", commit_at=datetime.utcnow() + timedelta(seconds=60),
+    )
+    w.db.add(other)
+    w.db.commit()
+
+    nothing, none = propose(w.db, w, None, CANCEL, {"request_id": w.rid}, w.rid)
+
+    assert refused(nothing, none), "the tool picked a parked action that is not an approval decision"
+    w.db.expire_all()
+    assert w.db.query(SlaFormAction).filter(SlaFormAction.id == other.id).one().status == "pending"
+
+    # control: once a decision is parked (and the other action is gone) the same call is proposed
+    other.status = "cancelled"
+    w.db.commit()
+    decide = store(w.db, w, None, [(DECIDE, decide_args(w))], {w.rid})
+    assert chat_confirm(w, decide).steps[0]["status"] == "parked"
+    ok, step = propose(w.db, w, None, CANCEL, {"request_id": w.rid}, w.rid)
+    assert ok.status == "proposed" and step is not None
+
+
+def test_the_cancel_proposal_itself_is_refused_for_someone_who_did_not_park_the_decision(world):
+    """Not left to the confirm step: a non-requester, non-admin gets no proposal at all."""
+    w = scene(world, grace=60)
+    other = scene(world, grace=None)  # a second agent contact and linked user (approve + view)
+    decide = store(w.db, w, None, [(DECIDE, decide_args(w))], {w.rid})
+    assert chat_confirm(w, decide).steps[0]["status"] == "parked"
+    other.rid = w.rid  # the second user looks at the first user's parked decision
+
+    own, own_step = propose(w.db, w, None, CANCEL, {"request_id": w.rid}, w.rid)
+    res, step = propose(w.db, other, None, CANCEL, {"request_id": w.rid}, w.rid)
+
+    assert own.status == "proposed" and own_step is not None  # control: the requester
+    assert refused(res, step), "the proposal was made for a user who may not withdraw the decision"
