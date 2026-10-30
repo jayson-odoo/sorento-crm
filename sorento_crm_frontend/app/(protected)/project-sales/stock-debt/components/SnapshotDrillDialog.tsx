@@ -143,18 +143,19 @@ function buildColumns(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine
 }
 
 /** The shared "Request CS to reserve", fed by the OI's live rows narrowed to this product's
- *  frozen rows that the OI page itself would still accept. Mounted only while open, so the
- *  OI is read when asked for. */
+ *  drill rows (frozen, or linked after the snapshot) that the OI page itself would still
+ *  accept. Mounted only while open, so the OI is read when asked for. */
 function OiRequestDialog({
   oiId,
-  frozenRowIds,
+  drillRowIds,
   coveredRowIds,
   defaultWarehouseId,
   onOpenChange,
   onSent,
 }: {
   oiId: string;
-  frozenRowIds: Set<string>;
+  /** This product's rows on the drill: frozen, or linked to its lines after the snapshot. */
+  drillRowIds: Set<string>;
   /** Frozen rows whose line reads Short 0: they open unticked. */
   coveredRowIds: string[];
   defaultWarehouseId: string | null;
@@ -165,9 +166,9 @@ function OiRequestDialog({
   const rows = React.useMemo(
     () =>
       (live.data ?? []).filter(
-        (row) => frozenRowIds.has(row.id) && reserveIneligibleReason(row) === null,
+        (row) => drillRowIds.has(row.id) && reserveIneligibleReason(row) === null,
       ),
-    [live.data, frozenRowIds],
+    [live.data, drillRowIds],
   );
   return (
     <RequestReserveDialog
@@ -197,13 +198,10 @@ function OiGroupGrid({
   const totals = React.useMemo(() => sumDemand(group.lines), [group.lines]);
   const columns = React.useMemo(() => buildColumns(totals), [totals]);
 
-  const frozenRowIds = React.useMemo(
-    () =>
-      new Set(
-        group.lines.flatMap((line) =>
-          line.group_oi_rows.filter((oi) => !oi.after_snapshot).map((oi) => oi.row_id),
-        ),
-      ),
+  // RESERVE-REQ-PICK AC-RP-8 (owner, 30 Oct: "we snapshot the sales order but not the
+  // OI"): rows linked after the snapshot count too, ticked like any line still short.
+  const drillRowIds = React.useMemo(
+    () => new Set(group.lines.flatMap((line) => line.group_oi_rows.map((oi) => oi.row_id))),
     [group.lines],
   );
   const coveredRowIds = React.useMemo(
@@ -216,7 +214,7 @@ function OiGroupGrid({
     [group.lines],
   );
   const requestable = group.lines.some((line) =>
-    line.group_oi_rows.some((oi) => oi.requestable && !oi.after_snapshot),
+    line.group_oi_rows.some((oi) => oi.requestable),
   );
 
   return (
@@ -254,7 +252,7 @@ function OiGroupGrid({
       {requestOpen && group.oiId && (
         <OiRequestDialog
           oiId={group.oiId}
-          frozenRowIds={frozenRowIds}
+          drillRowIds={drillRowIds}
           coveredRowIds={coveredRowIds}
           defaultWarehouseId={defaultWarehouseId}
           onOpenChange={setRequestOpen}
