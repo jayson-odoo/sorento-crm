@@ -111,11 +111,32 @@ def proposal_lines(action: AgentAction) -> list[str]:
     return [str(s.get("summary") or "") for s in action.steps or []]
 
 
+def waiting_of(step: dict) -> dict | None:
+    """A done step whose form action is parked in its grace window: when it applies, for the console's
+    Withdraw countdown. None for every other step."""
+    after = step.get("after") or {}
+    if step.get("status") != "done" or not after.get("deferred"):
+        return None
+    try:
+        # The form-action stamps are naive UTC.
+        due = datetime.fromisoformat(str(after.get("commit_at"))).replace(tzinfo=None)
+    except ValueError:
+        return None
+    if due <= datetime.now(timezone.utc).replace(tzinfo=None):
+        return None
+    return {"commit_at": after.get("commit_at"), "window_seconds": after.get("window_seconds")}
+
+
+def step_out(step: dict, *, default_status: str | None = None) -> dict:
+    """One step as the API carries it: no ids, no internals."""
+    return {
+        "summary": step.get("summary"), "status": step.get("status") or default_status,
+        "error": scrub_ids(step.get("error")), "changes": step.get("changes") or [], "waiting": waiting_of(step),
+    }
+
+
 def _out_steps(steps: list[dict]) -> list[dict]:
-    return [
-        {"summary": s.get("summary"), "status": s.get("status"), "error": scrub_ids(s.get("error")), "changes": s.get("changes") or []}
-        for s in steps
-    ]
+    return [step_out(s) for s in steps]
 
 
 # ------------------------------------------------------------------ confirm
@@ -312,3 +333,50 @@ def cancel(db, contact_respond_id: str, action_id: str, *, operator_user_id: str
         raise ActionRefused("not_proposed")
     db.refresh(action)
     return ActionOutcome(str(action.id), "cancelled", _reply("cancelled", []), _out_steps(action.steps or []))
+
+
+# ------------------------------------------------------------------ withdraw (inside the grace window)
+
+WITHDRAWN_REPLY = "Withdrawn. Nothing was changed and nobody was told."
+
+
+def withdraw(
+    db, contact_respond_id: str, action_id: str, index: int, *, operator_user_id: str | None = None
+) -> ActionOutcome:
+    """Withdraw one parked step through the system's form-action cancel, as the linked user who started it.
+    The cancel has no slug (nothing has happened yet); a console operator may withdraw only what they could
+    have confirmed, as `cancel` rules."""
+    from app.api.v1.sla.form_actions import cancel_form_action
+
+    action = _load(db, contact_respond_id, action_id)
+    steps = copy.deepcopy(action.steps or [])
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(steps):
+        raise ActionRefused("not_found")
+    step = steps[index]
+    after = step.get("after") or {}
+    if waiting_of(step) is None or not after.get("pending_action_id"):
+        raise ActionRefused("not_waiting")
+    try:
+        ctx = build_context(db, contact_respond_id)
+    except AgentRefused:
+        raise ActionRefused("entry_refused")
+    definition = writes.WRITES.get(step.get("tool"))
+    theirs = str(operator_user_id or ctx.user_id)
+    may = theirs == str(ctx.user_id) or (definition is not None and writes.holds(db, theirs, definition.user_permission))
+    if str(ctx.user_id) != str(action.user_id) or not may:
+        raise ActionRefused("entry_refused")
+    if operator_user_id and str(operator_user_id) != str(ctx.user_id):
+        ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
+    try:
+        writes.run_as_user(
+            db, ctx, lambda user: cancel_form_action(action_id=str(after["pending_action_id"]), current_user=user, db=db),
+            tool_name=step.get("tool"),
+        )
+    except writes.HTTPException as exc:
+        db.rollback()
+        raise ActionRefused("applied" if exc.status_code == 409 else "not_waiting")
+    step["status"] = "withdrawn"
+    step["changes"] = [dict(c, after="Withdrawn") for c in step.get("changes") or []]
+    db.execute(update(AgentAction).where(AgentAction.id == action.id).values(steps=steps))
+    db.commit()
+    return ActionOutcome(str(action.id), action.status, WITHDRAWN_REPLY, _out_steps(steps))

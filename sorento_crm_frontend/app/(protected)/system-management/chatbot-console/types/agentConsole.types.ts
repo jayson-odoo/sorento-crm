@@ -46,11 +46,18 @@ export interface AgentChange {
   after: string;
 }
 
+/** A done step whose form action waits out its grace window: when it applies. */
+export interface AgentStepWaiting {
+  commit_at: string | null;
+  window_seconds: number | null;
+}
+
 export interface AgentActionStep {
   summary: string | null;
-  status: 'done' | 'failed' | 'skipped' | 'proposed' | string;
+  status: 'done' | 'failed' | 'skipped' | 'proposed' | 'withdrawn' | string;
   error: string | null;
   changes?: AgentChange[];
+  waiting?: AgentStepWaiting | null;
 }
 
 /** A proposal made in a turn, as it stands now: kept across reloads. */
@@ -130,6 +137,8 @@ export const ACTION_REFUSAL_MESSAGES: Record<string, string> = {
   entry_refused: 'The agent can no longer act for this contact.',
   changed: 'The record changed since this was proposed.',
   same_turn: 'This proposal cannot be confirmed yet.',
+  applied: 'That change already applied, so it can no longer be withdrawn.',
+  not_waiting: 'That change is not waiting to apply.',
 };
 
 export const AGENT_TOOL_LABELS: Record<string, string> = {
@@ -155,6 +164,7 @@ export const AGENT_TOOL_LABELS: Record<string, string> = {
   crm_contact_access_update: 'Update contact access',
   crm_purchase_requests_list: 'Purchase requests',
   crm_purchase_request_decide: 'Decide purchase request',
+  crm_purchase_request_action_undo: 'Undo purchase request action',
   confirm_action: 'Confirm',
   cancel_action: 'Cancel',
 };

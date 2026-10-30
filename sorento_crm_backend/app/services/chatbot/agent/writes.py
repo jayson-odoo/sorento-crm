@@ -1553,3 +1553,136 @@ USER_READS[LIST_PRS] = UserRead(
     run=_pr_list,
     combine=_combine_prs,
 )
+
+
+# ------------------------------------------------------------------ W3 taking an action back
+
+UNDO_PR = "crm_purchase_request_action_undo"
+FORM_UNDO = "sla_management.form_sla.undo_action"
+
+
+def _is_admin(db, user_id: str) -> bool:
+    from app.api.v1.sla.form_actions import _is_admin as route_is_admin
+
+    return route_is_admin(db, user_id)
+
+
+def _undo_read_before(db, user: dict, args: dict) -> dict:
+    """What taking the request's action back would do now, by the system's rules: the user's own action
+    still waiting in its grace window is withdrawn (the form-action cancel); otherwise the last committed
+    action is undone (the post-grace undo: its slug, its guardrail, its mandatory reason)."""
+    from app.services.error_handler import handle_conflict, handle_validation_error
+    from app.services.form_action_registry import get_action
+    from app.services.form_action_service import _UNDO_REFUSAL_COPY, FormActionService
+    from app.services.form_action_undo import evaluate
+    from app.services.procurement_service import PurchaseRequestService
+    from app.services.uuid_path_param import validate_uuid_path
+
+    rid = str(args["request_id"])
+    validate_uuid_path(rid, resource="Request")
+    header = PurchaseRequestService(db).get_request(rid)
+    kind = header.request_type
+    waiting = FormActionService(db).pending_for(kind, rid)
+    if waiting is not None:
+        # The cancel route's rule. The agent acts for the linked user, who started the agent's actions.
+        starter = str(user.get("linked_user_id") or user["id"])
+        if str(waiting.requested_by_id or "") != starter and not _is_admin(db, str(user["id"])):
+            raise handle_conflict("Only the person who started this action can undo it.")
+        state, row = "waiting", waiting
+    else:
+        found = evaluate(
+            db, source_entity_type=kind, source_entity_id=rid, has_permission=_permitted(db, str(user["id"]), FORM_UNDO)
+        )
+        if not found.can_undo or found.action is None:
+            raise handle_conflict(_UNDO_REFUSAL_COPY.get(found.blocked_reason or "", "This action cannot be undone."))
+        if not _line(args.get("reason")):
+            raise handle_validation_error("A reason is required to undo an action.")
+        state, row = "applied", found.action
+    action = get_action(row.action_key)
+    return {
+        "state": state,
+        "form_action": str(row.id),
+        "approval_status": header.approval_status,
+        "status": header.status,
+        "updated_at": _plain(header.updated_at),
+        "_show": {
+            "kind": _PR_KINDS.get(kind, "request"),
+            "number": header.request_number or "(no number)",
+            "label": (action.label if action else "action").lower(),
+        },
+    }
+
+
+def _undo_summary(args: dict, before: dict) -> str:
+    target = f"{before['kind']} {_line(before['number'])}"
+    if before["state"] == "waiting":
+        return f"Withdraw the waiting {before['label']} on {target} before it applies. Nothing has been sent yet."
+    return (
+        f"Undo the {before['label']} on {target} with the reason {_quoted(args['reason'])}. The request goes "
+        "back to how it was before it, and everyone involved will be told."
+    )
+
+
+def _undo_execute(db, user: dict, args: dict) -> dict:
+    from app.api.v1.sla.form_actions import _UndoRequest, cancel_form_action, undo_form_action
+    from app.services.error_handler import AppException
+    from app.services.procurement_service import PurchaseRequestService
+
+    rid = str(args["request_id"])
+    before = _undo_read_before(db, user, args)
+    if before["state"] == "waiting":
+        cancel_form_action(action_id=before["form_action"], current_user=user, db=db)
+    else:
+        # The route's `require_permission` does not run on a direct call.
+        if not _permitted(db, str(user["id"]), FORM_UNDO):
+            raise AppException(status_code=403, message="You do not have permission to undo actions on this form.", code="FORBIDDEN")
+        header = PurchaseRequestService(db).get_request(rid)
+        body = _UndoRequest(source_entity_type=header.request_type, source_entity_id=rid, reason=_line(args["reason"]))
+        undo_form_action(body=body, current_user=user, db=db)
+    db.expire_all()
+    header = PurchaseRequestService(db).get_request(rid)
+    return {
+        "id": rid,
+        "after": {"state": "withdrawn" if before["state"] == "waiting" else "undone",
+                  "approval_status": header.approval_status, "status": header.status},
+    }
+
+
+def _undo_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    record = f"{shown.get('kind', 'request')} {shown.get('number', '')}".strip()
+    if after.get("state") == "withdrawn":
+        return _diff(record, [(shown.get("label", "action").capitalize(), "Waiting to apply", "Withdrawn")])
+    words = lambda v: _APPROVAL_WORDS.get(v, v)  # noqa: E731
+    return _diff(record, [
+        ("Approval", words(before.get("approval_status")), words(after.get("approval_status"))),
+        ("Status", before.get("status"), after.get("status")),
+    ])
+
+
+WRITES[UNDO_PR] = WriteDef(
+    name=UNDO_PR,
+    user_permission=PR_READ,
+    schema={
+        "type": "function",
+        "function": {
+            "name": UNDO_PR,
+            "description": (
+                "Propose taking back the last action on one purchase request or sponsorship form, as the "
+                "screen's Undo does: the user's own action still waiting in its grace window is withdrawn "
+                "(nothing was sent); an applied one is undone with a reason (the system requires one) and "
+                "everyone involved is told. Nothing changes until the user confirms. request_id must come "
+                "from crm_purchase_requests_list or crm_agent_actions_recent."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"request_id": {"type": "string"}, "reason": {"type": "string"}},
+                "required": ["request_id"],
+            },
+        },
+    },
+    read_before=_undo_read_before,
+    summary=_undo_summary,
+    execute=_undo_execute,
+    record_key="request_id",
+    changes=_undo_changes,
+)

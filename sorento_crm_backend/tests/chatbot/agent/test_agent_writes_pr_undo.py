@@ -312,3 +312,15 @@ def test_withdraw_of_another_contacts_action_is_not_found(db, sends, monkeypatch
         actions.withdraw(db, other.respond_id, str(action.id), 0)
 
     assert exc.value.reason == "not_found"
+
+
+def test_a_step_whose_window_has_passed_no_longer_reports_waiting():
+    from app.services.chatbot.agent.actions import waiting_of
+
+    past = (datetime.utcnow() - timedelta(seconds=1)).isoformat()
+    future = (datetime.utcnow() + timedelta(seconds=60)).isoformat()
+    step = {"status": "done", "after": {"deferred": True, "commit_at": past, "window_seconds": 30}}
+
+    assert waiting_of(step) is None
+    assert waiting_of({**step, "after": {**step["after"], "commit_at": future}})["window_seconds"] == 30
+    assert waiting_of({**step, "status": "withdrawn", "after": {**step["after"], "commit_at": future}}) is None

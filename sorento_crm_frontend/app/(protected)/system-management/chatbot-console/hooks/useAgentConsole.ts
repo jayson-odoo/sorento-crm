@@ -11,6 +11,7 @@ import {
   getAgentConversation,
   newAgentConversation,
   postAgentTurn,
+  withdrawAgentStep,
 } from '../services/agentConsoleService';
 import type {
   AgentActionResponse,
@@ -140,6 +141,23 @@ export function useAgentConsole() {
     },
   });
 
+  const withdraw = useMutation({
+    mutationFn: ({ actionId, index }: { actionId: string; index: number }) =>
+      withdrawAgentStep(contactId as string, actionId, index),
+    onMutate: () => setNotice(null),
+    onSuccess: (result) => toast.success(result.reply_text),
+    onError: (error) => {
+      if (error instanceof ActionRefusedError) {
+        setNotice(error.message);
+      } else {
+        toast.error(error instanceof Error ? error.message : 'Failed to withdraw the change');
+      }
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey });
+    },
+  });
+
   const fresh = useMutation({
     mutationFn: () => newAgentConversation(contactId as string),
     onSuccess: async () => {
@@ -201,5 +219,9 @@ export function useAgentConsole() {
       decide.mutate({ actionId, turnId, decision: 'confirm' }),
     cancelAction: (actionId: string, turnId: string) =>
       decide.mutate({ actionId, turnId, decision: 'cancel' }),
+    withdrawing: withdraw.isPending,
+    withdrawStep: (actionId: string, index: number) => withdraw.mutate({ actionId, index }),
+    /** A waiting change's window closed: read the conversation again to see it applied. */
+    refresh: () => queryClient.invalidateQueries({ queryKey }),
   };
 }

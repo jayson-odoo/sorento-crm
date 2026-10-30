@@ -276,7 +276,7 @@ def test_01_the_registry_holds_exactly_the_registered_writes_and_the_in_process_
 
     assert set(writes.WRITES) == {
         UPDATE, "crm_opportunity_create", "crm_opportunity_update", "crm_contact_access_update",
-        "crm_purchase_request_decide",
+        "crm_purchase_request_decide", "crm_purchase_request_action_undo",
     }
     assert {LIST, "crm_agent_actions_recent"} <= set(writes.USER_READS)
     definition = writes.WRITES[UPDATE]
