@@ -194,11 +194,11 @@ def test_draft_save_may_stay_incomplete(world, kind):
 # ------------------------------------------------------------------ revise
 
 
-@pytest.mark.parametrize("kind", ("stock_inquiry", "purchase_request", "sponsorship_form"))
-def test_revise_cannot_blank_a_required_field(kind):
-    """A revise is the other way back into the flow, so it refuses as submit does. The
-    requestor is frozen on revise for these kinds, so the blank under test is reached by
-    seeding a submitted row without one (a legacy row) and revising it unchanged."""
+REVISABLE = ("stock_inquiry", "purchase_request", "sponsorship_form")
+
+
+def _revise_legacy_row(kind, payload, **overrides):
+    """Seed a submitted, revisable row and revise it as its contact."""
     from unittest.mock import patch
 
     from app.services.portal_revision_service import PortalRevisionService
@@ -210,24 +210,43 @@ def test_revise_cannot_blank_a_required_field(kind):
         seed_system_settings,
         seed_token,
     )
-    from app.services.error_handler import AppException
 
     with patch("app.services.queue_service.enqueue_job", return_value=None), blank_session() as db:
         seed_system_settings(db, cap=3)
         seed_config(db, kind)
         person = seed_contact(db)
-        overrides = (
-            {"salesperson_contact_id": None}
-            if kind == "stock_inquiry"
-            else {"requested_by_contact_id": None}
-        )
         row = seed_entity(db, kind, person, **overrides)
-        with pytest.raises(AppException) as err:
-            PortalRevisionService(db).revise(
-                seed_token(person), kind, str(row.id), {}, "Fixing the form", row.revision_no
-            )
-        assert err.value.status_code == 422
-        assert err.value.detail["detail"] == EXPECTED_REQUIRED[kind][0]
+        return PortalRevisionService(db).revise(
+            seed_token(person), kind, str(row.id), payload, "Fixing the form", row.revision_no
+        )
+
+
+@pytest.mark.parametrize("kind", REVISABLE)
+def test_revise_does_not_demand_a_frozen_field(kind):
+    """The requestor is frozen on revise, so the contact cannot fill it there. A row
+    created elsewhere without one (staff / external create leave it optional) must still
+    be revisable rather than refused with no way out (security-review finding)."""
+    field = EXPECTED_REQUIRED[kind][0]
+    out = _revise_legacy_row(kind, {}, **{field: None})
+    assert out["revision_no"] == 1
+
+
+def test_revise_refuses_a_blanked_required_field(monkeypatch):
+    """The revise path runs the same check as submit. On main the revisable kinds' only
+    required field is frozen, so a non-frozen one is made required here to prove the hook
+    is live (complaint revise, coming with #1953, has eleven)."""
+    from app.services import portal_required_fields
+    from app.services.error_handler import AppException
+
+    monkeypatch.setitem(
+        portal_required_fields.REQUIRED_ON_SUBMIT,
+        "stock_inquiry",
+        ("salesperson_contact_id", "item_description"),
+    )
+    with pytest.raises(AppException) as err:
+        _revise_legacy_row("stock_inquiry", {"item_description": "  "})
+    assert err.value.status_code == 422
+    assert err.value.detail["detail"] == "item_description"
 
 
 # ------------------------------------------------------------------ one list

@@ -46,10 +46,12 @@ def _filled(value: Any) -> bool:
     return True
 
 
-def missing_on_submit(kind: str, row: Any) -> list[str]:
-    """Required fields of `kind` still empty on `row`, in form order."""
+def missing_on_submit(kind: str, row: Any, skip: tuple[str, ...] = ()) -> list[str]:
+    """Required fields of `kind` still empty on `row`, in form order, minus `skip`."""
     missing: list[str] = []
     for name in REQUIRED_ON_SUBMIT.get(kind, ()):
+        if name in skip:
+            continue
         # Complaint product lines are rebuilt into the legacy `product_code` CSV
         # (`_replace_complaint_lines_if_needed`), which older clients also send flat.
         attr = "product_code" if name == "product_lines" else name
@@ -58,11 +60,12 @@ def missing_on_submit(kind: str, row: Any) -> list[str]:
     return missing
 
 
-def require_complete(kind: str, row: Any) -> None:
+def require_complete(kind: str, row: Any, skip: tuple[str, ...] = ()) -> None:
     """422 naming every empty required field. Same body project registration answers
     with: `detail` is the comma-separated names, which the portal client reads into
-    the error's `fields`."""
-    missing = missing_on_submit(kind, row)
+    the error's `fields`. `skip` names fields the caller cannot let the contact change
+    (a revise's frozen fields): demanding one would refuse with no way out."""
+    missing = missing_on_submit(kind, row, skip)
     if missing:
         raise AppException(
             status_code=422,
