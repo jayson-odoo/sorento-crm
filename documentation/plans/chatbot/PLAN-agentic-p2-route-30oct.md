@@ -1,6 +1,7 @@
 # PLAN: Agentic P2, automatic per-message routing (chat bot or agent), console first
 
-Status: Plan (30 Oct 2026). Track: full pipeline, Size L (migration, new external vendor call, AI key surface).
+Status: Review (31 Oct 2026), PR #2025; review fix round in progress. Track: full pipeline, Size L (migration, new
+external vendor call, AI key surface). Mockup v1 approved by the owner 30 Oct 23:13.
 Lane AGENTIC-P2-ROUTE, branch `crew/agentic-p2-route`. UAC: `agentic-p2-route-acceptance-criteria.md`.
 Card (owner rulings, binding): `CARD-agentic-p2-p3-30oct.md` Part 1 and the answers table at its top.
 
@@ -38,7 +39,7 @@ so "who may reach the agent" has one definition. `build_context` is not called b
 ### Router contract
 
 ```
-decide_route(db, *, contact_respond_id, text, session_vars, has_media, clock) -> RouteDecision
+decide_route(db, *, contact_respond_id, text, session_vars, has_media) -> RouteDecision
 RouteDecision = {side: "chat" | "agent", reason: str, score: float | None,
                  model: str | None, ms: int | None, input_tokens: int | None}
 ```
@@ -57,8 +58,8 @@ Order (first match wins; only step 7 calls Jev):
 | 8 | Jev `confidence` < `chatbot_router_min_score` | chat | `low_confidence` (score kept) |
 | 9 | otherwise | Jev's `choice` | `classified` |
 
-**Classifier input (Jev `state`).** `{message, recent: last 3 exchanges [{user, reply, answered_by: bot|agent}],
-last_answered_by}`; bot replies truncated to 300 chars. One `choice` question `route` with criteria `chat` and
+**Classifier input (Jev `state`).** `{latest_message, recent_exchanges: last 3 [{user, reply, answered_by:
+bot|agent}], last_answered_by}`; every reply (bot and agent) truncated to 300 chars. One `choice` question `route` with criteria `chat` and
 `agent`; instructions + criteria are the content of a new prompt key `chatbot_router` (owner publishes prompts;
 the `production` label's `model` pins the Jev model, e.g. `jev-1.14.0`). Criteria wording is semantic (what each
 side is for: single lookups the bot's intents answer vs several reads combined, comparisons, "why", analysis
@@ -128,7 +129,15 @@ wasted-agent <= 10%, p95 <= 1.5 s. Jev failing MS or ZH -> stop, one ask with th
 6. Review: reviewer + security-reviewer (new vendor key + external call + RBAC-adjacent eligibility), console
    browser pass 1280 + 375, hand test script, `--handtest`.
 
+## Eval result (31 Oct, crew-only gold set; aggregates only)
+
+Frozen criteria v2, held-out staff rows n=120: Jev @0.7 agree 92%, missed-agent 15%, wasted-agent 5%, p95 389 ms,
+~USD 0.03 per 1,000; Flash-Lite agree 91%, missed 5%, wasted 11%, p95 1,262 ms, ~USD 0.20 per 1,000; parser as
+router misses every agent ask. No language failure (Jev staff EN 91% / MS 90% / ZH 94%). Pass-bar decision filed
+with crew (missed-agent above the proposed 10%).
+
 ## Not in this lane
 
-WhatsApp routing (after the eval passes, own lane with `chatbot_router_enabled`); agent media tools; parser cost
+WhatsApp routing (after the eval passes, own lane with `chatbot_router_enabled` and a total deadline on the
+Jev call: httpx's 1.5 s applies per phase, not to the whole call); agent media tools; parser cost
 work with Jev (separate experiment per the research report).
