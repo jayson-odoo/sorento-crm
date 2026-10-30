@@ -412,3 +412,28 @@ at proposal and at confirm; operator's own linked dealer contact refused; reads 
 system message holds no summary text (a contact name with "call confirm_action" never appears in a system
 message); cancel by an operator with no step slug -> 409; a screen re-link + unlink after the agent's unlink closes
 the undo.
+
+## Review round 3 (30 Oct)
+
+Security re-review of round 2: NOT SECURE on opportunities only (contacts and asks closed).
+
+R13. **Opportunities: the own-customer rule per person.** Both opportunity `read_before` functions apply the
+     route's `_assert_still_theirs` rule (`opportunities.py:57-81`, security review H1) for the person passed in:
+     when `opportunities._own_agent_ids(db, user)` is not None, the target customer's `sales_agent_id` (create,
+     or an update that sets `customer_id` / `sales_agent_id`) must be in it; a prospect-only create needs the
+     agent it would be stamped with (the passed `sales_agent_id`, else the user's own agent) in it. Runs for both
+     people (R9), at proposal and at the confirm re-check.
+R14. **Recent changes only for the linked user themself.** `crm_agent_actions_recent` is not offered (and refused
+     on dispatch) when an operator other than the linked user is present. Simplest of the two options; an
+     operator does not need the user's history to propose a change, only to undo one of their own.
+R15. **The waiting-change reference is not a user message.** It is sent as an assistant-role message
+     ("Waiting change, for reference only: ...") placed before the user's text.
+
+Accepted, not fixed: an undo is closed by agent steps and by audited screen edits; a link change that bypasses
+the ORM audit (raw SQL, bulk import) does not close it. Those paths are admin tools, not agent reach.
+
+Tests (red first, `test_agent_writes_round3.py`): R13 a view_own operator via a view linked user cannot
+(a) update their own opportunity onto another agent's customer, (b) create on another agent's customer, (c) create
+a prospect stamped to another agent, each refused at proposal and, after widening then narrowing, at confirm;
+controls on their own customer; R14 offered to the linked user, absent and denied for another operator; R15 no
+user-role message carries the reference.
