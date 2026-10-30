@@ -1209,7 +1209,7 @@ def flag_rows_for_cancelled_lines(
         .filter(
             ProjectSalesOrderLine.core_sales_order_line_id.in_(ids),
             OrderInquiryRow.state != INQUIRY_CANCELLED,
-            OrderInquiryRow.ack_state == ACK_ACKNOWLEDGED,
+            OrderInquiryRow.ack_state != ACK_REJECTED,
         )
         .all()
     )
