@@ -34,7 +34,6 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
 import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { useStockInquiries } from '../hooks/useStockInquiries';
-import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
@@ -64,12 +63,6 @@ const FILTERS_VERSION = 1;
 
 type StockInquiriesFilters = { statuses: string[] };
 
-/** A user limited to their own rows (PORTAL-P4-REQUESTS) also filters by their drafts. */
-const LIMITED_STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  ...STOCK_INQUIRY_STATUS_LABELS,
-};
-
 /**
  * A salesperson limited to their own stock inquiries gets the portal's own list body, through My Requests
  * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
@@ -83,11 +76,7 @@ export default function StockInquiriesList() {
 function StaffStockInquiriesList() {
   const router = useRouter();
   const pathname = usePathname();
-  // A salesperson sees only their own rows (the server narrows the list): Create needs
-  // `.add`, and there is no bulk Delete (a draft is deleted on its own page).
-  const { limited } = useRequestScope('stock_inquiry');
-  const canAdd = useHasPermission('procurement.stock_inquiries.add');
-  const statusLabels = limited ? LIMITED_STATUS_LABELS : STOCK_INQUIRY_STATUS_LABELS;
+  const statusLabels = STOCK_INQUIRY_STATUS_LABELS;
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -459,7 +448,7 @@ function StaffStockInquiriesList() {
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
-  const listPrimaryAction = limited && !canAdd ? undefined : (
+  const listPrimaryAction = (
     <Button
       onClick={() =>
         router.push('/procurement-management/stock-inquiries/new')
@@ -557,19 +546,15 @@ function StaffStockInquiriesList() {
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
-            bulkActions={
-              limited
-                ? []
-                : [
-                    {
-                      key: 'delete',
-                      label: 'Delete',
-                      icon: Trash2,
-                      destructive: true,
-                      onClick: () => setBulkDeleteDialogOpen(true),
-                    },
-                  ]
-            }
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteDialogOpen(true),
+              },
+            ]}
           />
         </CardHeader>
         <CardTable>

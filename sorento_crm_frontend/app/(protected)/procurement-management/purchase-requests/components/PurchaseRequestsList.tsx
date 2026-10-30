@@ -199,15 +199,7 @@ function StaffPurchaseRequestsList({
     staleTime: 5 * 60_000,
   });
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  // A salesperson sees only their own rows (PORTAL-P4-REQUESTS): Create needs `.add`, there is no
-  // bulk Delete or Report; a draft is deleted on its own page. Limited is per kind.
-  const scopeKind = requestType ?? 'purchase_request';
-  const { limited } = useRequestScope(scopeKind);
-  const canAdd = useHasPermission(
-    scopeKind === 'sponsorship_form' ? 'procurement.sponsorship_forms.add' : 'procurement.purchase_requests.add',
-  );
-  const canViewReport =
-    useHasPermission(reportPermission ?? '') && Boolean(reportPermission) && !limited;
+  const canViewReport = useHasPermission(reportPermission ?? '') && Boolean(reportPermission);
 
   const effectiveRequestType =
     requestType ?? (requestTypeFilter || undefined);
@@ -469,13 +461,12 @@ function StaffPurchaseRequestsList({
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
-  const listPrimaryAction =
-    limited && !canAdd ? undefined : (
-      <Button onClick={() => router.push(`${basePath}/new`)}>
-        <Plus />
-        Create
-      </Button>
-    );
+  const listPrimaryAction = (
+    <Button onClick={() => router.push(`${basePath}/new`)}>
+      <Plus />
+      Create
+    </Button>
+  );
 
   return (
     <DataGrid
@@ -581,7 +572,7 @@ function StaffPurchaseRequestsList({
                 </div>
               ),
             }}
-            exportConfig={limited ? false : { filename: 'purchase_requests_export.xlsx' }}
+            exportConfig={{ filename: 'purchase_requests_export.xlsx' }}
             secondaryActions={
               canViewReport
                 ? [
@@ -597,19 +588,15 @@ function StaffPurchaseRequestsList({
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
-            bulkActions={
-              limited
-                ? []
-                : [
-                    {
-                      key: 'delete',
-                      label: 'Delete',
-                      icon: Trash2,
-                      destructive: true,
-                      onClick: () => setBulkDeleteOpen(true),
-                    },
-                  ]
-            }
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteOpen(true),
+              },
+            ]}
           />
         </CardHeader>
         <CardTable>

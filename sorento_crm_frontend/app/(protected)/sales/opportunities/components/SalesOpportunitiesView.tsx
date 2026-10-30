@@ -81,8 +81,6 @@ function OwnSalesOpportunitiesView() {
 
 function StaffSalesOpportunitiesView() {
   const canAdd = useHasPermission('sales.opportunities.add');
-  // A salesperson limited to their own opportunities picks no agent (PORTAL-P4-REQUESTS S6).
-  const { limited } = useRequestScope('sales_opportunity');
   const [modalOpen, setModalOpen] = useState(false);
   const {
     value: searchQuery,
@@ -111,7 +109,7 @@ function StaffSalesOpportunitiesView() {
   ]);
 
   const { data: meta } = useSalesOpportunityMeta();
-  const { data: agentOptions } = useSalesOpportunityAgentOptions(!limited);
+  const { data: agentOptions } = useSalesOpportunityAgentOptions();
   const stageOptions: SearchableSelectOption[] = (meta?.stages ?? []).map((s) => ({
     value: s.id,
     label: s.label,
@@ -327,18 +325,16 @@ function StaffSalesOpportunitiesView() {
                   clearable
                   triggerClassName="w-full sm:w-40"
                 />
-                {!limited && (
-                  <SearchableMultiSelect
-                    id="opportunities-filter-agent"
-                    aria-label="Agent"
-                    value={splitMulti(salesAgentId)}
-                    onChange={(v) => setSalesAgentId(joinMulti(v))}
-                    options={agentSelectOptions}
-                    placeholder="Agent"
-                    clearable
-                    triggerClassName="w-full sm:w-40"
-                  />
-                )}
+                <SearchableMultiSelect
+                  id="opportunities-filter-agent"
+                  aria-label="Agent"
+                  value={splitMulti(salesAgentId)}
+                  onChange={(v) => setSalesAgentId(joinMulti(v))}
+                  options={agentSelectOptions}
+                  placeholder="Agent"
+                  clearable
+                  triggerClassName="w-full sm:w-40"
+                />
                 <SearchableMultiSelect
                   id="opportunities-filter-customer"
                   aria-label="Customer"

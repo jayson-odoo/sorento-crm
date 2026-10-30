@@ -45,7 +45,6 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 
@@ -59,8 +58,6 @@ const STATUS_OPTIONS = [
   { value: 'rejected', label: 'Rejected' },
   { value: 'settled_on_site', label: 'Settled on site' },
 ];
-/** A user limited to their own rows (PORTAL-P4-REQUESTS) also filters by their drafts. */
-const LIMITED_STATUS_OPTIONS = [{ value: 'draft', label: 'Draft' }, ...STATUS_OPTIONS];
 
 /**
  * A salesperson limited to their own complaints gets the portal's own list body, through My Requests
@@ -74,10 +71,6 @@ export default function ComplaintsList() {
 
 function StaffComplaintsList() {
   const router = useRouter();
-  // A salesperson sees only their own rows (the server narrows the list): Create needs
-  // `.add`, and there is no bulk Delete, row Delete or PDF (the portal's action set).
-  const { limited } = useRequestScope('complaint');
-  const canAdd = useHasPermission('complaint_management.complaints.add');
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -150,12 +143,12 @@ function StaffComplaintsList() {
     data: rootCauseOptions = [],
     error: rootCauseError,
     refetch: refetchRootCauses,
-  } = useComplaintRootCausesSelect(undefined, { enabled: !limited });
+  } = useComplaintRootCausesSelect();
   const {
     data: resolutionOptions = [],
     error: resolutionError,
     refetch: refetchResolutions,
-  } = useComplaintResolutionsSelect(undefined, { enabled: !limited });
+  } = useComplaintResolutionsSelect();
 
   const filtersActiveCount =
     (assignedToFilter ? 1 : 0) +
@@ -372,8 +365,7 @@ function StaffComplaintsList() {
         size: 56,
         enableSorting: false,
         enableHiding: false,
-        cell: ({ row }) =>
-          limited ? null : (
+        cell: ({ row }) => (
           // The entity's own set, in the row's "..." (D15). Declared once in
           // `../actions`, so the record's gear renders the same items, in the same
           // order, behind the same delete gate.
@@ -385,13 +377,13 @@ function StaffComplaintsList() {
             })}
             ariaLabel="complaint"
           />
-          ),
+        ),
       },
     ],
     // The mutation OBJECT is new on every render, so depending on it would rebuild
     // every column each time and remount the open menu out from under a click.
     // `mutate` is stable; `isPending` is the only part that changes.
-    [exportPdfMutation.mutate, exportPdfMutation.isPending, limited],
+    [exportPdfMutation.mutate, exportPdfMutation.isPending],
   );
 
   const table = useReactTable({
@@ -415,7 +407,7 @@ function StaffComplaintsList() {
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
-  const listPrimaryAction = limited && !canAdd ? undefined : (
+  const listPrimaryAction = (
     <Button
       onClick={() =>
         router.push('/complaint-management/complaints/new')
@@ -488,7 +480,7 @@ function StaffComplaintsList() {
                     <SearchableMultiSelect
                       value={splitMulti(statusFilter)}
                       onChange={(v) => setStatusFilter(joinMulti(v))}
-                      options={limited ? LIMITED_STATUS_OPTIONS : STATUS_OPTIONS}
+                      options={STATUS_OPTIONS}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
                       clearable
@@ -547,19 +539,15 @@ function StaffComplaintsList() {
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
-            bulkActions={
-              limited
-                ? []
-                : [
-                    {
-                      key: 'delete',
-                      label: 'Delete',
-                      icon: Trash2,
-                      destructive: true,
-                      onClick: () => setBulkDeleteDialogOpen(true),
-                    },
-                  ]
-            }
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteDialogOpen(true),
+              },
+            ]}
           />
         </CardHeader>
         <CardTable>

@@ -8,7 +8,6 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import {
   ColumnDef,
   PaginationState,
@@ -18,7 +17,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, UserPlus, X } from 'lucide-react';
+import { ChevronRight, Search, UserPlus, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -40,7 +39,6 @@ import {
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { AUTO_UPDATE_STATUSES } from '@/lib/dealer-kit/product-data-changes';
-import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import {
@@ -61,9 +59,6 @@ const STATUS_OPTIONS = [
   { value: 'void', label: 'Void' },
 ];
 
-/** A salesperson's own list carries their drafts (PORTAL-P4-REQUESTS S7); the queue never does. */
-const DRAFT_OPTION = { value: 'draft', label: 'Draft' };
-
 /** A saved, unsent request keeps status `new`; `portal_draft_at` is what makes it a draft. */
 const displayStatus = (row: PriceTagRequestSummary) => (row.portal_draft_at ? 'draft' : row.status);
 
@@ -78,9 +73,6 @@ export default function PriceTagRequestsList() {
 }
 
 function StaffPriceTagRequestsList() {
-  const { limited } = useRequestScope('price_tag_request');
-  const canCreate = useHasPermission('dealer_kit.price_tag_requests.create');
-  const statusOptions = limited ? [DRAFT_OPTION, ...STATUS_OPTIONS] : STATUS_OPTIONS;
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -321,7 +313,7 @@ function StaffPriceTagRequestsList() {
             );
           }
           // Claiming is marketing's; a salesperson's own row only names who has it.
-          if (row.original.status === 'new' && !row.original.portal_draft_at && !limited) {
+          if (row.original.status === 'new' && !row.original.portal_draft_at) {
             return (
               <Button
                 variant="ghost"
@@ -379,7 +371,7 @@ function StaffPriceTagRequestsList() {
     // handleClaim is stable because fetchData is recreated every render, but
     // in Phase 1 (mock) this is acceptable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [limited],
+    [],
   );
 
   const table = useReactTable({
@@ -448,7 +440,7 @@ function StaffPriceTagRequestsList() {
                     <SearchableMultiSelect
                       value={splitMulti(statusFilter)}
                       onChange={(v) => setStatusFilter(joinMulti(v))}
-                      options={statusOptions}
+                      options={STATUS_OPTIONS}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
                       clearable
@@ -470,16 +462,6 @@ function StaffPriceTagRequestsList() {
             }}
             onRefresh={() => void handleRefresh()}
             isRefreshing={isRefreshing}
-            primaryAction={
-              limited && canCreate ? (
-                <Button asChild>
-                  <Link href="/dealer-kit/price-tag-requests/new">
-                    <Plus />
-                    Create
-                  </Link>
-                </Button>
-              ) : undefined
-            }
           />
         </CardHeader>
         <CardTable>
