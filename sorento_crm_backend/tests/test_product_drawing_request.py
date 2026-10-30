@@ -109,6 +109,7 @@ def seed_drawing_team(
     email_on_escalation: bool = True,
     whatsapp_on_escalation: bool = False,
     start_event: str = "escalate",
+    company_id: str | None = None,
 ) -> dict:
     """An access agent, a team set of ``tiers`` tiers with one member each, an SLA policy with a
     tier row per level, and (``config``) the active `product_drawing` form-SLA step.
@@ -117,7 +118,7 @@ def seed_drawing_team(
     the SAME shape an admin builds in SLA Management, so a hard-coded team in the service would
     not find it. The team set code is random on purpose.
     """
-    company_id = db.execute(text("select id from companies where code = 'SRT'")).scalar()
+    company_id = company_id or db.execute(text("select id from companies where code = 'SRT'")).scalar()
     policy_id = _uid()
     db.add(SLAPolicy(id=policy_id, code=unique_code("POL"), name="ZZT drawing policy"))
     for level in range(1, tiers + 1):
@@ -454,12 +455,11 @@ def test_the_same_user_twice_is_recorded_once(db, env):
     assert out["escalation"]["requester_count"] == 1
 
 
-def test_escalate_locks_the_product_row_before_it_reads_or_opens_a_task(db, env):
-    """Two clicks in the same second must open one task. The check "is there an open task" is
-    read-then-write, so the product row is locked FOR UPDATE around it; a second click then waits
-    for the first to commit and finds its task. A rolled-back single connection cannot race two
-    sessions, so this pins the lock itself: a `FOR UPDATE` on products runs before the first
-    INSERT into the tracker table."""
+def test_escalate_holds_an_advisory_lock_on_the_product_from_before_the_task_to_after_the_requester(db, env):
+    """Two clicks in the same second must open one task. "Is there an open task" is read then
+    write, and the assignee draw commits in between, so a row lock would be gone by the INSERT.
+    The lock is a SESSION-level advisory lock keyed on the product: taken before the tracker is
+    written, released only after the requester row is written."""
     seed_drawing_team(db)
     product, version, line = quoted_product(db, env)
     caller = _user(db, "zzt Sales One")
@@ -468,21 +468,124 @@ def test_escalate_locks_the_product_row_before_it_reads_or_opens_a_task(db, env)
         _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller))
 
     lowered = [s.lower() for s in statements]
-    lock_at = next(
-        (i for i, s in enumerate(lowered) if "for update" in s and "from products" in s), None
-    )
-    insert_at = next(
-        # A scratch schema qualifies the table name, so match it anywhere in the INSERT.
-        (
-            i
-            for i, s in enumerate(lowered)
-            if s.lstrip().startswith("insert into") and "conversation_sla_tracking (" in s
-        ),
-        None,
-    )
-    assert lock_at is not None, "the product row is never locked FOR UPDATE"
-    assert insert_at is not None, "no tracker was inserted"
+
+    def first(pred):
+        return next((i for i, s in enumerate(lowered) if pred(s)), None)
+
+    lock_at = first(lambda s: "pg_advisory_lock" in s)
+    insert_at = first(lambda s: s.lstrip().startswith("insert into") and "conversation_sla_tracking (" in s)
+    requester_at = first(lambda s: s.lstrip().startswith("insert into") and "conversation_sla_event_log" in s)
+    unlock_at = first(lambda s: "pg_advisory_unlock" in s)
+    assert None not in (lock_at, insert_at, requester_at, unlock_at), lowered
     assert lock_at < insert_at, "the lock must be taken before the tracker is written"
+    assert requester_at < unlock_at, "the lock must outlive the requester write"
+    assert not any("for update" in s and "from products" in s for s in lowered), "no raw SQL on products"
+
+
+def test_the_advisory_lock_is_released_when_the_escalation_is_refused(db, env):
+    seed_drawing_team(db, config=False)
+    product, version, line = quoted_product(db, env)
+    caller = _user(db, "zzt Sales One")
+
+    with captured_sql(db) as statements:
+        with pytest.raises(AppException):
+            _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller))
+
+    lowered = [s.lower() for s in statements]
+    locks = sum("pg_advisory_lock" in s for s in lowered)
+    unlocks = sum("pg_advisory_unlock" in s for s in lowered)
+    assert locks == unlocks, (locks, unlocks)
+
+
+@contextmanager
+def _private_schema_engine():
+    """A scratch schema of its own, so a test that REALLY commits cannot leave rows in the shared
+    one (committed seeds would collide with every later test's seeds). The shared schema is set
+    aside and put back, and the private one is dropped on the way out."""
+    from . import _pg_fixture as pg
+
+    saved = dict(pg._BLANK)
+    pg._BLANK.clear()
+    try:
+        scoped = pg.blank_schema_engine()
+        yield scoped, pg._BLANK["name"]
+    finally:
+        pg.drop_blank_schema()
+        pg._BLANK.clear()
+        pg._BLANK.update(saved)
+
+
+def test_two_simultaneous_escalates_of_one_product_open_one_task_and_two_requesters(sent, monkeypatch):
+    """The real race: two sessions on two connections with real commits, the assignee draw slowed
+    so both reach the open-task check together. Runs in a private scratch schema (see
+    `_private_schema_engine`) because the commits are real."""
+    import threading
+    import time
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from app.database import engine as base_engine
+    from app.models.base import company_scope
+    from app.services import coverage_subscription_service as coverage
+
+    with _private_schema_engine() as (scoped, name):
+        path = ",".join(
+            (name,)
+            + tuple(f"{name}_{x}" for x in ("scm", "dealer_kit", "chatbot", "sales", "finance", "projects"))
+            + ("public",)
+        )
+        own = create_engine(
+            base_engine.url, connect_args={"options": f"-c search_path={path}"}, pool_size=6
+        ).execution_options(schema_translate_map=scoped.get_execution_options()["schema_translate_map"])
+        real = coverage.resolve_assignee_with_coverage
+
+        def slow(*args, **kwargs):
+            time.sleep(0.5)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(coverage, "resolve_assignee_with_coverage", slow)
+        seeder = Session(bind=own)
+        try:
+            env = _setup(seeder)
+            seeder.commit()
+            seed_drawing_team(seeder)
+            product, version, line = quoted_product(seeder, env)
+            first_user, second_user = _user(seeder, "zzt Sales One"), _user(seeder, "zzt Sales Two")
+            seeder.commit()
+            product_id, version_id, line_id = product.id, version.id, line.id
+            company_id = env["company_id"]
+            errors: list = []
+
+            def click(user_id):
+                session = Session(bind=own)
+                try:
+                    with company_scope(session, frozenset({company_id})):
+                        _svc().escalate(session, version_id=version_id, line_id=line_id, user=actor(user_id))
+                except Exception as exc:  # pragma: no cover - reported below
+                    errors.append(exc)
+                finally:
+                    session.close()
+
+            threads = [threading.Thread(target=click, args=(u,)) for u in (first_user, second_user)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=60)
+
+            check = Session(bind=own)
+            try:
+                trackers = trackers_for(check, product_id)
+                requesters = [r for t in trackers for r in requester_rows(check, t.id)]
+            finally:
+                check.close()
+            assert errors == []
+            assert len([t for t in trackers if not t.is_resolved]) == 1, [t.id for t in trackers]
+            assert {r.triggered_by_id for r in requesters} == {first_user, second_user}
+            assert len(requesters) == 2
+        finally:
+            seeder.close()
+            own.dispose()
 
 
 # ------------------------------------------------------------------------------ AC-9 refusals
@@ -1165,3 +1268,215 @@ def test_a_pdf_is_never_stamped_on_the_line_at_issue(db, env):
 
     db.refresh(line)
     assert line.drawing_attachment_id is None, "the quotation documents embed images only"
+
+
+# ------------------------------------------------------------------ fix round 1: company scope
+
+
+def _second_company(db) -> str:
+    from app.models.company import Company
+
+    company_id = _uid()
+    db.add(Company(id=company_id, name="ZZT Company B", code=unique_code("CB")[:20]))
+    db.flush()
+    return company_id
+
+
+def _team_for_company(db, seed: dict, company_id: str) -> str:
+    """A tier-1 team of the SAME agent and team set, owned by another company. Returns its member."""
+    team_id = _uid()
+    db.add(Team(id=team_id, name=unique_code("TeamB"), company_id=company_id))
+    db.add(
+        AgentTeam(
+            id=_uid(), agent_id=seed["agent_id"], code=seed["team_set_code"],
+            team_id=team_id, tier=1, company_id=company_id,
+        )
+    )
+    db.flush()
+    member_id = _uid()
+    db.add(User(id=member_id, email=f"{member_id}@t.zzt", name="ZZT Member B", status="ACTIVE"))
+    db.flush()
+    db.add(TeamMember(id=_uid(), team_id=team_id, user_id=member_id))
+    db.commit()
+    return member_id
+
+
+def test_a_product_of_another_company_is_a_404_and_opens_nothing(db, env):
+    from app.models.base import company_scope
+    from app.models.product import Product
+
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    other = _second_company(db)
+    db.query(Product).filter(Product.id == product.id).update({"company_id": other})
+    db.commit()
+    caller = _user(db, "zzt Sales One")
+
+    with company_scope(db, frozenset({env["company_id"]})):
+        with pytest.raises(AppException) as refused:
+            _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller))
+
+    assert refused.value.status_code == 404
+    assert refused.value.code == "product_not_found"
+    assert trackers_for(db, product.id) == []
+
+
+def test_a_product_of_company_b_routes_to_company_bs_team_and_the_task_is_company_b(db, env):
+    seed = seed_drawing_team(db)
+    company_b = _second_company(db)
+    member_b = _team_for_company(db, seed, company_b)
+    from app.models.product import Product
+
+    product, version, line = quoted_product(db, env)
+    db.query(Product).filter(Product.id == product.id).update({"company_id": company_b})
+    db.commit()
+    caller = _user(db, "zzt Sales One")
+
+    from app.models.base import company_scope
+
+    with company_scope(db, frozenset({env["company_id"], company_b})):
+        _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller))
+
+    (tracker,) = trackers_for(db, product.id)
+    assert str(tracker.company_id) == str(company_b)
+    assert tracker.assigned_to_id == member_b, "tier 1 of company B, not company A's member"
+
+
+def test_a_company_a_product_still_routes_to_company_as_team(db, env):
+    seed = seed_drawing_team(db)
+    _team_for_company(db, seed, _second_company(db))
+    product, version, line = quoted_product(db, env)
+    caller = _user(db, "zzt Sales One")
+
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller))
+
+    (tracker,) = trackers_for(db, product.id)
+    assert str(tracker.company_id) == str(env["company_id"])
+    assert tracker.assigned_to_id == seed["assignee"]
+
+
+def test_a_step_whose_agent_has_no_tier_team_is_the_plain_409_with_no_internals(db, env):
+    seed = seed_drawing_team(db)
+    db.query(AgentTeam).filter(AgentTeam.agent_id == seed["agent_id"]).delete()
+    db.commit()
+    product, version, line = quoted_product(db, env)
+    caller = _user(db, "zzt Sales One")
+
+    with pytest.raises(AppException) as refused:
+        _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller))
+
+    assert refused.value.status_code == 409
+    assert refused.value.code == "drawing_requests_not_set_up"
+    assert "No team is set up for drawing requests" in refused.value.message
+    shown = f"{refused.value.message} {refused.value.detail}"
+    assert seed["agent_code"] not in shown and str(seed["config_id"]) not in shown
+    assert trackers_for(db, product.id) == []
+
+
+# ------------------------------------------- fix round 1: respond / resolve do not need the step's events
+
+
+def test_respond_and_resolve_work_when_the_step_names_no_respond_or_resolve_event(db, env):
+    seed = seed_drawing_team(db)
+    config = db.query(FormSLAConfig).filter(FormSLAConfig.id == seed["config_id"]).one()
+    config.respond_event = None
+    config.resolve_event = None
+    db.commit()
+    product, version, line = quoted_product(db, env)
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(_user(db, "zzt Sales One")))
+    (tracker,) = trackers_for(db, product.id)
+
+    _svc().respond(db, tracker.id, actor(seed["assignee"]))
+    db.refresh(tracker)
+    assert tracker.is_responded is True and tracker.is_resolved is False
+    _svc().resolve(db, tracker.id, actor(seed["assignee"]))
+    db.refresh(tracker)
+    assert tracker.is_resolved is True
+
+
+def test_resolve_works_after_the_steps_team_set_changed(db, env):
+    seed = seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(_user(db, "zzt Sales One")))
+    (tracker,) = trackers_for(db, product.id)
+    db.query(FormSLAConfig).filter(FormSLAConfig.id == seed["config_id"]).update({"team_set_code": "changed"})
+    db.commit()
+
+    _svc().resolve(db, tracker.id, actor(seed["assignee"]))
+
+    db.refresh(tracker)
+    assert tracker.is_resolved is True and str(tracker.resolved_by) == str(seed["assignee"])
+
+
+def test_respond_records_who_responded(db, env):
+    seed = seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(_user(db, "zzt Sales One")))
+    (tracker,) = trackers_for(db, product.id)
+
+    _svc().respond(db, tracker.id, actor(seed["assignee"]))
+
+    db.refresh(tracker)
+    assert str(tracker.responded_by) == str(seed["assignee"])
+
+
+# ------------------------------------------------------ fix round 1: a failed notice never breaks the work
+
+
+def _broken_notice(db):
+    """A notice call that fails the way a real DB error does: the transaction is left aborted."""
+    from sqlalchemy.exc import DBAPIError
+
+    def boom(self, *args, **kwargs):
+        try:
+            db.execute(text("select * from zzt_no_such_table"))
+        except DBAPIError:
+            raise
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    return boom
+
+
+def test_a_failed_resolve_notice_leaves_the_task_resolved_and_the_session_usable(db, env, monkeypatch):
+    from app.services.notification_service import NotificationService
+
+    seed = seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(_user(db, "zzt Sales One")))
+    (tracker,) = trackers_for(db, product.id)
+    monkeypatch.setattr(NotificationService, "create_with_channel_preferences", _broken_notice(db))
+
+    _svc().resolve(db, tracker.id, actor(seed["assignee"]))
+
+    assert db.query(User).count() > 0, "the session is still usable"
+    db.refresh(tracker)
+    assert tracker.is_resolved is True
+
+
+def test_a_failed_drawing_linked_notice_does_not_break_the_attachment_link(db, env, monkeypatch):
+    from app.services.notification_service import NotificationService
+
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(_user(db, "zzt Sales One")))
+    attachment = _file(db, env["company_id"], DRAWINGS, "late.png")
+    monkeypatch.setattr(NotificationService, "create_with_channel_preferences", _broken_notice(db))
+
+    link = _link_through_the_product_service(db, product, attachment)
+
+    assert link is not None and str(link.attachment_id) == str(attachment.id)
+    assert db.query(User).count() > 0
+
+
+def test_h4_notifies_a_requester_once_even_if_the_notices_are_sent_twice(db, env):
+    seed = seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    caller = _user(db, "zzt Sales One")
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller))
+    (tracker,) = trackers_for(db, product.id)
+    _svc().resolve(db, tracker.id, actor(seed["assignee"]))
+
+    _svc()._notify_requesters_resolved(db, tracker)
+
+    title = f"Drawing request for {product.product_code} resolved"
+    assert len([n for n in notes_for(db, caller) if n.title == title]) == 1

@@ -16,10 +16,12 @@ recipient's own toggle and a linked WhatsApp contact.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy import and_, func, or_, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from app.models.product import Product, ProductAttachment
@@ -38,8 +40,6 @@ logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "product_drawing"
 EVENT_ESCALATE = "escalate"
-EVENT_RESPOND = "respond"
-EVENT_RESOLVE = "resolve"
 REQUESTER_EVENT = "requester"
 _VERSION_REASON_PREFIX = "quotation_version:"
 
@@ -114,12 +114,22 @@ def escalation_states(db: Session, product_ids: Iterable[Optional[str]]) -> Dict
     if not ids:
         return {}
 
-    # One read for both the open task and the resolved history: the latter only feeds
-    # "last resolved", and a product's history is a handful of rows.
+    # One read for the open task (with its requester count) and the resolved history: the
+    # latter only feeds "last resolved", and a product's history is a handful of rows.
+    requester_count = (
+        db.query(func.count(func.distinct(ConversationSLAEventLog.triggered_by_id)))
+        .filter(
+            ConversationSLAEventLog.sla_tracking_id == ConversationSLATracking.id,
+            ConversationSLAEventLog.event_type == REQUESTER_EVENT,
+        )
+        .correlate(ConversationSLATracking)
+        .scalar_subquery()
+    )
     open_rows: Dict[str, ConversationSLATracking] = {}
+    counts: Dict[str, int] = {}
     resolved: Dict[str, datetime] = {}
-    for tracker in (
-        db.query(ConversationSLATracking)
+    for tracker, requesters in (
+        db.query(ConversationSLATracking, requester_count)
         .filter(
             ConversationSLATracking.source_entity_type == SOURCE_TYPE,
             ConversationSLATracking.source_entity_id.in_(ids),
@@ -138,24 +148,9 @@ def escalation_states(db: Session, product_ids: Iterable[Optional[str]]) -> Dict
         if tracker.is_resolved:
             if key not in resolved or tracker.resolved_at > resolved[key]:
                 resolved[key] = tracker.resolved_at
-        elif tracker.voided_at is None:
-            open_rows.setdefault(key, tracker)
-
-    counts: Dict[str, int] = {}
-    if open_rows:
-        counts = {
-            str(tracking_id): int(n)
-            for tracking_id, n in db.query(
-                ConversationSLAEventLog.sla_tracking_id,
-                func.count(func.distinct(ConversationSLAEventLog.triggered_by_id)),
-            )
-            .filter(
-                ConversationSLAEventLog.sla_tracking_id.in_([str(t.id) for t in open_rows.values()]),
-                ConversationSLAEventLog.event_type == REQUESTER_EVENT,
-            )
-            .group_by(ConversationSLAEventLog.sla_tracking_id)
-            .all()
-        }
+        elif tracker.voided_at is None and key not in open_rows:
+            open_rows[key] = tracker
+            counts[str(tracker.id)] = int(requesters or 0)
 
     out: Dict[str, Optional[Dict[str, Any]]] = {}
     for pid in ids:
@@ -212,6 +207,35 @@ def _escalate_config(db: Session) -> Optional[FormSLAConfig]:
     return None
 
 
+@contextmanager
+def _product_lock(db: Session, product_id: str):
+    """A session-level Postgres advisory lock keyed on the product, held across commits.
+
+    A row lock would not do: assigning the task commits (the round-robin cursor), which would
+    release it before the tracker exists. The lock lives on ONE connection and is released on
+    that same connection. A pooled engine can hand the session a different connection after a
+    commit, so the lock gets a connection of its own; a session bound to a single connection
+    (a test's) uses that connection, which never changes.
+    """
+    key = {"k": f"{SOURCE_TYPE}:{product_id}"}
+    bind = db.get_bind()
+    owned = None if isinstance(bind, Connection) else bind.connect()
+    conn = bind if owned is None else owned
+    conn.execute(text("SELECT pg_advisory_lock(hashtext(:k))"), key)
+    try:
+        yield
+    finally:
+        try:
+            conn.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), key)
+        except Exception:
+            logger.warning("could not release the drawing request lock for %s", product_id, exc_info=True)
+            if owned is not None:
+                owned.invalidate()
+        finally:
+            if owned is not None:
+                owned.close()
+
+
 def escalate(db: Session, *, version_id: str, line_id: str, user: dict) -> Dict[str, Any]:
     """Open the product's drawing task, or join the open one. Returns ``{joined, escalation}``."""
     from app.services.form_sla_service import FormSLAOrchestrator
@@ -225,6 +249,11 @@ def escalate(db: Session, *, version_id: str, line_id: str, user: dict) -> Dict[
             message="This line has no catalogue product to request a drawing for.",
             code="line_has_no_product",
         )
+    # Through the scoped ORM: a product of a company the caller cannot see is not found, and
+    # its company is the one the task is routed under.
+    product = db.query(Product.id, Product.company_id).filter(Product.id == product_id).first()
+    if product is None:
+        raise AppException(status_code=404, message="Product not found.", code="product_not_found")
     if has_drawing(db, product_id):
         raise AppException(
             status_code=409,
@@ -233,40 +262,45 @@ def escalate(db: Session, *, version_id: str, line_id: str, user: dict) -> Dict[
         )
 
     # Two clicks in the same second must open one task. "Is there an open task" is read then
-    # write, so the product row is locked until the first click's commit; the second then finds it.
-    locked = db.execute(
-        text("SELECT id FROM products WHERE id = CAST(:id AS uuid) FOR UPDATE"), {"id": str(product_id)}
-    ).first()
-    if locked is None:
-        raise handle_not_found("Product", product_id)
-
-    tracker = _open_tracker(db, product_id)
-    joined = tracker is not None
-    if tracker is None:
-        config = _escalate_config(db)
-        if config is None:
-            db.rollback()
-            raise AppException(
-                status_code=409,
-                message="No team is set up for drawing requests.",
-                code="drawing_requests_not_set_up",
-            )
-        try:
-            tracker = FormSLAOrchestrator(db)._start_for_config(config, product_id)
-        except Exception:
-            db.rollback()
-            raise
+    # write, so the product is locked from the check until the requester is recorded.
+    with _product_lock(db, product_id):
+        tracker = _open_tracker(db, product_id)
+        joined = tracker is not None
         if tracker is None:
-            db.rollback()
-            raise AppException(
-                status_code=409,
-                message="No team is set up for drawing requests.",
-                code="drawing_requests_not_set_up",
-            )
+            config = _escalate_config(db)
+            if config is None:
+                db.rollback()
+                raise _not_set_up()
+            try:
+                tracker = FormSLAOrchestrator(db)._start_for_config(
+                    config, product_id, company_id=str(product.company_id) if product.company_id else None
+                )
+            except AppException as exc:
+                db.rollback()
+                if exc.status_code >= 500:
+                    raise
+                # The admin's setup problem, not the salesperson's: the detail names the agent
+                # and the step, so it goes to the log and not to the screen.
+                logger.warning("drawing request step is not usable: %s", exc.message)
+                raise _not_set_up()
+            except Exception:
+                db.rollback()
+                raise
+            if tracker is None:
+                db.rollback()
+                raise _not_set_up()
 
-    _record_requester(db, tracker, version_id=str(version_id), user_id=str(user["id"]))
-    db.commit()
+        _record_requester(db, tracker, version_id=str(version_id), user_id=str(user["id"]))
+        db.commit()
     return {"joined": joined, "escalation": escalation_states(db, [product_id])[str(product_id)]}
+
+
+def _not_set_up() -> AppException:
+    return AppException(
+        status_code=409,
+        message="No team is set up for drawing requests.",
+        code="drawing_requests_not_set_up",
+    )
 
 
 def _record_requester(db: Session, tracker: ConversationSLATracking, *, version_id: str, user_id: str) -> None:
@@ -318,48 +352,50 @@ def _tracker_for_actor(db: Session, tracking_id: str, user: dict) -> Conversatio
     return tracking
 
 
-def _not_configured() -> AppException:
-    return AppException(
-        status_code=409,
-        message="The drawing request step does not handle this action.",
-        code="drawing_step_not_configured",
+def _update(db: Session, tracking_id: str, **fields) -> None:
+    """The write the SLA resolve route makes: straight onto the tracker by id, so a blank event
+    name or a changed team set on the step can never strand a task."""
+    from app.schemas.sla import ConversationSLATrackingUpdate
+    from app.services.sla_service import ConversationSLATrackingService
+
+    ConversationSLATrackingService(db).update_tracking(
+        str(tracking_id), ConversationSLATrackingUpdate(**fields)
     )
 
 
 def respond(db: Session, tracking_id: str, user: dict) -> ConversationSLATracking:
-    from app.services.form_sla_service import emit_form_event
-
     tracking = _tracker_for_actor(db, tracking_id, user)
     if tracking.is_resolved:
         raise AppException(status_code=409, message="This request is already resolved.", code="already_resolved")
     if tracking.is_responded:
         return tracking
-    emit_form_event(
-        db, SOURCE_TYPE, str(tracking.source_entity_id), EVENT_RESPOND, actor_user_id=str(user["id"])
-    )
+    _update(db, tracking.id, is_responded=True, responded_by=str(user["id"]))
     db.refresh(tracking)
-    if not tracking.is_responded:
-        raise _not_configured()
     return tracking
 
 
 def resolve(db: Session, tracking_id: str, user: dict) -> ConversationSLATracking:
-    from app.services.form_sla_service import emit_form_event
-
     tracking = _tracker_for_actor(db, tracking_id, user)
     if tracking.is_resolved:
         raise AppException(status_code=409, message="This request is already resolved.", code="already_resolved")
-    emit_form_event(
-        db, SOURCE_TYPE, str(tracking.source_entity_id), EVENT_RESOLVE, actor_user_id=str(user["id"])
-    )
+    fields: Dict[str, Any] = {"is_resolved": True, "resolved_by": str(user["id"])}
+    if not tracking.is_responded:
+        fields.update(is_responded=True, responded_by=str(user["id"]))
+    _update(db, tracking.id, **fields)
     db.refresh(tracking)
-    if not tracking.is_resolved:
-        raise _not_configured()
     _notify_requesters_resolved(db, tracking)
     return tracking
 
 
 # ------------------------------------------------------------------------------ hand-off notices
+
+
+def _safe_rollback(db: Session) -> None:
+    """A failed notice must not leave the session in an aborted transaction for what follows."""
+    try:
+        db.rollback()
+    except Exception:
+        logger.warning("rollback after a failed drawing request notice also failed", exc_info=True)
 
 
 def _base_url() -> str:
@@ -383,6 +419,7 @@ def _send(
     path: str,
     code: str,
     event_type: str,
+    dedup_key: Optional[str] = None,
 ) -> None:
     """One notice on every channel the recipient allows. Best-effort, as `_notify_assignee` is:
     the work it announces has already committed."""
@@ -423,6 +460,7 @@ def _send(
             source_entity_type="form_sla_tracking",
             source_entity_id=str(tracker.id),
             event_type=event_type,
+            dedup_key=dedup_key,
             send_in_app=True,
             send_email=True,
             send_web_push=False,
@@ -431,6 +469,7 @@ def _send(
             email_pref_attr="notify_email_on_assignment",
         )
     except Exception as exc:
+        _safe_rollback(db)
         logger.warning("drawing request notice %s for tracker %s failed: %s", event_type, tracker.id, exc)
 
 
@@ -452,6 +491,7 @@ def notify_drawing_linked(db: Session, product_id: str) -> None:
             event_type="drawing_added",
         )
     except Exception as exc:
+        _safe_rollback(db)
         logger.warning("drawing linked notice for product %s failed: %s", product_id, exc)
 
 
@@ -506,7 +546,9 @@ def _notify_requesters_resolved(db: Session, tracker: ConversationSLATracking) -
                 body=f"The drawing request for {code} is resolved.",
                 path=path,
                 code=code,
-                event_type="drawing_resolved",
+                event_type="resolved",
+                dedup_key=f"drawing_resolved:{tracker.id}",
             )
     except Exception as exc:
+        _safe_rollback(db)
         logger.warning("drawing resolved notices for tracker %s failed: %s", tracker.id, exc)

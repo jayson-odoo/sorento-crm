@@ -294,6 +294,7 @@ def respond_drawing_request(
 def resolve_drawing_request(
     tracking_id: str,
     current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.resolve")),
     db: Session = Depends(get_db),
 ):
     """The assignee's Resolve on a product drawing task; tells every requester."""

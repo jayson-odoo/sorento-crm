@@ -3359,6 +3359,10 @@ class ProductAttachmentService:
             if drawing_requests.attachment_is_drawing(self.db, link.attachment_id):
                 drawing_requests.notify_drawing_linked(self.db, link.product_id)
         except Exception:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             logger.warning("drawing request notice after a product attachment link failed", exc_info=True)
 
     def _apply_brochure_choice(self, link, chosen: Optional[bool]) -> None:

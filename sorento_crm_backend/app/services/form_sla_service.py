@@ -899,8 +899,12 @@ class FormSLAOrchestrator:
         source_entity_id: str,
         *,
         contact_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> Optional[ConversationSLATracking]:
-        """Idempotent: skip if active tracker for this stage already exists."""
+        """Idempotent: skip if active tracker for this stage already exists.
+
+        ``company_id`` replaces the contact-derived company for an entity that is owned by one
+        (a product), so its task routes to that company's team."""
         from app.services.user_service import AccessAgentService
         from app.models.user import User
 
@@ -934,7 +938,7 @@ class FormSLAOrchestrator:
         # arbitrarily" rule as conversation routing.
         from app.services.company_routing_service import company_for_contact
 
-        company_id = company_for_contact(self.db, contact_id=contact_id)
+        company_id = company_id or company_for_contact(self.db, contact_id=contact_id)
 
         # Default-approver override: for the PR/SF APPROVAL stage (resolves on
         # 'approved'), if the form's configured default approver is a member of the

@@ -48,6 +48,7 @@ SLA_BASE = "/api/v1/sla-management/form-sla-tracking"
 VIEW = "projects.projects.view"
 VIEW_OWN = "projects.projects.view_own"
 EDIT = "projects.projects.edit"
+RESOLVE = "sla_management.conversation_sla_tracking.resolve"
 ESCALATE_PATH = "/quotation-versions/{version_id}/lines/{line_id}/drawing-escalation"
 
 
@@ -299,7 +300,7 @@ def test_the_assignee_resolves_and_every_requester_is_told_once(scene):
     tracker = _open_task(s)
     with acting(s["db"], s["stranger"], {VIEW}) as client:
         client.post(_url(s["version"].id, s["line"].id))
-    with acting(s["db"], s["team"]["assignee"], set()) as client:
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
         response = client.post(f"{SLA_BASE}/{tracker.id}/drawing-resolve")
 
     assert response.status_code == 200, response.text
@@ -316,7 +317,7 @@ def test_someone_who_is_not_the_assignee_gets_404_and_the_task_stays_open(scene)
     s = scene
     tracker = _open_task(s)
     for action in ("drawing-respond", "drawing-resolve"):
-        with acting(s["db"], s["stranger"], {VIEW}) as client:
+        with acting(s["db"], s["stranger"], {VIEW, RESOLVE}) as client:
             response = client.post(f"{SLA_BASE}/{tracker.id}/{action}")
         assert response.status_code in (400, 404), (action, response.text)
     s["db"].refresh(tracker)
@@ -327,7 +328,7 @@ def test_someone_who_is_not_the_assignee_gets_404_and_the_task_stays_open(scene)
 def test_an_unknown_tracker_is_a_404(scene, action):
     s = scene
     _assert_registered(f"/{action}")
-    with acting(s["db"], s["team"]["assignee"], set()) as client:
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
         assert client.post(f"{SLA_BASE}/{_uid()}/{action}").status_code == 404
 
 
@@ -352,12 +353,24 @@ def test_a_task_of_another_type_is_a_409(scene, action):
     )
     s["db"].add(other)
     s["db"].commit()
-    with acting(s["db"], s["team"]["assignee"], set()) as client:
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
         response = client.post(f"{SLA_BASE}/{other.id}/{action}")
 
     assert response.status_code == 409, response.text
     s["db"].refresh(other)
     assert other.is_resolved is False and other.is_responded is False
+
+
+def test_resolve_needs_the_sla_resolve_permission_even_for_the_assignee(scene):
+    """Like the conversation resolve route: the actor rule is not enough, the slug is required."""
+    s = scene
+    tracker = _open_task(s)
+    with acting(s["db"], s["team"]["assignee"], set()) as client:
+        response = client.post(f"{SLA_BASE}/{tracker.id}/drawing-resolve")
+
+    assert response.status_code == 403, response.text
+    s["db"].refresh(tracker)
+    assert tracker.is_resolved is False
 
 
 @pytest.mark.parametrize("action", ["drawing-respond", "drawing-resolve"])
