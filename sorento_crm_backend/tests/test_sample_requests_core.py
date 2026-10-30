@@ -1202,10 +1202,16 @@ def _lapse(w, rid, action_id, user):
         {"commit_at": datetime.utcnow() - timedelta(seconds=1)}, synchronize_session=False
     )
     w.db.commit()
-    return w.api.as_(user).get(
-        "/api/v1/pending-actions/current",
-        params={"entity_type": "sample_request", "entity_id": rid},
-    )
+    from app.models.base import company_scope
+
+    # `/current` answers only a reader whose company scope covers the action, and this
+    # client's scope dependency is stubbed without setting one (UNSET is fail-closed):
+    # read as the all-companies session the stub stands in for.
+    with company_scope(w.db, None):
+        return w.api.as_(user).get(
+            "/api/v1/pending-actions/current",
+            params={"entity_type": "sample_request", "entity_id": rid},
+        )
 
 
 def test_delete_draft_is_a_destructive_deferred_action_for_the_owner(world):
