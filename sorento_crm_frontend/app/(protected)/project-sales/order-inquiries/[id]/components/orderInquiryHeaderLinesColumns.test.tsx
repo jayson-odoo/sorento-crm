@@ -1093,12 +1093,14 @@ describe('OI-AUTO-CONFIRM review round 1: the status pill keeps its case and is 
     expect(screen.getByText('To order \u00b7 manual').className).not.toMatch(/capitalize|uppercase/);
   });
 
-  it('the status pill truncates inside a narrow cell and keeps the full text reachable via title', () => {
+  it('the status pill never shrinks and the State column keeps a minimum width', () => {
     pillFor({ id: 'c4', qty: '300', open_qty: 251, ack_state: 'awaiting', state: 'partly_linked', links: [{ id: 'l', kind: 'po', document: 'PO-1', qty: '49' }] });
     const pill = screen.getByText('To order \u00b7 251 left');
-    expect(pill.className).toMatch(/\btruncate\b/);
-    expect(pill.className).toMatch(/\bmax-w-full\b|\bmin-w-0\b/);
+    expect(pill.className).toMatch(/\bshrink-0\b/);
+    expect(pill.className).toMatch(/\bwhitespace-nowrap\b/);
+    expect(pill.className).not.toMatch(/\btruncate\b/);
     expect(pill.getAttribute('title') ?? '').toContain('To order \u00b7 251 left');
+    expect(stateColumn().minSize ?? 0).toBeGreaterThanOrEqual(190);
   });
 
   it('the State column is wide enough for "To order \u00b7 220 left" (at least 170)', () => {
