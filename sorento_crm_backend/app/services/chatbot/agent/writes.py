@@ -1299,3 +1299,317 @@ USER_READS[FIND_CONTACTS] = UserRead(
     run=_contacts_find,
     combine=_combine_finds,
 )
+
+
+# ------------------------------------------------------------------ W3 purchase-request approve / reject
+
+PR_APPROVE = "procurement.purchase_requests.approve"
+LIST_PRS = "crm_purchase_requests_list"
+GET_PR = "crm_purchase_request_get"
+DECIDE_PR = "crm_purchase_request_decide"
+CANCEL_PR = "crm_purchase_request_decision_cancel"
+PR_PREFIX = "/api/v1/procurement/purchase-requests"
+_PR_ROW_KEYS = (
+    "id", "request_number", "request_type", "customer_name", "approval_status", "status", "project_title",
+    "requested_by_contact_name", "submitted_at", "total_project_value", "revision_no",
+)
+_DECISION_WORDS = {"approve": "Approved", "reject": "Rejected", "approved": "Approved", "rejected": "Rejected"}
+
+
+def _pick(row: Any, keys) -> dict:
+    get = (lambda k: row.get(k)) if isinstance(row, dict) else (lambda k: getattr(row, k, None))
+    return {k: _plain(get(k)) for k in keys}
+
+
+def _pr_scope(db, user: dict, path_format: str, params: dict):
+    """The request forms' own-scope guard for this person (404 outside it, 403 on a route a limited user may not use)."""
+    from app.api.v1._request_own_scope import check
+
+    return check(db, str(user["id"]), "purchase_request", "GET", f"{PR_PREFIX}{path_format}", params)
+
+
+def _pr_header(db, user: dict, request_id: str):
+    from app.services.error_handler import AppException
+    from app.services.procurement_service import PurchaseRequestService
+    from app.services.uuid_path_param import validate_uuid_path
+
+    validate_uuid_path(request_id, resource="Request")
+    _pr_scope(db, user, "/{request_id}", {"request_id": request_id})
+    header = PurchaseRequestService(db).get_request(request_id, contact_id=None, space_id=None)
+    if header is None:
+        raise AppException(status_code=404, message="Purchase request not found")
+    return header
+
+
+def _pr_list(db, ctx, args: dict) -> ToolResult:
+    from app.api.v1.procurement.purchase_requests import get_purchase_requests
+
+    unknown = sorted(k for k in args if k not in {"query", "approval_status", "request_type", "limit"})
+    if unknown:
+        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
+    limit = args.get("limit", MAX_LIST)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIST:
+        return ToolResult("invalid", message=f"limit must be a whole number from 1 to {MAX_LIST}.")
+    statuses = args.get("approval_status") or ["pending"]
+    kinds = args.get("request_type") or None
+
+    def call(user: dict):
+        own = _pr_scope(db, user, "", {})
+        return get_purchase_requests(
+            page=1, limit=limit, query=args.get("query"), request_type=kinds, approval_status=list(statuses),
+            assigned_to=None, sort="submitted_at", dir="desc", current_user=user, db=db, own=own,
+        )
+
+    try:
+        payload = run_as_user(db, ctx, call, tool_name=LIST_PRS)
+    except Exception as exc:  # noqa: BLE001
+        return _route_failure(exc)
+    rows = [_pick(r, _PR_ROW_KEYS) for r in payload["data"]]
+    data, more = cap_result({"requests": rows, "total": payload["pagination"]["total"]})
+    return ToolResult("ok", data=data, more=more)
+
+
+def _pr_get(db, ctx, args: dict) -> ToolResult:
+    from app.api.v1.procurement.purchase_requests import get_purchase_request, get_purchase_request_by_number
+
+    unknown = sorted(k for k in args if k not in {"request_id", "number"})
+    if unknown or bool(args.get("request_id")) == bool(args.get("number")):
+        return ToolResult("invalid", message="Give either request_id or number.")
+
+    def call(user: dict):
+        if args.get("number"):
+            _pr_scope(db, user, "/by-number/{number}", {"number": args["number"]})
+            return get_purchase_request_by_number(number=str(args["number"]), current_user=user, db=db)
+        _pr_header(db, user, str(args["request_id"]))
+        return get_purchase_request(request_id=str(args["request_id"]), current_user=user, db=db)
+
+    try:
+        header = run_as_user(db, ctx, call, tool_name=GET_PR)
+    except Exception as exc:  # noqa: BLE001
+        return _route_failure(exc)
+    row = _pick(header, (*_PR_ROW_KEYS, "purpose", "requested_by", "approver_display_name"))
+    row["lines"] = len(getattr(header, "lines", None) or [])
+    return ToolResult("ok", data=row)
+
+
+def _combine_prs(mine: ToolResult, theirs: ToolResult) -> ToolResult:
+    ids = {r.get("id") for r in theirs.data["requests"]}
+    rows = [r for r in mine.data["requests"] if r.get("id") in ids]
+    return ToolResult("ok", data={"requests": rows, "total": len(rows)}, more=mine.more)
+
+
+def _pr_state(header) -> dict:
+    return {
+        "approval_status": header.approval_status,
+        "revision_no": getattr(header, "revision_no", None),
+        "updated_at": _plain(getattr(header, "updated_at", None)),
+    }
+
+
+def _pr_who(header) -> str:
+    return _line(header.customer_name or getattr(header, "requested_by", None) or "")
+
+
+def _pr_decide_read_before(db, user: dict, args: dict) -> dict:
+    from app.services.error_handler import AppException
+    from app.services.handling_lock_service import assert_can_act_on_form
+
+    request_id = str(args["request_id"])
+    header = _pr_header(db, user, request_id)
+    if header.approval_status != "pending":
+        raise AppException(
+            status_code=422,
+            message=f"This request is not waiting for approval (it is {header.approval_status or 'not submitted'}).",
+            code="VALIDATION_ERROR",
+        )
+    assert_can_act_on_form(db, request_id, user)
+    reason = (args.get("reason") or "").strip()
+    if args["decision"] == "reject" and not reason:
+        raise AppException(status_code=422, message="Give a reason to reject.", code="VALIDATION_ERROR")
+    return {
+        **_pr_state(header),
+        "_show": {"number": header.request_number, "who": _pr_who(header), "decision": args["decision"], "reason": reason},
+    }
+
+
+def _pr_decide_summary(args: dict, before: dict) -> str:
+    verb = "approve" if before["decision"] == "approve" else f"reject: {_quoted(before['reason'])}"
+    return f"{_line(before['number'])} ({_line(before['who'])}): {verb} (notifies the requester)"
+
+
+def _local_time(iso: str | None) -> str:
+    """HH:MM, Malaysia time (UTC+8), of a naive-UTC ISO timestamp."""
+    from datetime import datetime, timedelta
+
+    if not iso:
+        return ""
+    moment = datetime.fromisoformat(str(iso))
+    if moment.tzinfo is not None:
+        moment = moment.replace(tzinfo=None) - (moment.utcoffset() or timedelta(0))
+    return (moment + timedelta(hours=8)).strftime("%H:%M")
+
+
+def _plain_request():
+    """A request object with no X-API-Key, so the grace window applies exactly as for a browser click."""
+    from starlette.requests import Request
+
+    return Request({"type": "http", "method": "POST", "path": "/", "headers": [], "query_string": b""})
+
+
+def _pr_decide_execute(db, user: dict, args: dict) -> dict:
+    from fastapi.responses import JSONResponse
+
+    from app.api.v1.procurement.purchase_requests import ApprovalDecisionRequest, decide_purchase_request_approval
+
+    decision = "approved" if args["decision"] == "approve" else "rejected"
+    out = decide_purchase_request_approval(
+        request_id=str(args["request_id"]),
+        body=ApprovalDecisionRequest(action=decision, comments=(args.get("reason") or "").strip() or None),
+        request=_plain_request(),
+        current_user=user,
+        db=db,
+    )
+    after = {"approval_status": decision}
+    if isinstance(out, JSONResponse):  # 202: parked for the grace window
+        body = json.loads(out.body)
+        after["commit_at"] = body.get("commit_at")
+        return {
+            "id": str(args["request_id"]), "after": after,
+            "parked": {"pending_action_id": body.get("pending_action_id"), "commit_at": body.get("commit_at")},
+        }
+    return {"id": str(args["request_id"]), "after": after}
+
+
+def _pr_decide_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    if "approval_status" not in after:
+        return []
+    now = _DECISION_WORDS.get(after["approval_status"], after["approval_status"])
+    if after.get("commit_at"):
+        now = f"{now} (commits at {_local_time(after['commit_at'])})"
+    was = (before.get("approval_status") or "none").title()
+    record = f"{shown.get('number') or ''} ({shown.get('who') or ''})"
+    return _diff(record, [("Approval", was, now)])
+
+
+def _parked_for(db, header):
+    from app.services.form_action_service import FormActionService
+
+    return FormActionService(db).pending_for(getattr(header, "request_type", None) or "purchase_request", str(header.id))
+
+
+def _pr_cancel_read_before(db, user: dict, args: dict) -> dict:
+    from app.services.error_handler import AppException
+    from app.services.user_service import UserPermissionService
+
+    header = _pr_header(db, user, str(args["request_id"]))
+    row = _parked_for(db, header)
+    if row is None:
+        raise AppException(status_code=422, message="No decision is waiting to be withdrawn for this request.", code="VALIDATION_ERROR")
+    uid = str(user["id"])
+    admin = UserPermissionService(db).get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
+    if str(row.requested_by_id or "") != uid and not admin:
+        raise AppException(status_code=403, message="Only the person who started this action can undo it.", code="FORBIDDEN")
+    decision = (row.payload_json or {}).get("action")
+    return {
+        "pending_action_id": str(row.id),
+        "decision": decision,
+        "_show": {"number": header.request_number, "who": _pr_who(header)},
+    }
+
+
+def _pr_cancel_summary(args: dict, before: dict) -> str:
+    return f"{_line(before['number'])} ({_line(before['who'])}): cancel the waiting decision (nothing is sent)"
+
+
+def _pr_cancel_execute(db, user: dict, args: dict) -> dict:
+    from app.api.v1.sla.form_actions import cancel_form_action
+
+    plan = _pr_cancel_read_before(db, user, args)
+    cancel_form_action(action_id=plan["pending_action_id"], current_user=user, db=db)
+    return {"id": str(args["request_id"]), "after": {"approval_status": "pending", "withdrawn": True}}
+
+
+def _pr_cancel_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    if not after.get("withdrawn"):
+        return []
+    was = f"{_DECISION_WORDS.get(before.get('decision'), 'Decision')} (waiting to commit)"
+    return _diff(f"{shown.get('number') or ''} ({shown.get('who') or ''})", [("Approval", was, "Pending")])
+
+
+def _pr_schema(name: str, text: str, properties: dict, required: list[str]) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name, "description": text,
+            "parameters": {"type": "object", "properties": properties, "required": required},
+        },
+    }
+
+
+WRITES[DECIDE_PR] = WriteDef(
+    name=DECIDE_PR,
+    user_permission=PR_APPROVE,
+    schema=_pr_schema(
+        DECIDE_PR,
+        "Propose approving or rejecting one purchase request that is waiting for approval. The requester is "
+        "notified when it commits, and may be given a short window to undo. Nothing changes until the user "
+        "confirms. request_id must come from crm_purchase_requests_list. A rejection needs a reason.",
+        {
+            "request_id": {"type": "string"},
+            "decision": {"type": "string", "enum": ["approve", "reject"]},
+            "reason": {"type": "string", "maxLength": 1000},
+        },
+        ["request_id", "decision"],
+    ),
+    read_before=_pr_decide_read_before,
+    summary=_pr_decide_summary,
+    execute=_pr_decide_execute,
+    record_key="request_id",
+    changes=_pr_decide_changes,
+)
+WRITES[CANCEL_PR] = WriteDef(
+    name=CANCEL_PR,
+    user_permission=PR_APPROVE,
+    schema=_pr_schema(
+        CANCEL_PR,
+        "Propose withdrawing an approval or rejection that is still inside its undo window, before it commits. "
+        "request_id must come from crm_purchase_requests_list.",
+        {"request_id": {"type": "string"}},
+        ["request_id"],
+    ),
+    read_before=_pr_cancel_read_before,
+    summary=_pr_cancel_summary,
+    execute=_pr_cancel_execute,
+    record_key="request_id",
+    changes=_pr_cancel_changes,
+)
+USER_READS[LIST_PRS] = UserRead(
+    name=LIST_PRS,
+    user_permission=PR_APPROVE,
+    schema=_pr_schema(
+        LIST_PRS,
+        "Purchase requests (waiting for approval unless approval_status says otherwise), newest first, with the "
+        "request_id to use in crm_purchase_request_decide.",
+        {
+            "query": {"type": "string"},
+            "approval_status": {"type": "array", "items": {"type": "string"}},
+            "request_type": {"type": "array", "items": {"type": "string"}},
+            "limit": {"type": "integer"},
+        },
+        [],
+    ),
+    run=_pr_list,
+    combine=_combine_prs,
+)
+USER_READS[GET_PR] = UserRead(
+    name=GET_PR,
+    user_permission=PR_APPROVE,
+    schema=_pr_schema(
+        GET_PR,
+        "One purchase request, by request_id or by its request number.",
+        {"request_id": {"type": "string"}, "number": {"type": "string"}},
+        [],
+    ),
+    run=_pr_get,
+    combine=lambda mine, theirs: mine,
+)

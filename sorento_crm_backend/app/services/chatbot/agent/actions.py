@@ -150,6 +150,8 @@ def _reply(status: str, steps: list[dict]) -> str:
     lines = []
     for n, s in enumerate(steps, 1):
         tail = "" if status == "executed" else f" ({marks.get(s['status'], s['status'])})"
+        if s["status"] == "parked":
+            tail = f" (commits at {writes._local_time(s.get('commit_at'))} unless cancelled)"
         if s.get("error"):
             tail = f" ({marks.get(s['status'], s['status'])}: {scrub_ids(s['error'])})"
         lines.append(f"{n}. {s['summary']}{tail}")
@@ -250,6 +252,9 @@ def confirm(
                     )
             except Exception:  # noqa: BLE001 - the write is done; a missing summary must not undo it
                 logger.warning("agent: building the change lines failed", exc_info=True)
+            if result.get("parked"):
+                # Deferred by the grace window: nothing is committed or sent until it lapses.
+                step.update(status="parked", **result["parked"])
             if "unlinked_customer_ids" in result:
                 step["unlinked_customer_ids"] = result["unlinked_customer_ids"]
         except Exception as exc:  # noqa: BLE001 - a route refusal stops the run
