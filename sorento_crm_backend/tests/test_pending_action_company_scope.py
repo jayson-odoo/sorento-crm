@@ -233,9 +233,9 @@ def test_a_parked_delete_still_commits_for_the_company_that_asked(api):
 
 
 def test_the_sweep_will_not_delete_another_companys_record(api):
-    """The click checked a permission SLUG, never a company. So a company-A user
-    naming a company-B id gets an action that finds nothing when it runs - not
-    one the all-companies sweep carries out for them."""
+    """The click checked a permission SLUG, never a company. A company-A user naming
+    a company-B id is now refused at park time (the record is read under the
+    caller's scope first), so there is no action for the sweep to carry out."""
     db, _in_company, other = api
 
     _in_company(other)
@@ -244,13 +244,9 @@ def test_the_sweep_will_not_delete_another_companys_record(api):
 
     with TestClient(app) as client:
         parked = _park(client, "brand.delete", "brand", theirs)
-    assert parked.status_code == 202, parked.text
+    assert parked.status_code == 404, parked.text
 
-    _lapse(db, parked.json()["id"])
     _sweep(db)
-
-    row = _row(db, parked.json()["id"])
-    assert row.status in (FORM_ACTION_INELIGIBLE, FORM_ACTION_FAILED), row.status
     _in_company(other)
     db.expire_all()
     assert db.query(Brand).filter(Brand.id == theirs).first() is not None
