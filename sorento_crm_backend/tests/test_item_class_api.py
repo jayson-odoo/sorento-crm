@@ -410,3 +410,41 @@ def test_tag_brand_write_leaves_the_allowed_classes_alone(env) -> None:
     _brands(ALL)
     assert contact.brand_ids is None and contact.allowed_item_class_codes == ["DIY"]
     assert contact.brand_class_ids == {sorento.id: ["x"]}  # untouched, unread
+
+
+def test_code_rename_is_refused_while_products_carry_it_and_a_contact_limits_classes(env) -> None:
+    """TAG-BRAND-CLASS security M1 / review S3: access is keyed by code, so a rename of a carried
+    class would move its products to another code (widen or narrow a contact silently)."""
+    client, db = env
+    from app.models.access import RespondContact
+
+    row = _class(db, "RENAMED")
+    _product(db, item_class=row)
+    db.add(RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')}",
+                          allowed_item_class_codes=["__NONE__"]))
+    db.commit()
+    res = client.put(f"{BASE}/{row.id}", json={"item_class_code": unique_code("OTHER")[:50]})
+    assert res.status_code == 409, res.text
+    # A name-only edit, or the same code in another case, is not a rename.
+    assert client.put(f"{BASE}/{row.id}", json={"item_class_name": f"{MARKER} new name"}).status_code == 200
+    assert client.put(f"{BASE}/{row.id}", json={"item_class_code": row.item_class_code.lower()}).status_code == 200
+
+
+def test_a_tag_limiting_classes_also_blocks_delete(env) -> None:
+    client, db = env
+    from sqlalchemy import text
+
+    row = _class(db, "TAGHELD")
+    _product(db, item_class=row)
+    db.execute(
+        text("INSERT INTO contact_tags (id, name, settings) VALUES (:i, :n, CAST(:s AS jsonb))"),
+        {"i": str(uuid.uuid4()), "n": f"{MARKER} tag {unique_code('t')}", "s": '{"item_classes": ["DIY"]}'},
+    )
+    db.commit()
+    assert client.delete(f"{BASE}/{row.id}").status_code == 409
+
+
+def test_the_reserved_no_class_code_is_refused(env) -> None:
+    client, _ = env
+    res = client.post(BASE + "/", json={"item_class_code": "__none__", "item_class_name": "Sneaky"})
+    assert res.status_code == 422, res.text

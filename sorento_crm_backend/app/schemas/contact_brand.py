@@ -1,6 +1,6 @@
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class ContactBrandRef(BaseModel):
@@ -17,7 +17,9 @@ class ContactBrandsUpdate(BaseModel):
     """Replace a contact's accessible brands with this exact set (empty = every brand) and, when
     given, its allowed item class codes (empty = every class; absent = unchanged)."""
     brand_ids: List[str] = []
-    allowed_item_class_codes: Optional[List[str]] = None
+    allowed_item_class_codes: Optional[List[Annotated[str, StringConstraints(max_length=50)]]] = Field(
+        None, max_length=500
+    )
 
 
 class ContactBrandsResponse(BaseModel):

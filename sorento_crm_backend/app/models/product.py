@@ -189,8 +189,8 @@ class ItemType(Base, CompanyScopedMixin):
 class ItemClass(Base, CompanyScopedMixin):
     """AutoCount `Item.ItemClass` (SERENE, DIY; blank on most items) as reference data, the
     ItemType rule exactly: back-created code = name = raw value by the products ingest
-    (`product_rules.ensure_reference`). A contact's access can be narrowed to some classes
-    within a brand (`contact_brand_scope`). PLAN-item-class-29oct.md D1."""
+    (`product_rules.ensure_reference`). A contact's access can be limited to some class codes
+    (`contact_brand_scope`, TAG-BRAND-CLASS). PLAN-item-class-29oct.md D1."""
     __tablename__ = "item_classes"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))

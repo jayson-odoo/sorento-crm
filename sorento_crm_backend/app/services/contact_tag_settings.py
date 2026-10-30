@@ -271,7 +271,10 @@ def _v_item_classes(db, cat, section, value):
 
     if value == ALL:
         return
-    codes = normalise_class_codes(_str_list(section, value))
+    raw = _str_list(section, value)
+    if len(raw) > 500 or any(len(v) > 50 for v in raw):
+        raise _bad(section, "too many classes, or a code longer than 50 characters")
+    codes = normalise_class_codes(raw)
     if not codes:
         raise _bad(section, "needs at least one class (or \"all\")")
     known = known_class_codes(db, codes)  # the caller's company scope, as the contact card

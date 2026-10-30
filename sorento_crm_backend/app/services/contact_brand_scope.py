@@ -159,7 +159,8 @@ def brand_predicate(scope: frozenset[str], brand_col, company_col, class_col=Non
             named = classes - {NO_CLASS}
             allowed = [class_col.in_(_class_ids_select(named))] if named else []
             if NO_CLASS in classes:
-                allowed.append(class_col.is_(None))
+                # A class row with a blank code counts as no class (the Python twin agrees).
+                allowed += [class_col.is_(None), class_col.in_(_class_ids_select(frozenset({""})))]
             parts.append(or_(*allowed) if allowed else false())
     return and_(*parts) if parts else true()
 
@@ -187,8 +188,9 @@ def _product_out_of_scope(
         if not restricted or str(company_id) in restricted:
             return True
     if classes:
-        code = str(class_code).strip().upper() if class_code is not None else None
-        if code is None or code == "":
+        # `strip(" ")`, not `strip()`: the SQL side trims with btrim (spaces only).
+        code = str(class_code).strip(" ").upper() if class_code is not None else ""
+        if code == "":
             return NO_CLASS not in classes
         return code not in classes
     return False
@@ -220,8 +222,16 @@ def brand_scope_allows_tool(tool_name: str, scope: Optional[frozenset[str]]) -> 
 
     CONTACT-BRAND-SCOPE crew ruling (b): a scoped contact gets no project forecast. This is the
     one seam; the follow-up, option (c), is per-brand project scoping (projects carrying a
-    brand), after which this tool can be allowed again with a filtered figure."""
-    return not (scope and tool_name in _TOOLS_DENIED_WHEN_SCOPED)
+    brand), after which this tool can be allowed again with a filtered figure. A scope with only
+    item class tokens keeps the tool (TAG-BRAND-CLASS crew ruling (b), `limits_brands`)."""
+    return not (limits_brands(scope) and tool_name in _TOOLS_DENIED_WHEN_SCOPED)
+
+
+def limits_brands(scope: Optional[Iterable[str]]) -> bool:
+    """True when the scope names a brand. The answers that carry no product (unpaid invoices,
+    the project forecast) are refused only then: a class-only limit (All brands, some classes)
+    cannot be broken by a figure that names no product (TAG-BRAND-CLASS crew ruling (b))."""
+    return bool(scope) and bool(scope_brand_ids(scope))
 
 
 @contextmanager

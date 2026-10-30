@@ -236,10 +236,15 @@ def test_scope_survives_a_round_trip_through_a_sorted_list(db, cw) -> None:
     assert _visible(db, cw) == ALL - {"serene"}
 
 
-def test_project_forecast_is_denied_to_a_class_scoped_contact(db, cw) -> None:
-    """A figure with no product dimension would include SERENE: denied, as for brand scope."""
-    scope = _svc().contact_brand_scope(db, cw.contact(db, None, [NONE]).id)
-    assert _svc().brand_scope_allows_tool("crm_project_forecast", scope) is False
+def test_project_forecast_follows_the_brand_list_only(db, cw) -> None:
+    """Crew ruling (b): a figure with no product is refused only when the contact has a BRAND
+    list; a class-only limit (the Serene tag) keeps the project forecast."""
+    class_only = _svc().contact_brand_scope(db, cw.contact(db, None, [NONE]).id)
+    assert _svc().brand_scope_allows_tool("crm_project_forecast", class_only) is True
+    assert _svc().limits_brands(class_only) is False
+    branded = _svc().contact_brand_scope(db, cw.contact(db, [cw.w.sorento.id], [NONE]).id)
+    assert _svc().brand_scope_allows_tool("crm_project_forecast", branded) is False
+    assert _svc().limits_brands(branded) is True
 
 
 # --------------------------------------------------------------------- output guards / line clauses
@@ -267,8 +272,8 @@ def test_line_clauses_drop_serene_lines(db, cw) -> None:
     rows = db.execute(
         select(products.c.product_code).where(products.c.product_code.in_(list(cw.codes.values())), *clauses)
     ).all()
-    assert cw.codes["serene"] not in {r[0] for r in rows}
-    assert cw.codes["diy"] in {r[0] for r in rows}
+    got = {r[0] for r in rows}
+    assert got == {cw.codes[k] for k in ALL - {"serene"}}
 
 
 def test_in_scope_product_codes_honour_the_classes(db, cw) -> None:
@@ -323,3 +328,30 @@ def test_settings_card_refuses_an_unknown_code(db, cw) -> None:
     with pytest.raises(AppException) as err:
         _svc().set_contact_brands(db, c.id, [], ["ZZT-NO-SUCH-CLASS"])
     assert err.value.status_code == 422
+
+
+def test_without_a_class_column_a_class_scope_matches_nothing(db, cw) -> None:
+    """Review N2: a caller that forgets the class column fails closed, never open."""
+    scope = _svc().contact_brand_scope(db, cw.contact(db, None, [NONE, cw.DIY]).id)
+    rows = (
+        db.query(Product.product_code)
+        .filter(Product.product_code.in_(list(cw.codes.values())))
+        .filter(_svc().brand_predicate(scope, Product.brand_id, Product.company_id))
+        .all()
+    )
+    assert rows == []
+
+
+def test_a_blank_class_code_counts_as_no_class_on_both_sides(db, cw) -> None:
+    """Review N1: SQL and the Python twin agree on a class row whose code trims to empty."""
+    blank = _item_class(db, "  ")
+    p_blank = branded_product(db, unique_code("BLK", alpha=True), cw.w.sorento)
+    p_blank.item_class_id = blank.id
+    db.commit()
+    for allowed, visible in (([NONE], True), ([cw.DIY], False)):
+        scope = _svc().contact_brand_scope(db, cw.contact(db, None, allowed).id)
+        _stamp(db, scope)
+        sql = db.query(Product.id).filter(Product.id == p_blank.id).first() is not None
+        _stamp(db, None)
+        python = str(p_blank.id) not in _svc().out_of_scope_product_ids(db, scope, [p_blank.id])
+        assert (sql, python) == (visible, visible), allowed

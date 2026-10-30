@@ -106,7 +106,7 @@ companies, to walk through B5.
 - **D1 Storage.** `respond_contacts.allowed_item_class_codes` TEXT[] (NULL = every class), and
   the tag setting `item_classes: [code]` inside the Brands section. Codes, not ids: AutoCount
   ItemClass is flat and the same code (DIY) lives in both books, so one option per code covers
-  both companies. A reserved code `__none__` stands for "No class".
+  both companies. A reserved code `__NONE__` stands for "No class".
 - **D2 Rule.** A product passes when its brand passes the brand rule (unchanged) AND, if the
   contact has a class list, its class code is in the list (no class passes only when "No class"
   is in the list). Not per company: the list applies in every company, branded or not.

@@ -101,6 +101,24 @@ describe('tag Brands row: allowed item classes', () => {
     });
   });
 
+  it('classes can be set with brands left unset, so Apply never rewrites a holder brand list', async () => {
+    render({}, true);
+    fireEvent.click(within(brandsGroup()).getByRole('switch', { name: /set on this tag/i }));
+    fireEvent.click(within(brandsGroup()).getByRole('switch', { name: 'Set brands on this tag' }));
+    expect(within(brandsGroup()).getByText('Brands not set')).toBeInTheDocument();
+    const picker = await within(brandsGroup()).findByTestId('tag-item-classes');
+    fireEvent.click(await within(picker).findByText('pick SORENTO LITE - DIY'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateContactTag).toHaveBeenCalled());
+    expect(updateContactTag.mock.calls[0][1]).toEqual({ settings: { item_classes: ['__NONE__', 'DIY'] } });
+  });
+
+  it('view mode of a classes-only tag says brands are not set', async () => {
+    render({ item_classes: ['DIY'] }, false);
+    expect(await within(brandsGroup()).findByText('Brands not set')).toBeInTheDocument();
+    expect(within(brandsGroup()).getByText('SORENTO LITE - DIY')).toBeInTheDocument();
+  });
+
   it('the picker shows with brands picked too', async () => {
     render({ brands: ['b1'] }, true);
     expect(await within(brandsGroup()).findByTestId('tag-item-classes')).toBeInTheDocument();

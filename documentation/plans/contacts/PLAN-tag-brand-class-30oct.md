@@ -1,6 +1,6 @@
 # PLAN - TAG-BRAND-CLASS: allowed item classes under Brands, on tags and contacts
 
-Status: Build (Phase 2 backend + frontend). Track: full (migration + contact access rule change).
+Status: Review fix round (reviewer + security findings fixed; browser pass done). Track: full (migration + contact access rule change).
 Card: `CARD-tag-brand-class-30oct.md` (owner answers Q1 b, Q2 a, Q3 b, Q4 a, Q5 a; mock
 `tag-brand-class-mock.html` approved 30 Oct 12:17 with the three proposals). UAC:
 `tag-brand-class-acceptance-criteria.md`.
@@ -52,14 +52,22 @@ See the card's "What exists today" table. Added here:
   class data. Gate: `user_management.contacts.edit` (as Brands).
 - **D6 Access copy** carries `item_classes` (codes) inside the Brands facet; the Brands text reads
   `All brands; classes: No class, DIY`.
-- **D7 Delete guard.** Deleting an item class is refused (409) while products carry it AND some
-  contact has an allowed list: the delete would turn those products into "No class" and change
-  what those contacts see.
-- **D8 FE.** One shared component `components/contacts/BrandClassAccessBlock.tsx` renders the
+- **D7 Delete and rename guard.** Deleting an item class, or changing its code, is refused (409)
+  while products carry it AND some contact or tag limits item classes: either would move those
+  products to "No class" or to another code and change what those contacts see (security M1).
+  `__NONE__` is reserved: the Item Classes screen and the ingest refuse it as a code (L3).
+- **D7a Answers with no product** (crew ruling (b), 30 Oct): the unpaid report and the project
+  forecast are refused only when the contact has a BRAND list (`limits_brands`); a class-only
+  limit keeps them, since they name no product.
+- **D7b Accepted (security L5):** a viewer whose company scope cannot see a stored code still
+  sees the code itself (codes, never names), and saving the card then needs that code removed
+  (422, fails closed). Masking it would drop it on save, which widens.
+- **D8 FE.** One shared component `components/contacts/AllowedItemClassesPicker.tsx` renders the
   class picker (SearchableMultiSelect, clearable, "All classes" placeholder, "No class" first,
   auto-ticked when the first class is picked). The contact Brands card uses it under its brand
   picker and loses the per-brand rows; the tag Brands row uses it under the All brands switch /
-  brand pick list.
+  brand pick list. On a tag, "Set brands" can be switched off so a tag sets classes and leaves
+  each holder's brands alone (review S1: switching the row on used to force `brands: "all"`).
 
 ## 4. Tests (red first)
 
@@ -69,7 +77,7 @@ See the card's "What exists today" table. Added here:
 - `tests/test_item_class_scope_paths.py`, `tests/test_item_class_copy_access.py`,
   `tests/test_item_class_api.py` (delete guard), `tests/test_contact_brand_scope_api.py` updated.
 - `tests/test_contact_tags_item_classes.py`: validate, merge, evaluate, apply.
-- vitest: `BrandClassAccessBlock.test.tsx`, `ContactBrandScopeSection.test.tsx` updated,
+- vitest: `AllowedItemClassesPicker.test.tsx`, `ContactBrandScopeSection.test.tsx` updated,
   `ContactTagSettings` brands row.
 
 ## 5. Out of scope
