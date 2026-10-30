@@ -5975,8 +5975,13 @@ def resolve_references(
         tok_types = _types_for(tr.token)
         if tok_types is not None and not tok_types:
             continue
+        # A token that DID match (only kinds the caller did not ask for, D10b) is offered the
+        # kinds the caller asked for, as before sets had a trigram tier (CHATBOT-SET-STOCK): a
+        # set code that matched exactly is never offered its sibling sets instead. A token that
+        # matched nothing is offered every kind it may resolve to, sets included.
+        scope = caller_types if (tr.matches and caller_types is not None) else tok_types
         try:
-            hits = _trgm_lookup(db, tr.token, tok_types if tok_types is not None else _ALL_TRGM_TYPES)
+            hits = _trgm_lookup(db, tr.token, scope if scope is not None else _ALL_TRGM_TYPES)
         except Exception:
             logger.exception("resolve alternatives trgm lookup failed for token=%s", tr.token)
             hits = []
