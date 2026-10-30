@@ -56,8 +56,9 @@ export function useAttachmentActions(
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
-  // Permanent delete is the one the server gates (`resource.attachments.delete`).
-  const canDeletePermanently = useHasPermission('resource.attachments.delete');
+  // The server gates Move to trash, Restore and permanent delete on
+  // `resource.attachments.delete`, so all three hide without it.
+  const canDelete = useHasPermission('resource.attachments.delete');
 
   if (!attachment) return { actions: [] };
 
@@ -130,7 +131,7 @@ export function useAttachmentActions(
     },
   ];
 
-  if (attachment.is_deleted) {
+  if (attachment.is_deleted && canDelete) {
     actions.push({
       key: 'attachment.restore',
       label: 'Restore',
@@ -140,7 +141,7 @@ export function useAttachmentActions(
     });
   }
 
-  if (!attachment.is_deleted || canDeletePermanently) {
+  if (canDelete) {
     actions.push({
       key: 'attachment.delete',
       // A trashed file is deleted for good; a live one only goes to the trash, and

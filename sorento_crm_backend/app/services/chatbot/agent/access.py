@@ -42,6 +42,9 @@ class AgentContext:
     brand_scope: frozenset[str] | None = None
     #: The argument-level slugs (`tools.ARG_PERMISSIONS`) the user holds, sorted; also hashed.
     arg_permissions: tuple[str, ...] = ()
+    #: The console operator acting for this contact (AGENTIC-P3 R1); None in chat, or when the
+    #: operator is the linked user. Set per turn by the caller, never by `build_context`.
+    operator_user_id: str | None = None
 
 
 def build_context(db, contact_respond_id: str) -> AgentContext:

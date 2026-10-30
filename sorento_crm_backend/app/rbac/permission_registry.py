@@ -1060,3 +1060,13 @@ PERMISSION_REGISTRY.extend([
         "description": "See only the conversations of your own sales agents' customers in the Conversations inbox. Ignored when View Conversations is also held.",
     },
 ])
+
+
+# AGENTIC-P3 W0: change a dealer contact's role or end its access, only for contacts linked to
+# customers of the user's own sales agents. Seeded by `agp3_0002_contacts_edit_own`, granted to NO
+# role there. Holding `user_management.contacts.edit` allows the same for any contact.
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.contacts.edit_own",
+    "name": "Edit Own Dealer Contacts' Access",
+    "description": "Change the role or end the access of dealer contacts linked to customers of your own sales agents, through the agent. Ignored when Edit Contacts is also held.",
+})

@@ -22,6 +22,7 @@ import { providerModelLabel } from '@/lib/ai/modelOptions';
 import type { ProviderModel } from '@/components/common/ProviderModelSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { ProviderModelSelect } from '@/components/common/ProviderModelSelect';
+import AllowedItemClassesPicker from '@/components/contacts/AllowedItemClassesPicker';
 import {
   useSaveTagSettings,
   useSettingsCatalog,
@@ -47,7 +48,7 @@ type Sections = readonly string[];
 
 const GROUPS: { id: string; title: string; sections: Sections }[] = [
   { id: 'access_types', title: 'Access types', sections: ['access_types'] },
-  { id: 'brands', title: 'Brands', sections: ['brands'] },
+  { id: 'brands', title: 'Brands', sections: ['brands', 'item_classes'] },
   { id: 'companies', title: 'Companies', sections: ['companies'] },
   {
     id: 'market_segments',
@@ -358,9 +359,24 @@ function GroupBody({
     }
     case 'brands': {
       const all = s.brands === 'all';
+      // TAG-BRAND-CLASS: a tag may set item classes and leave the brands alone, so applying it
+      // never rewrites a holder's own brand list.
+      const brandsSet = s.brands !== undefined;
       return (
         <div className="space-y-2">
           {editing ? (
+            <div className="flex items-center gap-2 text-sm">
+              <Switch
+                aria-label="Set brands on this tag"
+                checked={brandsSet}
+                onCheckedChange={(v) => set('brands', v ? 'all' : undefined)}
+              />
+              Set brands
+            </div>
+          ) : null}
+          {!brandsSet ? (
+            <p className="text-sm text-muted-foreground">Brands not set</p>
+          ) : editing ? (
             <div className="flex items-center gap-2 text-sm">
               <Switch
                 aria-label="All brands"
@@ -372,7 +388,7 @@ function GroupBody({
           ) : all ? (
             <Pills labels={['All brands']} />
           ) : null}
-          {!all ? (
+          {brandsSet && !all ? (
             <PickList
               value={s.brands as string[] | undefined}
               onChange={(v) => set('brands', v ?? [])}
@@ -381,6 +397,14 @@ function GroupBody({
               placeholder="Select brands"
             />
           ) : null}
+          {/* TAG-BRAND-CLASS: the contact card's picker, with All brands on or off; empty = not set. */}
+          <AllowedItemClassesPicker
+            id="tag-item-classes"
+            value={Array.isArray(s.item_classes) ? (s.item_classes as string[]) : []}
+            onChange={(codes) => set('item_classes', codes.length ? codes : undefined)}
+            options={catalog.item_classes ?? []}
+            editing={editing}
+          />
         </div>
       );
     }
@@ -852,9 +876,18 @@ export default function ContactTagSettings({
       return next;
     });
 
+  // A group switched on stays open while its sections are cleared (Brands: brands unset, classes
+  // not picked yet), so it does not collapse under the hand.
+  const [opened, setOpened] = useState<ReadonlySet<Sections>>(new Set());
   const isSet = (sections: Sections) =>
-    sections.some((x) => s[x] !== undefined);
-  const toggle = (sections: Sections, on: boolean) =>
+    sections.some((x) => s[x] !== undefined) || (editing && opened.has(sections));
+  const toggle = (sections: Sections, on: boolean) => {
+    setOpened((o) => {
+      const next = new Set(o);
+      if (on) next.add(sections);
+      else next.delete(sections);
+      return next;
+    });
     setDraft((d) => {
       const next = { ...d };
       sections.forEach((x, i) => {
@@ -863,6 +896,7 @@ export default function ContactTagSettings({
       });
       return next;
     });
+  };
 
   return (
     <Card>

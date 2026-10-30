@@ -156,9 +156,9 @@ MASTER_DEACTIVATION: dict[str, tuple[str, Any]] = {
 }
 
 # Masters whose deletion only ever deactivates, even with no referrer the catalogue probe sees.
-# An item class can be named in `respond_contacts.brand_class_ids` (JSONB, no FK), so a hard
-# delete would leave a dangling id in a contact's access (ITEM-CLASS-MASTER D5; the Item
-# Classes screen refuses that delete with 409 for the same reason).
+# Contact access is keyed by item class CODE (`respond_contacts.allowed_item_class_codes`, no
+# FK), so a hard delete would turn the class's products into "No class" and change what those
+# contacts see (TAG-BRAND-CLASS D7; the Item Classes screen refuses that delete with 409).
 DEACTIVATE_ONLY = {"item_classes"}
 
 

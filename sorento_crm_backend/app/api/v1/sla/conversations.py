@@ -89,7 +89,7 @@ def _assert_own_contact(db: Session, current_user: dict, contact_ref: str) -> No
 @router.get("/")
 async def list_inbox_conversations(
     tab: str = Query(TAB_ALL, description="mine | mentioned | unassigned | all"),
-    q: Optional[str] = Query(None, description="Contact name or phone fragment"),
+    q: Optional[str] = Query(None, description="Contact name, phone or message text fragment"),
     cursor: Optional[str] = Query(None, description="Opaque keyset cursor from next_cursor"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     current_user: dict = Depends(require_any_permission(READ)),

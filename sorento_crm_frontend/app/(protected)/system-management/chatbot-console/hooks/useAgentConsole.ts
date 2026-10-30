@@ -4,12 +4,15 @@ import { useCallback, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
+  ActionRefusedError,
   AgentRefusedError,
+  cancelAgentAction,
+  confirmAgentAction,
   getAgentConversation,
   newAgentConversation,
   postAgentTurn,
 } from '../services/agentConsoleService';
-import type { AgentReplyMeta } from '../types/agentConsole.types';
+import type { AgentActionResponse, AgentReplyMeta } from '../types/agentConsole.types';
 
 const LAST_CONTACT_STORAGE_KEY = 'agent-console:last-contact';
 
@@ -42,6 +45,8 @@ export function useAgentConsole() {
   // server carries only text and reply.
   const [metaByTurn, setMetaByTurn] = useState<Record<string, AgentReplyMeta>>({});
   const [notice, setNotice] = useState<string | null>(null);
+  // What Confirm / Cancel did, by the proposing turn's id, for the turns decided in this visit.
+  const [outcomeByTurn, setOutcomeByTurn] = useState<Record<string, AgentActionResponse>>({});
 
   const contactId = contact?.id ?? null;
   const queryKey = ['agent-console', 'conversation', contactId];
@@ -50,7 +55,6 @@ export function useAgentConsole() {
     queryKey,
     queryFn: () => getAgentConversation(contactId as string),
     enabled: Boolean(contactId),
-    refetchOnWindowFocus: false,
     retry: false,
   });
   // A contact the agent may not run for is told in words, not left as an empty thread.
@@ -86,11 +90,35 @@ export function useAgentConsole() {
     },
   });
 
+  const pendingAction = conversation.data?.pending_action ?? null;
+
+  const decide = useMutation({
+    mutationFn: ({ actionId, decision }: { actionId: string; turnId: string; decision: 'confirm' | 'cancel' }) =>
+      decision === 'confirm'
+        ? confirmAgentAction(contactId as string, actionId)
+        : cancelAgentAction(contactId as string, actionId),
+    onMutate: () => setNotice(null),
+    onSuccess: (result, { turnId }) => {
+      setOutcomeByTurn((prev) => ({ ...prev, [turnId]: result }));
+    },
+    onError: (error) => {
+      if (error instanceof ActionRefusedError) {
+        setNotice(error.message);
+      } else {
+        toast.error(error instanceof Error ? error.message : 'Failed to decide the changes');
+      }
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey });
+    },
+  });
+
   const fresh = useMutation({
     mutationFn: () => newAgentConversation(contactId as string),
     onSuccess: async () => {
       setNotice(null);
       setMetaByTurn({});
+      setOutcomeByTurn({});
       await queryClient.invalidateQueries({ queryKey });
     },
     onError: (error) => {
@@ -107,6 +135,7 @@ export function useAgentConsole() {
     setNotice(null);
     setPendingText(null);
     setMetaByTurn({});
+    setOutcomeByTurn({});
     try {
       window.localStorage.setItem(LAST_CONTACT_STORAGE_KEY, JSON.stringify({ id, label }));
     } catch {
@@ -136,5 +165,12 @@ export function useAgentConsole() {
     send,
     startNew: () => fresh.mutate(),
     startingNew: fresh.isPending,
+    pendingAction,
+    outcomeByTurn,
+    deciding: decide.isPending,
+    confirmAction: (actionId: string, turnId: string) =>
+      decide.mutate({ actionId, turnId, decision: 'confirm' }),
+    cancelAction: (actionId: string, turnId: string) =>
+      decide.mutate({ actionId, turnId, decision: 'cancel' }),
   };
 }

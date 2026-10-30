@@ -219,7 +219,7 @@ export default function AttachmentsInFolderPanel({
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [bulkDownloadOpen, setBulkDownloadOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const canDeletePermanently = useHasPermission('resource.attachments.delete');
+  const canDelete = useHasPermission('resource.attachments.delete');
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
   const [setCompanyDialogOpen, setSetCompanyDialogOpen] = useState(false);
@@ -728,6 +728,7 @@ export default function AttachmentsInFolderPanel({
         isTrashView,
         isResubmitting: isResubmittingBulk,
         canRestore: !bulkRestoreMutation.isPending && selectedDeletableFileIds.length > 0,
+        canDelete,
       },
       {
         onMove: () => setMoveDialogOpen(true),
@@ -963,7 +964,7 @@ export default function AttachmentsInFolderPanel({
         isTrashView={isTrashView}
         recursive={recursive}
         resubmitting={isFileItem(item) && pendingResubmitIds.has(item.id)}
-        canDeletePermanently={canDeletePermanently}
+        canDelete={canDelete}
         handlers={{
           onOpen: openItem,
           onPreview: handlePreview,
@@ -995,7 +996,7 @@ export default function AttachmentsInFolderPanel({
     [
       isTrashView,
       recursive,
-      canDeletePermanently,
+      canDelete,
       pendingResubmitIds,
       openItem,
       handlePreview,
