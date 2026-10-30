@@ -126,7 +126,7 @@ describe('Complaint list, limited user: the portal list body', () => {
     expect(card).not.toBeNull();
     fireEvent.contextMenu(card);
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('MYC-0001')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('MYC-0001').length).toBeGreaterThanOrEqual(1);
     expect(within(dialog).getByText('DO-9001')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Duplicate' })).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Open' })).toBeInTheDocument();

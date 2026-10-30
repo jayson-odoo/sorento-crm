@@ -46,7 +46,6 @@ vi.mock('../hooks/useSampleRequests', async (importOriginal) => {
 
 import SampleRequestsList from './SampleRequestsList';
 
-const LIMITED = ['projects.sample_requests.view_own', 'projects.sample_requests.create'];
 const STAFF = ['projects.sample_requests.view', 'projects.sample_requests.create'];
 const COLUMNS = ['Number', 'Submitted', 'Status', 'Delivery', 'Customer', 'Project Title', 'Mode', 'Salesperson'];
 
@@ -62,7 +61,7 @@ beforeEach(() => {
 });
 
 describe('every Sample Request column header sorts, for limited and staff alike', () => {
-  it.each([['limited', LIMITED], ['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
+  it.each([['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
     held = new Set(slugs);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(

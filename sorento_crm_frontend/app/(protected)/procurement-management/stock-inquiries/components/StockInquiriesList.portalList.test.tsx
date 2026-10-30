@@ -129,7 +129,7 @@ describe('Stock Inquiry list, limited user: the portal list body', () => {
     expect(card).not.toBeNull();
     fireEvent.contextMenu(card);
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('MYS-0001')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('MYS-0001').length).toBeGreaterThanOrEqual(1);
     expect(within(dialog).getByText('Mixer, chrome')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Duplicate' })).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Open' })).toBeInTheDocument();

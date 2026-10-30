@@ -31,6 +31,7 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
 }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
 
+vi.mock('@/components/common/MyRequestPortalList', () => ({ default: () => <div data-testid="portal-list-body" />, MyRequestPortalList: () => <div data-testid="portal-list-body" /> }));
 let held = new Set<string>();
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => held.has(slug),
@@ -46,7 +47,6 @@ vi.mock('../hooks/useNewProductApplications', async (importOriginal) => {
 
 import NewProductApplicationsList from './NewProductApplicationsList';
 
-const LIMITED = ['procurement.new_product_applications.view_own', 'procurement.new_product_applications.create'];
 const STAFF = ['procurement.new_product_applications.view', 'procurement.new_product_applications.create'];
 // The grid's own titles, Number to Date (NewProductApplicationsList.tsx columns).
 const COLUMNS = ['Number', 'Status', 'Inquiry', 'Customer', 'First line', 'Lines', 'Done', 'Needed by', 'Date'];
@@ -80,7 +80,7 @@ function mount(slugs: string[]) {
 }
 
 describe('every New Product Application column header sorts, for limited and staff alike', () => {
-  it.each([['limited', LIMITED], ['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
+  it.each([['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
     mount(slugs);
     await screen.findByText('NPA-000001');
     const missing: string[] = [];
@@ -93,19 +93,19 @@ describe('every New Product Application column header sorts, for limited and sta
   });
 });
 
-describe('New for a limited user', () => {
-  it('a limited user with create gets Create (L4: was New)', async () => {
-    mount(LIMITED);
-    await screen.findByText('NPA-000001');
-    expect(screen.getByRole('button', { name: /^create$/i })).toBeTruthy();
-  });
-});
-
 describe('Create label (L4, owner a25895124 Q3 a)', () => {
   it('staff: the primary action reads exactly "Create", never "New"', async () => {
     mount(STAFF);
     await screen.findByText('NPA-000001');
     expect(screen.getAllByRole('button', { name: 'Create' }).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /^new$/i })).toBeNull();
+  });
+});
+
+describe('limited user (superseded by owner a25895124 Q1 a)', () => {
+  it('gets the portal list body (card / list toggle), not the staff DataGrid', async () => {
+    mount(['procurement.new_product_applications.view_own', 'procurement.new_product_applications.create']);
+    expect(await screen.findByTestId('portal-list-body')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
   });
 });

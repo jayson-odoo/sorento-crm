@@ -58,7 +58,6 @@ vi.mock('../hooks/useStockInquiries', () => ({
 import StockInquiriesList from './StockInquiriesList';
 import type { StockInquiry } from '../types/stockInquiry.types';
 
-const LIMITED = ['procurement.stock_inquiries.view_own', 'procurement.stock_inquiries.add'];
 const STAFF = [
   'procurement.stock_inquiries.view',
   'procurement.stock_inquiries.add',
@@ -99,37 +98,6 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('Stock Inquiry list, limited user', () => {
-  it('shows Create (holds .add; L4: the label is exactly Create)', async () => {
-    renderList(LIMITED);
-    expect(await screen.findByText('SI-26-0184')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Create' }).length).toBeGreaterThan(0);
-  });
-
-  it('hides Create when .add is not held', async () => {
-    renderList(['procurement.stock_inquiries.view_own']);
-    expect(await screen.findByText('SI-26-0184')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
-  });
-
-  it('offers no bulk Delete after selecting a row', async () => {
-    renderList(LIMITED);
-    await screen.findByText('SI-26-0184');
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select row' })[0]);
-    expect(screen.queryByRole('button', { name: /^Delete$/ })).toBeNull();
-  });
-
-  it('status filter offers Draft', async () => {
-    renderList(LIMITED);
-    await screen.findByText('SI-26-0184');
-    const trigger = screen.getByRole('button', { name: /^Filters?/ });
-    fireEvent.pointerDown(trigger, { button: 0, pointerId: 1 });
-    fireEvent.pointerUp(trigger, { button: 0, pointerId: 1 });
-    fireEvent.click(trigger);
-    expect(await screen.findByRole('button', { name: 'Draft' })).toBeInTheDocument();
-  });
-});
-
 describe('Stock Inquiry list, staff user (control, P4-26)', () => {
   it('still offers bulk Delete after selecting a row', async () => {
     renderList(STAFF);
@@ -145,7 +113,7 @@ describe('every column header sorts (P4-23), for limited and staff alike', () =>
     'Quantity', 'Delivery Date', 'Remark', 'Salesperson', 'Status', 'Assigned To',
     'Handled By', 'Print Count',
   ];
-  it.each([['limited', LIMITED], ['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
+  it.each([['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
     renderList(slugs);
     await screen.findByText('SI-26-0184');
     const missing: string[] = [];

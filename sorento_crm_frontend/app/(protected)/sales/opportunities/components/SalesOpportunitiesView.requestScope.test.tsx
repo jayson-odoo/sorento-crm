@@ -33,6 +33,7 @@ vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), custo
 vi.mock('@/components/common/container', () => ({
   Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
+vi.mock('@/components/common/MyRequestPortalList', () => ({ default: () => <div data-testid="portal-list-body" />, MyRequestPortalList: () => <div data-testid="portal-list-body" /> }));
 let held = new Set<string>();
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => held.has(slug),
@@ -64,7 +65,6 @@ beforeEach(() => {
 
 describe('every Sales Opportunity column header sorts', () => {
   it.each([
-    ['limited', ['sales.opportunities.view_own', 'sales.opportunities.add']],
     ['staff', ['sales.opportunities.view', 'sales.opportunities.add']],
   ])('%s: each header is a sort button', async (_n, slugs) => {
     held = new Set(slugs);
@@ -82,5 +82,19 @@ describe('every Sales Opportunity column header sorts', () => {
       if (!sortable) missing.push(title);
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe('limited user (superseded by owner a25895124 Q1 a)', () => {
+  it('gets the portal list body (card / list toggle), not the staff DataGrid', async () => {
+    held = new Set(['sales.opportunities.view_own', 'sales.opportunities.add']);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <SalesOpportunitiesView />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByTestId('portal-list-body')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
   });
 });

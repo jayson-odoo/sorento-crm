@@ -69,7 +69,6 @@ import ComplaintsList from './ComplaintsList';
 import type { Complaint } from '../types/complaint.types';
 import { APPEALED_LABEL } from '@/lib/submission-status';
 
-const LIMITED = ['complaint_management.complaints.view_own', 'complaint_management.complaints.add'];
 const STAFF = [
   'complaint_management.complaints.view',
   'complaint_management.complaints.add',
@@ -108,53 +107,6 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('Complaint list, limited user', () => {
-  it('shows Create (holds .add; L4: the label is exactly Create)', async () => {
-    renderList(LIMITED);
-    expect(await screen.findByText('CMP-0001')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Create' }).length).toBeGreaterThan(0);
-  });
-
-  it('hides Create when .add is not held', async () => {
-    renderList(['complaint_management.complaints.view_own']);
-    expect(await screen.findByText('CMP-0001')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
-  });
-
-  it('offers no bulk Delete after selecting a row', async () => {
-    renderList(LIMITED);
-    await screen.findByText('CMP-0001');
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select row' })[0]);
-    expect(screen.queryByRole('button', { name: /^Delete$/ })).toBeNull();
-  });
-
-  it('the row menu carries neither Delete nor Download PDF', async () => {
-    renderList(LIMITED);
-    await screen.findByText('CMP-0001');
-    const trigger = screen.queryByRole('button', { name: 'complaint actions' });
-    if (trigger) {
-      trigger.focus();
-      fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
-      const menu = await screen.findByRole('menu');
-      const labels = within(menu).queryAllByRole('menuitem').map((i) => (i.textContent ?? '').trim());
-      expect(labels).not.toContain('Delete');
-      expect(labels).not.toContain('Download PDF');
-    }
-    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: 'Download PDF' })).toBeNull();
-  });
-
-  it('the status filter offers Draft', async () => {
-    renderList(LIMITED, 'submitted'); // the row itself must not be the thing that says "Draft"
-    await screen.findByText('CMP-0001');
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /^filters/i }));
-    await user.click(await screen.findByText('All statuses'));
-    expect(await screen.findByText(APPEALED_LABEL)).toBeInTheDocument(); // the option list is open (#1952: resubmitted reads Appealed)
-    expect(screen.getByText('Draft')).toBeInTheDocument();
-  });
-});
-
 describe('Complaint list, staff user (control, P4-26)', () => {
   it('still offers bulk Delete after selecting a row', async () => {
     renderList(STAFF);
@@ -181,7 +133,7 @@ describe('every column header sorts (P4-23), for limited and staff alike', () =>
     'Complaint Type', 'Project Title', 'Salesperson', 'Status', 'Assigned To', 'Handled By',
     'Attachments', 'Print Count',
   ];
-  it.each([['limited', LIMITED], ['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
+  it.each([['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
     renderList(slugs);
     await screen.findByText('CMP-0001');
     const missing: string[] = [];
@@ -195,14 +147,6 @@ describe('every column header sorts (P4-23), for limited and staff alike', () =>
 });
 
 describe('lookups behind master-data permissions (owner hand test 2, item 1)', () => {
-  it('limited: root-cause and resolution selects are not requested (no 403 toast)', async () => {
-    renderList(LIMITED);
-    await screen.findByText('CMP-0001');
-    await new Promise((r) => setTimeout(r, 50));
-    expect(rootCauseSelect).not.toHaveBeenCalled();
-    expect(resolutionSelect).not.toHaveBeenCalled();
-  });
-
   it('staff: both selects are still requested (pin)', async () => {
     renderList(STAFF);
     await screen.findByText('CMP-0001');

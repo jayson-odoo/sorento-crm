@@ -31,6 +31,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 vi.mock('@/components/common/container', () => ({ Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
 
+vi.mock('@/components/common/MyRequestPortalList', () => ({ default: () => <div data-testid="portal-list-body" />, MyRequestPortalList: () => <div data-testid="portal-list-body" /> }));
 let held = new Set<string>();
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => held.has(slug),
@@ -60,8 +61,6 @@ vi.mock('../../services/priceTagRequestService', () => ({
 
 import PriceTagRequestsPage from '../page';
 
-const LIMITED = ['dealer_kit.price_tag_requests.view_own', 'dealer_kit.price_tag_requests.create'];
-const LIMITED_NO_CREATE = ['dealer_kit.price_tag_requests.view_own'];
 const STAFF = ['dealer_kit.price_tag_requests.view', 'dealer_kit.price_tag_requests.process', 'dealer_kit.price_tag_requests.create'];
 const COLUMNS = ['Doc Number', 'Customer', 'Salesperson', 'Status', 'Need by', 'Lines', 'Created', 'Assigned To', 'Product data'];
 
@@ -85,7 +84,7 @@ beforeEach(() => {
 });
 
 describe('every Price Tag Request column header sorts, for limited and staff alike', () => {
-  it.each([['limited', LIMITED], ['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
+  it.each([['staff', STAFF]])('%s: each header is a sort button', async (_n, slugs) => {
     mount(slugs);
     await screen.findByText('PT-000001');
     const missing: string[] = [];
@@ -99,11 +98,6 @@ describe('every Price Tag Request column header sorts, for limited and staff ali
 });
 
 describe('Claim', () => {
-  it('a limited user sees no Claim on an unclaimed new row', async () => {
-    mount(LIMITED);
-    await screen.findByText('PT-000001');
-    expect(screen.queryByText('Claim')).toBeNull();
-  });
   it('a process holder still sees Claim (control)', async () => {
     mount(STAFF);
     await screen.findByText('PT-000001');
@@ -111,45 +105,10 @@ describe('Claim', () => {
   });
 });
 
-describe('Create', () => {
-  it('a limited user with .create sees Create, pointing at /new', async () => {
-    mount(LIMITED);
-    await screen.findByText('PT-000001');
-    const create = screen.getAllByText(/^Create$/i).map((el) => el.closest('a,button')).find(Boolean);
-    expect(create, 'no Create control').toBeTruthy();
-    expect(create?.getAttribute('href') ?? '').toBe('/dealer-kit/price-tag-requests/new');
-  });
-  it('without .create there is no Create', async () => {
-    mount(LIMITED_NO_CREATE);
-    await screen.findByText('PT-000001');
-    expect(screen.queryAllByText(/^Create$/i)).toHaveLength(0);
-  });
-});
-
-describe('Draft status filter', () => {
-  it('offers Draft and sends it as the status', async () => {
-    const user = userEvent.setup();
-    mount(LIMITED);
-    await screen.findByText('PT-000001');
-    await user.click(screen.getByRole('button', { name: /^filters/i }));
-    const box = await screen.findByRole('listbox');
-    expect(within(box).queryByRole('option', { name: 'Draft' }), 'no Draft option').not.toBeNull();
-    await user.selectOptions(box, ['draft']);
-    await waitFor(() => {
-      const last = listPriceTagRequests.mock.calls.at(-1)?.[0] as { status?: string };
-      expect(String(last.status ?? '')).toBe('draft');
-    });
-  });
-});
-
-describe('a draft row', () => {
-  it('shows the Draft pill, not New, for a row with portal_draft_at', async () => {
-    listPriceTagRequests.mockResolvedValue({
-      data: [row({ id: 'req-9', doc_number: 'PT-000009', status: 'new', portal_draft_at: '2026-09-02T00:00:00Z' })],
-      pagination: { total: 1 },
-    });
-    mount(LIMITED);
-    await screen.findByText('PT-000009');
-    expect(screen.getAllByText('Draft').length).toBeGreaterThan(0);
+describe('limited user (superseded by owner a25895124 Q1 a)', () => {
+  it('gets the portal list body (card / list toggle), not the staff DataGrid', async () => {
+    mount(['dealer_kit.price_tag_requests.view_own', 'dealer_kit.price_tag_requests.create']);
+    expect(await screen.findByTestId('portal-list-body')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
   });
 });

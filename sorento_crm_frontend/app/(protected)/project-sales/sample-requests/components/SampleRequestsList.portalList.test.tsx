@@ -73,7 +73,7 @@ const STAFF = ['projects.sample_requests.view', 'projects.sample_requests.create
 
 const PORTAL_ROW = {
   id: 'mine-1', request_no: 'MYR-0001', status: 'submitted', status_label: 'Submitted', customer_name: 'Buyer One',
-  project_title: 'Alpha Tower', created_at: '2026-08-20T02:00:00',
+  request_date: '2026-08-20T02:00:00',
 };
 
 function mount(slugs: string[]) {
@@ -92,7 +92,7 @@ beforeEach(() => {
   apiFetch.mockReset();
   apiFetch.mockImplementation(async (url: unknown) => {
     const u = String(url);
-    if (u.includes('/api/v1/my-requests/submissions?type=complaint')) return jsonResponse({ items: [PORTAL_ROW] });
+    if (u.includes('/api/v1/my-requests/submissions/sample_request')) return jsonResponse({ data: [PORTAL_ROW], pagination: { total: 1, page: 1, limit: 50 } });
     return jsonResponse({ items: [], data: [], pagination: { total: 0, page: 1, limit: 50 } });
   });
 });
@@ -102,7 +102,7 @@ describe('Sample Request list, limited user: the portal list body', () => {
     mount(LIMITED);
     expect(await screen.findByText('MYR-0001')).toBeInTheDocument();
     const urls = urlsOf(apiFetch);
-    expect(urls.some((u) => u.includes('/api/v1/my-requests/submissions?type=complaint'))).toBe(true);
+    expect(urls.some((u) => u.includes('/api/v1/my-requests/submissions/sample_request'))).toBe(true);
     expect(urls.some((u) => u.includes('/public/portal'))).toBe(false);
   });
 
@@ -131,8 +131,9 @@ describe('Sample Request list, limited user: the portal list body', () => {
     expect(card).not.toBeNull();
     fireEvent.contextMenu(card);
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('MYR-0001')).toBeInTheDocument();
-    expect(within(dialog).getByText('Alpha Tower')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('MYR-0001').length).toBeGreaterThanOrEqual(1);
+    expect(within(dialog).getByText('Document number')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('Buyer One').length).toBeGreaterThanOrEqual(1);
     expect(within(dialog).getByRole('button', { name: 'Duplicate' })).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Open' })).toBeInTheDocument();
   });

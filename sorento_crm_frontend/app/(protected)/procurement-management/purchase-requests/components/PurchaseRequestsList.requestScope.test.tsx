@@ -64,6 +64,7 @@ vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
   return { ...actual, SearchableMultiSelect: (props: Props) => <Stub {...props} /> };
 });
 
+vi.mock('@/components/common/MyRequestPortalList', () => ({ default: () => <div data-testid="portal-list-body" />, MyRequestPortalList: () => <div data-testid="portal-list-body" /> }));
 let held = new Set<string>();
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => held.has(slug),
@@ -148,51 +149,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe.each(KINDS)('$kind list, limited user', (k) => {
-  const LIMITED = [`${k.base}.view_own`, `${k.base}.add`];
+describe.each(KINDS)('$kind list, staff user', (k) => {
   const STAFF = [`${k.base}.view`, `${k.base}.add`, `${k.base}.delete`, `${k.base}.report`];
-
-  it('shows Create (holds .add)', async () => {
-    renderList(k, LIMITED);
-    expect(await screen.findByText(k.number)).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /^Create$/ }).length).toBeGreaterThan(0);
-  });
-
-  it('hides Create when .add is not held', async () => {
-    renderList(k, [`${k.base}.view_own`]);
-    expect(await screen.findByText(k.number)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Create$/ })).toBeNull();
-  });
-
-  it('offers no bulk Delete after selecting a row', async () => {
-    renderList(k, LIMITED);
-    await screen.findByText(k.number);
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select row' })[0]);
-    expect(screen.queryByRole('button', { name: /^Delete$/ })).toBeNull();
-  });
-
-  it('offers no Export of other people rows after selecting a row', async () => {
-    renderList(k, LIMITED);
-    await screen.findByText(k.number);
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select row' })[0]);
-    expect(screen.queryByRole('button', { name: /Export/ })).toBeNull();
-  });
-
-  it('hides the Report button even when the report slug is held', async () => {
-    renderList(k, [...LIMITED, `${k.base}.report`]);
-    await screen.findByText(k.number);
-    expect(screen.queryByRole('button', { name: /Report/ })).toBeNull();
-    expect(screen.queryByRole('link', { name: /Report/ })).toBeNull();
-  });
-
-  it('status filter offers Draft', async () => {
-    renderList(k, LIMITED);
-    await screen.findByText(k.number);
-    await userEvent.setup().click(screen.getByRole('button', { name: /^filters/i }));
-    await waitFor(() => expect(document.querySelector('select[multiple] option[value="pending"]')).not.toBeNull());
-    const statusBox = document.querySelector('select[multiple] option[value="pending"]')!.parentElement!;
-    expect(statusBox.querySelector('option[value="draft"]')?.textContent).toBe('Draft');
-  });
 
   it('staff control (P4-26): bulk Delete, Export and Report stay', async () => {
     renderList(k, STAFF);
@@ -203,8 +161,8 @@ describe.each(KINDS)('$kind list, limited user', (k) => {
     expect(screen.getByRole('button', { name: /Export/ })).toBeInTheDocument();
   });
 
-  it.each([['limited', 'L'], ['staff', 'S']])('%s: every column header sorts (P4-23)', async (who) => {
-    renderList(k, who === 'limited' ? LIMITED : STAFF);
+  it.each([['staff', 'S']])('%s: every column header sorts (P4-23)', async () => {
+    renderList(k, STAFF);
     await screen.findByText(k.number);
     const titles: Array<string | RegExp> = [
       k.numberTitle, 'Rev', 'Submitted date', 'Created At', 'Status', 'Customer', 'Project Title',
@@ -220,5 +178,13 @@ describe.each(KINDS)('$kind list, limited user', (k) => {
       if (!sortable) missing.push(String(title));
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe.each(KINDS)('$kind list, limited user (superseded by owner a25895124 Q1 a)', (k) => {
+  it('gets the portal list body (card / list toggle), not the staff DataGrid', async () => {
+    renderList(k, [`${k.base}.view_own`, `${k.base}.add`]);
+    expect(await screen.findByTestId('portal-list-body')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
   });
 });
