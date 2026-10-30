@@ -34,3 +34,7 @@ def assert_no_banned_text(text: str | None) -> None:
     low = text.lower()
     for fragment in BANNED_FRAGMENTS:
         assert fragment.lower() not in low, f"banned generic failure text {fragment!r} in {text!r}"
+
+
+# Review round 1 (R1-R7): the shapes the follow-up tests share.
+PORTAL_COULD_NOT_FIND = "could not find portal link"
