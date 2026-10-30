@@ -33,7 +33,7 @@ vi.mock('./hooks/useChatbotMediaSettings', () => ({
 }));
 vi.mock('@/hooks/useProviderModels', () => ({
   useProviderModels: () => ({ data: { provider: 'gemini', source: 'live', message: null, models: [] } }),
-  useTestProviderModel: () => ({ mutate: vi.fn(), isPending: false }),
+  useTestProviderModel: () => ({ mutate: vi.fn(), isPending: false, reset: vi.fn(), data: undefined }),
 }));
 
 import ChatbotMediaSettingsPage from './page';
