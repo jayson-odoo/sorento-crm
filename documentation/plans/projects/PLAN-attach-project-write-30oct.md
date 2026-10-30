@@ -1,6 +1,6 @@
 # PLAN: attachment writes respect project edit rights (ATTACH-PROJECT-WRITE)
 
-Status: in progress (small fix track: backend only, no migration, no UI change)
+Status: in review (small fix track: no migration; one UI change, below)
 
 ## Gap
 
@@ -35,6 +35,10 @@ it up before Approve, R8), and `change_status` does the same.
   every row's entity.
 - Archive takes `resource.attachments.delete` (as bulk archive already does); restore takes the
   same slug, since it undoes an archive. No new slug, so no migration and no role reseed.
+- FE (crew ruling on the slug ask): Drive row actions, the attachment record actions and the
+  attachment detail modal hide Move to trash, Restore and Permanently delete without
+  `resource.attachments.delete`; Drive's bulk Restore hides too. Nobody sees a button the
+  server refuses. Users without the slug lose Move to trash / Restore.
 - Collision: when `entity_type` + `entity_id` are given, only files on that same entity
   collide (upload and the `collision-check` read).
 
