@@ -141,6 +141,16 @@ FE (staff): `QuotationLinesGrid` gains an optional prop
 `review?: { rows: QuotationAmendmentRow[]; onDecide: (rowId: string, decision: 'accepted' | 'rejected' | 'pending', reason?: string) => void; disabled?: boolean }`
 with `QuotationAmendmentRow = { id, line_id, field: 'quantity' | 'unit_price' | 'remove', value_from: string | null, value_to: string | null, decision, decision_reason: string | null, below_floor?: boolean, floor_value?: string | null }` in `_shared/types/project.types.ts`.
 
+### Contract details pinned by the red tests (tester, 30 Oct)
+
+- `submit_request(lines=...)` takes plain dicts `{line_id, quantity, unit_price, remove}`; `quantity` / `unit_price` are STRINGS in the public schema, so a bad value answers the lane's own 422 code, not pydantic's.
+- A whitespace-only note counts as no note (same as `request_changes`).
+- The route calls `rate_limit.hit(...)` through the module (tests patch `app.services.rate_limit.hit`), once with the token and once with the client IP, bucket containing `quotation_amendment`.
+- "Number of lines" in the notice counts distinct lines. Management fallback goes through `project_notify_service.management_user_ids`.
+- Staff UI: Reject reveals a reason input in the same cell; Enter in it sends `('rejected', reason)`. Nothing is sent on the first Reject click.
+- A superseded issue reports `sign_blocked_reason: "superseded"`; `latest_request_for_document` returns null once a newer issue has no request.
+- Floors in the fixtures: one company-level 65% `PriceFloorRule`, list prices chosen to give a 390.00 floor.
+
 ## Component map (to be confirmed against QUOTE-SIGN-PAGE once it merges)
 
 | Element | Repo path |
