@@ -1,6 +1,6 @@
 # PLAN: Drawing and photo requests use the chat escalation flow
 
-Status: Phase 2 (red tests, then wiring); standard track (expected diff over 300 lines), no migration, no setup.
+Status: Phase 3 (review fix round 1, then browser re-run); standard track (expected diff over 300 lines), no migration, no setup.
 
 Follow-up to #1983 (merged; plan archived at
 `documentation/plans/_archive/project-sales/PLAN-quote-drawing-escalate-29oct.md`). Owner hand test
@@ -33,7 +33,7 @@ so 1a's "no duplicate task" still holds per person.
   requester: `<source>:<product>:<user>`.
 - **B2 The ticket is on the requester's WhatsApp contact.** A new task stores the requester's
   `users.respond_contact_id` (when it points at an existing contact) as `respond_contact_id`, the
-  contact's phone as `contact_phone_number`, and `source_message_text` =
+  contact's phone through that contact, and `source_message_text` =
   `Technical drawing for <product code> (<quotation no>)` or `Product photo for <product code>
   (<quotation no>)`. No contact: the contact and phone stay empty (the source text is still
   set, it names the request in the panel) and the task behaves as in #1983 (Q4).
@@ -54,8 +54,8 @@ so 1a's "no duplicate task" still holds per person.
 - **B6 Resolve.** `media-resolve` on a task with a contact also does what a chat resolve does:
   queues the `ticket_resolved` WhatsApp (excerpt = the source text) and closes the Respond
   conversation when no other open ticket shares the contact (the existing helpers, not copies).
-- **B7 Notices (Q5).** The requester's H2 (responded) and H4 (resolved) keep in-app and email and
-  never send WhatsApp. H1 and escalation notices to the PIC are unchanged. H3 (a file linked in
+- **B7 Notices (Q5).** The requester's H4 (resolved) notice keeps in-app and email and
+  never sends WhatsApp (there is no "responded" notice to the requester: the PIC's reply is the message). H1 and escalation notices to the PIC are unchanged. H3 (a file linked in
   Resources) tells the assignee of EVERY open task of that kind for the product.
 - **B8 The quotation tile is per viewer.** It shows the viewer's own open task (Escalated /
   Replied); with none it offers Escalate even when a colleague has one open. The hover drops "by
