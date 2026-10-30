@@ -294,9 +294,7 @@ function CustomerSignature({
         </CardHeader>
         <CardContent className="space-y-2 py-5">
           <p className="min-w-0 break-words text-sm font-medium">
-            {lineIds.length === 0
-              ? 'Sorento has read your note.'
-              : `Sorento answered: ${yes} accepted, ${no} not accepted.`}
+            {`Sorento answered: ${yes} accepted, ${no} not accepted.`}
           </p>
           <p className="min-w-0 break-words text-sm text-muted-foreground">
             Your salesperson will send the revised quotation for signing.

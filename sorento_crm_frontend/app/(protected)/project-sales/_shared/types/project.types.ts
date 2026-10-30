@@ -871,8 +871,18 @@ export interface QuotationAmendmentRequest {
   /** The issue's total, and the total with the accepted rows applied. */
   total_issued: string;
   total_after: string;
-  /** Scopes a suggestion touches that already carry a hand-made draft: Apply would refuse. */
-  blocked_scopes: { quotation_id: string; scope_label: string }[];
+  /**
+   * Touched scopes that already carry a hand-made draft. `version_id` is the ISSUED version the
+   * rows name (the review is decided there); `has_accepted` says whether Apply refuses today.
+   */
+  blocked_scopes: {
+    quotation_id: string;
+    scope_label: string;
+    version_id: string;
+    has_accepted: boolean;
+  }[];
+  /** Apply drafted a revision. */
+  revised: boolean;
 }
 
 export interface QuotationOutcomeBody {

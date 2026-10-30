@@ -36,8 +36,10 @@ export function QuotationAmendmentSummary({
   ).length;
   const undecided = total - decided;
   const who = request.requester_name || 'The customer';
-  // A touched scope already has a hand-made draft: Apply would refuse, so it is off and says why.
+  // Touched scopes with a hand-made draft are named, always. Apply is off only where the server
+  // would refuse it: such a scope holding an accepted row.
   const blocked = request.blocked_scopes ?? [];
+  const refusing = blocked.filter((scope) => scope.has_accepted);
 
   return (
     <div className="space-y-2 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">
@@ -87,16 +89,22 @@ export function QuotationAmendmentSummary({
               type="button"
               size="sm"
               disabled={
-                !canApply || blocked.length > 0 || undecided > 0 || applying
+                !canApply || refusing.length > 0 || undecided > 0 || applying
               }
               onClick={onApply}
             >
               {applying ? 'Applying...' : 'Apply decisions'}
             </Button>
-            {blocked.length === 0 && undecided > 0 && (
+            {refusing.length > 0 ? (
               <p className="text-xs text-muted-foreground">
-                {`Accept or reject ${undecided === 1 ? 'the last suggestion' : `${undecided} more suggestions`} to apply.`}
+                {`Accepted suggestions on ${refusing.map((scope) => scope.scope_label).join(', ')} cannot be applied.`}
               </p>
+            ) : (
+              undecided > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {`Accept or reject ${undecided === 1 ? 'the last suggestion' : `${undecided} more suggestions`} to apply.`}
+                </p>
+              )
             )}
           </div>
         </div>
@@ -106,7 +114,7 @@ export function QuotationAmendmentSummary({
           key={scope.quotation_id}
           className="text-xs font-medium text-warning"
         >
-          {`A revision is already open on ${scope.scope_label}; issue or discard it first.`}
+          {`A revision is already open on ${scope.scope_label}, so accepted suggestions cannot be applied to it. Issuing that revision closes these suggestions.`}
         </p>
       ))}
     </div>

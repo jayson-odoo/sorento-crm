@@ -8,7 +8,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { QuotationAmendmentRequest } from '../../../../_shared/types/project.types';
 import { QuotationAmendmentSummary } from './QuotationAmendmentSummary';
 
-function request(overrides: Partial<QuotationAmendmentRequest> = {}): QuotationAmendmentRequest {
+function request(
+  overrides: Partial<QuotationAmendmentRequest> = {},
+): QuotationAmendmentRequest {
   return {
     id: 'req-1',
     status: 'open',
@@ -30,6 +32,7 @@ function request(overrides: Partial<QuotationAmendmentRequest> = {}): QuotationA
     total_issued: '48000.00',
     total_after: '44000.00',
     blocked_scopes: [],
+    revised: false,
     ...overrides,
   };
 }
@@ -50,17 +53,32 @@ function renderSummary(value: QuotationAmendmentRequest) {
 describe('QuotationAmendmentSummary with a hand-made draft on a touched scope', () => {
   it('names each blocked scope and turns Apply off; a clean request can apply', () => {
     const { unmount } = renderSummary(
-      request({ blocked_scopes: [{ quotation_id: 'q1', scope_label: 'Block A' }] }),
+      request({
+        blocked_scopes: [
+          {
+            quotation_id: 'q1',
+            scope_label: 'Block A',
+            version_id: 'v1',
+            has_accepted: true,
+          },
+        ],
+      }),
     );
     expect(
-      screen.getByText('A revision is already open on Block A; issue or discard it first.'),
+      screen.getByText(
+        'A revision is already open on Block A, so accepted suggestions cannot be applied to it. Issuing that revision closes these suggestions.',
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Apply decisions' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Apply decisions' }),
+    ).toBeDisabled();
     unmount();
 
     renderSummary(request());
     expect(screen.queryByText(/A revision is already open/)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Apply decisions' })).toBeEnabled();
+    expect(
+      screen.getByRole('button', { name: 'Apply decisions' }),
+    ).toBeEnabled();
   });
 });
 
@@ -68,15 +86,69 @@ describe('QuotationAmendmentSummary blocked before any decision (D2)', () => {
   it('says why at once, with nothing decided, and Apply is off', () => {
     renderSummary(
       request({
-        rows: request().rows.map((row) => ({ ...row, decision: 'pending' as const })),
-        blocked_scopes: [{ quotation_id: 'q1', scope_label: 'Block A' }],
+        rows: request().rows.map((row) => ({
+          ...row,
+          decision: 'pending' as const,
+        })),
+        blocked_scopes: [
+          {
+            quotation_id: 'q1',
+            scope_label: 'Block A',
+            version_id: 'v1',
+            has_accepted: false,
+          },
+        ],
       }),
     );
     expect(
-      screen.getByText('A revision is already open on Block A; issue or discard it first.'),
+      screen.getByText(
+        'A revision is already open on Block A, so accepted suggestions cannot be applied to it. Issuing that revision closes these suggestions.',
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Apply decisions' })).toBeDisabled();
-    // One reason at a time: the "decide the rest" hint gives way to the blocked one.
-    expect(screen.queryByText(/Accept or reject/)).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Apply decisions' }),
+    ).toBeDisabled();
+    // The suggestions stay decidable on the issued version, so the decide-the-rest hint stands.
+    expect(screen.getByText(/Accept or reject/)).toBeInTheDocument();
+  });
+});
+
+describe('QuotationAmendmentSummary matches the server on a blocked scope (S3b)', () => {
+  const blockedScope = (hasAccepted: boolean) => [
+    {
+      quotation_id: 'q1',
+      scope_label: 'Block A',
+      version_id: 'v1',
+      has_accepted: hasAccepted,
+    },
+  ];
+
+  it('keeps Apply on when the blocked scope holds only rejected rows', () => {
+    renderSummary(
+      request({
+        rows: request().rows.map((row) => ({
+          ...row,
+          decision: 'rejected' as const,
+        })),
+        blocked_scopes: blockedScope(false),
+      }),
+    );
+    // The warning stays for every touched scope with a draft.
+    expect(
+      screen.getByText(/A revision is already open on Block A/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Apply decisions' }),
+    ).toBeEnabled();
+  });
+
+  it('turns Apply off when an accepted row sits on the blocked scope, and names it', () => {
+    renderSummary(request({ blocked_scopes: blockedScope(true) }));
+    expect(
+      screen.getByRole('button', { name: 'Apply decisions' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText('Accepted suggestions on Block A cannot be applied.'),
+    ).toBeInTheDocument();
   });
 });

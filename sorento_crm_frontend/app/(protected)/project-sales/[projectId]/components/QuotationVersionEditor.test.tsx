@@ -2604,3 +2604,53 @@ describe('QuotationVersionEditor review: suggested lines only (QUOTE-CUSTOMER-AM
     expect(screen.queryByText(/lines without suggestions/)).not.toBeInTheDocument();
   });
 });
+
+describe('QuotationVersionEditor review on a scope with a hand-made draft (fix round 3, S3b)', () => {
+  it('opens on the ISSUED version the suggestions name, and they can be decided there', async () => {
+    // v1 went to the customer; somebody opened v2 by hand since. The rows name v1's lines.
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v1', version_no: 1, is_issued: true, total_amount: '9000.00' }),
+      version({ id: 'v2', version_no: 2, is_current: true, total_amount: '9000.00' }),
+    ]);
+    listQuotationLines.mockImplementation(async (versionId: string) =>
+      versionId === 'v1'
+        ? [line({ id: 'l-issued', version_id: 'v1', product_id: 'p1' })]
+        : [line({ id: 'l-draft', version_id: 'v2', product_id: 'p1' })],
+    );
+    const onDecide = vi.fn();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <QuotationVersionEditor
+          project={project()}
+          quotation={QUOTATION}
+          review={{
+            rows: [
+              {
+                id: 'r1',
+                line_id: 'l-issued',
+                field: 'quantity',
+                value_from: '10.00',
+                value_to: '8.00',
+                decision: 'pending',
+                decision_reason: null,
+              },
+            ],
+            onDecide,
+          }}
+          reviewVersionId="v1"
+          suggestedOnly
+        />
+      </QueryClientProvider>,
+    );
+
+    const reject = await screen.findByRole('button', {
+      name: 'Reject suggested quantity on SRT-WC-01',
+    });
+    expect(listQuotationLines).toHaveBeenCalledWith('v1');
+    expect(reject).toBeEnabled();
+    expect(screen.queryByText('No suggestions on this scope.')).toBeNull();
+  });
+});

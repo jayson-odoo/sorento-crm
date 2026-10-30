@@ -2244,12 +2244,18 @@ class QuotationAmendmentResponse(BaseModel):
 class QuotationAmendmentBlockedScope(BaseModel):
     quotation_id: str
     scope_label: str
+    # The issued version the rows name, where the review is still decided.
+    version_id: str
+    # An accepted row sits on this scope, so Apply refuses until it is rejected or the draft issued.
+    has_accepted: bool = False
 
 
 class QuotationAmendmentStaffResponse(QuotationAmendmentResponse):
     rows: List[QuotationAmendmentStaffRowResponse] = Field(default_factory=list)
     # Scopes a suggestion touches that already carry a hand-made draft: Apply would refuse.
     blocked_scopes: List[QuotationAmendmentBlockedScope] = Field(default_factory=list)
+    # Apply drafted a revision (only then does an applied request keep blocking the issue).
+    revised: bool = False
     # The issue's total, and the total with the ACCEPTED rows applied (the summary row).
     total_issued: Decimal = Decimal("0")
     total_after: Decimal = Decimal("0")

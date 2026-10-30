@@ -30,6 +30,7 @@ const AMENDMENT: QuotationAmendmentRequest = {
   total_issued: '100.00',
   total_after: '100.00',
   blocked_scopes: [],
+  revised: false,
 };
 
 function renderPanel(amendment: QuotationAmendmentRequest | null) {
@@ -48,6 +49,31 @@ describe('QuotationChangesRequestedPanel beside suggested changes', () => {
     renderPanel(AMENDMENT);
     expect(screen.queryByText(/asked for changes/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Revise this quotation' })).toBeNull();
+  });
+
+  it('renders nothing once the request was applied WITH a revision', () => {
+    renderPanel({ ...AMENDMENT, status: 'applied', revised: true });
+    expect(screen.queryByText(/asked for changes/)).toBeNull();
+  });
+
+  it('keeps the strip once the request was applied without a revision, rows or not', () => {
+    renderPanel({
+      ...AMENDMENT,
+      status: 'applied',
+      revised: false,
+      rows: [
+        {
+          id: 'r1',
+          line_id: 'l1',
+          field: 'quantity',
+          value_from: '10.00',
+          value_to: '8.00',
+          decision: 'rejected',
+          decision_reason: 'No',
+        },
+      ],
+    });
+    expect(screen.getByText(/Buyer A asked for changes/)).toBeInTheDocument();
   });
 
   it('keeps the strip for a free-text request with no suggestion request', () => {

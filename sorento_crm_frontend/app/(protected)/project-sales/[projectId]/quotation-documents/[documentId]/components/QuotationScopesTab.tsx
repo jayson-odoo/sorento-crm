@@ -64,18 +64,13 @@ export function QuotationScopesTab() {
     null,
   );
   const suggestedOnly = suggestedChoice ?? (openRequest?.rows.length ?? 0) > 0;
-  const reviewBlocked = (openRequest?.blocked_scopes?.length ?? 0) > 0;
   const decideRow = amendments.decide.mutate;
   const review = React.useMemo<QuotationLinesReview | undefined>(
     () =>
       openRequest
         ? {
             rows: openRequest.rows,
-            // A touched scope with a hand-made draft cannot take these decisions (Apply refuses).
-            disabled:
-              reviewBlocked ||
-              amendments.decide.isPending ||
-              amendments.apply.isPending,
+            disabled: amendments.decide.isPending || amendments.apply.isPending,
             onDecide: (rowId, decision, reason) =>
               decideRow({ requestId: openRequest.id, rowId, decision, reason }),
           }
@@ -85,7 +80,6 @@ export function QuotationScopesTab() {
       amendments.decide.isPending,
       decideRow,
       openRequest,
-      reviewBlocked,
     ],
   );
 
@@ -185,6 +179,13 @@ export function QuotationScopesTab() {
               locked={isLockedForApproval(record)}
               review={review}
               suggestedOnly={suggestedOnly}
+              // A scope with a hand-made draft: the suggestions name the ISSUED version's lines,
+              // so the review is decided there.
+              reviewVersionId={
+                openRequest?.blocked_scopes?.find(
+                  (scope) => scope.quotation_id === activeQuotation.id,
+                )?.version_id ?? null
+              }
             />
           </CardContent>
         </Card>

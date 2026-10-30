@@ -1848,12 +1848,28 @@ def test_s3_the_staff_payload_names_a_scope_with_a_hand_made_draft():
         clean = _svc().serialize_request(db, request)
         assert clean["blocked_scopes"] == []
 
+        issued_a = str(w.lines["WC"].version_id)
         quotes.revise(db, quotation=w.scope_a, actor_user_id=w.owner)
         db.flush()
         blocked = _svc().serialize_request(db, request)["blocked_scopes"]
+        # `version_id` is the ISSUED version the rows name, where the review is decided.
         assert blocked == [
-            {"quotation_id": str(w.scope_a.id), "scope_label": w.scope_a.scope_label}
+            {
+                "quotation_id": str(w.scope_a.id),
+                "scope_label": w.scope_a.scope_label,
+                "version_id": issued_a,
+                "has_accepted": False,
+            }
         ]
+
+        # Apply refuses only once that scope holds an accepted row (fix round 3, S3b).
+        wc_qty = _rows(db, request)[(str(w.lines["WC"].id), "quantity")]
+        _svc().decide_row(
+            db, request=request, row_id=str(wc_qty.id), decision="accepted", reason=None,
+            actor_user_id=w.owner,
+        )
+        (now,) = _svc().serialize_request(db, request)["blocked_scopes"]
+        assert now["has_accepted"] is True
 
 
 def _apply_note_only(db, w):
@@ -1983,5 +1999,29 @@ def test_d2_wire_the_staff_get_names_a_blocked_scope_before_anything_is_decided(
     body = client.get(f"{_root(w)}/amendment-request").json()
     assert all(row["decision"] == "pending" for row in body["rows"])
     assert body["blocked_scopes"] == [
-        {"quotation_id": str(w.scope_a.id), "scope_label": w.scope_a.scope_label}
+        {
+            "quotation_id": str(w.scope_a.id),
+            "scope_label": w.scope_a.scope_label,
+            "version_id": str(w.lines["WC"].version_id),
+            "has_accepted": False,
+        }
     ]
+
+
+def test_s3a_a_refused_apply_names_the_scope_in_words_staff_can_act_on():
+    """No screen discards a draft version, so the refusal says what does close it."""
+    with blank_session() as db:
+        w = _world(db)
+        request = _a_suggestion(db, w)
+        _decide(db, w, request, {})
+        quotes.revise(db, quotation=w.scope_a, actor_user_id=w.owner)
+        db.flush()
+        error = _refused(
+            lambda: _svc().apply_request(db, request=request, actor_user_id=w.owner),
+            409,
+            "quotation_amendment_draft_open",
+        )
+        assert error.detail["message"] == (
+            f"A revision is already open on {w.scope_a.scope_label}, so accepted suggestions "
+            "cannot be applied to it. Issuing that revision closes these suggestions."
+        )

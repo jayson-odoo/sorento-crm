@@ -41,9 +41,10 @@ export function QuotationChangesRequestedPanel({
   document: QuotationDocument;
   /**
    * The customer's suggested changes on the latest issue (QUOTE-CUSTOMER-AMEND). While one is
-   * open, or applied with suggestions, the Lines tab's summary row carries the note and the way
+   * open, or applied WITH a revision, the Lines tab's summary row carries the note and the way
    * forward, and this strip stands down: its Revise would open a hand-made draft, which is the
-   * one thing that stops those suggestions being applied.
+   * one thing that stops those suggestions being applied. An answer that drafted nothing leaves
+   * the issue as it was, so the strip returns, rows or not.
    */
   amendment?: QuotationAmendmentRequest | null;
   /** What the click will actually do, e.g. "Revise to v3". */
@@ -55,7 +56,7 @@ export function QuotationChangesRequestedPanel({
   if (!hasOpenChangeRequest(document)) return null;
   if (
     amendment &&
-    (amendment.status === 'open' || (amendment.status === 'applied' && amendment.rows.length > 0))
+    (amendment.status === 'open' || (amendment.status === 'applied' && amendment.revised))
   )
     return null;
 

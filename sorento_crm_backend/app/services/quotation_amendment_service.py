@@ -516,7 +516,12 @@ def _blocked_scopes(
     db: Session, request: QuotationAmendmentRequest, rows: List[QuotationAmendmentRequestRow]
 ) -> List[Dict[str, str]]:
     """Scopes a suggestion touches whose live version is no longer the one issued: the same
-    check Apply makes (``_assert_no_later_draft``), said in advance."""
+    check Apply makes (``_assert_no_later_draft``), said in advance.
+
+    ``version_id`` is the ISSUED version the rows name, where the review is still decided;
+    ``has_accepted`` says whether Apply would refuse today (it refuses only a scope that has an
+    accepted row on it).
+    """
     record = (
         db.query(ProjectQuotationIssue)
         .filter(ProjectQuotationIssue.id == request.issue_id)
@@ -537,7 +542,18 @@ def _blocked_scopes(
         if scope is None:
             continue
         if str(scopes.current_version(db, scope.id).id) != str(pair.version_id):
-            blocked.append({"quotation_id": str(scope.id), "scope_label": scope.scope_label})
+            blocked.append(
+                {
+                    "quotation_id": str(scope.id),
+                    "scope_label": scope.scope_label,
+                    "version_id": str(pair.version_id),
+                    "has_accepted": any(
+                        other.decision == "accepted"
+                        and (issued.get(str(other.line_id)) or (None, None))[1] is pair
+                        for other in rows
+                    ),
+                }
+            )
     return blocked
 
 
@@ -555,7 +571,10 @@ def _assert_no_later_draft(
             raise _refuse(
                 409,
                 "quotation_amendment_draft_open",
-                f"A revision is already open on {scope.scope_label}; issue or discard it first.",
+                (
+                    f"A revision is already open on {scope.scope_label}, so accepted suggestions "
+                    "cannot be applied to it. Issuing that revision closes these suggestions."
+                ),
             )
 
 
@@ -798,4 +817,5 @@ def serialize_request(
     if staff:
         payload["total_issued"], payload["total_after"] = _totals(db, request, rows)
         payload["blocked_scopes"] = _blocked_scopes(db, request, rows)
+        payload["revised"] = bool(request.revised)
     return payload
