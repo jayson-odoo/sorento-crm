@@ -47,6 +47,9 @@ export default function AIAssistantSettingsForm() {
   // Dedicated OpenAI key - each provider resolves its own key slot.
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
   const [openaiKeyEdited, setOpenaiKeyEdited] = useState(false);
+  // Dedicated TypeSafe (Jev) key - the console router's classifier. The stored key never comes
+  // back, so the field stays blank and only the masked tail shows as the placeholder.
+  const [typesafeKeyInput, setTypesafeKeyInput] = useState('');
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState('');
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
@@ -88,6 +91,7 @@ export default function AIAssistantSettingsForm() {
     setGeminiKeyEdited(false);
     setOpenaiKeyInput(data.openai_api_key_masked || '');
     setOpenaiKeyEdited(false);
+    setTypesafeKeyInput('');
   }, [data]);
 
   const filteredTools = useMemo(() => {
@@ -289,6 +293,17 @@ export default function AIAssistantSettingsForm() {
       </div>
 
       <div className="space-y-2">
+        <Label>TypeSafe (Jev) API key</Label>
+        <Input
+          type="password"
+          autoComplete="off"
+          value={typesafeKeyInput}
+          onChange={(e) => setTypesafeKeyInput(e.target.value)}
+          placeholder={data?.typesafe_api_key_masked || 'Not set'}
+        />
+      </div>
+
+      <div className="space-y-2">
         <Label>Enabled tools</Label>
         {toolsQuery.isError ? (
           <p className="text-xs text-destructive">
@@ -393,6 +408,7 @@ export default function AIAssistantSettingsForm() {
                 : undefined,
               gemini_api_key: geminiKeyEdited ? geminiKeyInput.trim() || undefined : undefined,
               openai_api_key: openaiKeyEdited ? openaiKeyInput.trim() || undefined : undefined,
+              typesafe_api_key: typesafeKeyInput.trim() || undefined,
               enabled_tools: enabledTools,
               rag_enabled: ragEnabled,
               is_enabled: isEnabled,
@@ -408,6 +424,7 @@ export default function AIAssistantSettingsForm() {
                 setGeminiKeyEdited(false);
                 setOpenaiKeyInput(saved.openai_api_key_masked || '');
                 setOpenaiKeyEdited(false);
+                setTypesafeKeyInput('');
               },
               onError: (e: Error) => toast.error(e.message),
             },

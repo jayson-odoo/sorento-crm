@@ -77,6 +77,8 @@ export interface ContactChatbotProfile {
   files_as_links: boolean;
   /** AGENTIC-P1: the read-only agent may run for this contact (`chatbot_agent_enabled`). Default off. */
   agent_enabled: boolean;
+  /** AGENTIC-P2-ROUTE: agent turns per day for this contact (`chatbot_agent_daily_turns`); null = the global setting. */
+  chatbot_agent_daily_turns?: number | null;
   /** MODEL-PER-CONTACT (read side): the effective model and its source. Never sent back. */
   chatbot_llm?: ChatbotLlm | null;
 }
@@ -189,6 +191,7 @@ function profileFromContact(contact: {
   chatbot_skip_period_questions?: boolean;
   chatbot_files_as_links?: boolean;
   chatbot_agent_enabled?: boolean;
+  chatbot_agent_daily_turns?: number | null;
   chatbot_llm?: ChatbotLlm | null;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
@@ -208,6 +211,7 @@ function profileFromContact(contact: {
     skip_period_questions: Boolean(contact.chatbot_skip_period_questions),
     files_as_links: Boolean(contact.chatbot_files_as_links),
     agent_enabled: Boolean(contact.chatbot_agent_enabled),
+    chatbot_agent_daily_turns: contact.chatbot_agent_daily_turns ?? null,
     chatbot_llm: contact.chatbot_llm ?? null,
   };
 }
@@ -240,6 +244,8 @@ export async function saveContactChatbotProfile(
       chatbot_skip_period_questions: input.skip_period_questions,
       chatbot_files_as_links: input.files_as_links,
       chatbot_agent_enabled: input.agent_enabled,
+      // null clears the contact's own cap back to the global one.
+      chatbot_agent_daily_turns: input.chatbot_agent_daily_turns,
       // Present only when the operator touched it; `JSON.stringify` drops undefined.
       llm: input.llm,
       // `escalation_allowed` is NOT sent here: it has its own save

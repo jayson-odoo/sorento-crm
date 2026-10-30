@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2, X } from 'lucide-react';
 
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,7 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { NumberInput } from '@/components/ui/number-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -102,6 +103,71 @@ const TIER_OPTIONS = [
   { value: 'office', label: 'Office' },
   { value: 'end_user', label: 'End user' },
 ];
+
+/** This contact's own agent turns per day: blank uses the global setting, 0 is no cap. Saves on blur. */
+function AgentDailyCapField({
+  value,
+  disabled,
+  onCommit,
+}: {
+  value: number | null;
+  disabled?: boolean;
+  onCommit: (next: number | null) => void;
+}) {
+  const [draft, setDraft] = useState(value === null ? '' : String(value));
+  useEffect(() => {
+    setDraft(value === null ? '' : String(value));
+  }, [value]);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed === '') {
+      if (value !== null) onCommit(null);
+      return;
+    }
+    if (!/^\d+$/.test(trimmed)) {
+      setDraft(value === null ? '' : String(value));
+      return;
+    }
+    const next = Number(trimmed);
+    if (next !== value) onCommit(next);
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor="contact-chatbot-agent-daily-turns">Agent turns per day</Label>
+      <div className="relative">
+        <NumberInput
+          id="contact-chatbot-agent-daily-turns"
+          inputMode="numeric"
+          min={0}
+          value={draft}
+          disabled={disabled}
+          className="pe-9"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+        />
+        {draft !== '' ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            mode="icon"
+            aria-label="Clear Agent turns per day"
+            disabled={disabled}
+            className="absolute end-1 top-1/2 size-6 -translate-y-1/2"
+            onClick={() => {
+              setDraft('');
+              if (value !== null) onCommit(null);
+            }}
+          >
+            <X className="size-4 opacity-60" />
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function SwitchRow({
   id,
@@ -318,10 +384,15 @@ function ChatbotSettingsCard({
           />
           <SwitchRow
             id="contact-chatbot-agent-mode"
-            label="Agent mode"
+            label="Agent mode (auto)"
             checked={profile.agent_enabled}
             disabled={save.isPending || saveEscalation.isPending || saveAiAllowed.isPending}
             onCheckedChange={(checked) => save.mutate({ ...profile, agent_enabled: checked })}
+          />
+          <AgentDailyCapField
+            value={profile.chatbot_agent_daily_turns ?? null}
+            disabled={save.isPending || saveEscalation.isPending || saveAiAllowed.isPending}
+            onCommit={(next) => save.mutate({ ...profile, chatbot_agent_daily_turns: next })}
           />
         </div>
       </CardContent>
