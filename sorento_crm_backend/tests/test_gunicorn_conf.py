@@ -181,3 +181,16 @@ def test_workers_are_recycled_after_a_jittered_request_count(monkeypatch):
     monkeypatch.setenv("GUNICORN_MAX_REQUESTS_JITTER", "0")
     module = _load_conf_module()
     assert (module.max_requests, module.max_requests_jitter) == (0, 0)  # 0 = never recycled, gunicorn's own off
+
+
+def test_importing_pymupdf_starts_no_native_thread_pool_in_the_preloading_master():
+    """LOOKUP-WARM-STORM: PyMuPDF 2.0 builds an onnxruntime model at `import fitz` (app import, flyer_extraction).
+    Under preload_app that thread pool belongs to the master; a forked worker exiting (a max_requests recycle, TTOU,
+    a deploy stop) joined a thread it never had and hung until WORKER TIMEOUT, about 1 exit in 3 measured. The import
+    runs in a clean interpreter so no other test's imports count."""
+    import subprocess
+
+    probe = "import sys, fitz; print('onnxruntime' in sys.modules)"
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-1] == "False", "import fitz loaded onnxruntime: keep PyMuPDF below 2 (requirements.txt)"
