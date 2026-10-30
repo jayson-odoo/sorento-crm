@@ -635,3 +635,52 @@ describe('AC-W9 edit mode is not a wizard', () => {
     );
   });
 });
+
+describe('AC-W10 footer stacks like Create lead', () => {
+  // Create lead (LeadWizardDialog) stacks Back, Cancel, forward in DOM order with a plain
+  // flex-col; a flex-col-reverse on the Cancel / forward group would flip them at 375px.
+  const footerOrder = () => {
+    const names = ['Back', 'Cancel'];
+    const back = screen.getByRole('button', { name: 'Back' });
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    const row = back.parentElement as HTMLElement;
+    const buttons = Array.from(row.querySelectorAll('button'));
+    return { names, back, cancel, buttons, group: cancel.parentElement as HTMLElement };
+  };
+
+  it('AC-W10 step 1 footer order is Back, Cancel, Check, and the group does not reverse', () => {
+    renderForm();
+    const { buttons, group } = footerOrder();
+    expect(buttons.map((b) => (b.textContent ?? '').trim())).toEqual(['Back', 'Cancel', 'Check']);
+    expect(group.className).not.toMatch(/flex-col-reverse/);
+  });
+
+  it('AC-W10 step 2 footer order is Back, Cancel, Register project', async () => {
+    renderForm();
+    await toDetails();
+    const { buttons, group } = footerOrder();
+    expect(buttons.map((b) => (b.textContent ?? '').trim())).toEqual(['Back', 'Cancel', 'Register project']);
+    expect(group.className).not.toMatch(/flex-col-reverse/);
+  });
+});
+
+describe('AC-W4 a clash found at submit time on step 2', () => {
+  it('AC-W4 shows the "Clash: <code> <title>" line together with Register as secondary lead on <code>', async () => {
+    let n = 0;
+    clashAnswer = () => (++n === 1 ? { candidates: [], would_block: false } : { candidates: [BLOCKING], would_block: true });
+    renderForm();
+    await toDetails();
+    await pickAsync(/^Lead/, 'Menara', /Menara Lead CONTOH/);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Register project' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
+    expect(
+      await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(linesWithText('Clash: PRJ-000009 Setia Alam Phase 3B CONTOH')).toHaveLength(1),
+    );
+    // Still on step 2, and nothing was registered.
+    expect(screen.getByLabelText(/^Lead/)).toBeInTheDocument();
+    expect(registerBody()).toBeUndefined();
+  });
+});

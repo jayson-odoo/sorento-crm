@@ -562,7 +562,7 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
     expect(screen.queryByText('Blocked by an existing project')).toBeNull();
   });
 
-  it('submit re-runs the check as a guard even when Check was never pressed (AC-PF031)', async () => {
+  it('submit re-runs the check once as a guard before registering (AC-PF031)', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
     await pickCustomer();

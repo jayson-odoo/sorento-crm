@@ -156,3 +156,89 @@ def test_ac_s4_a_draft_for_another_developer_submits(v2):
     draft = _draft(v2, BLOCKING, other)
     svc.crm_submit(v2.db, draft, user_id=v2.sub_b, payload={}, permissions=SUBMIT_ONLY)
     assert draft.approval_state == "pending"
+
+
+# ------------------------------------------------------------------ S5 no holder name for a user without view
+
+
+def _bare_submitter(w):
+    """A user whose ONLY permission is projects.registrations.submit (no view, no view_own)."""
+    from ._project_registration_support import MARKER, active_user, grant
+
+    uid_ = active_user(w.db, f"{MARKER} Bare Submitter")
+    grant(w.db, uid_, "projects.registrations.submit", w.company_id)
+    w.perms[uid_] = {"projects.registrations.submit"}
+    return uid_
+
+
+def _owner_name(w) -> str:
+    from app.models.user import User
+
+    return w.db.get(User, w.owner).name
+
+
+def _bare_payload(w, user, ttl, dev):
+    return {
+        "title": ttl,
+        "developer_party_id": dev.id,
+        "customer_id": w.customer.id,
+        "lead_id": seed_lead(w, user).id,
+    }
+
+
+def _assert_no_holder(w, message: str, incumbent):
+    assert _owner_name(w) not in message, message
+    assert incumbent.project_code in message, message
+
+
+def test_ac_s5_crm_register_409_hides_the_holder_name_from_a_user_without_view(v2):
+    from app.services import project_registration_service as svc
+    from app.services.error_handler import AppException
+
+    dev, incumbent = _world(v2)
+    user = _bare_submitter(v2)
+    with pytest.raises(AppException) as exc:
+        svc.crm_register(
+            v2.db, company_id=v2.company_id, user_id=user,
+            payload=_bare_payload(v2, user, BLOCKING, dev), submit=True,
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.code == "project_already_registered"
+    _assert_no_holder(v2, exc.value.message, incumbent)
+
+
+def test_ac_s5_crm_submit_409_hides_the_holder_name_from_a_user_without_view(v2):
+    from app.services import project_registration_service as svc
+    from app.services.error_handler import AppException
+
+    dev, incumbent = _world(v2)
+    user = _bare_submitter(v2)
+    draft = svc.crm_register(
+        v2.db, company_id=v2.company_id, user_id=user,
+        payload=_bare_payload(v2, user, BLOCKING, dev), submit=False,
+    )
+    v2.db.flush()
+    with pytest.raises(AppException) as exc:
+        svc.crm_submit(v2.db, draft, user_id=user, payload={}, permissions=SUBMIT_ONLY)
+    assert exc.value.code == "project_already_registered"
+    _assert_no_holder(v2, exc.value.message, incumbent)
+
+
+def test_ac_s5_http_409_hides_the_holder_name_from_a_user_without_view(v2):
+    dev, incumbent = _world(v2)
+    user = _bare_submitter(v2)
+    res = as_user(v2, user).post(LIST, json={**_bare_payload(v2, user, BLOCKING, dev), "submit": True})
+    assert res.status_code == 409, res.text
+    body = res.json()
+    assert body["code"] == "project_already_registered"
+    _assert_no_holder(v2, res.text, incumbent)
+
+
+def test_ac_s5_staff_with_view_still_sees_the_holder_name(v2):
+    """Regression guard: staff keep today's message."""
+    dev, incumbent = _world(v2)
+    res = as_user(v2, v2.sales_b).post(
+        LIST, json=register_body(v2, user=v2.sales_b, title=BLOCKING, developer_party_id=dev.id)
+    )
+    assert res.status_code == 409, res.text
+    assert _owner_name(v2) in res.text

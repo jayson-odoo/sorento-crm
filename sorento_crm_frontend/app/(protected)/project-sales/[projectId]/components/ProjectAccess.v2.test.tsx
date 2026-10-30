@@ -254,6 +254,9 @@ describe('AC-R6 secondary leads table', () => {
     wrap(<ProjectAccessPanel project={project()} />);
     const box = await interestedBox();
     const table = await within(box).findByRole('table');
+    // The grid sits inside the Access card, not in a card of its own.
+    const accessCard = (await screen.findByText('Access')).closest('[data-slot="card"]') as HTMLElement;
+    expect(accessCard.contains(table)).toBe(true);
     for (const name of ['Salesperson', 'Date', 'How they found it', 'Status']) {
       expect(within(table).getByRole('columnheader', { name: new RegExp(name) })).toBeInTheDocument();
     }

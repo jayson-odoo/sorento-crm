@@ -54,6 +54,7 @@ vi.mock('@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout', () =>
 type Call = { url: string; method: string; body: unknown; at: number };
 const apiCalls: Call[] = [];
 let docs: unknown[] = [];
+let docsMode: 'ok' | 'pending' | 'error' = 'ok';
 let seq = 0;
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
@@ -78,7 +79,16 @@ vi.mock('@/lib/api', async (importOriginal) => {
         return ok({ id: 'd-new' });
       }
       if (method === 'POST') return ok({ id: 'new' });
-      if (method === 'GET' && String(input).includes('/attachments')) return ok({ data: docs });
+      if (method === 'GET' && String(input).includes('/attachments')) {
+        if (docsMode === 'pending') return new Promise<Response>(() => {});
+        if (docsMode === 'error') {
+          return new Response(JSON.stringify({ detail: 'boom' }), {
+            status: 500,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return ok({ data: docs });
+      }
       return ok({ data: [] });
     },
   };
@@ -297,6 +307,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiCalls.length = 0;
   docs = [];
+  docsMode = 'ok';
   canManage = true;
   updateProject.mockResolvedValue({});
   standRegistered();
@@ -321,6 +332,27 @@ describe('AC-G7 header with no document', () => {
   it('AC-G9 with one document from the start the header is today: Spec In, no Upload Requirement', async () => {
     docs = [{ id: 'd1', original_filename: 'brief.pdf', stored_filename: 'brief.pdf' }];
     renderDetail();
+    expect(await header().findByRole('button', { name: 'Spec In' })).toBeInTheDocument();
+    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
+  });
+});
+
+describe('AC-G7 header while the documents query is not answered', () => {
+  const documentsAsked = () => apiCalls.some((c) => c.method === 'GET' && c.url.includes('/attachments'));
+
+  it('AC-G7 while the documents query is pending the header shows neither Spec In nor Upload Requirement', async () => {
+    docsMode = 'pending';
+    renderDetail();
+    await waitFor(() => expect(documentsAsked()).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(header().queryByRole('button', { name: 'Spec In' })).toBeNull();
+    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
+  });
+
+  it('AC-G7 when the documents query errors the header shows Spec In and no Upload Requirement', async () => {
+    docsMode = 'error';
+    renderDetail();
+    await waitFor(() => expect(documentsAsked()).toBe(true));
     expect(await header().findByRole('button', { name: 'Spec In' })).toBeInTheDocument();
     expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
   });

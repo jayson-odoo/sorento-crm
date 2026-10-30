@@ -2,7 +2,7 @@
  * AC-SR-50 (amended by PS-REGISTER-CHECK-FIRST AC-T1..T3): the project detail tabs read, in order,
  * Overview, Documents, Quotation, Samples Request, Sponsorship Form, PO, SO, Stakeholders, Tasks,
  * Activity. There is no Samples tab; its old link opens Samples Request, and the retired order
- * links open PO. Tab ids stay as today (`sample-requests`, `orders` for PO); SO's id is the coder's.
+ * links open PO. Tab ids stay as today (`sample-requests`, `orders` for PO); SO is `sales-orders`.
  */
 import { describe, expect, it, vi } from 'vitest';
 
@@ -44,7 +44,7 @@ describe('project detail tabs', () => {
     expect(client.resolveProjectTab('samples')).toBe('sample-requests');
   });
 
-  it.each(['orders', 'pos', 'schedules', 'sales-orders'])('AC-T3 ?tab=%s opens PO', (legacy) => {
+  it.each(['orders', 'pos', 'schedules'])('AC-T3 ?tab=%s opens PO', (legacy) => {
     const po = tabs().find((t) => t.label === 'PO')?.id;
     expect(po).toBe('orders');
     expect(client.resolveProjectTab(legacy)).toBe(po);
@@ -52,7 +52,8 @@ describe('project detail tabs', () => {
 
   it('AC-T2 SO is its own tab, distinct from PO', () => {
     const so = tabs().find((t) => t.label === 'SO')?.id;
-    expect(so).toBeDefined();
-    expect(so).not.toBe('orders');
+    expect(so).toBe('sales-orders');
+    expect(client.resolveProjectTab('sales-orders')).toBe('sales-orders');
+    expect(client.resolveProjectTab('sales-orders-tab')).toBe('overview');
   });
 });
