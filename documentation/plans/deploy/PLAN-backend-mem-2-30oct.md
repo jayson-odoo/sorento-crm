@@ -1,7 +1,7 @@
 # Backend memory, round 2 (BACKEND-MEM-2)
 
-Status: investigation done (2026-10-30), fix plan awaiting crew OK. No code yet. Track: small fix
-track per slice (each under 300 lines, no migration, no auth/RBAC, no ingest surface).
+Status: in review (2026-10-30). Crew chose S1 + S2 + S3 in this PR; all three built red-first and measured
+(see "Built" below). Track: small fix track (no migration, no auth/RBAC, no ingest surface).
 Lane: `crew/backend-mem-2` (sandbox branch `claude/backend-mem-investigation-o09ezl`), PR #2007.
 Previous round: `PLAN-backend-memory-28oct.md`, PR #1950 (gc.freeze, graceful TTOU).
 
@@ -156,6 +156,29 @@ worth it if S2 is not taken.
 vectors across workers (one float32 matrix in a file, `np.load(mmap_mode="r")`, about -130 MB per
 worker after S1): trigger is workers back to 8. Python 3.12 upgrade for immortal objects: trigger
 is a prod reading after S1-S3 showing copied preload above 400 MB per worker.
+
+## Built (30 Oct), with the measurement of each
+
+**S1** `lookup_word_store.load_lookup_vectors` reads `LOAD_BATCH = 500` rows at a time (`yield_per`) and
+turns each batch into float32 before the next; `lookup_lists.fill` reads the whole store only on a process's
+first warm, later only the texts the cache lacks. Store load, 7,035 vectors: kept +226 -> +122 MB, peak
++625 -> +127 MB per worker.
+
+**S2** `app/utils/heavy_work.py`: `@heavy` marks a route; `HeavyRouteLimit` (ASGI middleware, `app/main.py`)
+lets `HEAVY_HANDLER_CONCURRENCY` (default 1, 0 = off) marked requests run at once per worker, held from the body
+read to the last byte sent. First built as a lock around the handler: 566 -> 543 MB, because FastAPI validates
+and serializes the result after the handler returns. As middleware, real gunicorn, one worker, 3 rounds of 32
+exports of 15k rows 16 at once: knob 0 -> 485 / 641 / 664 MB private, 23-24 s a round; knob 1 -> 157 / 160 /
+160 MB, 19 s a round. The 42 wrapped handlers are listed in `tests/test_heavy_work.py` `WRAPPED`.
+
+**S3** `gunicorn.conf.py`: `max_requests` 2000 (`GUNICORN_MAX_REQUESTS`), jitter 500
+(`GUNICORN_MAX_REQUESTS_JITTER`), 0 = off; `child_exit` returns the worker count. `app/uvicorn_worker.py`
+`DrainingServer.on_tick`: a worker at its limit (not a signal) sends SIGTTIN to the master and keeps serving
+until its replacement is a child of the master (`/proc`, at most 30 s), then drains; the drain closes the
+listener and waits 1 s before uvicorn closes idle connections. The inbox stop is the lifespan shutdown's
+(`shutdown_event` -> `stop_inbox_queue` -> `begin_shutdown`), the same as a signal's. Real gunicorn, 2 workers,
+limit 40 + 10, 600 GETs 8 at once: first version 596 of 600 OK (4 connection resets) and the worker count
+drifted 2 -> 4 (the exit could beat the master's TTIN); final version: RESULT_S3.
 
 ## Expected per worker after
 
