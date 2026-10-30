@@ -1,7 +1,8 @@
 # PLAN: Agentic W3 - approve / reject a purchase request through the agent
 
-Status: Build done (backend + console), red-first; review and browser pass next. Full track (new write surface
-on a form with outward notifications; reuses the existing approval permission, no new slug, no migration).
+Status: Merge-ready pending CI. Reviewer READY, security SECURE (round 2), browser pass PASS at 1280 + 375 (cloud sandbox,
+scripted agent turns), hand test posted. Full track (new write surface on a form with outward notifications; reuses
+the existing approval permission, no new slug, no migration).
 
 ## Owner rulings (30 Oct ~23:15)
 
