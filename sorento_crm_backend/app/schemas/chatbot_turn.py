@@ -236,6 +236,8 @@ class AgentStepsToolCall(BaseModel):
     name: str
     status: str
     ms: int = 0
+    #: The call in plain words: what it was for, with what, and how it ended.
+    detail: str = ""
 
 
 class AgentSteps(BaseModel):
@@ -275,6 +277,32 @@ class AgentConversationToolCall(BaseModel):
     status: str
 
 
+class AgentChange(BaseModel):
+    """One field of one record, before and after, in words."""
+
+    record: str
+    field: str
+    before: str
+    after: str
+
+
+class AgentActionStep(BaseModel):
+    summary: str | None = None
+    status: str
+    error: str | None = None
+    changes: list[AgentChange] = Field(default_factory=list)
+
+
+class AgentConversationAction(BaseModel):
+    """A proposal made in a turn, as it stands now (kept across reloads)."""
+
+    id: str
+    status: str
+    decided_at: datetime | None = None
+    decided_by_name: str | None = None
+    steps: list[AgentActionStep] = Field(default_factory=list)
+
+
 class AgentConversationTurn(BaseModel):
     turn_id: str
     text: str
@@ -285,6 +313,7 @@ class AgentConversationTurn(BaseModel):
     limit_hit: str | None = None
     tool_calls: list[AgentConversationToolCall] = Field(default_factory=list)
     steps: AgentSteps = Field(default_factory=AgentSteps)
+    actions: list[AgentConversationAction] = Field(default_factory=list)
 
 
 class AgentConversationResponse(BaseModel):
@@ -308,12 +337,6 @@ class AgentActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contact_respond_id: str = Field(min_length=1, max_length=64)
-
-
-class AgentActionStep(BaseModel):
-    summary: str | None = None
-    status: str
-    error: str | None = None
 
 
 class AgentActionResponse(BaseModel):

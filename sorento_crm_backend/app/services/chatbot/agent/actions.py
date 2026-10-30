@@ -103,7 +103,10 @@ def proposal_lines(action: AgentAction) -> list[str]:
 
 
 def _out_steps(steps: list[dict]) -> list[dict]:
-    return [{"summary": s.get("summary"), "status": s.get("status"), "error": s.get("error")} for s in steps]
+    return [
+        {"summary": s.get("summary"), "status": s.get("status"), "error": s.get("error"), "changes": s.get("changes") or []}
+        for s in steps
+    ]
 
 
 # ------------------------------------------------------------------ confirm
@@ -231,6 +234,13 @@ def confirm(
                 db, ctx, lambda user: definition.execute(db, user, step["args"]), tool_name=step["tool"]
             )
             step.update(status="done", result_id=result.get("id"), after=result.get("after"), error=None)
+            try:
+                if definition.changes is not None:
+                    step["changes"] = definition.changes(
+                        step["args"], step.get("before") or {}, result.get("after") or {}, step.get("shown") or {}
+                    )
+            except Exception:  # noqa: BLE001 - the write is done; a missing summary must not undo it
+                logger.warning("agent: building the change lines failed", exc_info=True)
             if "unlinked_customer_ids" in result:
                 step["unlinked_customer_ids"] = result["unlinked_customer_ids"]
         except Exception as exc:  # noqa: BLE001 - a route refusal stops the run

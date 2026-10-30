@@ -132,6 +132,17 @@ TOOL_LABELS: dict[str, str] = {
     "crm_order_management_orders_by_product_list": "orders by product",
     "crm_resolve": "finding names and codes",
     "crm_products_find": "finding products",
+    "crm_customer_asks_list": "your customer asks",
+    "crm_customer_ask_update": "change a customer ask",
+    "crm_opportunities_list": "your sales opportunities",
+    "crm_opportunity_meta": "opportunity stages",
+    "crm_opportunity_create": "create an opportunity",
+    "crm_opportunity_update": "change an opportunity",
+    "crm_contacts_find": "finding dealer contacts",
+    "crm_contact_access_update": "change a dealer contact",
+    "crm_agent_actions_recent": "recent changes",
+    "confirm_action": "confirm the waiting change",
+    "cancel_action": "cancel the waiting change",
 }
 FIXED_NOT_ENVELOPE = "The tool returned an unexpected shape, so its data was not used."
 

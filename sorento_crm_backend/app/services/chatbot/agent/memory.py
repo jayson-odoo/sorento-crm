@@ -179,6 +179,7 @@ def steps_from_trace(trace: object) -> dict:
                     "name": name,
                     "status": str(event.get("status") or ""),
                     "ms": int(ms) if isinstance(ms, (int, float)) and not isinstance(ms, bool) else 0,
+                    "detail": str(event.get("detail") or ""),
                 }
             )
     return steps
