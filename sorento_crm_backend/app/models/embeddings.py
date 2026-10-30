@@ -141,6 +141,8 @@ class EmbeddingChunk(Base):
     __table_args__ = (
         Index("ix_embedding_chunks_source_current", "source_type", "source_id", "is_current"),
         Index("ix_embedding_chunks_model_current", "model_name", "model_version", "is_current"),
+        # EMBED-PAGE-PERF: index-only "missing documents" probe (app/services/embedding_indexes.py COVERAGE_INDEXES).
+        Index("ix_embedding_chunks_current_model_doc", "model_name", "document_id", postgresql_where=text("is_current")),
         Index(
             "uq_embedding_chunks_current",
             "source_type",

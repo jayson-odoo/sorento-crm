@@ -100,3 +100,10 @@ def index_ddl(model: str) -> list[str]:
 
 # The set `lec_0002_embedding_indexes` and `scripts/ensure_goods_chain_indexes.py` build.
 MIGRATION_INDEXES = online_indexes("text-embedding-3-small")
+
+# EMBED-PAGE-PERF: lets the Embeddings overview and the backfill guard find "documents with no current chunk of
+# the model" from an index alone; without it each probe read the chunk heap (vector + text per row), which keeps
+# every superseded and old-model chunk. Also declared on the model, so create_all builds it.
+COVERAGE_INDEXES = (
+    ("embedding_chunks", "ix_embedding_chunks_current_model_doc", "(model_name, document_id) WHERE is_current"),
+)
