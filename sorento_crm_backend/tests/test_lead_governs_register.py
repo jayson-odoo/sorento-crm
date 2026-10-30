@@ -147,10 +147,12 @@ def test_f1_a_lead_without_a_customer_qualifies_as_before(v2):
     assert profile is None or profile.customer_id is None
 
 
-def test_e9_a_null_customer_id_never_clears_the_leads_customer_on_put(v2):
+def test_e9_a_null_customer_id_clears_the_projects_customer_and_leaves_the_leads(v2):
     lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
     pid = _register_linked(v2, lead, title("NullKeep"))
     assert profile_of(v2, pid).customer_id == v2.customer.id
     res = as_user(v2, v2.owner).put(f"{STAFF}/{pid}", json={"customer_id": None})
     assert res.status_code == 200, res.text
-    assert profile_of(v2, pid).customer_id == v2.customer.id
+    assert profile_of(v2, pid).customer_id is None
+    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
+    assert project_of(v2, pid).lead_id == lead.id

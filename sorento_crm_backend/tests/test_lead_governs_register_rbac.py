@@ -359,8 +359,8 @@ def test_e10_a_manage_holder_saving_the_project_leaves_the_lead_customer_empty(v
     assert reload_lead(v2, lead.id).customer_id is None
 
 
-def test_e9_a_null_customer_id_never_clears_the_customer_on_a_submit_only_draft(v2):
+def test_e9_a_null_customer_id_clears_the_customer_on_a_submit_only_draft(v2):
     pid = _register(v2, v2.sub_a, submit=False, customer_id=v2.customer.id).json()["id"]
     res = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"customer_id": None})
     assert res.status_code == 200, res.text
-    assert profile_of(v2, pid).customer_id == v2.customer.id
+    assert profile_of(v2, pid).customer_id is None
