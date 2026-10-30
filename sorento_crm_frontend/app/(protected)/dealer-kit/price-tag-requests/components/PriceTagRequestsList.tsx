@@ -312,7 +312,7 @@ function StaffPriceTagRequestsList() {
               </span>
             );
           }
-          // Claiming is marketing's; a salesperson's own row only names who has it.
+          // Unassigned and not a portal draft: marketing can claim it.
           if (row.original.status === 'new' && !row.original.portal_draft_at) {
             return (
               <Button

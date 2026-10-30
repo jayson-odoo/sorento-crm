@@ -12,12 +12,11 @@
  * own (Sample Request, New Product Application, Sales Opportunity, Price Tag Request; R3): the CRM
  * page wraps the portal's component in it.
  *
- * A saved complaint gets one tab the portal does not have (L3, owner a25895124 Q2 a): its
- * fulfilment DOs, read-only, after Details / Comments / Revisions (`extraTabs`).
+ * A caller may add tabs the portal does not have (`extraTabs`): a saved complaint's fulfilment DOs
+ * (L3, owner a25895124 Q2 a), read-only, after Details / Comments / Revisions.
  */
 
 import { useMemo, type ReactNode } from 'react';
-import ComplaintFulfilmentOrdersSection from '@/app/(protected)/complaint-management/complaints/components/ComplaintFulfilmentOrdersSection';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -192,26 +191,16 @@ export default function MyRequestPortalForm({
   kind,
   submissionId,
   initialValues,
+  extraTabs,
 }: {
   kind: MyRequestKind;
   /** None: a new request (`?from=<id>` duplicates one of theirs, as on the portal). */
   submissionId?: string;
   /** A new request's starting values (a project's stage action seeds its project). */
   initialValues?: SubmissionInitialValues;
+  /** Tabs the caller adds after the portal form's own (a complaint's fulfilment DOs). */
+  extraTabs?: SubmissionExtraTab[];
 }) {
-  const extraTabs = useMemo<SubmissionExtraTab[] | undefined>(
-    () =>
-      kind === 'complaint' && submissionId
-        ? [
-            {
-              value: 'fulfilment-dos',
-              label: 'Fulfilment DOs',
-              content: <ComplaintFulfilmentOrdersSection complaintId={submissionId} readOnly />,
-            },
-          ]
-        : undefined,
-    [kind, submissionId],
-  );
   return (
     <MyRequestClientProvider extraTabs={extraTabs}>
       <SubmissionForm

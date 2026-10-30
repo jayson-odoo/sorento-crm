@@ -59,6 +59,7 @@ import {
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
+import { useComplaintFulfilmentTabs } from './useComplaintFulfilmentTabs';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -107,7 +108,8 @@ const statusLabel = complaintStatusLabel;
  */
 export default function ComplaintDetail(props: ComplaintDetailProps) {
   const { limited } = useRequestScope('complaint');
-  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} />;
+  const fulfilmentTabs = useComplaintFulfilmentTabs(props.complaintId);
+  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} extraTabs={fulfilmentTabs} />;
   return <StaffComplaintDetail {...props} />;
 }
 

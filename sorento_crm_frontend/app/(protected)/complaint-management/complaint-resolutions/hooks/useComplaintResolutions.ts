@@ -41,11 +41,10 @@ export function useComplaintResolution(id: string | null) {
   });
 }
 
-export function useComplaintResolutionsSelect(query?: string, options?: { enabled?: boolean }) {
+export function useComplaintResolutionsSelect(query?: string) {
   return useQuery({
     queryKey: ['complaint-resolutions-select', query ?? ''],
     queryFn: () => getComplaintResolutionsSelect(query),
-    enabled: options?.enabled ?? true,
     staleTime: 1000 * 60 * 5,
   });
 }

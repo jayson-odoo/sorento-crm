@@ -562,20 +562,20 @@ export function PortalLanding({ slug, embedded = false }: { slug?: string; embed
               onViewChange={setView}
             />
           ) : (
-          <SubmissionList
-            kind={currentTab}
-            items={submissions[currentTab] ?? []}
-            filters={filters}
-            onFiltersChange={setFilters}
-            sort={sort}
-            onSortChange={setSort}
-            view={view}
-            onViewChange={setView}
-            slug={slug}
-            search={search}
-            onClearSearch={() => setSearch('')}
-            embedded={embedded}
-          />
+            <SubmissionList
+              kind={currentTab}
+              items={submissions[currentTab] ?? []}
+              filters={filters}
+              onFiltersChange={setFilters}
+              sort={sort}
+              onSortChange={setSort}
+              view={view}
+              onViewChange={setView}
+              slug={slug}
+              search={search}
+              onClearSearch={() => setSearch('')}
+              embedded={embedded}
+            />
           )}
         </>
       )}

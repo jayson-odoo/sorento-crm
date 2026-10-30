@@ -16,7 +16,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  AlertCircle,
   ArrowDown,
   ArrowUp,
   Copy,
@@ -25,7 +24,6 @@ import {
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -38,6 +36,7 @@ import {
 } from '@/components/ui/dialog';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import LoadErrorState from '@/components/common/LoadErrorState';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -309,6 +308,7 @@ export function KindSubmissionList({
   const [sort, setSort] = useState<LandingSort>(DEFAULT_LANDING_SORT);
   const [items, setItems] = useState<PortalSubmissionSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -327,7 +327,7 @@ export function KindSubmissionList({
     return () => {
       cancelled = true;
     };
-  }, [client, kind, debouncedSearch]);
+  }, [client, kind, debouncedSearch, reloadKey]);
 
   return (
     <div className="space-y-3">
@@ -341,12 +341,14 @@ export function KindSubmissionList({
         inputClassName="h-12 text-base"
       />
       {error ? (
-        <Alert variant="destructive">
-          <AlertIcon>
-            <AlertCircle />
-          </AlertIcon>
-          <AlertTitle>{error}</AlertTitle>
-        </Alert>
+        <LoadErrorState
+          title="Could not load submissions"
+          message={error}
+          onRetry={() => {
+            setError(null);
+            setReloadKey((k) => k + 1);
+          }}
+        />
       ) : items === null ? (
         <div className="space-y-3">
           <Skeleton className="h-10 w-full" />

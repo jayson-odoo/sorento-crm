@@ -49,6 +49,7 @@ import ComplaintManualAttachmentsSection from "./ComplaintManualAttachmentsSecti
 import { usePublicViewLinksEnabled } from "@/hooks/usePublicViewLinksEnabled";
 import { useRequestScope } from "@/hooks/useRequestScope";
 import MyRequestPortalForm from "@/components/common/MyRequestPortalForm";
+import { useComplaintFulfilmentTabs } from './useComplaintFulfilmentTabs';
 
 interface ComplaintFormProps {
   complaintId?: string;
@@ -117,7 +118,8 @@ function cleanProductLines(
  */
 export default function ComplaintForm(props: ComplaintFormProps) {
   const { limited } = useRequestScope("complaint");
-  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} />;
+  const fulfilmentTabs = useComplaintFulfilmentTabs(props.complaintId);
+  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} extraTabs={fulfilmentTabs} />;
   return <StaffComplaintForm {...props} />;
 }
 
