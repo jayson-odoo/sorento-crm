@@ -228,10 +228,13 @@ def _probe(db: Session | None = None) -> ProbeFn:
 
 # CHATBOT-FAIL-TRIAGE R5: the allow-listed tools that are NOT retried on a timeout. Both
 # pass `ensure_read_only` (no customer-visible write) but each call still creates something:
-# `crm_low_stock_report` starts a report run and writes its workbook, and
-# `crm_portal_link_get` mints a portal token. The MCP catalogue's `read_only` flag is true
-# for both, so there is no marker on the capability rows to read this from.
-_NOT_RETRIED_ON_TIMEOUT: frozenset[str] = frozenset({"crm_low_stock_report", "crm_portal_link_get"})
+# `crm_low_stock_report` starts a report run and writes its workbook, `crm_portal_link_get`
+# mints a portal token, and `crm_sales_analysis` builds its Excel file and pushes it to the
+# chat (review round 2 security nit). The MCP catalogue's `read_only` flag is true for all
+# three, so there is no marker on the capability rows to read this from.
+_NOT_RETRIED_ON_TIMEOUT: frozenset[str] = frozenset(
+    {"crm_low_stock_report", "crm_portal_link_get", "crm_sales_analysis"}
+)
 
 
 def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) -> McpCallFn:

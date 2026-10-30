@@ -1658,6 +1658,31 @@ def portal_submission_type(parse_output: dict[str, Any]) -> str | None:
     return form if isinstance(form, str) and form in LINK_TYPES else None
 
 
+#: CHATBOT-FAIL-TRIAGE AC-3 (review round 2 security nit): a portal link ask for a form the
+#: contact is not granted. MS / ZH in `label_catalog`.
+FORM_NOT_AVAILABLE_MESSAGE = "That form is not available on your account."
+
+
+def portal_form_granted(db: Any, contact_respond_id: Any, space_id: Any, submission_type: str) -> bool:
+    """Is `submission_type` a form the portal shows this contact? The portal's own gate
+    (`portal_form_visibility_service.resolve_visible_form_types`, which the price tag tab
+    403s on, `public/portal_price_tag._assert_visible`), so the chat never hands a link to
+    a tab that would refuse it. A contact that resolves to no row is not gated here: no
+    link can be minted for it, and the portal still gates the tab."""
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    from app.services.portal_form_visibility_service import resolve_visible_form_types
+
+    respond_id = jsc.js_string(contact_respond_id or "").strip()
+    if not respond_id:
+        return True
+    contact_pk = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=respond_id, space_id=(jsc.js_string(space_id).strip() or None) if space_id else None
+    )
+    if not contact_pk:
+        return True
+    return submission_type in resolve_visible_form_types(db, str(contact_pk))
+
+
 def _extract_envelope(j: Any) -> dict[str, Any]:
     empty = {
         "items": [],

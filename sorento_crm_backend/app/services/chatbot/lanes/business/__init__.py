@@ -1514,6 +1514,13 @@ def run_fetch(
     for key, values in narrow.items():
         semantic_input[key] = list(values)
     submission_type = fetch_mod.portal_submission_type(parse_output)
+    if submission_type and db is not None and not fetch_mod.portal_form_granted(
+        db, contact_id, space_id, submission_type
+    ):
+        # CHATBOT-FAIL-TRIAGE AC-3: no link to a form the portal would refuse this contact.
+        if trace is not None:
+            trace.add("portal_link", {"refused": "form_not_granted", "form": submission_type})
+        return _fixed_reply(fetch_mod.FORM_NOT_AVAILABLE_MESSAGE, refused=True)
     if submission_type:
         semantic_input["submission_type"] = submission_type
     # PLAN-chatbot-customer-scope-29sep.md D3/D4: a customer-scoped contact's turn

@@ -385,6 +385,8 @@ LABELS: dict[str, dict[str, str]] = {
     # CHATBOT-FAIL-TRIAGE AC-7c: the escalation's topic clarify (`lanes/escalation.py`).
     "Which topic is this about - {topics}?": {"ms": "Perkara ini tentang topik apa - {topics}?", "zh": "这是关于哪个主题 - {topics}？"},
     'Low stock report is not enabled for your account.': {"ms": 'Laporan stok rendah tidak diaktifkan untuk akaun anda.', "zh": '您的账户未开通低库存报告。'},
+    # CHATBOT-FAIL-TRIAGE AC-3: a portal link ask for a form the contact is not granted.
+    "That form is not available on your account.": {"ms": "Borang itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法使用该表格。"},
     'Could not run the low stock report right now.': {"ms": 'Laporan stok rendah tidak dapat dijalankan sekarang.', "zh": '暂时无法生成低库存报告。'},
     # REPORT-SMART-1021 step 5: a report failure is a plain sentence.
     "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.": {"ms": "Saya belum dapat membandingkan pecahan bulan demi bulan. Minta jumlah keseluruhan, atau pecahkan mengikut dimensi lain.", "zh": "暂时无法对比逐月明细。请查看总计，或按其他维度拆分。"},
@@ -729,6 +731,7 @@ INLINE = frozenset(
         "That report is not available on your account.",
         "Which topic is this about - {topics}?",
         "Low stock report is not enabled for your account.",
+        "That form is not available on your account.",
         "Could not run the low stock report right now.",
         "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.",
         "I couldn't read that period. Which period? For example this month, September, 2026, or 1 to 15 Sep.",
