@@ -21,9 +21,7 @@ const FLOOR_LEVEL_LABELS: Record<string, string> = {
 /**
  * What is true about the line, ON THE SPOT (the client: "cannot wait until I save").
  *
- * **Non-standard** is one word for two facts: no product and no set is linked (a fact about the
- * row on screen, read off the LIVE draft), or the linked product or set is outside the series
- * (the server's). A line never shows two pills. **Minimum price** is the server's too: while the
+ * **Non-standard** means the linked product or set is outside the series (the server's). **Minimum price** is the server's too: while the
  * draft matches the saved row the saved verdicts show, and the moment it diverges the server is
  * asked (debounced, via `useLineVerdict`) with the same functions the save runs.
  *
@@ -47,20 +45,23 @@ function useLineFacts(quotationId: string | null, line: QuotationLine | null, dr
       product_set_id: setId || undefined,
       unit_price: price || undefined,
     },
-    !pristine && quotationId !== null,
+    !pristine && quotationId !== null && Boolean(productId || setId),
   );
 
   const belowFloor = pristine
     ? line.is_below_floor
     : Boolean(verdict.data?.is_below_floor);
-  const nonStandard = pristine
-    ? line.is_non_standard
-    : Boolean(verdict.data?.is_non_standard);
+  const nonStandard =
+    !productId && !setId
+      ? false
+      : pristine
+        ? line.is_non_standard
+        : Boolean(verdict.data?.is_non_standard);
   const floor = pristine
     ? describeFloor(line)
     : describeVerdictFloor(verdict.data ?? null);
 
-  return { noTarget: !productId && !setId, belowFloor, nonStandard, floor };
+  return { belowFloor, nonStandard, floor };
 }
 
 /** The Product cell's flag: Non-standard, once. */
@@ -74,17 +75,15 @@ export function LineFlags({
   line: QuotationLine | null;
   draft: LineDraft;
 }) {
-  const { noTarget, nonStandard } = useLineFacts(quotationId, line, draft);
-  if (!noTarget && !nonStandard) return null;
+  const { nonStandard } = useLineFacts(quotationId, line, draft);
+  if (!nonStandard) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-1">
       <Badge
         variant="secondary"
         className="gap-1 text-2xs"
-        title={
-          noTarget ? 'Not a catalogue product' : 'Outside the series this scope is quoted from'
-        }
+        title="Outside the series this scope is quoted from"
       >
         <TriangleAlert className="size-3" aria-hidden />
         Non-standard

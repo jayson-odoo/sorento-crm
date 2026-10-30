@@ -348,8 +348,8 @@ export function QuotationFormClient({
     );
     if (unfinished > 0) {
       return unfinished === 1
-        ? 'One line still needs a product or a description.'
-        : `${unfinished} lines still need a product or a description.`;
+        ? 'One line still needs a catalogue product or set.'
+        : `${unfinished} lines still need a catalogue product or set.`;
     }
     // Caught here rather than as a 422 toast: the field already says "Must be a number".
     const badNumbers = list.reduce(
