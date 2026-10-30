@@ -6,13 +6,13 @@ reads the state the automatic rule gives it (idempotent). The backfill is NOT re
 downgrade: only the three columns are dropped.
 
 Revision ID: oiac_0001_ack_override
-Revises: agp3_0002_contacts_edit_own
+Revises: pp4_0002_complaint_revision
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "oiac_0001_ack_override"
-down_revision = "agp3_0002_contacts_edit_own"
+down_revision = "pp4_0002_complaint_revision"
 branch_labels = None
 depends_on = None
 
