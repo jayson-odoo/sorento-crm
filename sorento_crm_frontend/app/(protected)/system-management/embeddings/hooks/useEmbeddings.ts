@@ -12,12 +12,19 @@ import type { BackfillAction } from '../types/embeddings.types';
 
 export const EMBEDDINGS_KEY = ['embeddings'] as const;
 
-export function useEmbeddingsOverview() {
+/** Overview counts scan the embedding tables: polled only while the caller shows them (`poll`) in a visible tab. */
+export function useEmbeddingsOverview({ poll = false }: { poll?: boolean } = {}) {
   return useQuery({
     queryKey: [...EMBEDDINGS_KEY, 'overview'],
     queryFn: getOverview,
-    refetchInterval: 30_000,
+    refetchInterval: poll ? 30_000 : false,
+    refetchIntervalInBackground: false,
   });
+}
+
+/** Refresh after a mutation by joining a fetch already in flight: aborting it leaves its query running server-side. */
+function refreshEmbeddings(queryClient: ReturnType<typeof useQueryClient>) {
+  return queryClient.invalidateQueries({ queryKey: EMBEDDINGS_KEY }, { cancelRefetch: false });
 }
 
 export function useLookupWords(list: string) {
@@ -39,7 +46,7 @@ export function useEmbedMissing() {
   return useMutation({
     mutationFn: () => embedMissing(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: EMBEDDINGS_KEY });
+      refreshEmbeddings(queryClient);
       toast.success('Embedding started');
     },
     onError: (error: Error) => toast.error(error.message),
@@ -51,7 +58,7 @@ export function useRecordsBackfill() {
   return useMutation({
     mutationFn: ({ action }: { action: BackfillAction }) => recordsBackfill(action),
     onSuccess: (_data, { action }) => {
-      queryClient.invalidateQueries({ queryKey: EMBEDDINGS_KEY });
+      refreshEmbeddings(queryClient);
       toast.success(action === 'start' ? 'Backfill started' : 'Backfill stopping');
     },
     onError: (error: Error) => toast.error(error.message),
