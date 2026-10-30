@@ -24,6 +24,11 @@ What each answer settles (crew reading, applied to this card):
 | P3-Q4 | (a) | WhatsApp confirm is read semantically, within the server limits of rule 3. |
 | P3-Q5 | (b) | Writes first, in the console Agent tab; routing after. |
 
+Console writes (owner 30 Oct ~12:20, "the console is ad admin view so i think is ok"): an operator in the
+console may run changes for any agent contact, provided the operator also holds every permission the change
+needs; the audit names the operator as the real actor and the contact it was done for. WhatsApp later: own
+contact only.
+
 Where this card's text below still says `agent.write`, the table above wins. No product code until then. Track: full pipeline
 (Size L: new routing path on live WhatsApp turns, new write surface, identity change for writes).
 Base: AGENTIC-P1 (PR #1982, owner hand test PASS 30 Oct). Lane AGENTIC-P2-CARD.

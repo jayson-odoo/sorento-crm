@@ -339,12 +339,16 @@ Slice 3, using the owner's example shape (4 phones to Business owner, 1 resign; 
 
 Reviewer NOT READY (B1, B2), security reviewer NOT SECURE (blocker: console operator acts as another user).
 
-R1. **Who may write from the console** (crew-ask filed; building the recommended (a) meanwhile): write tools are
-    offered, and `confirm` / `cancel` accepted from the console, only when the operator (the console caller) IS
-    the contact's linked user. Any other operator gets read tools only; a console confirm / cancel by another
-    operator -> 409 reason `not_your_contact`. `agent_actions` gains `decided_by_user_id` (the operator, or the
-    linked user for a chat confirm). `run_agent_turn` takes `operator_user_id` (None = chat, the sender is the
-    user).
+R1. **Who may write from the console** (owner 30 Oct ~12:20, "the console is ad admin view so i think is ok":
+    option b). From the console an operator may propose and confirm changes for ANY agent contact, but only when
+    the operator ALSO holds every slug the step needs (the same slug check as the linked user, at exposure,
+    proposal and confirm; for the dealer-contact tool `.edit_own` or `.edit`). The write still executes as the
+    linked user (its route scope rules apply). Audit: `AuditActor.user_id` = the linked user (whose permissions
+    and scope ran), `real_user_id` = the operator (who actually acted), `contact_id` = the contact; never only the
+    contact. `agent_actions` gains `decided_by_user_id` (the operator; the linked user for a chat confirm).
+    `run_agent_turn` takes `operator_user_id` (None = chat, the sender is the user). A console confirm by an
+    operator lacking a step's slug -> the action is `rejected` with that step's error ("You do not have permission
+    for this change."), nothing written. WhatsApp later: own contact only (no operator).
 R2. **Chat confirm works across turns** (B1): while a proposal is pending, the system prompt carries one line
     naming it (`A change is waiting for the user's decision (action <id>): <lines joined by "; ">`), and the
     `confirm_action` / `cancel_action` schemas restrict `action_id` to that id (`enum`). The loop's same-turn
@@ -372,5 +376,5 @@ Tests to add red first: two `run_agent_turn` calls where turn 2's model sees onl
 confirms (R2); resign in turn 1, undo in turn 2 without hand-seeded ids (R3/R4); claim race: the row flipped to
 `executing` from a second session between re-check and claim -> written once (reviewer 2); re-link refused for a
 `.edit` holder who did not do the unlink (binding only, reviewer 4); re-link refused after a later re-link and
-unlink by someone else (R4 ii); R1 console write tools absent and confirm 409 for another operator; R5, R6, R7, R8
+unlink by someone else (R4 ii); R1 an operator without the slug gets no write tools and a console confirm by them is rejected, an operator with it can confirm and the audit row has real_user_id = operator; R5, R6, R7, R8
 one each.
