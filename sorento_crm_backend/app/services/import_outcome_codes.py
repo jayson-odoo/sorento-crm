@@ -31,7 +31,8 @@ RENAMED_COPY = "renamed_copy"
 
 # --- missing / malformed input -------------------------------------------
 MISSING_DOC_NO = "missing_doc_no"
-#: A delivery order's own date (DO-IMPORT-DATE): blank, or a value no format reads.
+#: A delivery order imported without its own date (DO-IMPORT-DATE): blank, or a value no format
+#: reads. Flagged on an imported row, never a refusal.
 MISSING_DOC_DATE = "missing_doc_date"
 INVALID_DOC_DATE = "invalid_doc_date"
 MISSING_ITEM_CODE = "missing_item_code"
@@ -205,7 +206,7 @@ LABELS: dict[str, str] = {
     REPLACED: "Replaced in place",
     RENAMED_COPY: "Renamed to keep both copies",
     MISSING_DOC_NO: "Missing document number",
-    MISSING_DOC_DATE: "Missing document date",
+    MISSING_DOC_DATE: "No document date",
     INVALID_DOC_DATE: "Unreadable document date",
     MISSING_ITEM_CODE: "Missing item code",
     MISSING_LOCATION: "Missing location",

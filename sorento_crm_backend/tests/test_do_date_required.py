@@ -1,9 +1,10 @@
-"""DO-IMPORT-DATE: a delivery order always carries its DO date.
+"""DO-IMPORT-DATE: an undated DO is imported and flagged, never refused, and a stored DO date
+is never cleared.
 
-Owner, 29 Oct 2026: "there shouldn't be any undated DO; fix why there is no date instead of
-circumventing it". 11 live DOs had no DO date; the Excel tracking import turned a blank or
-unparseable Master "Date" into NULL and created the row anyway, and the create API accepted
-an order with no date. Plan: documentation/plans/order-management/PLAN-do-import-date.md.
+Owner, 30 Oct 2026: no existing import or integration may fail because of a DO date (manual
+DOs can come without one); unreadable dates stay out of reports. The import used to write NULL
+over a stored date and gave no word about a blank or unreadable cell.
+Plan: documentation/plans/order-management/PLAN-do-import-date.md.
 """
 from __future__ import annotations
 
@@ -12,7 +13,6 @@ from io import BytesIO
 
 import pytest
 from openpyxl import Workbook
-from pydantic import ValidationError
 
 from app.models.order import Order, OrderStatus
 from app.schemas.order import OrderCreate, OrderResponse, OrderUpdate
@@ -55,38 +55,49 @@ def _row_errors(result: dict) -> dict[int, str]:
     return {e["row"]: e["error"] for e in result.get("errors") or [] if isinstance(e, dict)}
 
 
-def _skipped_codes(outcome: ImportOutcome) -> set[str]:
-    return {e["code"] for e in outcome.breakdown()["skipped"]}
+def _successful_codes(outcome: ImportOutcome) -> set[str]:
+    return {e["code"] for e in outcome.breakdown()["successful"]}
+
+
+def _warnings(result: dict) -> list[str]:
+    return [w.get("warning") if isinstance(w, dict) else w for w in result.get("warnings") or []]
+
+
+UNDATED = "imported without a DO date (left out of reports until it has one)"
 
 
 # --- Excel tracking import ------------------------------------------------------------
 
 
-def test_import_refuses_master_row_with_blank_date(db):
+def test_import_creates_master_row_with_blank_date_flagged(db):
     good, blank = unique_code("DO"), unique_code("RMA")
     outcome = ImportOutcome(None)
     result = OrderService(db).import_excel_tracking(
         _workbook([[good, date(2026, 8, 28), "DO"], [blank, None, "RMA"]]), USER, outcome=outcome
     )
 
-    errors = _row_errors(result)
-    assert errors.get(3) == f"{blank}: Date is required", result.get("errors")
-    assert _order(db, blank) is None, "an undated Master row must not create a DO"
+    assert not _row_errors(result), result.get("errors")
+    assert f"{blank}: no Date, {UNDATED}" in _warnings(result)
+    created = _order(db, blank)
+    assert created is not None and created.order_date is None
     assert _order(db, good).order_date == date(2026, 8, 28)
-    assert oc.MISSING_DOC_DATE in _skipped_codes(outcome)
+    assert oc.MISSING_DOC_DATE in _successful_codes(outcome)
+    assert outcome.successful == 2
 
 
-def test_import_refuses_master_row_with_unparseable_date(db):
+def test_import_creates_master_row_with_unparseable_date_flagged(db):
     bad = unique_code("RMA")
     outcome = ImportOutcome(None)
     result = OrderService(db).import_excel_tracking(
         _workbook([[bad, "not a date", "RMA"]]), USER, outcome=outcome
     )
 
-    error = _row_errors(result).get(2)
-    assert error == f"{bad}: Date 'not a date' is not a valid date (use DD/MM/YYYY)", result.get("errors")
-    assert _order(db, bad) is None
-    assert oc.INVALID_DOC_DATE in _skipped_codes(outcome)
+    assert not _row_errors(result), result.get("errors")
+    assert (
+        f"{bad}: Date 'not a date' is not a valid date (use DD/MM/YYYY), {UNDATED}"
+    ) in _warnings(result)
+    assert _order(db, bad).order_date is None
+    assert oc.INVALID_DOC_DATE in _successful_codes(outcome)
 
 
 def test_import_blank_date_does_not_wipe_existing_do_date(db):
@@ -94,41 +105,67 @@ def test_import_blank_date_does_not_wipe_existing_do_date(db):
     db.add(Order(order_number=number, order_date=date(2026, 7, 1)))
     db.commit()
 
-    result = OrderService(db).import_excel_tracking(_workbook([[number, None, "DO"]]), USER)
+    result = OrderService(db).import_excel_tracking(_workbook([[number, None, "RMA"]]), USER)
 
-    assert 2 in _row_errors(result)
+    assert not _row_errors(result), result.get("errors")
+    assert not _warnings(result), "nothing lost, nothing to say"
+    order = _order(db, number)
+    db.refresh(order)
+    assert order.order_date == date(2026, 7, 1)
+    assert order.order_type == "RMA", "the row's other columns still apply"
+
+
+def test_import_unreadable_date_keeps_existing_do_date_and_says_so(db):
+    number = unique_code("DO")
+    db.add(Order(order_number=number, order_date=date(2026, 7, 1)))
+    db.commit()
+
+    result = OrderService(db).import_excel_tracking(_workbook([[number, "31/13/2026", "DO"]]), USER)
+
+    assert (
+        f"{number}: Date '31/13/2026' is not a valid date (use DD/MM/YYYY), kept the stored DO date"
+    ) in _warnings(result)
     order = _order(db, number)
     db.refresh(order)
     assert order.order_date == date(2026, 7, 1)
 
 
-def test_import_validate_only_reports_undated_row(db):
+def test_import_validate_only_warns_about_undated_row(db):
     bad = unique_code("RMA")
     result = OrderService(db).import_excel_tracking(
         _workbook([[bad, None, "RMA"]]), USER, validate_only=True
     )
     # The preview lists bare messages, so the doc number rides in the text.
-    assert result["valid"] is False
-    assert result["errors"] == [f"{bad}: Date is required"]
+    assert result["valid"] is True
+    assert result["errors"] == []
+    assert f"{bad}: no Date, {UNDATED}" in result["warnings"]
+    assert result["summary"]["would_create"] == 1
 
 
 # --- API schemas ----------------------------------------------------------------------
 
 
-def test_order_create_requires_order_date():
-    with pytest.raises(ValidationError):
-        OrderCreate(order_number="DO-1")
-    with pytest.raises(ValidationError):
-        OrderCreate(order_number="DO-1", order_date=None)
+def test_order_create_accepts_a_missing_order_date():
+    assert OrderCreate(order_number="DO-1").order_date is None
+    assert OrderCreate(order_number="DO-1", order_date=None).order_date is None
     assert OrderCreate(order_number="DO-1", order_date="2026-10-29").order_date is not None
 
 
-def test_order_update_rejects_explicit_null_order_date():
-    with pytest.raises(ValidationError):
-        OrderUpdate(order_date=None)
-    # Omitting it leaves the stored date alone.
+def test_order_update_null_order_date_keeps_the_stored_date():
+    # A sent null is dropped, exactly like leaving the field out.
+    assert "order_date" not in OrderUpdate(order_date=None).model_dump(exclude_unset=True)
     assert "order_date" not in OrderUpdate(remarks="x").model_dump(exclude_unset=True)
     assert OrderUpdate(order_date="2026-10-29").order_date is not None
+
+
+def test_update_order_with_null_date_does_not_clear_it(db):
+    order = Order(order_number=unique_code("DO"), order_date=date(2026, 7, 1))
+    db.add(order)
+    db.commit()
+    updated = OrderService(db).update_order(
+        order.id, OrderUpdate.model_validate({"order_date": None, "remarks": "kept"}), USER
+    )
+    assert updated.remarks == "kept" and updated.order_date == date(2026, 7, 1)
 
 
 def test_legacy_undated_row_still_reads(db):
@@ -148,48 +185,52 @@ def test_update_without_date_on_legacy_undated_row_still_works(db):
     assert updated.remarks == "kept" and updated.order_date is None
 
 
-def test_create_order_route_rejects_missing_date():
+def test_create_order_route_accepts_missing_date(db):
     from fastapi.testclient import TestClient
 
+    from app.database import get_db
     from app.dependencies import get_current_user, get_current_user_or_api_key
     from app.main import app
     from app.services.company_scope_resolver import apply_company_scope
 
+    number = unique_code("DO")
     principal = {"id": USER, "roles": ["superadmin"]}
-    deps = (get_current_user, get_current_user_or_api_key)
-    for dep in deps:
-        app.dependency_overrides[dep] = lambda: principal
-    app.dependency_overrides[apply_company_scope] = lambda: None
+    overrides = {
+        get_current_user: lambda: principal,
+        get_current_user_or_api_key: lambda: principal,
+        apply_company_scope: lambda: None,
+        get_db: lambda: db,
+    }
+    app.dependency_overrides.update(overrides)
     try:
-        resp = TestClient(app).post(
-            "/api/v1/order-management/orders/", json={"order_number": unique_code("DO")}
-        )
+        resp = TestClient(app).post("/api/v1/order-management/orders/", json={"order_number": number})
     finally:
-        for dep in (*deps, apply_company_scope):
+        for dep in overrides:
             app.dependency_overrides.pop(dep, None)
-    assert resp.status_code == 422, resp.text
+    assert resp.status_code in (200, 201), resp.text
+    assert resp.json()["order_date"] is None
+    assert _order(db, number).order_date is None
 
 
 # --- JSON bulk import -----------------------------------------------------------------
 
 
-def test_bulk_import_refuses_new_order_without_date(db):
+def test_bulk_import_creates_new_order_without_date_flagged(db):
     number = unique_code("DO")
     result = OrderService(db).bulk_import_orders([{"Order Number": number}], USER)
-    assert result["created"] == 0
-    assert any("Order Date is required" in e for e in result["errors"]), result["errors"]
-    assert _order(db, number) is None
+    assert result["created"] == 1 and result["errors"] == [], result
+    assert result["warnings"] == [f"Row 1: Order {number}: no Date, {UNDATED}"]
+    assert _order(db, number).order_date is None
 
 
-def test_bulk_import_refuses_blanking_existing_date(db):
+def test_bulk_import_blank_date_keeps_existing_date(db):
     number = unique_code("DO")
     db.add(Order(order_number=number, order_date=date(2026, 7, 1)))
     db.commit()
     result = OrderService(db).bulk_import_orders(
         [{"Order Number": number, "Order Date": ""}], USER
     )
-    assert result["updated"] == 0
-    assert any("Order Date is required" in e for e in result["errors"]), result["errors"]
+    assert result["updated"] == 1 and result["errors"] == [], result
     order = _order(db, number)
     db.refresh(order)
     assert order.order_date == date(2026, 7, 1)
@@ -288,21 +329,27 @@ def test_import_reads_an_excel_date_serial(db):
     assert _order(db, number).order_date == date(2026, 10, 29)
 
 
-def test_import_tracking_row_of_refused_master_row_names_the_date(db):
+def test_import_tracking_row_of_undated_master_row_still_applies(db):
     number = unique_code("RMA")
     result = OrderService(db).import_excel_tracking(
         _sheet(["Doc. No.", "Date"], [[number, None]], [[number, date(2026, 10, 30)]]), USER
     )
-    warnings = [w.get("warning") for w in result.get("warnings") or [] if isinstance(w, dict)]
-    assert f"Order '{number}' skipped: its Master row has no valid Date" in warnings, warnings
-    assert not any("not found in Master sheet" in (w or "") for w in warnings), warnings
+    assert not any("not found in Master sheet" in (w or "") for w in _warnings(result))
+    order = _order(db, number)
+    assert order.order_date is None
+    assert order.actual_delivery_date == date(2026, 10, 30)
 
 
-def test_import_master_sheet_without_date_column_is_refused_once(db):
+def test_import_master_sheet_without_date_column_imports_with_one_warning(db):
     number = unique_code("DO")
-    with pytest.raises(ValueError, match="Master sheet has no Date column"):
-        OrderService(db).import_excel_tracking(_sheet(["Doc. No.", "Type"], [[number, "DO"]]), USER)
-    assert _order(db, number) is None
+    result = OrderService(db).import_excel_tracking(
+        _sheet(["Doc. No.", "Type"], [[number, "DO"]]), USER
+    )
+    assert not _row_errors(result), result.get("errors")
+    assert (
+        "Master sheet has no Date column: new delivery orders are imported without a DO date"
+    ) in _warnings(result)
+    assert _order(db, number).order_date is None
 
 
 def test_bulk_import_reads_an_excel_date_serial(db):
@@ -318,7 +365,11 @@ def test_bulk_import_reads_an_excel_date_serial(db):
 def test_bulk_import_names_an_unreadable_date(db):
     number = unique_code("DO")
     result = OrderService(db).bulk_import_orders([{"Order Number": number, "Order Date": "soon"}], USER)
-    assert result["errors"] == ["Row 1: Order Date 'soon' is not a valid date"], result
+    assert result["created"] == 1 and result["errors"] == [], result
+    assert result["warnings"] == [
+        f"Row 1: Order {number}: Date 'soon' is not a valid date (use DD/MM/YYYY), {UNDATED}"
+    ]
+    assert _order(db, number).order_date is None
 
 
 def test_bulk_import_blank_date_on_autocount_do_is_not_refused(db):
@@ -334,16 +385,16 @@ def test_bulk_import_blank_date_on_autocount_do_is_not_refused(db):
     assert order.order_date == date(2026, 7, 1)
 
 
-def test_import_number_outside_plausible_dates_is_refused(db):
-    """A typed ddmmyy (280826) is not a serial for the year 2668: refuse it visibly."""
+def test_import_number_outside_plausible_dates_is_flagged_not_dated(db):
+    """A typed ddmmyy (280826) is not a serial for the year 2668: no date, said visibly."""
     number = unique_code("DO")
     result = OrderService(db).import_excel_tracking(
         _sheet(["Doc. No.", "Date"], [[number, 280826]]), USER
     )
-    assert _row_errors(result).get(2) == (
-        f"{number}: Date '280826' is not a valid date (use DD/MM/YYYY)"
-    ), result.get("errors")
-    assert _order(db, number) is None
+    assert (
+        f"{number}: Date '280826' is not a valid date (use DD/MM/YYYY), {UNDATED}"
+    ) in _warnings(result)
+    assert _order(db, number).order_date is None
 
 
 def test_import_empty_master_tab_still_applies_tracking(db):

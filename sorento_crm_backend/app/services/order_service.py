@@ -21,7 +21,7 @@ from app.schemas.order import (
     OrderLineCreate, OrderLineUpdate,
 )
 from app.utils.product_display import code_with_name
-from app.services import customer_identity
+from app.services import customer_identity, import_outcome_codes
 from app.services.error_handler import handle_not_found, handle_conflict, handle_unprocessable
 from app.services.import_log_service import ImportLogService
 from app.services.contact_brand_scope import product_in_scope_clauses
@@ -86,6 +86,20 @@ def _excel_serial_to_datetime(value) -> Optional[datetime]:
     except (TypeError, ValueError, OverflowError):
         return None
     return converted if isinstance(converted, datetime) else None
+
+
+def _undated_flag(label: str, raw_date, existing: Optional[Order]) -> Optional[tuple[str, str]]:
+    """(outcome code, message) for an imported DO row whose date cell gave no date, or None
+    when nothing needs saying (a blank cell on a DO that keeps its stored date).
+    DO-IMPORT-DATE: the row is imported either way and a stored date is never cleared."""
+    kept = existing is not None and existing.order_date is not None
+    tail = "kept the stored DO date" if kept else "imported without a DO date (left out of reports until it has one)"
+    if raw_date is None or str(raw_date).strip() == "":
+        return None if kept else (import_outcome_codes.MISSING_DOC_DATE, f"{label}: no Date, {tail}")
+    return (
+        import_outcome_codes.INVALID_DOC_DATE,
+        f"{label}: Date '{str(raw_date).strip()}' is not a valid date (use DD/MM/YYYY), {tail}",
+    )
 
 
 def _delivered_status_ids(db) -> list:
@@ -2757,22 +2771,21 @@ class OrderService:
                         errors.append(f"Row {idx}: Order Number '{mapped_data['order_number']}' already exists")
                         continue
 
-                # DO-IMPORT-DATE: a new DO needs its date, and a sent blank never clears one
-                # (AutoCount owns the date on its own DOs, so a blank there is moot).
-                if mapped_data.get('order_date') is None and (
-                    not existing_order
-                    or ('order_date' in mapped_data and not is_autocount_owned(existing_order))
-                ):
-                    raw_date = next(
-                        (v for k, v in row_data.items()
-                         if column_mapping.get(k, k.lower()) == 'order_date'),
-                        None,
-                    )
-                    if raw_date is None or str(raw_date).strip() == '':
-                        errors.append(f"Row {idx}: Order Date is required")
-                    else:
-                        errors.append(f"Row {idx}: Order Date '{str(raw_date).strip()}' is not a valid date")
-                    continue
+                # DO-IMPORT-DATE: a row without a readable date still imports, never clears
+                # a stored date, and says so (AutoCount owns the date on its own DOs).
+                if mapped_data.get('order_date') is None:
+                    mapped_data.pop('order_date', None)
+                    if not (existing_order and is_autocount_owned(existing_order)):
+                        raw_date = next(
+                            (v for k, v in row_data.items()
+                             if column_mapping.get(k, k.lower()) == 'order_date'),
+                            None,
+                        )
+                        flag = _undated_flag(
+                            f"Row {idx}: Order {mapped_data['order_number']}", raw_date, existing_order
+                        )
+                        if flag:
+                            warnings.append(flag[1])
 
                 sent_keys = [k for k in mapped_data if k != 'order_number']
                 # Calculate total if not provided
@@ -2935,13 +2948,15 @@ class OrderService:
             return str(value).strip()
 
         master_rows_list = list(iter_sheet_rows(master_sheet, "Master"))
-        # DO-IMPORT-DATE: Master's Date is every DO's own date; without the column
-        # every row would be refused one by one, so say it once. An empty Master tab
-        # (a tracking-only upload) has no rows to refuse.
+        # DO-IMPORT-DATE: without the column no DO gets a date from this sheet; say it once.
         if master_rows_list and "Date" not in {
             normalize_header(cell.value) for cell in master_sheet[1]
         }:
-            raise ValueError("Master sheet has no Date column: every delivery order needs its DO date")
+            warnings.append({
+                "row": 1,
+                "warning": "Master sheet has no Date column: new delivery orders are imported without a DO date",
+                "data": None,
+            })
         tracking_rows_list = list(iter_sheet_rows(tracking_sheet, "Overall Tracking"))
         master_rows = len(master_rows_list)
         tracking_rows = len(tracking_rows_list)
@@ -3060,8 +3075,8 @@ class OrderService:
         working_weekdays = calendar_service.get_working_weekdays()
 
         mapped_master_rows = []
-        # Doc number (lower) -> outcome code of a Master row refused for its Date.
-        refused_for_date: dict[str, str] = {}
+        # Master row -> (outcome code, message) for a DO date the sheet did not give.
+        date_flags: dict[int, tuple[str, str]] = {}
         min_master_date = None
         max_master_date = None
         touched_orders: list[Order] = []
@@ -3092,31 +3107,18 @@ class OrderService:
                     continue
                 mapped["order_number"] = order_number
                 order_date_value = mapped.get("order_date")
-                # DO-IMPORT-DATE: a DO always carries its date. A blank or unreadable
-                # Date used to become NULL (an undated DO, or a dated one wiped).
-                # AutoCount owns the date on its own DOs, so the sheet's cell is moot there.
-                known = existing_orders.get(order_number.lower())
-                if order_date_value is None and known is not None and is_autocount_owned(known):
+                # DO-IMPORT-DATE: manual DOs can come without a date (owner, 30 Oct), so a
+                # blank or unreadable Date never refuses the row. It never clears a stored
+                # date either (it used to write NULL over it), and a DO left undated is
+                # flagged; reports leave it out until someone fills the date.
+                if order_date_value is None:
                     mapped.pop("order_date", None)
-                elif order_date_value is None:
-                    raw_date = row_data.get("Date")
-                    if raw_date is None or str(raw_date).strip() == "":
-                        date_code = _oc.MISSING_DOC_DATE
-                        date_error = f"{order_number}: Date is required"
-                    else:
-                        date_code = _oc.INVALID_DOC_DATE
-                        date_error = (
-                            f"{order_number}: Date '{str(raw_date).strip()}' "
-                            "is not a valid date (use DD/MM/YYYY)"
-                        )
-                    errors.append({"row": row_idx, "error": date_error, "data": row_data})
-                    refused_for_date[order_number.lower()] = date_code
-                    outcome.skip(
-                        row=row_idx, code=date_code, message=date_error,
-                        value=order_number,
-                        identity={"sheet": "Master", "doc_no": order_number},
-                    )
-                    continue
+                    known = existing_orders.get(order_number.lower())
+                    if known is None or not is_autocount_owned(known):
+                        flag = _undated_flag(order_number, row_data.get("Date"), known)
+                        if flag:
+                            date_flags[row_idx] = flag
+                            warnings.append({"row": row_idx, "warning": flag[1], "data": row_data})
                 if isinstance(order_date_value, (datetime, date)):
                     date_value = order_date_value.date() if isinstance(order_date_value, datetime) else order_date_value
                     min_master_date = date_value if min_master_date is None else min(min_master_date, date_value)
@@ -3200,9 +3202,11 @@ class OrderService:
                         existing_order.order_status_id = new_status_id
                     existing_order.updated_by = user_id
                     updated += 1
+                    date_flag = date_flags.get(row_idx)
                     outcome.updated(
                         row=row_idx,
-                        message=f"Order updated: {order_number}",
+                        **({"code": date_flag[0]} if date_flag else {}),
+                        message=date_flag[1] if date_flag else f"Order updated: {order_number}",
                         value=order_number,
                         identity={"sheet": "Master", "doc_no": order_number},
                         entity_type="order",
@@ -3226,9 +3230,11 @@ class OrderService:
                     order = Order(**mapped)
                     self.db.add(order)
                     created += 1
+                    date_flag = date_flags.get(row_idx)
                     outcome.success(
                         row=row_idx,
-                        message=f"Order created: {order_number}",
+                        **({"code": date_flag[0]} if date_flag else {}),
+                        message=date_flag[1] if date_flag else f"Order created: {order_number}",
                         value=order_number,
                         identity={"sheet": "Master", "doc_no": order_number},
                         entity_type="order",
@@ -3276,15 +3282,6 @@ class OrderService:
                     continue
 
                 order = existing_orders.get(order_number.lower())
-                if not order and order_number.lower() in refused_for_date:
-                    message = f"Order '{order_number}' skipped: its Master row has no valid Date"
-                    warnings.append({"row": row_idx, "warning": message, "data": row_data})
-                    outcome.skip(
-                        row=row_idx, code=refused_for_date[order_number.lower()],
-                        message=message, value=order_number,
-                        identity={"sheet": "Overall Tracking", "doc_no": order_number},
-                    )
-                    continue
                 if not order:
                     warnings.append({"row": row_idx, "warning": f"Order '{order_number}' not found in Master sheet", "data": row_data})
                     outcome.skip(

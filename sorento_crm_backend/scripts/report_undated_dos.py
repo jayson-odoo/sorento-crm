@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Report the live delivery orders that have no DO date (DO-IMPORT-DATE).
 
-Owner, 29 Oct 2026: "there shouldn't be any undated DO". The import and the API now refuse
-one (plan: documentation/plans/order-management/PLAN-do-import-date.md); this lists the
-ones already stored so the owner can decide, per row, to delete it or fill its date.
+Manual DOs can be imported without a date (owner, 30 Oct 2026); the import flags them and
+reports leave them out until they have one (plan:
+documentation/plans/order-management/PLAN-do-import-date.md). This is the to-fill list.
 Print only - it never writes.
 
 Run from sorento_crm_backend/:
