@@ -40,6 +40,7 @@ function placeholderSelection(contactRef: string): ConversationInboxItem {
     open_ticket_count: 0,
     my_open_ticket_count: 0,
     my_open_ticket_id: null,
+    match: null,
   };
 }
 
@@ -74,6 +75,14 @@ export default function ConversationsInbox() {
   const [selected, setSelected] = useState<ConversationInboxItem | null>(
     contactParam ? placeholderSelection(contactParam) : null,
   );
+  // The search that produced the pick, so a message match opens on that
+  // message with the term marked. Empty for an ordinary pick.
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const select = useCallback((item: ConversationInboxItem, term?: string) => {
+    setSelected(item);
+    setSearchTerm(term ?? '');
+  }, []);
 
   // Only ever replaces the deep-link stub, never a row the user picked: the
   // list re-reads every 30s and swapping the selection on each of those would
@@ -98,7 +107,7 @@ export default function ConversationsInbox() {
           setSelected(null);
         }}
         selectedRef={selected?.contact_ref ?? null}
-        onSelect={setSelected}
+        onSelect={select}
         onRowsLoaded={upgradePlaceholder}
         className={cn(
           'w-full shrink-0 lg:w-80 xl:w-96',
@@ -109,6 +118,7 @@ export default function ConversationsInbox() {
 
       <ConversationThreadPane
         contact={selected}
+        searchTerm={searchTerm}
         canReply={canReply}
         onBack={() => setSelected(null)}
         className={cn('min-w-0', selected ? 'flex' : 'hidden lg:flex')}

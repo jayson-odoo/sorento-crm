@@ -155,6 +155,8 @@ export function useApplyTagSettings(target: {
         'contact-tag-settings',
         'contact-tags',
         'contact-tag',
+        // The contact page's Brands card (brands + allowed item classes) reads its own query.
+        'contact-brand-scope',
       ]) {
         queryClient.invalidateQueries({ queryKey: [key] });
       }

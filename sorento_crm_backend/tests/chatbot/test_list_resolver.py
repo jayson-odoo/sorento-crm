@@ -270,7 +270,9 @@ def test_spec_key_rows_from_registry_entries():
     assert res.status == "resolved" and res.candidates[0].row.key == "finish"
 
 
-# AC-S1-14 narrowed on purpose by AC-S2-9: only the span pass and the engine seam import the resolver
+# AC-S1-14 narrowed on purpose by AC-S2-9: only the span pass and the engine seam import the resolver.
+# AGENTIC-P1 adds `agent/tools.py`: `crm_resolve` scores typed terms (no span pass to run) against
+# the contact's visible `lookup_lists` rows, the same rows and scorer the engine seam uses.
 def _importers(root: Path) -> list[str]:
     return sorted(
         str(p.relative_to(root)) for p in root.rglob("*.py")
@@ -282,7 +284,7 @@ def test_only_span_extract_and_the_engine_import_list_resolver():
     root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
     assert (root / "head" / "list_resolver.py").is_file()
     assert (root / "head" / "span_extract.py").is_file(), "AC-S2-9: the span pass module must exist"
-    assert _importers(root) == ["engine.py", "head/span_extract.py"]
+    assert _importers(root) == ["agent/tools.py", "engine.py", "head/span_extract.py"]
 
 
 # AC-S1-6 guard: the margin itself (a zero margin must fail this)
@@ -362,7 +364,11 @@ def test_exact_other_list_beats_one_edit_typed_row():
 # AC-S1-14 widened, then narrowed by AC-S2-9: nothing else under app/ references it
 def test_nothing_else_in_app_references_list_resolver():
     root = Path(__file__).resolve().parents[2] / "app"
-    assert _importers(root) == ["services/chatbot/engine.py", "services/chatbot/head/span_extract.py"]
+    assert _importers(root) == [
+        "services/chatbot/agent/tools.py",
+        "services/chatbot/engine.py",
+        "services/chatbot/head/span_extract.py",
+    ]
 
 
 # nit: a one-row list is not all-common
