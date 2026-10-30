@@ -47,17 +47,18 @@ of threads running them at once changes. One process, app preloaded (638 MB priv
 
 | threads at once | private after 24 / 48 / 72 ops | kept |
 |---|---|---|
-| 1 (what a worker did before #1951) | 800 / 800 / 788 | +150-160 MB |
-| 4 | RESULT_C4 | |
-| 8 | RESULT_C8 | |
-| 24 (40-thread pool, as now) | 1,526 / 1,806 / 1,731 | +900-1,170 MB |
+| 1 (what a worker did before #1951) | 800 / 800 / 788 | +150-160 MB, 21-25 s per 24 ops |
+| 4 | 854 / 923 / 952 | +314 MB, still climbing, 20-24 s |
+| 8 | 1,029 / 1,156 / 1,166 | +528 MB, 22-24 s |
+| 24 (40-thread pool, as now) | 1,526 / 1,806 / 1,731 | +900-1,170 MB, 25-33 s |
 | 24 with `MALLOC_ARENA_MAX=2` | 1,618 / 1,770 / 1,793 (4th batch 1,898) | no better |
-| 24 with `malloc_trim(0)` after each batch | RESULT_C24T | |
-| 4 with `malloc_trim(0)` | RESULT_C4T | |
+| 24 with `malloc_trim(0)` after each batch | 1,322 / 1,360 / 1,442 | +800 MB (trim gives back about 290) |
+| 4 with `malloc_trim(0)` | 910 / 886 / 964 | +326 MB (trim gives back nothing) |
 
 Not a leak: it plateaus. It is the peak of concurrent transient work, and CPython's allocator plus
 glibc keep that peak (freed memory sits in partly used pools and heap holes and is not given back).
-So a worker's size is "the most heavy requests it ever ran at once" times "their transient size",
+Concurrency buys no throughput for this work: the same 24 ops take 21-25 s one at a time and
+22-33 s 24 at a time (the GIL serialises the Python part). So a worker's size is "the most heavy requests it ever ran at once" times "their transient size",
 held until the worker dies, which (no `max_requests`) is the next deploy. Malloc arenas are not the
 cause (`MALLOC_ARENA_MAX=2` changes nothing), so that knob is not in the plan.
 
@@ -123,43 +124,49 @@ holds rows across requests.
 
 Each slice is red-first and measured with the same harness before and after.
 
-**S1 (S): stream the lookup store load.** `load_lookup_vectors` reads with `yield_per(500)` and
-turns each batch into float32 before the next (prototype above). Expected per worker: -118 MB kept,
-peak -500 MB; a new colour's boot peak drops by about 2 GB. Also: `fill` loads from the store only
-the first time (or when the store has texts the cache lacks), not on every missing-text warm.
-~60 lines + test.
+**S1 (S): stream the lookup store load.** `load_lookup_vectors` (`lookup_word_store.py:228`)
+reads with `yield_per(500)` and turns each batch into float32 before the next (prototype above).
+And `fill` (`lookup_lists.py:961`) loads from the store once per process, not on every warm that
+finds a missing text. Expected per worker: -118 MB kept; boot peak -500 MB per worker, about -2 GB
+for a new colour. ~60 lines + test.
 
-**S2 (S): `max_requests` with jitter, plus the inbox stop on a request-limit exit.** Bounds how
-long a worker keeps a high-water mark. At about 650 requests per worker per hour (2,617/h on 28
-Oct across 8 workers, now 4), `max_requests = 2000`, `max_requests_jitter = 500` recycles each
-worker every 2.5-4 h, staggered, one at a time. #1950 dropped it because the 28 Oct numbers showed
-no growth over time; the #1951 high-water shape is different (it climbs with each busier moment).
-The retiring worker needs #1950's graceful drain on this exit path too (the 28 Oct plan notes the
-request-limit exit has no signal, so `inbox_queue.begin_shutdown` must run from the worker's own
-exit). Depends on S1, or every recycle re-pays the +621 MB warm peak. ~40 lines + test.
+**S2 (S): one heavy handler at a time per worker.** A per-process `threading.BoundedSemaphore(1)`
+(knob `HEAVY_HANDLER_CONCURRENCY`, default 1) taken by the export, report and PDF handlers only:
+the xlsx/CSV exports, the sales and outstanding reports, the PDF renders, the in-handler upload
+parsers. NOT the global anyio limiter: `def chat_turn` (`external/chat.py:173`) runs in the same
+pool and waits on the LLM for 10-60 s, so a global cap would queue chat turns behind exports.
+#1951's goal (the event loop stays free) is kept: the waiting handler blocks a pool thread, not
+the loop. Expected: the heavy high-water falls from the CONC 8-24 rows (+528 to +1,170 MB) to the
+CONC 1 row (+160 MB), with no throughput loss (table above). ~80 lines (a decorator plus about 15
+call sites) + test.
 
-**S3 (S): `malloc_trim(0)` after heavy work.** A worker-local call (ctypes, glibc only, no-op
-elsewhere) at the end of the export / report / PDF handlers, or once a minute from the existing
-sweeper thread when the worker is idle. Expected from the table above: RESULT_TRIM_EFFECT.
-~30 lines + test.
+**S3 (S): `max_requests` with jitter, plus the inbox stop on a request-limit exit.** Bounds how
+long a worker keeps whatever high-water it reached. At about 650 requests per worker per hour
+(2,617/h on 28 Oct, now on 4 workers), `max_requests = 2000`, `max_requests_jitter = 500` recycles
+each worker every 2.5-4 h, staggered. #1950 dropped it because the 28 Oct numbers showed no growth
+over time; after #1951 the high-water climbs with each busier moment. A request-limit exit gets
+no signal, so `inbox_queue.begin_shutdown` must run from the worker's own exit path (the reason
+#1950 removed it). Needs S1 first, or every recycle re-pays the +621 MB warm peak. ~40 lines + test.
 
-**S4 (M): cap concurrent heavy handlers per worker.** A small semaphore (e.g. 2) around exports,
-reports and PDF renders only, NOT the global anyio limiter: `def chat_turn` also runs in that pool
-and waits on the LLM for 10-60 s, so a global cap would queue chat behind exports. Expected:
-the high-water mark falls toward the CONC=RESULT_CAP row. Only if S2+S3 leave a worker over budget.
+**Optional S4 (S): `malloc_trim(0)`** once a minute from the existing sweeper thread when the worker
+is idle (ctypes, glibc only). Gives back about 290 MB at high concurrency, nothing at 4 at once; only
+worth it if S2 is not taken.
 
-**Not planned, with the trigger:** share the lookup vectors across workers (one float32 matrix in a
-file `np.load(mmap_mode="r")`, page cache instead of 4 private copies, about -130 MB per worker
-after S1). Trigger: workers go back up to 8. Python 3.12 upgrade for immortal objects: trigger is
-a prod measurement after S1-S3 showing copied preload above 400 MB per worker.
+**Not planned, with the trigger:** `MALLOC_ARENA_MAX` (measured, no effect). Sharing the lookup
+vectors across workers (one float32 matrix in a file, `np.load(mmap_mode="r")`, about -130 MB per
+worker after S1): trigger is workers back to 8. Python 3.12 upgrade for immortal objects: trigger
+is a prod reading after S1-S3 showing copied preload above 400 MB per worker.
 
 ## Expected per worker after
 
+Estimates from the local numbers, against the prod budget above; verify on prod with the owner
+check below.
+
 | | today | after S1 | after S1+S2+S3 |
 |---|---|---|---|
-| one worker, steady | about 1.85 GB | about 1.7 GB | RESULT_AFTER |
-| colour (4 workers + master) | 7.95 GiB | about 7.4 GB | RESULT_COLOUR |
-| new colour boot peak | about 3.5-4 GB | about 1.5-2 GB | same |
+| one worker, steady | about 1.85 GB | about 1.7 GB | about 0.9-1.1 GB |
+| colour (4 workers + master) | 7.95 GiB | about 7.4 GB | about 4-5 GB |
+| new colour boot peak | about 3.5-4 GB | about 1.5-2 GB | about 1.5-2 GB |
 
 ## Deploy guard threshold
 
