@@ -24,6 +24,8 @@ import type { StatusGraph } from '@/app/(protected)/system-management/status-gra
  *   POST   /projects/{projectId}/quotation-documents/{id}/sign             -> QuotationSignature (201)
  *   POST   /projects/{projectId}/quotation-documents/{id}/issues/{issueId}/sign-link
  *                                                                         -> QuotationSignLink
+ *   POST   /projects/{projectId}/quotation-documents/{id}/issues/{issueId}/whatsapp-opened
+ *                                                                         -> 204
  *   POST   /projects/{projectId}/quotation-documents/{id}/issues/{issueId}/export/pdf
  *                                                                         -> QueuedDownload
  *   POST   /projects/{projectId}/quotation-documents/{id}/issues/{issueId}/export/xlsx
@@ -519,6 +521,20 @@ export async function createQuotationSignLink(
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to create the counter-sign link'));
   return response.json();
+}
+
+/** Note on the project's activity feed that the salesperson opened the link in WhatsApp. */
+export async function logQuotationWhatsAppOpened(
+  projectId: string,
+  documentId: string,
+  issueId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/issues/${issueId}/whatsapp-opened`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to record the WhatsApp send'));
 }
 
 /**

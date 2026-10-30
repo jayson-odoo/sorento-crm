@@ -1018,6 +1018,43 @@ def issue_sign_link(
     return record.sign_token
 
 
+def record_whatsapp_opened(
+    db: Session,
+    *,
+    document: ProjectQuotationDocument,
+    record: ProjectQuotationIssue,
+    actor_id: str,
+) -> None:
+    """Note on the project feed that the salesperson opened the quotation link in WhatsApp.
+
+    Deliberately NOT on `MEANINGFUL_TEMPLATES`: opening a chat is not the customer answering, and
+    must not clear the project's unattended clock.
+    """
+    from app.models.user import User
+    from app.services import project_activity_service as activity
+
+    project = db.query(Project).filter(Project.id == document.project_id).first()
+    if project is None:
+        return
+    user = db.query(User).filter(User.id == actor_id).first()
+    who = (user.name or user.email) if user is not None else "a colleague"
+    reference = record.our_ref_text or f"{document.document_no} (R{record.issue_no})"
+    activity.record_project_event(
+        db,
+        project=project,
+        template=WHATSAPP_OPENED_TEMPLATE,
+        payload={
+            "document_id": str(document.id),
+            "issue_id": str(record.id),
+            "issue_no": record.issue_no,
+            "our_ref": reference,
+        },
+        actor_id=actor_id,
+        body_text=f"Quotation {reference} link opened in WhatsApp by {who}",
+    )
+    db.flush()
+
+
 def get_issue_by_sign_token(db: Session, token: str) -> ProjectQuotationIssue:
     """Resolve a counter-sign link, refusing anything expired or unknown with the SAME message.
 
@@ -1203,6 +1240,7 @@ def _win_the_scopes_on(db: Session, record: ProjectQuotationIssue) -> List[Proje
 
 
 CHANGES_REQUESTED_TEMPLATE = "quotation_changes_requested"
+WHATSAPP_OPENED_TEMPLATE = "quotation_whatsapp_opened"
 
 
 def request_changes(
