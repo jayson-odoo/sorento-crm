@@ -775,39 +775,6 @@ export function useLeads(params: LeadListParams) {
 }
 
 /**
- * The project form's Lead picker (D4): a server search over OPEN leads only, capped at
- * 20, by title or lead code. Returned as options rather than raw leads so `ProjectForm`
- * never has to know the field is async-searched vs static.
- */
-export function useFetchLeadOptions() {
-  return React.useCallback(async (query: string) => {
-    const result = await listLeads({ query: query || undefined, outcome: ['open'], limit: 20 });
-    // Title first, code as the second line: no " · " joins (owner rule, 13 Oct). The
-    // customer and assignee ride along so the form fills from the pick without a fetch.
-    return result.data.map(
-      (lead): LeadPick => ({
-        value: lead.id,
-        label: lead.title,
-        description: lead.lead_code,
-        customer_id: lead.customer_id ?? null,
-        customer_name: lead.customer_name ?? null,
-        owner_user_id: lead.owner_user_id ?? null,
-      }),
-    );
-  }, []);
-}
-
-/** A Lead picker option: the pick plus what the register form takes from the lead. */
-export type LeadPick = {
-  value: string;
-  label: string;
-  description?: string;
-  customer_id: string | null;
-  customer_name: string | null;
-  owner_user_id: string | null;
-};
-
-/**
  * Async options for the Developer / Architect / Main contractor pickers: a server-side search
  * of one party type (PROJECT-REGISTER-V2 B1), so a party past the first page is found by name.
  */

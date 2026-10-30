@@ -1304,12 +1304,6 @@ def update_project(
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
 
-    # A project does not govern or take its customer from a lead (owner ruling 30 Oct): a sent
-    # lead_id is ignored and an existing link stays as it is.
-    payload = {k: v for k, v in payload.items() if k != "lead_id"}
-    # A null customer counts as absent: an edit never clears the customer (LGR-E9).
-    if "customer_id" in payload and not payload["customer_id"]:
-        payload = {k: v for k, v in payload.items() if k != "customer_id"}
     apply_sales_details(db, project, payload)
     return project
 

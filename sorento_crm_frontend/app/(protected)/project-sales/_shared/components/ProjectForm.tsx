@@ -883,25 +883,23 @@ export function ProjectForm(props: ProjectFormProps) {
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                  <>
-                    <Label htmlFor="project-customer">
-                      Customer
-                      {(mode === 'create' || submitOnly) && (
-                        <span className="text-destructive"> *</span>
-                      )}
-                    </Label>
-                    <SearchableSelect
-                      id="project-customer"
-                      value={customerId}
-                      onChange={setCustomerId}
-                      onOptionChange={setCustomerOption}
-                      fetchOptions={fetchCustomerOptions}
-                      selectedOption={customerOption ?? undefined}
-                      clearable
-                      placeholder="Search customers"
-                      emptyMessage="No customers found"
-                    />
-                  </>
+                  <Label htmlFor="project-customer">
+                    Customer
+                    {(mode === 'create' || submitOnly) && (
+                      <span className="text-destructive"> *</span>
+                    )}
+                  </Label>
+                  <SearchableSelect
+                    id="project-customer"
+                    value={customerId}
+                    onChange={setCustomerId}
+                    onOptionChange={setCustomerOption}
+                    fetchOptions={fetchCustomerOptions}
+                    selectedOption={customerOption ?? undefined}
+                    clearable
+                    placeholder="Search customers"
+                    emptyMessage="No customers found"
+                  />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="project-owner">Salesperson</Label>
