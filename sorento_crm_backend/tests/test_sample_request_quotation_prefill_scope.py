@@ -62,6 +62,27 @@ def test_b1_limited_rep_cannot_record_another_owners_quotation(world):
     assert res.json()["code"] == "SAMPLE_REQUEST_PROJECT_NOT_ALLOWED"
 
 
+def test_b1_limited_rep_cannot_record_another_owners_quotation_by_update(world):
+    """A plain draft on another owner's project is allowed (the company-wide portal rule); recording
+    that project's quotation on it later is not (re-review K6)."""
+    w = world
+    owner = s.make_user(w.sc.db, perms=["projects.projects.view"], name="ZZT foreign owner")
+    rep = w.person("Limited", perms=LIMITED)
+    project, doc = _quoted_project(w, owner.id)
+    created = rep.me.call(
+        "POST", "/submissions/sample_request", json=w.sr_body(project_id=project.id, project_title=None)
+    )
+    assert created.status_code == 201, created.text
+
+    res = rep.me.call(
+        "PUT",
+        f"/submissions/sample_request/{created.json()['id']}",
+        json={"quotation_document_id": doc.id},
+    )
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "SAMPLE_REQUEST_PROJECT_NOT_ALLOWED"
+
+
 def test_n1_my_requests_read_needs_create(world):
     w = world
     viewer = w.person("Viewer", perms=[SR_VIEW_OWN, "projects.projects.view_own"])

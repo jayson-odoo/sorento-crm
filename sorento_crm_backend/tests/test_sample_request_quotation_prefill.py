@@ -303,6 +303,22 @@ def test_sfq_8_several_documents_list_issued_first_and_can_be_picked(world):
     assert _codes(picked) == [pc.product_code]
 
 
+def test_sfq_8_never_issued_documents_of_one_moment_default_to_the_higher_number(world):
+    """Two never-issued documents made in one transaction share created_at; the later number wins."""
+    w = world
+    project = _fresh_project(w)
+    first, second = make_product(w.db), make_product(w.db)
+    older = _document(w.db, project, w.admin)
+    _line(w.db, older.scopes[0].v1, product=first)
+    newer = _document(w.db, project, w.admin)
+    _line(w.db, newer.scopes[0].v1, product=second)
+    w.db.commit()
+
+    body = _read(w, project.id)
+    assert [d["id"] for d in body["documents"]] == [newer.doc.id, older.doc.id]
+    assert _codes(body) == [second.product_code]
+
+
 def test_sfq_8_a_document_of_another_project_is_refused(world):
     w = world
     project = _fresh_project(w)
