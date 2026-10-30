@@ -43,6 +43,8 @@ class WriteDef:
     record_key: str
     #: (args, before, after, shown) -> [{record, field, before, after}] in words, for what really changed.
     changes: Callable[[dict, dict, dict, dict], list[dict]] | None = None
+    #: True = `execute` also takes the confirmed `before` as a fourth argument, to refuse a different branch.
+    execute_takes_before: bool = False
 
 
 @dataclass(frozen=True)
@@ -1298,4 +1300,418 @@ USER_READS[FIND_CONTACTS] = UserRead(
     },
     run=_contacts_find,
     combine=_combine_finds,
+)
+
+
+# ------------------------------------------------------------------ W3 purchase-request decision
+
+PR_APPROVE = "procurement.purchase_requests.approve"
+PR_READ = (
+    "procurement.purchase_requests.view", "procurement.purchase_requests.view_own",
+    "procurement.sponsorship_forms.view", "procurement.sponsorship_forms.view_own", PR_APPROVE,
+)
+LIST_PRS = "crm_purchase_requests_list"
+DECIDE_PR = "crm_purchase_request_decide"
+PR_PREFIX = "/api/v1/procurement/purchase-requests"
+_PR_KINDS = {"purchase_request": "purchase request", "sponsorship_form": "sponsorship form"}
+_PR_STATES = ("pending", "approved", "rejected")
+_DECISIONS = {"approve": "approved", "reject": "rejected"}
+
+
+def _module_open(user: dict, db, *keys: str) -> None:
+    """The routers' `require_module_enabled` guards, which a direct call skips."""
+    from app.modules.runtime.guards import module_blocked
+
+    for key in keys:
+        if module_blocked(db, str(user["id"]), key):
+            raise HTTPException(status_code=403, detail=f"Module not enabled: {key}")
+
+
+def _pr_scope(db, user: dict, method: str, path: str, request_id: str | None = None):
+    """The purchase-request router's "only theirs" guard (`_request_own_scope.check`), which a direct call
+    skips: a `view_own`-only user is refused every write, and sees only their own rows."""
+    from app.api.v1._request_own_scope import check
+
+    _module_open(user, db, "procurement")
+    params = {"request_id": request_id} if request_id else {}
+    return check(db, str(user["id"]), "purchase_request", method, PR_PREFIX + path, params)
+
+
+def _user_name(db, user_id: Any) -> str:
+    from app.models.user import User
+
+    if not user_id:
+        return ""
+    row = db.query(User.name, User.email).filter(User.id == str(user_id)).first()
+    return ((row.name or "").strip() or row.email or "") if row else ""
+
+
+def _money(value: Any, text: Any) -> str:
+    if value is not None:
+        return f"RM {float(value):,.2f}"
+    return _line(text)
+
+
+def _pr_row(db, header: Any) -> dict:
+    return {
+        "request_id": str(header.id),
+        "number": header.request_number,
+        "kind": header.request_type,
+        "customer": header.customer_name,
+        "title": header.project_title,
+        "value": _money(header.total_project_value, header.total_project_value_text) or None,
+        "submitted_by": getattr(header, "requested_by_contact_name", None) or header.requested_by,
+        "sent_for_approval_by": _user_name(db, header.requested_approval_by_user_id) or None,
+        "status": header.status,
+        "approval_status": header.approval_status,
+        "submitted_at": _plain(header.submitted_at),
+    }
+
+
+def _pr_list(db, ctx, args: dict) -> ToolResult:
+    from app.api.v1.procurement.purchase_requests import get_purchase_requests
+
+    allowed = {"status", "kind", "query", "limit"}
+    unknown = sorted(k for k in args if k not in allowed)
+    if unknown:
+        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
+    state = args.get("status", "pending")
+    if state not in (*_PR_STATES, "all"):
+        return ToolResult("invalid", message=f"status must be one of: {', '.join((*_PR_STATES, 'all'))}.")
+    kind = args.get("kind")
+    if kind is not None and kind not in _PR_KINDS:
+        return ToolResult("invalid", message=f"kind must be one of: {', '.join(_PR_KINDS)}.")
+    query = args.get("query")
+    if query is not None and not isinstance(query, str):
+        return ToolResult("invalid", message="query must be text.")
+    limit = args.get("limit", MAX_LIST)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIST:
+        return ToolResult("invalid", message=f"limit must be a whole number from 1 to {MAX_LIST}.")
+
+    def run(user: dict) -> list[dict]:
+        payload = get_purchase_requests(
+            page=1, limit=limit, query=query or None, request_type=[kind] if kind else None,
+            approval_status=None if state == "all" else [state], assigned_to=None, sort="submitted_at",
+            dir="desc", current_user=user, db=db, own=_pr_scope(db, user, "GET", ""),
+        )
+        return [_pr_row(db, h) for h in payload["data"]]
+
+    try:
+        rows = run_as_user(db, ctx, run, tool_name=LIST_PRS)
+    except Exception as exc:  # noqa: BLE001
+        return _route_failure(exc)
+    data, more = cap_result({"requests": rows})
+    return ToolResult("ok", data=data, more=more)
+
+
+def _combine_prs(mine: ToolResult, theirs: ToolResult) -> ToolResult:
+    ids = {r["request_id"] for r in theirs.data["requests"]}
+    return ToolResult("ok", data={"requests": [r for r in mine.data["requests"] if r["request_id"] in ids]}, more=mine.more)
+
+
+def _pr_read_before(db, user: dict, args: dict) -> dict:
+    """The request as it is now, after every check the route and its service make before deciding."""
+    from app.services import handling_lock_service
+    from app.services.error_handler import handle_conflict
+    from app.services.form_action_service import FormActionService
+    from app.services.procurement_service import PurchaseRequestService
+    from app.services.uuid_path_param import validate_uuid_path
+
+    rid = str(args["request_id"])
+    validate_uuid_path(rid, resource="Request")
+    _pr_scope(db, user, "POST", "/{request_id}/approval-decision", rid)
+    service = PurchaseRequestService(db)
+    # The service's own rules, in its words: the reason a rejection needs, and the premise.
+    service.decision_comments(_DECISIONS[args["decision"]], args.get("reason"))
+    header = service.get_request(rid)
+    service.assert_decidable(header)
+    handling_lock_service.assert_can_act_on_form(db, rid, user)
+    if FormActionService(db).pending_for(header.request_type, rid) is not None:
+        raise handle_conflict("Another action on this form is still pending. Wait for it to apply, or undo it first.")
+    return {
+        "approval_status": header.approval_status,
+        "status": header.status,
+        "revision_no": int(header.revision_no or 0),
+        "updated_at": _plain(header.updated_at),
+        "_show": {
+            "kind": _PR_KINDS.get(header.request_type, "request"),
+            "number": header.request_number or "(no number)",
+            "customer": header.customer_name or "",
+            "title": header.project_title or "",
+            "value": _money(header.total_project_value, header.total_project_value_text),
+            "sender": _user_name(db, header.requested_approval_by_user_id),
+        },
+    }
+
+
+def _in_full(value: Any) -> str:
+    """Text that leaves the system (a reason sent to the dealer): quoted whole, never cut, so the person
+    confirming reads exactly what will be sent."""
+    return f'"{_line(value)}"'
+
+
+def _pr_summary(args: dict, before: dict) -> str:
+    # Record text is capped (it is shown, not sent); the reason is shown whole (it is sent).
+    detail = ", ".join(x for x in (_quoted(before["title"]) if before["title"] else "", _word(before["value"]) if before["value"] else "") if x)
+    text = f"{'Approve' if args['decision'] == 'approve' else 'Reject'} {before['kind']} {_word(before['number'])}"
+    if before["customer"]:
+        text += f" for {_word(before['customer'])}"
+    if detail:
+        text += f" ({detail})"
+    if before["sender"]:
+        text += f", sent for approval by {_word(before['sender'])}"
+    if _line(args.get("reason")):
+        text += f", with the {'reason' if args['decision'] == 'reject' else 'comment'} {_in_full(args['reason'])}"
+    return text + ". The requester and the dealer contact will be told."
+
+
+def _pr_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
+    from starlette.requests import Request
+    from fastapi.responses import JSONResponse
+
+    from app.api.v1.procurement.purchase_requests import ApprovalDecisionRequest, decide_purchase_request_approval
+
+    from app.services.revision_fence import assert_revision_current
+
+    rid = str(args["request_id"])
+    _pr_scope(db, user, "POST", "/{request_id}/approval-decision", rid)
+    # The route's revision fence, with the revision the user confirmed.
+    assert_revision_current(db, "purchase_request", rid, confirmed.get("revision_no"))
+    body = ApprovalDecisionRequest(action=_DECISIONS[args["decision"]], comments=_line(args.get("reason")) or None)
+    # A person clicked Confirm in the console, so the browser channel: the screen's grace window applies.
+    request = Request({"type": "http", "method": "POST", "headers": [], "path": PR_PREFIX})
+    out = decide_purchase_request_approval(request_id=rid, body=body, request=request, current_user=user, db=db)
+    if isinstance(out, JSONResponse):
+        parked = json.loads(out.body)
+        return {
+            "id": rid,
+            "after": {
+                "decision": body.action, "deferred": True, "commit_at": parked.get("commit_at"),
+                "window_seconds": parked.get("window_seconds"), "pending_action_id": parked.get("pending_action_id"),
+            },
+            "note": (
+                f"It applies in {parked.get('window_seconds')} seconds; until then it can be withdrawn "
+                "and nobody is told."
+            ),
+        }
+    return {
+        "id": rid,
+        "after": {
+            "decision": body.action, "deferred": False, "approval_status": out.approval_status,
+            "status": out.status, "approval_comments": out.approval_comments,
+        },
+    }
+
+
+_APPROVAL_WORDS = {"pending": "Pending", "approved": "Approved", "rejected": "Rejected"}
+
+
+def _pr_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    record = f"{shown.get('kind', 'request')} {shown.get('number', '')}".strip()
+    was = _APPROVAL_WORDS.get(before.get("approval_status"), before.get("approval_status"))
+    now = _APPROVAL_WORDS.get(after.get("decision"), after.get("decision"))
+    if after.get("deferred"):
+        now = f"{now} (applies in {after.get('window_seconds')} seconds)"
+    pairs = [("Approval", was, now)]
+    if not after.get("deferred") and after.get("approval_comments"):
+        pairs.append(("Reason" if after.get("decision") == "rejected" else "Comment", None, after["approval_comments"]))
+    return _diff(record, pairs)
+
+
+WRITES[DECIDE_PR] = WriteDef(
+    name=DECIDE_PR,
+    user_permission=PR_APPROVE,
+    schema={
+        "type": "function",
+        "function": {
+            "name": DECIDE_PR,
+            "description": (
+                "Propose approving or rejecting one purchase request or sponsorship form that is pending "
+                "approval, as the screen's Approve / Reject does. Nothing changes until the user confirms; on "
+                "confirm the requester and the dealer contact are told. A rejection needs a reason (the screen "
+                "refuses one without); ask the user when they gave none. request_id must come from "
+                "crm_purchase_requests_list. Call once per request."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "request_id": {"type": "string"},
+                    "decision": {"type": "string", "enum": list(_DECISIONS)},
+                    "reason": {"type": "string"},
+                },
+                "required": ["request_id", "decision"],
+            },
+        },
+    },
+    read_before=_pr_read_before,
+    summary=_pr_summary,
+    execute=_pr_execute,
+    record_key="request_id",
+    changes=_pr_changes,    execute_takes_before=True,
+)
+USER_READS[LIST_PRS] = UserRead(
+    name=LIST_PRS,
+    user_permission=PR_READ,
+    schema={
+        "type": "function",
+        "function": {
+            "name": LIST_PRS,
+            "description": (
+                "Purchase requests and sponsorship forms the user may see, newest first, with the request_id "
+                "to use in crm_purchase_request_decide. status: pending (awaiting approval, the default), "
+                "approved, rejected or all. kind: purchase_request or sponsorship_form. query matches number, "
+                "customer or title."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": [*_PR_STATES, "all"]},
+                    "kind": {"type": "string", "enum": list(_PR_KINDS)},
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+            },
+        },
+    },
+    run=_pr_list,
+    combine=_combine_prs,
+)
+
+
+# ------------------------------------------------------------------ W3 taking an action back
+
+UNDO_PR = "crm_purchase_request_action_undo"
+FORM_UNDO = "sla_management.form_sla.undo_action"
+
+
+def _is_admin(db, user_id: str) -> bool:
+    from app.api.v1.sla.form_actions import _is_admin as route_is_admin
+
+    return route_is_admin(db, user_id)
+
+
+def _undo_read_before(db, user: dict, args: dict) -> dict:
+    """What taking the request's action back would do now, by the system's rules: the user's own action
+    still waiting in its grace window is withdrawn (the form-action cancel); otherwise the last committed
+    action is undone (the post-grace undo: its slug, its guardrail, its mandatory reason)."""
+    from app.services.error_handler import handle_conflict, handle_validation_error
+    from app.services.form_action_registry import get_action
+    from app.services.form_action_service import _UNDO_REFUSAL_COPY, FormActionService
+    from app.services.form_action_undo import evaluate
+    from app.services.procurement_service import PurchaseRequestService
+    from app.services.uuid_path_param import validate_uuid_path
+
+    rid = str(args["request_id"])
+    validate_uuid_path(rid, resource="Request")
+    # Only a request this person may open (the row read's own-scope rule, 404 otherwise).
+    _pr_scope(db, user, "GET", "/{request_id}", rid)
+    _module_open(user, db, "sla")
+    header = PurchaseRequestService(db).get_request(rid)
+    kind = header.request_type
+    waiting = FormActionService(db).pending_for(kind, rid)
+    if waiting is not None:
+        # The cancel route's rule. The agent acts for the linked user, who started the agent's actions.
+        starter = str(user.get("linked_user_id") or user["id"])
+        if str(waiting.requested_by_id or "") != starter and not _is_admin(db, str(user["id"])):
+            raise handle_conflict("Only the person who started this action can undo it.")
+        state, row = "waiting", waiting
+    else:
+        found = evaluate(
+            db, source_entity_type=kind, source_entity_id=rid, has_permission=_permitted(db, str(user["id"]), FORM_UNDO)
+        )
+        if not found.can_undo or found.action is None:
+            raise handle_conflict(_UNDO_REFUSAL_COPY.get(found.blocked_reason or "", "This action cannot be undone."))
+        if not _line(args.get("reason")):
+            raise handle_validation_error("A reason is required to undo an action.")
+        state, row = "applied", found.action
+    action = get_action(row.action_key)
+    return {
+        "state": state,
+        "form_action": str(row.id),
+        "approval_status": header.approval_status,
+        "status": header.status,
+        "updated_at": _plain(header.updated_at),
+        "_show": {
+            "kind": _PR_KINDS.get(kind, "request"),
+            "number": header.request_number or "(no number)",
+            "label": (action.label if action else "action").lower(),
+        },
+    }
+
+
+def _undo_summary(args: dict, before: dict) -> str:
+    target = f"{before['kind']} {_line(before['number'])}"
+    if before["state"] == "waiting":
+        return f"Withdraw the waiting {before['label']} on {target} before it applies. Nothing has been sent yet."
+    return (
+        f"Undo the {before['label']} on {target} with the reason {_in_full(args['reason'])}. The request goes "
+        "back to how it was before it, and everyone involved will be told."
+    )
+
+
+def _undo_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
+    from app.api.v1.sla.form_actions import _UndoRequest, cancel_form_action, undo_form_action
+    from app.services.error_handler import handle_conflict
+    from app.services.procurement_service import PurchaseRequestService
+
+    rid = str(args["request_id"])
+    before = _undo_read_before(db, user, args)
+    # Only what was confirmed: a waiting action that applied meanwhile is not undone in its place.
+    if (before["state"], before["form_action"]) != (confirmed.get("state"), confirmed.get("form_action")):
+        raise handle_conflict("The action on this form changed since this was proposed.")
+    if before["state"] == "waiting":
+        cancel_form_action(action_id=before["form_action"], current_user=user, db=db)
+    else:
+        # The route's `require_permission` does not run on a direct call: `_undo_read_before` above asked the
+        # undo guardrail with this user's own permission, which refuses without it.
+        header = PurchaseRequestService(db).get_request(rid)
+        body = _UndoRequest(source_entity_type=header.request_type, source_entity_id=rid, reason=_line(args["reason"]))
+        undo_form_action(body=body, current_user=user, db=db)
+    db.expire_all()
+    header = PurchaseRequestService(db).get_request(rid)
+    return {
+        "id": rid,
+        "after": {"state": "withdrawn" if before["state"] == "waiting" else "undone",
+                  "approval_status": header.approval_status, "status": header.status},
+    }
+
+
+def _undo_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    record = f"{shown.get('kind', 'request')} {shown.get('number', '')}".strip()
+    if after.get("state") == "withdrawn":
+        return _diff(record, [(shown.get("label", "action").capitalize(), "Waiting to apply", "Withdrawn")])
+    words = lambda v: _APPROVAL_WORDS.get(v, v)  # noqa: E731
+    return _diff(record, [
+        ("Approval", words(before.get("approval_status")), words(after.get("approval_status"))),
+        ("Status", before.get("status"), after.get("status")),
+    ])
+
+
+WRITES[UNDO_PR] = WriteDef(
+    name=UNDO_PR,
+    user_permission=PR_READ,
+    schema={
+        "type": "function",
+        "function": {
+            "name": UNDO_PR,
+            "description": (
+                "Propose taking back the last action on one purchase request or sponsorship form, as the "
+                "screen's Undo does: the user's own action still waiting in its grace window is withdrawn "
+                "(nothing was sent); an applied one is undone with a reason (the system requires one) and "
+                "everyone involved is told. Nothing changes until the user confirms. request_id must come "
+                "from crm_purchase_requests_list or crm_agent_actions_recent."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"request_id": {"type": "string"}, "reason": {"type": "string"}},
+                "required": ["request_id"],
+            },
+        },
+    },
+    read_before=_undo_read_before,
+    summary=_undo_summary,
+    execute=_undo_execute,
+    record_key="request_id",
+    changes=_undo_changes,
+    execute_takes_before=True,
 )
