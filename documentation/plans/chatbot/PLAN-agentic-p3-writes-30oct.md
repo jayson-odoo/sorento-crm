@@ -254,3 +254,82 @@ Routes (`api/v1/system/chatbot.py`, same permission as `/agent/turn`):
 `POST /api/v1/system/chatbot/agent/actions/{action_id}/confirm` and `/cancel`, body `{contact_respond_id}`
 -> 200 `{action_id, status, reply_text, steps}`; `ActionRefused` -> 409
 `{"detail": {"code": "action_refused", "reason": ...}}`.
+
+## Build contract, slices 2 and 3
+
+Slice 1 landed at c7382e7d (`agent/writes.py`, `agent/actions.py`). Slices 2 and 3 add entries to `WRITES` and
+`USER_READS`; nothing else in the proposal / confirm path changes.
+
+### Slice 2: sales opportunities (W2)
+
+| Tool | Kind | Route function (in process, as the user) | Slug |
+| --- | --- | --- | --- |
+| `crm_opportunities_list` | user read | `list_opportunities` (`api/v1/sales/opportunities.py:133`); args `query`, `status_ids`, `customer_ids`, `close_from`, `close_to`, `outcome`, `limit` (<= 50) | `sales.opportunities.view` or `.view_own` (the route's `READ`) |
+| `crm_opportunity_meta` | user read | `get_meta` (stages with ids, lost reasons if any) | same |
+| `crm_opportunity_create` | write | `create_opportunity`, body `SalesOpportunityCreate` (`app/schemas/sales.py:165`) | `sales.opportunities.add` |
+| `crm_opportunity_update` | write | `update_opportunity` (`opportunities.py:259`), body `SalesOpportunityUpdate` (`:191`) | `sales.opportunities.edit` |
+
+- `record_key`: `opportunity_id` for update, "" for create. A create's `read_before` is `{}` and its re-check
+  only re-checks the slug.
+- Summaries (code-built, no UUIDs): create `Create opportunity "<title>" for <customer code or prospect>, close
+  <date>`; update `Opportunity "<title>": <field> <old> -> <new>` for each changed field, stage by its name.
+- The route's own rules stay authoritative: Lost needs a reason, Won links a same-customer live sales order,
+  `_assert_still_theirs` for own-scope users. Their error text becomes the step error.
+
+### Slice 3: dealer-contact access (W0)
+
+New slug `user_management.contacts.edit_own` ("Edit Own Dealer Contacts' Access": change role or end access only
+for contacts linked to customers of your own sales agents). Migration `agp3_0002_contacts_edit_own` (insert-only,
+guarded, granted to no role; pattern `pp2_0001_view_own_perms.py`) and a `permission_registry.py` entry.
+
+**Scope rule** (`writes.contact_in_scope(db, user_id, contact_pk) -> bool`): true when the user holds
+`user_management.contacts.edit`; else true when the contact has a `respond_contact_customers` link to a customer
+whose `sales_agent_id` is one of the user's own active sales agents (`sales/portal_agent.agents_for_contact`
+on `users.respond_contact_id`). Never true for the user's own linked contact (no self-escalation).
+A tool is exposed when the user holds `.edit_own` or `.edit`.
+
+| Tool | Kind | Behaviour |
+| --- | --- | --- |
+| `crm_contacts_find` | user read | `{phones: [str] 1..20}`. Each phone through `contact_setup_engine.normalise_phone` + `_find_contacts`. Per phone: `invalid_phone`, `not_found`, `ambiguous`, `not_yours` (exists, out of scope: no name, no id, nothing else), or `found` with `{contact_id, name, phone, companies: [code], role: owner|employee|none, chatbot_allowed, accounts: [{customer_id, code, name}]}`. Role: holds an owner type of one of its companies (`contact_access_sheet_service.TEMPLATE["owner_types"]`) = owner; holds `end_user` only = employee; none = none. `accounts` lists only links to the user's own agents' customers (all links for `.edit` holders). |
+| `crm_contact_access_update` | write | `{contact_id, role?: owner|employee, chatbot_allowed?: bool, link_customer_ids?: [id], unlink_customer_ids?: [id]}`, at least one field. One general tool: "resign" is the model composing `chatbot_allowed=false` + `unlink_customer_ids` = the contact's accounts; "undo" is the inverse args. |
+
+`crm_contact_access_update` rules, checked in `read_before` and again at confirm:
+- `contact_in_scope` must hold, except for a re-link: a `link_customer_ids` entry is allowed for an out-of-scope
+  contact only when this user's executed `agent_actions` show a step that unlinked this contact from that customer
+  (the undo of a resign). Every linked / unlinked customer must be one of the user's own agents' customers
+  (any customer for `.edit` holders).
+- `role=owner`: insert the owner types of every company the contact holds, plus `end_user` if missing (the
+  sheet's `_template_sets`, owner branch). `role=employee`: delete the owner types of every company, keep or
+  add `end_user`. A contact with no company -> invalid "This contact has no company, so its role cannot be set."
+- `chatbot_allowed`: the column on `respond_contacts`. Links: `contact_customer_service.link_customer` /
+  `unlink_customer` (`:70`, `:132`).
+- Execute in one transaction; audit event `contact.access_agent` with before / after per facet (pattern
+  `contact_access_sheet_service` `audit_service` calls), actor = the user (`run_as_user`).
+- Summary: `<phone> <name>: Employee -> Business owner (Sorento)`, `AI replies on -> off`, `unlinked from
+  <customer code>`; a step whose args change nothing is `invalid` "Nothing to change for <phone>.".
+- Before-state for the re-check: role, chatbot_allowed, the linked customer ids.
+
+Card change (simplest thing): resign does NOT end the per-agent enquiry windows (`contact_agent_access`). With AI
+replies off they have no effect, and leaving them keeps the undo exact.
+
+### Tests, slices 2 and 3 (tester adds `test_agent_writes_opportunity.py`, `test_agent_writes_contacts.py`)
+
+Slice 2: create via proposal + confirm (row exists, sales agent stamped, audit actor = user); update stage by
+name in the summary; Lost without reason -> step failed with the route's message, nothing changed; own-scope user
+moving an opportunity onto another agent's customer -> failed with the route's message; changed since proposal
+-> rejected; list read under own scope shows only own rows.
+
+Slice 3, using the owner's example shape (4 phones to Business owner, 1 resign; masked seed data):
+1. find: found / not_found / ambiguous / not_yours / invalid_phone each; not_yours carries no name or id.
+2. a proposal with 4 role steps + 1 resign step writes nothing; summaries show old -> new role and the resign.
+3. confirm: owner types added per company, end_user kept; resign contact has chatbot_allowed false and no link
+   to the user's customer; audit rows `contact.access_agent` actor = user.
+4. downgrade owner -> employee removes owner types only.
+5. scope: `.edit_own` holder on another salesperson's dealer contact -> denied; `.edit` holder -> allowed; own
+   linked contact -> denied for both.
+6. no slug (switch on, neither `.edit_own` nor `.edit`): tools not exposed.
+7. undo of resign: a re-link of the contact to the same customer by the same user is allowed although the contact
+   is now out of scope; a re-link by another `.edit_own` user, or to a customer it was never unlinked from, is
+   denied.
+8. a contact with no company -> invalid on role; nothing-to-change -> invalid.
+9. migration seeds the slug once (re-run safe); registry lists it.
