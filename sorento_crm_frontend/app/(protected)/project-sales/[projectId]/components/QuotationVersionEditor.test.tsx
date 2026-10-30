@@ -1577,10 +1577,12 @@ describe('QuotationVersionEditor photo and drawing picker (QUOTATION-UX)', () =>
     expect(await screen.findByTestId('attachment-preview-modal')).toBeInTheDocument();
   });
 
-  it('says no drawing when the product has none', async () => {
+  it('offers Escalate when the product has no drawing', async () => {
     listQuotationLines.mockResolvedValue([ext({ product_id: 'p1', product_image: PHOTO({ candidates: [], candidate_count: 1 }), technical_drawing: { state: 'no_drawings', candidate_count: 0, candidates: [] } })]);
     renderEditor();
-    expect(await screen.findByText('no drawing')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Escalate missing drawing for SRT-WC-01' }),
+    ).toBeInTheDocument();
   });
 
   it('offers Change photo and Change drawing when several candidates exist, and stages the pick', async () => {

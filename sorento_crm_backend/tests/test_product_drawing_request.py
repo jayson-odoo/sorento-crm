@@ -472,7 +472,12 @@ def test_escalate_locks_the_product_row_before_it_reads_or_opens_a_task(db, env)
         (i for i, s in enumerate(lowered) if "for update" in s and "from products" in s), None
     )
     insert_at = next(
-        (i for i, s in enumerate(lowered) if s.lstrip().startswith("insert into conversation_sla_tracking")),
+        # A scratch schema qualifies the table name, so match it anywhere in the INSERT.
+        (
+            i
+            for i, s in enumerate(lowered)
+            if s.lstrip().startswith("insert into") and "conversation_sla_tracking (" in s
+        ),
         None,
     )
     assert lock_at is not None, "the product row is never locked FOR UPDATE"
