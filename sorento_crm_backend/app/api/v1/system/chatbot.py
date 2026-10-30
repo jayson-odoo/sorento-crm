@@ -57,6 +57,8 @@ from app.schemas.chat_topic_audit import (
     VerdictRequest,
 )
 from app.schemas.chatbot_turn import (
+    AgentActionRequest,
+    AgentActionResponse,
     AgentConversationNewRequest,
     AgentConversationNewResponse,
     AgentConversationResponse,
@@ -74,6 +76,7 @@ from app.schemas.chatbot_turn import (
     FailedContactListResponse,
     RetryTurnResponse,
 )
+from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import memory as agent_memory
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
 from app.services.chatbot.agent.loop import AgentBusy, run_agent_turn
@@ -741,7 +744,50 @@ def agent_turn(
         usage=result.usage,
         tool_calls=result.tool_calls,
         steps=agent_memory.steps_for_turn(db, result.turn_id),
+        pending_action=result.pending_action,
     )
+
+
+def _action_response(outcome) -> AgentActionResponse:
+    return AgentActionResponse(
+        action_id=outcome.action_id, status=outcome.status, reply_text=outcome.reply_text, steps=outcome.steps
+    )
+
+
+def _action_refused(exc: agent_actions.ActionRefused) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": "action_refused", "reason": exc.reason},
+    )
+
+
+@router.post("/agent/actions/{action_id}/confirm", response_model=AgentActionResponse)
+def agent_action_confirm(
+    action_id: str,
+    payload: AgentActionRequest,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Carry out the changes the agent proposed, from the console's Confirm button."""
+    try:
+        return _action_response(
+            agent_actions.confirm(db, payload.contact_respond_id, action_id, via="console")
+        )
+    except agent_actions.ActionRefused as exc:
+        raise _action_refused(exc)
+
+
+@router.post("/agent/actions/{action_id}/cancel", response_model=AgentActionResponse)
+def agent_action_cancel(
+    action_id: str,
+    payload: AgentActionRequest,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    try:
+        return _action_response(agent_actions.cancel(db, payload.contact_respond_id, action_id))
+    except agent_actions.ActionRefused as exc:
+        raise _action_refused(exc)
 
 
 def _agent_refused(exc: AgentRefused) -> HTTPException:

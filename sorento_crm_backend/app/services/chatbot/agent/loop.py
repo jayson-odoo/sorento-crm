@@ -20,7 +20,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot.agent import memory
+from app.services.chatbot.agent import actions, memory, writes
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
 from app.services.chatbot.agent.tools import (
     ANSWER,
@@ -445,6 +445,76 @@ def limit_sentence(word: str, labels: list[str]) -> str:
     return f"I stopped at the {word} limit before finishing, so I did not check: {what}."
 
 
+# ------------------------------------------------------------------ write tools
+
+CONFIRM_ACTION = "confirm_action"
+CANCEL_ACTION = "cancel_action"
+
+
+def _decision_schema(name: str, text: str) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": text,
+            "parameters": {
+                "type": "object",
+                "properties": {"action_id": {"type": "string"}},
+                "required": ["action_id"],
+            },
+        },
+    }
+
+
+CONFIRM_SCHEMA = _decision_schema(
+    CONFIRM_ACTION,
+    "Carry out the pending proposed changes, only when the user's latest message clearly says yes to them. "
+    "action_id is the one from the proposal.",
+)
+CANCEL_SCHEMA = _decision_schema(
+    CANCEL_ACTION,
+    "Drop the pending proposed changes, when the user's latest message says no or asks to stop.",
+)
+
+
+def proposal_block(lines: list[str]) -> str:
+    numbered = "\n".join(f"{n}. {line}" for n, line in enumerate(lines, 1))
+    return f"I will make these changes when you confirm:\n{numbered}\nReply yes to go ahead, or tell me what to change."
+
+
+def _propose(db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str) -> ToolResult:
+    if len(steps) >= actions.MAX_STEPS:
+        return ToolResult("invalid", message=f"At most {actions.MAX_STEPS} changes per confirmation.")
+    out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids)
+    if step is None:
+        return out
+    steps.append(step)
+    return ToolResult(
+        "proposed",
+        data={"action_id": action_id, "step": len(steps), "summary": step["summary"]},
+        message="Proposed, not done. The user must confirm in a later message.",
+    )
+
+
+def _decide(db, ctx, name: str, args: Any, steps: list[dict], turn_id: str) -> ToolResult:
+    """`confirm_action` / `cancel_action`: the model read the user's message; the server limits are `actions`."""
+    action_id = args.get("action_id") if isinstance(args, dict) else None
+    if not isinstance(action_id, str) or not action_id.strip():
+        return ToolResult("invalid", message="action_id is required.")
+    if steps:
+        return ToolResult("invalid", message="Changes proposed in this turn can be confirmed only in a later turn.")
+    try:
+        if name == CONFIRM_ACTION:
+            outcome = actions.confirm(db, ctx.contact_respond_id, action_id.strip(), via="chat", turn_id=turn_id)
+        else:
+            outcome = actions.cancel(db, ctx.contact_respond_id, action_id.strip())
+    except actions.ActionRefused as exc:
+        return ToolResult("invalid", message=f"Not done: {exc.reason.replace('_', ' ')}.")
+    return ToolResult(
+        "ok", data={"status": outcome.status, "reply_text": outcome.reply_text, "steps": outcome.steps}
+    )
+
+
 # ------------------------------------------------------------------ result
 
 
@@ -458,6 +528,8 @@ class AgentTurnResult:
     rounds: int
     usage: dict
     tool_calls: list[dict]
+    #: The proposal this turn stored: {"id", "lines", "expires_at"}, or None.
+    pending_action: dict | None = None
 
 
 @dataclass
@@ -656,6 +728,8 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
     turn_id = str(turn.id)
     conversation_id = str(conv.id)
 
+    steps: list[dict] = []
+    action_id = ""
     provider_name = DEFAULT_PROVIDER
     model = DEFAULT_MODEL
     effort: str | None = None
@@ -761,7 +835,13 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         messages: list[dict] = [{"role": "system", "content": _system_prompt(db, ctx.user_name)}]
         messages.extend(memory.history_messages(db, conv))
         messages.append({"role": "user", "content": text})
-        schemas = tool_schemas(permitted_tools(db, ctx), catalog) + [PLAN_SCHEMA, ANSWER_SCHEMA]
+        schemas = tool_schemas(permitted_tools(db, ctx), catalog)
+        schemas += [r.schema for r in writes.permitted_user_reads(db, ctx)]
+        schemas += [w.schema for w in writes.permitted_writes(db, ctx)]
+        if actions.pending_action(db, contact_respond_id) is not None:
+            schemas += [CONFIRM_SCHEMA, CANCEL_SCHEMA]
+        schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
+        action_id = str(uuid.uuid4())
         plan_parts: list[str] = []
         own_ids = (str(ctx.contact_respond_id), str(ctx.contact_pk))
 
@@ -884,11 +964,18 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
                 seconds = max(1, int(min(remaining(), MCP_CALL_TIMEOUT)))
-                out = dispatch(
-                    db, ctx, name, args,
-                    call=mcp_call if mcp_call is not None else mcp_builder(seconds),
-                    catalog=catalog, timeout=float(seconds), seen_ids=seen_ids, denied_domains=denied_domains,
-                )
+                if name in writes.WRITES:
+                    out = _propose(db, ctx, name, args, steps, seen_ids, action_id)
+                elif name in writes.USER_READS:
+                    out = writes.run_user_read(db, ctx, name, args, seen_ids)
+                elif name in (CONFIRM_ACTION, CANCEL_ACTION):
+                    out = _decide(db, ctx, name, args, steps, turn_id)
+                else:
+                    out = dispatch(
+                        db, ctx, name, args,
+                        call=mcp_call if mcp_call is not None else mcp_builder(seconds),
+                        catalog=catalog, timeout=float(seconds), seen_ids=seen_ids, denied_domains=denied_domains,
+                    )
                 ms = int((clock() - started) * 1000)
                 payload = out.to_json(call_id)
                 run.any_tool_result = True
@@ -979,6 +1066,20 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         reply = f"The agent could not answer: {error}."
     if not reply:
         reply = "The agent has no answer for this."
+    pending = None
+    if status != "failed" and steps:
+        # After verification: the block is built by code from the stored steps, so its figures are not flagged.
+        try:
+            stored = actions.store_proposal(
+                db, ctx, conversation_id=conversation_id, turn_id=turn_id, steps=steps, action_id=action_id
+            )
+            lines = actions.proposal_lines(stored)
+            pending = {"id": str(stored.id), "lines": lines, "expires_at": actions._expires_at(stored).isoformat()}
+            reply = f"{reply}\n\n{proposal_block(lines)}"
+        except Exception:  # noqa: BLE001 - the turn still closes
+            logger.warning("agent: storing the proposal failed", exc_info=True)
+            db.rollback()
+            reply = f"{reply}\n\nI could not store the proposed changes, so nothing will be changed."
 
     turn = db.get(ChatbotTurn, turn_id) or turn
     turn.status = "failed" if status == "failed" else "done"
@@ -1010,4 +1111,5 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         rounds=run.rounds,
         usage=run.usage(),
         tool_calls=run.tool_calls,
+        pending_action=pending,
     )
