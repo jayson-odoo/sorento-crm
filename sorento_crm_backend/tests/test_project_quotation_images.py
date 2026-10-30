@@ -166,11 +166,10 @@ def _issue(db, document, owner):
 def _priced_line(db, env, scope, product=None, **payload):
     from app.services import project_quotation_service as quotes
 
-    body = {"unit_price": "250.00", "quantity": 4}
-    if product is not None:
-        body["product_id"] = product.id
-    else:
-        body["description_snapshot"] = f"{MARKER} bespoke feature wall"
+    # A line names a catalogue product (QUOTE-NO-FREE-TEXT), so a caller that does not care
+    # which one gets a fresh product.
+    product = product if product is not None else _product(db, env)
+    body = {"unit_price": "250.00", "quantity": 4, "product_id": product.id}
     body.update(payload)
     return quotes.upsert_line(
         db,
@@ -231,28 +230,6 @@ def test_a_draft_line_shows_the_photo_chosen_today_not_the_one_chosen_when_it_wa
         # Nothing was written to the line: the draft is live, not stamped.
         db.refresh(line)
         assert line.image_attachment_id is None
-
-
-def test_an_off_catalog_line_is_never_invited_to_choose_a_photo():
-    """No product, so no `product_attachments` row a flag could point at. This is not "nobody has
-    chosen yet" - there is nothing to choose, and offering the choice would be the second place a
-    picture gets decided, which is exactly the defect the flag removes."""
-    from app.services import project_quotation_document_service as qdocs
-
-    with blank_session() as db:
-        env = _setup(db)
-        document = qdocs.create_document(
-            db, project=env["project"], actor_user_id=env["owner"]
-        )
-        scope = qdocs.add_scope(
-            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=env["owner"]
-        )
-        line = _priced_line(db, env, scope, None)
-
-        cell = _cell(db, line)
-        assert cell["state"] == "off_catalog"
-        assert cell["url"] is None
-        assert cell["candidate_count"] == 0
 
 
 # ------------------------------------------------------------------- FRZ-2 / FRZ-3

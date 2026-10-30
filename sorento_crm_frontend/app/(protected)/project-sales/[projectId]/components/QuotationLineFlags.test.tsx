@@ -1,8 +1,10 @@
 /**
- * SET-QUOTE-LINE A7 / F2 and the owner's naming ruling (14 Oct, "just call Non-standard"): a row
- * with neither a product nor a set reads "Non-standard" (tooltip "Not a catalogue product"); a
+ * SET-QUOTE-LINE A7 / F2 and the owner's naming ruling (14 Oct, "just call Non-standard"): a
  * linked product or set outside the series reads "Non-standard" with the series tooltip; the word
  * "custom" appears nowhere, and a line never shows two Non-standard pills.
+ *
+ * QUOTE-NO-FREE-TEXT AC-11: "Not a catalogue product" never renders - a line with neither a
+ * product nor a set is refused on save, so it no longer has a flag of its own.
  *
  * Owner meeting 29 Oct: the below-floor flag leaves the product cell. It sits under the price in
  * the Rate cell (`MinimumPriceFlag`) and reads "Minimum price RM x", never "Below floor".
@@ -55,13 +57,15 @@ describe('LineFlags', () => {
     expect(screen.queryByText(/custom/i)).toBeNull();
   });
 
-  it('reads Non-standard with the catalogue tooltip for a line with neither product nor set', () => {
+  it('never reads "Not a catalogue product" for a line with neither product nor set', () => {
     render(<LineFlags quotationId="q1" line={line()} draft={draftOf()} />);
-    expect(screen.getByText('Non-standard')).toHaveAttribute('title', 'Not a catalogue product');
+    expect(screen.queryByText(/Not a catalogue product/i)).toBeNull();
+    expect(screen.queryByTitle('Not a catalogue product')).toBeNull();
+    expect(screen.queryByText('Non-standard')).not.toBeInTheDocument();
     expect(screen.queryByText(/custom/i)).toBeNull();
   });
 
-  it('shows exactly one Non-standard pill when the server also marks a no-product line non-standard', () => {
+  it('never reads "Not a catalogue product" even when the server marks a no-product line non-standard', () => {
     render(
       <LineFlags
         quotationId="q1"
@@ -69,8 +73,20 @@ describe('LineFlags', () => {
         draft={draftOf()}
       />,
     );
+    expect(screen.queryByText(/Not a catalogue product/i)).toBeNull();
+    expect(screen.queryByTitle('Not a catalogue product')).toBeNull();
+  });
+
+  it('shows exactly one Non-standard pill for a non-standard product line', () => {
+    render(
+      <LineFlags
+        quotationId="q1"
+        line={line({ product_id: 'p1', is_non_standard: true })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
     expect(screen.getAllByText('Non-standard')).toHaveLength(1);
-    expect(screen.getByText('Non-standard')).toHaveAttribute('title', 'Not a catalogue product');
+    expect(screen.queryByTitle('Not a catalogue product')).toBeNull();
     expect(screen.queryByText(/custom/i)).toBeNull();
   });
 

@@ -162,6 +162,9 @@ def api():
             developer_party_id=None,
             title=f"{MARKER} Tower",
         )
+        _CATALOGUE["product_id"] = _product(
+            db, _category(db, "Fixture").id, _uom(db), "100.00"
+        ).id
         db.commit()
         client, originals = _client(db, user_id)
         try:
@@ -190,8 +193,15 @@ def _stored(client, version_id: str) -> list:
     return response.json()["data"]
 
 
-def _off_catalog(description: str, price: str, quantity: str = "1", **extra) -> dict:
+# The catalogue product every helper line names, seeded by the ``api`` fixture. A line must
+# name a product or a set (QUOTE-NO-FREE-TEXT), so the fixture lines carry one and the
+# description is the printed wording on top of it.
+_CATALOGUE: dict = {}
+
+
+def _catalogue_line(description: str, price: str, quantity: str = "1", **extra) -> dict:
     return {
+        "product_id": _CATALOGUE["product_id"],
         "description_snapshot": f"{MARKER} {description}",
         "unit_price": price,
         "quantity": quantity,
@@ -211,7 +221,7 @@ def test_one_call_inserts_updates_and_deletes_the_whole_set(api):
     seeded = _bulk(
         client,
         version_id,
-        [_off_catalog("Basin", "100.00"), _off_catalog("Tap", "200.00")],
+        [_catalogue_line("Basin", "100.00"), _catalogue_line("Tap", "200.00")],
     )
     assert seeded.status_code == 200, seeded.text
     basin, tap = seeded.json()["data"]
@@ -222,7 +232,7 @@ def test_one_call_inserts_updates_and_deletes_the_whole_set(api):
         version_id,
         [
             {"id": basin["id"], "unit_price": "150.00", "quantity": "2"},
-            _off_catalog("Mirror", "300.00"),
+            _catalogue_line("Mirror", "300.00"),
         ],
     )
     assert saved.status_code == 200, saved.text
@@ -253,7 +263,7 @@ def test_a_line_left_out_of_the_body_is_deleted(api):
     _bulk(
         client,
         version_id,
-        [_off_catalog("Basin", "100.00"), _off_catalog("Tap", "200.00")],
+        [_catalogue_line("Basin", "100.00"), _catalogue_line("Tap", "200.00")],
     )
     kept = _stored(client, version_id)[0]
 
@@ -267,7 +277,7 @@ def test_an_empty_set_clears_the_version(api):
     client, _db, _company_id, _user_id, project = api
     quotation = _quotation(client, project.id)
     version_id = quotation["current_version_id"]
-    _bulk(client, version_id, [_off_catalog("Basin", "100.00")])
+    _bulk(client, version_id, [_catalogue_line("Basin", "100.00")])
 
     cleared = _bulk(client, version_id, [])
     assert cleared.status_code == 200, cleared.text
@@ -292,9 +302,9 @@ def test_the_order_of_the_array_is_the_order_of_the_lines(api):
         client,
         version_id,
         [
-            _off_catalog("Basin", "100.00"),
-            _off_catalog("Tap", "200.00"),
-            _off_catalog("Mirror", "300.00"),
+            _catalogue_line("Basin", "100.00"),
+            _catalogue_line("Tap", "200.00"),
+            _catalogue_line("Mirror", "300.00"),
         ],
     )
     assert saved.status_code == 200, saved.text
@@ -331,8 +341,8 @@ def test_a_sort_order_sent_by_the_client_does_not_override_the_position(api):
         client,
         version_id,
         [
-            _off_catalog("Basin", "100.00", sort_order=99),
-            _off_catalog("Tap", "200.00", sort_order=5),
+            _catalogue_line("Basin", "100.00", sort_order=99),
+            _catalogue_line("Tap", "200.00", sort_order=5),
         ],
     )
     assert saved.status_code == 200, saved.text
@@ -362,9 +372,9 @@ def test_the_total_is_recomputed_once_and_excludes_rate_only_lines(api, monkeypa
         client,
         version_id,
         [
-            _off_catalog("Basin", "100.00", quantity="2"),
-            _off_catalog("Tap", "200.00"),
-            _off_catalog("Spare valve", "500.00", is_rate_only=True),
+            _catalogue_line("Basin", "100.00", quantity="2"),
+            _catalogue_line("Tap", "200.00"),
+            _catalogue_line("Spare valve", "500.00", is_rate_only=True),
         ],
     )
     assert saved.status_code == 200, saved.text
@@ -385,7 +395,7 @@ def test_a_frozen_version_is_refused_and_nothing_is_applied(api):
     client, _db, _company_id, _user_id, project = api
     quotation = _quotation(client, project.id)
     frozen_version = quotation["current_version_id"]
-    _bulk(client, frozen_version, [_off_catalog("Basin", "100.00")])
+    _bulk(client, frozen_version, [_catalogue_line("Basin", "100.00")])
     before = _stored(client, frozen_version)
 
     revised = client.post(f"{BASE}/quotations/{quotation['id']}/revise")
@@ -396,7 +406,7 @@ def test_a_frozen_version_is_refused_and_nothing_is_applied(api):
         frozen_version,
         [
             {"id": before[0]["id"], "unit_price": "1.00"},
-            _off_catalog("Sneaked in", "999.00"),
+            _catalogue_line("Sneaked in", "999.00"),
         ],
     )
     assert refused.status_code == 422, refused.text
@@ -423,7 +433,7 @@ def test_an_issued_version_is_refused_with_the_issued_code(api):
 
     quotation = _quotation(client, project.id)
     version_id = quotation["current_version_id"]
-    _bulk(client, version_id, [_off_catalog("Basin", "100.00")])
+    _bulk(client, version_id, [_catalogue_line("Basin", "100.00")])
     before = _stored(client, version_id)
 
     row = db.query(ProjectQuotation).filter(ProjectQuotation.id == quotation["id"]).first()
@@ -449,7 +459,7 @@ def test_an_issued_version_is_refused_with_the_issued_code(api):
     )
     db.commit()
 
-    refused = _bulk(client, version_id, [_off_catalog("Sneaked in", "999.00")])
+    refused = _bulk(client, version_id, [_catalogue_line("Sneaked in", "999.00")])
     assert refused.status_code == 422, refused.text
     assert refused.json()["code"] == "quotation_version_issued"
     assert _stored(client, version_id) == before
@@ -461,7 +471,7 @@ def test_a_malformed_line_rejects_every_other_line_in_the_batch(api):
     client, _db, _company_id, _user_id, project = api
     quotation = _quotation(client, project.id)
     version_id = quotation["current_version_id"]
-    _bulk(client, version_id, [_off_catalog("Basin", "100.00")])
+    _bulk(client, version_id, [_catalogue_line("Basin", "100.00")])
     before = _stored(client, version_id)
 
     refused = _bulk(
@@ -469,14 +479,14 @@ def test_a_malformed_line_rejects_every_other_line_in_the_batch(api):
         version_id,
         [
             {"id": before[0]["id"], "unit_price": "111.00"},
-            _off_catalog("Tap", "200.00"),
-            # Off-catalog with no description: valid to Pydantic, refused by the service
+            _catalogue_line("Tap", "200.00"),
+            # No product and no set: valid to Pydantic, refused by the service
             # AFTER the two good lines above have already been flushed.
-            {"unit_price": "300.00", "quantity": "1"},
+            {"description_snapshot": f"{MARKER} Free text", "unit_price": "300.00", "quantity": "1"},
         ],
     )
     assert refused.status_code == 422, refused.text
-    assert refused.json()["code"] == "quotation_line_description_required"
+    assert refused.json()["code"] == "quotation_line_product_required"
 
     assert _stored(client, version_id) == before, "a refused batch writes nothing at all"
 
@@ -489,7 +499,7 @@ def test_a_line_id_from_another_version_is_refused(api):
     version_id = quotation["current_version_id"]
     other = _quotation(client, project.id, scope_label=f"{MARKER} Common Area")
     other_version = other["current_version_id"]
-    _bulk(client, other_version, [_off_catalog("Basin", "100.00")])
+    _bulk(client, other_version, [_catalogue_line("Basin", "100.00")])
     stranger = _stored(client, other_version)[0]
 
     refused = _bulk(client, version_id, [{"id": stranger["id"], "unit_price": "1.00"}])
@@ -502,7 +512,7 @@ def test_the_same_line_twice_is_refused(api):
     client, _db, _company_id, _user_id, project = api
     quotation = _quotation(client, project.id)
     version_id = quotation["current_version_id"]
-    _bulk(client, version_id, [_off_catalog("Basin", "100.00")])
+    _bulk(client, version_id, [_catalogue_line("Basin", "100.00")])
     line = _stored(client, version_id)[0]
 
     refused = _bulk(
@@ -518,11 +528,11 @@ def test_a_reader_who_may_not_edit_the_project_cannot_save_its_lines(api):
     client, _db, _company_id, _user_id, project = api
     quotation = _quotation(client, project.id)
     version_id = quotation["current_version_id"]
-    _bulk(client, version_id, [_off_catalog("Basin", "100.00")])
+    _bulk(client, version_id, [_catalogue_line("Basin", "100.00")])
     before = _stored(client, version_id)
 
     with _without_permission(EDIT):
-        denied = _bulk(client, version_id, [_off_catalog("Sneaked in", "999.00")])
+        denied = _bulk(client, version_id, [_catalogue_line("Sneaked in", "999.00")])
 
     assert denied.status_code == 403, denied.text
     assert _stored(client, version_id) == before
@@ -530,7 +540,7 @@ def test_a_reader_who_may_not_edit_the_project_cannot_save_its_lines(api):
 
 def test_an_unknown_version_is_a_404_not_a_silent_no_op(api):
     client, _db, _company_id, _user_id, _project = api
-    missing = _bulk(client, _uid(), [_off_catalog("Basin", "100.00")])
+    missing = _bulk(client, _uid(), [_catalogue_line("Basin", "100.00")])
     assert missing.status_code == 404, missing.text
 
 
