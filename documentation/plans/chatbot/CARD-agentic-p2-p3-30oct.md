@@ -14,8 +14,9 @@ no silent fallback between agent and bot; semantic routing only (no regex or wor
 on Gemini, customers on OpenAI; dev AI on Gemini (dev OpenAI key is dead); the owner publishes prompts; one
 confirmation per write (P1 ruling R5).
 
-Data: every number marked **[dev]** comes from crew's read-only queries on the dev DB (crew-ask on PR #1999);
-until they arrive it reads "pending". Examples are masked: `<cust>`, `<person>`, `<code>`.
+Data: every place marked **[dev]** is filled from crew's read-only queries on the dev DB and the Jev research
+report. Those figures and message examples are delivered in the crew report only and are NOT committed (public
+repo). This file carries the rules, the reasoning and the recommendations they led to.
 
 ## What exists today (code facts)
 
@@ -84,14 +85,16 @@ price lists at build time, not from memory.
 
 | Option | How | Extra calls | Input / output per message | Cost / 1k | Notes |
 | --- | --- | --- | --- | --- | --- |
-| A. Existing parser | Add one output pair to the parser schema: `route: chat|agent`, `route_score: 0..1` | 0 (parser already runs every turn) | +~40 output tokens on today's parser call **[dev: avg_in / avg_out per parser call, pending]** | parser cost + ~40 tokens | Cheapest. But the parser runs BEFORE the decision, so every agent turn also pays a full parser call it does not use **[dev: share of staff turns that would go to agent, pending]**. Changes the owner-published parser prompt and strict schema (`parser.py:164`). LLM self-reported scores are poorly calibrated. |
-| B. Jev (TypeSafe AI) | Typed `choice(chat, agent)` + confidence | 1 per message, before the parser | message + 3 exchanges, under its 32k limit | **[from RESEARCH-JEV-parser-cost.md, pending]** | Returns a real confidence. English-first: staff write Malay, Chinese and mixed **[dev: language mix, pending]**. A new vendor receives staff messages (data agreement). |
-| C. Gemini Flash-Lite | Its own prompt label `chatbot-router` (owner publishes), JSON `{route, score}` | 1 per message, before the parser | ~600-1,200 in (prompt + 3 exchanges), ~15 out | **[dev + price list, pending]** | Same provider and key as staff agent turns (Gemini). Lets agent turns skip the parser entirely. Score is self-reported, like A. |
+| A. Existing parser | Add one output pair to the parser schema: `route: chat|agent`, `route_score: 0..1` | 0 (parser already runs every turn) | +~40 output tokens on today's parser call **[dev: avg_in / avg_out per parser call, in crew report]** | parser cost + ~40 tokens | Cheapest. But the parser runs BEFORE the decision, so every agent turn also pays a full parser call it does not use **[dev: share of staff turns that would go to agent, in crew report]**. Changes the owner-published parser prompt and strict schema (`parser.py:164`). LLM self-reported scores are poorly calibrated. |
+| B. Jev (TypeSafe AI) | Typed `choice(chat, agent)` + confidence | 1 per message, before the parser | message + 3 exchanges, under its 32k limit | **[from RESEARCH-JEV-parser-cost.md, in crew report]** | Returns a real confidence. English-first: staff write Malay, Chinese and mixed **[dev: language mix, in crew report]**. A new vendor receives staff messages (data agreement). |
+| C. Gemini Flash-Lite | Its own prompt label `chatbot-router` (owner publishes), JSON `{route, score}` | 1 per message, before the parser | ~600-1,200 in (prompt + 3 exchanges), ~15 out | **[dev + price list, in crew report]** | Same provider and key as staff agent turns (Gemini). Lets agent turns skip the parser entirely. Score is self-reported, like A. |
 
-Recommendation (to confirm once the numbers land): **C** if the agent share of staff messages is above about
-the ratio `router_cost / parser_cost` (then skipping the parser on agent turns pays for the router); **A**
-otherwise. **B** only if the Jev report shows better accuracy on Malay / Chinese staff messages at a lower cost
-than C, because it adds a vendor and is English-first.
+Recommendation, on the dev numbers: **C**. It beats A as soon as a small share of staff messages goes to the
+agent (it lets those skip the parser call, which is where the tokens are), and its absolute cost at staff volume
+is a few dollars a month. **B (Jev)** saves almost nothing over C at that volume while adding a new vendor that
+is English-first, waitlisted and would receive staff WhatsApp text. The owner's "use JEV for token saving" is a
+real lever for the **parser** (most tokens per message are there; parser caching already works), not for the
+router, and Jev cannot replace the parser's entity extraction. Keep it as a separate parser-cost experiment.
 
 ### How the switch and budgets change
 
@@ -107,7 +110,7 @@ than C, because it adds a vendor and is English-first.
 
 ### Examples (masked, dev data)
 
-**[dev Q4, pending]** Five real staff messages with the route the card expects and why. Shapes the card will
+**[dev Q4, in crew report]** Five real staff messages with the route the card expects and why. Shapes the card will
 fill from the sample: a single stock lookup (chat), an ETA lookup (chat), a "compare this month vs last month by
 agent" (agent), a "why is <cust> outstanding so high" (agent), a "mark that ask done" (agent, write).
 
@@ -127,7 +130,9 @@ agent" (agent), a "why is <cust> outstanding so high" (agent), a "mark that ask 
 ### Eval plan
 
 1. Gold set: 200 real staff messages from the last 60 days (crew Q4), masked by crew, each with its previous 3
-   exchanges. The owner (or crew, owner spot-checks 20) labels each `chat` or `agent`. 60 for tuning the router
+   exchanges. Today's staff traffic is almost all single lookups, so a random sample holds too few agent-shaped
+   asks to measure missed-agent. The set is enriched with every staff turn that ended `clarify_menu` or
+   `out_of_scope`, plus the P1 eval cases, until it holds at least 40 agent-labelled items. The owner (or crew, owner spot-checks 20) labels each `chat` or `agent`. 60 for tuning the router
    prompt, 140 held out.
 2. Each option runs on the same held-out set, through cassettes after the first paid run.
 3. Measured: agreement with the label; **missed-agent** rate (labelled agent, routed chat); **wasted-agent**
@@ -142,9 +147,9 @@ agent" (agent), a "why is <cust> outstanding so high" (agent), a "mark that ask 
 - **P2-Q1** Where does routing go live first? (a) console only, WhatsApp after the eval passes; (b) WhatsApp
   straight away for switched staff. Recommend **(a)**: the router decides who gets a slower, costlier answer on
   a live channel, and the console lets you watch it first.
-- **P2-Q2** Which router? (a) parser field, (b) Jev, (c) Gemini Flash-Lite label. Recommend: decide on the
-  numbers in the cost table; provisional **(c)**, because it keeps the parser prompt untouched (P1 ruling R1)
-  and lets agent turns skip the parser.
+- **P2-Q2** Which router? (a) parser field, (b) Jev, (c) Gemini Flash-Lite label. Recommend **(c)**: on the dev numbers
+  it costs a few dollars a month at staff volume, keeps the parser prompt untouched (P1 ruling R1) and lets
+  agent turns skip the parser; Jev saves almost nothing on top and adds a vendor (see the cost table).
 - **P2-Q3** On low confidence: (a) today's bot answers; (b) the agent answers. Recommend **(a)**: cheaper,
   familiar, and the eval counts how often it was wrong.
 - **P2-Q4** Who labels the gold set? (a) the owner labels all 200; (b) crew labels, owner spot-checks 20.
@@ -158,8 +163,10 @@ agent" (agent), a "why is <cust> outstanding so high" (agent), a "mark that ask 
 
 ### Rules
 
-1. **One record, one confirmation.** The agent proposes exactly one change at a time; nothing is written until
-   the user confirms that proposal (P1 ruling R5). No batch writes in P3.
+1. **One request, one confirmation.** The agent turns one user request into one proposal and nothing is
+   written until the user confirms it (P1 ruling R5). A proposal may cover several records when the user asked
+   for several (the lead example below: 5 contacts); the summary lists every record, and the apply is one
+   transaction, all or nothing, capped at 20 records.
 2. **The proposal is server state, not chat text.** A write tool call does not write. It creates a pending
    action row with canonical arguments, the record's current state as read now (the precondition), a
    plain-language summary built by code from the arguments (not by the model), and an expiry (10 minutes). The
@@ -193,27 +200,110 @@ agent" (agent), a "why is <cust> outstanding so high" (agent), a "mark that ask 
 
 ### First write candidates (pick 3)
 
-Grounded in what staff ask the bot today **[dev Q4, pending: counts and masked examples per candidate]**:
+Grounded in what staff do today. The dev sample shows staff do not ask the bot for writes (it cannot do
+them), so demand comes from outside the bot: the owner's W0 example came by person-to-person chat **[dev Q4: in
+crew report]**:
 
 | # | Write | Existing path (reused as-is) | Permission | Undo | Side effects |
 | --- | --- | --- | --- | --- | --- |
+| W0 | Dealer contact access: set role (Business owner / Employee), resign | `contact_setup_engine._apply_contact` (`contact_setup_engine.py:258`) + `unlink_customer` (`contact_customer_service.py:132`); see the lead example | today `user_management.contacts.edit` (whole contact book); proposed `user_management.contacts.edit_own` limited to contacts under the user's own sales agents (P3-Q2) | inverse from the ledger's before-state | the contact's bot answers change at its next message |
 | W1 | Customer ask: add a note, mark Done, reopen | `PATCH /sales/customer-asks/{id}` -> `stock_ask_service.update_for_sales` with `_patch_scope` (`api/v1/sales/customer_asks.py:196-210`) | `sales.customer_asks.edit` (`customer_asks.py:40`) | Done <-> Reopen; a note cannot be removed | none outward |
 | W2 | Sales opportunity: create, move stage, mark Lost with reason | `POST/PATCH /sales/opportunities` (`api/v1/sales/opportunities.py:219,259`), state graph + lost reason in `services/sales/opportunity_service.py:423` | `sales.opportunities.add` / `.edit` (`opportunities.py:37-38`) | previous stage from the before-state; create -> archive | none outward |
 | W3 | Purchase request: approve / reject (reason required) | `approval-decision` route (`api/v1/procurement/purchase_requests.py:501`) through `dispatch_or_defer` | `procurement.purchase_requests.approve` + revision + handling lock | grace-window cancel; then form-action undo where eligible | notifies requester and contact, SLA event, approval automation |
 | W4 | Complaint close | `POST /complaints/{id}/close` (`api/v1/complaints/complaints.py:1418`, `crm_complaint_close` wraps it), current-revision guard | `complaint_management.complaints.close` | form-action undo where eligible | notifications |
 | W5 | IT ticket: create and submit | `api/v1/tickets/tickets.py:108,182` | `.add` | cancel draft before submit only | round-robin assignment, SLA |
 
-Recommendation: **W1, W2, W3** in that order. W1 and W2 are internal, reversible and have no outward
-notification, so they prove the confirm / re-check / ledger / undo loop safely; W3 is the first with real
-side effects and uses the existing grace window.
+Recommendation: **W0, W1, W2** first, W3 after. W0 is the owner's own example and a real salesperson request
+today; W1 and W2 are internal and reversible with no outward notification. W3 is the first with real side
+effects and uses the existing grace window.
+
+### Lead example (owner, 30 Oct ~10:50): a salesperson changes dealer contacts' access
+
+The message a salesperson sent (masked by crew; real names and phones never go in the repo):
+
+```
+Dealer-Person-A
+Chg ALL to Business owner
++60-xxx-0001
++60-xxx-0002
++60-xxx-0003
++60-xxx-0004
+
+Person-B resign. +60-xxx-0005
+```
+
+Meaning: set the access role of 4 dealer contacts to Business owner, and end access for one contact who
+resigned. Owner: "a very good example of agentic movement ... so agents can help".
+
+**The real model (code facts).**
+- "Business owner" / "Employee" are the access sheet's role words (`app/services/contact_access_sheet_service.py:62`
+  `OWNER_WORDS`). A role is a set of contact access types per company: every contact gets `end_user`; Business
+  owner adds `dealer` + `cabana_dealer` for Sorento (SRT) and `mocha_dealer` for Mocha (MCH)
+  (`contact_access_sheet_service.py:43-45` `TEMPLATE`, `:230-240` `_template_sets`). Access types live in
+  `respond_contact_access_types` (`app/models/access.py:92`), codes in `contact_access_types` (`:67`).
+- The writer is `contact_setup_engine._apply_contact` (`app/services/contact_setup_engine.py:258`), today
+  called by the access-sheet upload `POST /user-management/contacts/access-sheet`
+  (`api/v1/user_management/contacts.py:282`), which requires `user_management.contacts.edit` and has a dry run.
+  The engine is **add-only**: it inserts types and links, never removes them (`contact_access_sheet_service.py:546`
+  "apply is add-only").
+- Phones resolve with `contact_setup_engine.normalise_phone` (`:54`, `+601` + 8-9 digits) and `_find_contacts`
+  (`:72`): exact digits on `respond_contacts.phone_number`; two contacts with the same digits = neither (ambiguous).
+- "Under this salesperson" is an explicit chain, no names: salesperson user -> `users.respond_contact_id` ->
+  active `sales_agents.contact_id` (`app/services/sales/portal_agent.py:23` `agents_for_contact`) ->
+  `customers.sales_agent_id` -> `respond_contact_customers` (`app/models/access.py:11`) -> the dealer contact.
+  The same agent rule the portal and own-scope use (`app/services/own_scope.py:1-15`).
+- There is no contact "active" flag. What a contact can do is: `chatbot_allowed` (AI replies,
+  `models/access.py` RespondContact), its access types, its customer links (`contact_customer_service.py:132`
+  `unlink_customer`, "the customer and the contact both survive it"), and per-agent windows
+  (`contact_agent_access.valid_to`, `models/access.py:477`).
+
+**How the agent handles it.**
+1. Reads the message as one request with two parts (role change for 4 phones, resign for 1). The dealer name
+   line is context only; phones decide.
+2. Resolves each phone with `normalise_phone` + `_find_contacts`. For each found contact, checks the explicit
+   chain: is it linked to a customer whose sales agent is one of THIS salesperson's agents?
+3. Reads each contact's current role from its access types per company (has an owner type -> Business owner;
+   only `end_user` -> Employee; none -> no access) and its companies (`respond_contact_companies`).
+4. Builds one proposal (code writes the summary, not the model):
+
+```
+Change access for 5 contacts of <dealer> (your customer <cust-code>):
+  +60-xxx-0001 <person>   Employee -> Business owner (Sorento)
+  +60-xxx-0002 <person>   Employee -> Business owner (Sorento)
+  +60-xxx-0003 <person>   already Business owner - no change
+  +60-xxx-0004            not found in the CRM - skipped
+  +60-xxx-0005 <person>   resigned: AI replies off, unlinked from <cust-code>, agent access ends today.
+                          Contact and chat history are kept.
+Reply yes to apply the 3 changes, or tell me what to change.
+```
+
+5. On confirm: re-checks everything (rule 4, including that each contact is still under this salesperson and
+   its role has not changed), applies in one transaction through the engine's writer as the salesperson, writes
+   the domain audit rows (`audit_service`, as the sheet does with `EVENT = "contact.access_sheet"`, here
+   `contact.access_agent` with `via = agent`) and one ledger row listing every contact before / after.
+6. Undo: "undo that" proposes the exact inverse from the ledger's before-state (re-link, AI replies back on,
+   owner types removed) as a new confirmed action.
+
+**Phones that do not fit** (each listed on its own line in the proposal, never silently dropped):
+- Not in the CRM -> "not found, skipped". The agent does not create contacts (question P3-Q3).
+- Two contacts share the digits -> "matches more than one contact, skipped; fix it on the contact screen".
+- Belongs to another salesperson's dealer -> "not one of your dealers' contacts, skipped". The reply does not say
+  whose it is.
+- Under this salesperson but linked to a different dealer than the one named -> applied, and the summary shows
+  the dealer it is actually linked to, so the salesperson sees the mismatch before confirming.
+- Contact has no company yet -> role cannot be set (owner types are per company); "skipped: no company on this
+  contact".
+- Business owner -> Employee (a downgrade) needs removing owner types; the engine cannot do that today
+  (add-only). Out of the first slice unless the owner says otherwise (question P3-Q3).
 
 ### Never a write tool
 
 Hard delete of anything; order cancel (`crm_order_cancel` stays off the agent); prices, costs, discounts,
 credit terms; stock adjustments, GRN, POs to suppliers; payments, invoices, credit notes; users, roles,
 permissions, integrations, API keys, system settings, prompts; any contact's chatbot settings, grants or
-switches (no self-escalation); sending WhatsApp / email to a customer on the agent's own initiative; more than
-one record per confirmation.
+switches of the user's OWN contact (no self-escalation); access facets other than role and the resign set below
+(stock mode, brands, prompts, model, reveals); sending WhatsApp / email to a customer on the agent's own
+initiative; more than 20 records per confirmation.
 
 ### Edge cases
 
@@ -231,19 +321,32 @@ one record per confirmation.
 
 ### P3 questions (max 5)
 
-- **P3-Q1** First three writes: (a) W1 customer ask, W2 opportunity, W3 PR decision; (b) a different set.
-  Recommend **(a)**: two reversible internal writes prove the loop before one with notifications.
-- **P3-Q2** How is a write confirmed on WhatsApp later? (a) the model reads the next message semantically and
-  calls confirm, under rule 3's server limits; (b) a WhatsApp quick-reply button only. Recommend **(a)** for
-  consistency with the semantic-only ruling, with (b) added if the eval shows a false confirm.
-- **P3-Q3** Who may let the agent write for a contact? (a) a new contact grant `agent.write`, default off, on
-  the contact screen; (b) the Agent switch alone. Recommend **(a)**: reads and writes are different risks and
-  you can turn writes on per person.
-- **P3-Q4** Grace window for agent form actions: (a) same as the screen's configured grace; (b) always
-  immediate after confirm. Recommend **(a)**: one rule for one action, and it gives a cancel path.
+- **P3-Q1** First writes: (a) W0 dealer contact access, W1 customer ask, W2 opportunity, then W3 PR decision;
+  (b) a different set. Recommend **(a)**: W0 is your own example of a real request; W1 and W2 are internal and
+  reversible; W3 is the first with outward notifications.
+- **P3-Q2** Who may make the agent write? (a) two gates: a new per-contact grant `agent.write` (default off,
+  contact screen) AND the user's own slug; for W0 a new slug `user_management.contacts.edit_own` that allows
+  role / resign only on contacts linked to customers of the user's own sales agents (the `view_own` pattern,
+  `own_scope.py`); (b) the Agent switch alone, and W0 only for holders of `user_management.contacts.edit` (the
+  whole contact book), so the salesperson in your example could not do it. Recommend **(a)**: reads and writes
+  are different risks, and the salesperson can do exactly what they asked for their own dealers only.
+- **P3-Q3** W0 details: what does "resign" do, and what about downgrades and unknown phones? (a) resign = AI
+  replies off + unlinked from the dealer's account(s) + agent access ends today, contact row, tags and chat
+  history kept; Business owner -> Employee is NOT in the first slice (the engine is add-only); a phone not in
+  the CRM is skipped and named, never created; (b) resign deletes the contact, or any of the other choices
+  differ. Recommend **(a)**: fully reversible, history kept for audit, and creating contacts from chat is a new
+  identity surface Respond sync owns.
+- **P3-Q4** How is a write confirmed on WhatsApp later (console uses Confirm / Cancel buttons)? (a) the model
+  reads the next message semantically and calls confirm, inside rule 3's server limits; (b) a WhatsApp
+  quick-reply button only. Recommend **(a)**, consistent with the semantic-only ruling; add (b) if the eval
+  shows a false confirm.
 - **P3-Q5** Order: (a) P2 routing first, then P3 writes; (b) P3 writes first in the console (explicit Agent tab),
-  routing after. Recommend **(b)**: writes build on the P1 console you just passed and need no router; routing
-  needs the gold set labelled first, which can run in parallel.
+  routing after. Recommend **(b)**: writes build on the P1 console you just passed and need no router. The dev
+  sample shows staff ask today's bot almost only single lookups, so routing has little to move until the agent
+  can do something the bot cannot; writes are that thing. The gold set can be labelled in parallel.
+
+Settled by default, not asked: agent form actions use the screen's configured grace window (rule 5), so one
+action has one rule and keeps its cancel path.
 
 ## Not in this card
 
