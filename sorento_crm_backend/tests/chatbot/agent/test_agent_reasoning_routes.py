@@ -21,11 +21,14 @@ TRACE = [
     {"kind": "agent_tool", "name": STOCK, "status": "ok", "ms": 5, "detail": "Stock balance: 1 row"},
     {"kind": "agent_round", "kind_of_call": "round", "prompt_tokens": 20, "completion_tokens": 3, "tool_calls": 1},
     {"kind": "agent_reasoning", "round": 2, "text": "Answer with the figure."},
+    {"kind": "agent_round", "kind_of_call": "final", "prompt_tokens": 5, "completion_tokens": 1, "tool_calls": 1},
+    {"kind": "agent_reasoning", "kind_of_call": "final", "round": 2, "text": "Wrap up with what was read."},
 ]
 
 EXPECTED_REASONING = [
-    {"round": 1, "text": "First find the stock balance."},
-    {"round": 2, "text": "Answer with the figure."},
+    {"round": 1, "text": "First find the stock balance.", "final": False},
+    {"round": 2, "text": "Answer with the figure.", "final": False},
+    {"round": 2, "text": "Wrap up with what was read.", "final": True},
 ]
 
 

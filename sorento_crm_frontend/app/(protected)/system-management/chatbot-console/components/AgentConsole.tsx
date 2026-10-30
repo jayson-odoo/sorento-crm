@@ -86,7 +86,7 @@ function callLine(call: StepCall): string {
 }
 
 /** One round's reasoning, collapsed until asked for. */
-function ReasoningItem({ round, text }: { round: number; text: string }) {
+function ReasoningItem({ label, text }: { label: string; text: string }) {
   const [open, setOpen] = useState(false);
   return (
     <li data-testid="agent-reasoning">
@@ -96,7 +96,7 @@ function ReasoningItem({ round, text }: { round: number; text: string }) {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {`Thinking (round ${round})`}
+        {label}
       </button>
       {open ? (
         <p
@@ -120,16 +120,31 @@ function roundItems(calls: StepCall[], reasoning: AgentReasoning[]) {
   const items: React.ReactNode[] = [];
   for (let round = 1; round <= last; round += 1) {
     reasoning
-      .filter((r) => r.round === round)
+      .filter((r) => r.round === round && !r.final)
       .forEach((r, index) =>
         items.push(
-          <ReasoningItem key={`r${round}-${index}`} round={round} text={r.text} />,
+          <ReasoningItem
+            key={`r${round}-${index}`}
+            label={`Thinking (round ${round})`}
+            text={r.text}
+          />,
         ),
       );
     calls
       .filter((c) => (c.round ?? 1) === round)
       .forEach((c, index) =>
         items.push(<li key={`c${round}-${c.name}-${index}`}>{callLine(c)}</li>),
+      );
+    reasoning
+      .filter((r) => r.round === round && r.final)
+      .forEach((r, index) =>
+        items.push(
+          <ReasoningItem
+            key={`f${round}-${index}`}
+            label="Thinking (final answer)"
+            text={r.text}
+          />,
+        ),
       );
   }
   return items;

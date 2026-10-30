@@ -191,7 +191,11 @@ def steps_from_trace(trace: object) -> dict:
             number = event.get("round")
             if isinstance(text, str) and text.strip():
                 ok = isinstance(number, int) and not isinstance(number, bool) and number > 0
-                steps["reasoning"].append({"round": number if ok else max(steps["rounds"], 1), "text": text})
+                steps["reasoning"].append({
+                    "round": number if ok else max(steps["rounds"], 1),
+                    "text": text,
+                    "final": event.get("kind_of_call") == "final",
+                })
     return steps
 
 

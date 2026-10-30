@@ -167,6 +167,26 @@ describe('the agent reasoning in Steps', () => {
     expect(within(disclosure).getByRole('button', { name: 'Thinking (round 2)' })).toBeInTheDocument();
   });
 
+  it("labels the forced final answer's thinking as such and puts it after the round's calls", async () => {
+    const steps = {
+      ...STEPS,
+      rounds: 1,
+      reasoning: [
+        { round: 1, text: THOUGHT_1, final: false },
+        { round: 1, text: THOUGHT_2, final: true },
+      ],
+    };
+    getAgentConversation.mockResolvedValue({ conversation_id: 'cv1', turns: [turn({ steps })], pending_action: null });
+    renderConsole();
+    const disclosure = await openSteps();
+    expect(within(disclosure).queryByRole('button', { name: 'Thinking (round 2)' })).toBeNull();
+    const text = disclosure.textContent ?? '';
+    const call = text.indexOf('Stock balance (query: ZZT1): 1 row');
+    const final = text.indexOf('Thinking (final answer)');
+    expect(text.indexOf('Thinking (round 1)')).toBeLessThan(call);
+    expect(final).toBeGreaterThan(call);
+  });
+
   it('an older turn without reasoning keeps the plain Steps list', async () => {
     const older = {
       rounds: 1,

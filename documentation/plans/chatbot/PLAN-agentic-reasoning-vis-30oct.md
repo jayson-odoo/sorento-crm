@@ -13,9 +13,11 @@ the console so at least I know agent's thought process."
   `gemini` / `gemini-3.5-flash` with no effort (`app/services/chatbot/agent/loop.py` DEFAULT_PROVIDER,
   DEFAULT_MODEL). No migration seeds a label row for `chatbot_agent`. The sandbox cannot read the
   dev or prod DB, so whether the owner set a label there is not verified here.
-- Reasoning is ON: every Gemini 2.5+ call gets a `thinkingConfig` (`app/services/llm_provider.py`
-  `_gemini_thinking`, applied in `GeminiProvider.chat`), so the model thinks and its
-  `thoughtsTokenCount` is billed.
+- Reasoning is ON only with an effort on the label: every Gemini 2.5+ call gets a `thinkingConfig`
+  (`app/services/llm_provider.py` `_gemini_thinking`), but with no effort a flash 3.x model gets
+  `thinkingBudget: 1` (`_gemini_thinking_budget`), so it barely thinks; Claude thinks only when an
+  effort is set. To see real Thinking, set Reasoning effort (low or medium) on the `chatbot_agent`
+  production label in Prompts (settings, no code; owner call on #2022).
 - The thought TEXT is not returned: no request sets `includeThoughts`, so Gemini answers with
   `thoughtSignature` parts only (kept as `ChatResult.continuation` for replay, #1979). Anthropic does
   return `thinking` blocks, but they live only in `continuation` and are dropped after the turn.

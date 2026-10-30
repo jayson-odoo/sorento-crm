@@ -181,7 +181,10 @@ def test_each_rounds_reasoning_is_stored_on_the_turn(db, contact):
 
     result = run(db, contact, ScriptedProvider(_two_round_script()))
     steps = memory.steps_for_turn(db, result.turn_id)
-    assert steps["reasoning"] == [{"round": 1, "text": THOUGHT_1}, {"round": 2, "text": THOUGHT_2}]
+    assert steps["reasoning"] == [
+        {"round": 1, "text": THOUGHT_1, "final": False},
+        {"round": 2, "text": THOUGHT_2, "final": False},
+    ]
     assert [(c["name"], c["round"]) for c in steps["tool_calls"]] == [(STOCK, 1)]
 
 
@@ -225,7 +228,7 @@ def test_a_turn_without_reasoning_has_an_empty_list(db, contact):
     assert memory.steps_for_turn(db, result.turn_id)["reasoning"] == []
 
 
-def test_the_forced_final_answers_reasoning_follows_the_last_round(db, contact):
+def test_the_forced_final_answers_reasoning_is_marked_final_within_the_last_round(db, contact):
     from app.models.user import SystemSetting
     from app.services.chatbot.agent import memory
 
@@ -236,9 +239,12 @@ def test_the_forced_final_answers_reasoning_follows_the_last_round(db, contact):
     script = [_reasoned(asks(call()), THOUGHT_1), _reasoned(answer("There are 12 units.", figures=TWELVE), THOUGHT_2)]
     result = run(db, contact, ScriptedProvider(script), Mcp())
     assert result.status == "limited"
-    assert memory.steps_for_turn(db, result.turn_id)["reasoning"] == [
-        {"round": 1, "text": THOUGHT_1},
-        {"round": 2, "text": THOUGHT_2},
+    steps = memory.steps_for_turn(db, result.turn_id)
+    # The final answer is not a round: its thinking stays inside the round count the console shows.
+    assert steps["rounds"] == 1
+    assert steps["reasoning"] == [
+        {"round": 1, "text": THOUGHT_1, "final": False},
+        {"round": 1, "text": THOUGHT_2, "final": True},
     ]
 
 

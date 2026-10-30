@@ -848,7 +848,8 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         started = clock()
         try:
             result = send(
-                messages, tools=tools, reasoning_effort=effort, model=model, timeout=timeout, include_thoughts=True
+                messages, tools=tools, reasoning_effort=effort, model=model, timeout=timeout,
+                include_thoughts=kind != "compaction",
             )
         except Exception as exc:  # noqa: BLE001 - detail is logged, the user sees a fixed reason
             logger.warning("agent: model call failed (%s)", kind, exc_info=True)
@@ -876,8 +877,9 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         )
         if thought:
             # For the console's steps only: never the reply, the history or a log line. A round's call
-            # comes before its count goes up, and the forced final answer follows the last round.
-            trace.add("agent_reasoning", {"kind_of_call": kind, "round": run.rounds + 1, "text": thought})
+            # comes before its count goes up; the forced final answer is not a round, so it stays in the last one.
+            number = max(run.rounds, 1) if kind == "final" else run.rounds + 1
+            trace.add("agent_reasoning", {"kind_of_call": kind, "round": number, "text": thought})
         record_turn_llm_usage(
             db,
             feature=FEATURE,

@@ -73,6 +73,8 @@ export interface AgentActionResponse {
 export interface AgentReasoning {
   round: number;
   text: string;
+  /** The forced final answer's thinking: shown after the round's tool calls. */
+  final?: boolean;
 }
 
 /** What a turn did, from its stored trace; the console shows it under the reply. */

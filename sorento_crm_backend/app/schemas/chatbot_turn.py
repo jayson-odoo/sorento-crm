@@ -247,6 +247,8 @@ class AgentReasoning(BaseModel):
 
     round: int
     text: str
+    #: The thinking of the forced final answer (after a limit), shown after the round's tool calls.
+    final: bool = False
 
 
 class AgentSteps(BaseModel):
