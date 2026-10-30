@@ -19,6 +19,9 @@
  *
  * 1. GET /conversations?tab=&q=&cursor=&limit=   -> ConversationInboxPage
  *      tab: mine | mentioned | unassigned | all (default all; unknown -> 400)
+ *      q: contact name, phone OR message text (CONVO-SEARCH-MESSAGES). A row
+ *      found by a message carries it as `match`; those rows sort newest match
+ *      first. A name / phone hit has `match` null and reads as before.
  *      limit: default 30, max 100. Keyset: pass `next_cursor` back verbatim,
  *      stop when it is null. `mentioned` is newest-NOTE first, the rest are
  *      newest-MESSAGE first, and `last_message_*` can be null on the ticket
@@ -76,6 +79,16 @@ export type ConversationInboxTab = (typeof CONVERSATION_INBOX_TABS)[number];
 /** Default page size; the backend caps at 100. */
 export const CONVERSATION_INBOX_PAGE_SIZE = 30;
 
+/** The newest message that matched the search, when a message (not the name or phone) did. */
+export interface ConversationInboxMatch {
+  message_id: string;
+  /** Naive UTC. Render through `formatDateTimeInMalaysia`. */
+  sent_at: string | null;
+  direction: 'incoming' | 'outgoing' | null;
+  /** A window around the hit, OTP-masked; the term is NOT marked up. */
+  snippet: string;
+}
+
 export interface ConversationInboxItem {
   /** Opaque handle for every `/{contact_ref}/...` call on this row. */
   contact_ref: string;
@@ -92,6 +105,8 @@ export interface ConversationInboxItem {
   my_open_ticket_count: number;
   /** Null unless `my_open_ticket_count === 1` - what a reply stamps. */
   my_open_ticket_id: string | null;
+  /** Non-null only while searching, on a row a MESSAGE matched. */
+  match: ConversationInboxMatch | null;
 }
 
 export interface ConversationInboxPage {

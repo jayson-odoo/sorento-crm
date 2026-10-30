@@ -827,7 +827,8 @@ export default function AttachmentDetailModal({
     : -1;
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const canDeletePermanently = useHasPermission('resource.attachments.delete');
+  // Gates Move to trash, Restore and permanent delete alike: the server takes this slug for all three.
+  const canDelete = useHasPermission('resource.attachments.delete');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
@@ -979,29 +980,28 @@ export default function AttachmentDetailModal({
                     <RefreshCw className={`size-4 ${resubmitMutation.isPending ? 'animate-spin' : ''}`} />
                     Resubmit
                   </Button>
-                  {attachment.is_deleted ? (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => restoreMutation.mutate(attachment.id)}
-                        disabled={restoreMutation.isPending}
-                      >
-                        Restore
-                      </Button>
-                      {canDeletePermanently && (
+                  {canDelete &&
+                    (attachment.is_deleted ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => restoreMutation.mutate(attachment.id)}
+                          disabled={restoreMutation.isPending}
+                        >
+                          Restore
+                        </Button>
                         <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>
                           <Trash2 className="size-4" />
                           Permanently Delete
                         </Button>
-                      )}
-                    </>
-                  ) : (
-                    <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>
-                      <Trash2 className="size-4" />
-                      Move to Trash
-                    </Button>
-                  )}
+                      </>
+                    ) : (
+                      <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>
+                        <Trash2 className="size-4" />
+                        Move to Trash
+                      </Button>
+                    ))}
                   <div className="ms-auto">
                     <IntegrationStatusChip
                       attachmentId={attachment.id}
