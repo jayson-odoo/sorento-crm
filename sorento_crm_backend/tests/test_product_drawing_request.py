@@ -1834,6 +1834,32 @@ def test_the_photo_lock_key_is_per_kind_and_product(db, env, monkeypatch):
     assert waited < 2.5, f"the photo escalation waited {waited:.1f}s on the DRAWING key"
 
 
+def test_drawing_and_photo_of_one_product_lock_two_different_keys(db, env):
+    """The rule itself, whatever the key's spelling: one product's drawing and photo escalations
+    take two different advisory keys, each naming the product. A key without the kind would make
+    the two kinds queue behind each other (and a held drawing lock answer a photo click busy)."""
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    caller = _user(db, "zzt Sales One")
+    keys: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        if "pg_advisory_lock" in statement and isinstance(parameters, dict):
+            keys.append(str(parameters.get("k")))
+
+    connection = db.get_bind()
+    event.listen(connection, "before_cursor_execute", _record)
+    try:
+        esc(db, version, line, caller, "drawing")
+        esc(db, version, line, caller, "photo")
+    finally:
+        event.remove(connection, "before_cursor_execute", _record)
+
+    assert len(keys) == 2, keys
+    assert keys[0] != keys[1], f"drawing and photo locked the same key {keys[0]!r}"
+    assert all(str(product.id) in key for key in keys), keys
+
+
 def test_the_lock_connection_keeps_one_transaction_from_lock_to_unlock(sent):
     """Behind a transaction-mode pooler a COMMIT between lock and unlock would hand the connection
     back and the unlock would run elsewhere. The lock's own connection must run lock and unlock
