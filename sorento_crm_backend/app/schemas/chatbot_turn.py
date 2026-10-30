@@ -167,6 +167,7 @@ class ConsoleRoute(BaseModel):
     score: float | None = None
     model: str | None = None
     ms: int | None = None
+    error: str | None = None
 
 
 class ConsoleTurnResponse(BaseModel):

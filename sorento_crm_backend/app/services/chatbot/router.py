@@ -50,11 +50,13 @@ class RouteDecision:
     model: str | None = None
     ms: int | None = None
     input_tokens: int | None = None
+    #: The class name behind a Jev timeout or transport failure (`JevError.detail`); None otherwise.
+    error: str | None = None
     #: The `ai_assistant_usage_logs` row this decision wrote, so the caller can point it at the turn.
     usage_id: str | None = None
 
     def as_response(self) -> dict[str, Any]:
-        return {"side": self.side, "reason": self.reason, "score": self.score, "model": self.model, "ms": self.ms}
+        return {"side": self.side, "reason": self.reason, "score": self.score, "model": self.model, "ms": self.ms, "error": self.error}
 
 
 def decide_route(
@@ -98,7 +100,7 @@ def decide_route(
             timeout_s=jev_client.TIMEOUT_S,
         )
     except JevError as exc:
-        return RouteDecision("chat", f"router_failed:{exc.kind}")
+        return RouteDecision("chat", f"router_failed:{exc.kind}", error=exc.detail)
     ms = int((time.perf_counter() - started) * 1000)
 
     usage_id = str(uuid.uuid4())

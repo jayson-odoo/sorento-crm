@@ -49,6 +49,7 @@ export interface ConsoleRoute {
   score: number | null;
   model: string | null;
   ms: number | null;
+  error?: string | null;
 }
 
 export interface ConsoleTurnResponse {
