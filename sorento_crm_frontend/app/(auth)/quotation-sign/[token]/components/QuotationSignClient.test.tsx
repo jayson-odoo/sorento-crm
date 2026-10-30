@@ -327,60 +327,11 @@ describe('QuotationSignClient requesting changes', () => {
     changes_requested_by_name: 'Kelly Tan',
   });
 
-  it('offers the request beside Accept, not instead of it', async () => {
-    getQuotationSignPage.mockResolvedValue(page());
-    renderPage();
-
-    expect(await screen.findByRole('button', { name: 'Sign and accept' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Request changes' })).toBeInTheDocument();
-  });
-
-  it('refuses to send an empty request', async () => {
-    // An empty box tells the salesperson nothing, and a stamped request with no words behind it
-    // would settle this page on an outcome nobody can act on.
-    getQuotationSignPage.mockResolvedValue(page());
-    renderPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Request changes' }));
-
-    const send = screen.getByRole('button', { name: 'Send request' });
-    expect(send).toBeDisabled();
-
-    fireEvent.change(screen.getByRole('textbox', { name: 'What needs to change' }), {
-      target: { value: '   ' },
-    });
-    expect(send).toBeDisabled();
-    expect(requestQuotationChanges).not.toHaveBeenCalled();
-
-    fireEvent.change(screen.getByRole('textbox', { name: 'What needs to change' }), {
-      target: { value: FEEDBACK },
-    });
-    expect(send).toBeEnabled();
-  });
-
-  it('settles the page on the request without fetching it again', async () => {
-    getQuotationSignPage.mockResolvedValue(page());
-    requestQuotationChanges.mockResolvedValue(requested);
-    renderPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Request changes' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'What needs to change' }), {
-      target: { value: FEEDBACK },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
-
-    await waitFor(() =>
-      expect(requestQuotationChanges).toHaveBeenCalledWith('tok-123', {
-        note: FEEDBACK,
-        requester_name: 'Kelly',
-      }),
-    );
-
-    // The response IS the page, written straight into the cache: no spinner in the one moment
-    // the customer needs confirmation, and no second GET.
-    expect(await screen.findByText('Changes requested')).toBeInTheDocument();
-    expect(getQuotationSignPage).toHaveBeenCalledTimes(1);
-  });
+  // The free-text form these specs once drove ("Request changes" / "What needs to change" /
+  // "Send request") is gone: owner Q5 (30 Oct) folded it into the per-line suggestions as their
+  // optional note. Offering the action beside Accept, refusing an empty send and settling the
+  // page on the answer are pinned for the replacement in QuotationSignAmend.test.tsx. What stays
+  // here is how a request already on record (sent before the change) still reads.
 
   it('reads as a settled outcome afterwards, with the words quoted back', async () => {
     getQuotationSignPage.mockResolvedValue(requested);
