@@ -557,6 +557,7 @@ export function SignaturePad({
         {renderFooterHint?.({ hasContent, hintId: `${fieldId}-hint` })}
         <Button
           type="button"
+          className="aria-disabled:opacity-60"
           disabled={onNotReadyAttempt ? undefined : disabled || !hasContent}
           aria-disabled={onNotReadyAttempt && (disabled || !hasContent) ? true : undefined}
           aria-describedby={

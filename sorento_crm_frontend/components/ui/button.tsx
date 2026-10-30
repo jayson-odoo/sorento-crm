@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
 
 const buttonVariants = cva(
-  'cursor-pointer group whitespace-nowrap focus-visible:outline-hidden inline-flex items-center justify-center has-data-[arrow=true]:justify-between whitespace-nowrap text-sm font-medium ring-offset-background disabled:pointer-events-none disabled:opacity-60 aria-disabled:opacity-60 [&_svg]:shrink-0 ' +
+  'cursor-pointer group whitespace-nowrap focus-visible:outline-hidden inline-flex items-center justify-center has-data-[arrow=true]:justify-between whitespace-nowrap text-sm font-medium ring-offset-background disabled:pointer-events-none disabled:opacity-60 [&_svg]:shrink-0 ' +
     PRESSED_CLASS,
   {
     variants: {
