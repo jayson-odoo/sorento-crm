@@ -1,7 +1,7 @@
 /**
  * AutoCount pull + review - feature service.
  * Layering: components -> hooks (useAutocountPull) -> THIS service -> lib/api-client -> backend.
- * Routes: `documentation/plans/autocount/PLAN-autocount-pull-review.md` "Routes" table, prefix
+ * Routes: `documentation/plans/_archive/autocount/PLAN-autocount-pull-review.md` "Routes" table, prefix
  * `/api/v1/autocount/pulls`. SR1 built start / current / status; rows, download.xlsx, compare and
  * confirm are wired here ahead of their own backend (SR3/SR4) - same URL, method and body shape
  * the plan pins, so nothing here needs to change again once those routes exist.

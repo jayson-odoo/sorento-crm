@@ -1,7 +1,7 @@
 # PLAN - products resolve code-wins on ingest (contract 2.4)
 
-Status: in progress (2026-09-20, owner go given; SR0 of the AutoCount pull + review work)
-UAC: `documentation/plans/autocount/ingest-products-code-wins-acceptance-criteria.md`
+Status: merged (2026-09-20, PR #1049 deployed; contract 2.4 live, FoundryX keys products by ItemCode on both books)
+UAC: `documentation/plans/_archive/autocount/ingest-products-code-wins-acceptance-criteria.md`
 Branch: `feat/ingest-products-code-wins` (its own lane and PR, ahead of the pull lane)
 
 ## Journey
