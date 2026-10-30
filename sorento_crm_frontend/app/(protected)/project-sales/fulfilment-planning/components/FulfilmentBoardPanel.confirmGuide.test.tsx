@@ -167,7 +167,28 @@ vi.mock('@/services/pendingActionService', () => ({
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import { addBtn, qty, splitLine, typeDate, typeQty, wireLine, wireSplit } from '@/test-mocks/lineSplitSheetKit';
-import { openConfirmGuide, walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
+import {
+  fillRequiredRemark,
+  openConfirmGuide as openGuideRaw,
+  walkConfirmGuide,
+  walkToConfirmStep,
+} from '@/test-mocks/confirmGuide';
+
+/**
+ * FULFIL-SO-REMARK-CHANGES (R1): most pages here carry a split edit, a change, so their Remark
+ * is required. Specs about the split pages key one in as the guide opens; the Remark specs
+ * themselves open with `openGuideRaw`.
+ */
+async function openConfirmGuide() {
+  const guide = await openGuideRaw();
+  await waitFor(() => {
+    if (screen.queryAllByTestId('confirm-guide-split-page').length > 0) {
+      expect(screen.queryAllByTestId('confirm-guide-so-remark').length).toBeGreaterThan(0);
+    }
+  }).catch(() => undefined);
+  fillRequiredRemark();
+  return guide;
+}
 import { toast } from '@/lib/toast';
 import userEvent from '@testing-library/user-event';
 
@@ -221,12 +242,25 @@ const SO2_L1 = demand({
 
 type Board = ReturnType<typeof buildBoard>;
 
+/** FULFIL-SO-REMARK-CHANGES: the line never confirmed, so its first decision is not a change. */
+const fresh = (line: BoardDemandLine): BoardDemandLine =>
+  ({ ...line, decision: null }) as unknown as BoardDemandLine;
+
 function mapContributions(board: Board, fn: (entry: Record<string, unknown>) => Record<string, unknown>) {
   const apply = (entry: unknown) => fn(entry as Record<string, unknown>);
   return {
     ...board,
     cells: board.cells.map((cell) => ({ ...cell, contributions: cell.contributions.map(apply) })),
     contributions: (board as unknown as { contributions?: unknown[] }).contributions?.map(apply),
+  } as unknown as Board;
+}
+
+/** A pending AutoCount change on every order: what retires a book-cancelled line. */
+function withPendingBatch(board: Board) {
+  const built = board as unknown as { orders: Record<string, unknown>[] };
+  return {
+    ...board,
+    orders: built.orders.map((order) => ({ ...order, pending_change_batch_id: 'b-zzt' })),
   } as unknown as Board;
 }
 
@@ -387,7 +421,12 @@ async function mountWith(board: Board, soNumbers?: string[]) {
 }
 
 const pages = () => screen.queryAllByTestId('confirm-guide-split-page');
-const click = (id: string) => fireEvent.click(screen.getByTestId(id));
+const click = (id: string) => {
+  // R1: the next page may be a change page too; its Remark is keyed in before moving on.
+  if (id === 'confirm-guide-next') fillRequiredRemark();
+  fireEvent.click(screen.getByTestId(id));
+  if (id === 'confirm-guide-next' || id === 'confirm-guide-back') fillRequiredRemark();
+};
 const pageOf = (so: string) =>
   screen.getAllByTestId('confirm-guide-split-page').find((el) => el.getAttribute('data-so') === so)!;
 
@@ -546,22 +585,25 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
   });
 
   // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15): a line the book cancelled is not a
-  // decision, so the guide's pages (the lines Confirm (N) counts) leave it out; the board's
-  // AutoCount change note names it instead.
-  it('B2: a covered book-cancelled line with no draft is not a guide row; it is the AutoCount note', async () => {
-    const board = mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
-      entry.project_line_id === 'pl-1-2'
-        ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
-        : entry,
+  // decision, so Confirm (N) does not count it; the board's AutoCount change note names it.
+  // FULFIL-SO-REMARK-CHANGES (owner R3, 26 Oct 2026): the popup still shows it, on its order's
+  // page, since every Confirm opens the same popup and the email tells that line.
+  it('B2: a covered book-cancelled line with no draft is the AutoCount note and a row on its page', async () => {
+    const board = withPendingBatch(
+      mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
+        entry.project_line_id === 'pl-1-2'
+          ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+          : entry,
+      ),
     );
     await mountWith(board, ['SO000001']);
     expect(await screen.findByTestId('board-autocount-change-note')).toHaveTextContent(
       '1 old line',
     );
-    // Nothing else is decided, so the button applies the change and the guide has no line page.
+    // Nothing else is decided, so the button applies the change; the popup has its order's page.
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Apply AutoCount change');
     await openConfirmGuide();
-    expect(screen.queryByTestId('split-line-2')).toBeNull();
+    expect(await screen.findByTestId('split-line-2')).toBeInTheDocument();
   });
 
   it('B2: the header count equals the rows shown', async () => {
@@ -1829,13 +1871,14 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
   const remarkInput = (so: string) =>
     within(pageOf(so)).getByTestId('confirm-guide-so-remark') as HTMLInputElement;
 
-  // SO000001: line 1 split-edited + line 3 saved draft are covered, line 2 is not.
+  // SO000001: lines 1 and 3 re-approved (saved drafts, no change), line 2 is not in the press.
+  // FULFIL-SO-REMARK-CHANGES (R2): only a new-only order is prefilled, so these lines are new.
   const base = () =>
-    withDraft(withSplitEdited(boardOf([SO1_L1, SO1_L2, SO1_L3, SO2_L1]), ['pl-1-1']), ['pl-1-3', 'pl-2-1']);
+    withDraft(boardOf([SO1_L1, SO1_L2, SO1_L3, SO2_L1].map(fresh)), ['pl-1-1', 'pl-1-3', 'pl-2-1']);
 
   async function openAt(board: Board) {
     await mountWith(board);
-    await openConfirmGuide();
+    await openGuideRaw();
     await screen.findAllByTestId('confirm-guide-split-page');
   }
 
@@ -1922,5 +1965,141 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
     const [body] = confirmMany.mock.calls[0];
     expect(body.orders.find((o: { pso_id: string }) => o.pso_id === 'pso-so-1').so_remark).toBe('Mockup');
     expect(body.orders.find((o: { pso_id: string }) => o.pso_id === 'pso-so-2').so_remark).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R1/R2): the Remark is REQUIRED on an SO whose
+// press carries a change, and starts EMPTY there; a new-only SO keeps today's optional,
+// prefilled Remark.
+// ---------------------------------------------------------------------------
+
+describe('FULFIL-SO-REMARK-CHANGES: a change SO needs its Remark keyed in', () => {
+  function withRemarkType(board: Board, types: Record<string, string | null>) {
+    return {
+      ...board,
+      orders: board.orders.map((o) =>
+        o.sales_order_id in types ? { ...o, remark_type: types[o.sales_order_id] } : o,
+      ),
+    } as unknown as Board;
+  }
+  const remarkInput = (so: string) =>
+    within(pageOf(so)).getByTestId('confirm-guide-so-remark') as HTMLInputElement;
+  const next = () => screen.getByTestId('confirm-guide-next') as HTMLButtonElement;
+
+  // SO000001: line 1 split-edited (a change). SO000002: line 1 a new line's first decision.
+  const board = () =>
+    withRemarkType(
+      withDraft(withSplitEdited(boardOf([SO1_L1, SO1_L2, fresh(SO2_L1)]), ['pl-1-1']), ['pl-2-1']),
+      { 'so-1': 'Sponsorship', 'so-2': 'Purchase Request' },
+    );
+
+  async function open() {
+    await mountWith(board());
+    await openGuideRaw();
+    await screen.findAllByTestId('confirm-guide-split-page');
+  }
+
+  it('R2: a change SO starts with an EMPTY Remark, never the Sponsorship prefill', async () => {
+    await open();
+    expect(remarkInput('SO000001')).toHaveValue('');
+  });
+
+  it('R1: a change SO marks its Remark required and holds Next until it is keyed in', async () => {
+    await open();
+    expect(remarkInput('SO000001')).toBeRequired();
+    await waitFor(() => expect(next()).toBeDisabled());
+    fireEvent.change(remarkInput('SO000001'), { target: { value: '   ' } });
+    expect(next()).toBeDisabled();
+    fireEvent.change(remarkInput('SO000001'), { target: { value: 'Site asked to split' } });
+    await waitFor(() => expect(next()).toBeEnabled());
+  });
+
+  it('R1/R2: a new-only SO keeps its prefill and stays optional', async () => {
+    await open();
+    fireEvent.change(remarkInput('SO000001'), { target: { value: 'Site asked to split' } });
+    await waitFor(() => expect(next()).toBeEnabled());
+    click('confirm-guide-next');
+    expect(remarkInput('SO000002')).toHaveValue('Purchase Request');
+    expect(remarkInput('SO000002')).not.toBeRequired();
+    fireEvent.click(within(pageOf('SO000002')).getByRole('button', { name: 'Clear remark' }));
+    expect(next()).toBeEnabled();
+  });
+
+  it('R1: the keyed-in change Remark is what Confirm posts for that SO', async () => {
+    await open();
+    fireEvent.change(remarkInput('SO000001'), { target: { value: 'Site asked to split' } });
+    await waitFor(() => expect(next()).toBeEnabled());
+    click('confirm-guide-next');
+    await walkConfirmGuideFromHere();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    const byPso = Object.fromEntries(
+      body.orders.map((o: { pso_id: string; so_remark?: string }) => [o.pso_id, o.so_remark]),
+    );
+    expect(byPso).toEqual({ 'pso-so-1': 'Site asked to split', 'pso-so-2': 'Purchase Request' });
+  });
+});
+
+/** Steps the open guide to its Confirm step from wherever it is and presses Confirm. */
+async function walkConfirmGuideFromHere() {
+  for (let i = 0; i < 12; i += 1) {
+    const confirm = screen.queryByTestId('confirm-guide-confirm');
+    if (confirm) {
+      await waitFor(() => expect(confirm).toBeEnabled());
+      fireEvent.click(confirm);
+      return;
+    }
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('confirm-guide-next'));
+  }
+  throw new Error('the guide never reached its Confirm step');
+}
+
+// ---------------------------------------------------------------------------
+// FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R3): every Confirm opens the same popup with its
+// order pages. A press that only applies an AutoCount change gets its order's page (the lines it
+// retires), a change, so its Remark is required.
+// ---------------------------------------------------------------------------
+
+describe('FULFIL-SO-REMARK-CHANGES: an AutoCount-change-only press gets its page and Remark', () => {
+  // SO000001's line 2 was cancelled in the book and nothing is decided: the press applies the
+  // AutoCount change only.
+  const changeOnly = () =>
+    withPendingBatch(
+      mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
+        entry.project_line_id === 'pl-1-2'
+          ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+          : entry,
+      ),
+    );
+
+  it('R3: the popup opens on SO000001 with the retired line and an empty, required Remark', async () => {
+    await mountWith(changeOnly(), ['SO000001']);
+    await openGuideRaw();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    expect(page).toHaveAttribute('data-so', 'SO000001');
+    expect(await within(page).findByTestId('split-line-2')).toBeInTheDocument();
+    const remark = within(page).getByTestId('confirm-guide-so-remark') as HTMLInputElement;
+    expect(remark).toHaveValue('');
+    expect(remark).toBeRequired();
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeDisabled());
+  });
+  it('R5: a mixed order lists its decided lines AND the retired ones, as its email does', async () => {
+    const mixed = withPendingBatch(
+      mapContributions(
+        withDraft(boardOf([fresh(SO1_L1), SO1_L2]), ['pl-1-1']),
+        (entry) =>
+          entry.project_line_id === 'pl-1-2'
+            ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+            : entry,
+      ),
+    );
+    await mountWith(mixed, ['SO000001']);
+    await openGuideRaw();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    expect(await within(page).findByTestId('split-line-1')).toBeInTheDocument();
+    expect(within(page).getByTestId('split-line-2')).toBeInTheDocument();
+    expect(within(page).getByTestId('confirm-guide-so-remark')).toBeRequired();
   });
 });

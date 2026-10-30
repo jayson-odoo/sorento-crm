@@ -82,7 +82,9 @@ import {
   excludedFromPress,
   splitEditsToConfirm,
   contributionMatchesSearch,
+  autocountChangeLinesByOrder,
   confirmLinesByOrder,
+  isChangeLine,
   remarkFor,
   autocountBoardNote,
   autocountChangeNotes,
@@ -2244,9 +2246,22 @@ export function FulfilmentBoardPanel({
       pendingBatchSalesOrderIds,
       { unadoptedSalesOrderIds, batchNamedKeys },
     );
+    // FULFIL-SO-REMARK-CHANGES (R3): an order whose press only applies an AutoCount change gets
+    // its page too (its retired lines), so every Confirm asks for the change's Remark.
+    // A mixed order lists both, as its email does (R5).
+    const retired = autocountChangeLinesByOrder(
+      allContributions,
+      draftWithoutPreMark,
+      pendingBatchSalesOrderIds,
+    );
     return (board.data?.orders ?? []).flatMap((order) => {
-      const lines = covered.get(order.sales_order_id);
-      if (!lines) return [];
+      const decided = covered.get(order.sales_order_id) ?? [];
+      const decidedKeys = new Set(decided.map((line) => line.key));
+      const lines = [
+        ...decided,
+        ...(retired.get(order.sales_order_id) ?? []).filter((line) => !decidedKeys.has(line.key)),
+      ];
+      if (lines.length === 0) return [];
       return [
         {
           psoId: order.project_sales_order_id ?? guideAdopted.get(order.sales_order_id) ?? null,
@@ -2254,6 +2269,17 @@ export function FulfilmentBoardPanel({
           soNumber: order.so_number,
           soDate: order.so_date ?? null,
           remarkType: order.remark_type ?? null,
+          // FULFIL-SO-REMARK-CHANGES (R1): a change on any line makes this order's Remark required.
+          hasChange:
+            retired.has(order.sales_order_id) ||
+            lines.some((line) =>
+              isChangeLine(
+                line,
+                draftWithoutPreMark,
+                pendingBatchSalesOrderIds.has(line.sales_order_id),
+                batchNamedKeys,
+              ),
+            ),
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);

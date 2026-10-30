@@ -117,6 +117,7 @@ from app.models.project_so import (
 from app.models.projects import Project
 from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
+from app.services import so_remark_rules
 from app.services.error_handler import AppException
 from app.utils.multi_value import multi_values
 from app.services.scm import ladder_steps, priority, spo_supply
@@ -1598,7 +1599,36 @@ class ProjectSupplyService:
             "review_state": self._review_state(order),
             "decision": self._serialize_decision(decision or self.latest_decision(str(order.id))),
             "lines": payload_lines,
+            "default_so_remark": self._default_so_remark(lines),
         }
+
+    def _default_so_remark(self, lines: Sequence[ProjectSalesOrderLine]) -> str:
+        """FULFIL-SO-REMARK-CHANGES (R5): the words the email's SO table prints when the
+        planner keys no Remark, so the sheet's Confirm popup prefills what the email says.
+        The same rule the board's Confirm guide reads (`so_remark_rules.default_remark`)."""
+        core_ids = [line.core_sales_order_line_id for line in lines if line.core_sales_order_line_id]
+        if not core_ids:
+            return ""
+        rows = (
+            self.db.query(
+                SalesOrderLine.line_remark,
+                SalesOrderLine.section_heading,
+                SalesOrder.internal_note,
+                SalesOrder.ship_info,
+            )
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(SalesOrderLine.id.in_(core_ids))
+            .all()
+        )
+        if not rows:
+            return ""
+        return so_remark_rules.default_remark(
+            so_remark_rules.remark_type(rows[0].ship_info),
+            [
+                so_remark_rules.is_mockup_line(row.internal_note, row.line_remark, row.section_heading)
+                for row in rows
+            ],
+        )
 
     def outside_reserve_window(
         self, fact: _LineFacts, *, as_of: Optional[date] = None

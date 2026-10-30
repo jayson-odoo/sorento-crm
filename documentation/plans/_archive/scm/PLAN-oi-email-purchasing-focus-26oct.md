@@ -1,6 +1,6 @@
 # PLAN: OI purchasing email + Excel show only what purchasing must act on
 
-Status: Build done, under review (owner answered the card 26 Oct ~13:05). Track: small fix (no
+Status: merged (#1871, 242cb0d554, 27 Oct 2026; owner hand test PASS). Track: small fix (no
 migration, no auth/RBAC, no new ingest).
 
 ## 0. Owner rulings, 26 Oct 2026 ~13:05 MYT

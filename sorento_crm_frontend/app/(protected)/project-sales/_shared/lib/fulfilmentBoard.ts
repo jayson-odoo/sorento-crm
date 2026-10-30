@@ -966,6 +966,32 @@ export function autocountChangeNotes(
   return [...byOrder.values()].map((note) => ({ ...note, itemCodes: [...note.itemCodes].sort() }));
 }
 
+/**
+ * FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R3): per sales order, the lines a pending
+ * AutoCount change retires (role `cancelled`), the same population `autocountChangeNotes` counts.
+ * The Confirm guide gives such an order its page, a change, so the press asks for its Remark too.
+ */
+export function autocountChangeLinesByOrder(
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+  pendingBatchSalesOrderIds: ReadonlySet<string>,
+  excludeKeys?: ReadonlySet<string>,
+): Map<string, BoardContribution[]> {
+  const out = new Map<string, BoardContribution[]>();
+  for (const contribution of contributions) {
+    if (excludedFromPress(contribution, excludeKeys)) continue;
+    // Only what the press retires (`retiresBookCancelled`): a pending change to apply, and not a
+    // line still waiting for its Transfer to Cancel SO.
+    if (!pendingBatchSalesOrderIds.has(contribution.sales_order_id)) continue;
+    if (awaitsCancelSo(contribution)) continue;
+    if (pressRoleFor(contribution, draft[contribution.key], false).kind !== 'cancelled') continue;
+    const lines = out.get(contribution.sales_order_id) ?? [];
+    lines.push(contribution);
+    out.set(contribution.sales_order_id, lines);
+  }
+  return out;
+}
+
 /** Malaysia is UTC+8 all year (no daylight saving). */
 const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -1113,6 +1139,32 @@ export function splitEditsToConfirm(
     seen.add(lineId);
     return true;
   });
+}
+
+/**
+ * FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R1): whether this line of the press is a CHANGE,
+ * which makes its order's Remark required. A withdrawal, a Transfer to Cancel SO, a split edit,
+ * a line the book cancelled, any new decision on a confirmed line (an Amend, or a re-approve,
+ * which posts the engine's current suggestion and so can move what purchasing was told), and a
+ * line posted over an order inquiry purchasing already holds (covered with no decision, e.g. an
+ * imported raised row) are changes. Only a brand-new line's first decision is not, the same
+ * reading as the planning sheet, where re-confirming an order is a change.
+ */
+export function isChangeLine(
+  contribution: BoardContribution,
+  draft: BoardDraft,
+  batchBlocked = false,
+  batchNamedKeys?: ReadonlySet<string>,
+): boolean {
+  const decision = draft[contribution.key];
+  const role = pressRoleFor(contribution, decision, batchBlocked, batchNamedKeys);
+  if (role.kind === 'withdraw' || role.kind === 'cancel_so' || role.kind === 'cancelled') {
+    return true;
+  }
+  if (splitEditApplies(contribution, batchBlocked, batchNamedKeys)) return true;
+  if (role.kind !== 'post') return false;
+  if (contribution.cancelled) return true;
+  return Boolean(contribution.decision) || Boolean(contribution.covered);
 }
 
 /**

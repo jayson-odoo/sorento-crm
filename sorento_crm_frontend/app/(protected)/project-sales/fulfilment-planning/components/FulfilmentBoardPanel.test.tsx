@@ -189,6 +189,21 @@ vi.mock('../../_shared/services/lineSplitService', () => ({
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
+
+/** Steps an already-open guide to its Confirm step and presses Confirm. */
+async function walkConfirmGuideOn() {
+  for (let i = 0; i < 12; i += 1) {
+    const confirm = screen.queryByTestId('confirm-guide-confirm');
+    if (confirm) {
+      await waitFor(() => expect(confirm).toBeEnabled());
+      fireEvent.click(confirm);
+      return;
+    }
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('confirm-guide-next'));
+  }
+  throw new Error('the guide never reached its Confirm step');
+}
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
@@ -5424,7 +5439,9 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     );
   }
 
-  it('COUNT-DISPLAY review: the guide of a change-only press says Apply AutoCount change, never Confirm 0 orders', async () => {
+  it('COUNT-DISPLAY review: the guide of a change-only press names its order, never Confirm 0 orders', async () => {
+    // FULFIL-SO-REMARK-CHANGES (owner R3, 26 Oct 2026): the change-only press opens the same
+    // popup with its order's page (it read "Apply AutoCount change" with no page before).
     getPlanningBoard.mockResolvedValue(changeOnlyBoard());
     renderPanel(['SO403340']);
     await waitFor(() =>
@@ -5432,12 +5449,42 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     );
     await walkToConfirmStep();
     const guide = screen.getByTestId('confirm-guide');
-    expect(within(guide).getByRole('heading')).toHaveTextContent('Apply AutoCount change');
-    expect(screen.getByTestId('confirm-guide-confirm')).toHaveTextContent('Apply AutoCount change');
+    expect(within(guide).getByRole('heading')).toHaveTextContent('Confirm SO403340');
+    expect(screen.getByTestId('confirm-guide-confirm')).toHaveTextContent('Confirm 1 order');
+    // With the order's page, the note reads as the second sentence ("Also applies ...").
     expect(guide).toHaveTextContent(
-      'Applies the AutoCount change from 1 Sep: 1 old line (CB110) is retired',
+      'Also applies the AutoCount change from 1 Sep: 1 old line (CB110) is retired',
     );
     expect(guide).not.toHaveTextContent(/0 orders/);
+  });
+
+  it('FULFIL-SO-REMARK-CHANGES R3: a change-only press posts the Remark keyed in on its page', async () => {
+    getPlanningBoard.mockResolvedValue(changeOnlyBoard());
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 4,
+          inquiry_rows_created: 0,
+          lines_confirmed: [],
+          lines_carried: 0,
+          lines_retired: [{ line_no: 2, item_code: 'CB110' }],
+          planning_change_applied: true,
+        },
+      ],
+    });
+    renderPanel(['SO403340']);
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    const remark = (await screen.findByTestId('confirm-guide-so-remark')) as HTMLInputElement;
+    expect(remark).toHaveValue('');
+    expect(remark).toBeRequired();
+    fireEvent.change(remark, { target: { value: 'Book cancelled CB110' } });
+    await walkConfirmGuideOn();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [{ orders: { so_remark?: string }[] }];
+    expect(body.orders[0].so_remark).toBe('Book cancelled CB110');
   });
 
   it('COUNT-DISPLAY review: the guide of a mixed press also names the AutoCount change', async () => {
