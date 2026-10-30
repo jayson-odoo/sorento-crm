@@ -482,6 +482,47 @@ def test_escalate_holds_an_advisory_lock_on_the_product_from_before_the_task_to_
     assert not any("for update" in s and "from products" in s for s in lowered), "no raw SQL on products"
 
 
+def _advisory_locks_held(db) -> int:
+    return db.execute(
+        text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()")
+    ).scalar()
+
+
+def test_a_hung_holder_cannot_block_an_escalation_forever_it_answers_busy_and_leaks_nothing(
+    db, env, monkeypatch
+):
+    import time
+
+    from app.database import engine as base_engine
+
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    caller = _user(db, "zzt Sales One")
+    db.commit()  # the busy answer rolls the session back, so the seeds must be committed
+    monkeypatch.setattr(_svc(), "LOCK_TIMEOUT_SECONDS", 1)
+    key = {"k": f"product_drawing:{product.id}"}
+    holder = base_engine.connect()
+    holder.execute(text("SELECT pg_advisory_lock(hashtext(:k))"), key)
+    try:
+        started = time.monotonic()
+        with pytest.raises(AppException) as busy:
+            _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller))
+        waited = time.monotonic() - started
+    finally:
+        holder.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), key)
+        holder.close()
+
+    assert busy.value.status_code == 409 and busy.value.code == "drawing_request_busy"
+    assert busy.value.message == "Someone else is escalating this product, try again."
+    assert waited < 8, waited
+    assert trackers_for(db, product.id) == []
+    assert _advisory_locks_held(db) == 0, "the failed wait leaked a lock"
+
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller))
+    assert len(trackers_for(db, product.id)) == 1
+    assert _advisory_locks_held(db) == 0
+
+
 def test_the_advisory_lock_is_released_when_the_escalation_is_refused(db, env):
     seed_drawing_team(db, config=False)
     product, version, line = quoted_product(db, env)

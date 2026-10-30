@@ -22,6 +22,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy import and_, func, or_, text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.models.product import Product, ProductAttachment
@@ -40,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "product_drawing"
 EVENT_ESCALATE = "escalate"
+#: How long an escalation waits for another click on the same product before answering busy.
+LOCK_TIMEOUT_SECONDS = 10
 REQUESTER_EVENT = "requester"
 _VERSION_REASON_PREFIX = "quotation_version:"
 
@@ -221,7 +224,30 @@ def _product_lock(db: Session, product_id: str):
     bind = db.get_bind()
     owned = None if isinstance(bind, Connection) else bind.connect()
     conn = bind if owned is None else owned
-    conn.execute(text("SELECT pg_advisory_lock(hashtext(:k))"), key)
+    # The wait is bounded, so a hung holder cannot block later escalations of the product for
+    # ever. The session's own connection goes through the session so a timeout rolls back to its
+    # savepoint; a connection of the lock's own is rolled back directly.
+    runner = db if owned is None else owned
+    try:
+        runner.execute(
+            text("SELECT set_config('lock_timeout', :v, false)"),
+            {"v": f"{int(LOCK_TIMEOUT_SECONDS * 1000)}ms"},
+        )
+        runner.execute(text("SELECT pg_advisory_lock(hashtext(:k))"), key)
+        runner.execute(text("SELECT set_config('lock_timeout', '0', false)"))
+        if owned is not None:
+            owned.commit()
+    except DBAPIError as exc:
+        runner.rollback()
+        if owned is not None:
+            owned.close()
+        if getattr(exc.orig, "sqlstate", None) == "55P03" or "lock timeout" in str(exc.orig).lower():
+            raise AppException(
+                status_code=409,
+                message="Someone else is escalating this product, try again.",
+                code="drawing_request_busy",
+            )
+        raise
     try:
         yield
     finally:
