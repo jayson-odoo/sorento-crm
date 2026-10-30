@@ -72,7 +72,12 @@ product check.
 - AC-AC-17b A manual decision is stored with kind (confirmed / unconfirmed), by and at, and the row
   status reads "Done · manual" / "To order · manual" with who and when on hover. Confirm writes one
   audit entry per press, like Unconfirm. A row the system marked done never reads "Confirmed by".
-- AC-AC-17c Rows confirmed by a press before this ships are NOT manual: the backfill re-derives them.
+- AC-AC-17c Rows a PERSON confirmed before this ships stay Done (owner, 30 Oct ~10:35: "for SO lines
+  someone confirmed, keep it confirmed for old lines"; reverses the 29 Oct point 7). The backfill
+  records each stored `acknowledged` row with a person's name (`acknowledged_by` set) as a manual
+  Confirm (`ack_override = 'confirmed'`, by / at copied from `acknowledged_by` / `acknowledged_at`), so
+  the automatic rule never reopens it; a CS amendment or a reject clears it as for any manual Confirm.
+  Rows the system marks done carry no name, so a re-run never freezes them.
 - AC-AC-18 Row labels: "To confirm" reads "To order", "Confirmed" reads "Done" (owner may still pick
   "Confirmed"); the Lines list quick chip and Status filter use the new words.
 - AC-AC-19 Reject stays, with its reason and its email, unchanged.
@@ -89,7 +94,7 @@ product check.
 
 ## Data
 
-- AC-AC-23 A one-time data migration sets every live, not-rejected row to the state AC-AC-1..10c
-  give it (done -> `acknowledged`; not done and `acknowledged` -> `awaiting`; `awaiting`/`changed`
-  not done unchanged). Checked on a dev copy before the hand test; the counts match the card.
+- AC-AC-23 A one-time data migration: every live `awaiting` / `changed` row the rule marks done becomes
+  `acknowledged` (by NULL); every person-confirmed `acknowledged` row gets the manual Confirm of
+  AC-AC-17c; no row moves from Done to To order. Checked on a dev copy before the hand test.
 - AC-AC-24 The migration is idempotent: a second run changes nothing.
