@@ -40,11 +40,12 @@ product check.
   any PO chips. The reserve is NOT a document link (`links_for_rows` keeps leaving reserve links out,
   as on main, so no quantity is counted twice); rows carry `reserve_label` + `reserved_qty` instead.
 - AC-AC-10d Rows carry `open_qty` = qty minus live cover minus bundled qty; "N left" reads it.
-- AC-AC-10e A live BUY row (ORDER / ORDER_BACK / RESERVE_AND_ORDER, not used) on a CANCELLED SO
-  line with no live link is done (nothing to order); with a live link it is not done until a manual
-  Confirm, even if it was `actioned`, and no later automatic write flips it to done. The flag and
-  every later write decide this in one place (lead ruling (c), ask open with the owner, 30 Oct).
-  Used and information-only rows keep their own rule (AC-AC-8).
+- AC-AC-10e Every live row on a CANCELLED SO line is done, with or without a PO / SPO link, and
+  purchasing never has to act on it (owner, 30 Oct ~10:00: "OI rows on cancelled SO shouldn't need
+  purchasing to confirm, it should just be done, I don't want purchasing intervention"; replaces lead
+  ruling (c) and, for this case, the 20 Sep "purchasing must act" rule). The cancel does not stamp
+  `changed`, queues no purchasing email or notice, and the row never counts in To order. A manual
+  Unconfirm still overrides like on any row.
 - AC-AC-10c A row the system marks done carries `acknowledged_at` = the moment it became done and
   `acknowledged_by` = NULL (no person pressed anything).
 
