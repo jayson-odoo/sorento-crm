@@ -184,6 +184,7 @@ class ProductBase(BaseModel):
     warranty_months: Optional[int] = None
     has_serial_tracking: bool = False
     has_batch_tracking: bool = False
+    show_so_line_description: bool = False
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
     # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X and Y for
@@ -251,6 +252,7 @@ class ProductUpdate(BaseModel):
     warranty_months: Optional[int] = None
     has_serial_tracking: Optional[bool] = None
     has_batch_tracking: Optional[bool] = None
+    show_so_line_description: Optional[bool] = None
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
     chatbot_max_qty: Optional[int] = Field(None, ge=0)

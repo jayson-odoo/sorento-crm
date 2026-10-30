@@ -111,12 +111,20 @@ _USER = {"id": str(uuid.uuid4()), "email": "curator@example.com"}
 
 
 @pytest.fixture()
-def client(db):
+def client(db, monkeypatch):
     from app.main import app
     from app.database import get_db
     from app.dependencies import get_current_user, get_current_user_or_api_key
     from app.services.company_scope_resolver import apply_company_scope
+    from app.services.user_service import UserPermissionService
 
+    # The curation routes require `master_data.products.edit`; who may call them
+    # is pinned in tests/test_product_write_gates.py, this file pins what they do.
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "master_data.products.edit",
+    )
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: _USER
     app.dependency_overrides[get_current_user_or_api_key] = lambda: _USER

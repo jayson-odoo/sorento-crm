@@ -10403,6 +10403,18 @@ class PurchaseRequestService:
         runs the shared ``_apply_approval_decision``. Guards that the request is
         still awaiting a decision (approval_status == 'pending')."""
         header = self.get_request(request_id)
+        self.assert_decidable(header)
+        return self._apply_approval_decision(
+            header,
+            action,
+            approved_by=approved_by,
+            approval_comments=approval_comments,
+            actor_user_id=actor_user_id,
+        )
+
+    def assert_decidable(self, header) -> None:
+        """The in-system decision's premise: not voided, and still awaiting a decision
+        (approval_status == 'pending'). The agent's proposal asks the same question."""
         self._refuse_if_voided(header, "approved or rejected")
         appr = (getattr(header, "approval_status", None) or "").strip().lower()
         if appr in ("approved", "rejected"):
@@ -10411,13 +10423,20 @@ class PurchaseRequestService:
             raise handle_conflict(
                 "This request is not pending approval. Send it for approval first."
             )
-        return self._apply_approval_decision(
-            header,
-            action,
-            approved_by=approved_by,
-            approval_comments=approval_comments,
-            actor_user_id=actor_user_id,
-        )
+
+    @staticmethod
+    def decision_comments(action: str, approval_comments: Optional[str]) -> Optional[str]:
+        """The comments a decision stores, or the refusal: a rejection needs a reason."""
+        from app.services.error_handler import handle_validation_error
+
+        if action not in ("approved", "rejected"):
+            raise handle_conflict("action must be 'approved' or 'rejected'.")
+        if action == "rejected":
+            rejection_notes = (approval_comments or "").strip()
+            if not rejection_notes:
+                raise handle_validation_error("Rejection reason is required.")
+            return rejection_notes
+        return approval_comments
 
     def submit_approval(
         self,
@@ -10472,17 +10491,8 @@ class PurchaseRequestService:
         token flow (``submit_approval``) and the authenticated in-system Approve/
         Reject buttons so both behave identically. Does NOT touch approval tokens.
         """
-        from app.services.error_handler import handle_validation_error
-
-        if action not in ("approved", "rejected"):
-            raise handle_conflict("action must be 'approved' or 'rejected'.")
+        approval_comments = self.decision_comments(action, approval_comments)
         self._refuse_if_voided(header, "approved or rejected")
-
-        if action == "rejected":
-            rejection_notes = (approval_comments or "").strip()
-            if not rejection_notes:
-                raise handle_validation_error("Rejection reason is required.")
-            approval_comments = rejection_notes
 
         now = datetime.now(timezone.utc)
         header.approval_status = action

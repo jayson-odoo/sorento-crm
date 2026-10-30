@@ -80,6 +80,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const { data: product, isLoading } = useProduct(productId);
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
   const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
+  const canEditProduct = useHasPermission('master_data.products.edit');
 
   // Tab badge counts - same hooks the tab content components use, so React
   // Query dedupes the request when the user opens the tab.
@@ -181,16 +182,18 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           pendingAction={pending}
           gearLabel="Product options"
           primary={
-            <Button
-              onClick={() =>
-                router.push(
-                  `${navigationBasePath}/${productId}/edit${navigationQueryString ? `?${navigationQueryString}` : ''}`,
-                )
-              }
-            >
-              <Edit className="size-4" />
-              Edit
-            </Button>
+            canEditProduct ? (
+              <Button
+                onClick={() =>
+                  router.push(
+                    `${navigationBasePath}/${productId}/edit${navigationQueryString ? `?${navigationQueryString}` : ''}`,
+                  )
+                }
+              >
+                <Edit className="size-4" />
+                Edit
+              </Button>
+            ) : undefined
           }
         />
       </div>
@@ -560,6 +563,12 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                         variant={product.has_batch_tracking ? 'success' : 'secondary'}
                       >
                         Batch Tracking: {product.has_batch_tracking ? 'Yes' : 'No'}
+                      </Badge>
+                      <Badge
+                        variant={product.show_so_line_description ? 'success' : 'secondary'}
+                      >
+                        SO line description in OI email:{' '}
+                        {product.show_so_line_description ? 'Yes' : 'No'}
                       </Badge>
                       <Badge
                         variant={product.is_discontinued ? 'destructive' : 'secondary'}

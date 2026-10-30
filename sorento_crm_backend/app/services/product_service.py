@@ -1435,19 +1435,32 @@ class ProductService:
         return {"message": f"Updated {len(rows)} product(s)", "updated_count": len(rows)}
 
     def bulk_delete_products(self, product_ids: List[str]):
-        """Delete multiple products by ID."""
+        """Delete multiple products by ID, all or nothing.
+
+        Row by row through the ORM read, never `query(...).delete()`: the company scope
+        filter covers SELECTs only, so a bulk DELETE reached every company's rows by id.
+        The read is scoped, so an id from another company is not found and not counted
+        (the `bulk_update_products` rule), and each row passes the same refusal guards
+        as a single delete before anything is deleted.
+        """
         if not product_ids:
             return {"message": "No products to delete", "deleted_count": 0}
+        rows = self.db.query(Product).filter(Product.id.in_(product_ids)).all()
+        # TODO(#2020): add the "refuse delete while a quotation uses it" guard here too
+        # once that lane merges, if it is not already inside one of these.
+        for product in rows:
+            self._reject_if_companion_rule_dependency(product.id)
+            self._reject_if_new_product_application_link(product.id)
         # Capture children of all deleted rows (excluding the deleted set itself)
         # so survivors re-anchor to their next existing ancestor.
         ex_children: List[str] = []
-        for pid in product_ids:
-            ex_children.extend(self._variant_child_ids(pid))
-        deleted_set = set(product_ids)
-        deleted = self.db.query(Product).filter(Product.id.in_(product_ids)).delete(
-            synchronize_session=False
-        )
+        for product in rows:
+            ex_children.extend(self._variant_child_ids(product.id))
+        deleted_set = {product.id for product in rows}
+        for product in rows:
+            self.db.delete(product)
         self.db.commit()
+        deleted = len(rows)
         for child_id in ex_children:
             if child_id in deleted_set:
                 continue
@@ -3352,6 +3365,7 @@ class ProductAttachmentService:
             self._apply_brochure_choice(existing, chosen)
             self.db.commit()
             self.db.refresh(existing)
+            self._notify_if_drawing(existing)
             row = self.db.query(ProductAttachment).options(
                 joinedload(ProductAttachment.product),
                 joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
@@ -3376,12 +3390,33 @@ class ProductAttachmentService:
         self._apply_brochure_choice(product_attachment, chosen)
         self.db.commit()
         self.db.refresh(product_attachment)
+        self._notify_if_drawing(product_attachment)
 
         return self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         ).filter(ProductAttachment.id == product_attachment.id).first()
     
+    def _notify_if_drawing(self, link) -> None:
+        """Tell the assignee of an open drawing or photo request that a matching file was linked (best-effort).
+
+        Create path only: a later edit of an attachment's type does not come through here.
+        """
+        try:
+            from app.services import product_drawing_request_service as drawing_requests
+
+            kind = drawing_requests.attachment_kind(self.db, link.attachment_id)
+            if kind == "drawing":
+                drawing_requests.notify_drawing_linked(self.db, link.product_id)
+            elif kind == "photo":
+                drawing_requests.notify_photo_linked(self.db, link.product_id)
+        except Exception:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            logger.warning("drawing request notice after a product attachment link failed", exc_info=True)
+
     def _apply_brochure_choice(self, link, chosen: Optional[bool]) -> None:
         """Set or clear the brochure image flag through the one service that owns it.
 

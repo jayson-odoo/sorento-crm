@@ -72,6 +72,18 @@ class SampleRequest(Base, CompanyScopedMixin):
     )
     #: A typed title for a project that is not registered (the soft transition, card rule 2).
     project_title = Column(String(255), nullable=True)
+    #: The quotation the lines were pre-filled from (SAMPLE-FROM-QUOTE, owner Q5 a): the
+    #: letterhead, and the revision when it had been issued (NULL for a never-issued one).
+    quotation_document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quotation_issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_issues.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     customer_id = Column(
         UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
     )

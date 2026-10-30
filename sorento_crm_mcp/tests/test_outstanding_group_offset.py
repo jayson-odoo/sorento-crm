@@ -140,7 +140,8 @@ def test_catalog_exposes_and_forwards_group_offset():
 
     async def call():
         client = _RecordingClient()
-        await _compile_tool(spec)(_FakeCtx(client), group_offset=20)
+        # SEC-MCP-AUTH: a company-scoped tool refuses a call without the calling contact.
+        await _compile_tool(spec)(_FakeCtx(client), contact_id="900000008", space_id="364817", group_offset=20)
         return client.calls
 
     calls = asyncio.run(call())

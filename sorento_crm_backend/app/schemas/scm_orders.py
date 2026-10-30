@@ -164,6 +164,8 @@ class SalesOrderLine(BaseModel):
     source: str = "manual"
     sku: str
     product_name: str
+    #: SO-LINE-DESC: AutoCount's line description; `None` when none was sent.
+    description: Optional[str] = None
     qty_ordered: float
     #: What really went out: AutoCount's TransferedQty minus `qty_cancelled` (AC-CANCEL-CRM).
     qty_delivered: float
