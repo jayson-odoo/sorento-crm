@@ -26,8 +26,13 @@ Owner answered Q1-Q5 on 30 Oct ~21:15; Q1 escalation routing evidence filed as a
 - Review round 1 (30 Oct): NOT READY, findings R1-R7 + nits in the UAC file. Next round: tester red
   tests for R1, R2, R3, R4, R5, R6, R7 and AC-7a..e, then coder (escalation slice on Opus: tangled
   routing state), then reviewer + security-reviewer again.
-- Batch 2: AC-5 dealer promotion cost, AC-6 code + size (parser prompt via md5 pin, owner publishes,
-  eval gate).
+- R1 split (crew answer, 30 Oct): batch 1 ships the R1 code side only (`lanes/business/fetch.py`
+  `PORTAL_LINK_COPY` + the `portal_submission_type` filter accept `price_tag_request`). The
+  portal-form addendum (`alembic/data/chatbot_semantic_parser.portal-form.addendum.txt`, md5
+  b755bc4e today, four forms) gains the fifth form in batch 2. Until that version is published, a
+  price tag link ask gets the honest "could not find" text, never busy / problem understanding.
+- Batch 2: AC-5 dealer promotion cost, AC-6 code + size, AC-7f named team, R1 portal-form addendum:
+  ONE parser version, ONE eval gate, ONE md5 pin; owner publishes.
 - Outside this repo: C7, the n8n `sub-error-logger` text "Sorry, I couldn't process that just now"
   lives in n8n (never touched from a lane); its fix is an n8n promote by crew / owner. CRM side: the
   turn answers before n8n's ~60 s give-up (UNVERIFIED number, n8n config not in the repo).
