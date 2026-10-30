@@ -84,3 +84,11 @@ owner approval as destructive). Rec (a).
 Only the free-text path goes: no description-only "Add a line"; a line without a product shows the red error and
 blocks Save; the picker is no longer clearable on a saved line (clearing = remove the line). No new screen, so no
 mock (brief: mock only if the screen changes beyond removing the free-text path).
+
+## Answers (owner via crew, 30 Oct ~22:05)
+
+"You don't need to see prod, prod is not live yet, so won't have product with free text."
+- Q1: no legacy handling; one save rule only (no read-only / red-row logic unless it falls out for free).
+- Q3: yes, drop "Not a catalogue product", keep "Non-standard".
+- Q5: (a) API + UI now.
+- Q2, Q4: being explained to the owner; built as separate small commits after his answer, not blocking the rest.
