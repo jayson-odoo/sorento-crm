@@ -415,11 +415,25 @@ describe('why Sign is off, said once', () => {
       ]),
     });
 
-    const sign = await screen.findByRole('button', { name: 'Sign and accept' });
-    expect(isOff(sign)).toBe(true);
+    // Give the pad a signature first (the Type tab), so the ONLY thing left that can keep Sign
+    // off is the open request: the name comes from `attn_name` and the tick is hidden.
+    await screen.findByRole('button', { name: 'Sign and accept' });
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Type' }), { button: 0 });
+
+    expect(isOff(screen.getByRole('button', { name: 'Sign and accept' }))).toBe(true);
     expect(screen.getByText(OPEN_SENTENCE)).toBeInTheDocument();
     expect(screen.queryByText(TICK_HINT)).toBeNull();
     expect(screen.queryByRole('checkbox')).toBeNull();
+  });
+
+  it('control: the same steps with no open request leave Sign enabled', async () => {
+    await open({ terms: '<p>CLAUSE A</p>' });
+    await screen.findByRole('button', { name: 'Sign and accept' });
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Type' }), { button: 0 });
+
+    expect(isOff(screen.getByRole('button', { name: 'Sign and accept' }))).toBe(false);
+    expect(screen.queryByText(OPEN_SENTENCE)).toBeNull();
   });
 
   it('with no open request and the terms unticked, only the terms reason shows', async () => {
