@@ -468,10 +468,9 @@ def _cancel_via_so_edit(db, so) -> None:
 
 
 @pytest.mark.parametrize("row_state", [INQUIRY_RAISED, INQUIRY_PLACED, INQUIRY_ACTIONED])
-def test_so_edit_cancel_flags_an_acknowledged_row_changed(db, row_state):
+def test_so_edit_cancel_leaves_an_acknowledged_row_done(db, row_state):
     """AC-CL-6 (write site 1): a live row (raised/placed/actioned) that was
-    `acknowledged` becomes `changed` with `changed_at` set the moment its line is
-    cancelled by the sales order edit."""
+    `acknowledged` stays done the moment its line is cancelled by the sales order edit."""
     so, _product, line, row = _so_edit_chain(db, row_state=row_state, row_ack=ACK_ACKNOWLEDGED)
 
     _cancel_via_so_edit(db, so)
@@ -614,9 +613,9 @@ def _create_then_prep_push(env):
 
 
 @pytest.mark.parametrize("row_state", [INQUIRY_RAISED, INQUIRY_PLACED, INQUIRY_ACTIONED])
-def test_autocount_cancel_push_flags_an_acknowledged_row_changed(env, row_state):
-    """AC-CL-6 (write site 2): a cancelled AutoCount push flags a live, acknowledged
-    row `changed` with `changed_at` set, same as the sales order edit."""
+def test_autocount_cancel_push_leaves_an_acknowledged_row_done(env, row_state):
+    """AC-CL-6 (write site 2): a cancelled AutoCount push leaves a live, acknowledged
+    row done, same as the sales order edit."""
     record, header, line, product_id = _create_then_prep_push(env)
     _mirror, row = _mirror_for_ingest_line(
         env, header["id"], line["id"], product_id, row_state=row_state, row_ack=ACK_ACKNOWLEDGED,

@@ -142,7 +142,7 @@ def _companion(w, host_done: bool):
     return host, comp
 
 
-def test_ac_ac_23_the_backfill_derives_every_row_and_17c_writes_no_override(bundle_world):
+def test_ac_ac_23_the_backfill_derives_every_row_and_system_rows_carry_no_override(bundle_world):
     from app.services.oi_auto_confirm_backfill import backfill_auto_confirm
 
     w = bundle_world
@@ -181,7 +181,8 @@ def test_ac_ac_23_the_backfill_derives_every_row_and_17c_writes_no_override(bund
     # the undone companion only if it moved (it stays awaiting, so not counted).
     assert changed == 7, changed
 
-    # AC-AC-17c: a person's earlier press is not a manual decision.
+    # AC-AC-17c: the seed rows carry no name (acknowledged_by NULL), so they are system rows
+    # and are never frozen as a manual Confirm.
     overrides = w.db.execute(
         text(f"SELECT count(*) FROM {_bundles.P}.order_inquiry_rows WHERE ack_override IS NOT NULL")
     ).scalar()
