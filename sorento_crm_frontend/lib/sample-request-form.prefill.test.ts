@@ -40,7 +40,7 @@ const form = (over: Partial<FormState> = {}): FormState => ({
 
 describe('prefillFromQuotation (SFQ-20, SFQ-25)', () => {
   it('turns each quotation product into a row of qty 1 with no remark and records the source', () => {
-    const next = prefillFromQuotation(PREFILL, 'note');
+    const next = prefillFromQuotation(PREFILL);
     expect(next.lines.map((l) => [l.product_id, l.label, l.qty, l.remark])).toEqual([
       ['p-1', 'BASIN-1 - Basin', '1', ''],
       ['p-2', 'TAP-2 - Tap', '1', ''],
@@ -49,18 +49,9 @@ describe('prefillFromQuotation (SFQ-20, SFQ-25)', () => {
     expect(next.quotation_issue_id).toBe('iss-2');
   });
 
-  it("'row' adds each free-text line as an empty-product row carrying its description", () => {
-    const next = prefillFromQuotation(PREFILL, 'row');
-    expect(next.lines.map((l) => [l.product_id, l.remark])).toEqual([
-      ['p-1', ''],
-      ['p-2', ''],
-      ['', 'Bespoke vanity top'],
-      ['', 'Site labour'],
-    ]);
-  });
 
   it('a quotation with nothing to pre-fill leaves one blank row and no source', () => {
-    const next = prefillFromQuotation({ ...PREFILL, lines: [], skipped: [] }, 'note');
+    const next = prefillFromQuotation({ ...PREFILL, lines: [], skipped: [] });
     expect(next.lines).toHaveLength(1);
     expect(next.lines[0].product_id).toBe('');
     expect(next.quotation_document_id).toBe('');
@@ -75,7 +66,7 @@ describe('linesUntouched (SFQ-20, SFQ-22)', () => {
   });
 
   it('pre-filled rows stay untouched until a row is deleted, added, or edited', () => {
-    const filled = form(prefillFromQuotation(PREFILL, 'note'));
+    const filled = form(prefillFromQuotation(PREFILL));
     expect(linesUntouched(filled)).toBe(true);
     expect(linesUntouched({ ...filled, lines: filled.lines.slice(1) })).toBe(false);
     expect(linesUntouched({ ...filled, lines: [...filled.lines, blankLine()] })).toBe(false);
@@ -91,27 +82,22 @@ describe('linesUntouched (SFQ-20, SFQ-22)', () => {
   });
 });
 
-describe('prefillNote (SFQ-25)', () => {
-  it("'note' counts free text and inactive lines", () => {
-    expect(prefillNote(PREFILL, 'note')).toBe(
+describe('prefillNote (SFQ-25, owner Q3)', () => {
+  it('counts free text and inactive lines (owner Q3: free text never becomes a row)', () => {
+    expect(prefillNote(PREFILL)).toBe(
       '3 quotation lines were not added: 2 have no product, 1 product is inactive.',
     );
   });
 
-  it("'row' counts only inactive products, since free text became rows", () => {
-    expect(prefillNote(PREFILL, 'row')).toBe(
-      '1 quotation line was not added: 1 product is inactive.',
-    );
-  });
 
   it('nothing skipped, no note', () => {
-    expect(prefillNote({ ...PREFILL, skipped: [] }, 'note')).toBeNull();
+    expect(prefillNote({ ...PREFILL, skipped: [] })).toBeNull();
   });
 });
 
 describe('the source travels with the request (SFQ-12)', () => {
   it('the payload carries the source, or nulls', () => {
-    const filled = form(prefillFromQuotation(PREFILL, 'note'));
+    const filled = form(prefillFromQuotation(PREFILL));
     expect(payloadFromState(filled)).toMatchObject({
       quotation_document_id: 'doc-1',
       quotation_issue_id: 'iss-2',

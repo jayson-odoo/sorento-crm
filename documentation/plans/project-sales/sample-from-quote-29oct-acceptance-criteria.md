@@ -45,7 +45,14 @@ Q1 a, Q2 a, Q4 a, Q5 a, Q6 a (staff form too), Q7 a (discontinued pre-fills as-i
 - **SFQ-23** Each pre-filled row has the existing Remove line control; Add item still adds a blank row.
 - **SFQ-24** More than one document: a quotation picker above the items, defaulting to the first; picking another
   replaces untouched rows. Once the rows are edited the picker is not offered.
-- **SFQ-25** Q3 switch (`QUOTE_FREE_TEXT_LINES` in `lib/sample-request-form.ts`): `'note'` shows one muted line
-  naming how many quotation lines were not added and why; `'row'` adds each free-text line as an empty-product
-  row carrying the description as its remark. Inactive products are always left out with the note.
+- **SFQ-25** Owner Q3 (30 Oct ~21:15, "free text product shouldn't be allowed"): a quotation line with no catalogue
+  product never becomes a row; it is left out and counted in one muted line under the items, as an inactive
+  product is. No switch.
 - **SFQ-26** The request page shows the source quotation (read-only) when one is recorded.
+- **SFQ-27** Owner hand test 30 Oct ("when I add the product it must source from the product in the quotation"):
+  while a request carries its source quotation, the line product search (staff, portal, My Requests) offers only
+  that quotation's catalogue products (set parts included); an empty search lists them all. A portal or My Requests
+  search names only a quotation of a project the contact may pick (the SFQ-11 rule, plus the own-project rule for
+  a limited user). Without a source the search is the catalogue, unchanged.
+- **SFQ-28** Create / update with a source quotation refuse a line product that is not on it: 422
+  `SAMPLE_REQUEST_PRODUCT_NOT_ON_QUOTATION` (field `lines`).

@@ -96,12 +96,31 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
     @router.get("/sample-request/products")
     def portal_search_products(
         q: str = Query(""),
+        quotation_document_id: Optional[str] = Query(None),
+        quotation_issue_id: Optional[str] = Query(None),
         token: PortalToken = Depends(token_dependency),
         db: Session = Depends(get_db),
     ):
+        """A request with a source quotation offers only that quotation's products (SFQ-27), and
+        only for a quotation of a project the contact may pick."""
+        from app.services.sponsorship_link_service import contact_company_ids
+
         _assert_visible(db, token.contact_id)
-        with company_scope(db, frozenset({_resolve_company(db, token)})):
-            return svc.search_products(db, q)
+        if not (quotation_document_id or quotation_issue_id):
+            with company_scope(db, frozenset({_resolve_company(db, token)})):
+                return svc.search_products(db, q)
+        contact = PortalService(db).get_contact(token)
+        with company_scope(db, frozenset(contact_company_ids(db, contact=contact))):
+            project_id = svc.source_quotation(db, quotation_document_id, quotation_issue_id)
+            svc.assert_portal_project_allowed(db, contact=contact, project_id=project_id)
+            _assert_own_quoted_project(db, token, project_id)
+            return svc.search_products(
+                db,
+                q,
+                product_ids=svc.quotation_product_ids(
+                    db, quotation_document_id, quotation_issue_id
+                ),
+            )
 
 
     @router.get("/sample-request/quotation-prefill")

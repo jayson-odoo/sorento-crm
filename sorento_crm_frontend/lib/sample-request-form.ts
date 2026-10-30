@@ -8,6 +8,7 @@ import {
   type SampleRequestDetail,
   type SampleRequestGoodsFrom,
   type SampleRequestLoanUnit,
+  type SampleRequestProductSource,
   type SampleRequestQuotationPrefill,
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
@@ -140,15 +141,6 @@ export function stateFromDetail(d: SampleRequestDetail): FormState {
   };
 }
 
-/**
- * What happens to a quotation line that names no product (owner Q3, pending 30 Oct):
- * 'note' leaves it out and counts it under the table; 'row' adds an empty-product row carrying
- * its description as the remark, for the person to pick a product or delete.
- */
-export type QuoteFreeTextMode = 'note' | 'row';
-export const QUOTE_FREE_TEXT_LINES: QuoteFreeTextMode = 'note';
-
-const REMARK_MAX = 255;
 
 const signature = (lines: DraftLine[]) =>
   JSON.stringify(lines.map((l) => [l.product_id, l.qty, l.remark]));
@@ -165,7 +157,6 @@ export function linesUntouched(s: FormState): boolean {
 /** The rows and source a new request takes from its project's quotation (SFQ-20, SFQ-25). */
 export function prefillFromQuotation(
   prefill: SampleRequestQuotationPrefill,
-  mode: QuoteFreeTextMode = QUOTE_FREE_TEXT_LINES,
 ): Pick<FormState, 'lines' | 'quotation_document_id' | 'quotation_issue_id' | 'prefill_signature'> {
   const lines: DraftLine[] = prefill.lines.map((l) => ({
     key: nextKey(),
@@ -174,13 +165,6 @@ export function prefillFromQuotation(
     qty: '1',
     remark: '',
   }));
-  if (mode === 'row') {
-    for (const skip of prefill.skipped) {
-      if (skip.reason === 'no_product') {
-        lines.push({ ...blankLine(), remark: skip.description.slice(0, REMARK_MAX) });
-      }
-    }
-  }
   if (lines.length === 0) {
     return {
       lines: [blankLine()],
@@ -197,13 +181,13 @@ export function prefillFromQuotation(
   };
 }
 
-/** One line under the table naming the quotation lines that did not become rows, or null. */
-export function prefillNote(
-  prefill: SampleRequestQuotationPrefill,
-  mode: QuoteFreeTextMode = QUOTE_FREE_TEXT_LINES,
-): string | null {
-  const noProduct =
-    mode === 'note' ? prefill.skipped.filter((s) => s.reason === 'no_product').length : 0;
+/**
+ * One line under the table naming the quotation lines that did not become rows, or null. A line
+ * with no catalogue product never becomes a row (owner Q3, 30 Oct: "free text product shouldn't be
+ * allowed"); neither does an inactive product.
+ */
+export function prefillNote(prefill: SampleRequestQuotationPrefill): string | null {
+  const noProduct = prefill.skipped.filter((s) => s.reason === 'no_product').length;
   const inactive = prefill.skipped.filter((s) => s.reason === 'inactive').length;
   const total = noProduct + inactive;
   if (total === 0) return null;
@@ -286,3 +270,19 @@ export function numberErrors(s: FormState): Record<string, string> {
   return errors;
 }
 
+/** The source quotation a row's product search is narrowed to, or undefined without one (SFQ-27). */
+export function productSource(s: FormState): SampleRequestProductSource | undefined {
+  return s.quotation_document_id
+    ? { quotation_document_id: s.quotation_document_id, quotation_issue_id: s.quotation_issue_id || null }
+    : undefined;
+}
+
+/** The product search query string, with the source quotation when there is one. */
+export function productSearchQuery(q: string, source?: SampleRequestProductSource): string {
+  const usp = new URLSearchParams({ q });
+  if (source) {
+    usp.set('quotation_document_id', source.quotation_document_id);
+    if (source.quotation_issue_id) usp.set('quotation_issue_id', source.quotation_issue_id);
+  }
+  return usp.toString();
+}

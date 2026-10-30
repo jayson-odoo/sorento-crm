@@ -14,10 +14,12 @@ import {
   SampleRequestError,
   type SampleRequestDetail,
   type SampleRequestProductHit,
+  type SampleRequestProductSource,
   type SampleRequestQuotationPrefill,
   type SampleRequestRow,
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
+import { productSearchQuery } from '@/lib/sample-request-form';
 import { portalFetch, type PortalSubmissionSummary } from './portal-client';
 
 const BASE = '/api/v1/public/portal/submissions/sample_request';
@@ -63,9 +65,10 @@ export function makeSampleRequestService(fetcher: typeof portalFetch) {
 
   async function searchSampleRequestProducts(
     q: string,
+    source?: SampleRequestProductSource,
   ): Promise<SampleRequestProductHit[]> {
     const res = await fetcher(
-      `/api/v1/public/portal/sample-request/products?q=${encodeURIComponent(q)}`,
+      `/api/v1/public/portal/sample-request/products?${productSearchQuery(q, source)}`,
     );
     return unwrapNamingField<SampleRequestProductHit[]>(res, 'Failed to search products');
   }

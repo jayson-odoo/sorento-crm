@@ -103,10 +103,19 @@ def _statuses(raw: Optional[list[str]], actor: svc.Actor):
 @router.get("/sample-requests/products")
 def search_products(
     q: str = Query(""),
-    _user: dict = Depends(require_permission(CREATE)),
+    quotation_document_id: Optional[str] = Query(None),
+    quotation_issue_id: Optional[str] = Query(None),
+    user: dict = Depends(require_permission(CREATE)),
     db: Session = Depends(get_db),
 ):
-    return svc.search_products(db, q)
+    """A request with a source quotation offers only that quotation's products (SFQ-27)."""
+    project_id = svc.source_quotation(db, quotation_document_id, quotation_issue_id)
+    if project_id is None:
+        return svc.search_products(db, q)
+    _assert_own_project(db, user, project_id)
+    return svc.search_products(
+        db, q, product_ids=svc.quotation_product_ids(db, quotation_document_id, quotation_issue_id)
+    )
 
 
 @router.get("/projects/{project_id}/sample-requests/quotation-prefill")

@@ -35,6 +35,7 @@ import {
   EMPTY_FORM,
   blankLine,
   payloadFromState,
+  productSource,
   stateFromDetail,
   numberErrors,
   validate,
@@ -121,10 +122,21 @@ export default function SampleRequestForm({
     (next: Partial<FormState>) => setState((prev) => ({ ...prev, ...next })),
     [],
   );
+  // A request from a quotation offers only that quotation's products (SFQ-27).
+  const source = productSource(state);
+  const sourceDoc = source?.quotation_document_id;
+  const sourceIssue = source?.quotation_issue_id;
   const searchProducts = useCallback(
-    (q: string) =>
-      clientService(client, 'sampleRequest', portalSampleRequest).searchSampleRequestProducts(q),
-    [client],
+    (q: string) => {
+      const svc = clientService(client, 'sampleRequest', portalSampleRequest);
+      return sourceDoc
+        ? svc.searchSampleRequestProducts(q, {
+            quotation_document_id: sourceDoc,
+            quotation_issue_id: sourceIssue ?? null,
+          })
+        : svc.searchSampleRequestProducts(q);
+    },
+    [client, sourceDoc, sourceIssue],
   );
   // A NEW request starts from its project's quotation (SAMPLE-FROM-QUOTE); a draft never refills.
   const prefill = useSampleRequestPrefill({

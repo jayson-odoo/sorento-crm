@@ -7,10 +7,12 @@ import {
   type SampleRequestDetail,
   type SampleRequestPage,
   type SampleRequestProductHit,
+  type SampleRequestProductSource,
   type SampleRequestQuotationPrefill,
   type SampleRequestStatus,
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
+import { productSearchQuery } from '@/lib/sample-request-form';
 
 const BASE = '/api/v1/project-sales';
 
@@ -131,8 +133,11 @@ export async function downloadSampleRequestPdf(id: string, requestNo: string): P
   saveBlobAs(await res.blob(), `${requestNo}.pdf`);
 }
 
-export async function searchSampleRequestProducts(q: string): Promise<SampleRequestProductHit[]> {
-  const res = await apiFetch(`${BASE}/sample-requests/products?q=${encodeURIComponent(q)}`);
+export async function searchSampleRequestProducts(
+  q: string,
+  source?: SampleRequestProductSource,
+): Promise<SampleRequestProductHit[]> {
+  const res = await apiFetch(`${BASE}/sample-requests/products?${productSearchQuery(q, source)}`);
   return read<SampleRequestProductHit[]>(res, 'Failed to search products');
 }
 

@@ -119,6 +119,12 @@ export interface SampleRequestRow {
   board_mounting: boolean;
 }
 
+/** The source quotation a product search is narrowed to (SFQ-27). */
+export interface SampleRequestProductSource {
+  quotation_document_id: string;
+  quotation_issue_id: string | null;
+}
+
 /** One quotation document of the project, as the pre-fill picker lists it. */
 export interface SampleRequestQuotationOption {
   id: string;

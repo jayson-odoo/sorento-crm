@@ -368,6 +368,19 @@ def _check_source(db: Session, req: SampleRequest) -> None:
         raise _source_invalid()
 
 
+def _check_on_quotation(db: Session, req: SampleRequest, product_ids: List[str]) -> None:
+    """A request with a source quotation carries only that quotation's products (owner, 30 Oct:
+    "Sample requests should take the product from the quotation")."""
+    allowed = quotation_product_ids(db, req.quotation_document_id, req.quotation_issue_id)
+    if any(pid not in allowed for pid in product_ids):
+        raise AppException(
+            status_code=422,
+            message="Every item must be a product on the project's quotation.",
+            code="SAMPLE_REQUEST_PRODUCT_NOT_ON_QUOTATION",
+            details={"field": "lines"},
+        )
+
+
 # ------------------------------------------------------------------ writes
 
 
@@ -394,6 +407,16 @@ def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
         if field in data:
             setattr(req, field, data[field] or None)
     _check_source(db, req)
+    if req.quotation_document_id and (
+        lines is not None or "quotation_document_id" in data or "quotation_issue_id" in data
+    ):
+        _check_on_quotation(
+            db,
+            req,
+            [str(line["product_id"]) for line in line_dicts]
+            if lines is not None
+            else [str(line.product_id) for line in (req.lines or [])],
+        )
     for field in HEADER_NOT_NULL:
         if data.get(field) is not None:
             setattr(req, field, data[field])
@@ -598,24 +621,32 @@ def _folded(column):
     return func.upper(func.regexp_replace(column, "[^A-Za-z0-9]", "", "g"))
 
 
-def search_products(db: Session, q: str, limit: int = 20) -> List[Dict[str, Any]]:
+def search_products(
+    db: Session, q: str, limit: int = 20, product_ids: Optional[set] = None
+) -> List[Dict[str, Any]]:
     """Active products whose code (dashes, spaces, case ignored) or name matches. The
-    search only LISTS products; a person always picks one (card rule 5)."""
+    search only LISTS products; a person always picks one (card rule 5).
+
+    ``product_ids`` (a request's source quotation, SFQ-27) narrows the search to those products,
+    and an empty search then lists them all so a phone user can pick without typing."""
     text = (q or "").strip()
-    if not text:
+    if not text and product_ids is None:
         return []
-    clauses = [Product.product_name.ilike(f"%{text}%")]
-    folded = "".join(ch for ch in text if ch.isalnum()).upper()
-    if folded:
-        clauses.append(_folded(Product.product_code).like(f"%{folded}%"))
-    rows = (
+    query = (
         db.query(Product, Brand.brand_name)
         .outerjoin(Brand, Brand.id == Product.brand_id)
-        .filter(Product.is_active.is_(True), or_(*clauses))
-        .order_by(Product.product_code)
-        .limit(limit)
-        .all()
+        .filter(Product.is_active.is_(True))
     )
+    if product_ids is not None:
+        query = query.filter(Product.id.in_(list(product_ids) or [None]))
+        limit = max(limit, len(product_ids))
+    if text:
+        clauses = [Product.product_name.ilike(f"%{text}%")]
+        folded = "".join(ch for ch in text if ch.isalnum()).upper()
+        if folded:
+            clauses.append(_folded(Product.product_code).like(f"%{folded}%"))
+        query = query.filter(or_(*clauses))
+    rows = query.order_by(Product.product_code).limit(limit).all()
     return [
         {
             "id": p.id,
@@ -635,6 +666,109 @@ def quotation_label(document_no: str, issue_no: Optional[int]) -> str:
     return f"{document_no} (R{issue_no})" if issue_no else f"{document_no} (not issued)"
 
 
+def _quotation_items(
+    db: Session, document_id: str, issue_id: Optional[str]
+) -> List[tuple]:
+    """Every item of one quotation document, in quotation order, as ``(product id or None, what a
+    person would recognise the line by)``: the versions its ``issue_id`` holds, or each scope's
+    current version when it was never issued; a set line gives its frozen parts."""
+    from app.models.projects import (
+        ProjectQuotation,
+        ProjectQuotationIssueScope,
+        ProjectQuotationLine,
+        ProjectQuotationVersion,
+    )
+
+    if issue_id:
+        version_ids = [
+            v
+            for (v,) in db.query(ProjectQuotationIssueScope.version_id)
+            .join(ProjectQuotation, ProjectQuotation.id == ProjectQuotationIssueScope.quotation_id)
+            .filter(ProjectQuotationIssueScope.issue_id == issue_id)
+            .order_by(ProjectQuotation.sort_order, ProjectQuotation.created_at)
+            .all()
+        ]
+    else:
+        current = (
+            db.query(
+                ProjectQuotationVersion.quotation_id,
+                func.max(ProjectQuotationVersion.version_no).label("no"),
+            )
+            .group_by(ProjectQuotationVersion.quotation_id)
+            .subquery()
+        )
+        version_ids = [
+            v
+            for (v,) in db.query(ProjectQuotationVersion.id)
+            .join(ProjectQuotation, ProjectQuotation.id == ProjectQuotationVersion.quotation_id)
+            .join(
+                current,
+                (current.c.quotation_id == ProjectQuotationVersion.quotation_id)
+                & (current.c.no == ProjectQuotationVersion.version_no),
+            )
+            .filter(ProjectQuotation.document_id == document_id)
+            .order_by(ProjectQuotation.sort_order, ProjectQuotation.created_at)
+            .all()
+        ]
+    if not version_ids:
+        return []
+
+    position = {str(v): i for i, v in enumerate(version_ids)}
+    quote_lines = sorted(
+        db.query(ProjectQuotationLine)
+        .filter(ProjectQuotationLine.version_id.in_(version_ids))
+        .all(),
+        key=lambda l: (position[str(l.version_id)], l.sort_order, l.created_at),
+    )
+    # (product id or None, what a person would recognise the line by)
+    wanted: List[tuple] = []
+    for line in quote_lines:
+        if line.product_id:
+            wanted.append((str(line.product_id), line.product_code_snapshot))
+        elif line.set_parts_snapshot:
+            for part in line.set_parts_snapshot:
+                wanted.append((part.get("product_id"), part.get("product_code")))
+        else:
+            text = line.description_snapshot or line.product_code_snapshot or ""
+            wanted.append((None, " ".join(text.split())))
+    return wanted
+
+
+def quotation_product_ids(db: Session, document_id: str, issue_id: Optional[str]) -> set:
+    """The catalogue products a sample request with this source may carry (SFQ-28)."""
+    return {
+        str(pid) for pid, _ in _quotation_items(db, document_id, issue_id) if pid and _is_uuid(pid)
+    }
+
+
+def source_quotation(
+    db: Session, document_id: Optional[str], issue_id: Optional[str]
+) -> Optional[str]:
+    """The project of a source quotation named by a client (search filter), after checking the
+    issue is that document's; None when no source is named. 422 when it does not hold."""
+    from app.models.projects import ProjectQuotationDocument, ProjectQuotationIssue
+
+    if not document_id and not issue_id:
+        return None
+    if not document_id or not _is_uuid(document_id) or (issue_id and not _is_uuid(issue_id)):
+        raise _source_invalid()
+    project_id = (
+        db.query(ProjectQuotationDocument.project_id)
+        .filter(ProjectQuotationDocument.id == document_id)
+        .scalar()
+    )
+    if project_id is None:
+        raise _source_invalid()
+    if issue_id and (
+        db.query(ProjectQuotationIssue.id)
+        .filter(ProjectQuotationIssue.id == issue_id, ProjectQuotationIssue.document_id == document_id)
+        .first()
+        is None
+    ):
+        raise _source_invalid()
+    return str(project_id)
+
+
 def quotation_prefill(
     db: Session, project_id: Optional[str], document_id: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -646,14 +780,7 @@ def quotation_prefill(
     version. A set line gives its frozen parts. Each product once, in quotation order; a line
     with no product, or an inactive one, is reported in `skipped` instead. No prices.
     """
-    from app.models.projects import (
-        ProjectQuotation,
-        ProjectQuotationDocument,
-        ProjectQuotationIssue,
-        ProjectQuotationIssueScope,
-        ProjectQuotationLine,
-        ProjectQuotationVersion,
-    )
+    from app.models.projects import ProjectQuotationDocument, ProjectQuotationIssue
 
     _check_refs(db, {"project_id": project_id})
     result: Dict[str, Any] = {
@@ -717,58 +844,9 @@ def quotation_prefill(
     result["document_id"] = chosen.id
     result["issue_id"] = issue.id if issue else None
 
-    if issue is not None:
-        version_ids = [
-            v
-            for (v,) in db.query(ProjectQuotationIssueScope.version_id)
-            .join(ProjectQuotation, ProjectQuotation.id == ProjectQuotationIssueScope.quotation_id)
-            .filter(ProjectQuotationIssueScope.issue_id == issue.id)
-            .order_by(ProjectQuotation.sort_order, ProjectQuotation.created_at)
-            .all()
-        ]
-    else:
-        current = (
-            db.query(
-                ProjectQuotationVersion.quotation_id,
-                func.max(ProjectQuotationVersion.version_no).label("no"),
-            )
-            .group_by(ProjectQuotationVersion.quotation_id)
-            .subquery()
-        )
-        version_ids = [
-            v
-            for (v,) in db.query(ProjectQuotationVersion.id)
-            .join(ProjectQuotation, ProjectQuotation.id == ProjectQuotationVersion.quotation_id)
-            .join(
-                current,
-                (current.c.quotation_id == ProjectQuotationVersion.quotation_id)
-                & (current.c.no == ProjectQuotationVersion.version_no),
-            )
-            .filter(ProjectQuotation.document_id == chosen.id)
-            .order_by(ProjectQuotation.sort_order, ProjectQuotation.created_at)
-            .all()
-        ]
-    if not version_ids:
+    wanted = _quotation_items(db, chosen.id, issue.id if issue else None)
+    if not wanted:
         return result
-
-    position = {str(v): i for i, v in enumerate(version_ids)}
-    quote_lines = sorted(
-        db.query(ProjectQuotationLine)
-        .filter(ProjectQuotationLine.version_id.in_(version_ids))
-        .all(),
-        key=lambda l: (position[str(l.version_id)], l.sort_order, l.created_at),
-    )
-    # (product id or None, what a person would recognise the line by)
-    wanted: List[tuple] = []
-    for line in quote_lines:
-        if line.product_id:
-            wanted.append((str(line.product_id), line.product_code_snapshot))
-        elif line.set_parts_snapshot:
-            for part in line.set_parts_snapshot:
-                wanted.append((part.get("product_id"), part.get("product_code")))
-        else:
-            text = line.description_snapshot or line.product_code_snapshot or ""
-            wanted.append((None, " ".join(text.split())))
 
     ids = {pid for pid, _ in wanted if pid and _is_uuid(pid)}
     products = {

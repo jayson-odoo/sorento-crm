@@ -436,6 +436,7 @@ def test_sfq_12_a_never_issued_source_has_no_issue(world):
     project = _fresh_project(w)
     p = make_product(w.db)
     q = _document(w.db, project, w.admin)
+    _line(w.db, q.scopes[0].v1, product=p)
     w.db.commit()
     res = w.api.as_(w.sales).post(
         SR,
@@ -575,8 +576,11 @@ def test_sfq_27_portal_search_is_limited_to_its_own_project_quotation(portal):
     on_quote, elsewhere = make_product(p.db), make_product(p.db)
     q = _document(p.db, p.inside, _owner(p))
     _line(p.db, q.scopes[0].v1, product=on_quote)
-    foreign = _document(p.db, p.outside, _owner(p))
-    _line(p.db, foreign.scopes[0].v1, product=elsewhere)
+    from app.models.base import company_scope
+
+    with company_scope(p.db, frozenset({p.other_company})):
+        foreign = _document(p.db, p.outside, _owner(p))
+        _line(p.db, foreign.scopes[0].v1, product=elsewhere)
     p.db.commit()
 
     url = "/api/v1/public/portal/sample-request/products"
