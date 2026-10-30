@@ -124,7 +124,12 @@ export default function ConversationThreadPane({
   const matchMessageId = contact?.match?.message_id ?? null;
   const matchTerm = matchMessageId ? searchTerm.trim() : '';
   const { jumpToMessage } = thread;
+  // The list's anchor on the match. Released once the reader leaves it (jump
+  // to latest, or a send): while it is set the list never pins to the tail,
+  // so their own reply and new messages would stop following.
+  const [anchorId, setAnchorId] = useState<string | null>(matchMessageId);
   useEffect(() => {
+    setAnchorId(matchMessageId);
     if (matchMessageId) jumpToMessage(matchMessageId);
     // Keyed on the contact too: the same message id never belongs to two
     // contacts, but a re-pick of the same row must not re-jump on every render.
@@ -215,7 +220,10 @@ export default function ConversationThreadPane({
             isLoadingOlder={thread.isLoadingOlder}
             atConversationStart={thread.atConversationStart}
             isDetached={thread.isDetached}
-            onJumpToLatest={thread.jumpToLatest}
+            onJumpToLatest={() => {
+              setAnchorId(null);
+              thread.jumpToLatest();
+            }}
             newerUnseenCount={thread.newerUnseenCount}
             onLoadNewer={thread.loadNewer}
             hasMoreNewer={thread.hasMoreNewer}
@@ -225,7 +233,7 @@ export default function ConversationThreadPane({
             // The drawer's enquiry anchor, reused for the search match: it
             // holds the list off its first pin-to-bottom, which otherwise won
             // the race against the jump on a cold first open (browser pass).
-            highlightMessageId={matchMessageId}
+            highlightMessageId={anchorId}
             highlightLabel="Matches your search"
             focusMessageId={thread.focusMessageId}
             focusNonce={thread.focusNonce}
@@ -312,7 +320,11 @@ export default function ConversationThreadPane({
             closed: windowQuery.data ? !windowQuery.data.window.open : false,
             template: windowQuery.data?.chat_template ?? null,
           }}
-          templateSendAdapter={(input) => templateMutation.mutateAsync(input)}
+          templateSendAdapter={async (input) => {
+            const result = await templateMutation.mutateAsync(input);
+            setAnchorId(null);
+            return result;
+          }}
           snippetsEnabled
           snippetTrackingId={snippetTicketId}
           emojiEnabled
@@ -321,6 +333,7 @@ export default function ConversationThreadPane({
               text: payload.text,
               files: payload.files,
             });
+            setAnchorId(null);
             // AC-N2: a stamped send answered one of the sender's own enquiries
             // and stopped its clock. Said quietly - an unstamped send still
             // reached the contact, so it is information, not a failure.

@@ -67,6 +67,7 @@ interface ChatListStubProps {
   highlightTerm?: string;
   focusMessageId?: string | null;
   highlightMessageId?: string | number | null;
+  onJumpToLatest?: () => void;
 }
 
 vi.mock('@/components/common/RespondChatList', () => ({
@@ -79,6 +80,7 @@ vi.mock('@/components/common/RespondChatList', () => ({
     highlightTerm,
     focusMessageId,
     highlightMessageId,
+    onJumpToLatest,
   }: ChatListStubProps) => (
     <div
       data-testid="chat-list"
@@ -91,6 +93,9 @@ vi.mock('@/components/common/RespondChatList', () => ({
       data-has-jump-to-message={onJumpToMessage ? 'yes' : 'no'}
     >
       {items.length} message(s)
+      <button type="button" data-testid="jump-latest" onClick={() => onJumpToLatest?.()}>
+        latest
+      </button>
     </div>
   ),
 }));
@@ -526,5 +531,24 @@ describe('ConversationThreadPane', () => {
     expect(loadPage).not.toHaveBeenCalledWith(expect.objectContaining({ around: expect.anything() }));
     expect(screen.getByTestId('chat-list')).toHaveAttribute('data-highlight-term', '');
     expect(screen.getByTestId('chat-list')).toHaveAttribute('data-highlight-message-id', '');
+  });
+
+  it('CONVO-SEARCH-MESSAGES: leaving the match (jump to latest, or a send) releases the anchor', async () => {
+    const matched = contact({
+      match: { message_id: 'msg-77', sent_at: null, direction: 'incoming', snippet: 'sofa' },
+    });
+    const { unmount } = render(
+      <ConversationThreadPane contact={matched} searchTerm="sofa" canReply />,
+    );
+    expect(screen.getByTestId('chat-list')).toHaveAttribute('data-highlight-message-id', 'msg-77');
+    fireEvent.click(screen.getByTestId('jump-latest'));
+    expect(screen.getByTestId('chat-list')).toHaveAttribute('data-highlight-message-id', '');
+    unmount();
+
+    render(<ConversationThreadPane contact={matched} searchTerm="sofa" canReply />);
+    fireEvent.click(screen.getByTestId('inbox-composer-send'));
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-list')).toHaveAttribute('data-highlight-message-id', ''),
+    );
   });
 });
