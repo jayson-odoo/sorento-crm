@@ -70,6 +70,7 @@ export interface RespondContact {
   chatbot_allowed?: boolean;
   chatbot_skip_period_questions?: boolean;
   chatbot_files_as_links?: boolean;
+  chatbot_agent_enabled?: boolean;
   /** MODEL-PER-CONTACT: the effective model and where it came from (detail reads only). */
   chatbot_llm?: ChatbotLlm | null;
   /** Identity S3: the user this contact is linked to, if any (list rows). Null

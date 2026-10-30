@@ -145,6 +145,74 @@ class HttpTurnEngine:
         )
 
 
+class AgentTurnEngine:
+    """AGENTIC-P1: one case turn = one console agent turn (`POST /system/chatbot/agent/turn`).
+
+    The route is a staff console route, so it takes a staff session token (`EVAL_AGENT_TOKEN`), not the
+    integration key. The agent only reads, so every outcome is a dry run. `reset_contact` starts a new
+    agent conversation, which is how the agent clears its context."""
+
+    TOOL_FAILURES = ("denied", "invalid", "error", "timeout")
+
+    def __init__(self, base_url: str, api_key: str = "", timeout: float = 120, token: str | None = None, **_: Any):
+        import os
+
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.token = token if token is not None else os.environ.get("EVAL_AGENT_TOKEN", "")
+        self.transport: Any = None
+
+    def _client(self) -> httpx.Client:
+        return httpx.Client(
+            timeout=self.timeout, transport=self.transport, headers={"Authorization": f"Bearer {self.token}"}
+        )
+
+    def reset_contact(self, case: Any) -> None:
+        body = {"contact_respond_id": str(case.contact.get("respond_id", ""))}
+        with self._client() as client:
+            client.post(f"{self.base_url}/api/v1/system/chatbot/agent/conversation/new", json=body)
+
+    def turn(self, case: Any, text: str, state: dict | None, run_id: str) -> Outcome:
+        body = {"contact_respond_id": str(case.contact.get("respond_id", "")), "text": text}
+        started = time.monotonic()
+        try:
+            with self._client() as client:
+                resp = client.post(f"{self.base_url}/api/v1/system/chatbot/agent/turn", json=body)
+        except httpx.TransportError as exc:
+            latency = int((time.monotonic() - started) * 1000)
+            return Outcome(reply_text="", tool_errors=[f"transport: {type(exc).__name__}"], latency_ms=latency)
+        latency_ms = int((time.monotonic() - started) * 1000)
+        if resp.status_code != 200:
+            try:
+                detail = resp.json().get("detail")
+            except ValueError:
+                detail = None
+            reason = detail.get("reason") if isinstance(detail, dict) else None
+            label = f"http {resp.status_code}" + (f" {reason}" if reason else "")
+            return Outcome(reply_text="", tool_errors=[label], latency_ms=latency_ms)
+        data = resp.json()
+        usage = data.get("usage") or {}
+        calls = [c for c in data.get("tool_calls") or [] if isinstance(c, dict)]
+        notes = [f"rounds={data.get('rounds', 0)}"]
+        if data.get("limit_hit"):
+            notes.append(f"limit={data['limit_hit']}")
+        notes += [f"tool {c.get('name')} {c.get('status')}" for c in calls]
+        return Outcome(
+            reply_text=data.get("reply_text") or "",
+            branch_kind=f"agent:{data.get('status')}",
+            dry_run=True,
+            tool_errors=[f"{c.get('name')}: {c.get('status')}" for c in calls if c.get("status") in self.TOOL_FAILURES],
+            lane_notes=notes,
+            tokens={
+                "prompt": int(usage.get("prompt_tokens", 0) or 0),
+                "cached": int(usage.get("cached_tokens", 0) or 0),
+                "output": int(usage.get("completion_tokens", 0) or 0),
+            },
+            latency_ms=latency_ms,
+            raw=data,
+        )
+
+
 def load_engine(spec: str, **kw: Any) -> Engine:
     if spec == "http":
         return HttpTurnEngine(**kw)
