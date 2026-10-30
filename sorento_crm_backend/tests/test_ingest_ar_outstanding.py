@@ -465,7 +465,7 @@ class TestContract:
         res = env.client.get("/api/v1/external/contract")
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.10"
+        assert body["version"] == "2.11"
         assert "ar_outstanding" in body["entities"]
 
 

@@ -43,7 +43,7 @@ from app.models.finance import BillingDocument
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import SPOAllocation, Supplier
-from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, ItemClass, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.services.dependent_probe import is_referenced, referrers_of, relation_name
 from app.services.document_ingest_service import CANCELLED, DOCUMENT_SPECS
@@ -134,6 +134,7 @@ ENTITY_MODELS: dict[str, type] = {
     "products": Product,
     "sales_agents": SalesAgent,
     "brands": Brand,
+    "item_classes": ItemClass,
     **{name: spec.header_model for name, spec in DOCUMENT_SPECS.items()},
 }
 
@@ -151,7 +152,14 @@ MASTER_DEACTIVATION: dict[str, tuple[str, Any]] = {
     "products": ("is_discontinued", True),
     "sales_agents": ("is_active", False),
     "brands": ("is_active", False),
+    "item_classes": ("is_active", False),
 }
+
+# Masters whose deletion only ever deactivates, even with no referrer the catalogue probe sees.
+# An item class can be named in `respond_contacts.brand_class_ids` (JSONB, no FK), so a hard
+# delete would leave a dangling id in a contact's access (ITEM-CLASS-MASTER D5; the Item
+# Classes screen refuses that delete with 409 for the same reason).
+DEACTIVATE_ONLY = {"item_classes"}
 
 
 class DeletionService:
@@ -397,7 +405,9 @@ class DeletionService:
                     source_ref=ref, outcome=DeletionOutcome.NOT_FOUND
                 )
 
-            if not self._has_dependents(entity_type, entity_id):
+            if entity_type not in DEACTIVATE_ONLY and not self._has_dependents(
+                entity_type, entity_id
+            ):
                 try:
                     self._hard_delete(entity_type, entity_id)
                     savepoint.commit()

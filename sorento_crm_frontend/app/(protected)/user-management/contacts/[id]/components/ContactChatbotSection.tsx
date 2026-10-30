@@ -316,6 +316,13 @@ function ChatbotSettingsCard({
             disabled={save.isPending || saveEscalation.isPending || saveAiAllowed.isPending}
             onCheckedChange={(checked) => save.mutate({ ...profile, files_as_links: checked })}
           />
+          <SwitchRow
+            id="contact-chatbot-agent-mode"
+            label="Agent mode"
+            checked={profile.agent_enabled}
+            disabled={save.isPending || saveEscalation.isPending || saveAiAllowed.isPending}
+            onCheckedChange={(checked) => save.mutate({ ...profile, agent_enabled: checked })}
+          />
         </div>
       </CardContent>
     </Card>

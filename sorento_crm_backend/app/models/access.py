@@ -345,6 +345,8 @@ class RespondContact(Base):
     # WhatsApp message per file (today); on = link mode, one text with a short link per file
     # (`chatbot_file_links`). Default OFF: every contact starts in attachment mode (Q4 (a)).
     chatbot_files_as_links = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # AGENTIC-P1: explicit entry to the read-only agent (console Agent mode). Default OFF.
+    chatbot_agent_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)

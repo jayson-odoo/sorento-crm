@@ -5,9 +5,44 @@ predicate text lives here and `EmbeddingReadService.search_current` reuses it.
 """
 from __future__ import annotations
 
+import logging
 import re
 
+from sqlalchemy import text
+
 from app.services.embedding_settings import HOT_FILTERED_SOURCES, RECORD_KEEP_SET
+
+logger = logging.getLogger(__name__)
+
+# `hnsw.iterative_scan` exists only from pgvector 0.8; read the extension version once per process
+# (an RQ work-horse is a fresh fork, so once per job there).
+_ITERATIVE_SCAN_SUPPORTED: bool | None = None
+
+
+def _version_supports_iterative_scan(version) -> bool:
+    try:
+        major, minor = (int(part) for part in str(version).split(".")[:2])
+    except ValueError:
+        return False
+    return (major, minor) >= (0, 8)
+
+
+def set_iterative_scan(db) -> None:
+    """Let a post-filtered HNSW read keep scanning until enough rows survive, on servers that support it.
+
+    On pgvector < 0.8 the SET would raise and abort the transaction, so it is skipped and the read runs
+    without the iterative scan (as it did before LOOKUP-EMBED-CENTRAL)."""
+    global _ITERATIVE_SCAN_SUPPORTED
+    if _ITERATIVE_SCAN_SUPPORTED is None:
+        version = db.execute(text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")).scalar()
+        _ITERATIVE_SCAN_SUPPORTED = _version_supports_iterative_scan(version)
+        if not _ITERATIVE_SCAN_SUPPORTED:
+            logger.warning(
+                "pgvector %s does not support hnsw.iterative_scan (needs >= 0.8); filtered vector reads run without it",
+                version,
+            )
+    if _ITERATIVE_SCAN_SUPPORTED:
+        db.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
 
 
 def _quote(value: str) -> str:
