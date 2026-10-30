@@ -221,10 +221,12 @@ def test_set_stock_gold_file():
     assert any(r["message"] == "stock srtwc8826" for r in rows)
     # Owner, card v4 Q1 (a): every product ask expands a set, so ETA, photo and delivery asks too.
     assert any(r["id"].startswith(p) for r in rows for p in ("ss-eta-",)) and any(r["id"].startswith("ss-photo-") for r in rows)
+    # Owner hand test round 2 (31 Oct): a partial code resolves like a product code.
+    assert {"photo wc8826", "wc8826 eta", "stock wc7405"} <= {r["message"] for r in rows}
     for r in rows:
         if r["id"].startswith(("ss-stem-", "ss-full-")):
             assert r["expect"]["domain_hint"] == "inventory", r["id"]
-        assert r["id"].startswith(("ss-stem-", "ss-full-", "ss-eta-", "ss-photo-", "ss-delivery-")), r["id"]
+        assert r["id"].startswith(("ss-stem-", "ss-full-", "ss-eta-", "ss-photo-", "ss-delivery-", "ss-partial-")), r["id"]
         assert r["expect"]["canonical"] is None, r["id"]
 
 

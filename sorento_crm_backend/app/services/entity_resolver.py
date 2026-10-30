@@ -3255,6 +3255,40 @@ PRE_EXTRACTED_TOKEN_CEILING = 50
 FREE_TEXT_CANDIDATES = 8
 
 
+def _trgm_product_sets(db: Session, norm: str) -> list[ResolvedEntity]:
+    """CHATBOT-SET-STOCK: the product tier's did-you-mean, over set codes (owner, 31 Oct: a set
+    resolves "same as how we resolve product code"). Same fold, threshold, limit and variant
+    ordering as the product probe; ORM, so the company listener scopes it. A set with a part
+    the product probe would not offer (not chat-searchable) is not offered either."""
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    code = _ws_insensitive_lower(ProductSet.set_code)
+    sim = func.similarity(code, norm)
+    is_variant = func.left(code, len(norm)) == norm
+    hidden_part = (
+        db.query(ProductSetMember.id)
+        .join(Product, Product.id == ProductSetMember.product_id)
+        .filter(ProductSetMember.product_set_id == ProductSet.id, ~chat_searchable_products())
+        .correlate(ProductSet)
+        .exists()
+    )
+    with db.begin_nested():
+        rows = (
+            db.query(ProductSet, sim.label("sim"), is_variant.label("is_variant"))
+            .filter(ProductSet.is_active.is_(True), sim >= TRGM_THRESHOLD, code != norm, ~hidden_part)
+            .order_by(is_variant.desc(), sim.desc(), ProductSet.set_code)
+            .limit(TRGM_LIMIT)
+            .all()
+        )
+    score = {r[0].id: (float(r.sim or 0.0), bool(r.is_variant)) for r in rows}
+    out = []
+    for product_set, entity in _product_set_entities(db, [r[0] for r in rows], match_tier="trgm"):
+        entity.similarity, variant = score[product_set.id]
+        entity.display["is_variant"] = variant
+        out.append(entity)
+    return out
+
+
 def _trgm_lookup(
     db: Session,
     phrase: str,
@@ -3342,6 +3376,12 @@ def _trgm_lookup(
                 )
         except Exception:
             logger.exception("trgm product probe failed for phrase=%s", phrase)
+
+    if "product_set" in allowed_entity_types:
+        try:
+            out.extend(_trgm_product_sets(db, norm))
+        except Exception:
+            logger.exception("trgm product set probe failed for phrase=%s", phrase)
 
     if "customer" in allowed_entity_types:
         try:

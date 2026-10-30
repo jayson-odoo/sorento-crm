@@ -10,3 +10,7 @@
 {"id": "ss-eta-02", "message": "bila srtwc7405 sampai?", "expect": {"canonical": null, "domain_hint": "incoming"}}
 {"id": "ss-photo-01", "message": "photo srtwc8826-s", "expect": {"canonical": null, "domain_hint": "product_attachment"}}
 {"id": "ss-delivery-01", "message": "delivery for srtwc8608-rl", "expect": {"canonical": null}}
+{"id": "ss-partial-01", "message": "photo wc8826", "expect": {"canonical": null, "domain_hint": "product_attachment"}}
+{"id": "ss-partial-02", "message": "wc8826 eta", "expect": {"canonical": null, "domain_hint": "incoming"}}
+{"id": "ss-partial-03", "message": "stock wc7405", "expect": {"canonical": null, "domain_hint": "inventory"}}
+{"id": "ss-partial-04", "message": "ada stok wc7405?", "expect": {"canonical": null, "domain_hint": "inventory"}}
