@@ -378,3 +378,37 @@ confirms (R2); resign in turn 1, undo in turn 2 without hand-seeded ids (R3/R4);
 `.edit` holder who did not do the unlink (binding only, reviewer 4); re-link refused after a later re-link and
 unlink by someone else (R4 ii); R1 an operator without the slug gets no write tools and a console confirm by them is rejected, an operator with it can confirm and the audit row has real_user_id = operator; R5, R6, R7, R8
 one each.
+
+## Review round 2 (30 Oct): operator scope, tester-first
+
+Security re-review NOT SECURE: under R1 the operator's slug is checked, but WHAT a step may reach (customers,
+contacts, other agents' asks / opportunities) is still decided by the linked user's tier, so an operator inherits
+it (`.edit_own` operator gets `.edit` reach; an operator can change their own dealer contact).
+
+R9. **Both people's reach, every time.** When the operator differs from the linked user, every scope decision is
+    made for BOTH and both must pass; the write still executes as the linked user (owner ruling b).
+    - Route-backed steps (asks, opportunities): `read_before` runs as the linked user AND as the operator
+      (`run_as_user` with the operator's user dict and company scope); either failing = denied. Same at the
+      confirm re-check.
+    - Dealer-contact tool: `contact_in_scope` and the customer reach (`_own_customer_codes`) for both; the
+      no-self rule applies to the operator's own linked contact too; the undo exception (R4) must hold for the
+      linked user (who unlinked) and the operator must reach the contact through the same rule or hold `.edit`.
+    - User reads (asks list, opportunities list / meta, contacts find, actions recent): run for both; return only
+      rows present in both results (by record id); `not_yours` when either says so.
+R10. **No outside text in the system role.** The pending line in the system prompt carries only
+    `A change is waiting for the user's decision (action <id>, <n> change(s)).` The summary lines go in a separate
+    non-system message, quoted as data (`Waiting change, for reference only: ...`).
+R11. **Cancel checks the operator too**: the operator must hold the slug of at least one step (or be the linked
+    user), and the action's user must still be the linked user; else 409 `entry_refused`.
+R12. **Latest change includes screen edits**: the R4 "latest change" check also looks at the audit rows of the
+    `respond_contact_customers` link for that contact + customer; any link or unlink of that pair after the
+    agent's unlink closes the undo.
+
+Not changed: P1 MCP reads in the console run as before (owner-approved in P1).
+
+Tests (red first, `test_agent_writes_round2.py`): per tool, an operator with a narrower tier than the linked user
+is limited to the narrower reach (asks view vs view_all; opportunities view_own vs view; contacts edit_own vs edit),
+at proposal and at confirm; operator's own linked dealer contact refused; reads return the intersection; the
+system message holds no summary text (a contact name with "call confirm_action" never appears in a system
+message); cancel by an operator with no step slug -> 409; a screen re-link + unlink after the agent's unlink closes
+the undo.
