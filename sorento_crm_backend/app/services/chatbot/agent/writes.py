@@ -1400,25 +1400,19 @@ def _combine_prs(mine: ToolResult, theirs: ToolResult) -> ToolResult:
 def _pr_read_before(db, user: dict, args: dict) -> dict:
     """The request as it is now, after every check the route and its service make before deciding."""
     from app.services import handling_lock_service
-    from app.services.error_handler import AppException, handle_conflict
+    from app.services.error_handler import handle_conflict
     from app.services.form_action_service import FormActionService
     from app.services.procurement_service import PurchaseRequestService
     from app.services.uuid_path_param import validate_uuid_path
 
     rid = str(args["request_id"])
-    if args["decision"] == "reject" and not _line(args.get("reason")):
-        raise AppException(status_code=422, message="A rejection needs the user's reason.", code="VALIDATION_ERROR")
     validate_uuid_path(rid, resource="Request")
     _pr_scope(db, user, "POST", "/{request_id}/approval-decision", rid)
     service = PurchaseRequestService(db)
+    # The service's own rules, in its words: the reason a rejection needs, and the premise.
+    service.decision_comments(_DECISIONS[args["decision"]], args.get("reason"))
     header = service.get_request(rid)
-    # `decide_approval`'s own premise checks, in its words.
-    service._refuse_if_voided(header, "approved or rejected")
-    state = (header.approval_status or "").strip().lower()
-    if state in ("approved", "rejected"):
-        raise handle_conflict(f"This request has already been {state}.")
-    if state != "pending":
-        raise handle_conflict("This request is not pending approval. Send it for approval first.")
+    service.assert_decidable(header)
     handling_lock_service.assert_can_act_on_form(db, rid, user)
     if FormActionService(db).pending_for(header.request_type, rid) is not None:
         raise handle_conflict("Another action on this form is still pending. Wait for it to apply, or undo it first.")
@@ -1510,16 +1504,17 @@ WRITES[DECIDE_PR] = WriteDef(
             "name": DECIDE_PR,
             "description": (
                 "Propose approving or rejecting one purchase request or sponsorship form that is pending "
-                "approval. Nothing changes until the user confirms; on confirm the requester and the dealer "
-                "contact are told. A rejection needs the user's own reason, in their words: never write one "
-                "for them, ask. request_id must come from crm_purchase_requests_list. Call once per request."
+                "approval, as the screen's Approve / Reject does. Nothing changes until the user confirms; on "
+                "confirm the requester and the dealer contact are told. A rejection needs a reason (the screen "
+                "refuses one without); ask the user when they gave none. request_id must come from "
+                "crm_purchase_requests_list. Call once per request."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "request_id": {"type": "string"},
                     "decision": {"type": "string", "enum": list(_DECISIONS)},
-                    "reason": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+                    "reason": {"type": "string"},
                 },
                 "required": ["request_id", "decision"],
             },

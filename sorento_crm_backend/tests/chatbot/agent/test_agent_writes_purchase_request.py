@@ -297,7 +297,7 @@ def test_a_rejection_without_a_reason_is_refused(db, reason):
     res, step = propose(db, w, args)
 
     assert res.status == "invalid" and step is None
-    assert "reason" in res.message.lower()
+    assert res.message == "Rejection reason is required."
 
 
 @pytest.mark.parametrize("state", ["approved", "rejected"])
@@ -476,5 +476,29 @@ def test_the_slug_removed_before_confirm_rejects_the_action(db, sends, monkeypat
     out = confirm(db, w, action)
 
     assert out.status == "rejected"
+    assert row_now(db, pr.id).approval_status == "pending"
+    assert sends == []
+
+
+# ------------------------------------------------------------------ one turn
+
+
+def test_a_turn_lists_then_proposes_an_approval_and_writes_nothing(db, sends):
+    from tests.chatbot.agent.test_agent_writes import PROPOSAL_HEAD, answer_, round_of, run_turn, tc, tool_names
+
+    w = make_world(db)
+    pr = make_request(db, w)
+    script = [
+        round_of(tc(LIST, {}, "l1")),
+        round_of(tc(DECIDE, {"request_id": pr.id, "decision": "approve"}, "d1")),
+        answer_("I have prepared the approval."),
+    ]
+
+    result, provider = run_turn(db, w, script, text_="approve the pending showroom request")
+
+    assert {LIST, DECIDE} <= tool_names(provider)
+    assert result.pending_action is not None
+    assert PROPOSAL_HEAD in result.reply_text
+    assert f"Approve purchase request {pr.request_number}" in result.reply_text
     assert row_now(db, pr.id).approval_status == "pending"
     assert sends == []
