@@ -8593,6 +8593,7 @@ def _run_stages_body(  # noqa: PLR0915
                     [s.domain for s in fetch_plan.fetch],
                     compatible_entities or verdict.get("entities") or [],
                     policy,
+                    label_catalog.resolve(db, item.get("reply_language") or "en", dry_run=dry_run),
                 ),
             )
             _close_turn(

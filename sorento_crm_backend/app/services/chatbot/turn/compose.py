@@ -574,13 +574,18 @@ def _failed_fetch_block(error: str, header: str, shown_label: str, codes: str) -
     return header + "\n" + f"I could not fetch {shown_label} just now, please try again."
 
 
-def fetch_failed_text(domains: list[Any], entities: list[Any], policy: Policy | None) -> str:
+def fetch_failed_text(
+    domains: list[Any], entities: list[Any], policy: Policy | None, localizer: Any = None
+) -> str:
     """CHATBOT-FAIL-TRIAGE AC-1c: a lane that raised after the parser read the message says
-    what could not be fetched and for which subjects, the way an error section does."""
+    what could not be fetched and for which subjects, the way an error section does. The
+    domain label is said in the reply's language (`localizer`), as `compose` says it: the
+    final reply pass translates the sentence around it but keeps a token verbatim."""
+    localizer = localizer or IDENTITY
     labels: list[str] = []
     for domain in domains:
         row = policy.domain(domain) if policy else None
-        label = row.label if row else str(domain).replace("_", " ")
+        label = localizer.sentence(row.label if row else str(domain).replace("_", " "))
         if label not in labels:
             labels.append(label)
     shown = " and ".join(labels) or "this request"

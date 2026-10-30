@@ -58,7 +58,7 @@ PARSER_MAX_TOKENS_RANGE = (1024, 32768)
 # this call): every attempt carries `llm_call.ATTEMPT_TIMEOUT_SECONDS` with the SDK's own
 # retries off, the whole call stops at `llm_call.CALL_DEADLINE_SECONDS`, and a timeout is
 # raised as `llm_call.TimedOut`, a `RateLimited`, so it lands in the `rate_limited` arm
-# below and the dealer reads `RATE_LIMITED_REPLY`.
+# below and the dealer reads `CHATBOT_REPLY_AI_DID_NOT_ANSWER` (CHATBOT-FAIL-TRIAGE AC-1a).
 
 
 class ParserError(RuntimeError):
@@ -83,8 +83,9 @@ class ParserError(RuntimeError):
         # The provider call's wall clock, set by `parse` even when the call never returned
         # (no usage then, so no usage row), for the failed `understood` record.
         self.latency_ms: int | None = None
-        # PR #1247 round 6, ruling 3: every attempt was refused with a 429, so the
-        # dealer is told `llm_call.RATE_LIMITED_REPLY`, not the generic parser error.
+        # PR #1247 round 6, ruling 3: every attempt was refused with a 429. The flag keeps
+        # that reason on the row; the dealer is told `CHATBOT_REPLY_AI_DID_NOT_ANSWER`
+        # (CHATBOT-FAIL-TRIAGE AC-1a), never the busy line or the generic parser error.
         self.rate_limited = rate_limited
 
 
