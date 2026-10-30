@@ -428,6 +428,15 @@ def _reset_global_state():
     except Exception:
         pass
     try:
+        # LOOKUP-WARM-STORM: a failed lookup warm holds off a retry of the same texts for 900 s
+        # (`lookup_lists._gave_up`, a process global); a test whose warm fails on a shared model
+        # would suppress a later test's warm of that model.
+        from app.services.chatbot.head import lookup_lists
+
+        lookup_lists._gave_up.clear()
+    except Exception:
+        pass
+    try:
         # The idempotency middleware caches 2xx responses in Redis for
         # ``idempotency_result_ttl`` seconds, keyed by a hash of (session, method,
         # path, body). Two route tests that POST the SAME body to the SAME endpoint
