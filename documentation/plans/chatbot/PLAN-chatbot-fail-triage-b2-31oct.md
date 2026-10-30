@@ -99,8 +99,18 @@ registry, so trap length needs no naming. Two variants matching: stays a pick be
 
 ## Prompt edits (one version, base = production text, F1)
 
-Candidate D, md5 11c870e6 (production md5 57d7d412 + the four edits below), text kept with crew at
-`crew/state/eval/fail-triage-b2/texts/D.txt`. Assumes Q1 = (a).
+Candidate E, md5 e90461ef (production md5 57d7d412 + the four edits below in their final wording + P5), text kept with crew
+at `crew/state/eval/fail-triage-b2/texts/E.txt`. Assumes Q1 = (a). Hidden result on the earlier D (crew, 113 rows, A x2 vs
+D x2): whole-parse OK (A 91, 90; D 91, 93), but `suggested_team` non-null fell from 102, 101 to 84, 86, a real regression;
+crew ruled not to rely on #2018's fallback. So D is replaced, and the "Known risk" note below is superseded.
+
+- P5 end of the `== ROUTING ==` map: a `domain_hint` from the map always fills both, on every ask; a plain stock, order or
+  product question is a routing signal. `suggested_team` non-null on 17 sensitive TRAIN rows x3: E 51/51, production 31/34.
+  This is above production's rate, a behaviour change: on 23 TRAIN rows where production had no team, E sets one on 9, all
+  with a domain; 0 of 7 null-domain rows.
+- P2 final form uses an arrow example, not a JSON object. The JSON form lost routing (32/51); prose with no example kept it
+  (44/51) but glued fell to 1/5; arrow alone with the other edits lost it again (28/51) until P5. Glued on E: 13/15.
+- Gold on E: 35/36 (miss: glued `SRTKS1248300MM`). E has no full TRAIN arm; hidden is the full whole-parse measure.
 
 - P1 `== LAST PURCHASE COST ==`: the asker's own cost ("my cost", "dealer cost", "costing", any language) is this same ask.
   Dropped once after 8/8 cost rows on one production run, restored when 2 of them flipped on the next text: the reading was
