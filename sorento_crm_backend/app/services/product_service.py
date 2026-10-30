@@ -1473,11 +1473,10 @@ class ProductService:
         if not product_ids:
             return {"message": "No products to delete", "deleted_count": 0}
         rows = self.db.query(Product).filter(Product.id.in_(product_ids)).all()
-        # TODO(#2020): add the "refuse delete while a quotation uses it" guard here too
-        # once that lane merges, if it is not already inside one of these.
         for product in rows:
             self._reject_if_companion_rule_dependency(product.id)
             self._reject_if_new_product_application_link(product.id)
+            self._reject_if_on_quotation(product.id)
         # Capture children of all deleted rows (excluding the deleted set itself)
         # so survivors re-anchor to their next existing ancestor.
         ex_children: List[str] = []
