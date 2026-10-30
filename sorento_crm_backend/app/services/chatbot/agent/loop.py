@@ -862,7 +862,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         messages: list[dict] = [{"role": "system", "content": system}]
         messages.extend(memory.history_messages(db, conv))
         if waiting is not None:
-            messages.append({"role": "user", "content": waiting_reference(waiting)})
+            messages.append({"role": "assistant", "content": waiting_reference(waiting)})
         messages.append({"role": "user", "content": text})
         schemas = tool_schemas(permitted_tools(db, ctx), catalog)
         schemas += [r.schema for r in writes.permitted_user_reads(db, ctx)]

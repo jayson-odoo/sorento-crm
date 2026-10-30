@@ -53,6 +53,8 @@ class UserRead:
     run: Callable[[Any, Any, dict], ToolResult]
     #: (linked user's result, operator's result) -> the result both may see; None = the operator adds nothing.
     combine: Callable[[ToolResult, ToolResult], ToolResult] | None = None
+    #: True = for the linked user themself: not offered, and refused, when another operator is acting.
+    linked_only: bool = False
 
 
 def holds(db, user_id: str, permission: str | tuple[str, ...]) -> bool:
@@ -361,6 +363,7 @@ USER_READS: dict[str, UserRead] = {
             },
         },
         run=_recent_actions,
+        linked_only=True,
     ),
 }
 
@@ -374,7 +377,10 @@ def permitted_writes(db, ctx) -> list[WriteDef]:
 
 
 def permitted_user_reads(db, ctx) -> list[UserRead]:
-    return [r for r in USER_READS.values() if holds_ctx(db, ctx, r.user_permission)]
+    return [
+        r for r in USER_READS.values()
+        if holds_ctx(db, ctx, r.user_permission) and not (r.linked_only and len(people(ctx)) > 1)
+    ]
 
 
 def run_user_read(db, ctx, name: str, args: Any, seen_ids: set[str]) -> ToolResult:
@@ -382,7 +388,7 @@ def run_user_read(db, ctx, name: str, args: Any, seen_ids: set[str]) -> ToolResu
     read = USER_READS.get(name)
     if read is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
-    if not holds_ctx(db, ctx, read.user_permission):
+    if not holds_ctx(db, ctx, read.user_permission) or (read.linked_only and len(people(ctx)) > 1):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not isinstance(args, dict):
         return ToolResult("invalid", message="Arguments must be an object of named values.")
@@ -465,7 +471,7 @@ MAX_LIST = 50
 
 _OPP_KEYS = (
     "title", "customer_id", "customer_code", "prospect_name", "status_id", "stage_label", "outcome",
-    "expected_amount", "expected_close_date", "lost_reason",
+    "expected_amount", "expected_close_date", "lost_reason", "sales_agent_id", "sales_agent_label",
 )
 _OPP_LIST_KEYS = (
     "id", "opportunity_no", "title", "customer_id", "customer_code", "customer_name", "prospect_name",
@@ -482,6 +488,7 @@ _OPP_FIELDS = {
     "expected_amount": {"type": "number"},
     "customer_id": {"type": "string"},
     "prospect_name": {"type": "string", "maxLength": 200},
+    "sales_agent_id": {"type": "string"},
 }
 
 
@@ -492,6 +499,38 @@ def _customer_code(db, customer_id: str) -> str:
     row = db.query(Customer.customer_code).filter(Customer.id == customer_id).first()
     if row is None:
         raise handle_not_found("Customer", customer_id)
+    return row[0]
+
+
+def _assert_own_target(db, user: dict, args: dict) -> None:
+    """The route's own-customer rule (`_assert_still_theirs`, security review H1) for this person, applied
+    before anything is written: a user who sees only their own opportunities may not put one on a
+    customer or an agent that is not theirs. Reuses the route's own-agent logic."""
+    from app.api.v1.sales.opportunities import _own_agent_ids
+    from app.models.order import Customer
+    from app.services.error_handler import AppException
+
+    own = _own_agent_ids(db, user)
+    if own is None:
+        return
+    own = {str(a) for a in own}
+    agent_id = args.get("sales_agent_id")
+    customer_agent = None
+    if args.get("customer_id"):
+        customer_agent = db.query(Customer.sales_agent_id).filter(Customer.id == args["customer_id"]).scalar()
+    if (agent_id and str(agent_id) not in own) or (
+        args.get("customer_id") and str(customer_agent or "") not in own
+    ):
+        raise AppException(status_code=403, message="Pick one of your own customers or sales agents.", code="FORBIDDEN")
+
+
+def _agent_code(db, agent_id: str) -> str:
+    from app.models.sales_agent import SalesAgent
+    from app.services.error_handler import handle_not_found
+
+    row = db.query(SalesAgent.sales_agent).filter(SalesAgent.id == agent_id).first()
+    if row is None:
+        raise handle_not_found("Sales agent", agent_id)
     return row[0]
 
 
@@ -513,6 +552,7 @@ def _opp_create_read_before(db, user: dict, args: dict) -> dict:
     if not args.get("customer_id") and not args.get("prospect_name"):
         raise AppException(status_code=422, message="Give a customer or a prospect name.", code="VALIDATION_ERROR")
     target = _customer_code(db, args["customer_id"]) if args.get("customer_id") else args["prospect_name"]
+    _assert_own_target(db, user, args)
     return {"_show": {"target": target}}
 
 
@@ -539,12 +579,15 @@ def _opp_update_read_before(db, user: dict, args: dict) -> dict:
         raise AppException(status_code=422, message="Give a field to change.", code="VALIDATION_ERROR")
     _body(SalesOpportunityUpdate, fields)
     row = opportunity_service.serialize(db, _load(db, user, str(args["opportunity_id"])))
+    _assert_own_target(db, user, fields)
     before = {k: _plain(row.get(k)) for k in _OPP_KEYS}
     shown: dict = {"title": row.get("title"), "customer": row.get("customer_code") or row.get("prospect_name")}
     if "status_id" in fields:
         shown["new_stage"] = _stage_label(db, fields["status_id"])
     if "customer_id" in fields:
         shown["new_customer"] = _customer_code(db, fields["customer_id"])
+    if "sales_agent_id" in fields:
+        shown["new_agent"] = _agent_code(db, fields["sales_agent_id"])
     return {**before, "_show": shown}
 
 
@@ -558,6 +601,8 @@ def _opp_update_summary(args: dict, before: dict) -> str:
             continue
         if key == "status_id":
             parts.append(f"stage {was(before.get('stage_label'))} -> {before['new_stage']}")
+        elif key == "sales_agent_id":
+            parts.append(f"sales agent {was(before.get('sales_agent_label'))} -> {before['new_agent']}")
         elif key == "customer_id":
             parts.append(f"customer {was(before.get('customer'))} -> {before['new_customer']}")
         else:
