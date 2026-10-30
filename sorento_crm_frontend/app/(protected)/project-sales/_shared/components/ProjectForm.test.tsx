@@ -341,16 +341,30 @@ async function pickParty(label: string | RegExp, text: string, optionName: strin
   fireEvent.click(await screen.findByRole('button', { name: optionName }));
 }
 
+/**
+ * PS-REGISTER-CHECK-FIRST: create mode opens on the Check step; walk it to Details.
+ * Types the title if the field is empty, Checks, waits for the result, presses Next.
+ */
+async function toDetails(text = 'Setia Alam Phase 3B') {
+  const box = screen.getByLabelText(/project title/i) as HTMLTextAreaElement;
+  if (!box.value) fireEvent.change(box, { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+  await screen.findByText('No clash');
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+  await screen.findByRole('button', { name: /Lead, customer and salesperson/ });
+}
+
 async function fillWho() {
   await pickParty('Developer', 'SP', 'SP Setia');
-  await waitFor(() =>
-    expect(within(screen.getByLabelText('Project type')).getByText('Hotel')).toBeInTheDocument(),
-  );
-  fireEvent.change(screen.getByLabelText('Project type'), { target: { value: 'ty2' } });
   fireEvent.change(screen.getByLabelText(/project title/i), {
     target: { value: 'Setia Alam Phase 3B' },
   });
   fireEvent.blur(screen.getByLabelText(/project title/i));
+  await toDetails();
+  await waitFor(() =>
+    expect(within(screen.getByLabelText('Project type')).getByText('Hotel')).toBeInTheDocument(),
+  );
+  fireEvent.change(screen.getByLabelText('Project type'), { target: { value: 'ty2' } });
   // Details opens by itself once the template list for the type has answered.
   await waitFor(() =>
     expect(screen.getByRole('button', { name: /^Details/ })).toHaveAttribute(
@@ -416,8 +430,9 @@ beforeEach(() => {
 });
 
 describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
-  it('create mode opens Who and what and Lead, customer and salesperson, collapses Details', () => {
+  it('create mode opens Who and what and Lead, customer and salesperson, collapses Details', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     expect(screen.getByRole('button', { name: /Who and what/ })).toHaveAttribute(
       'aria-expanded',
       'true',
@@ -451,30 +466,36 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Details/ }));
     expect(screen.queryByLabelText('Location')).toBeNull();
 
+    // The title lives on the Check step now: go back, change it, Check and come forward again.
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     fireEvent.change(screen.getByLabelText(/project title/i), {
       target: { value: 'Setia Alam Phase 3C' },
     });
     fireEvent.blur(screen.getByLabelText(/project title/i));
+    await toDetails();
     expect(screen.queryByLabelText('Location')).toBeNull();
   });
 });
 
 describe('ProjectForm: primary CTA (AC-PF007)', () => {
-  it('renders exactly one submit button', () => {
+  it('renders exactly one submit button', async () => {
     const { container } = renderForm({ mode: 'create' });
+    await toDetails();
     expect(container.querySelectorAll('button[type="submit"]').length).toBe(1);
   });
 
-  it('labels the CTA Register project on create and Save changes on edit', () => {
+  it('labels the CTA Register project on create and Save changes on edit', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeInTheDocument();
 
     renderForm({ mode: 'edit', project: baseProject() });
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
   });
 
-  it('disables submit while the title is empty (AC-PF010)', () => {
+  it('disables submit while the title is empty (AC-PF010)', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeDisabled();
   });
 });
@@ -517,12 +538,13 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
 
   it('Check runs the check exactly once', async () => {
     renderForm({ mode: 'create' });
-    await pickCustomer();
     fireEvent.change(screen.getByLabelText(/project title/i), {
       target: { value: 'Setia Alam Phase 3B' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     await waitFor(() => expect(previewClashes).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole('button', { name: 'Next' }));
+    await pickCustomer();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeEnabled();
   });
 
@@ -544,16 +566,19 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
     renderForm({ mode: 'create' });
     await fillWho();
     await pickCustomer();
+    previewClashes.mockClear(); // fillWho pressed Check; count only the submit guard
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
     expect(previewClashes).toHaveBeenCalledTimes(1);
   });
 
   it('a submit-time blocking match stops the register call', async () => {
-    previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
     renderForm({ mode: 'create' });
     await fillWho();
     await pickCustomer();
+    // The Check step passed; the clash appears between Check and Register.
+    previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
+    previewClashes.mockClear();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(previewClashes).toHaveBeenCalledTimes(1));
     expect(registerProject).not.toHaveBeenCalled();
@@ -571,6 +596,7 @@ describe('ProjectForm: type drives To-do list template and delivery fields (AC-P
       { id: 'tp1', name: 'Standard', has_forked_status_graph: false },
     ]);
     renderForm({ mode: 'create' });
+    await toDetails();
     await pickType('ty2', 'Hotel');
     await waitFor(() =>
       expect(within(screen.getByLabelText('To-do list template')).getByText('Standard')).toBeInTheDocument(),
@@ -584,6 +610,7 @@ describe('ProjectForm: type drives To-do list template and delivery fields (AC-P
 
   it('shows Project launch date for a type that derives delivery from launch', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     await pickType('ty1', TYPE_LAUNCH.name);
     openDetails();
     await waitFor(() => expect(screen.getByLabelText('Project launch date')).toBeInTheDocument());
@@ -592,6 +619,7 @@ describe('ProjectForm: type drives To-do list template and delivery fields (AC-P
 
   it('shows Expected delivery for a type that does not derive delivery from launch', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     await pickType('ty2', 'Hotel');
     openDetails();
     await waitFor(() => expect(screen.getByLabelText('Expected delivery')).toBeInTheDocument());
@@ -611,14 +639,16 @@ describe('ProjectForm: clearable selects (AC-PF011, PF015, PF022, PF023)', () =>
 });
 
 describe('ProjectForm: text and number fields (AC-PF012-014, PF017, PF018)', () => {
-  it('limits Reference to 64 characters', () => {
+  it('limits Reference to 64 characters', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     openDetails();
     expect(screen.getByLabelText('Reference')).toHaveAttribute('maxLength', '64');
   });
 
-  it('Estimated sales value is a non-negative number field', () => {
+  it('Estimated sales value is a non-negative number field', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     openDetails();
     const input = screen.getByLabelText('Estimated sales value (RM)');
     expect(input).toHaveAttribute('type', 'number');
@@ -653,6 +683,7 @@ describe('ProjectForm: Brands are gone (PROJECT-REGISTER-V2 G3)', () => {
 describe('ProjectForm: Salesperson (AC-PF040-043)', () => {
   it('defaults to the current session user on create', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     await waitFor(() => expect(getUserLookup).toHaveBeenCalled());
     await waitFor(() =>
       expect((screen.getByLabelText('Salesperson') as HTMLSelectElement).value).toBe('u-me'),
@@ -669,6 +700,7 @@ describe('ProjectForm: Salesperson (AC-PF040-043)', () => {
   it('is disabled without manage permission', async () => {
     hasManagePermission.mockReturnValue(false);
     renderForm({ mode: 'create' });
+    await toDetails();
     await waitFor(() => expect(screen.getByLabelText('Salesperson')).toBeDisabled());
   });
 
@@ -732,6 +764,7 @@ describe('ProjectForm: Lead link (AC-PF050-058)', () => {
 
   it('lists a lead by its title with the code apart, never a dot-joined label', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Menara' } });
     expect(await screen.findByRole('button', { name: 'Menara Lead' })).toBeInTheDocument();
     expect(screen.queryByText(/ · /)).toBeNull();
@@ -758,6 +791,7 @@ describe('ProjectForm: Lead link (AC-PF050-058)', () => {
 
   it('searches open leads with the typed text, capped at 20', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Menara' } });
     await waitFor(() =>
       expect(listLeads).toHaveBeenCalledWith({ query: 'Menara', outcome: ['open'], limit: 20 }),

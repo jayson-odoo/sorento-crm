@@ -409,15 +409,30 @@ beforeEach(() => {
   listCustomerOptions.mockResolvedValue([{ value: 'c-1', label: 'KEDAI CONTOH SDN. BHD.' }]);
 });
 
+/**
+ * PS-REGISTER-CHECK-FIRST: create mode opens on the Check step; walk it to Details.
+ * Types the title if the field is empty, Checks, waits for the result, presses Next.
+ */
+async function toDetails(text = 'Setia Alam Phase 3B') {
+  const box = screen.getByLabelText(/project title/i) as HTMLTextAreaElement;
+  if (!box.value) fireEvent.change(box, { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+  await screen.findByText('No clash');
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+  await screen.findByRole('button', { name: /Lead, customer and salesperson/ });
+}
+
 describe('LGR-D1 the Lead, customer and salesperson section', () => {
-  it('names the bottom section and drops the old one', () => {
+  it('names the bottom section and drops the old one', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     expect(screen.getByRole('button', { name: /Lead, customer and salesperson/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Salesperson and customer/ })).toBeNull();
   });
 
-  it('holds Lead, Customer, Salesperson in that order, and Details holds no Lead', () => {
+  it('holds Lead, Customer, Salesperson in that order, and Details holds no Lead', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     fireEvent.click(screen.getByRole('button', { name: /^Details/ }));
     const details = screen.getByRole('button', { name: /^Details/ }).closest('[data-slot="card"]') as HTMLElement;
     expect(within(details).queryByLabelText(/^Lead/)).toBeNull();
@@ -436,6 +451,7 @@ describe('LGR-D1 the Lead, customer and salesperson section', () => {
 describe('LGR-D2 Customer is read-only, filled from the lead', () => {
   it('shows the lead\'s customer name once a lead is picked, with no editable Customer', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     expect(customerTextbox()).toBeNull();
     await pickLead('TRX', 'TRX Zus Coffee fit-out');
     expect(await within(section()).findByText('KEDAI CONTOH SDN. BHD.')).toBeInTheDocument();
@@ -444,6 +460,7 @@ describe('LGR-D2 Customer is read-only, filled from the lead', () => {
 
   it('clearing the lead clears the customer', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     await pickLead('TRX', 'TRX Zus Coffee fit-out');
     await within(section()).findByText('KEDAI CONTOH SDN. BHD.');
     fireEvent.click(screen.getByRole('button', { name: 'Clear lead' }));
@@ -454,7 +471,7 @@ describe('LGR-D2 Customer is read-only, filled from the lead', () => {
 
   it('Register stays disabled until a lead is picked, then sends lead_id', async () => {
     renderForm({ mode: 'create' });
-    typeTitle('TRX Zus Coffee fit-out');
+    await toDetails('TRX Zus Coffee fit-out');
     expect(registerButton()).toBeDisabled();
     await pickLead('TRX', 'TRX Zus Coffee fit-out');
     await waitFor(() => expect(registerButton()).toBeEnabled());
@@ -467,7 +484,7 @@ describe('LGR-D2 Customer is read-only, filled from the lead', () => {
 describe('LGR-D3 a lead with no customer asks for one', () => {
   it('turns Customer into the required search picker and holds Register until one is picked', async () => {
     renderForm({ mode: 'create' });
-    typeTitle('Menara Tanpa Pelanggan');
+    await toDetails('Menara Tanpa Pelanggan');
     await pickLead('Tanpa', 'Menara Tanpa Pelanggan');
 
     const picker = await screen.findByLabelText(/^Customer/);
@@ -489,6 +506,7 @@ describe('LGR-D4 Salesperson follows the lead', () => {
 
   it('a user who may change the salesperson gets the lead\'s assignee', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     await waitFor(() => expect(salesperson().value).toBe('u-me'));
     await pickLead('TRX', 'TRX Zus Coffee fit-out');
     await waitFor(() => expect(salesperson().value).toBe('u-2'));
@@ -496,6 +514,7 @@ describe('LGR-D4 Salesperson follows the lead', () => {
 
   it('a lead with no assignee leaves Salesperson as it was', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     await waitFor(() => expect(salesperson().value).toBe('u-me'));
     await pickLead('Tanpa', 'Menara Tanpa Pelanggan');
     await screen.findByLabelText(/^Customer/);
@@ -505,6 +524,7 @@ describe('LGR-D4 Salesperson follows the lead', () => {
   it('a user who may not change it stays the signed-in user', async () => {
     granted = new Set(['projects.projects.edit']);
     renderForm({ mode: 'create' });
+    await toDetails();
     await waitFor(() => expect(salesperson().value).toBe('u-me'));
     await pickLead('TRX', 'TRX Zus Coffee fit-out');
     await within(section()).findByText('KEDAI CONTOH SDN. BHD.');
@@ -515,7 +535,7 @@ describe('LGR-D4 Salesperson follows the lead', () => {
 describe('LGR-D5 Create lead from the picker', () => {
   it('opens the wizard with the typed text, then picks the new lead and shows its customer', async () => {
     renderForm({ mode: 'create' });
-    typeTitle('Tower Q');
+    await toDetails('Tower Q');
     fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Tower Q' } });
     fireEvent.click(await screen.findByRole('button', { name: /Create lead .Tower Q./ }));
     const wizard = await screen.findByRole('dialog', { name: 'Create lead' });
@@ -540,6 +560,7 @@ describe('LGR-D6 AI extract never sets Customer', () => {
         'Tajuk Dari Gambar CONTOH',
       ),
     );
+    await toDetails();
     expect(screen.queryByText('WARUNG CONTOH ENTERPRISE')).toBeNull();
     expect(registerButton()).toBeDisabled();
   });
@@ -577,9 +598,9 @@ describe('LGR-D8 submit-only salesperson', () => {
 
   it('sees the same section with a Lead picker; Save draft needs no lead, Submit does', async () => {
     renderForm({ mode: 'create' });
+    await toDetails('TRX Zus Coffee fit-out');
     expect(screen.getByRole('button', { name: /Lead, customer and salesperson/ })).toBeInTheDocument();
     expect(screen.getByLabelText(/^Lead/)).toBeInTheDocument();
-    typeTitle('TRX Zus Coffee fit-out');
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeDisabled();
 
@@ -594,6 +615,7 @@ describe('LGR-D8 submit-only salesperson', () => {
 
   it('keeps Salesperson as the signed-in user when a lead assigned to someone else is picked', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     await pickLead('TRX', 'TRX Zus Coffee fit-out');
     await within(section()).findByText('KEDAI CONTOH SDN. BHD.');
     expect((screen.getByLabelText('Salesperson') as HTMLSelectElement).value).toBe('u-me');
@@ -644,7 +666,7 @@ describe('LGR-D8 the lead guard holds on its own', () => {
 
   it('create mode: picking a lead then clearing it disables Register again', async () => {
     renderForm({ mode: 'create' });
-    typeTitle('TRX Zus Coffee fit-out');
+    await toDetails('TRX Zus Coffee fit-out');
     await pickLead('TRX', 'TRX Zus Coffee fit-out');
     await waitFor(() => expect(registerButton()).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Clear lead' }));
@@ -655,6 +677,7 @@ describe('LGR-D8 the lead guard holds on its own', () => {
 describe('LGR-D5 Create lead round trip with an assignee', () => {
   it('Salesperson becomes the person the new lead was assigned to', async () => {
     renderForm({ mode: 'create' });
+    await toDetails();
     fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Tower Q' } });
     fireEvent.click(await screen.findByRole('button', { name: /Create lead .Tower Q./ }));
     const wizard = await screen.findByRole('dialog', { name: 'Create lead' });
