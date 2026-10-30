@@ -141,7 +141,6 @@ export function stateFromDetail(d: SampleRequestDetail): FormState {
   };
 }
 
-
 const signature = (lines: DraftLine[]) =>
   JSON.stringify(lines.map((l) => [l.product_id, l.qty, l.remark]));
 
@@ -271,9 +270,12 @@ export function numberErrors(s: FormState): Record<string, string> {
 }
 
 /** The source quotation a row's product search is narrowed to, or undefined without one (SFQ-27). */
-export function productSource(s: FormState): SampleRequestProductSource | undefined {
-  return s.quotation_document_id
-    ? { quotation_document_id: s.quotation_document_id, quotation_issue_id: s.quotation_issue_id || null }
+export function productSource(
+  documentId: string | null | undefined,
+  issueId: string | null | undefined,
+): SampleRequestProductSource | undefined {
+  return documentId
+    ? { quotation_document_id: documentId, quotation_issue_id: issueId || null }
     : undefined;
 }
 

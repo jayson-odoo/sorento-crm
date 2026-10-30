@@ -123,18 +123,13 @@ export default function SampleRequestForm({
     [],
   );
   // A request from a quotation offers only that quotation's products (SFQ-27).
-  const source = productSource(state);
-  const sourceDoc = source?.quotation_document_id;
-  const sourceIssue = source?.quotation_issue_id;
+  const sourceDoc = state.quotation_document_id;
+  const sourceIssue = state.quotation_issue_id;
   const searchProducts = useCallback(
     (q: string) => {
       const svc = clientService(client, 'sampleRequest', portalSampleRequest);
-      return sourceDoc
-        ? svc.searchSampleRequestProducts(q, {
-            quotation_document_id: sourceDoc,
-            quotation_issue_id: sourceIssue ?? null,
-          })
-        : svc.searchSampleRequestProducts(q);
+      const source = productSource(sourceDoc, sourceIssue);
+      return source ? svc.searchSampleRequestProducts(q, source) : svc.searchSampleRequestProducts(q);
     },
     [client, sourceDoc, sourceIssue],
   );
@@ -471,6 +466,7 @@ export default function SampleRequestForm({
             value={state}
             onChange={patch}
             search={searchProducts}
+            listWhenEmpty={Boolean(sourceDoc)}
             captions={{ no: '#', item: 'Item code', qty: 'Quantity' }}
             errors={errors}
             disabled={readOnly}

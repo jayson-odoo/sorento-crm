@@ -368,11 +368,15 @@ def _check_source(db: Session, req: SampleRequest) -> None:
         raise _source_invalid()
 
 
-def _check_on_quotation(db: Session, req: SampleRequest, product_ids: List[str]) -> None:
+def _check_on_quotation(
+    db: Session, req: SampleRequest, product_ids: List[str], kept: frozenset = frozenset()
+) -> None:
     """A request with a source quotation carries only that quotation's products (owner, 30 Oct:
-    "Sample requests should take the product from the quotation")."""
+    "Sample requests should take the product from the quotation"). Products the request already
+    holds (`kept`) may stay, as in `_check_products`: a never-issued quotation that later drops a
+    product must not lock the draft that holds it."""
     allowed = quotation_product_ids(db, req.quotation_document_id, req.quotation_issue_id)
-    if any(pid not in allowed for pid in product_ids):
+    if any(pid not in allowed and pid not in kept for pid in product_ids):
         raise AppException(
             status_code=422,
             message="Every item must be a product on the project's quotation.",
@@ -416,6 +420,7 @@ def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
             [str(line["product_id"]) for line in line_dicts]
             if lines is not None
             else [str(line.product_id) for line in (req.lines or [])],
+            kept,
         )
     for field in HEADER_NOT_NULL:
         if data.get(field) is not None:

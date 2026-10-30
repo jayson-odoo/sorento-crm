@@ -33,6 +33,7 @@ import { SampleRequestError } from '@/types/sampleRequest';
 import {
   EMPTY_FORM,
   blankLine,
+  productSource,
   payloadFromState,
   stateFromDetail,
   numberErrors,
@@ -169,21 +170,18 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
     (next: Partial<FormState>) => setState((prev) => ({ ...prev, ...next })),
     [],
   );
-  // A NEW request starts from its project's quotation (SAMPLE-FROM-QUOTE, owner Q6 a); a draft
-  // never refills.
   // A request from a quotation offers only that quotation's products (SFQ-27).
   const sourceDoc = state.quotation_document_id;
   const sourceIssue = state.quotation_issue_id;
   const searchProductsForRequest = useCallback(
-    (q: string) =>
-      sourceDoc
-        ? searchSampleRequestProducts(q, {
-            quotation_document_id: sourceDoc,
-            quotation_issue_id: sourceIssue || null,
-          })
-        : searchSampleRequestProducts(q),
+    (q: string) => {
+      const source = productSource(sourceDoc, sourceIssue);
+      return source ? searchSampleRequestProducts(q, source) : searchSampleRequestProducts(q);
+    },
     [sourceDoc, sourceIssue],
   );
+  // A NEW request starts from its project's quotation (SAMPLE-FROM-QUOTE, owner Q6 a); a draft
+  // never refills.
   const prefill = useSampleRequestPrefill({
     enabled: !requestId,
     projectId: state.project_id,
@@ -468,6 +466,7 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
             value={state}
             onChange={patch}
             search={searchProductsForRequest}
+            listWhenEmpty={Boolean(sourceDoc)}
             captions={{ no: 'No.', item: 'Item Code', qty: 'Qty' }}
             errors={errors}
           />
