@@ -635,12 +635,10 @@ def test_r6_an_unlink_that_removes_nothing_fails_the_step(db):
 def test_r6_a_customer_of_a_company_the_user_has_no_grant_for_is_not_usable(db):
     w = contact_world(db, slugs=(EDIT,))
     foreign_customer = seed_customer(db, "ZZT Mocha Dealer", w.me, company_id=w.mch)
-    db.add(RespondContactCustomer(id=str(uuid.uuid4()), contact_id=dealer(db, w, customers=(w.mine,)).id,
+    row_id = dealer(db, w, customers=(w.mine,)).id
+    db.add(RespondContactCustomer(id=str(uuid.uuid4()), contact_id=row_id,
                                   customer_id=foreign_customer.id, company_id=w.mch))
     db.commit()
-    row_id = db.query(RespondContactCustomer.contact_id).filter(
-        RespondContactCustomer.customer_id == foreign_customer.id
-    ).scalar()
 
     control, _ = _propose_contact(db, w, {"contact_id": row_id, "unlink_customer_ids": [w.mine.id]}, row_id, w.mine.id)
     refused, step = _propose_contact(

@@ -1,6 +1,6 @@
 # PLAN: Agentic P3 - write actions in the console Agent tab
 
-Status: Phase 2 slice 1 (red tests first). Full track (migration, new write surface, acts as the linked user).
+Status: review round 1 fixes green (R1-R8); re-review next. Slices 1-4 built; W3 (slice 5) not started. Full track (migration, new write surface, acts as the linked user).
 Lane AGENTIC-P2-CARD, PR #1999, branch `claude/agentic-p2-auto-routing-3npqem` (base main; P1 #1982 merged).
 Card and owner answers: `CARD-agentic-p2-p3-30oct.md`. Acceptance criteria: `UAC-agentic-p3-writes-30oct.md`.
 
@@ -217,7 +217,7 @@ def propose_step(db, ctx, name: str, args: Any, *, seen_ids: set[str]) -> tuple[
 
 Tester's resolved points (31 Oct red round): ids in `USER_READS` results join the turn's seen ids;
 `confirm_action` / `cancel_action` are exempt from the ids rule (the action id is checked by `confirm`); a confirm
-in the proposing turn is `invalid` (the row is stored at turn end); an unknown action id is 409 `not_found`; a
+in the proposing turn finds no stored row (`not_found`; review round 1 removed the loop guard); an unknown action id is 409 `not_found`; a
 route `AppException` message appears verbatim in the step error; the changed-record error names the field.
 
 `app/services/chatbot/agent/actions.py`:

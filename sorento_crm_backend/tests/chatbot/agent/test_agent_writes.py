@@ -677,7 +677,7 @@ def test_13_the_confirm_and_cancel_tools_are_not_offered_when_nothing_is_pending
     assert CONFIRM_ACTION not in tool_names(provider) and CANCEL_ACTION not in tool_names(provider)
 
 
-def test_13_confirming_in_the_same_turn_as_the_proposal_is_invalid_and_writes_nothing(db):
+def test_13_confirming_an_unstored_proposal_in_its_own_turn_writes_nothing(db):
     """AC08: the model cannot confirm in the turn it proposed."""
     w = make_world(db)
     ask = w.asks[0]
