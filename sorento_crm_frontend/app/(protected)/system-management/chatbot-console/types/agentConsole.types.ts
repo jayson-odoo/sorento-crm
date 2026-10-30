@@ -153,6 +153,8 @@ export const AGENT_TOOL_LABELS: Record<string, string> = {
   crm_opportunity_update: 'Update opportunity',
   crm_contacts_find: 'Find contacts',
   crm_contact_access_update: 'Update contact access',
+  crm_purchase_requests_list: 'Purchase requests',
+  crm_purchase_request_decide: 'Decide purchase request',
   confirm_action: 'Confirm',
   cancel_action: 'Cancel',
 };

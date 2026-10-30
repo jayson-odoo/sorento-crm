@@ -274,7 +274,10 @@ def test_01_the_registry_holds_exactly_the_registered_writes_and_the_in_process_
     """AC12: nothing outside the registered write tools exists."""
     from app.services.chatbot.agent import writes
 
-    assert set(writes.WRITES) == {UPDATE, "crm_opportunity_create", "crm_opportunity_update", "crm_contact_access_update"}
+    assert set(writes.WRITES) == {
+        UPDATE, "crm_opportunity_create", "crm_opportunity_update", "crm_contact_access_update",
+        "crm_purchase_request_decide",
+    }
     assert {LIST, "crm_agent_actions_recent"} <= set(writes.USER_READS)
     definition = writes.WRITES[UPDATE]
     assert definition.name == UPDATE

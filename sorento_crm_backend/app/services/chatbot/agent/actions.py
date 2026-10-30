@@ -152,7 +152,8 @@ def _reply(status: str, steps: list[dict]) -> str:
         tail = "" if status == "executed" else f" ({marks.get(s['status'], s['status'])})"
         if s.get("error"):
             tail = f" ({marks.get(s['status'], s['status'])}: {scrub_ids(s['error'])})"
-        lines.append(f"{n}. {s['summary']}{tail}")
+        note = f" {s['note']}" if s.get("note") else ""
+        lines.append(f"{n}. {s['summary']}{tail}{note}")
     head = {
         "executed": "Done. I made these changes:",
         "partial": "I made some of the changes and stopped at a failure:",
@@ -252,6 +253,8 @@ def confirm(
                 logger.warning("agent: building the change lines failed", exc_info=True)
             if "unlinked_customer_ids" in result:
                 step["unlinked_customer_ids"] = result["unlinked_customer_ids"]
+            if result.get("note"):
+                step["note"] = result["note"]
         except Exception as exc:  # noqa: BLE001 - a route refusal stops the run
             db.rollback()
             if not isinstance(exc, writes.HTTPException):

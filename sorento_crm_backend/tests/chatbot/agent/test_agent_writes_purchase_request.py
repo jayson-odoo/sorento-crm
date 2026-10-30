@@ -461,18 +461,17 @@ def test_with_a_grace_window_the_decision_is_parked_not_applied(db, sends, monke
 
     step = db.get(AgentAction, str(action.id)).steps[0]
     assert step["after"]["deferred"] is True and step["after"]["commit_at"]
-    assert "applies at" in out.reply_text
+    assert "applies in 30 seconds" in out.reply_text
 
 
 def test_the_slug_removed_before_confirm_rejects_the_action(db, sends, monkeypatch):
-    from app.models.user import UserRoleAssignment
+    from tests.chatbot.agent.test_agent_writes import revoke
 
     no_grace(monkeypatch)
     w = make_world(db)
     pr = make_request(db, w)
     _, action = propose_and_store(db, w, {"request_id": pr.id, "decision": "approve"})
-    db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == w.user_id).delete()
-    db.commit()
+    revoke(db, w.user_id, APPROVE)
 
     out = confirm(db, w, action)
 
