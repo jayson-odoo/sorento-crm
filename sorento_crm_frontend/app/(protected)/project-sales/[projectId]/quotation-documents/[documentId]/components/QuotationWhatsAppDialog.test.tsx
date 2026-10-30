@@ -322,7 +322,7 @@ describe('QuotationWhatsAppDialog', () => {
     await user.clear(message);
     await user.type(message, 'No link here');
     await user.click(screen.getByRole('button', { name: 'Copy link' }));
-    const shown = (await screen.findByLabelText('Counter-sign link')) as HTMLInputElement;
+    const shown = (await screen.findByRole('textbox', { name: 'Counter-sign link' })) as HTMLInputElement;
     expect(shown.value).toBe(LINK());
     expect(toast.error).not.toHaveBeenCalledWith('Press Ctrl/Cmd+C to copy the selected link');
   });
