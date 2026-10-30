@@ -151,10 +151,10 @@ def compute_done(
             return True
         if row.ack_override == "unconfirmed":
             return False
-        if row.id in cancelled_line and row.verb in BUY_VERBS and not row.redirected_to_pool:
-            # AC-AC-10e: nothing left to buy on a cancelled line, unless a live document
-            # still holds it. Ahead of the actioned / pool shortcuts for a buy row.
-            return live_links.get(row.id, 0) == 0
+        if row.id in cancelled_line:
+            # AC-AC-10e (owner 30 Oct): nothing to buy on a cancelled SO line, whatever its
+            # links or verb; purchasing never acts on it.
+            return True
         if row.state == INQUIRY_ACTIONED or row.verb not in BUY_VERBS or row.redirected_to_pool:
             return True
         return linked.get(row.id, _ZERO) >= _dec(row.qty)

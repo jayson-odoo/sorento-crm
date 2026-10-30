@@ -1200,7 +1200,6 @@ def flag_rows_for_cancelled_lines(
     ids = [cid for cid in core_line_ids if cid]
     if not ids:
         return 0
-    now = datetime.utcnow()
     rows = (
         db.query(OrderInquiryRow)
         .join(
@@ -1214,16 +1213,11 @@ def flag_rows_for_cancelled_lines(
         )
         .all()
     )
-    for row in rows:
-        row.ack_state = ACK_CHANGED
-        row.changed_at = now
-        row.ack_override = None
-        row.ack_override_by = None
-        row.ack_override_at = None
     if rows:
         db.flush()
-        # Ruling (c): a flagged row with no live link is done (acknowledged by NULL); one
-        # with a live link stays `changed` until a manual Confirm. ONE batched call.
+        # Owner 30 Oct: every live row on a cancelled SO line is done (acknowledged by
+        # NULL), linked or not; nothing is stamped `changed` and nothing is queued for
+        # purchasing. ONE batched `auto_confirm`; a manual Unconfirm still holds.
         ProjectOrderInquiryService(db).auto_confirm([row.id for row in rows])
     logger.info(
         "flag_rows_for_cancelled_lines: %d core line id(s), %d row(s) flagged",
