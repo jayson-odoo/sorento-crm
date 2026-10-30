@@ -83,4 +83,27 @@ describe('SoLineLinksBody', () => {
 
     expect(screen.getByText('Not linked.')).toBeInTheDocument();
   });
+
+  it('OI-AUTO-CONFIRM: a reserve entry reads as text and is never a link to a purchase order', () => {
+    renderWithClient(
+      <SoLineLinksBody
+        links={
+          [
+            {
+              kind: 'reserve',
+              document: 'Reserved @ BRW',
+              purchase_order_id: 'po-should-not-link',
+              qty: '3',
+              location: 'BRW',
+              expected_date: null,
+              late: false,
+            },
+          ] as unknown as SalesOrderLineLink[]
+        }
+      />,
+    );
+
+    expect(screen.getByText(/Reserved @ BRW/)).toBeInTheDocument();
+    expect(screen.queryByRole('link')).toBeNull();
+  });
 });

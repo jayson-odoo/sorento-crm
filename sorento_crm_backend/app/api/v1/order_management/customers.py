@@ -18,6 +18,7 @@ from app.services.user_service import UserPermissionService
 import uuid
 from app.services.error_handler import handle_internal_error, handle_not_found, handle_unprocessable
 from app.utils.multi_value import multi_uuids
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -53,6 +54,7 @@ def get_customers(
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
+@heavy
 def import_customers(
     file: UploadFile = File(..., description="Excel file: customer (debtor) listing"),
     validate_only: bool = Query(

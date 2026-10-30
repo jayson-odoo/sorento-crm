@@ -237,15 +237,6 @@ export function RunPlanningModal({
     [candidateOrders],
   );
 
-  /** Awaiting-ack counts, kept apart from `orderOptions` so `renderOption` can colour just
-   *  that part of the row (27 Aug ruling: never bought against, so it has to stay visible
-   *  before Start). */
-  const awaitingBySoNumber = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const o of candidateOrders ?? []) map.set(o.so_number, o.rows_awaiting);
-    return map;
-  }, [candidateOrders]);
-
   /** The Orders field's own closed-trigger label (AC-D1: ONE line, the first two SO
    *  numbers then `+x` for the rest - `SO418869, SO419517 +12`, no chip wall) - shared by
    *  Demand = All and Demand = Project alike ("Same trigger under Demand = Project"). */
@@ -431,20 +422,8 @@ export function RunPlanningModal({
                 renderTriggerLabel={renderOrdersTriggerLabel}
                 // Owner ruling (Lane D fix round 1, narrowed round 3): one-line menu rows
                 // under Project AND All, full stop - `opt.label` IS "<SO number> -
-                // <customer>" (the option's own accessible name, fix round 3 item 3), so
-                // the row prints that same string, with the awaiting-ack count appended
-                // only when it is non-zero.
-                renderOption={(opt) => {
-                  const awaiting = awaitingBySoNumber.get(opt.value) ?? 0;
-                  return (
-                    <span className="break-words">
-                      {opt.label}
-                      {awaiting > 0 ? (
-                        <span className="text-warning">{`, ${awaiting} awaiting ack`}</span>
-                      ) : null}
-                    </span>
-                  );
-                }}
+                // <customer>" (the option's own accessible name, fix round 3 item 3).
+                renderOption={(opt) => <span className="break-words">{opt.label}</span>}
               />
               <p className="mt-1 text-2xs text-muted-foreground">
                 Empty = every project order in range.

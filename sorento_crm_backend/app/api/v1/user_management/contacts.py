@@ -31,6 +31,7 @@ from app.services import contact_customer_service
 from app.services.company_scope_resolver import company_name_map, grants_scope, widen_if_requested
 from app.services.error_handler import handle_internal_error, handle_not_found, handle_unprocessable
 from app.utils.multi_value import multi_uuids, multi_values
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +281,7 @@ def bulk_copy_contact_access(
 
 
 @router.post("/access-sheet", status_code=status.HTTP_200_OK)
+@heavy
 def import_contact_access_sheet(
     file: UploadFile = File(...),
     dry_run: bool = Form(True),

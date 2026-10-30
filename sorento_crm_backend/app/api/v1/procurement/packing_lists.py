@@ -22,6 +22,7 @@ from app.schemas.procurement import (
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error, handle_unprocessable
 from app.utils.multi_value import multi_values
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -138,6 +139,7 @@ def download_latest_container_status(
 
 
 @router.post("/container-status-import", status_code=status.HTTP_202_ACCEPTED)
+@heavy
 def import_container_status(
     file: UploadFile = File(..., description="Container Status workbook (.xlsx / .xls / .xlsm)."),
     validate_only: bool = Query(

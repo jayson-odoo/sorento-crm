@@ -4,8 +4,6 @@ import * as React from 'react';
 import {
   Check,
   ChevronDown,
-  CircleCheck,
-  CircleDashed,
   ChevronRight,
   History as HistoryIcon,
   Pencil,
@@ -25,7 +23,6 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   OrderInquiryLineStatePill,
   OrderInquiryVerbPill,
@@ -38,7 +35,6 @@ import {
   raisedKindLabel,
 } from '../../../_shared/lib/orderInquiryWorklist';
 import {
-  lineConfirmationOf,
   lineFooterTotals,
   lineOf,
   type OrderInquiryLine,
@@ -47,6 +43,8 @@ import {
 import {
   DeliveryDateCell,
   documentChipsOf,
+  ReserveText,
+  reserveTextOfRows,
   type DocumentEntry,
   ItemCodeCell,
   LocationCell,
@@ -55,6 +53,8 @@ import {
   RaisedCell,
   SupplierCell,
 } from '../../components/orderInquiryWorklistColumns';
+import { statusPillClass } from '@/lib/status-pill';
+import { ackOverrideHint, ackStateOf, ackStatusText } from '../../../_shared/lib/orderInquiryAck';
 import { DocumentStatePills, WorklistPill } from '../../components/orderInquiryDocumentPills';
 import type {
   OrderInquiryLineSplit,
@@ -119,6 +119,15 @@ export interface StagedReserveEntry {
  * every row of the sales order line at once, so one SPO line two rows sit on (one via its
  * PO, one directly) is one chip whose receipts add up, and a withdrawn line is one more
  * chip behind "+N" - never lost to a de-dup by document number. */
+/** The status pill keeps the text's own case ("To order \u00b7 220 left"), so no capitalize. */
+const ACK_PILL_BASE =
+  'inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold';
+
+function ackPalette(row: Parameters<typeof ackStateOf>[0]): string {
+  const state = ackStateOf(row);
+  return state === 'acknowledged' ? 'approved' : state === 'rejected' ? 'voided' : 'pending';
+}
+
 function lineDocumentsOf(line: OrderInquiryLine, kind: 'po' | 'spo'): DocumentEntry[] {
   return documentChipsOf(
     line.liveRows.flatMap((row) => (row.links ?? []).map((link) => ({ row, link }))),
@@ -126,7 +135,21 @@ function lineDocumentsOf(line: OrderInquiryLine, kind: 'po' | 'spo'): DocumentEn
   );
 }
 
+/** The PO cell: the line's purchase documents and, beside them, a reserve ("Reserved @ BRW 3"). */
 function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' | 'spo' }) {
+  const reserve =
+    kind === 'po' ? reserveTextOfRows(line.liveRows) : null;
+  if (!reserve) return <LinePurchaseDocumentsCell line={line} kind={kind} />;
+  if (lineDocumentsOf(line, kind).length === 0) return <ReserveText text={reserve} />;
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <LinePurchaseDocumentsCell line={line} kind={kind} />
+      <ReserveText text={reserve} />
+    </div>
+  );
+}
+
+function LinePurchaseDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' | 'spo' }) {
   // Round 5: the popover opens from "+N" or from the narrow-cell receipt chip, so it is
   // positioned against the whole cell rather than one trigger.
   const [open, setOpen] = React.useState(false);
@@ -471,43 +494,6 @@ export function ReserveActionsCell({
   return null;
 }
 
-/**
- * W1: the worklist PO cell's own confirmed / proposed marks (`DraftMark` in
- * `orderInquiryWorklistColumns.tsx`): `CircleCheck` emerald once purchasing confirmed,
- * `CircleDashed` muted while part of the line still waits.
- */
-function LineConfirmationMark({ line }: { line: OrderInquiryLine }) {
-  const confirmation = lineConfirmationOf(line);
-  if (confirmation.kind === 'none') return null;
-  if (confirmation.kind === 'confirmed') {
-    const when = confirmation.at ? ` on ${formatDateInMalaysia(confirmation.at)}` : '';
-    const label = `Confirmed by ${confirmation.by ?? 'Purchasing'}${when}`;
-    return (
-      <span
-        data-testid="line-confirmed-mark"
-        role="img"
-        title={label}
-        aria-label={label}
-        className="inline-flex"
-      >
-        <CircleCheck className="size-3.5 shrink-0 text-emerald-600" aria-hidden />
-      </span>
-    );
-  }
-  const label = `${confirmation.confirmed} of ${confirmation.total} rows confirmed`;
-  return (
-    <span
-      data-testid="line-partly-confirmed-mark"
-      role="img"
-      title={label}
-      aria-label={label}
-      className="inline-flex"
-    >
-      <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-    </span>
-  );
-}
-
 /** AC-ND-17: a footer total over every loaded line (the tab loads the whole set at once,
  * so there is no server page this could disagree with). */
 function LineFooter({
@@ -737,20 +723,6 @@ export function useOrderInquiryHeaderLinesColumns({
           );
         },
       },
-      // W1 (PR #1266, owner hand test 26 Sep): the line's own confirmed mark, in the gap
-      // the owner boxed between Product and SO Qty. Not sortable: no other icon column on
-      // this grid sorts.
-      {
-        id: 'confirmation',
-        header: () => <span className="sr-only">Confirmed</span>,
-        size: 44,
-        minSize: 44,
-        enableSorting: false,
-        enableResizing: false,
-        // Review N4: a blank header with a lone drag grip reads as stray chrome.
-        meta: { headerTitle: 'Confirmed', draggable: false },
-        cell: ({ row }) => <LineConfirmationMark line={lineOf(row.original)} />,
-      },
       // AC-ND-3..5b (owner ruling 26 Sep, G4): SO Qty, Requested, Taken, Remaining - the
       // line's own sums (`orderInquiryLineFold.ts`), no Was / now annotation (G1).
       // OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit right after
@@ -852,6 +824,8 @@ export function useOrderInquiryHeaderLinesColumns({
         // the icons is choosing that, and can drag it back out again (owner, 24 Sep).
         // OI-BULK-RESERVE: +28 for the x between the tick and the pen.
         size: canReserve ? 438 : 220,
+        // The pill never shrinks, so a narrow saved width is clamped in both layouts.
+        minSize: 190,
         meta: { headerTitle: 'State' },
         cell: ({ row }) => {
           const line = lineOf(row.original);
@@ -866,6 +840,14 @@ export function useOrderInquiryHeaderLinesColumns({
                 reservedQty={primary.reserved_qty}
                 requestedQty={primary.requested_qty}
               />
+            ) : ['raised', 'partly_linked', 'placed', 'to_confirm'].includes(line.state) ? (
+              // OI-AUTO-CONFIRM (approved mock): a live line reads its status, not the supply pill.
+              <span
+                className={`${ACK_PILL_BASE} ${statusPillClass(ackPalette(primary))}`}
+                title={[ackStatusText(primary), ackOverrideHint(primary)].filter(Boolean).join('. ')}
+              >
+                {ackStatusText(primary)}
+              </span>
             ) : (
               <OrderInquiryLineStatePill state={line.state} />
             );

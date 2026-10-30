@@ -397,8 +397,8 @@ export interface SalesOrderLine {
 
 /** One link on the order inquiry row covering a sales order line. Never an id on screen. */
 export interface SalesOrderLineLink {
-  /** Which book the document lives in. */
-  kind: 'po' | 'spo';
+  /** Which book the document lives in; `reserve` is a CS stock reserve, not a document. */
+  kind: 'po' | 'spo' | 'reserve';
   /** `202607-S0105`, `SPO-2026/08-0061`. */
   document: string;
   /** `L3` when the book numbered the line. Absent when it did not - never invented. */

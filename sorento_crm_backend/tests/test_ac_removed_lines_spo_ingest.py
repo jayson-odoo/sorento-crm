@@ -21,6 +21,7 @@ from sqlalchemy import text
 
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     INQUIRY_ACTIONED,
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
@@ -155,7 +156,7 @@ def test_ac_rl_10_a_retired_spo_line_releases_its_only_link(env, monkeypatch):
     assert after["link_allocs"] == [], after  # AC-RL-10
     assert after["state"] == INQUIRY_RAISED, after  # AC-RL-02
     assert after["inquiry_state"] == INQUIRY_RAISED, after
-    assert after["ack_state"] == ACK_ACKNOWLEDGED, after  # AC-RL-03
+    assert after["ack_state"] == ACK_AWAITING, after  # AC-AC-9: lost its cover, To order
     assert after["note"] == "ZZT earlier note", after
     assert after["changed_at"] is None
     quiet.assert_nothing_queued()

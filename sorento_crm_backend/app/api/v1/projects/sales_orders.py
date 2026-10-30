@@ -66,6 +66,7 @@ from app.services.project_so_delta_service import ProjectSODeltaService
 from app.services.project_so_draft_service import ProjectSODraftService
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 logger = logging.getLogger(__name__)
 
@@ -946,6 +947,7 @@ def get_autocount_change_list(
 
 
 @router.get("/amendments/{amendment_id}/autocount-change-list.xlsx")
+@heavy
 def export_autocount_change_list(
     amendment_id: str,
     _user: dict = Depends(require_any_permission_with_api_key([VIEW])),

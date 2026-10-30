@@ -78,7 +78,7 @@ from datetime import date
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from app.models.project_so import ACK_ACKNOWLEDGED
+from app.models.project_so import ACK_AWAITING
 from app.models.scm import ReorderRun
 from app.services.scm import demand_breakdown_service as dbs
 from app.services.scm import reorder_engine as eng
@@ -240,11 +240,11 @@ def test_ac_d3_picked_so_project_need_bought_in_full_on_top_of_retail_sizing(scm
 
     so_a = _project_so_with_lines(db, lines=[
         {"product_id": u1["pid"], "warehouse_id": u1["root_wid"], "qty": 40,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
     so_b = _project_so_with_lines(db, lines=[
         {"product_id": u2["pid"], "warehouse_id": u2["root_wid"], "qty": 25,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
 
     created = svc.create_run(
@@ -288,7 +288,7 @@ def test_ac_d4_retail_only_product_still_admitted_and_sized_same_as_plain_all_ru
     other_u = _seed_pool_below_level(db, level=150, demand_add=5.0, lead=30)
     so_a = _project_so_with_lines(db, lines=[
         {"product_id": other_u["pid"], "warehouse_id": other_u["root_wid"], "qty": 40,
-         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_AWAITING},
     ])
 
     scoped = svc.create_run(
@@ -357,7 +357,7 @@ def test_ac_d1b_all_run_range_narrows_project_leg_only_retail_leg_unbounded(scm_
     # Project row also due after the range end - must stay excluded either way.
     so = _project_so_with_lines(db, lines=[
         {"product_id": pid, "warehouse_id": wid, "qty": 20,
-         "delivery_date": date(2026, 12, 1), "ack_state": ACK_ACKNOWLEDGED},
+         "delivery_date": date(2026, 12, 1), "ack_state": ACK_AWAITING},
     ])
 
     all_run = svc.create_run(
