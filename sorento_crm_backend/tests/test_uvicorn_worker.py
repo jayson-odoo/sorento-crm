@@ -111,21 +111,44 @@ def test_the_worker_serves_through_the_draining_server(monkeypatch, tmp_path):
     assert served[0]._heartbeat_for == 150
 
 
-# ---- BACKEND-MEM-2 S3: a worker at its request limit asks for its replacement before it drains
-def _limited(asked, limit=3):
-    server = uvicorn_worker.DrainingServer(
-        uvicorn.Config(app=None, limit_max_requests=limit), lambda: None, 150.0, ask_replacement=lambda: asked.append(1)
+# ---- BACKEND-MEM-2 S3: a worker at its request limit asks for its replacement, and drains once it is up
+def _limited(asked, up=lambda: False, limit=3):
+    return uvicorn_worker.DrainingServer(
+        uvicorn.Config(app=None, limit_max_requests=limit), lambda: None, 150.0,
+        ask_replacement=lambda: asked.append(1), replacement_up=up,
     )
-    return server
 
 
-def test_the_request_limit_asks_the_master_for_a_replacement_once():
+def test_the_request_limit_asks_once_and_keeps_serving_until_the_replacement_is_up():
+    asked: list[int] = []
+    ready = [False]
+    server = _limited(asked, up=lambda: ready[0])
+    server.server_state.total_requests = 3
+    assert asyncio.run(server.on_tick(0)) is False  # asked, replacement not forked yet: keep serving
+    server.server_state.total_requests = 9
+    assert asyncio.run(server.on_tick(1)) is False
+    ready[0] = True
+    assert asyncio.run(server.on_tick(2)) is True
+    assert asked == [1]
+
+
+def test_a_replacement_that_never_comes_stops_the_wait(monkeypatch):
     asked: list[int] = []
     server = _limited(asked)
     server.server_state.total_requests = 3
-    assert asyncio.run(server.on_tick(0)) is True
+    assert asyncio.run(server.on_tick(0)) is False
+    monkeypatch.setattr(uvicorn_worker.DrainingServer, "REPLACEMENT_WAIT_SECONDS", 0.0)
+    time.sleep(0.01)
     assert asyncio.run(server.on_tick(1)) is True
-    assert asked == [1]
+
+
+def test_a_signal_while_waiting_drains_at_once():
+    asked: list[int] = []
+    server = _limited(asked)
+    server.server_state.total_requests = 3
+    assert asyncio.run(server.on_tick(0)) is False
+    server.should_exit = True
+    assert asyncio.run(server.on_tick(1)) is True
 
 
 def test_a_signalled_shutdown_asks_for_nothing():
@@ -146,12 +169,13 @@ def test_below_the_limit_nothing_happens():
     assert asked == []
 
 
-def test_the_request_limit_runs_the_lifespan_shutdown(tmp_path):
+def test_the_request_limit_runs_the_lifespan_shutdown(monkeypatch):
     """The inbox drains stop in the app's lifespan shutdown (app/main.py shutdown_event -> stop_inbox_queue ->
     begin_shutdown); a request-limit exit reaches it like a signal does."""
     import threading
     import urllib.request
 
+    monkeypatch.setattr(uvicorn_worker.DrainingServer, "ACCEPT_SETTLE_SECONDS", 0.05)
     events: list[str] = []
 
     async def app(scope, receive, send):
@@ -169,7 +193,9 @@ def test_the_request_limit_runs_the_lifespan_shutdown(tmp_path):
 
     asked: list[int] = []
     config = uvicorn.Config(app=app, port=0, limit_max_requests=1, log_level="warning")
-    server = uvicorn_worker.DrainingServer(config, lambda: None, 5.0, ask_replacement=lambda: asked.append(1))
+    server = uvicorn_worker.DrainingServer(
+        config, lambda: None, 5.0, ask_replacement=lambda: asked.append(1), replacement_up=lambda: bool(asked)
+    )
     t = threading.Thread(target=server.run)
     t.start()
     for _ in range(100):
