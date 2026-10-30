@@ -5,7 +5,7 @@ import { TABS, resolveProjectTab } from './ProjectDetailClient';
 describe('the Orders tab', () => {
   it('replaces POs, Delivery schedules and Sales orders', () => {
     const labels = TABS.map((tab) => tab.label);
-    expect(labels).toContain('Orders');
+    expect(labels).toContain('PO');
     expect(labels).not.toContain('POs');
     expect(labels).not.toContain('Delivery schedules');
     expect(labels).not.toContain('Sales orders');

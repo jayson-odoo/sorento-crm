@@ -80,7 +80,6 @@ import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
 import { SampleRequestsPanel } from './SampleRequestsPanel';
-import { SamplesPanel } from './SamplesPanel';
 import { SponsorshipsPanel } from './SponsorshipsPanel';
 import { StakeholdersPanel } from './StakeholdersPanel';
 import { TasksPanel } from './TasksPanel';
@@ -97,17 +96,16 @@ import { TasksPanel } from './TasksPanel';
  */
 export const TABS = [
   { id: 'overview', label: 'Overview', icon: Info },
+  { id: 'documents', label: 'Documents', icon: Paperclip },
+  { id: 'quotations', label: 'Quotation', icon: FileText },
+  { id: 'sample-requests', label: 'Samples Request', icon: ClipboardList },
+  { id: 'sponsorships', label: 'Sponsorship Form', icon: HandCoins },
+  // PO is the old Orders tab (id kept so links hold); SO lists every sales order.
+  { id: 'orders', label: 'PO', icon: ShoppingCart },
+  { id: 'sales-orders-tab', label: 'SO', icon: Package },
   { id: 'stakeholders', label: 'Stakeholders', icon: Users },
   { id: 'tasks', label: 'Tasks', icon: ListChecks },
-  { id: 'quotations', label: 'Quotations', icon: FileText },
-  { id: 'sample-requests', label: 'Sample requests', icon: ClipboardList },
-  { id: 'samples', label: 'Samples', icon: Package },
-  { id: 'sponsorships', label: 'Sponsorships', icon: HandCoins },
-  // PM-SIMPLIFY AC-O1: one Orders tab where POs, Delivery schedules and Sales orders were.
-  // A PO's schedule and sales orders live on the PO's own page.
-  { id: 'orders', label: 'Orders', icon: ShoppingCart },
   { id: 'activity', label: 'Activity', icon: History },
-  { id: 'documents', label: 'Documents', icon: Paperclip },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -123,6 +121,7 @@ const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
 };
 
 export function resolveProjectTab(requested: string | null): TabId {
+  if (requested === 'samples') return 'sample-requests';
   if (requested && LEGACY_ORDER_TABS.includes(requested)) return 'orders';
   return requested && TABS.some((tab) => tab.id === requested)
     ? (requested as TabId)
@@ -561,15 +560,14 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         <TabsContent value="sample-requests">
           <SampleRequestsPanel project={project} />
         </TabsContent>
-        <TabsContent value="samples">
-          <SamplesPanel project={project} />
-        </TabsContent>
         <TabsContent value="sponsorships">
           <SponsorshipsPanel project={project} />
         </TabsContent>
-        <TabsContent value="orders" className="space-y-4">
+        <TabsContent value="orders">
           <PurchaseOrdersPanel project={project} />
-          <SalesOrdersPanel project={project} withoutPurchaseOrder />
+        </TabsContent>
+        <TabsContent value="sales-orders-tab">
+          <SalesOrdersPanel project={project} />
         </TabsContent>
         <TabsContent value="activity">
           <ProjectActivityPanel project={project} />
