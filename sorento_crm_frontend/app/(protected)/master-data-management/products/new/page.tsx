@@ -7,8 +7,17 @@ import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import ProductForm from '../components/ProductForm';
+import RequireAccess from '@/app/components/common/RequireAccess';
 
 export default function NewProductPage() {
+  return (
+    <RequireAccess permission="master_data.products.add">
+      <NewProductPageBody />
+    </RequireAccess>
+  );
+}
+
+function NewProductPageBody() {
   const router = useRouter();
 
   return (

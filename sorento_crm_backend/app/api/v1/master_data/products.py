@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.utils.multi_value import multi_values
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
+from app.dependencies import get_current_user_or_api_key, require_permission
 from app.services.product_service import ProductService
 from app.services import product_purchase_history_service
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
@@ -307,7 +307,7 @@ def get_product_purchase_history(
 @router.post("/", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 def create_product(
     product_data: ProductCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.add")),
     db: Session = Depends(get_db)
 ):
     """Create a new product."""
@@ -330,7 +330,7 @@ def create_product(
 @router.put("/bulk", status_code=status.HTTP_200_OK)
 def bulk_update_products(
     body: BulkUpdateProductsRequest = Body(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.edit")),
     db: Session = Depends(get_db)
 ):
     """Bulk update products by ID. Body: { ids: string[], updates: { is_searchable } }."""
@@ -347,7 +347,7 @@ def bulk_update_products(
 def update_product(
     product_id: str,
     product_data: ProductUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.edit")),
     db: Session = Depends(get_db)
 ):
     """Update a product."""
@@ -373,7 +373,7 @@ def update_product(
 @heavy
 def bulk_import_products(
     import_data: BulkImportProductsRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.import")),
     db: Session = Depends(get_db)
 ):
     """Bulk import products from Excel data (queued). If validate_only=true, run validation only and return errors/warnings (no job)."""
@@ -429,7 +429,7 @@ def bulk_import_products(
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
 def bulk_delete_products(
     body: BulkDeleteProductsRequest = Body(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.bulk_delete")),
     db: Session = Depends(get_db)
 ):
     """Bulk delete products by ID. Body: { ids: string[] }."""
@@ -446,7 +446,7 @@ def bulk_delete_products(
 @router.delete("/{product_id}", status_code=status.HTTP_200_OK)
 def delete_product(
     product_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.delete")),
     db: Session = Depends(get_db)
 ):
     """Delete a product."""
@@ -468,7 +468,7 @@ class _VariantParentBody(BaseModel):
 def set_variant_parent(
     product_id: str,
     body: _VariantParentBody,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.edit")),
     db: Session = Depends(get_db),
 ):
     """Manually set/change a product's variant parent (sticky override).
@@ -489,7 +489,7 @@ def set_variant_parent(
 @router.delete("/{product_id}/variant-parent", response_model=ProductResponse)
 def unlink_variant(
     product_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.edit")),
     db: Session = Depends(get_db),
 ):
     """Manually unlink a product from its variant parent (sticky override).
@@ -509,7 +509,7 @@ def unlink_variant(
 @router.post("/{product_id}/variant-reset", response_model=ProductResponse)
 def reset_variant_auto(
     product_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.edit")),
     db: Session = Depends(get_db),
 ):
     """Reset a manually-curated variant link back to auto-derivation.
@@ -597,7 +597,7 @@ def set_product_attachment_field_links(
     product_id: str,
     attachment_id: str,
     body: _FieldLinksBody = Body(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.products.edit")),
     db: Session = Depends(get_db),
 ):
     """Idempotently replace the per-row field-link rows for one product +

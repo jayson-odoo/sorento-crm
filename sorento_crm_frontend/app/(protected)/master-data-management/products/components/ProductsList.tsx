@@ -192,6 +192,9 @@ const ProductsList = () => {
   const [catalogueUploadOpen, setCatalogueUploadOpen] = useState(false);
   const canExtractCataloguePhotos = useHasPermission('dealer_kit.page.edit');
   const canEditProducts = useHasPermission('master_data.products.edit');
+  const canAddProducts = useHasPermission('master_data.products.add');
+  const canImportProducts = useHasPermission('master_data.products.import');
+  const canDeleteProducts = useHasPermission('master_data.products.delete');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
 
@@ -1071,32 +1074,44 @@ const ProductsList = () => {
             }}
             primaryAction={<UploadCostPriceAction />}
             secondaryActions={[
-              {
-                key: 'create-product',
-                label: 'Create product',
-                icon: Plus,
-                onClick: openCreateProduct,
-              },
+              ...(canAddProducts
+                ? [
+                    {
+                      key: 'create-product',
+                      label: 'Create product',
+                      icon: Plus,
+                      onClick: openCreateProduct,
+                    },
+                  ]
+                : []),
               {
                 key: 'advanced-filter',
                 label: 'Advanced filters',
                 icon: SlidersHorizontal,
                 onClick: () => setAdvancedFilterDialogOpen(true),
               },
-              {
-                key: 'template',
-                label: 'Download template',
-                icon: Download,
-                onClick: () =>
-                  generateExcelFile([{}], PRODUCT_IMPORT_COLUMNS, 'products_import_template.xlsx'),
-              },
-              {
-                key: 'import',
-                label: 'Import',
-                icon: Upload,
-                onClick: () => setUploadDialogOpen(true),
-                dataGuideTarget: 'master-data.products.upload-button',
-              },
+              ...(canImportProducts
+                ? [
+                    {
+                      key: 'template',
+                      label: 'Download template',
+                      icon: Download,
+                      onClick: () =>
+                        generateExcelFile(
+                          [{}],
+                          PRODUCT_IMPORT_COLUMNS,
+                          'products_import_template.xlsx',
+                        ),
+                    },
+                    {
+                      key: 'import',
+                      label: 'Import',
+                      icon: Upload,
+                      onClick: () => setUploadDialogOpen(true),
+                      dataGuideTarget: 'master-data.products.upload-button',
+                    },
+                  ]
+                : []),
               ...(canEditProducts
                 ? [
                     {
@@ -1131,20 +1146,28 @@ const ProductsList = () => {
                 : []),
             ]}
             bulkActions={[
-              {
-                key: 'chat-search',
-                label: 'Chat search',
-                icon: MessageSquare,
-                onClick: () => setBulkChatSearchDialogOpen(true),
-              },
-              {
-                key: 'delete',
-                label: 'Delete',
-                icon: Trash2,
-                destructive: true,
-                onClick: () =>
-                  bulkDeletion.run(selectedRowIds(table).map((id) => ({ id }))),
-              },
+              ...(canEditProducts
+                ? [
+                    {
+                      key: 'chat-search',
+                      label: 'Chat search',
+                      icon: MessageSquare,
+                      onClick: () => setBulkChatSearchDialogOpen(true),
+                    },
+                  ]
+                : []),
+              ...(canDeleteProducts
+                ? [
+                    {
+                      key: 'delete',
+                      label: 'Delete',
+                      icon: Trash2,
+                      destructive: true,
+                      onClick: () =>
+                        bulkDeletion.run(selectedRowIds(table).map((id) => ({ id }))),
+                    },
+                  ]
+                : []),
             ]}
           />
         </CardHeader>
