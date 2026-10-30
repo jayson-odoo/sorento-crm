@@ -709,3 +709,322 @@ def test_ac7e_control_a_member_pick_is_the_preferred_assignee(
     assert [b.get("preferred_assignee_id") for b in bodies] == [member], seams.assignee
     assert not seams.errors(), seams.errors()
     assert _assigned(result), result.actions
+
+
+# =========================================================================== #
+# Review round 2 (NOT READY): B2, B3, B4, S1, S2, S3, S4
+# =========================================================================== #
+
+ZH_TEXT = "我想找人帮忙"  # detected `zh` (any CJK ideograph)
+FREE_TEAM = "call 0123 for refund"  # a team word the parser copied verbatim (head/parser.py)
+
+
+def _say_dry(message_id: str, words: str):
+    """The chat console's turn: `is_test` makes it a dry run (D14)."""
+    env = _say(message_id, words)
+    env.is_test = True
+    return env
+
+
+def _named_customer_service(**overrides: Any) -> dict[str, Any]:
+    """'escalate to the customer service team': the parser routed nowhere, the team is in
+    its own reading of the message (`user_goal`)."""
+    return _help(user_goal="escalate to the customer service team", **overrides)
+
+
+def _unconfigured_company(session_factory, phone: str) -> None:
+    """A company whose only link is outside the topic map: no topic pair is reachable."""
+    company = _seed_company(session_factory, "ZZT Company Unmapped")
+    _seed_contact(session_factory, phone=phone, company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="it_support", team_code="it_admin")
+
+
+def _mocha_like(session_factory, phone: str) -> None:
+    company = _seed_company(session_factory, "ZZT Company Two")
+    _seed_contact(session_factory, phone=phone, company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="general_enquiries", team_code="purchasing_product")
+    _seed_pair(session_factory, company_id=company, agent_code="order_enquiries", team_code="customer_service")
+
+
+# --------------------------------------------------------------------------- #
+# B2  a team the customer NAMES is kept, even when the chain filled the same team
+# --------------------------------------------------------------------------- #
+
+
+def test_b2_a_named_customer_service_team_routes_there_without_a_topic_question(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    company = _seed_company(session_factory, "ZZT Company Order")
+    _seed_contact(session_factory, phone="+60970000010", company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="order_enquiries", team_code="customer_service")
+    _seed_pair(session_factory, company_id=company, agent_code="general_enquiries", team_code="marketing_promotion")
+    seams = _observe(monkeypatch)
+    stub_parser(_named_customer_service())
+    stub_access()
+
+    result = engine_mod.run_turn(
+        _say("b2-1", "please escalate to the customer service team"), session_factory=session_factory
+    )
+
+    assert seams.pairs() == [DOMAIN_PAIR["order"]], (
+        f"the named team is the route, no topic question: {_reply_text(result)!r} {seams.assignee!r}"
+    )
+    assert not seams.errors(), seams.errors()
+    assert _assigned(result), result.actions
+
+
+def test_b2_a_held_promotion_topic_never_overrides_the_named_customer_service_team(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    company = _seed_company(session_factory, "ZZT Company Order")
+    _seed_contact(session_factory, phone="+60970000011", company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="order_enquiries", team_code="customer_service")
+    _seed_pair(session_factory, company_id=company, agent_code="general_enquiries", team_code="marketing_promotion")
+    # An earlier turn was about promotions: the topic is held in the focus.
+    _set_open_question(session_factory, None, focus={"domains": ["promotion"]})
+    seams = _observe(monkeypatch)
+    stub_parser(_named_customer_service())
+    stub_access()
+
+    result = engine_mod.run_turn(
+        _say("b2-2", "please escalate to the customer service team"), session_factory=session_factory
+    )
+
+    assert ("general_enquiries", "marketing_promotion") not in seams.pairs(), seams.assignee
+    assert seams.pairs() == [DOMAIN_PAIR["order"]], seams.assignee
+    assert _assigned(result), result.actions
+
+
+# --------------------------------------------------------------------------- #
+# B3 (AC-4)  the topic clarify is in the contact's language, labels and joiner included
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(("lang", "words"), [("ms", MS_TEXT), ("zh", ZH_TEXT)])
+def test_b3_the_topic_question_and_its_quick_replies_are_in_the_contacts_language(
+    session_factory, stub_parser, stub_access, monkeypatch, lang, words
+) -> None:
+    company = _seed_company(session_factory, "ZZT Company Three")
+    _seed_contact(session_factory, phone="+60970000012", company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="order_enquiries", team_code="customer_service")
+    _seed_pair(session_factory, company_id=company, agent_code="general_enquiries", team_code="marketing_promotion")
+    seams = _observe(monkeypatch)
+    stub_parser(_help())
+    stub_access()
+
+    result = engine_mod.run_turn(_say(f"b3-{lang}", words), session_factory=session_factory)
+
+    assert seams.live_bodies() == [], seams.assignee
+    sends = _sends(result)
+    assert len(sends) == 1, sends
+    said = sends[0].get("text") or ""
+    lead = label_catalog.LABELS[T.ESC_TOPIC_ASK][lang].split("{topics}")[0]
+    assert said.startswith(lead), (lead, said)
+    english = [label for label in T.ESC_TOPIC_LABELS if label.lower() in said.lower()]
+    assert not english, f"English topic labels in a {lang} reply: {english!r} in {said!r}"
+    assert " or " not in said, f"the English joiner in a {lang} reply: {said!r}"
+    offered = _quick_replies(result)
+    assert not [q for q in offered if q in {label.lower() for label in T.ESC_TOPIC_LABELS}], offered
+    wanted = {(label_catalog.LABELS.get(label) or {}).get(lang) for label in ("Orders & delivery", "Promotions")}
+    assert None not in wanted, f"no {lang} label for the topics in label_catalog"
+    assert set(offered) == {w.lower() for w in wanted}, offered
+
+
+@pytest.mark.parametrize("english", T.NEW_EN_LABELS)
+def test_b3_every_topic_label_has_ms_and_zh_in_the_catalog(english: str) -> None:
+    from app.services.chatbot.lanes.escalation import ESCALATION_TOPICS
+
+    assert english in [label for label, _ in ESCALATION_TOPICS], "the lane's own topic labels"
+    entry = label_catalog.LABELS.get(english)
+    assert entry, f"no label_catalog entry for {english!r}"
+    for lang in ("ms", "zh"):
+        assert entry.get(lang, "").strip() and entry[lang] != english, (lang, english)
+        assert english in label_catalog.defaults(lang), (lang, english)
+
+
+# --------------------------------------------------------------------------- #
+# B4  the failure reply names the team the customer named and the draw was for
+# --------------------------------------------------------------------------- #
+
+
+def test_b4_a_failed_draw_for_the_named_warehouse_team_never_names_the_parsers_team(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    company = _seed_company(session_factory, "ZZT Company Stock")
+    _seed_contact(session_factory, phone="+60970000013", company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="general_enquiries", team_code="warehouse")
+    _seed_pair(session_factory, company_id=company, agent_code="general_enquiries", team_code="purchasing")
+    seams = _observe(monkeypatch, **_failure("assignee_404"))
+    stub_parser(
+        _help(
+            user_goal="escalate to the warehouse team",
+            routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+        )
+    )
+    stub_access()
+
+    result = engine_mod.run_turn(_say("b4-1", "please escalate to the warehouse team"), session_factory=session_factory)
+
+    assert seams.pairs() == [DOMAIN_PAIR["inventory"]], seams.assignee
+    assert result.reply["text"] == T.H_ESC.format(team="warehouse"), result.reply["text"]
+    assert "purchasing" not in result.reply["text"], result.reply["text"]
+
+
+# --------------------------------------------------------------------------- #
+# S1 + security nit  a failure names no team unless it is a reachable topic-map team
+# --------------------------------------------------------------------------- #
+
+
+def _neutral(lang: str) -> str:
+    return T.H_ESC_NEUTRAL if lang == "en" else (label_catalog.LABELS.get(T.H_ESC_NEUTRAL) or {}).get(lang)
+
+
+@pytest.mark.parametrize(("lang", "words"), [("en", "I want to talk to a person"), ("ms", MS_TEXT)])
+def test_s1_no_reachable_topic_fails_with_the_neutral_text(
+    session_factory, stub_parser, stub_access, monkeypatch, lang, words
+) -> None:
+    _unconfigured_company(session_factory, "+60970000014")
+    seams = _observe(monkeypatch)
+    stub_parser(_help())
+    stub_access()
+
+    result = engine_mod.run_turn(_say(f"s1-a-{lang}", words), session_factory=session_factory)
+
+    said = result.reply["text"]
+    assert seams.live_bodies() == [], seams.assignee
+    assert not _assigned(result), result.actions
+    assert pretty_team(DEFAULT_SUGGESTED_TEAM) not in said.lower(), said
+    assert said == _neutral(lang), said
+
+
+def test_s1_an_unreachable_topic_team_is_never_named(session_factory, stub_parser, stub_access, monkeypatch) -> None:
+    """The stock topic's team is warehouse; this company has no warehouse link."""
+    _unconfigured_company(session_factory, "+60970000015")
+    seams = _observe(monkeypatch)
+    stub_parser(_help(domain_hint="inventory"))
+    stub_access()
+
+    result = engine_mod.run_turn(_say("s1-b", "can someone help me with stock"), session_factory=session_factory)
+
+    said = result.reply["text"]
+    assert seams.live_bodies() == [], seams.assignee
+    assert "warehouse" not in said.lower(), said
+    assert said == T.H_ESC_NEUTRAL, said
+
+
+def test_s1_a_free_string_team_from_the_parser_is_never_echoed(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    """Security nit: `routing.suggested_team` may be the customer's own words verbatim."""
+    _unconfigured_company(session_factory, "+60970000016")
+    seams = _observe(monkeypatch)
+    stub_parser(
+        _help(
+            user_goal=f"escalate to the {FREE_TEAM} team",
+            routing={"suggested_team": FREE_TEAM, "suggested_agent": None},
+            escalation={"is_escalation_confirmation": True, "escalation_declined": None, "company_pick": None},
+        )
+    )
+    stub_access()
+
+    result = engine_mod.run_turn(
+        _say("s1-c", f"escalate to the '{FREE_TEAM}' team"), session_factory=session_factory
+    )
+
+    said = _reply_text(result)
+    assert seams.live_bodies() == [], seams.assignee
+    assert "0123" not in said and "refund" not in said.lower(), said
+    assert said == T.H_ESC_NEUTRAL, said
+
+
+# --------------------------------------------------------------------------- #
+# S2  an explicit team draws with its map agent before a default-filled agent
+# --------------------------------------------------------------------------- #
+
+
+def test_s2_an_explicit_customer_service_team_draws_with_order_enquiries_not_the_default_agent(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    company = _seed_company(session_factory, "ZZT Company Both")
+    _seed_contact(session_factory, phone="+60970000017", company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="general_enquiries", team_code="customer_service")
+    _seed_pair(session_factory, company_id=company, agent_code="order_enquiries", team_code="customer_service")
+    seams = _observe(monkeypatch)
+    # The parser named the team, not the agent: the agent the turn carries is the default fill.
+    stub_parser(_help(routing={"suggested_team": "customer_service", "suggested_agent": None}))
+    stub_access()
+
+    result = engine_mod.run_turn(_say("s2-1", "customer service please"), session_factory=session_factory)
+
+    assert seams.pairs() == [DOMAIN_PAIR["order"]], (
+        f"never the default agent {DEFAULT_SUGGESTED_AGENT!r}: {seams.assignee!r}"
+    )
+    assert _assigned(result), result.actions
+
+
+# --------------------------------------------------------------------------- #
+# S3  a dry run (chat console) shows the outcome the live turn has
+# --------------------------------------------------------------------------- #
+
+
+def test_s3_a_dry_run_shows_the_same_failure_as_the_live_turn(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    _unconfigured_company(session_factory, "+60970000018")
+    _observe(monkeypatch)
+    stub_parser(_help())
+    stub_access()
+
+    dry = engine_mod.run_turn(_say_dry("s3-dry", "I want to talk to a person"), session_factory=session_factory)
+    live = engine_mod.run_turn(_say("s3-live", "I want to talk to a person"), session_factory=session_factory)
+
+    assert not _assigned(live), live.actions
+    kinds = [a.get("kind") for a in dry.actions]
+    assert "assign_conversation" not in kinds and "add_comment" not in kinds, (
+        f"no previewed assignment to the chain's team: {dry.actions!r}"
+    )
+    assert _reply_text(dry) == _reply_text(live), (_reply_text(dry), _reply_text(live))
+
+
+# --------------------------------------------------------------------------- #
+# S4  Mocha: general_enquiries is linked to purchasing_product, not purchasing
+# --------------------------------------------------------------------------- #
+
+
+def test_s4_mocha_a_product_info_escalation_routes_to_purchasing_product(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    _mocha_like(session_factory, "+60970000019")
+    seams = _observe(monkeypatch)
+    stub_parser(_help(domain_hint="master_products"))
+    stub_access()
+
+    result = engine_mod.run_turn(
+        _say("s4-1", "I need someone to check this product for me"), session_factory=session_factory
+    )
+
+    assert seams.pairs() == [("general_enquiries", "purchasing_product")], (_reply_text(result), seams.assignee)
+    assert not seams.errors(), seams.errors()
+    assert _assigned(result), result.actions
+
+
+def test_s4_mocha_the_topic_question_offers_product_info_and_routes_it(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    _mocha_like(session_factory, "+60970000020")
+    seams = _observe(monkeypatch)
+    stub_parser(_help())
+    stub_access()
+
+    first = engine_mod.run_turn(_say("s4-2", "I want to talk to a person"), session_factory=session_factory)
+
+    assert seams.live_bodies() == [], seams.assignee
+    assert TOPIC_PRODUCT in set(_quick_replies(first)), (_reply_text(first), _quick_replies(first))
+    open_question = _session_vars(session_factory).get("open_question") or {}
+    product = [o for o in (open_question.get("options") or []) if TOPIC_PRODUCT in str(o.get("label") or "").lower()]
+    assert len(product) == 1, open_question
+    stub_parser(_pick(int(product[0]["position"])))
+
+    engine_mod.run_turn(_say("s4-3", "Product info"), session_factory=session_factory)
+
+    assert seams.pairs() == [("general_enquiries", "purchasing_product")], seams.assignee

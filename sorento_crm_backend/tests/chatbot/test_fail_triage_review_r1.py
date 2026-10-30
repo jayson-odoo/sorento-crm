@@ -47,20 +47,55 @@ def _envelope_saying(text: str):
 # --------------------------------------------------------------------------- #
 
 
-def test_r1_a_price_tag_request_ask_gets_the_price_tag_portal_link(portal_console) -> None:
-    c = portal_console("+60100000615")
-    c.state = {"focus": None, "open_question": None}
-    out = c.say(
-        "I want to request price tags",
-        parser_reply(
-            domain_hint="portal_link", intent_hint="get_portal_link", entities=[], portal_form="price_tag_request"
-        ),
+def _grant_price_tag_form(session_factory) -> None:
+    """The real grant shape (`portal_form_visibility_service.switched_form_types` step 3): a
+    per-contact override row. Price tag is not one of the base kinds."""
+    from sqlalchemy import text
+
+    from app.models.price_tag import ContactPortalFormOverride
+
+    db = session_factory()
+    contact_id = db.execute(text("SELECT id FROM respond_contacts LIMIT 1")).scalar_one()
+    db.add(ContactPortalFormOverride(contact_id=contact_id, form_type="price_tag_request", is_enabled=True))
+    db.commit()
+
+
+def _price_tag_turn() -> dict[str, Any]:
+    return parser_reply(
+        domain_hint="portal_link", intent_hint="get_portal_link", entities=[], portal_form="price_tag_request"
     )
+
+
+def test_r1_a_price_tag_request_ask_gets_the_price_tag_portal_link(portal_console, session_factory) -> None:
+    c = portal_console("+60100000615")
+    _grant_price_tag_form(session_factory)
+    c.state = {"focus": None, "open_question": None}
+    out = c.say("I want to request price tags", _price_tag_turn())
     calls = _portal_calls(c)
     assert len(calls) == 1, c.tool_calls
     assert calls[0].get("submission_type") == "price_tag_request", calls
     assert LINK in out, out
     assert T.PORTAL_COULD_NOT_FIND not in out.lower(), out
+
+
+FORM_NOT_AVAILABLE = "That form is not available on your account."
+
+
+def test_ac3_a_contact_without_the_price_tag_grant_gets_no_link(portal_console) -> None:
+    c = portal_console("+60100000616")
+    c.state = {"focus": None, "open_question": None}
+    out = c.say("I want to request price tags", _price_tag_turn())
+    assert out == FORM_NOT_AVAILABLE, out
+    assert LINK not in out
+    assert _portal_calls(c) == [], c.tool_calls
+
+
+def test_ac3_the_form_not_available_text_has_ms_and_zh() -> None:
+    entry = label_catalog.LABELS.get(FORM_NOT_AVAILABLE)
+    assert entry, "no label_catalog entry"
+    for lang in ("ms", "zh"):
+        assert entry.get(lang, "").strip() and entry[lang] != FORM_NOT_AVAILABLE, lang
+        assert FORM_NOT_AVAILABLE in label_catalog.defaults(lang), lang
 
 
 # --------------------------------------------------------------------------- #
@@ -153,7 +188,7 @@ def test_r4_a_queue_wait_timeout_still_says_h_queue(session_factory, seeded, mon
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("tool", ["crm_low_stock_report", "crm_portal_link_get"])
+@pytest.mark.parametrize("tool", ["crm_low_stock_report", "crm_portal_link_get", "crm_sales_analysis"])
 def test_r5_a_side_effecting_tool_is_never_retried_on_timeout(monkeypatch, tool) -> None:
     call, _unused, calls = _mcp_harness(monkeypatch, [TimeoutError("timed out")])
     with pytest.raises(TimeoutError):

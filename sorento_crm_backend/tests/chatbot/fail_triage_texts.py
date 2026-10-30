@@ -17,8 +17,19 @@ AC2_ASK_PRODUCT = "Which product do you want the {label} for? Send me the code."
 AC2_COULD_NOT_FETCH = "I could not fetch {label} just now, please try again."
 AC2_NOT_PERMITTED = "That report is not available on your account."
 
+# AC-7 escalation (review round 2, B3 + S1): the topic clarify, its five quick-reply labels,
+# and the failure reply that names no team (no reachable topic-map team to name).
+ESC_TOPIC_ASK = "Which topic is this about - {topics}?"
+ESC_TOPIC_LABELS = ("Orders & delivery", "Stock & ETA", "Product info", "Promotions", "Forms")
+H_ESC_NEUTRAL = "I could not pass this to our team just now. Please contact us directly."
+
 #: Every new EN sentence the batch adds, for the AC-4 catalog coverage test.
-NEW_EN_TEXTS = (H_AI, H_ERROR, H_QUEUE, H_ESC, AC2_NONE_FOUND, AC2_ASK_SUBJECT, AC2_ASK_PRODUCT, AC2_NOT_PERMITTED)
+NEW_EN_TEXTS = (
+    H_AI, H_ERROR, H_QUEUE, H_ESC, AC2_NONE_FOUND, AC2_ASK_SUBJECT, AC2_ASK_PRODUCT, AC2_NOT_PERMITTED,
+    ESC_TOPIC_ASK, H_ESC_NEUTRAL,
+)
+#: Every new EN quick-reply LABEL (catalog-covered too, but replaced whole, so not INLINE).
+NEW_EN_LABELS = ESC_TOPIC_LABELS
 
 #: Substrings of the two banned texts in every language (owner rule, 30 Oct 2026).
 BANNED_FRAGMENTS = (
