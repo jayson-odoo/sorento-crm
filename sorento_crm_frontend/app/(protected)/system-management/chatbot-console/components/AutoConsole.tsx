@@ -60,9 +60,6 @@ export default function AutoConsole() {
         {auto.contactId && auto.entries.length === 0 && !auto.pendingText ? (
           <div className="py-10 text-center">
             <p className="text-sm font-medium">No messages yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Each message goes to the bot or the agent, whichever fits it.
-            </p>
           </div>
         ) : null}
         {auto.entries.map((entry) => {
@@ -103,7 +100,6 @@ export default function AutoConsole() {
                   <ProposalActions
                     action={entry.pendingAction}
                     busy={auto.deciding}
-                    showLines
                     onConfirm={() => auto.confirmAction(entry.pendingAction!.id, entry.id)}
                     onCancel={() => auto.cancelAction(entry.pendingAction!.id, entry.id)}
                   />

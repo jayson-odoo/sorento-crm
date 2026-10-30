@@ -459,7 +459,6 @@ export default function ChatbotMediaSettingsPage() {
           <NumberField
             id="agent-daily-turns"
             label="Agent turns per contact per day"
-            hint="0 means no cap."
             value={draft.agentDailyTurns}
             error={numberError.agentDailyTurns}
             onChange={(v) => set('agentDailyTurns', v)}

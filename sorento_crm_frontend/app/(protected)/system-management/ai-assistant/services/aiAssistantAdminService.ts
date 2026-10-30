@@ -49,8 +49,7 @@ export async function updateAIAssistantConfig(
     body: JSON.stringify(payload),
   });
   if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail || 'Failed to update AI assistant config');
+    throw new Error(await extractApiError(r, 'Failed to update AI assistant config'));
   }
   return r.json();
 }

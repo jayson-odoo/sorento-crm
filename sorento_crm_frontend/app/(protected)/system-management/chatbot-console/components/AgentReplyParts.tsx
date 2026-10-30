@@ -126,14 +126,11 @@ export function ReplyMeta({ meta }: { meta: AgentReplyMeta }) {
 export function ProposalActions({
   action,
   busy,
-  showLines,
   onConfirm,
   onCancel,
 }: {
   action: AgentPendingAction;
   busy: boolean;
-  /** The Auto tab has no separate list of the lines, so the box prints them. */
-  showLines?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -143,15 +140,6 @@ export function ProposalActions({
       className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2"
       data-testid="agent-proposal"
     >
-      {showLines ? (
-        <ul className="w-full space-y-0.5 text-xs">
-          {action.lines.map((line, index) => (
-            <li key={index} className="break-words">
-              {line}
-            </li>
-          ))}
-        </ul>
-      ) : null}
       <Button
         type="button"
         size="sm"

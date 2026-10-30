@@ -173,9 +173,7 @@ function DailyTurnsField({
           if (e.key === 'Enter') commit();
         }}
       />
-      <p className={invalid ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
-        {error ?? '0 means no cap.'}
-      </p>
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }

@@ -113,8 +113,9 @@ def main(argv: list[str] | None = None, *, choose: Callable[..., dict] | None = 
                     criteria=router.CRITERIA,
                 )
                 score = float(answer["probabilities"]["agent"])
-            except jev_client.JevError:
-                # The live router sends this to the bot as `router_failed`; the eval counts it the same way.
+            except (jev_client.JevError, KeyError, TypeError, ValueError):
+                # A failed call or an answer without the `agent` probability: the live router sends it to the
+                # bot as `router_failed` and the eval counts it the same way. Anything else is a bug and stops the run.
                 row = {**base, "route": "chat", "reason": "router_failed", "score": None,
                        "ms": (time.monotonic() - started) * 1000, "input_tokens": 0}
             else:

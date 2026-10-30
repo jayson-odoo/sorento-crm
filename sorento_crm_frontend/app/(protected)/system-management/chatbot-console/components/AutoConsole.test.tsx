@@ -215,7 +215,8 @@ describe('AutoConsole', () => {
     send('mark the ask done');
     await screen.findByText('AGENT-REPLY');
     const box = screen.getByTestId('agent-proposal');
-    expect(within(box).getByText('Mark ask done')).toBeInTheDocument();
+    // The lines are in the reply text, not repeated in the box.
+    expect(within(box).queryByText('Mark ask done')).not.toBeInTheDocument();
     expect(within(box).getByRole('button', { name: /confirm/i })).toBeInTheDocument();
   });
 
