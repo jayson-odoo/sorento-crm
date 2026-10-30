@@ -183,3 +183,64 @@ the step error; a user limited to own opportunities cannot move one onto another
 
 FE (slice 4, vitest): the proposal block renders lines + Confirm / Cancel; Confirm calls the service and shows
 the step results; buttons disabled while pending; expired / refused shows the reason.
+
+## Build contract, slice 1 (tester and coder both read this; tests import these names)
+
+`app/models/chatbot_agent.py`: model `AgentAction`, table `chatbot.agent_actions`, columns as section 4
+(`steps` JSONB not null default `[]`). Migration `agp3_0001_agent_actions` (down_revision = main's current head).
+
+`app/services/chatbot/agent/writes.py`:
+
+```python
+@dataclass(frozen=True)
+class WriteDef: name, user_permission, schema, read_before, summary, execute, record_key   # section 1
+
+WRITES: dict[str, WriteDef]          # slice 1: exactly {"crm_customer_ask_update"}
+USER_READS: dict[str, ...]           # in-process reads as the user: "crm_customer_asks_list", "crm_agent_actions_recent"
+def permitted_writes(db, ctx) -> list[WriteDef]          # WRITES the linked user holds the slug for
+def run_as_user(db, ctx, fn: Callable[[dict], Any]) -> Any
+    # loads the user dict, sets the USER's company scope (company_scope_resolver._scope_for_user) and the
+    # audit actor (actor_type "user", auth_method "agent", contact_id ctx.contact_pk, tool_name), calls
+    # fn(user_dict), restores the previous scope and actor even on error
+def propose_step(db, ctx, name: str, args: Any, *, seen_ids: set[str]) -> tuple["ToolResult", dict | None]
+    # checks in order: name in WRITES else denied; slug now else denied; args dict and keys within
+    # schema properties else invalid; ids rule (P1 `_check_ids`) else invalid; read_before under run_as_user
+    # (route 404/403 -> denied with the route's message, other errors -> error). Success -> (ToolResult with
+    # status "proposed", data {"summary"}), step {"tool", "args", "before", "summary", "status": "proposed"}
+```
+
+`app/services/chatbot/agent/actions.py`:
+
+```python
+ACTION_TTL_MINUTES = 10
+MAX_STEPS = 20
+class ActionRefused(Exception):
+    reason: str   # not_found | not_newest | expired | not_proposed | entry_refused | changed | same_turn
+@dataclass
+class ActionOutcome:
+    action_id: str
+    status: str            # executed | partial | rejected | cancelled
+    reply_text: str
+    steps: list[dict]      # [{"summary", "status": done|failed|skipped|proposed, "error"}]
+def store_proposal(db, ctx, *, conversation_id: str, turn_id: str, steps: list[dict]) -> AgentAction
+    # expires any older `proposed` action of the contact; returns the new row (status proposed)
+def pending_action(db, contact_respond_id: str) -> AgentAction | None   # newest proposed, not expired
+def proposal_lines(action) -> list[str]
+def confirm(db, contact_respond_id: str, action_id: str, *, via: str, turn_id: str | None = None,
+            now: datetime | None = None) -> ActionOutcome
+    # raises ActionRefused for not_found / not_proposed / not_newest / expired / entry_refused / same_turn
+    # (via == "chat" and turn_id == action.turn_id). A changed record or a lost slug is NOT raised: it
+    # returns ActionOutcome(status="rejected") with the step's error naming what changed, nothing written.
+def cancel(db, contact_respond_id: str, action_id: str) -> ActionOutcome   # proposed -> cancelled
+```
+
+Loop (`agent/loop.py`): write tools from `permitted_writes` and the `USER_READS` join the turn's schemas;
+`confirm_action` / `cancel_action` (`{action_id: str}`) join only when `pending_action(...)` is not None. A write
+call goes through `propose_step`; steps collect per turn; at most `MAX_STEPS` (the next gets `invalid`). After the
+answer, steps -> `store_proposal` and the reply gets the proposal block (section 2).
+`AgentTurnResult` gains `pending_action: dict | None` (`{"id", "lines", "expires_at"}`).
+
+Routes (`api/v1/system/chatbot.py`, same permission as `/agent/turn`):
+`POST /api/v1/system/chatbot/agent/actions/{action_id}/confirm` and `/cancel`, body `{contact_respond_id}`
+-> 200 `{action_id, status, reply_text, steps}`; `ActionRefused` -> 409
+`{"detail": {"code": "action_refused", "reason": ...}}`.
