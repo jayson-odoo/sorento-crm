@@ -1,6 +1,6 @@
 # UAC: Send a quotation through the salesperson's own WhatsApp (QUOTE-SEND-WHATSAPP)
 
-**Status:** FINAL pending mock v2 approval. Owner answers 30 Oct ~00:30: Q1 (a), Q2 (b) sign-off = the quotation's
+**Status:** FINAL (mock v2 approved 30 Oct 09:50; Email = today's flow only, no mailto). Owner answers 30 Oct ~00:30: Q1 (a), Q2 (b) sign-off = the quotation's
 signatory, Q3 (a), Q4 (a), Q5 (a); Lavish notes on mock v1 (00:31): Send to Customer offers Email or WhatsApp (section
 E, replaces Q5 (a)'s auto-open), and the message is editable (AC-B5).
 Plan: `PLAN-quote-send-whatsapp-29oct.md`. Card: `CARD-quote-send-whatsapp-29oct.md`. Mock:

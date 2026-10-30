@@ -1,6 +1,6 @@
 # PLAN: Send a quotation through the salesperson's own WhatsApp (QUOTE-SEND-WHATSAPP)
 
-**Status:** Build pending mock v2 approval (card answered 30 Oct 00:30, Lavish notes 00:31). Size M (card + mock before code), lead pattern (tester -> coder -> reviewer). No migration, no
+**Status:** Build (mock v2 approved 30 Oct 09:50). Size M (card + mock before code), lead pattern (tester -> coder -> reviewer). No migration, no
 auth/RBAC change, no new external ingest. Behaviour card: `CARD-quote-send-whatsapp-29oct.md` (Waiting:owner).
 
 **Source:** owner team meeting 29 Oct 15:40 (Project Sales module); owner answers 29 Oct 22:45: Q4 a wa.me link from
