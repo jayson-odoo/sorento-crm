@@ -30,7 +30,7 @@ fulfilment planning and the OI email.
 ## Slices (after answers)
 
 1. Migration `sld_0001_so_line_description`: `sales_order_lines.description TEXT NULL`, down_revision
-   = main head at build time (today `agp1_0001_agent_foundation`). Model `app/models/order.py:756-795`.
+   = main head at build time (30 Oct: `agp3_0002_contacts_edit_own`). Model `app/models/order.py:756-795`.
 2. Ingest: `_line_values` (`app/services/document_ingest_service.py:1324`, pattern :1403-1406) writes
    `description` from `product_name` when sent (absent keeps, null clears, strip, blank -> NULL).
 3. Read: SO detail serializer (`app/services/scm/sales_order_service.py:404`, line keys ~:520-544,

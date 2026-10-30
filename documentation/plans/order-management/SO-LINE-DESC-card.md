@@ -24,7 +24,7 @@ the ITEM CODE cell carries code + description. Email = preview = attachment must
 1. Storage: new nullable Text column `sales_order_lines.description` (core table). Ingest writes it from
    the line's `product_name` only when the key is sent: absent keeps the stored value, explicit null
    clears (same as `line_remark`, `app/services/document_ingest_service.py:1403-1406`). Read-only in
-   the CRM; AutoCount owns it. Migration chains onto main's head `agp1_0001_agent_foundation`.
+   the CRM; AutoCount owns it. Migration chains onto main's head at build time (30 Oct: `agp3_0002_contacts_edit_own`).
 2. SO > Lines: new "Description" column right after Product
    (`app/(protected)/scm/sales-orders/[id]/components/SalesOrderDetail.tsx:914-994`), truncate + title.
    Product column unchanged (code, product master name underneath).
