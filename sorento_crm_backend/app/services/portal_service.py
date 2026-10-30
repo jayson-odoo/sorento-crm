@@ -172,25 +172,36 @@ class PortalService:
 
         A Respond.io id is unique per workspace only, so it is resolved inside the
         workspace `space_id` names (a contact with no workspace yet still resolves
-        when it is the only row for that id). An id that matches no row, or more
-        than one, is refused rather than resolved to an arbitrary row.
+        when it is the only row for that id and the workspace holds none). An id
+        that matches no row, or more than one, is refused rather than resolved to
+        an arbitrary row.
         """
-        from app.services.field_access import (
-            resolve_contact_id,
-            resolve_contact_with_null_workspace_fallback,
-        )
+        from app.models.respond_workspace import RespondWorkspace
 
-        if space_id:
-            resolved = resolve_contact_with_null_workspace_fallback(
-                self.db, contact_id=contact_id, space_id=space_id
-            )
-        else:
-            resolved = resolve_contact_id(self.db, contact_id)
-        contact = (
-            self.db.query(RespondContact).filter(RespondContact.id == resolved).first()
-            if resolved
-            else None
-        )
+        key = (contact_id or "").strip()
+        space_id = (space_id or "").strip()
+        contact = self.db.query(RespondContact).filter(RespondContact.id == key).first()
+        if contact is None and key:
+            by_rid = self.db.query(RespondContact).filter(RespondContact.respond_io_id == key)
+            if space_id:
+                rows = (
+                    by_rid.join(RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id)
+                    .filter(RespondWorkspace.space_id == space_id)
+                    .limit(2)
+                    .all()
+                )
+                if not rows:
+                    rows = by_rid.filter(RespondContact.workspace_id.is_(None)).limit(2).all()
+            else:
+                rows = by_rid.limit(2).all()
+            if len(rows) > 1:
+                logger.warning(
+                    "portal: respond_io_id %s matches %s contacts for space %s; refusing",
+                    key,
+                    len(rows),
+                    space_id,
+                )
+            contact = rows[0] if len(rows) == 1 else None
         if contact is None:
             raise handle_not_found("Contact", contact_id)
         return contact

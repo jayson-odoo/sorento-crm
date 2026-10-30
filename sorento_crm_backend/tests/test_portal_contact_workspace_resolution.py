@@ -200,3 +200,44 @@ def test_respond_inbox_url_refuses_id_outside_named_workspace(db, twins, cleanup
     other = _workspace(db, cleanup)
     db.commit()
     assert PortalService(db)._build_respond_inbox_url(rid, other.space_id) is None
+
+
+def test_send_link_resolves_contact_in_named_workspace(db, twins, monkeypatch):
+    rid, ws_a, ws_b, a, b = twins
+    sent = {}
+
+    class _FakeClient:
+        def send_message(self, identifier, text):
+            sent["identifier"] = identifier
+            return {}
+
+    import app.services.portal_service as portal_service_module
+    import app.services.integration_service as integration_service_module
+
+    monkeypatch.setattr(portal_service_module, "RespondClient", _FakeClient)
+    monkeypatch.setattr(integration_service_module, "log_respond_send", lambda *a, **k: None)
+    svc = PortalService(db)
+    minted = {}
+    real = svc.get_or_mint_token
+
+    def _spy(contact_id, space_id):
+        minted["contact_id"] = contact_id
+        return real(contact_id, space_id)
+
+    monkeypatch.setattr(svc, "get_or_mint_token", _spy)
+    svc.send_link_via_respond_io(rid, ws_b.space_id, "https://portal.example")
+    assert minted["contact_id"] == b.id
+
+
+def test_duplicate_id_inside_named_workspace_is_refused(db, cleanup):
+    """Two rows with one id in the SAME workspace refuse, and do not fall back to a
+    workspace-less row with that id either."""
+    rid = f"rio_{uuid.uuid4().hex[:8]}"
+    ws = _workspace(db, cleanup)
+    _contact(db, cleanup, respond_io_id=rid, workspace_id=ws.id)
+    _contact(db, cleanup, respond_io_id=rid, workspace_id=ws.id)
+    _contact(db, cleanup, respond_io_id=rid, workspace_id=None)
+    db.commit()
+    with pytest.raises(AppException) as exc:
+        PortalService(db).mint_token(rid, ws.space_id)
+    assert exc.value.status_code == 404
