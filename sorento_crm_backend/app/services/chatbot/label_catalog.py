@@ -1128,12 +1128,18 @@ class Localizer:
 
     def quick_replies(self, labels: str) -> str:
         """n8n's comma-joined quick-reply set with every label replaced whole (B3), or as
-        printed when one label is not catalogued (never half translated)."""
+        printed when one label is not catalogued (never half translated). This runs after the
+        engine's button guard, so a set whose translation would put any title past the
+        WhatsApp limit (`quick_reply_guard.MAX_TITLE_CHARS`) is sent in English whole."""
+        from app.services.chatbot.quick_reply_guard import MAX_TITLE_CHARS
+
         if not self.table or not labels:
             return labels
         parts = [part.strip() for part in labels.split(",")]
         said = [None if part in DIRECT_ONLY else self.table.get(part) for part in parts]
-        return labels if None in said else ", ".join(said)
+        if None in said or any(len(title.strip()) > MAX_TITLE_CHARS for title in said):
+            return labels
+        return ", ".join(said)
 
     def _inline_line(self, text: str) -> str:
         found: list[tuple[int, int, int, str]] = []
