@@ -811,3 +811,103 @@ describe('RESERVE-REQ-PICK AC-RP-6: a frozen line already covered (Short 0) open
     expect(payload.rows.find((r) => r.row_id === 'row-17p')?.qty_requested).toBe(2);
   });
 });
+
+describe('RESERVE-REQ-PICK AC-RP-8: an OI raised after the snapshot can be requested from the drill', () => {
+  // Owner, 30 Oct: "we snapshot the sales order but not the OI". Shape of the 26/10 case in
+  // crew's finding (point 2): the SO line had no OI when frozen; an OI raised later links a
+  // row to it today, so the drill shows it badged "after the snapshot".
+  const OI_LATE = 'b0000000-0000-4000-8000-000000000901';
+  const LATE_LINE = line({
+    so_number: 'SO409901',
+    required_date: '2027-02-10',
+    bucket: '2027-02',
+    short_qty: 12,
+    qty_ordered: 12,
+    open_qty: 12,
+    oi_rows: [
+      oiRow({
+        oi_id: OI_LATE,
+        inquiry_no: 'OI-2610-0901',
+        row_id: 'row-late',
+        qty: 11,
+        remaining: 11,
+        after_snapshot: true,
+        requestable: true,
+        delivery_date: '2027-02-10',
+      }),
+    ],
+    now: { so_status: 'open', open_qty: 11 },
+  });
+  const LATE_LIVE_ROW = {
+    ...OI17_LIVE_ROWS[0],
+    id: 'row-late',
+    delivery_date: '2027-02-10',
+    qty: '11',
+  };
+  // On a line OI-2609-0417 already held when frozen, a second row linked after the snapshot.
+  const FIRST = LINES[0] as ReturnType<typeof line>;
+  const WITH_LATE_ROW = {
+    ...FIRST,
+    oi_rows: [
+      ...FIRST.oi_rows,
+      oiRow({ row_id: 'row-17q', qty: 5, remaining: 5, after_snapshot: true, delivery_date: '2027-01-08' }),
+    ],
+  };
+  const LATE_17_LIVE_ROW = { ...OI17_LIVE_ROWS[0], id: 'row-17q', delivery_date: '2027-01-08', qty: '5' };
+
+  beforeEach(() => {
+    getSnapshotRowLines.mockResolvedValue({ lines: [WITH_LATE_ROW, ...LINES.slice(1), LATE_LINE] });
+    getOrderInquiryHeaderLines.mockImplementation(async (id: unknown) =>
+      id === OI_LATE ? [LATE_LIVE_ROW] : [...OI17_LIVE_ROWS, LATE_17_LIVE_ROW],
+    );
+  });
+
+  async function openRequestOn(inquiryNo: string) {
+    renderPage();
+    const dialog = await openAllMonths();
+    await within(dialog).findAllByText('SO383872');
+    fireEvent.click(
+      within(groupOf(dialog, inquiryNo)).getByRole('button', { name: /request cs to reserve/i }),
+    );
+    const heading = await screen.findByRole('heading', { name: /request cs to reserve/i });
+    return heading.closest('[role="dialog"]') as HTMLElement;
+  }
+
+  it('the late OI group carries Request CS to reserve', async () => {
+    renderPage();
+    const dialog = await openAllMonths();
+    await within(dialog).findAllByText('SO383872');
+    expect(
+      within(groupOf(dialog, 'OI-2610-0901')).getByRole('button', { name: /request cs to reserve/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('lists the late row ticked ("1 of 1 lines") and sends it', async () => {
+    const request = await openRequestOn('OI-2610-0901');
+    expect(getOrderInquiryHeaderLines).toHaveBeenCalledWith(OI_LATE);
+    const table = await within(request).findByRole('table');
+    await within(table).findByText('10/02/2027');
+    expect(within(rowWith(table, '10/02/2027')).getByRole('checkbox')).toBeChecked();
+    expect(within(request).getByText('1 of 1 lines')).toBeInTheDocument();
+    fireEvent.click(within(request).getByRole('button', { name: /send request/i }));
+    await waitFor(() => expect(createReserveRequest).toHaveBeenCalledTimes(1));
+    const [inquiryId, payload] = createReserveRequest.mock.calls[0] as [
+      string,
+      { rows: Array<{ row_id: string; qty_requested: number }> },
+    ];
+    expect(inquiryId).toBe(OI_LATE);
+    expect(payload.rows).toEqual([expect.objectContaining({ row_id: 'row-late', qty_requested: 11 })]);
+  });
+
+  it('a row linked after the snapshot on a frozen OI joins its group request, ticked', async () => {
+    const request = await openRequestOn('OI-2609-0417');
+    const table = await within(request).findByRole('table');
+    await within(table).findByText('08/01/2027');
+    expect(within(rowWith(table, '08/01/2027')).getByRole('checkbox')).toBeChecked();
+    expect(within(request).getByText('4 of 4 lines')).toBeInTheDocument();
+    fireEvent.click(within(request).getByRole('button', { name: /send request/i }));
+    await waitFor(() => expect(createReserveRequest).toHaveBeenCalledTimes(1));
+    const [, payload] = createReserveRequest.mock.calls[0] as [string, { rows: Array<{ row_id: string }> }];
+    expect(payload.rows.map((r) => r.row_id).sort()).toEqual(['row-17a', 'row-17b', 'row-17c', 'row-17q']);
+  });
+});
