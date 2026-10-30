@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import httpx
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -273,7 +274,14 @@ def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) 
         # `timeout_seconds` is a caller's own tighter budget (the agent's turn clock).
         timeout = int(timeout_seconds or getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
         client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
-        result = parse_mcp_content(client.call_tool(name, args))
+        try:
+            raw = client.call_tool(name, args)
+        except (TimeoutError, httpx.TimeoutException):
+            # CHATBOT-FAIL-TRIAGE AC-2d: a read that timed out is tried once more. These are
+            # read-only calls, so the repeat is safe; a second timeout reaches the caller.
+            logger.warning("chatbot: MCP tool %s timed out, retrying once", name)
+            raw = client.call_tool(name, args)
+        result = parse_mcp_content(raw)
         # CONTACT-BRAND-SCOPE: the probes (cross-domain, did-you-mean, siblings) read through
         # this seam too, so a brand-scoped session's result is guarded here as well.
         if db is not None:

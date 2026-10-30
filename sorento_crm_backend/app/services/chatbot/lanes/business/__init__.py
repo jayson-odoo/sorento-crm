@@ -2568,7 +2568,14 @@ def run_fetch(
             if trace is not None:
                 trace.add("report_ask", {"refused": envelope.get("status_code")})
             return _fixed_reply(refusal, refused=True)
-        return _error_fragment(envelope["error"])
+        # CHATBOT-FAIL-TRIAGE AC-2: the route's own `detail.code` rides on the reason, so the
+        # composer can word the refusal (`subject_required`, `customer_not_permitted`).
+        reason = envelope["error"]
+        detail = envelope.get("detail")
+        code = detail.get("code") if isinstance(detail, dict) else None
+        if isinstance(code, str) and code and code not in reason:
+            reason = f"{reason} ({code})"
+        return _error_fragment(reason)
 
     # PRODUCT-ALTERNATIVES round B (card Addendum 1, owner 8 Oct 2026): an asked product
     # that is discontinued and has a stored alternative gets the SAME tool's answer for the

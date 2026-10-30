@@ -35,6 +35,7 @@ from dataclasses import dataclass, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator, Mapping
 
+from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,13 @@ from app.config import settings
 from app.models.base import set_brand_scope, set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services import llm_cassette
+from app.services.chatbot_reply_copy import (
+    CHATBOT_REPLY_AI_DID_NOT_ANSWER,
+    CHATBOT_REPLY_ESCALATION_FAILED,
+    CHATBOT_REPLY_FALLBACK_OFFER,
+    CHATBOT_REPLY_PREVIOUS_STILL_RUNNING,
+    CHATBOT_REPLY_TURN_FAILED,
+)
 from app.services.reports.ask import SALES_CHANNELS
 from app.services.chatbot import direct_ingress, dispatch, inbox_queue, jsc, llm_call, media_intake, send_order, trace as trace_mod
 from app.services.chatbot import user_turn as user_turn_mod
@@ -140,7 +148,12 @@ _ASK_BRANCH_KINDS: frozenset[str] = frozenset(
 # when the settings singleton does not exist yet.
 _UNSET: Any = object()
 
-GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
+# CHATBOT-FAIL-TRIAGE: the reply of a failed turn that has no more specific words.
+GENERIC_ERROR_REPLY = CHATBOT_REPLY_TURN_FAILED
+
+# AC-1h: how long the first message waits before it re-reads a contact Respond has not
+# committed yet.
+CONTACT_REREAD_WAIT_SECONDS = 1.0
 
 # AC-703. The queue the offloaded turn runs on, classified `fast` in `worker.QUEUES`: a
 # customer is watching "typing...", so it must never queue behind a 39-minute import.
@@ -1897,7 +1910,15 @@ def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | No
         get_referenced_state,
     )
 
-    state = get_for_contact(db, respond_io_id=respond_io_id)
+    try:
+        state = get_for_contact(db, respond_io_id=respond_io_id)
+    except HTTPException as missing:
+        # CHATBOT-FAIL-TRIAGE AC-1h: a first message can land before Respond's contact row
+        # commits. One re-read after a short wait; still missing, the turn fails as before.
+        if missing.status_code != 404:
+            raise
+        time.sleep(CONTACT_REREAD_WAIT_SECONDS)
+        state = get_for_contact(db, respond_io_id=respond_io_id)
     if reply_to_id is not None:
         state = {
             **state,
@@ -2531,7 +2552,7 @@ def _answer_claimed(
                 error=message,
                 records=turn_trace.persisted(),
             )
-        return _failed_result(turn_id, stage[0], message, actions, False)
+        return _failed_result(turn_id, stage[0], message, actions, False, reply_text=_failure_reply(exc))
 
 
 # --------------------------------------------------------------------------- #
@@ -3762,7 +3783,7 @@ def _run_turn(
                     error=message,
                     records=turn_trace.persisted(),
                 )
-            failed = _failed_result(turn_id, stage[0], message, actions, dry_run)
+            failed = _failed_result(turn_id, stage[0], message, actions, dry_run, reply_text=_failure_reply(exc))
             if earlier_actions:
                 # The earlier-sent messages were answered on their own rows; their
                 # replies still go out, ahead of this turn's error reply.
@@ -3947,7 +3968,9 @@ def _worker_failed(
     except Exception:  # noqa: BLE001 - the reply matters more than the id
         logger.warning("chatbot offload: could not close the turn row", exc_info=True)
     logger.error("chatbot offload failed: %s", message)
-    return _failed_result(turn_id, "queued", message, [], envelope.dry_run)
+    return _failed_result(
+        turn_id, "queued", message, [], envelope.dry_run, reply_text=CHATBOT_REPLY_PREVIOUS_STILL_RUNNING
+    )
 
 
 def _fanout_domain_hint(domains: list[Any], entities: Any) -> Any:
@@ -5395,11 +5418,7 @@ def _run_stages_body(  # noqa: PLR0915
             message,
             actions,
             dry_run,
-            reply_text=(
-                llm_call.RATE_LIMITED_REPLY
-                if getattr(exc, "rate_limited", False)
-                else GENERIC_ERROR_REPLY
-            ),
+            reply_text=CHATBOT_REPLY_AI_DID_NOT_ANSWER,
         )
 
     # Chatbot memory lane A (contract section 3, Q5 ruling): the recall re-parse
@@ -8562,6 +8581,11 @@ def _run_stages_body(  # noqa: PLR0915
                 ctx=ctx,
                 item=item,
                 branch_kind=branch_kind,
+                reply_text=turn_compose.fetch_failed_text(
+                    [s.domain for s in fetch_plan.fetch],
+                    compatible_entities or verdict.get("entities") or [],
+                    policy,
+                ),
             )
             _close_turn(
                 db,
@@ -10149,14 +10173,16 @@ def _run_casual_lane(
         except casual.ClarifierRateLimited as exc:
             # PR #1247 round 6, ruling 3: a rate limit that never cleared is one plain
             # sentence, never the provider's text. The row keeps the real reason.
+            # CHATBOT-FAIL-TRIAGE AC-1b: and the reply is the canned offer, not a "busy" line.
             failed = f"{type(exc).__name__}: {exc}"
-            text = llm_call.RATE_LIMITED_REPLY
+            text = CHATBOT_REPLY_FALLBACK_OFFER.get(reply_language or "en", CHATBOT_REPLY_FALLBACK_OFFER["en"])
         except Exception as exc:  # noqa: BLE001 - a provider error or an unreadable answer
             # AC-MEM086 (owner ruling Q10): the dealer never reads exception text. The
             # row and the trace keep the real reason; the dealer gets the turn's own
-            # apology. n8n's `sub-error-logger` interpolation is retired here.
+            # canned offer (CHATBOT-FAIL-TRIAGE AC-1b). n8n's `sub-error-logger`
+            # interpolation is retired here.
             failed = f"{type(exc).__name__}: {exc}"
-            text = GENERIC_ERROR_REPLY
+            text = CHATBOT_REPLY_FALLBACK_OFFER.get(reply_language or "en", CHATBOT_REPLY_FALLBACK_OFFER["en"])
     if clarifier_calls and not dry_run:
         # LIVE turns only, like the parser's row (`_record_parser_usage`, D14). Telemetry never
         # fails the customer's turn: opening the session can raise too, so the whole write is
@@ -10427,7 +10453,7 @@ def _run_escalation_arm(
     owns its own unit of work: the round-robin cursor and the SLA row must not roll back
     with the turn's routing transaction, because a person has already been told.
 
-    A lane failure is a FAILED turn at `looked_up` with today's generic reply and NO
+    A lane failure is a FAILED turn at `looked_up` with the escalation-failed reply and NO
     partial assignment - the lane returns its whole action list or raises before returning
     any of it, so "assigned but no SLA row" is not a state this can produce.
     """
@@ -10472,7 +10498,18 @@ def _run_escalation_arm(
                 records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": actions},
             )
-        return _failed_result(turn_id, "looked_up", message, actions, dry_run)
+        from app.services.chatbot.tail.outcome import pretty_team
+
+        # CHATBOT-FAIL-TRIAGE AC-1d: the reply names the team the contact asked for.
+        team = ((verdict or {}).get("routing") or {}).get("suggested_team") or lane_item.get("team")
+        return _failed_result(
+            turn_id,
+            "looked_up",
+            message,
+            actions,
+            dry_run,
+            reply_text=CHATBOT_REPLY_ESCALATION_FAILED.format(team=pretty_team(team) or "customer service"),
+        )
 
     arm = fragment.get("arm")
     clarify = fragment.get("clarify")
@@ -10729,6 +10766,12 @@ def _stamp_item(access: dict, branch_kind: str, tier_stamp: dict) -> dict[str, A
     return item
 
 
+def _failure_reply(exc: BaseException) -> str:
+    """What a turn that raised tells the contact: the AI service did not answer when the
+    parser's own error escaped (config or key missing), else the plain error sentence."""
+    return CHATBOT_REPLY_AI_DID_NOT_ANSWER if isinstance(exc, parser.ParserError) else GENERIC_ERROR_REPLY
+
+
 def _failed_result(
     turn_id: str,
     stage: str,
@@ -10741,10 +10784,12 @@ def _failed_result(
     branch_kind: str | None = None,
     reply_text: str = GENERIC_ERROR_REPLY,
 ) -> TurnResult:
-    """A failed turn still hands the caller today's error reply to send (AC-105, AC-107).
+    """A failed turn still hands the caller an error reply to send (AC-105, AC-107).
 
-    `reply_text` is that reply unless the caller knows better: a parser call refused by
-    a rate limit on every attempt says `llm_call.RATE_LIMITED_REPLY` (PR #1247 round 6).
+    `reply_text` is `GENERIC_ERROR_REPLY` unless the caller knows better: a parser that did
+    not answer, a previous turn still running, an escalation that could not be made each
+    say their own (CHATBOT-FAIL-TRIAGE). The generic apology and the rate limit sentence
+    are never sent.
 
     `quick_replies` is null, never `[]`: AC-507's contract is `quick_reply` is n8n's
     comma-joined string or null, and a failed turn offered none.
@@ -12346,18 +12391,23 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     # CUSTOMER-ASKS-REFER-ONLY: a reply this tail composed (the casual, canned, escalation
     # and business lanes) that referred the customer is a Customer asks row, the same rule
     # `_run_answer` applies. The row is closed first, as there.
-    _record_customer_asks(
-        session_factory,
-        turn_id=turn_id,
-        contact_respond_id=str(contact_respond_id or ""),
-        state=state,
-        stock_entries=[],
-        reply_text=jsc.js_string(reply.get("text") or ""),
-        refer_context=None,
-        ctx=ctx,
-        dry_run=dry_run,
-        chat_console=chat_console,
-    )
+    # CHATBOT-FAIL-TRIAGE AC-1g: the row is closed and the answer composed, so a failure
+    # here is logged and never replaces the answer the contact is about to get.
+    try:
+        _record_customer_asks(
+            session_factory,
+            turn_id=turn_id,
+            contact_respond_id=str(contact_respond_id or ""),
+            state=state,
+            stock_entries=[],
+            reply_text=jsc.js_string(reply.get("text") or ""),
+            refer_context=None,
+            ctx=ctx,
+            dry_run=dry_run,
+            chat_console=chat_console,
+        )
+    except Exception:  # noqa: BLE001 - best effort after the answer is composed
+        logger.exception("chatbot turn %s: customer asks write failed after the answer", turn_id)
 
     return CompleteResult(
         turn_id=turn_id,

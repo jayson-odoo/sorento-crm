@@ -552,6 +552,51 @@ def _did_you_mean_per_code(
     return text, None, True, listed_codes
 
 
+# CHATBOT-FAIL-TRIAGE AC-2: the reasons a fetch fails that the contact can act on. They are our
+# own markers: the lane's empty-set reason, the route's `detail.code` (the lane appends it to the
+# reason), and the attachment tools' no-filter reason. Anything else stays "could not fetch".
+_REASON_EMPTY_SET = "the described set qualifies nothing"
+_REASON_SUBJECT_REQUIRED = "subject_required"
+_REASON_NOT_PERMITTED = "customer_not_permitted"
+_REASONS_ATTACHMENT_FILTER = ("over the attachment cap", "needs a document or entity filter")
+
+
+def _failed_fetch_block(error: str, header: str, shown_label: str, codes: str) -> str:
+    """The section of a fetch that did not complete, worded for the reason it did not."""
+    if _REASON_NOT_PERMITTED in error:
+        return "That report is not available on your account."
+    if _REASON_SUBJECT_REQUIRED in error:
+        return f"Which customer or salesperson should I check the {shown_label} for?"
+    if any(marker in error for marker in _REASONS_ATTACHMENT_FILTER):
+        return f"Which product do you want the {shown_label} for? Send me the code."
+    if _REASON_EMPTY_SET in error and codes:
+        return f"No current {shown_label} found for {codes}."
+    return header + "\n" + f"I could not fetch {shown_label} just now, please try again."
+
+
+def fetch_failed_text(domains: list[Any], entities: list[Any], policy: Policy | None) -> str:
+    """CHATBOT-FAIL-TRIAGE AC-1c: a lane that raised after the parser read the message says
+    what could not be fetched and for which subjects, the way an error section does."""
+    labels: list[str] = []
+    for domain in domains:
+        row = policy.domain(domain) if policy else None
+        label = row.label if row else str(domain).replace("_", " ")
+        if label not in labels:
+            labels.append(label)
+    shown = " and ".join(labels) or "this request"
+    codes: list[str] = []
+    for e in entities:
+        code = (e.get("canonical_code") or e.get("raw") or e.get("display_name")) if isinstance(e, dict) else e
+        if code:
+            codes.append(str(code))
+    subjects = _header_subjects(codes)
+    if not subjects:
+        return f"I could not fetch {shown} just now, please try again."
+    if len(subjects) > HEADER_SUBJECT_MAX:
+        return f"I could not fetch {shown} for {len(subjects)} items just now, please try again."
+    return f"I could not fetch {shown} for {', '.join(subjects)} just now, please try again."
+
+
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
     localizer = getattr(ctx, "localizer", None) or IDENTITY
     sections: list[Section] = []
@@ -686,7 +731,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             # header. Measured on turn 32425b9a (16 Sep 2026): the MCP call timed out and
             # the customer read `*orders* for HANLIM TRADING SDN BHD:` and nothing else,
             # which reads as "there are none" rather than "ask me again".
-            block = header + "\n" + f"I could not fetch {shown_label} just now, please try again."
+            block = _failed_fetch_block(env["error"], header, shown_label, codes)
         elif (
             codes
             and not header_override

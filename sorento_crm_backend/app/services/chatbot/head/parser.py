@@ -39,7 +39,7 @@ PROMPT_KEY = "chatbot_semantic_parser"
 # The parser's own error reply. ONE declaration, in `app/services/chatbot_reply_copy.py`
 # with the rest of the bot's fixed sentences, because the ENDPOINT sends the same string
 # when the TAIL fails and it cannot import this package (AC-002).
-from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY as PARSER_ERROR_REPLY
+from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED as PARSER_ERROR_REPLY
 from app.services.llm_provider import ResponseTruncated
 
 # The parser's answer budget when `system_settings.chatbot_parser_max_output_tokens` sets none

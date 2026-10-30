@@ -58,7 +58,7 @@ from app.services.chatbot import complete_turn, inbox_queue, run_turn
 # complete route and the duplicate-delivery check can never pick different rows.
 from app.services.chatbot.engine import find_turn_for_message
 from app.services.error_handler import AppException
-from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
+from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
 from app.services.chatbot.contracts import (
     DIRECT_INGRESS,
     CompleteRequest,
@@ -132,7 +132,7 @@ def _logged_payload(payload: BaseModel, *, reference: str = "") -> str:
 # parser reads, in a core module the package does not own, so the two can never drift
 # into two different apologies for the same silence and the package keeps exporting
 # exactly its two entry points (D3).
-TAIL_ERROR_REPLY = CHATBOT_TURN_ERROR_REPLY
+TAIL_ERROR_REPLY = CHATBOT_REPLY_TURN_FAILED
 
 
 # H6, AC-701: the thin spine has ONE trigger. In S7 mode `/turn` runs the whole turn and
