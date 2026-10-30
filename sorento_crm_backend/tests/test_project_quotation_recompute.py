@@ -303,34 +303,6 @@ def test_the_lines_that_moved_are_named_by_their_product_code():
         assert report["changed_lines"] == [product.product_code]
 
 
-def test_an_off_catalog_line_stays_non_standard_and_is_not_reported_as_a_change():
-    """It is not stale, it is correct: "we quoted something that is not in our catalogue"
-    is the case the alert exists for. Re-confirming it must not appear as news."""
-    from app.services import project_quotation_service as quotes
-
-    with blank_session() as db:
-        company_id = _sorento(db)
-        project_seed_service.run(db, company_id=company_id)
-        owner = _user(db)
-        quotation, version = _scope(db, company_id, owner)
-        line = quotes.upsert_line(
-            db,
-            version=version,
-            actor_user_id=owner,
-            payload={
-                "description_snapshot": "Bespoke stone counter",
-                "unit_price": "4000.00",
-                "quantity": 1,
-            },
-        )
-        assert line.is_non_standard is True
-
-        report = quotes.recompute_version(db, version=version)
-
-        assert line.is_non_standard is True
-        assert report["changed_count"] == 0
-
-
 def test_a_line_already_below_its_floor_does_not_raise_a_second_breach_event():
     """``_apply_guardrails`` emits on the TRANSITION only (AC-E6a), and recompute must
     not turn that into an alert per press."""

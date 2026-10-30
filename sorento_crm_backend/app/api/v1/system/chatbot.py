@@ -795,6 +795,24 @@ def agent_action_cancel(
         raise _action_refused(exc)
 
 
+@router.post("/agent/actions/{action_id}/steps/{index}/withdraw", response_model=AgentActionResponse)
+def agent_action_withdraw(
+    action_id: str,
+    index: int,
+    payload: AgentActionRequest,
+    user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The console's Withdraw on a step still waiting out its grace window: the form-action cancel, as the
+    linked user who started it. Nothing was applied, so nothing is reversed and nobody is told."""
+    try:
+        return _action_response(
+            agent_actions.withdraw(db, payload.contact_respond_id, action_id, index, operator_user_id=str(user["id"]))
+        )
+    except agent_actions.ActionRefused as exc:
+        raise _action_refused(exc)
+
+
 def _agent_refused(exc: AgentRefused) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
@@ -829,13 +847,7 @@ def _actions_by_turn(db, turn_ids: list[str], user_id: str) -> dict[str, list[Ag
                 status=a.status,
                 decided_at=a.decided_at,
                 decided_by_name=names.get(str(a.decided_by_user_id)) if a.decided_by_user_id else None,
-                steps=[
-                    {
-                        "summary": st.get("summary"), "status": st.get("status") or "proposed",
-                        "error": agent_actions.scrub_ids(st.get("error")), "changes": st.get("changes") or [],
-                    }
-                    for st in a.steps or []
-                ],
+                steps=[agent_actions.step_out(st, default_status="proposed") for st in a.steps or []],
             )
         )
     return out

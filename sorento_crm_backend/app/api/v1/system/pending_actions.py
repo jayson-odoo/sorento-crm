@@ -37,8 +37,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_actor_user_id, get_current_user
-from app.models.base import company_scope
-from app.services.company_scope_resolver import grants_scope_value
+from app.models.base import company_scope, get_company_scope
+from app.services.company_scope_resolver import _user_grant_ids, grants_scope_value
 from app.models.sla import (
     FORM_ACTION_CANCELLED,
     FORM_ACTION_CHANNEL_UI,
@@ -56,7 +56,11 @@ from app.services.error_handler import (
 )
 from app.services.form_action_grace import record_action_window_seconds
 from app.services.form_action_registry import get_action
-from app.services.form_action_service import FormActionService
+from app.services.form_action_service import (
+    _SCOPE_PAYLOAD_KEY,
+    FormActionService,
+    _scope_from_payload,
+)
 
 # Module scope, not per-request: the lazy commit below calls `action_for(row.action_key)`,
 # and on an API worker that has never served a POST the registry would be empty - the
@@ -77,6 +81,10 @@ _OUTCOME_STATUS = {
     FORM_ACTION_FAILED: "failed",
     FORM_ACTION_INELIGIBLE: "failed",
 }
+
+# How many of a record's latest ended actions `last_outcome` looks through for one the
+# reader may see. A record's history is short; this only bounds a pathological one.
+_OUTCOME_SCAN_LIMIT = 20
 
 
 class _CreateRequest(BaseModel):
@@ -445,13 +453,47 @@ def _serialize_pending(db: Session, row: SlaFormAction) -> dict:
     }
 
 
+def _visible_to_reader(db: Session, row: Optional[SlaFormAction]) -> bool:
+    """Whether the reader's company scope covers the company the action was parked in.
+
+    `sla_form_actions` has no company column and the scope filter only reaches
+    `CompanyScopedMixin` models, so `/current` read any company's countdown and failure
+    text by entity id. A parked row stores its requester's scope
+    (`form_action_service._payload_with_scope`); a row without one (an immediate
+    form-SLA action, or one parked before the key existed) falls back to the
+    requester's explicit company grants. A reader with every company sees every row; an
+    all-companies row is shown only to such a reader, since it names no one company.
+    """
+    if row is None:
+        return False
+    reader = get_company_scope(db)
+    if reader is None:
+        return True
+    if not isinstance(reader, frozenset) or not reader:
+        return False
+    stored = row.payload_json or {}
+    if _SCOPE_PAYLOAD_KEY in stored:
+        row_scope = _scope_from_payload(stored)
+        if row_scope is None:
+            return False
+    elif row.requested_by_id:
+        # Explicit grants only: an admin's "every company" would make the row public.
+        row_scope = frozenset(_user_grant_ids(db, str(row.requested_by_id)))
+    else:
+        return False
+    # Compares the requester's scope with the reader's, not the record's own company. Only
+    # `contact_customer_link.unlink` parks under a widened scope today, and a contact
+    # belongs to no one company; a new multi-company park path must revisit this.
+    return isinstance(row_scope, frozenset) and bool(row_scope & reader)
+
+
 def _last_outcome(db: Session, entity_type: str, entity_id: str) -> Optional[dict]:
-    """How the most recent action on this record ended.
+    """How the most recent action on this record ended, among those the reader may see.
 
     Whether it applied is the ONE thing the countdown cannot infer from its own
     disappearance, so it is answered here rather than assumed there.
     """
-    row = (
+    rows = (
         db.query(SlaFormAction)
         .filter(
             SlaFormAction.source_entity_type == entity_type,
@@ -463,8 +505,10 @@ def _last_outcome(db: Session, entity_type: str, entity_id: str) -> Optional[dic
             SlaFormAction.resolved_at.desc().nullslast(),
             SlaFormAction.created_at.desc(),
         )
-        .first()
+        .limit(_OUTCOME_SCAN_LIMIT)
+        .all()
     )
+    row = next((r for r in rows if _visible_to_reader(db, r)), None)
     if row is None:
         return None
     ended_at = row.committed_at or row.resolved_at
@@ -533,7 +577,9 @@ def create_pending_action(
             _commit_if_due(service, existing)
             existing = service.pending_for(body.entity_type, body.entity_id)
             if existing is not None:
-                if existing.action_key == body.action_key:
+                # Another company's countdown is never echoed back (its id and timing are
+                # what `/current` hides): it answers like any other action in the way.
+                if existing.action_key == body.action_key and _visible_to_reader(db, existing):
                     # A double click parks one action, not two, and answers with the
                     # countdown already running (S6-01).
                     return {
@@ -626,6 +672,8 @@ def get_current_pending_action(
         row = service.pending_for(entity_type, entity_id)
         _commit_if_due(service, row)
         row = service.pending_for(entity_type, entity_id)
+        if not _visible_to_reader(db, row):
+            row = None
         return {
             "pending": _serialize_pending(db, row) if row else None,
             "last_outcome": _last_outcome(db, entity_type, entity_id),
