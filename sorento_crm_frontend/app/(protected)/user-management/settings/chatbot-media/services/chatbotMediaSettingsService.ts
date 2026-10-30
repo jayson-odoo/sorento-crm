@@ -121,6 +121,10 @@ export interface ChatbotMediaSettings {
   chatbot_agent_max_seconds: number;
   chatbot_agent_max_input_tokens: number;
   chatbot_agent_compact_tokens: number;
+  /** AGENTIC-P2 router: on/off, confidence bar (0.5-0.95) and agent turns per contact per day (0 = no cap). */
+  chatbot_router_enabled: boolean;
+  chatbot_router_min_score: number;
+  chatbot_agent_daily_turns: number;
 }
 
 const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
@@ -150,6 +154,9 @@ const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
   'chatbot_agent_max_seconds',
   'chatbot_agent_max_input_tokens',
   'chatbot_agent_compact_tokens',
+  'chatbot_router_enabled',
+  'chatbot_router_min_score',
+  'chatbot_agent_daily_turns',
 ];
 
 /** The plan's section 2.4 defaults, used when the settings row predates the columns. */
@@ -183,6 +190,9 @@ const FALLBACKS: ChatbotMediaSettings = {
   chatbot_agent_max_seconds: 45,
   chatbot_agent_max_input_tokens: 150000,
   chatbot_agent_compact_tokens: 40000,
+  chatbot_router_enabled: false,
+  chatbot_router_min_score: 0.7,
+  chatbot_agent_daily_turns: 50,
 };
 
 /**

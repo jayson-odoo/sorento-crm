@@ -34,6 +34,7 @@ import {
   PACKING_LIST_REGION_OPTIONS,
   type PackingListRegion,
 } from '@/lib/packing-list-regions';
+import { wholeNumberRangeError } from '@/lib/whole-number-range';
 import { formatDate, formatDateSafe, formatDateTimeInMalaysia } from '@/lib/helpers';
 
 import {
@@ -133,6 +134,48 @@ function SwitchRow({
         disabled={disabled}
         onCheckedChange={(v) => onCheckedChange(v === true)}
       />
+    </div>
+  );
+}
+
+/** The contact's own cap on agent turns per day. Blank follows the system value, 0 is no cap. */
+function DailyTurnsField({
+  value,
+  disabled,
+  onCommit,
+}: {
+  value: number | null;
+  disabled: boolean;
+  onCommit: (next: number | null) => void;
+}) {
+  const [text, setText] = useState(value === null ? '' : String(value));
+  const trimmed = text.trim();
+  const error = wholeNumberRangeError(text, 0, 100000, { allowBlank: true });
+  const invalid = error !== undefined;
+  const commit = () => {
+    if (invalid) return;
+    const next = trimmed === '' ? null : Number(trimmed);
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor="contact-chatbot-agent-daily-turns">Agent turns per day</Label>
+      <Input
+        id="contact-chatbot-agent-daily-turns"
+        inputMode="numeric"
+        value={text}
+        disabled={disabled}
+        placeholder="(follow the system default)"
+        aria-invalid={invalid || undefined}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+        }}
+      />
+      <p className={invalid ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+        {error ?? '0 means no cap.'}
+      </p>
     </div>
   );
 }
@@ -244,6 +287,12 @@ function ChatbotSettingsCard({
           />
           <p className="text-xs text-muted-foreground">{llmSourceLine(profile.chatbot_llm)}</p>
         </div>
+        <DailyTurnsField
+          key={String(profile.agent_daily_turns ?? '')}
+          value={profile.agent_daily_turns ?? null}
+          disabled={save.isPending}
+          onCommit={(next) => save.mutate({ ...profile, agent_daily_turns: next })}
+        />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <SwitchRow
             id="contact-chatbot-ai-allowed"

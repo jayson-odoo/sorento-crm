@@ -173,3 +173,26 @@ describe('contactChatbotService - agent mode switch (AGENTIC-P1)', () => {
     expect(JSON.parse(apiFetch.mock.calls[1][1].body).chatbot_agent_enabled).toBe(false);
   });
 });
+
+describe('contactChatbotService - agent turns per day (AGENTIC-P2)', () => {
+  it('reads the override off the contact; absent reads as null', async () => {
+    getContact.mockResolvedValueOnce({ chatbot_agent_daily_turns: 0 });
+    expect((await getContactChatbotProfile('c1')).agent_daily_turns).toBe(0);
+
+    getContact.mockResolvedValueOnce({});
+    expect((await getContactChatbotProfile('c1')).agent_daily_turns).toBeNull();
+  });
+
+  it('sends a number, and an explicit null to clear it', async () => {
+    getContact.mockResolvedValueOnce({ chatbot_agent_daily_turns: 5 });
+    const profile = await getContactChatbotProfile('c1');
+    apiFetch.mockResolvedValueOnce(new Response(JSON.stringify({ chatbot_agent_daily_turns: 9 }), { status: 200 }));
+    const saved = await saveContactChatbotProfile('c1', { ...profile, agent_daily_turns: 9 });
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body).chatbot_agent_daily_turns).toBe(9);
+    expect(saved.agent_daily_turns).toBe(9);
+
+    apiFetch.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }));
+    await saveContactChatbotProfile('c1', { ...profile, agent_daily_turns: null });
+    expect(JSON.parse(apiFetch.mock.calls[1][1].body).chatbot_agent_daily_turns).toBeNull();
+  });
+});

@@ -15,6 +15,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   SearchableSelect,
@@ -81,6 +82,10 @@ type Draft = {
   agentMaxSeconds: string;
   agentMaxInputTokens: string;
   agentCompactTokens: string;
+  routerEnabled: boolean;
+  /** The confidence bar as a whole percent; the API holds 0.5 to 0.95. */
+  routerMinPercent: string;
+  agentDailyTurns: string;
 };
 
 function toDraft(settings: ChatbotMediaSettings): Draft {
@@ -111,6 +116,9 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     agentMaxSeconds: String(settings.chatbot_agent_max_seconds),
     agentMaxInputTokens: String(settings.chatbot_agent_max_input_tokens),
     agentCompactTokens: String(settings.chatbot_agent_compact_tokens),
+    routerEnabled: settings.chatbot_router_enabled,
+    routerMinPercent: String(Math.round(settings.chatbot_router_min_score * 100)),
+    agentDailyTurns: String(settings.chatbot_agent_daily_turns),
   };
 }
 
@@ -144,6 +152,9 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     chatbot_agent_max_seconds: Number(draft.agentMaxSeconds.trim()),
     chatbot_agent_max_input_tokens: Number(draft.agentMaxInputTokens.trim()),
     chatbot_agent_compact_tokens: Number(draft.agentCompactTokens.trim()),
+    chatbot_router_enabled: draft.routerEnabled,
+    chatbot_router_min_score: Number(draft.routerMinPercent.trim()) / 100,
+    chatbot_agent_daily_turns: Number(draft.agentDailyTurns.trim()),
   };
 }
 
@@ -172,6 +183,8 @@ const NUMBER_BOUNDS = {
   agentMaxSeconds: [5, 300],
   agentMaxInputTokens: [10000, 2000000],
   agentCompactTokens: [5000, 500000],
+  routerMinPercent: [50, 95],
+  agentDailyTurns: [0, 100000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 type NumberKey = keyof typeof NUMBER_BOUNDS;
@@ -417,6 +430,39 @@ export default function ChatbotMediaSettingsPage() {
             value={draft.agentCompactTokens}
             error={numberError.agentCompactTokens}
             onChange={(v) => set('agentCompactTokens', v)}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b border-border">
+          <CardTitle>Auto routing</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-5 py-5 sm:grid-cols-2">
+          <div className="flex items-center justify-between gap-4 sm:col-span-2">
+            <Label htmlFor="router-enabled" className="cursor-pointer font-normal">
+              Route staff messages to the bot or the agent
+            </Label>
+            <Switch
+              id="router-enabled"
+              checked={draft.routerEnabled}
+              onCheckedChange={(v) => set('routerEnabled', v === true)}
+            />
+          </div>
+          <NumberField
+            id="router-min-percent"
+            label="Agent confidence needed (percent)"
+            value={draft.routerMinPercent}
+            error={numberError.routerMinPercent}
+            onChange={(v) => set('routerMinPercent', v)}
+          />
+          <NumberField
+            id="agent-daily-turns"
+            label="Agent turns per contact per day"
+            hint="0 means no cap."
+            value={draft.agentDailyTurns}
+            error={numberError.agentDailyTurns}
+            onChange={(v) => set('agentDailyTurns', v)}
           />
         </CardContent>
       </Card>
