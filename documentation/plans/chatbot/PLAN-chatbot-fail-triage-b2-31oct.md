@@ -99,18 +99,20 @@ registry, so trap length needs no naming. Two variants matching: stays a pick be
 
 ## Prompt edits (one version, base = production text, F1)
 
-Candidate md5 59146557 (production md5 57d7d412 + the three edits below, 10 changed lines), text kept with crew at
-`crew/state/eval/fail-triage-b2/texts/B.txt`.
+Candidate D, md5 11c870e6 (production md5 57d7d412 + the four edits below), text kept with crew at
+`crew/state/eval/fail-triage-b2/texts/D.txt`. Assumes Q1 = (a).
 
-- P1 dropped. The 8 cost gold rows already pass on the production text ("my cost", "dealer cost", "costing", "cost price",
-  MS and ZH paraphrases read as `purchase_cost`; the negatives stay out). A rule would add nothing. Only applies if Q1 = (a).
+- P1 `== LAST PURCHASE COST ==`: the asker's own cost ("my cost", "dealer cost", "costing", any language) is this same ask.
+  Dropped once after 8/8 cost rows on one production run, restored when 2 of them flipped on the next text: the reading was
+  not stable. 8/8 twice with the line.
 - P2 new line after `A BARE FAMILY CODE`: a size stuck on a code's end is two entities, code + reserved `size`, even with
   no candidate line; the specification rule gets the one exception (F7). Dash and space forms already parse right on
   production, because the `Size` candidate line exists for them; only the glued form was failing.
-- P3 `== ROUTING ==`: a named team maps to the enum when it is exactly one team; when it fits several or none, emit the
-  user's own word, lowercased, agent null (`head/parser.py:410-428` already documents this). Output key text says so.
-- P4 `portal_link` domain line gains price tag request, never the price tag template document; `portal_form` output key
-  with five forms (F2). Measured wider than R1: on production `portal_form` is null even for "link for complaint form".
+- P3 end of `== ROUTING ==`: a named team decides over the domain map; exactly one team maps to the enum, several or none
+  emit the user's own word, lowercased, agent null (`head/parser.py:410-428` already documents this).
+- P4 `portal_link` domain line gains "price tag request"; `portal_form` joins the IN ADDITION keys with five forms (F2).
+  Measured wider than R1: on production `portal_form` is null even for "link for complaint form". The first, larger P4
+  (a sentence on the domain line + a key inside the OUTPUT object) was the drag in the bisect and was cut.
 
 ## Gate (crew answers 31 Oct: USD 2.60 for this gate, DB `sorento_prod_1020` read-only and rolled back, version 2247a9af)
 
@@ -123,15 +125,31 @@ refuses unless the connection is read-only. Crew runs the hidden split on the ar
 | Gold 32 | 57d7d412 | 17/32 | 0.0949 |
 | Gold 32, first draft | 85c286c4 | 26/32: team, portal, cost all pass | 0.0940 |
 | Gold 7 glued + negatives | 59146557 | 6/7, glued 4/5, no-unit and exact-code negatives hold | 0.0221 |
+| TRAIN 118, first candidates | 59146557, 79f41411 | 96, 92; replaced | 0.7394 |
+| Bisect, 34 volatile rows: A x2, P3, P4, P2 x1 each | single edits | pass A 21, 18; P3 20; P4 14; P2 20 | 0.5567 |
+| Gold portal + team, size + cost | 129b08cb (C) | 13/14; 20/22 (size 14/14, 2 cost rows flipped) | 0.1110 |
+| C on 34 rows; C on 84, stopped after 3 rows | 129b08cb | 18/34; replaced by D | 0.1134 |
+| Gold cost x2 | 11c870e6 (D) | 8/8, 8/8 | 0.0488 |
+| TRAIN 118 | 11c870e6 (D) | 95/118 | 0.3773 |
+
+Read: A scores 99, 98 and 95 on TRAIN (one full run + two repeats of the 34 volatile rows), so 99 was a lucky baseline and D
+sits at A's floor, not above it. The other 84 rows do not flip in any arm (77). Of the rows A got right in all 3 runs D
+loses only G112 ("request pricetag"), whose gold predates owner Q5. Size, portal and team gold were not re-run on D's exact
+text. The hidden split is crew's; it is the bar, not this table.
+
+Known risk: on the 34 volatile rows `suggested_team` is non-null on 16 with D against 23-27 for A (other 84: 70 = 70).
+Whole-parse does not score routing, and no single edit is clearly the cause. #2018's `_route_pair` draws from the turn's
+domain when the parser gives no team, so this version is published only after #2018 merges; not yet run end to end.
 
 `sorento_prod_1020` alembic_version is `adp_0001_pcs_attach_delete`, not head `sfq_0001_sample_request_source`; crew
-migrates lane schema into it by SQL, and the columns the parser reads are present.
+migrates lane schema into it by SQL, and the columns the parser reads are present. Embedder dry: ~10.7% of vector lookups
+miss, in every arm alike.
 
 ## Code slices
 
 - S1 AC-6 done: `narrow_code_tokens_by_specs` honours `any_keys` (c71a780945). The no-variant reply waits on Q3.
 - S2 AC-5: the grant-gate split, in-process dealer cost read, reply wording, MS + ZH in `label_catalog.py`. Waits on Q1, Q2.
-- S3 prompt text, gold rows `scripts/chatbot_eval/gold/parser_fail_triage_b2.jsonl`, grader keys done; arm B and full gold next.
+- S3 prompt text, gold rows `scripts/chatbot_eval/gold/parser_fail_triage_b2.jsonl`, grader keys done; TRAIN done; hidden with crew.
 
 ## Decisions (lead)
 
