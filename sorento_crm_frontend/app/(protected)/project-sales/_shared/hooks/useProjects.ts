@@ -145,7 +145,7 @@ import type {
 } from '../types/project.types';
 import { importJobPhase } from '../types/project.types';
 // Keys only, and the document hooks import nothing from here, so the two files do not circle.
-import { quotationDocumentsKey } from './useQuotationDocuments';
+import { AMENDMENT_KEY, quotationDocumentsKey } from './useQuotationDocuments';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const PROJECTS_KEY = 'projects';
@@ -1091,6 +1091,8 @@ export function useQuotationMutations(projectId: string) {
     queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
     queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'list'] });
     if (quotationId) queryClient.invalidateQueries({ queryKey: versionsKey(quotationId) });
+    // A revise can open the draft that blocks a customer's suggestions (QUOTE-CUSTOMER-AMEND).
+    queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY] });
   };
 
   const create = useMutation({

@@ -864,6 +864,52 @@ export interface StagedQuotationLine {
   removed: boolean;
 }
 
+export type QuotationAmendmentField = 'quantity' | 'unit_price' | 'remove';
+export type QuotationAmendmentDecision = 'pending' | 'accepted' | 'rejected';
+
+/**
+ * One customer suggestion on one ISSUED line (QUOTE-CUSTOMER-AMEND): one field, decided on its
+ * own, so a quantity can be accepted and a price on the same line rejected. Money and quantities
+ * are decimal strings; `value_to` is null for a removal. The floor fields are staff-only.
+ */
+export interface QuotationAmendmentRow {
+  id: string;
+  line_id: string;
+  field: QuotationAmendmentField;
+  value_from: string | null;
+  value_to: string | null;
+  decision: QuotationAmendmentDecision;
+  decision_reason: string | null;
+  below_floor?: boolean;
+  floor_value?: string | null;
+}
+
+/** The request as the staff routes answer it. */
+export interface QuotationAmendmentRequest {
+  id: string;
+  status: 'open' | 'applied' | 'superseded';
+  submitted_at: string | null;
+  requester_name: string | null;
+  note: string | null;
+  applied_at: string | null;
+  rows: QuotationAmendmentRow[];
+  /** The issue's total, and the total with the accepted rows applied. */
+  total_issued: string;
+  total_after: string;
+  /**
+   * Touched scopes that already carry a hand-made draft. `version_id` is the ISSUED version the
+   * rows name (the review is decided there); `has_accepted` says whether Apply refuses today.
+   */
+  blocked_scopes: {
+    quotation_id: string;
+    scope_label: string;
+    version_id: string;
+    has_accepted: boolean;
+  }[];
+  /** Apply drafted a revision. */
+  revised: boolean;
+}
+
 export interface QuotationOutcomeBody {
   outcome: QuotationOutcome;
   loss_reason?: string | null;

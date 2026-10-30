@@ -133,8 +133,10 @@ def sync_lookup_words(db: Session, *, model: str | None = None, embed: bool = Tr
     customers, spec rows), then give every active document a chunk for each text that has a vector for `model`.
     A text already embedded for `model` is copied; only new texts call the provider. The caller commits."""
     from app.models.base import get_company_scope, set_company_scope
+    from app.services.chatbot.head import list_resolver
     from app.services.chatbot.head import lookup_lists as ll
     from app.services.embedding_settings import embed_for_model, resolve_embedder
+    from app.services.product_spec_registry import active_registry
 
     model = model or resolve_embedder(db)[1]
     result = SyncResult()
@@ -142,6 +144,9 @@ def sync_lookup_words(db: Session, *, model: str | None = None, embed: bool = Tr
     set_company_scope(db, None)
     try:
         rows = ll.load_rows(db, include_salespeople=True, include_customers=True, customer_ids=None)
+        # LOOKUP-WARM-STORM: the spec-name rows are warmed with the lookup rows (`engine.start_lookup_warm`), so they
+        # are stored too; without a document of theirs every fresh worker sent their ~279 texts to the provider.
+        rows.extend(list_resolver.spec_key_rows(active_registry(db)))
     finally:
         set_company_scope(db, scope)
 
@@ -228,18 +233,30 @@ def sync_lookup_words(db: Session, *, model: str | None = None, embed: bool = Tr
     return result
 
 
+def _from_binary(raw):
+    """A vector from pgvector's binary form: dimensions and an unused word (big-endian uint16 each), then the
+    big-endian float32 values."""
+    import numpy as np
+
+    dim = int.from_bytes(bytes(raw[:2]), "big")
+    return np.frombuffer(raw, dtype=">f4", count=dim, offset=4).astype(np.float32)
+
+
 def load_lookup_vectors(db: Session, model: str, only: Iterable[str] | None = None) -> int:
     """Load the current `lookup_word` chunks of `model` into the lookup lists' process cache (no provider call),
     every chunk or only those whose text is in `only`. Returns the vectors loaded.
 
     BACKEND-MEM-2: read `LOAD_BATCH` rows at a time and turned into float32 before the next batch. pgvector hands
     each vector over as 1536 Python floats, and `.all()` over 7,035 rows held them all at once: +621 MB peak and
-    +231 MB kept per worker, for 43 MB of vectors (documentation/plans/deploy/PLAN-backend-mem-2-30oct.md)."""
+    +231 MB kept per worker, for 43 MB of vectors (documentation/plans/deploy/PLAN-backend-mem-2-30oct.md).
+
+    LOOKUP-WARM-STORM: each vector is read in pgvector's binary form (`vector_send`) and decoded by numpy. Parsing the
+    text form into Python floats was 1.67 s of CPU for 6,788 rows, now 0.19 s (plan PLAN-lookup-warm-storm-30oct.md)."""
     import numpy as np
 
     from app.services.chatbot.head import lookup_lists as ll
 
-    query = db.query(EmbeddingChunk.chunk_text, EmbeddingChunk.embedding).filter(
+    query = db.query(EmbeddingChunk.chunk_text, func.vector_send(EmbeddingChunk.embedding)).filter(
         EmbeddingChunk.source_type == LOOKUP_SOURCE,
         EmbeddingChunk.model_name == model,
         EmbeddingChunk.is_current.is_(True),
@@ -252,7 +269,7 @@ def load_lookup_vectors(db: Session, model: str, only: Iterable[str] | None = No
     loaded = 0
 
     def store(batch: list) -> int:
-        unit = ll._unit_rows(np.stack([np.asarray(v, dtype=np.float32) for _t, v in batch]))
+        unit = ll._unit_rows(np.stack([_from_binary(v) for _t, v in batch]))
         added = 0
         with ll._store_lock:
             for (text, _v), vec in zip(batch, unit):

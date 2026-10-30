@@ -1,6 +1,10 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
-import type { QuotationLineBulkItem } from '../types/project.types';
+import type {
+  QuotationAmendmentDecision,
+  QuotationAmendmentRequest,
+  QuotationLineBulkItem,
+} from '../types/project.types';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
 /**
@@ -33,6 +37,15 @@ import type { StatusGraph } from '@/app/(protected)/system-management/status-gra
  *   POST   /projects/{projectId}/quotation-documents/{id}/approval-status  -> QuotationDocument
  *   POST   /projects/{projectId}/quotation-documents/{id}/approve          -> QuotationDocument
  *   POST   /projects/{projectId}/quotation-documents/{id}/reject           -> QuotationDocument
+ *
+ * The customer's suggested changes (QUOTE-CUSTOMER-AMEND) add three:
+ *
+ *   GET    /projects/{projectId}/quotation-documents/{id}/amendment-request
+ *                                                                         -> QuotationAmendmentRequest | null
+ *   PUT    /projects/{projectId}/quotation-documents/{id}/amendment-requests/{requestId}/rows/{rowId}
+ *                                                                         -> QuotationAmendmentRequest
+ *   POST   /projects/{projectId}/quotation-documents/{id}/amendment-requests/{requestId}/apply
+ *                                                                         -> QuotationAmendmentApplied
  *
  * `/issue` gains one refusal: 422 `quotation_below_floor_pending_approval` when the document
  * carries a line priced below its floor and is not `approved`.
@@ -578,5 +591,56 @@ export async function queueQuotationIssueXlsx(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to queue the Excel file'));
+  return response.json();
+}
+
+// ------------------------------------------------------- customer suggested changes
+
+/** What Apply answers: the request, now applied, and the draft versions it opened. */
+export type QuotationAmendmentApplied = {
+  request: QuotationAmendmentRequest;
+  version_ids: string[];
+};
+
+/** The open (or latest) request on the document's latest issue, or null when nobody asked. */
+export async function getQuotationAmendmentRequest(
+  projectId: string,
+  documentId: string,
+): Promise<QuotationAmendmentRequest | null> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/amendment-request`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, "Failed to load the customer's suggestions"));
+  return response.json();
+}
+
+export async function decideQuotationAmendmentRow(
+  projectId: string,
+  documentId: string,
+  requestId: string,
+  rowId: string,
+  body: { decision: QuotationAmendmentDecision; reason?: string | null },
+): Promise<QuotationAmendmentRequest> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/amendment-requests/${requestId}/rows/${rowId}`,
+    { method: 'PUT', body: JSON.stringify({ decision: body.decision, reason: body.reason ?? null }) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the decision'));
+  return response.json();
+}
+
+export async function applyQuotationAmendmentRequest(
+  projectId: string,
+  documentId: string,
+  requestId: string,
+): Promise<QuotationAmendmentApplied> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/amendment-requests/${requestId}/apply`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to apply the decisions'));
   return response.json();
 }
