@@ -81,7 +81,7 @@ list of 1536 Python floats (`pgvector/vector.py:88`, `[float(v) for v in value[1
 | today, then `malloc_trim(0)` | +185 MB | |
 | prototype: `yield_per(500)`, each batch to float32 at once | +113 MB | +123 MB |
 
-Every worker runs it at start-up (`app/main.py:416` -> `engine.py:1342` `start_lookup_warm`), so
+Every worker runs it at start-up (`app/main.py:416` -> `engine.py:1345` `start_lookup_warm`), so
 a new colour's 4 workers peak about +2.5 GB together, during exactly the deploy overlap the guard
 protects. It also runs again whenever a turn's rows hold a text the cache does not have
 (`lookup_lists.py:1115` `is_cached` false -> `warm` -> `fill` -> full reload at `:961`), e.g.
