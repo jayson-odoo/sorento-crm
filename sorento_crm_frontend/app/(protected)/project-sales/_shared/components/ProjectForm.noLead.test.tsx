@@ -1,10 +1,11 @@
 /**
- * LEAD-GOVERNS-REGISTER, the Register a project form (UAC D1-D8). Red until the form is rebuilt:
- * a "Lead, customer and salesperson" section, Lead required on Register, Customer a read-only value
- * filled from the lead (a search picker only when the lead has none), AI extract never sets it.
- *
- * Seams: leads come from listLeads (rows carry customer_id, customer_name, owner_user_id) and
- * getLead; permissions from useHasPermission, the same hook ProjectForm uses for submitOnly.
+ * PS-REGISTER-CHECK-FIRST section L (owner ruling 30 Oct): registration has no lead. Replaces
+ * ProjectForm.leadGoverns.test.tsx (LEAD-GOVERNS-REGISTER), whose every case pinned the Lead picker,
+ * the read-only customer-from-lead, or lead_id on the body.
+ * AC-L1 no Lead field / no "Create lead", section "Customer and salesperson", Customer is the
+ * always-editable search picker (listCustomerOptions), required for Register / Submit, optional for
+ * Save draft; the register body carries customer_id and NO lead_id key. AC-L5 edit keeps the lead
+ * link untouched (no lead_id on the PUT).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -373,12 +374,12 @@ function renderForm(props: { mode: 'create' } | { mode: 'edit'; project: Project
 
 const section = () =>
   screen
-    .getByRole('button', { name: /Lead, customer and salesperson/ })
+    .getByRole('button', { name: /^Customer and salesperson/ })
     .closest('[data-slot="card"]') as HTMLElement;
 const typeTitle = (text: string) =>
   fireEvent.change(screen.getByLabelText(/project title/i), { target: { value: text } });
-async function pickLead(typed: string, name: string) {
-  fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: typed } });
+async function pickCustomer(typed = 'KEDAI', name = 'KEDAI CONTOH SDN. BHD.') {
+  fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: typed } });
   fireEvent.click(await screen.findByRole('button', { name }));
 }
 const registerButton = () => screen.getByRole('button', { name: 'Register project' });
@@ -409,258 +410,155 @@ beforeEach(() => {
   listCustomerOptions.mockResolvedValue([{ value: 'c-1', label: 'KEDAI CONTOH SDN. BHD.' }]);
 });
 
-describe('LGR-D1 the Lead, customer and salesperson section', () => {
-  it('names the bottom section and drops the old one', () => {
+/**
+ * PS-REGISTER-CHECK-FIRST: create mode opens on the Check step; walk it to Details.
+ * Types the title if the field is empty, Checks, waits for the result, presses Next.
+ */
+async function toDetails(text = 'Setia Alam Phase 3B') {
+  const box = screen.getByLabelText(/project title/i) as HTMLTextAreaElement;
+  if (!box.value) fireEvent.change(box, { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+  await screen.findByText('No clash');
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+  await screen.findByRole('button', { name: /^Customer and salesperson/ });
+}
+
+
+const bodyOf = (fn: ReturnType<typeof vi.fn>) =>
+  (fn.mock.calls[0] as unknown as Array<Record<string, unknown>>).slice(-1)[0] as Record<string, unknown>;
+
+describe('AC-L1 create mode', () => {
+  it('AC-L1 step 2 names the section Customer and salesperson and drops the old one', async () => {
     renderForm({ mode: 'create' });
-    expect(screen.getByRole('button', { name: /Lead, customer and salesperson/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Salesperson and customer/ })).toBeNull();
+    await toDetails();
+    expect(screen.getByRole('button', { name: /^Customer and salesperson/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Lead, customer and salesperson/ })).toBeNull();
   });
 
-  it('holds Lead, Customer, Salesperson in that order, and Details holds no Lead', () => {
+  it('AC-L1 has no Lead field and no Create lead option', async () => {
     renderForm({ mode: 'create' });
-    fireEvent.click(screen.getByRole('button', { name: /^Details/ }));
-    const details = screen.getByRole('button', { name: /^Details/ }).closest('[data-slot="card"]') as HTMLElement;
-    expect(within(details).queryByLabelText(/^Lead/)).toBeNull();
-
-    const box = section();
-    const lead = within(box).getByLabelText(/^Lead/);
-    const customer = within(box).getAllByText(/^Customer/)[0];
-    const salesperson = within(box).getByLabelText('Salesperson');
-    const follows = (a: Element, b: Element) =>
-      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(follows(lead, customer)).toBe(true);
-    expect(follows(customer, salesperson)).toBe(true);
-  });
-});
-
-describe('LGR-D2 Customer is read-only, filled from the lead', () => {
-  it('shows the lead\'s customer name once a lead is picked, with no editable Customer', async () => {
-    renderForm({ mode: 'create' });
-    expect(customerTextbox()).toBeNull();
-    await pickLead('TRX', 'TRX Zus Coffee fit-out');
-    expect(await within(section()).findByText('KEDAI CONTOH SDN. BHD.')).toBeInTheDocument();
-    expect(customerTextbox()).toBeNull();
+    await toDetails();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'Pavilion' } });
+    expect(screen.queryByRole('button', { name: /Create lead/ })).toBeNull();
+    expect(listLeads).not.toHaveBeenCalled();
   });
 
-  it('clearing the lead clears the customer', async () => {
+  it('AC-L1 the section holds Customer then Salesperson, both editable', async () => {
     renderForm({ mode: 'create' });
-    await pickLead('TRX', 'TRX Zus Coffee fit-out');
-    await within(section()).findByText('KEDAI CONTOH SDN. BHD.');
-    fireEvent.click(screen.getByRole('button', { name: 'Clear lead' }));
-    await waitFor(() =>
-      expect(within(section()).queryByText('KEDAI CONTOH SDN. BHD.')).toBeNull(),
-    );
+    await toDetails();
+    const customer = within(section()).getByLabelText(/^Customer/);
+    const sales = within(section()).getByLabelText('Salesperson');
+    expect(customer).toBeEnabled();
+    expect(customer.compareDocumentPosition(sales) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('Register stays disabled until a lead is picked, then sends lead_id', async () => {
+  it('AC-L1 Register stays disabled until a Customer is picked, then sends customer_id and no lead_id key', async () => {
     renderForm({ mode: 'create' });
-    typeTitle('TRX Zus Coffee fit-out');
+    await toDetails();
     expect(registerButton()).toBeDisabled();
-    await pickLead('TRX', 'TRX Zus Coffee fit-out');
+    await pickCustomer();
     await waitFor(() => expect(registerButton()).toBeEnabled());
     fireEvent.click(registerButton());
     await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
-    expect(registerProject).toHaveBeenCalledWith(expect.objectContaining({ lead_id: 'lead-1' }));
+    const body = bodyOf(registerProject);
+    expect(body).toMatchObject({ customer_id: 'c-1' });
+    expect(body).not.toHaveProperty('lead_id');
   });
-});
 
-describe('LGR-D3 a lead with no customer asks for one', () => {
-  it('turns Customer into the required search picker and holds Register until one is picked', async () => {
+  it('AC-L1 the picked Customer stays editable: it can be cleared and Register disables again', async () => {
     renderForm({ mode: 'create' });
-    typeTitle('Menara Tanpa Pelanggan');
-    await pickLead('Tanpa', 'Menara Tanpa Pelanggan');
-
-    const picker = await screen.findByLabelText(/^Customer/);
-    expect(registerButton()).toBeDisabled();
-    fireEvent.change(picker, { target: { value: 'KEDAI' } });
-    await waitFor(() => expect(listCustomerOptions).toHaveBeenCalledWith('KEDAI'));
-    fireEvent.click(await screen.findByRole('button', { name: 'KEDAI CONTOH SDN. BHD.' }));
+    await toDetails();
+    await pickCustomer();
     await waitFor(() => expect(registerButton()).toBeEnabled());
-    fireEvent.click(registerButton());
-    await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
-    expect(registerProject).toHaveBeenCalledWith(
-      expect.objectContaining({ lead_id: 'lead-2', customer_id: 'c-1' }),
-    );
-  });
-});
-
-describe('LGR-D4 Salesperson follows the lead', () => {
-  const salesperson = () => screen.getByLabelText('Salesperson') as HTMLSelectElement;
-
-  it('a user who may change the salesperson gets the lead\'s assignee', async () => {
-    renderForm({ mode: 'create' });
-    await waitFor(() => expect(salesperson().value).toBe('u-me'));
-    await pickLead('TRX', 'TRX Zus Coffee fit-out');
-    await waitFor(() => expect(salesperson().value).toBe('u-2'));
+    fireEvent.click(screen.getByRole('button', { name: /^Clear .*customer/i }));
+    await waitFor(() => expect(registerButton()).toBeDisabled());
   });
 
-  it('a lead with no assignee leaves Salesperson as it was', async () => {
+  it('AC-L1 Customer starts empty (nothing fills it for you) and Register is disabled', async () => {
     renderForm({ mode: 'create' });
-    await waitFor(() => expect(salesperson().value).toBe('u-me'));
-    await pickLead('Tanpa', 'Menara Tanpa Pelanggan');
-    await screen.findByLabelText(/^Customer/);
-    expect(salesperson().value).toBe('u-me');
-  });
-
-  it('a user who may not change it stays the signed-in user', async () => {
-    granted = new Set(['projects.projects.edit']);
-    renderForm({ mode: 'create' });
-    await waitFor(() => expect(salesperson().value).toBe('u-me'));
-    await pickLead('TRX', 'TRX Zus Coffee fit-out');
-    await within(section()).findByText('KEDAI CONTOH SDN. BHD.');
-    expect(salesperson().value).toBe('u-me');
-  });
-});
-
-describe('LGR-D5 Create lead from the picker', () => {
-  it('opens the wizard with the typed text, then picks the new lead and shows its customer', async () => {
-    renderForm({ mode: 'create' });
-    typeTitle('Tower Q');
-    fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Tower Q' } });
-    fireEvent.click(await screen.findByRole('button', { name: /Create lead .Tower Q./ }));
-    const wizard = await screen.findByRole('dialog', { name: 'Create lead' });
-    expect(within(wizard).getByText('wizard title: Tower Q')).toBeInTheDocument();
-    fireEvent.click(within(wizard).getByRole('button', { name: 'Finish wizard' }));
-
-    expect(await within(section()).findByText('KEDAI CONTOH SDN. BHD.')).toBeInTheDocument();
-    await waitFor(() => expect(registerButton()).toBeEnabled());
-    fireEvent.click(registerButton());
-    await waitFor(() =>
-      expect(registerProject).toHaveBeenCalledWith(expect.objectContaining({ lead_id: 'lead-new' })),
-    );
-  });
-});
-
-describe('LGR-D6 AI extract never sets Customer', () => {
-  it('fills the title and mukim but leaves Customer empty and Register disabled', async () => {
-    renderForm({ mode: 'create' });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply extract' }));
-    await waitFor(() =>
-      expect((screen.getByLabelText(/project title/i) as HTMLTextAreaElement).value).toBe(
-        'Tajuk Dari Gambar CONTOH',
-      ),
-    );
-    expect(screen.queryByText('WARUNG CONTOH ENTERPRISE')).toBeNull();
+    await toDetails();
+    expect(within(section()).getByLabelText(/^Customer/)).toHaveValue('');
     expect(registerButton()).toBeDisabled();
   });
 });
 
-describe('LGR-D7 edit mode', () => {
-  it('with a lead, Customer is the read-only project customer and Lead is optional', () => {
-    renderForm({ mode: 'edit', project: baseProject() });
-    expect(within(section()).getByText('KEDAI CONTOH SDN. BHD.')).toBeInTheDocument();
-    expect(customerTextbox()).toBeNull();
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
-  });
-
-  it('picking a different lead re-fills Customer from that lead', async () => {
-    renderForm({ mode: 'edit', project: baseProject() });
-    await pickLead('Gerai', 'Gerai Contoh Phase 2');
-    expect(await within(section()).findByText('WARUNG CONTOH ENTERPRISE')).toBeInTheDocument();
-    expect(within(section()).queryByText('KEDAI CONTOH SDN. BHD.')).toBeNull();
-  });
-
-  it('with no lead, Customer is the editable picker and Save changes is enabled', () => {
-    renderForm({
-      mode: 'edit',
-      project: baseProject({ lead_id: null, lead_code: null, lead_title: null }),
-    });
-    expect(screen.getByLabelText(/^Customer/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
-  });
-});
-
-describe('LGR-D8 submit-only salesperson', () => {
+describe('AC-L1 submit-only salesperson', () => {
   beforeEach(() => {
     granted = new Set(['projects.registrations.submit']);
   });
 
-  it('sees the same section with a Lead picker; Save draft needs no lead, Submit does', async () => {
+  it('AC-L1 no Lead; Save draft needs no customer, Submit for approval does', async () => {
     renderForm({ mode: 'create' });
-    expect(screen.getByRole('button', { name: /Lead, customer and salesperson/ })).toBeInTheDocument();
-    expect(screen.getByLabelText(/^Lead/)).toBeInTheDocument();
-    typeTitle('TRX Zus Coffee fit-out');
+    await toDetails();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeDisabled();
+    await pickCustomer();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeEnabled());
+  });
 
-    await pickLead('TRX', 'TRX Zus Coffee fit-out');
+  it('AC-L1 Submit for approval sends customer_id and no lead_id key', async () => {
+    renderForm({ mode: 'create' });
+    await toDetails();
+    await pickCustomer();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Submit for approval' }));
     await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
-    expect(registerProject).toHaveBeenCalledWith(
-      expect.objectContaining({ lead_id: 'lead-1', submit: true }),
-    );
+    const body = bodyOf(registerProject);
+    expect(body).toMatchObject({ customer_id: 'c-1', submit: true });
+    expect(body).not.toHaveProperty('lead_id');
   });
 
-  it('keeps Salesperson as the signed-in user when a lead assigned to someone else is picked', async () => {
+  it('AC-L1 Save draft with no customer sends no lead_id key', async () => {
     renderForm({ mode: 'create' });
-    await pickLead('TRX', 'TRX Zus Coffee fit-out');
-    await within(section()).findByText('KEDAI CONTOH SDN. BHD.');
-    expect((screen.getByLabelText('Salesperson') as HTMLSelectElement).value).toBe('u-me');
+    await toDetails();
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
+    expect(bodyOf(registerProject)).not.toHaveProperty('lead_id');
   });
 });
 
-describe('edit mode keeps the project customer when a customerless lead is linked', () => {
-  it('does not send customer_id null and still shows the picker holding the customer', async () => {
-    renderForm({
-      mode: 'edit',
-      project: baseProject({ lead_id: null, lead_code: null, lead_title: null }),
-    });
-    await pickLead('Tanpa', 'Menara Tanpa Pelanggan');
-    const picker = await screen.findByLabelText(/^Customer/);
+describe('AC-L5 edit mode', () => {
+  it('AC-L5 a project that has a lead shows no Lead field, and the Customer is the editable picker', () => {
+    renderForm({ mode: 'edit', project: baseProject() });
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Create lead/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Customer and salesperson/ })).toBeInTheDocument();
+    const picker = screen.getByLabelText(/^Customer/);
+    expect(picker).toBeEnabled();
     expect(picker).toHaveValue('KEDAI CONTOH SDN. BHD.');
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+  });
+
+  it('AC-L5 changing the Customer saves it, and the PUT body has no lead_id key', async () => {
+    renderForm({ mode: 'edit', project: baseProject() });
+    await pickCustomer('KEDAI', 'KEDAI CONTOH SDN. BHD.');
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
-    const body = (updateProject.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
-    expect([undefined, 'c-1']).toContain(body.customer_id);
-    expect(body.lead_id).toBe('lead-2');
-  });
-});
-
-describe('LGR-D8 the lead guard holds on its own', () => {
-  const draft = (over: Record<string, unknown> = {}) =>
-    baseProject({ approval_state: 'draft', ...over });
-
-  it('submit-only draft with a customer but no lead: Submit disabled, Save draft enabled', () => {
-    granted = new Set(['projects.registrations.submit']);
-    renderForm({
-      mode: 'edit',
-      project: draft({ lead_id: null, lead_code: null, lead_title: null }),
-    });
-    expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+    expect(bodyOf(updateProject)).not.toHaveProperty('lead_id');
   });
 
-  it('submit-only draft that had a lead: clearing it disables Submit, Save draft stays enabled', async () => {
-    granted = new Set(['projects.registrations.submit']);
-    renderForm({ mode: 'edit', project: draft() });
-    expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Clear lead' }));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeDisabled(),
-    );
-    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+  it('AC-L5 clearing the Customer on edit sends customer_id null and no lead_id key (guard)', async () => {
+    renderForm({ mode: 'edit', project: baseProject() });
+    fireEvent.click(screen.getByRole('button', { name: /^Clear .*customer/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    const body = bodyOf(updateProject);
+    expect(body).toHaveProperty('customer_id', null);
+    expect(body).not.toHaveProperty('lead_id');
   });
 
-  it('create mode: picking a lead then clearing it disables Register again', async () => {
-    renderForm({ mode: 'create' });
-    typeTitle('TRX Zus Coffee fit-out');
-    await pickLead('TRX', 'TRX Zus Coffee fit-out');
-    await waitFor(() => expect(registerButton()).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Clear lead' }));
-    await waitFor(() => expect(registerButton()).toBeDisabled());
+  it('AC-L5 saving an unrelated field sends no lead_id key either', async () => {
+    renderForm({ mode: 'edit', project: baseProject() });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    expect(bodyOf(updateProject)).not.toHaveProperty('lead_id');
   });
-});
 
-describe('LGR-D5 Create lead round trip with an assignee', () => {
-  it('Salesperson becomes the person the new lead was assigned to', async () => {
-    renderForm({ mode: 'create' });
-    fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Tower Q' } });
-    fireEvent.click(await screen.findByRole('button', { name: /Create lead .Tower Q./ }));
-    const wizard = await screen.findByRole('dialog', { name: 'Create lead' });
-    fireEvent.click(within(wizard).getByRole('button', { name: 'Finish wizard assigned to Sales B' }));
-    await waitFor(() =>
-      expect((screen.getByLabelText('Salesperson') as HTMLSelectElement).value).toBe('u-2'),
-    );
+  it('AC-L5 a project with no lead has the same editable picker', () => {
+    renderForm({ mode: 'edit', project: baseProject({ lead_id: null, lead_code: null, lead_title: null }) });
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.getByLabelText(/^Customer/)).toBeEnabled();
   });
 });

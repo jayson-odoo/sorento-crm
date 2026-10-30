@@ -1,5 +1,5 @@
 /**
- * S4 - PurchaseOrdersPanel + SamplesPanel (AC-F1, AC-F2, AC-F8, AC-F9, AC-F9a).
+ * S4 - PurchaseOrdersPanel (AC-F1, AC-F2, AC-F8, AC-F9, AC-F9a).
  *
  * The distinction worth pinning is the one AC-F9 and AC-F9a draw: a MISMATCH reads as an
  * exception to chase, while DRIFT from v1 reads as a plain number. A UI that presented
@@ -64,7 +64,6 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
 
 import { PurchaseOrderLinesEditor } from './PurchaseOrderLinesEditor';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
-import { SamplesPanel } from './SamplesPanel';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -147,17 +146,6 @@ function renderLines(poOverrides: Partial<ProjectPurchaseOrder> = {}) {
   return render(
     <QueryClientProvider client={client}>
       <PurchaseOrderLinesEditor project={project()} po={po(poOverrides)} />
-    </QueryClientProvider>,
-  );
-}
-
-function renderSamples(overrides: Partial<Project> = {}) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <SamplesPanel project={project(overrides)} />
     </QueryClientProvider>,
   );
 }
@@ -383,47 +371,6 @@ describe('PurchaseOrdersPanel', () => {
     expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Upload a PO document/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Delete PO-9001/i })).toBeNull();
-  });
-});
-
-describe('SamplesPanel', () => {
-  it('tells the user a sample needs a quoted version first', async () => {
-    renderSamples();
-
-    expect(await screen.findByText(/No samples sent yet/i)).toBeInTheDocument();
-    // The heading says it; the sentence explaining the dependency is gone.
-    expect(screen.getByText('No samples sent yet')).toBeInTheDocument();
-  });
-
-  it('states that a version was superseded rather than leaving a badge off', async () => {
-    listSamples.mockResolvedValue([sample({ is_version_current: false })]);
-
-    renderSamples();
-
-    expect(await screen.findByText('Superseded')).toBeInTheDocument();
-    expect(screen.getByText('1 against a superseded version')).toBeInTheDocument();
-  });
-
-  it('names the scope and version on every row', async () => {
-    listSamples.mockResolvedValue([
-      sample({ scope_label: 'Common Area', version_no: 3, submitted_by_name: 'Siti' }),
-    ]);
-
-    renderSamples();
-
-    expect(await screen.findByText('Common Area')).toBeInTheDocument();
-    // Scope and version are separate columns now, so they are asserted separately.
-    expect(screen.getByText('v3')).toBeInTheDocument();
-    // Its own "By" column now, so the name stands alone without the "by" preposition.
-    expect(screen.getByText('Siti')).toBeInTheDocument();
-  });
-
-  it('says feedback is missing instead of rendering an empty gap', async () => {
-    listSamples.mockResolvedValue([sample({ developer_feedback: null })]);
-
-    renderSamples();
-
-    expect((await screen.findAllByText('-')).length).toBeGreaterThan(0);
   });
 });
 

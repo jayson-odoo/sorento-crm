@@ -732,16 +732,6 @@ def require_customer(customer_id: Optional[str]) -> None:
         )
 
 
-def require_lead(lead_id: Optional[str]) -> None:
-    """A registration comes from a lead (LEAD-GOVERNS-REGISTER E1, E6)."""
-    if not lead_id:
-        raise AppException(
-            status_code=422,
-            message="Pick the lead this project comes from.",
-            code="project_lead_required",
-        )
-
-
 def _to_pending(project: Project) -> bool:
     """Draft or rejected -> pending or resubmitted, the state change `portal_submit` makes.
     Returns True when it is a resubmission."""
@@ -772,17 +762,8 @@ def crm_register(
         raise AppException(
             status_code=422, message="A project title is required.", code="project_title_required"
         )
-    from app.services import project_lead_service as leads
-
-    lead_id = payload.get("lead_id")
-    if submit:
-        require_lead(lead_id)
-    lead = (
-        leads.lead_for_registration(db, lead_id, actor_user_id=user_id, own_leads_only=True)
-        if lead_id
-        else None
-    )
-    customer_id = leads.customer_from_lead(lead, payload.get("customer_id")) if lead else payload.get("customer_id")
+    # A registration has no lead (owner ruling 30 Oct): a sent lead_id is ignored.
+    customer_id = payload.get("customer_id")
     payload = {**payload, "customer_id": customer_id}
     project_service.check_company_refs(db, company_id, payload)
     if submit:
@@ -791,6 +772,16 @@ def crm_register(
     agents = agents_for_contact(db, contact_id) if contact_id else []
     details = {k: payload[k] for k in _CRM_DETAIL_KEYS if k in payload}
     developer_party_id = payload.get("developer_party_id")
+    if submit:
+        # The Check runs on the server too, so a client that skips it is still refused
+        # (PS-REGISTER-CHECK-FIRST S1). Drafts stay free.
+        project_service.assert_no_blocking_clash(
+            db,
+            company_id=company_id,
+            actor_user_id=user_id,
+            developer_party_id=developer_party_id,
+            title=title,
+        )
     try:
         with db.begin_nested():
             project = Project(
@@ -814,14 +805,8 @@ def crm_register(
             )
             db.flush()
             project_service.apply_sales_details(db, project, details)
-            if lead:
-                leads.set_project_lead(
-                    db, project, lead.id, actor_user_id=user_id, permissions=set(), own_leads_only=True
-                )
             if submit:
                 _to_pending(project)
-                if lead:
-                    leads.mark_qualified(db, lead)
             db.flush()
     except IntegrityError as exc:
         if "uq_projects_company_developer_title" not in str(getattr(exc, "orig", exc)):
@@ -850,26 +835,20 @@ def crm_submit(
         project_service.update_project(
             db, project, payload, actor_user_id=user_id, permissions=permissions
         )
-    require_lead(project.lead_id)
-    from app.services import project_lead_service as leads
-
-    # The lead may have been reassigned since the draft was saved (LGR-E11).
-    submit_only = "projects.registrations.submit" in permissions and "projects.projects.edit" not in permissions
-    leads.lead_for_registration(
-        db,
-        project.lead_id,
-        actor_user_id=user_id,
-        own_leads_only=submit_only,
-        permissions=None if submit_only else permissions,
-    )
     profile = db.get(ProjectSalesProfile, project.id)
     require_customer(getattr(profile, "customer_id", None))
     if not _clean(project.title):
         raise AppException(
             status_code=422, message="A project title is required.", code="project_title_required"
         )
+    project_service.assert_no_blocking_clash(
+        db,
+        company_id=project.company_id,
+        actor_user_id=user_id,
+        developer_party_id=project.developer_party_id,
+        title=project.title,
+    )
     resubmitted = _to_pending(project)
-    leads.mark_qualified(db, db.get(leads.ProjectLead, project.lead_id))
     return resubmitted
 
 

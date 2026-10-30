@@ -1,10 +1,11 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -21,6 +22,7 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { FormSection } from '@/components/common/FormSection';
+import { WizardSteps } from '@/components/common/WizardSteps';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { toast } from '@/lib/toast';
@@ -31,9 +33,7 @@ import {
   useClashPreview,
   useFetchClashPreview,
   useFetchCustomerOptions,
-  useFetchLeadOptions,
   useFetchPartyOptions,
-  type LeadPick,
   usePartyMutations,
   useProjectTemplates,
   useProjectTypes,
@@ -50,10 +50,14 @@ import type {
   ProjectUpdateBody,
 } from '../types/project.types';
 import { isProjectApproved } from '../lib/projectApproval';
-import { ClashWarningPanel } from '../../pipeline/components/ClashWarningPanel';
 import { isAwaitingDecision } from './ApprovalStatePill';
-import { LeadWizardDialog } from '../../leads/components/LeadWizardDialog';
 import { ProjectAIExtractDialog, type ProjectExtractFill } from './ProjectAIExtractDialog';
+
+const WIZARD_STEPS = [
+  { id: 'check', label: 'Check' },
+  { id: 'details', label: 'Details' },
+] as const;
+type WizardStepId = (typeof WIZARD_STEPS)[number]['id'];
 
 type ProjectFormProps = { mode: 'create' } | { mode: 'edit'; project: Project };
 
@@ -71,7 +75,7 @@ const PARTY_EDIT_PERMISSION = 'projects.parties.edit';
  * from the register dialog it replaces (PR #1336 round 2). Two things differ from that
  * dialog:
  *
- * - A third section, "Lead, customer and salesperson", open from the start.
+ * - A third section, "Customer and salesperson", open from the start.
  * - Edit mode starts every section open, never wipes the project's own template on
  *   first render, and excludes the project itself from its own clash check.
  */
@@ -155,19 +159,6 @@ export function ProjectForm(props: ProjectFormProps) {
       setOwnerUserId((current) => current || sessionUserId);
     }
   }, [mode, sessionUserId]);
-  const [leadId, setLeadId] = React.useState(project?.lead_id ?? '');
-  const [leadOption, setLeadOption] = React.useState<PickOption | null>(
-    project?.lead_id ? { value: project.lead_id, label: project.lead_code ?? 'Linked lead' } : null,
-  );
-  // The lead governs the customer: when the lead has one it is shown read-only. An edit with a
-  // stored lead shows the project's own customer without asking the lead again.
-  const [leadHasCustomer, setLeadHasCustomer] = React.useState(
-    mode === 'edit' && Boolean(project?.lead_id) && Boolean(project?.customer_id),
-  );
-
-  // The text typed into the Lead picker when nothing matched; non-null opens the lead wizard.
-  const [creatingLeadTitle, setCreatingLeadTitle] = React.useState<string | null>(null);
-
   // The blocking project the user is registering interest in (D4); non-null opens the dialog.
   const [interestTarget, setInterestTarget] = React.useState<ClashCandidate | null>(null);
   const [extractOpen, setExtractOpen] = React.useState(false);
@@ -182,7 +173,6 @@ export function ProjectForm(props: ProjectFormProps) {
   const types = useProjectTypes({ enabled: canViewTypes });
   const templates = useProjectTemplates(typeId || undefined, { enabled: canViewTypes });
   const states = useLookupSetOptions('my_state');
-  const fetchLeadOptions = useFetchLeadOptions();
   const users = useQuery({
     queryKey: ['user-lookup', 'project-owner'],
     queryFn: () => getUserLookup(),
@@ -191,6 +181,11 @@ export function ProjectForm(props: ProjectFormProps) {
   // The title the user last checked; editing the field clears it, so a result never
   // sits under a title it was not asked about.
   const [checkedTitle, setCheckedTitle] = React.useState('');
+  // Create mode is a two-step wizard: Check (title + developer), then Details. Edit mode is
+  // the flat form.
+  const [step, setStep] = React.useState<WizardStepId>('check');
+  const wizard = mode === 'create';
+  const [checkFailed, setCheckFailed] = React.useState(false);
   // The title counts as filled once the user leaves the field or checks it, so Details
   // does not open under them after the first letter.
   const [titleSettled, setTitleSettled] = React.useState(mode === 'edit');
@@ -260,15 +255,11 @@ export function ProjectForm(props: ProjectFormProps) {
   const pending = register.isPending || update.isPending || submitDraft.isPending;
   const [showErrors, setShowErrors] = React.useState(false);
   const valueError = numberFieldError(estimatedValue, { min: 0, optional: true });
-  // A new project needs its Lead (LEAD-GOVERNS-REGISTER D1) and a Customer, which the lead
-  // supplies unless it has none. Edit leaves both optional, so a project registered before the
-  // rule saves. A salesperson's Submit for approval enforces them either way.
-  const leadMissing = (mode === 'create' || submitOnly) && !leadId;
   const customerMissing = (mode === 'create' || submitOnly) && !customerId;
   const canSubmit =
-    title.trim().length > 0 && !leadMissing && !customerMissing && !wouldBlock && !pending;
+    title.trim().length > 0 && !customerMissing && !wouldBlock && !pending;
   const canSaveDraft = title.trim().length > 0 && !pending;
-  // The top blocking candidate: the footer's one primary becomes Register interest (D2).
+  // The top blocking candidate: the footer's one primary becomes Register as secondary lead (D2).
   const blocker =
     mode === 'create' && wouldBlock ? candidates.find((candidate) => candidate.blocks) : undefined;
 
@@ -276,8 +267,68 @@ export function ProjectForm(props: ProjectFormProps) {
     const trimmed = title.trim();
     if (trimmed.length < CLASH_MIN_CHARS) return;
     setTitleSettled(true);
+    setCheckFailed(false);
     setCheckedTitle(trimmed);
-    await fetchClash(trimmed, developerId || null).catch(() => undefined);
+    try {
+      await fetchClash(trimmed, developerId || null);
+    } catch {
+      // Say so and let the user press Check again (a swallowed failure read as "no clash").
+      setCheckedTitle('');
+      setCheckFailed(true);
+    }
+  }
+
+  /** A new title or developer makes the last result stale: clear it, Check returns. */
+  function clearCheck() {
+    setCheckedTitle('');
+    setCheckFailed(false);
+  }
+
+  function goToDetails() {
+    setStep('details');
+  }
+
+  const checked = hasChecked && clash.isSuccess && !clash.isFetching;
+  // A registration waiting for approval has no lock (its `candidates` carry blocks: false), but
+  // its matches still read as a Clash line, as information.
+  const blockingCandidate = (
+    mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates
+  ).find((candidate) => candidate.blocks);
+  /** The one result line of a Check, the same in create and edit. */
+  const checkResult = checkFailed ? (
+    <p className="text-sm text-destructive" role="alert">
+      The check did not finish. Try again.
+    </p>
+  ) : checked ? (
+    blockingCandidate ? (
+      <p className="break-words text-sm text-destructive" aria-live="polite">
+        Clash:{' '}
+        <Link
+          href={`/project-sales/${blockingCandidate.project_id}`}
+          className="font-medium underline"
+        >
+          {blockingCandidate.project_code}
+        </Link>{' '}
+        {blockingCandidate.title}
+      </p>
+    ) : (
+      <p className="text-sm text-muted-foreground" aria-live="polite">
+        No clash
+      </p>
+    )
+  ) : null;
+
+  /** Step 1's forward action: Check, then Next, or the way out of a clash. */
+  function forwardFromCheck() {
+    if (blocker) {
+      setInterestTarget(blocker);
+      return;
+    }
+    if (checked) {
+      goToDetails();
+      return;
+    }
+    void handleCheck();
   }
 
   function buildBody(): ProjectRegisterBody {
@@ -299,17 +350,16 @@ export function ProjectForm(props: ProjectFormProps) {
       launch_date: launchDate || null,
       expected_delivery_from: deliveryFrom || null,
       expected_delivery_to: deliveryTo || null,
-      // A lead's own customer is sent back unchanged, which the server accepts.
       ...((mode === 'create' ? Boolean(customerId) : customerId !== (project?.customer_id ?? ''))
         ? { customer_id: customerId || null }
         : {}),
-      lead_id: leadId || null,
     };
   }
 
   /** Pre-fills the form from a confirmed AI extract; the typed title is never overwritten. */
   function applyExtract(fill: ProjectExtractFill) {
     if (fill.title && !title.trim()) setTitle(fill.title);
+    clearCheck();
     if (fill.developer) {
       setDeveloperId(fill.developer.id);
       setDeveloperOption({ value: fill.developer.id, label: fill.developer.name });
@@ -329,25 +379,6 @@ export function ProjectForm(props: ProjectFormProps) {
     if (fill.state) setState(fill.state);
     if (fill.mukim) setMukim(fill.mukim);
     setTitleSettled(true);
-  }
-
-  /** Takes the customer and the assignee from the picked lead (LEAD-GOVERNS-REGISTER D2, D4). */
-  function takeFromLead(
-    lead: {
-      customer_id?: string | null;
-      customer_name?: string | null;
-      owner_user_id?: string | null;
-    } | null,
-  ) {
-    setLeadHasCustomer(Boolean(lead?.customer_id));
-    if (lead?.customer_id) {
-      setCustomerId(lead.customer_id);
-      setCustomerOption({ value: lead.customer_id, label: lead.customer_name ?? 'Customer' });
-    } else if (mode === 'create') {
-      setCustomerId('');
-      setCustomerOption(null);
-    }
-    if (lead?.owner_user_id && canManageOwner) setOwnerUserId(lead.owner_user_id);
   }
 
   /** Creates a party from the typed text and selects it (B2); holders of parties.edit only. */
@@ -379,6 +410,10 @@ export function ProjectForm(props: ProjectFormProps) {
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (wizard && step === 'check') {
+      forwardFromCheck();
+      return;
+    }
     await save(submitOnly ? true : undefined);
   }
 
@@ -407,7 +442,7 @@ export function ProjectForm(props: ProjectFormProps) {
           : previewCandidates;
       if (filtered.some((c) => c.blocks)) return;
     }
-    // A refusal (409 lead_already_linked, 403, ...) is toasted by the mutation hook;
+    // A refusal (403, ...) is toasted by the mutation hook;
     // the user stays on the form with what they typed.
     try {
       if (mode === 'create') {
@@ -426,6 +461,85 @@ export function ProjectForm(props: ProjectFormProps) {
     }
   }
 
+  // Both routes need projects.types.view: without it the type and template show as the
+  // project's own text and nothing is requested.
+  const typeField = (
+    <div className="space-y-1.5">
+      <Label id="project-type-label" htmlFor="project-type">
+        Project type
+      </Label>
+      {!canViewTypes ? (
+        <p id="project-type" aria-labelledby="project-type-label" className="text-sm">
+          {project?.type_name || '-'}
+        </p>
+      ) : (
+        <SearchableSelect
+          id="project-type"
+          value={typeId}
+          onChange={(next) => {
+            // A new type must clear the template too, or a stale template from the previous
+            // type is submitted and the project gets roles it should not offer. In the
+            // handler, not an effect, so opening an edit form never wipes the project's own
+            // template.
+            setTypeId(next);
+            if (next !== typeId) setTemplateId('');
+          }}
+          clearable
+          loadError={types.error}
+          onRetry={() => void types.refetch()}
+          options={(types.data ?? []).map((type) => ({ value: type.id, label: type.name }))}
+          placeholder="Select a type"
+        />
+      )}
+    </div>
+  );
+  const templateField = (
+    <div className="space-y-1.5">
+      <Label id="project-template-label" htmlFor="project-template">
+        To-do list template
+      </Label>
+      {!canViewTypes ? (
+        <p id="project-template" aria-labelledby="project-template-label" className="text-sm">
+          {project?.template_name || '-'}
+        </p>
+      ) : (
+        <SearchableSelect
+          id="project-template"
+          value={templateId}
+          onChange={setTemplateId}
+          clearable
+          loadError={templates.error}
+          onRetry={() => void templates.refetch()}
+          options={(templates.data ?? []).map((template) => ({
+            value: template.id,
+            label: template.name,
+            description: template.has_forked_status_graph ? 'Has its own stage flow' : undefined,
+          }))}
+          placeholder="Select a to-do list template"
+          emptyMessage="No to-do list templates for this type"
+        />
+      )}
+    </div>
+  );
+
+  const titleInput = (
+    <Textarea
+      id="project-title"
+      value={title}
+      onChange={(event) => {
+        setTitle(event.target.value);
+        clearCheck();
+        if (!event.target.value.trim()) setTitleSettled(false);
+      }}
+      onBlur={() => setTitleSettled(title.trim().length > 0)}
+      placeholder="e.g. Setia Alam Phase 3B"
+      autoComplete="off"
+      rows={3}
+      className="min-h-20 [field-sizing:content]"
+      required
+    />
+  );
+
   function handleCancel() {
     router.push(mode === 'create' ? '/project-sales/pipeline' : `/project-sales/${project!.id}`);
   }
@@ -433,361 +547,344 @@ export function ProjectForm(props: ProjectFormProps) {
   return (
     <>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <FormSection
-          title="Who and what"
-          summary={title.trim() || null}
-          open={sectionOpen.who}
-          onOpenChange={(next) => toggleSection('who', next)}
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="project-title">
-              Project title <span className="text-destructive">*</span>
-            </Label>
-            <Textarea
-              id="project-title"
-              value={title}
-              onChange={(event) => {
-                setTitle(event.target.value);
-                setCheckedTitle('');
-                if (!event.target.value.trim()) setTitleSettled(false);
-              }}
-              onBlur={() => setTitleSettled(title.trim().length > 0)}
-              placeholder="e.g. Setia Alam Phase 3B"
-              autoComplete="off"
-              rows={3}
-              className="min-h-20 [field-sizing:content]"
-              required
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!checkable || clash.isFetching}
-                onClick={() => void handleCheck()}
-              >
-                {clash.isFetching && hasChecked && (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                )}
-                Check
-              </Button>
-              <Button type="button" variant="outline" onClick={() => setExtractOpen(true)}>
-                <Sparkles className="size-4" aria-hidden />
-                AI extract
-              </Button>
-            </div>
-            {hasChecked && clash.isSuccess && !clash.isFetching && candidates.length === 0 && (
-              <p className="text-xs text-muted-foreground" aria-live="polite">
-                No existing project matches this title.
-              </p>
-            )}
-          </div>
+        {wizard && (
+          <WizardSteps
+            steps={WIZARD_STEPS}
+            currentId={step}
+            className="mb-2 rounded-lg border border-border p-4"
+          />
+        )}
 
-          {hasChecked && <ClashWarningPanel candidates={candidates} isLoading={clash.isFetching} />}
-
-          <div className="grid gap-4 sm:grid-cols-2">
+        {wizard && step === 'check' && (
+          <div className="space-y-4 rounded-lg border border-border p-4">
             <div className="space-y-1.5">
-              <Label htmlFor="project-developer">Developer</Label>
-              <SearchableSelect
-                id="project-developer"
-                value={developerId}
-                onChange={setDeveloperId}
-                onOptionChange={setDeveloperOption}
-                fetchOptions={fetchDeveloperOptions}
-                selectedOption={developerOption ?? undefined}
-                clearable
-                placeholder="Search developers"
-                emptyMessage="No developers found"
-                createOption={partyCreateOption('developer', 'developer', (id, option) => {
-                  setDeveloperId(id);
-                  setDeveloperOption(option);
-                })}
-              />
-              <TypedHint typed={typed?.developer_name} picked={developerId} />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label id="project-type-label" htmlFor="project-type">
-                Project type
+              <Label htmlFor="project-title">
+                Project title <span className="text-destructive">*</span>
               </Label>
-              {!canViewTypes ? (
-                <p id="project-type" aria-labelledby="project-type-label" className="text-sm">
-                  {project?.type_name || '-'}
-                </p>
-              ) : (
-              <SearchableSelect
-                id="project-type"
-                value={typeId}
-                onChange={(next) => {
-                  // A new type must clear the template too, or a stale template from
-                  // the previous type is submitted and the project gets roles it should
-                  // not offer. In the handler, not an effect, so opening an edit form
-                  // never wipes the project's own template.
-                  setTypeId(next);
-                  if (next !== typeId) setTemplateId('');
-                }}
-                clearable
-                loadError={types.error}
-                onRetry={() => void types.refetch()}
-                options={(types.data ?? []).map((type) => ({
-                  value: type.id,
-                  label: type.name,
-                }))}
-                placeholder="Select a type"
-              />
-              )}
+              {titleInput}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setExtractOpen(true)}
+                >
+                  <Sparkles className="size-4" aria-hidden />
+                  AI extract
+                </Button>
+              </div>
             </div>
+            <div className="space-y-1.5">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-developer">Developer</Label>
+                <SearchableSelect
+                  id="project-developer"
+                  value={developerId}
+                  onChange={(next) => {
+                    setDeveloperId(next);
+                    clearCheck();
+                  }}
+                  onOptionChange={setDeveloperOption}
+                  fetchOptions={fetchDeveloperOptions}
+                  selectedOption={developerOption ?? undefined}
+                  clearable
+                  placeholder="Search developers"
+                  emptyMessage="No developers found"
+                  createOption={partyCreateOption(
+                    'developer',
+                    'developer',
+                    (id, option) => {
+                      setDeveloperId(id);
+                      setDeveloperOption(option);
+                      clearCheck();
+                    },
+                  )}
+                />
+                <TypedHint typed={typed?.developer_name} picked={developerId} />
+              </div>
+            </div>
+            {checkResult}
           </div>
+        )}
 
-          {typeId && (
-            <div className="space-y-1.5">
-              <Label id="project-template-label" htmlFor="project-template">
-                To-do list template
-              </Label>
-              {!canViewTypes ? (
-                <p id="project-template" aria-labelledby="project-template-label" className="text-sm">
-                  {project?.template_name || '-'}
-                </p>
-              ) : (
-              <SearchableSelect
-                id="project-template"
-                value={templateId}
-                onChange={setTemplateId}
-                clearable
-                loadError={templates.error}
-                onRetry={() => void templates.refetch()}
-                options={(templates.data ?? []).map((template) => ({
-                  value: template.id,
-                  label: template.name,
-                  description: template.has_forked_status_graph
-                    ? 'Has its own stage flow'
-                    : undefined,
-                }))}
-                placeholder="Select a to-do list template"
-                emptyMessage="No to-do list templates for this type"
-              />
-              )}
-            </div>
-          )}
+        {wizard && step === 'details' && blockingCandidate && checkResult}
 
-        </FormSection>
-
-        <FormSection
-          title="Details"
-          open={sectionOpen.details}
-          onOpenChange={(next) => toggleSection('details', next)}
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-registered-company">Registered company / SPV</Label>
-              <Input
-                id="project-registered-company"
-                value={registeredCompany}
-                onChange={(event) => setRegisteredCompany(event.target.value)}
-                placeholder="Optional"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-location">Location</Label>
-              <Input
-                id="project-location"
-                value={location}
-                onChange={(event) => setLocation(event.target.value)}
-                placeholder="e.g. Setia Alam, Selangor"
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-state">State</Label>
-              <SearchableSelect
-                id="project-state"
-                value={state}
-                onChange={setState}
-                clearable
-                loadError={states.error}
-                onRetry={() => void states.refetch()}
-                options={[
-                  // A stored value the lookup set no longer offers still shows as itself.
-                  ...(state && !(states.data ?? []).some((o) => o.value === state)
-                    ? [{ value: state, label: state }]
-                    : []),
-                  ...(states.data ?? []).map((option) => ({
-                    value: option.value,
-                    label: option.label,
-                  })),
-                ]}
-                placeholder="Select a state"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-mukim">Area</Label>
-              <Input
-                id="project-mukim"
-                value={mukim}
-                onChange={(event) => setMukim(event.target.value)}
-                placeholder="Optional"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="project-address">Address</Label>
-            <Textarea
-              id="project-address"
-              value={address}
-              onChange={(event) => setAddress(event.target.value)}
-              rows={3}
-              placeholder="Optional"
-            />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-admin-ref">Reference</Label>
-              <Input
-                id="project-admin-ref"
-                value={adminRef}
-                onChange={(event) => setAdminRef(event.target.value)}
-                maxLength={64}
-                placeholder="e.g. PS26-0143"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-value">Estimated sales value (RM)</Label>
-              <NumberInput
-                id="project-value"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={estimatedValue}
-                error={showErrors ? valueError : undefined}
-                onChange={(event) => setEstimatedValue(event.target.value)}
-                placeholder="0.00"
-              />
-            </div>
-          </div>
-
-          {derivesDelivery ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="project-launch">Project launch date</Label>
-              <Input
-                id="project-launch"
-                type="date"
-                value={launchDate}
-                onChange={(event) => setLaunchDate(event.target.value)}
-              />
-            </div>
-          ) : (
-            // One range, one control: two date fields let "to" land before "from"
-            // and stop reading as a single fact once they wrap apart.
-            <div className="space-y-1.5">
-              <Label htmlFor="project-delivery-range">Expected delivery</Label>
-              <DateRangePicker
-                id="project-delivery-range"
-                from={deliveryFrom || null}
-                to={deliveryTo || null}
-                onChange={({ from, to }) => {
-                  setDeliveryFrom(from ?? '');
-                  setDeliveryTo(to ?? '');
-                }}
-              />
-            </div>
-          )}
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-architect">Architect</Label>
-              <SearchableSelect
-                id="project-architect"
-                value={architectId}
-                onChange={setArchitectId}
-                onOptionChange={setArchitectOption}
-                fetchOptions={fetchArchitectOptions}
-                selectedOption={architectOption ?? undefined}
-                clearable
-                placeholder="Search architects"
-                emptyMessage="No architects found"
-                createOption={partyCreateOption('architect', 'architect', (id, option) => {
-                  setArchitectId(id);
-                  setArchitectOption(option);
-                })}
-              />
-              <TypedHint typed={typed?.architect_name} picked={architectId} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-contractor">Main contractor</Label>
-              <SearchableSelect
-                id="project-contractor"
-                value={mainContractorId}
-                onChange={setMainContractorId}
-                onOptionChange={setContractorOption}
-                fetchOptions={fetchContractorOptions}
-                selectedOption={contractorOption ?? undefined}
-                clearable
-                placeholder="Search main contractors"
-                emptyMessage="No main contractors found"
-                createOption={partyCreateOption(
-                  'main_contractor',
-                  'main contractor',
-                  (id, option) => {
-                    setMainContractorId(id);
-                    setContractorOption(option);
-                  },
-                )}
-              />
-              <TypedHint typed={typed?.main_contractor_name} picked={mainContractorId} />
-            </div>
-          </div>
-        </FormSection>
-
-        <FormSection
-          title="Lead, customer and salesperson"
-          open={sectionOpen.salesCustomer}
-          onOpenChange={(next) => toggleSection('salesCustomer', next)}
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="project-lead">
-              Lead{(mode === 'create' || submitOnly) && <span className="text-destructive"> *</span>}
-            </Label>
-            <SearchableSelect
-              id="project-lead"
-              value={leadId}
-              onChange={setLeadId}
-              onOptionChange={(option) => {
-                setLeadOption(option);
-                takeFromLead(option as LeadPick | null);
-              }}
-              fetchOptions={fetchLeadOptions}
-              selectedOption={leadOption ?? undefined}
-              clearable
-              placeholder="Search leads by title or code"
-              emptyMessage="No open leads match"
-              // Ungated, like the Leads page's own Create lead: the server decides who may
-              // create one (projects.projects.edit or projects.registrations.submit).
-              createOption={{
-                label: (query) => <span>Create lead &ldquo;{query}&rdquo;</span>,
-                onCreate: setCreatingLeadTitle,
-              }}
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              {(leadId && leadHasCustomer) || (mode === 'create' && !leadId) ? (
-                <>
-                  <Label>Customer</Label>
-                  <div className="flex min-h-9 items-center text-sm">
-                    {customerId && customerOption ? (
-                      <span className="truncate" title={customerOption.label}>
-                        {customerOption.label}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
+        {(!wizard || step === 'details') && (
+          <FormSection
+            title="Who and what"
+            summary={title.trim() || null}
+            open={sectionOpen.who}
+            onOpenChange={(next) => toggleSection('who', next)}
+          >
+            {!wizard && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="project-title">
+                    Project title <span className="text-destructive">*</span>
+                  </Label>
+                  {titleInput}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!checkable || clash.isFetching}
+                      onClick={() => void handleCheck()}
+                    >
+                      {clash.isFetching && hasChecked && (
+                        <Loader2 className="size-4 animate-spin" aria-hidden />
+                      )}
+                      Check
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setExtractOpen(true)}
+                    >
+                      <Sparkles className="size-4" aria-hidden />
+                      AI extract
+                    </Button>
                   </div>
-                </>
-              ) : (
-                <>
+                  {checkResult}
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="project-developer">Developer</Label>
+                      <SearchableSelect
+                        id="project-developer"
+                        value={developerId}
+                        onChange={(next) => {
+                          setDeveloperId(next);
+                          clearCheck();
+                        }}
+                        onOptionChange={setDeveloperOption}
+                        fetchOptions={fetchDeveloperOptions}
+                        selectedOption={developerOption ?? undefined}
+                        clearable
+                        placeholder="Search developers"
+                        emptyMessage="No developers found"
+                        createOption={partyCreateOption(
+                          'developer',
+                          'developer',
+                          (id, option) => {
+                            setDeveloperId(id);
+                            setDeveloperOption(option);
+                            clearCheck();
+                          },
+                        )}
+                      />
+                      <TypedHint
+                        typed={typed?.developer_name}
+                        picked={developerId}
+                      />
+                    </div>
+                  </div>
+                  {typeField}
+                </div>
+              </>
+            )}
+            {wizard && (
+              <div className="space-y-1.5">{typeField}</div>
+            )}
+
+            {typeId && templateField}
+          </FormSection>
+        )}
+
+        {(!wizard || step === 'details') && (
+          <FormSection
+            title="Details"
+            open={sectionOpen.details}
+            onOpenChange={(next) => toggleSection('details', next)}
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-registered-company">
+                  Registered company / SPV
+                </Label>
+                <Input
+                  id="project-registered-company"
+                  value={registeredCompany}
+                  onChange={(event) => setRegisteredCompany(event.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-location">Location</Label>
+                <Input
+                  id="project-location"
+                  value={location}
+                  onChange={(event) => setLocation(event.target.value)}
+                  placeholder="e.g. Setia Alam, Selangor"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-state">State</Label>
+                <SearchableSelect
+                  id="project-state"
+                  value={state}
+                  onChange={setState}
+                  clearable
+                  loadError={states.error}
+                  onRetry={() => void states.refetch()}
+                  options={[
+                    // A stored value the lookup set no longer offers still shows as itself.
+                    ...(state &&
+                    !(states.data ?? []).some((o) => o.value === state)
+                      ? [{ value: state, label: state }]
+                      : []),
+                    ...(states.data ?? []).map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    })),
+                  ]}
+                  placeholder="Select a state"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-mukim">Area</Label>
+                <Input
+                  id="project-mukim"
+                  value={mukim}
+                  onChange={(event) => setMukim(event.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="project-address">Address</Label>
+              <Textarea
+                id="project-address"
+                value={address}
+                onChange={(event) => setAddress(event.target.value)}
+                rows={3}
+                placeholder="Optional"
+              />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-admin-ref">Reference</Label>
+                <Input
+                  id="project-admin-ref"
+                  value={adminRef}
+                  onChange={(event) => setAdminRef(event.target.value)}
+                  maxLength={64}
+                  placeholder="e.g. PS26-0143"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-value">
+                  Estimated sales value (RM)
+                </Label>
+                <NumberInput
+                  id="project-value"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={estimatedValue}
+                  error={showErrors ? valueError : undefined}
+                  onChange={(event) => setEstimatedValue(event.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+
+            {derivesDelivery ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="project-launch">Project launch date</Label>
+                <Input
+                  id="project-launch"
+                  type="date"
+                  value={launchDate}
+                  onChange={(event) => setLaunchDate(event.target.value)}
+                />
+              </div>
+            ) : (
+              // One range, one control: two date fields let "to" land before "from"
+              // and stop reading as a single fact once they wrap apart.
+              <div className="space-y-1.5">
+                <Label htmlFor="project-delivery-range">
+                  Expected delivery
+                </Label>
+                <DateRangePicker
+                  id="project-delivery-range"
+                  from={deliveryFrom || null}
+                  to={deliveryTo || null}
+                  onChange={({ from, to }) => {
+                    setDeliveryFrom(from ?? '');
+                    setDeliveryTo(to ?? '');
+                  }}
+                />
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-architect">Architect</Label>
+                <SearchableSelect
+                  id="project-architect"
+                  value={architectId}
+                  onChange={setArchitectId}
+                  onOptionChange={setArchitectOption}
+                  fetchOptions={fetchArchitectOptions}
+                  selectedOption={architectOption ?? undefined}
+                  clearable
+                  placeholder="Search architects"
+                  emptyMessage="No architects found"
+                  createOption={partyCreateOption(
+                    'architect',
+                    'architect',
+                    (id, option) => {
+                      setArchitectId(id);
+                      setArchitectOption(option);
+                    },
+                  )}
+                />
+                <TypedHint typed={typed?.architect_name} picked={architectId} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-contractor">Main contractor</Label>
+                <SearchableSelect
+                  id="project-contractor"
+                  value={mainContractorId}
+                  onChange={setMainContractorId}
+                  onOptionChange={setContractorOption}
+                  fetchOptions={fetchContractorOptions}
+                  selectedOption={contractorOption ?? undefined}
+                  clearable
+                  placeholder="Search main contractors"
+                  emptyMessage="No main contractors found"
+                  createOption={partyCreateOption(
+                    'main_contractor',
+                    'main contractor',
+                    (id, option) => {
+                      setMainContractorId(id);
+                      setContractorOption(option);
+                    },
+                  )}
+                />
+                <TypedHint
+                  typed={typed?.main_contractor_name}
+                  picked={mainContractorId}
+                />
+              </div>
+            </div>
+          </FormSection>
+        )}
+
+        {(!wizard || step === 'details') && (
+          <FormSection
+            title="Customer and salesperson"
+            open={sectionOpen.salesCustomer}
+            onOpenChange={(next) => toggleSection('salesCustomer', next)}
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
                   <Label htmlFor="project-customer">
                     Customer
                     {(mode === 'create' || submitOnly) && (
@@ -801,80 +898,151 @@ export function ProjectForm(props: ProjectFormProps) {
                     onOptionChange={setCustomerOption}
                     fetchOptions={fetchCustomerOptions}
                     selectedOption={customerOption ?? undefined}
-                    clearable={mode === 'edit'}
+                    clearable
                     placeholder="Search customers"
                     emptyMessage="No customers found"
                   />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-owner">Salesperson</Label>
+                <SearchableSelect
+                  id="project-owner"
+                  value={ownerUserId}
+                  onChange={setOwnerUserId}
+                  disabled={!canManageOwner}
+                  loadError={users.error}
+                  onRetry={() => void users.refetch()}
+                  options={(users.data ?? []).map((user) => ({
+                    value: user.id,
+                    label: user.name || 'Unnamed user',
+                  }))}
+                  placeholder="Select a salesperson"
+                />
+              </div>
+            </div>
+          </FormSection>
+        )}
+
+        {wizard ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={step === 'check'}
+              onClick={() => setStep('check')}
+            >
+              <ArrowLeft className="size-4" aria-hidden />
+              Back
+            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button type="button" variant="outline" onClick={handleCancel}>
+                Cancel
+              </Button>
+              {step === 'check' ? (
+                blocker ? (
+                  <Button
+                    type="button"
+                    onClick={() => setInterestTarget(blocker)}
+                  >
+                    Register as secondary lead on {blocker.project_code}
+                  </Button>
+                ) : checked ? (
+                  <Button type="button" onClick={goToDetails}>
+                    Next
+                    <ArrowRight className="size-4" aria-hidden />
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    disabled={!checkable || clash.isFetching}
+                    onClick={() => void handleCheck()}
+                  >
+                    {clash.isFetching && hasChecked && (
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                    )}
+                    Check
+                  </Button>
+                )
+              ) : (
+                <>
+                  {blocker ? (
+                    <Button
+                      type="button"
+                      onClick={() => setInterestTarget(blocker)}
+                    >
+                      Register as secondary lead on {blocker.project_code}
+                    </Button>
+                  ) : submitOnly ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!canSaveDraft}
+                        onClick={() => void save(false)}
+                      >
+                        Save draft
+                      </Button>
+                      <Button type="submit" disabled={!canSubmit}>
+                        {pending && (
+                          <Loader2
+                            className="size-4 animate-spin"
+                            aria-hidden
+                          />
+                        )}
+                        Submit for approval
+                      </Button>
+                    </>
+                  ) : (
+                    <Button type="submit" disabled={!canSubmit}>
+                      {pending && (
+                        <Loader2 className="size-4 animate-spin" aria-hidden />
+                      )}
+                      Register project
+                    </Button>
+                  )}
                 </>
               )}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-owner">Salesperson</Label>
-              <SearchableSelect
-                id="project-owner"
-                value={ownerUserId}
-                onChange={setOwnerUserId}
-                disabled={!canManageOwner}
-                loadError={users.error}
-                onRetry={() => void users.refetch()}
-                options={(users.data ?? []).map((user) => ({
-                  value: user.id,
-                  label: user.name || 'Unnamed user',
-                }))}
-                placeholder="Select a salesperson"
-              />
-            </div>
           </div>
-        </FormSection>
-
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button type="button" variant="outline" onClick={handleCancel}>
-            Cancel
-          </Button>
-          {blocker ? (
-            <Button type="button" onClick={() => setInterestTarget(blocker)}>
-              Register interest in {blocker.project_code}
+        ) : (
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={handleCancel}>
+              Cancel
             </Button>
-          ) : submitOnly ? (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!canSaveDraft}
-                onClick={() => void save(false)}
-              >
-                {mode === 'edit' && project?.approval_state !== 'draft' ? 'Save changes' : 'Save draft'}
+            {blocker ? (
+              <Button type="button" onClick={() => setInterestTarget(blocker)}>
+                Register as secondary lead on {blocker.project_code}
               </Button>
+            ) : submitOnly ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!canSaveDraft}
+                  onClick={() => void save(false)}
+                >
+                  {mode === 'edit' && project?.approval_state !== 'draft'
+                    ? 'Save changes'
+                    : 'Save draft'}
+                </Button>
+                <Button type="submit" disabled={!canSubmit}>
+                  {pending && (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  )}
+                  Submit for approval
+                </Button>
+              </>
+            ) : (
               <Button type="submit" disabled={!canSubmit}>
-                {pending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-                Submit for approval
+                {pending && (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                )}
+                Save changes
               </Button>
-            </>
-          ) : (
-            <Button type="submit" disabled={!canSubmit}>
-              {pending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-              {mode === 'create' ? 'Register project' : 'Save changes'}
-            </Button>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </form>
-
-      {creatingLeadTitle !== null && (
-        <LeadWizardDialog
-          initialTitle={creatingLeadTitle}
-          onDone={(created) => {
-            setCreatingLeadTitle(null);
-            if (!created) return;
-            setLeadId(created.id);
-            setLeadOption({
-              value: created.id,
-              label: created.title,
-              description: created.lead_code,
-            });
-            takeFromLead(created);
-          }}
-        />
-      )}
 
       {interestTarget && (
         <RegisterInterestDialog
@@ -925,7 +1093,7 @@ function RegisterInterestDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92dvh] w-full max-w-lg overflow-hidden" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>Register interest in {candidate.project_code}</DialogTitle>
+          <DialogTitle>Register as secondary lead on {candidate.project_code}</DialogTitle>
         </DialogHeader>
 
         <form
@@ -943,7 +1111,7 @@ function RegisterInterestDialog({
             if (canViewProject) {
               router.push(`/project-sales/${candidate.project_id}`);
             } else {
-              toast.success(`Interest registered in ${candidate.project_code}`);
+              toast.success(`Registered as secondary lead on ${candidate.project_code}`);
               router.push('/project-sales/pipeline');
             }
           }}
@@ -969,7 +1137,7 @@ function RegisterInterestDialog({
             </Button>
             <Button type="submit" disabled={!reason.trim() || request.isPending}>
               {request.isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-              Register interest
+              Register as secondary lead
             </Button>
           </DialogFooter>
         </form>

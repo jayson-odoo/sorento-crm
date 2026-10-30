@@ -4,7 +4,8 @@
  * pending or rejected one. The server answers 409 `project_not_approved` for the same request.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render as rtlRender, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../_shared/types/project.types';
 
@@ -30,7 +31,17 @@ vi.mock('../../_shared/hooks/useProjects', () => ({
   }),
 }));
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/project-sales/p1',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 import { ProjectAccessPanel } from './ProjectAccessPanel';
+
+// The Secondary leads table is a PanelDataGrid, which reads the query client.
+const render = (node: React.ReactElement) =>
+  rtlRender(<QueryClientProvider client={new QueryClient()}>{node}</QueryClientProvider>);
 
 function project(over: Partial<Project> = {}): Project {
   return {
@@ -54,13 +65,14 @@ describe('ProjectAccessPanel: join and register interest', () => {
   it('a staff project someone else owns offers Ask to join and Register interest (the control)', () => {
     render(<ProjectAccessPanel project={project()} />);
     expect(screen.getByRole('button', { name: 'Ask to join' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Register interest' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Register as secondary lead' })).toBeInTheDocument();
+    expect(screen.queryByText(/register interest/i)).toBeNull();
   });
 
   it.each(['pending', 'rejected'] as const)('a %s registration offers neither', (state) => {
     render(<ProjectAccessPanel project={project({ approval_state: state, project_code: null })} />);
     expect(screen.queryByRole('button', { name: 'Ask to join' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Register interest' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Register as secondary lead' })).toBeNull();
   });
 
   it('an approved registration offers them again', () => {
