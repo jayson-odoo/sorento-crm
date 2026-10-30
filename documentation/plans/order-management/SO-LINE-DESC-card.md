@@ -1,6 +1,6 @@
 # SO-LINE-DESC owner card (30 Oct 2026)
 
-Status: Plan, size L, LEAD pattern. Behaviour card filed; no product code until the owner answers.
+Status: ANSWERED 30 Oct 16:13 (owner, Lavish on mock v1). Size L, LEAD pattern. Build red-first.
 
 Owner ask (30 Oct ~11:25, SO428498 Lines tab): pull the AutoCount SO line description through shared
 service, show it as its own column on SO > Lines and in fulfilment planning; in the OI email, the
@@ -80,20 +80,18 @@ the ITEM CODE cell carries code + description. Email = preview = attachment must
   decorated only if ITS code is on the list, using the line's description. Test pins it.
 - Unchanged: Confirm split sheet (`LineSplitSheet.tsx:547`), OI worklist, fulfilment board cards.
 
-## Questions (recommendation first)
+## Owner answers (30 Oct 2026 16:13, Lavish notes on mock v1, relayed by crew)
 
-1. Cell format: (a) `RPACC - <line description>` on one line; (b) code, line break, description in the
-   same cell; (c) code + space + description. Rec (a): reads the same in the HTML body, the email's
-   plain-text part and Excel; a line break renders differently per email client.
-2. Code list: (a) a System Settings list, admins edit, starts as RPACC; RPAC (1,683 lines, Cabana
-   accessories, same pattern) added too? (pattern
-   `handling_lock_enabled_types`, `app/models/user.py:575`, `app/api/v1/user_management/settings.py:423-426, 899-908`);
-   (b) a tick on each product record; (c) fixed in code, change by release. Rec (a): one setting on
-   an existing page, no product form change.
-3. SO Lines Description column: (a) every line; (b) only where it differs from the product master
-   name. Rec (a): staff edit Description on ordinary codes too, and (b) hides it inconsistently.
-4. Backfill: (a) one shared-service Repush of sales orders after the CRM release, so open RPACC lines
-   show it at once; (b) new and edited SOs only. Rec (a). Repush re-sends every SO; its load is UNVERIFIED.
-5. Long text in the email cell: (a) the ITEM CODE cell wraps only when it carries a description
-   (others keep nowrap); Excel cell wraps, column width unchanged; (b) keep nowrap everywhere.
-   Rec (a).
+- Q1 (a): `RPACC - <line description>` on one line.
+- Q2 (b), owner verbatim on the settings panel: "this should be per product". A tick on the product
+  record, "Show SO line description in OI email", editable by whoever edits products (form switch
+  beside Serial/Batch Tracking, `ProductForm.tsx:897-930`; detail badge `ProductDetail.tsx:552-566`).
+  The migration ticks product code RPACC (every company's RPACC row) and nothing else; RPAC stays off
+  until someone ticks it.
+- Q3 (a): Description column on every SO line.
+- Q4 (a): one shared-service Repush of sales orders after the release; measure the load first and
+  crew-note it.
+- Q5 (a): the ITEM CODE cell wraps only when it carries a description; Excel cell wraps, width unchanged.
+- Rest of mock v1: "ok".
+
+Rule 4 above now reads "for a line whose PRODUCT carries the tick" instead of "a code on the list".

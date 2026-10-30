@@ -1,10 +1,10 @@
 # PLAN: SO line description (SO-LINE-DESC, 30 Oct 2026)
 
-Status: Plan (DRAFT; waits on the owner's answers to card Q1-Q5 and mock v1). Track: full (size L:
+Status: Build (owner answered 30 Oct 16:13; Q2 = per-product tick). Track: full (size L:
 migration, ingest contract field, purchasing-facing email). PR #2000. LEAD pattern.
 
 Card: `documentation/plans/order-management/SO-LINE-DESC-card.md`. Mock:
-`documentation/mockups/SO-LINE-DESC/index.html`. UAC: `so-line-desc-acceptance-criteria.md` (after answers).
+`documentation/mockups/SO-LINE-DESC/index.html`. UAC: `so-line-desc-acceptance-criteria.md` (AC-1..AC-16).
 
 ## Problem
 
@@ -27,9 +27,11 @@ fulfilment planning and the OI email.
 - Classes fixed, not one row: every listed code, every OI line kind (new, changed with `was`,
   undone), empty description, description equal to the code.
 
-## Slices (after answers)
+## Slices
 
-1. Migration `sld_0001_so_line_description`: `sales_order_lines.description TEXT NULL`, down_revision
+1. Migration `sld_0001_so_line_description`: `sales_order_lines.description TEXT NULL`;
+   `products.show_so_line_description BOOLEAN NOT NULL DEFAULT false`; data step ticks
+   `product_code = 'RPACC'` (every company). down_revision
    = main head at build time (re-check `alembic heads` after merging origin/main; 30 Oct: `pp4_0002`). Model `app/models/order.py:756-795`.
 2. Ingest: `_line_values` (`app/services/document_ingest_service.py:1324`, pattern :1403-1406) writes
    `description` from `product_name` when sent (absent keeps, null clears, strip, blank -> NULL).
@@ -39,11 +41,14 @@ fulfilment planning and the OI email.
    :5531, schema `app/schemas/project_board.py:574`) through `core_sales_order_line_id`.
 4. FE: Description column after Product in `SalesOrderDetail.tsx` (~:994) and
    `FulfilmentBoardListView.tsx` (~:640); explicit `size`, `truncate` + `title`.
-5. Setting (if Q2 = a): `system_settings` code-list column, both dict builders
-   (`app/api/v1/user_management/settings.py:284`, GET :423-426 pattern, PUT :899-908 pattern), FE input on
-   the settings page.
-6. OI decoration in `handover_item`: `<code> - <description>` for listed codes, `was` side decorated by
-   its own code (`order_inquiry_worklist_service.py:4030-4050`).
+5. Product tick: model `app/models/product.py` (pattern `has_serial_tracking`), schemas
+   `app/schemas/product.py:185` (create/out) and `:252` (update, Optional), FE switch in
+   `products/components/ProductForm.tsx:897-930` and badge in `products/[id]/components/ProductDetail.tsx:552-566`,
+   type in `products/types/product.types.ts`. Product ingest from shared service must not touch it.
+6. OI decoration in `handover_item`: `<code> - <description>` for ticked products, `was` side by its own
+   product's tick (`order_inquiry_worklist_service.py:4030-4050`). Email wrap (Q5): template migration
+   `oihr_0011_item_code_wrap` (pattern oihr_0009/0010: swap the ITEM CODE cell so it drops `nowrap` only
+   when the line carries a description); Excel `wrap_text` on decorated cells.
 
 ## Test list (tester writes red first)
 
@@ -53,11 +58,11 @@ fulfilment planning and the OI email.
 - `handover_item`: listed code + description; listed + empty; listed + description == code; unlisted
   code with description; `was` line on a code switch; email body, preview body and Excel cell
   string-equal for the same lines.
-- Settings round trip (GET/PUT) if Q2 = a.
+- Product tick: GET/PUT round trip, default false, product ingest leaves it alone, migration ticks RPACC only.
 - Global guards: `tests/test_schema_uuid_id_principle.py` (new column).
 
 ## Release order
 
 CRM release first, then check the ss connection's `sorento_contract_version` (v2 needed), then one ss
-Repush of sales orders (if Q4 = a). Migration SQL for the crew copy:
+Repush of sales orders (Q4 = a; measure load first, crew-note it). Migration SQL for the crew copy:
 `crew/state/migrations/SO-LINE-DESC.sql` (`ADD COLUMN IF NOT EXISTS`).
