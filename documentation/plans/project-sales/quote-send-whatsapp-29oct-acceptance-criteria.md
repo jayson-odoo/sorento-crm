@@ -29,7 +29,10 @@ Plan: `PLAN-quote-send-whatsapp-29oct.md`. Card: `CARD-quote-send-whatsapp-29oct
 - **AC-B6** "Open WhatsApp" is a link to `https://wa.me/<digits>?text=<url-encoded message box text>` opening in a
   new tab; with an empty "To" it is `https://wa.me/?text=<url-encoded message box text>`. A typed "To" goes through
   the same cleanup as section C (a typed `012...` becomes `6012...`).
-- **AC-B7** "Copy link" copies the counter-sign link (same behaviour as the gear's copy action).
+- **AC-B7** "Copy link" copies the counter-sign link. When the browser refuses the clipboard (plain http, policy),
+  the link inside the message box is selected and the toast "Press Ctrl/Cmd+C to copy the selected link" shows (same
+  wording as the gear's fallback, `QuotationSignLinkDialog.tsx`).
+- **AC-B9** Opening the prompt asks the server for the link once, also under React StrictMode (dev).
 - **AC-B8** Usable at 375 px and 1280 px: nothing clipped, buttons reachable without horizontal scroll.
 
 ## C. The number
@@ -40,6 +43,8 @@ Plan: `PLAN-quote-send-whatsapp-29oct.md`. Card: `CARD-quote-send-whatsapp-29oct
   `601x...`; spaces, dashes, brackets and `+` are dropped.
 - **AC-C3** A number written with another country code (`+65...`, `0065...`) is kept as given (digits only, `00`
   prefix dropped).
+- **AC-C5** A typed "To" also folds `+60 01x...` to `601x...` and a bare 9-10 digit `1x...` (leading 0 forgotten) to
+  `601x...`.
 - **AC-C4** A MY landline (`03-...`, `+603...`, `04-...`, etc.), a field with no mobile, or an empty field leaves "To"
   empty.
 
@@ -56,6 +61,9 @@ Plan: `PLAN-quote-send-whatsapp-29oct.md`. Card: `CARD-quote-send-whatsapp-29oct
   Thank you,
   <quotation signatory name>
   ```
+  The signatory name is the quotation's `signatory_name` when set; otherwise the name of the person who signed it for
+  Sorento (`signatory_signature.signer_name`, what the counter-sign page shows under "Signed for Sorento"). Browser
+  pass 30 Oct: the UI never sets `signatory_name`, so without the fallback every UI-made quotation signed off blank.
 - **AC-D2** No Attn -> first line "Hi,". No subject -> " for <subject>" is left out. No signatory name on the
   quotation -> the message ends at "Thank you," (never another person's name).
 - **AC-D3** Number label: today's printed `our_ref_text` (e.g. "PRJQ-2026-0003 (R1)") until QUOTE-SIGN-PAGE merges,
