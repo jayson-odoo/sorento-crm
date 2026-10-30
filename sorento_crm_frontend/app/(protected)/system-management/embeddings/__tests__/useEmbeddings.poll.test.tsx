@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const getOverview = vi.fn();
 const recordsBackfill = vi.fn();
 const embedMissing = vi.fn();
+const saveEmbeddingSettings = vi.fn();
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('../services/embeddingsService', () => ({
@@ -21,6 +22,12 @@ vi.mock('../services/embeddingsService', () => ({
   tryPhrase: vi.fn(),
 }));
 
+vi.mock('@/app/(protected)/user-management/settings/embeddings/services/embeddingSettingsService', () => ({
+  getEmbeddingSettings: vi.fn(),
+  saveEmbeddingSettings: (i: unknown) => saveEmbeddingSettings(i),
+}));
+
+import { useSaveEmbeddingSettings } from '@/app/(protected)/user-management/settings/embeddings/hooks/useEmbeddingSettings';
 import { useEmbeddingsOverview, useEmbedMissing, useRecordsBackfill } from '../hooks/useEmbeddings';
 
 function wrapper() {
@@ -60,6 +67,22 @@ describe('useEmbeddingsOverview polling', () => {
     expect(getOverview).toHaveBeenCalledTimes(2);
   });
 
+  it('polls while a poll function says so (settings page: records search still moving)', async () => {
+    getOverview.mockResolvedValueOnce({ moving: true }).mockResolvedValue({ moving: false });
+    renderHook(() => useEmbeddingsOverview({ poll: (o) => !!(o as { moving?: boolean } | undefined)?.moving }), {
+      wrapper: wrapper(),
+    });
+    await waitFor(() => expect(getOverview).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_500);
+    });
+    expect(getOverview).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(95_000);
+    });
+    expect(getOverview).toHaveBeenCalledTimes(2);
+  });
+
   it('stops polling while the browser tab is hidden', async () => {
     renderHook(() => useEmbeddingsOverview({ poll: true }), { wrapper: wrapper() });
     await waitFor(() => expect(getOverview).toHaveBeenCalledTimes(1));
@@ -75,11 +98,13 @@ describe('one overview query at a time', () => {
   it.each([
     ['backfill start', () => useRecordsBackfill(), (m: { mutate: (v: { action: 'start' }) => void }) => m.mutate({ action: 'start' })],
     ['embed missing', () => useEmbedMissing(), (m: { mutate: () => void }) => m.mutate()],
+    ['save settings', () => useSaveEmbeddingSettings(), (m: { mutate: (v: unknown) => void }) => m.mutate({})],
   ])('%s joins the overview fetch already in flight', async (_name, useMutationHook, run) => {
     let resolve: (v: unknown) => void = () => {};
     getOverview.mockReset().mockResolvedValueOnce({ n: 1 });
     recordsBackfill.mockReset().mockResolvedValue({ job_id: 'j' });
     embedMissing.mockReset().mockResolvedValue({ queued: true });
+    saveEmbeddingSettings.mockReset().mockResolvedValue({});
     const { result } = renderHook(
       () => ({ overview: useEmbeddingsOverview(), mutation: useMutationHook() }),
       { wrapper: wrapper() },

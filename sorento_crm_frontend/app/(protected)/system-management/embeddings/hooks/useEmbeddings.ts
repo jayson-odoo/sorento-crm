@@ -8,16 +8,18 @@ import {
   recordsBackfill,
   tryPhrase,
 } from '../services/embeddingsService';
-import type { BackfillAction } from '../types/embeddings.types';
+import type { BackfillAction, EmbeddingsOverview } from '../types/embeddings.types';
 
 export const EMBEDDINGS_KEY = ['embeddings'] as const;
 
+type OverviewPoll = boolean | ((overview: EmbeddingsOverview | undefined) => boolean);
+
 /** Overview counts scan the embedding tables: polled only while the caller shows them (`poll`) in a visible tab. */
-export function useEmbeddingsOverview({ poll = false }: { poll?: boolean } = {}) {
+export function useEmbeddingsOverview({ poll = false }: { poll?: OverviewPoll } = {}) {
   return useQuery({
     queryKey: [...EMBEDDINGS_KEY, 'overview'],
     queryFn: getOverview,
-    refetchInterval: poll ? 30_000 : false,
+    refetchInterval: (query) => ((typeof poll === 'function' ? poll(query.state.data) : poll) ? 30_000 : false),
     refetchIntervalInBackground: false,
   });
 }
