@@ -209,3 +209,16 @@ contacts, 0 with no linked company, 0 flagged (crew-note 6482381218).
 
 Known unrelated: `PageHeader.inventory.test.ts` S5-05 flags main's `StockPositionGrid.tsx` (RELEASE5-FIX 8e56966136).
 Dead after R1, delete in a cleanup slice: own-request mode of the SI / Complaint attachment sections; limited complaint branch in `FormRevisionsTab`.
+
+## Hand test 3 notes -> list parity (owner a25895124, 30 Oct: Q1 a, Q2 a, Q3 a)
+
+Parity table: #1953 crew-note 6513155441. Track: full (new my-requests route => security review).
+
+| Slice | Scope |
+| --- | --- |
+| L1 BE | `GET /submissions` (today portal-only, `public/portal.py:954`) also on `/api/v1/my-requests`, same body, the caller's own contact's rows only; staff / no session refused like the other my-requests routes. The four own-kind list calls (price tag, sample, NPA, opportunity) checked on my-requests. |
+| L2 FE | Extract a single-kind list body from `PortalLanding` (its filters `landing-fields.ts`, `LandingToolbar` with Create on the filter row, `ListBoardViewToggle`, `useSubmissionPress` + `SubmissionPreviewDialog`); the portal landing uses it unchanged; the salesperson's 8 CRM list pages render it through the injected client (`SubmissionClient` gains the list calls; `SubmissionPaths` gains new / revise). Staff DataGrid lists unchanged. Partly supersedes S8 "no embedded portal" (owner Q1 a). |
+| L3 FE | "Fulfilment DOs" tab next to Details / Comments / Revisions in the salesperson's complaint view (embedded-only extra-tab slot on `SubmissionForm`, given by the client); the below-form section goes. |
+| L4 FE | "Create" on all 8 request lists (SI, Complaint, NPA, Opportunity renamed); the shared toolbar keeps the primary action on the filter row on phones for every list. |
+
+Red-first per slice, reviewer + security-reviewer, browser pass side by side with the portal, re-file the hand test.
