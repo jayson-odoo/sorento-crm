@@ -31,6 +31,9 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
@@ -229,7 +232,24 @@ function InternalDialog({
   );
 }
 
+/**
+ * A salesperson limited to their own sample requests (PORTAL-P4-REQUESTS R3, form parity) views
+ * theirs in the portal's own form, read-only exactly as the portal shows it; everyone else the
+ * staff detail, unchanged.
+ */
 export default function SampleRequestDetail({ requestId }: { requestId: string }) {
+  const { limited } = useRequestScope('sample_request');
+  if (limited) {
+    return (
+      <MyRequestClientProvider>
+        <PortalSampleRequestForm requestId={requestId} />
+      </MyRequestClientProvider>
+    );
+  }
+  return <StaffSampleRequestDetail requestId={requestId} />;
+}
+
+function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
   const router = useRouter();
   const { data: request, isLoading, isError, error } = useSampleRequestQuery(requestId);
   const { submit, move, saveInternal } = useSampleRequestMutations();

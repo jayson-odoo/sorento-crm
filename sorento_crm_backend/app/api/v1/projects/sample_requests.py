@@ -90,10 +90,12 @@ def _load(db: Session, request_id: str):
     return svc.get_for(db, validate_uuid_path(request_id, resource="Sample request"))
 
 
-def _statuses(raw: Optional[list[str]]):
+def _statuses(raw: Optional[list[str]], actor: svc.Actor):
     # No param = the open set; an empty param = every status; several (comma-joined or repeated) are OR-ed.
+    # A user limited to their own requests sees every status by default, as the portal lists them
+    # (PORTAL-P4-REQUESTS S4).
     if raw is None:
-        return list(svc.DEFAULT_OPEN)
+        return None if actor.own_only else list(svc.DEFAULT_OPEN)
     return multi_values(raw) or []
 
 
@@ -123,7 +125,7 @@ def list_requests(
     return svc.list_for(
         db,
         actor=actor,
-        statuses=_statuses(status_filter),
+        statuses=_statuses(status_filter, actor),
         project_id=validate_uuid_path(project_id, resource="Project") if project_id else None,
         salesperson_id=multi_uuids(salesperson_id, "salesperson_id"),
         q=q,

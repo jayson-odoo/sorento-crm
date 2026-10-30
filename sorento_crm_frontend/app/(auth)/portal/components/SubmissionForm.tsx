@@ -73,25 +73,18 @@ import {
   PortalUnauthorizedError,
   ProductLookupItem,
   SUBMISSION_LABELS,
-  deleteDraftSubmission,
-  fetchMe,
-  lookupProjects,
   type ProjectLookupItem,
-  fetchRequestorOptions,
-  fetchSubmission,
-  fetchSubmissionNeighbours,
-  lookupDebtors,
-  lookupDeliveryOrders,
-  lookupProducts,
-  lookupSet,
-  saveDraft,
-  discardRevisionDraft,
-  saveRevisionDraft,
   statusLabel,
   submitVerb,
-  submitDraft,
-  uploadAttachment,
 } from '../lib/portal-client';
+import {
+  clientDeletes,
+  clientEmbedded,
+  clientExtraTabs,
+  clientPaths,
+  useSubmissionClient,
+  useSubmissionFetchBytes,
+} from '../lib/submission-client';
 import {
   portalDetailPath,
   portalDuplicatePath,
@@ -114,7 +107,8 @@ import {
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
-import { portalFetchBytes, toPreviewItem } from '../lib/portal-preview';
+import { toPreviewItem } from '../lib/portal-preview';
+import RecordNavigation from '@/components/common/RecordNavigation';
 import {
   InquiryFormTableRow,
   ProductInquiryFormLayout,
@@ -497,14 +491,39 @@ interface Props {
    *  slug-mode verify card - which resolves "this {kind} belongs to {name}"
    *  and the OTP flow - instead of the legacy "message us" dead end. */
   slug?: string;
+  /** What a NEW form starts with; passed by the CRM page only, never by the portal. */
+  initialValues?: SubmissionInitialValues;
 }
 
-export function SubmissionForm({ kind, submissionId, slug }: Props) {
+/**
+ * A new form's starting values (PORTAL-P4-REQUESTS R2, owner ruling (a)): a project's Sponsorship
+ * stage action opens the salesperson's form with that project. `fields` are written in and saved
+ * with the draft, a field hidden for this contact included; `labels` name an id-valued picker's
+ * value, keyed like `FieldDef.displayFromDetail`, until a saved record names it.
+ */
+export interface SubmissionInitialValues {
+  fields: Record<string, string>;
+  labels?: Record<string, string>;
+}
+
+export function SubmissionForm({ kind, submissionId, slug, initialValues }: Props) {
   const router = useRouter();
+  // The API this form talks to: portal-client, or the CRM's My Requests client (R1).
+  const client = useSubmissionClient();
+  const fetchBytes = useSubmissionFetchBytes();
+  const paths = clientPaths(client);
+  const deferredDeletes = clientDeletes(client);
+  const embedded = clientEmbedded(client);
+  const homeHref = paths ? paths.home(kind) : portalHomePath({ type: kind });
+  const detailHref = (id: string) =>
+    paths ? paths.detail(kind, id) : portalDetailPath(kind, id, slug);
   // Read inside the load effect through a ref: its identity must not re-run the seed and wipe
   // what the visitor has typed.
   const routerRef = useRef(router);
   routerRef.current = router;
+  // The same, for the starting values the seed writes in.
+  const initialValuesRef = useRef(initialValues);
+  initialValuesRef.current = initialValues;
   const [loading, setLoading] = useState(Boolean(submissionId));
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -639,7 +658,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    fetchMe()
+    client
+      .fetchMe()
       .then((c) => {
         if (cancelled) return;
         setContact(c);
@@ -662,7 +682,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [submissionId, kind]);
+  }, [submissionId, kind, client]);
 
   const defaultsFromContact = useMemo(() => {
     const name = contact?.name?.trim() ?? '';
@@ -683,7 +703,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       return;
     }
     let cancelled = false;
-    fetchSubmissionNeighbours(kind, submissionId)
+    client
+      .fetchSubmissionNeighbours(kind, submissionId)
       .then((n) => {
         if (!cancelled) setNeighbours(n);
       })
@@ -693,7 +714,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [kind, submissionId]);
+  }, [kind, submissionId, client]);
 
   useEffect(() => {
     if (!neighbours) return;
@@ -718,14 +739,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         return;
       }
       if (e.key === 'ArrowLeft' && neighbours.prev_id) {
-        router.push(portalDetailPath(kind, neighbours.prev_id, slug));
+        router.push(paths ? paths.detail(kind, neighbours.prev_id) : portalDetailPath(kind, neighbours.prev_id, slug));
       } else if (e.key === 'ArrowRight' && neighbours.next_id) {
-        router.push(portalDetailPath(kind, neighbours.next_id, slug));
+        router.push(paths ? paths.detail(kind, neighbours.next_id) : portalDetailPath(kind, neighbours.next_id, slug));
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [neighbours, kind, slug, router]);
+  }, [neighbours, kind, slug, router, paths]);
 
   // Shared by the revision-draft resume (below) and Duplicate's `?from=`
   // prefill (D-D1): both copy fields + lines from an already-fetched source,
@@ -807,7 +828,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         // otherwise wipe a widget-applied value.
         await Promise.all(
           lookupFields.map((f) =>
-            lookupSet(f.setKey as string)
+            client
+              .lookupSet(f.setKey as string)
               .then((r) => {
                 if (r.defaultValue && !next[f.name])
                   next[f.name] = r.defaultValue;
@@ -815,6 +837,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               .catch(() => {}),
           ),
         );
+        for (const [name, value] of Object.entries(initialValuesRef.current?.fields ?? {})) {
+          if (value) next[name] = value;
+        }
         if (!cancelledNew) {
           setFields(next);
           setComplaintLines([]);
@@ -833,7 +858,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       if (fromId && fromId.trim()) {
         void (async () => {
           try {
-            const source = await fetchSubmission(kind, fromId.trim());
+            const source = await client.fetchSubmission(kind, fromId.trim());
             if (cancelledNew) return;
             applySourceToForm(source as unknown as Record<string, unknown>);
             setAttachments([]);
@@ -854,7 +879,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const data = await fetchSubmission(kind, submissionId);
+        const data = await client.fetchSubmission(kind, submissionId);
         if (cancelled) return;
         setDetail(data);
         // Resume a saved-but-unsent revision (UAC: revision drafts): a stored,
@@ -915,6 +940,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     submissionId,
     defaultsFromContact,
     reloadToken,
+    client,
   ]);
 
   const cleanedFields = useMemo(() => {
@@ -935,6 +961,12 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         else if (f.name === 'customer_id') out[f.name] = null;
       }
     }
+    // A seeded value whose field this contact does not see (the stage action's project for an
+    // unflagged contact) is saved all the same.
+    for (const name of Object.keys(initialValues?.fields ?? {})) {
+      const raw = fields[name];
+      if (!(name in out) && typeof raw === 'string' && raw.trim()) out[name] = raw.trim();
+    }
     // Sponsorship: the "Others" detail only applies when the subject is 'others'.
     // Drop a stale value so switching back to Showroom/Mockup doesn't persist it.
     if (kind === 'sponsorship_form' && out.sponsor_subject !== 'others') {
@@ -953,7 +985,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       if (lines.length > 0) out['product_lines'] = lines;
     }
     return out;
-  }, [fieldDefs, fields, kind, complaintLines]);
+  }, [fieldDefs, fields, kind, complaintLines, initialValues]);
 
   const cleanedProducts = useMemo(() => {
     if (!showLines) return undefined;
@@ -967,7 +999,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     const errors: string[] = [];
     for (const file of pendingFiles) {
       try {
-        const att = await uploadAttachment(kind, id, file);
+        const att = await client.uploadAttachment(kind, id, file);
         uploaded.push(att);
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'unknown error';
@@ -997,7 +1029,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       // A retry after create succeeded but the attachment flush after it
       // failed must UPDATE that row, not create a second one (#482) - so this
       // checks `effectiveId` (state) rather than only the `submissionId` prop.
-      const saved = await saveDraft(
+      const saved = await client.saveDraft(
         kind,
         cleanedFields,
         cleanedProducts,
@@ -1006,7 +1038,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       if (!effectiveId) setCreatedSubmissionId(saved.id);
       await flushPendingFiles(saved.id);
       toast.success('Draft saved.');
-      router.replace(portalHomePath({ type: kind }));
+      router.replace(homeHref);
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
         router.replace(portalVerifyPath({ reason: 'expired' }));
@@ -1171,14 +1203,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       // create a second one (#482).
       let id = effectiveId;
       if (!id) {
-        const saved = await saveDraft(kind, cleanedFields, cleanedProducts);
+        const saved = await client.saveDraft(kind, cleanedFields, cleanedProducts);
         id = saved.id;
         setCreatedSubmissionId(saved.id);
       }
       await flushPendingFiles(id);
-      await submitDraft(kind, id, cleanedFields, cleanedProducts);
+      await client.submitDraft(kind, id, cleanedFields, cleanedProducts);
       toast.success(VERB_DONE[verb]);
-      router.replace(portalHomePath({ type: kind }));
+      router.replace(homeHref);
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
         router.replace(portalVerifyPath({ reason: 'expired' }));
@@ -1213,9 +1245,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     if (!submissionId) return;
     setDeleting(true);
     try {
-      await deleteDraftSubmission(kind, submissionId);
+      await client.deleteDraftSubmission(kind, submissionId);
       toast.success('Draft deleted.');
-      router.replace(portalHomePath({ type: kind }));
+      router.replace(homeHref);
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
         router.replace(portalVerifyPath({ reason: 'expired' }));
@@ -1324,7 +1356,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     if (!submissionId) return;
     setSavingRevisionDraft(true);
     try {
-      await saveRevisionDraft(kind, submissionId, {
+      await client.saveRevisionDraft(kind, submissionId, {
         reason: reason.trim() || null,
         baseRevisionNo: revisionPolicy?.used ?? 0,
         fields: cleanedFields,
@@ -1354,7 +1386,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     if (!submissionId) return;
     setDiscardingDraft(true);
     try {
-      await discardRevisionDraft(kind, submissionId);
+      await client.discardRevisionDraft(kind, submissionId);
       toast.success('Draft discarded.');
       setReviseMode(false);
       setReason('');
@@ -1503,7 +1535,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     const items: DOLookupItem[] = [];
     for (const dn of doNumbers) {
       try {
-        const matches = await lookupDeliveryOrders(dn, 5);
+        const matches = await client.lookupDeliveryOrders(dn, 5);
         const exact = matches.find((m) => m.order_number === dn);
         if (exact) items.push(exact);
       } catch {
@@ -1562,7 +1594,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       let productType = existing?.product_type ?? '';
       if (!productType) {
         try {
-          const matches = await lookupProducts(code, 5);
+          const matches = await client.lookupProducts(code, 5);
           const exact = matches.find((m) => m.product_code === code);
           productType = (
             exact?.category_code ??
@@ -1675,7 +1707,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           <AlertTitle>{error}</AlertTitle>
         </Alert>
         <Button asChild variant="outline">
-          <Link href={portalHomePath({ slug })}>Back to your forms</Link>
+          <Link href={paths ? paths.home(kind) : portalHomePath({ slug })}>Back to your forms</Link>
         </Button>
       </div>
     );
@@ -1785,7 +1817,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const commentsCount = commentsThread.comments.filter(
     (c) => c.kind !== 'response' && !c.deleted,
   ).length;
-  const tabbed = revisionsTabbed || commentsTabbed;
+  // Tabs the client adds after these (a CRM complaint's fulfilment DOs, L3), on a saved form only.
+  // The portal's client adds none.
+  const extraTabs = submissionId ? clientExtraTabs(client) : [];
+  const tabbed = revisionsTabbed || commentsTabbed || extraTabs.length > 0;
 
   const detailsContent = (
     <>
@@ -1945,6 +1980,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           onDebtorChange={handleDebtorChange}
           contact={contact}
           resolveContactOption={resolveContactOption}
+          seedLabels={detail ? undefined : initialValues?.labels}
         />
       )}
 
@@ -2004,7 +2040,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                                 ),
                               )
                             }
-                            fetchOptions={(q) => lookupProducts(q)}
+                            fetchOptions={(q) => client.lookupProducts(q)}
                             optionValue={(o) => o.product_code}
                             optionLabel={(o) => o.product_code}
                             optionMeta={(o) => o.product_name ?? ''}
@@ -2235,7 +2271,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         <div className="flex flex-wrap gap-2 justify-end pt-2">
           <Button
             variant="ghost"
-            onClick={() => router.replace(portalHomePath({ type: kind }))}
+            onClick={() => router.replace(homeHref)}
             disabled={revising}
           >
             Cancel
@@ -2265,20 +2301,30 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       ) : (
         <div className="flex flex-wrap gap-2 justify-end pt-2">
           {/* A rejected registration is editable but the server deletes drafts only. */}
-          {submissionId && detail?.is_draft && detail.status !== 'rejected' && (
-            <Button
-              variant="outline"
-              className="text-destructive border-destructive/50 hover:bg-destructive/10 mr-auto"
-              onClick={() => setConfirmDeleteOpen(true)}
-              disabled={saving || submitting || deleting}
-            >
-              <Trash2 className="size-4 mr-1" />
-              {deleting ? 'Deleting...' : 'Delete draft'}
-            </Button>
-          )}
+          {submissionId && detail?.is_draft && detail.status !== 'rejected' &&
+            (deferredDeletes ? (
+              <div className="mr-auto">
+                <deferredDeletes.DraftDelete
+                  kind={kind}
+                  submissionId={submissionId}
+                  disabled={saving || submitting}
+                  onDeleted={() => router.replace(homeHref)}
+                />
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                className="text-destructive border-destructive/50 hover:bg-destructive/10 mr-auto"
+                onClick={() => setConfirmDeleteOpen(true)}
+                disabled={saving || submitting || deleting}
+              >
+                <Trash2 className="size-4 mr-1" />
+                {deleting ? 'Deleting...' : 'Delete draft'}
+              </Button>
+            ))}
           <Button
             variant="ghost"
-            onClick={() => router.replace(portalHomePath({ type: kind }))}
+            onClick={() => router.replace(homeHref)}
             disabled={saving || submitting || deleting}
           >
             Cancel
@@ -2321,14 +2367,18 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   return (
     // M6-02: dvh - phone-facing portal form, so a `vh` shell that sits under
     // mobile Safari's dynamic toolbar clips the form the reader is filling in.
-    <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <Button variant="ghost" size="sm" asChild className="shrink-0">
-          <Link href={portalHomePath({ type: kind })}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Link>
-        </Button>
+    // Inside a CRM page the page's Container owns the width and the padding.
+    <div className={embedded ? 'space-y-4' : 'min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4'}>
+      <div className={`flex items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}>
+        {/* Inside a CRM page its header carries Back. */}
+        {!embedded && (
+          <Button variant="ghost" size="sm" asChild className="shrink-0">
+            <Link href={homeHref}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Link>
+          </Button>
+        )}
         <div className="flex min-w-0 items-center gap-3">
           {editing && (
             <Button
@@ -2346,7 +2396,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           {/* R3-5: form number, revision status and the prev/next counter
               share ONE truncating line - the revision budget/blocked
               sentence used to live in its own gear row below the tabs. */}
-          {(detail?.reference || revisionStatusText || neighbours) && (
+          {(detail?.reference || revisionStatusText || (neighbours && !embedded)) && (
             <span className="min-w-0 truncate text-sm text-muted-foreground">
               {detail?.reference}
               {submissionId && !reviseMode && revisionStatusText && (
@@ -2360,7 +2410,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                   </span>
                 </>
               )}
-              {neighbours && (
+              {neighbours && !embedded && (
                 <>
                   {(detail?.reference || revisionStatusText) && (
                     <span aria-hidden> · </span>
@@ -2383,7 +2433,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             >
               <DropdownMenuItem
                 onSelect={() => {
-                  router.push(portalDuplicatePath(kind, detail.id, slug));
+                  router.push(
+                    paths ? paths.duplicate(kind, detail.id) : portalDuplicatePath(kind, detail.id, slug),
+                  );
                 }}
               >
                 <Copy className="h-4 w-4" />
@@ -2402,6 +2454,18 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                 </DropdownMenuItem>
               )}
             </DetailActionsMenu>
+          )}
+          {embedded && neighbours && (
+            <RecordNavigation
+              index={neighbours.position}
+              total={neighbours.total}
+              hasPrevious={Boolean(neighbours.prev_id)}
+              hasNext={Boolean(neighbours.next_id)}
+              onPrevious={() => neighbours.prev_id && router.push(detailHref(neighbours.prev_id))}
+              onNext={() => neighbours.next_id && router.push(detailHref(neighbours.next_id))}
+              ariaLabel={SUBMISSION_LABELS[kind].toLowerCase()}
+              className="shrink-0"
+            />
           )}
         </div>
       </div>
@@ -2431,6 +2495,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                 <span>Revisions</span>
               </TabsTrigger>
             )}
+            {extraTabs.map((tab) => (
+              <TabsTrigger key={tab.value} value={tab.value}>
+                <span>{tab.label}</span>
+              </TabsTrigger>
+            ))}
           </TabsList>
           <TabsContent value="details" className="m-0 space-y-4">
             {detailsContent}
@@ -2452,6 +2521,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               {revisionHistoryCard}
             </TabsContent>
           )}
+          {extraTabs.map((tab) => (
+            <TabsContent key={tab.value} value={tab.value} className="m-0">
+              {tab.content}
+            </TabsContent>
+          ))}
         </Tabs>
       ) : (
         <>
@@ -2464,7 +2538,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         open={staffPreviewOpen}
         onOpenChange={setStaffPreviewOpen}
         items={staffPreviewItems}
-        fetchBytes={portalFetchBytes}
+        fetchBytes={fetchBytes}
       />
 
       <AlertDialog open={reviseConfirmOpen} onOpenChange={setReviseConfirmOpen}>
@@ -2562,13 +2636,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         </AlertDialogContent>
       </AlertDialog>
 
-      {neighbours?.prev_id && (
+      {!embedded && neighbours?.prev_id && (
         <button
           type="button"
           onClick={() =>
-            router.push(
-              portalDetailPath(kind, neighbours.prev_id as string, slug),
-            )
+            router.push(detailHref(neighbours.prev_id as string))
           }
           aria-label="Previous submission"
           className="fixed left-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition-opacity hover:opacity-100 sm:left-3 sm:size-10"
@@ -2576,13 +2648,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
         </button>
       )}
-      {neighbours?.next_id && (
+      {!embedded && neighbours?.next_id && (
         <button
           type="button"
           onClick={() =>
-            router.push(
-              portalDetailPath(kind, neighbours.next_id as string, slug),
-            )
+            router.push(detailHref(neighbours.next_id as string))
           }
           aria-label="Next submission"
           className="fixed right-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition-opacity hover:opacity-100 sm:right-3 sm:size-10"
@@ -2795,6 +2865,7 @@ function ComplaintLinesTable({
     ]);
   const removeRow = (index: number) =>
     setLines((prev) => prev.filter((_, i) => i !== index));
+  const client = useSubmissionClient();
 
   return (
     <div className="space-y-2" data-field-name="product_lines">
@@ -2848,7 +2919,7 @@ function ComplaintLinesTable({
                         ...(derived ? { product_type: derived } : {}),
                       });
                     }}
-                    fetchOptions={(q) => lookupProducts(q)}
+                    fetchOptions={(q) => client.lookupProducts(q)}
                     optionValue={(o) => o.product_code}
                     optionLabel={(o) => o.product_code}
                     optionMeta={(o) => o.product_name ?? ''}
@@ -2986,7 +3057,12 @@ function PurchaseRequestFormSection({
   onDebtorChange,
   contact,
   resolveContactOption,
-}: SectionProps & { kind: PortalSubmissionKind }) {
+  seedLabels,
+}: SectionProps & {
+  kind: PortalSubmissionKind;
+  /** A new form's names for its seeded ids (`SubmissionInitialValues.labels`). */
+  seedLabels?: Record<string, string>;
+}) {
   const heading =
     kind === 'sponsorship_form'
       ? 'Project Sales Sponsorship Form'
@@ -3035,6 +3111,7 @@ function PurchaseRequestFormSection({
                             ] as string | undefined) ?? undefined,
                             f.displayFormat,
                           ) ??
+                          seedLabels?.[f.displayFromDetail] ??
                           // A new form has no detail yet: the read-only agent name comes from /me.
                           (f.widget === 'readonly'
                             ? (contact?.sales_agent_name ?? undefined)
@@ -3155,6 +3232,7 @@ function FieldControl({
   /** Human-readable text for an id-valued picker (`FieldDef.displayFromDetail`). */
   displayValue?: string;
 }) {
+  const client = useSubmissionClient();
   const widget: WidgetKind = field.widget ?? 'text';
   const stringValue = typeof value === 'string' ? value : '';
   const arrayValue = Array.isArray(value) ? value : [];
@@ -3216,7 +3294,7 @@ function FieldControl({
             onChange(v);
             if (item && onItemSelect) onItemSelect(item);
           }}
-          fetchOptions={(q) => lookupProducts(q)}
+          fetchOptions={(q) => client.lookupProducts(q)}
           optionValue={(o) => o.product_code}
           optionLabel={(o) => o.product_code}
           optionMeta={(o) => o.product_name ?? ''}
@@ -3234,7 +3312,7 @@ function FieldControl({
             onChange(v);
             onDebtorChange?.(item);
           }}
-          fetchOptions={(q) => lookupDebtors(q, 20, field.lookupKind)}
+          fetchOptions={(q) => client.lookupDebtors(q, 20, field.lookupKind)}
           allowFreeText={!field.pickOnly}
           optionValue={(o) => o.debtor_name}
           optionLabel={(o) => o.debtor_name}
@@ -3249,7 +3327,7 @@ function FieldControl({
           id={field.name}
           value={stringValue}
           onChange={(v) => onChange(v)}
-          fetchOptions={(q) => lookupProjects(q)}
+          fetchOptions={(q) => client.lookupProjects(q)}
           optionValue={(o) => o.id}
           optionLabel={(o) => `${projectCodeLabel(o)} - ${o.title}`}
           // A registered project is picked, never typed: the column is a UUID FK, so
@@ -3287,7 +3365,7 @@ function FieldControl({
           placeholder={field.placeholder ?? 'Type code, press Enter'}
           disabled={disabled}
           fetchOptions={async (q) => {
-            const items = await lookupProducts(q);
+            const items = await client.lookupProducts(q);
             return items.map((p) => ({
               value: p.product_code,
               label: p.product_code,
@@ -3319,7 +3397,7 @@ function FieldControl({
           value={stringValue}
           onChange={(v) => onChange(v)}
           fetchOptions={async (q) => {
-            const { items } = await fetchRequestorOptions(q);
+            const { items } = await client.fetchRequestorOptions(q);
             return items.map((o) => ({ value: o.id, label: o.name }));
           }}
           selectedOption={contactOption}

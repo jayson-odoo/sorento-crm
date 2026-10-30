@@ -21,7 +21,7 @@ export default function SponsorshipFormDetailPage({
       <PageHeader
         title="Sponsorship Form"
         actions={
-          <BackToList
+          <BackToList hideForLimited="sponsorship_form"
             listPath="/procurement-management/sponsorship-forms"
             label="Back to sponsorship forms"
           />

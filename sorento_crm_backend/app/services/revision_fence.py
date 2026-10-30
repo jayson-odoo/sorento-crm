@@ -112,9 +112,9 @@ _TARGETS: dict[str, _FenceTarget] = {
             or "purchase_request"
         ),
     ),
-    # Wired but inert: the complaint config row ships disabled (UAC A5), so this
-    # short-circuits before touching the database. Flipping the checkbox arms it
-    # with no code change - which is the point of CB4.
+    # Armed by the complaint config row (revisable since PORTAL-P4-REQUESTS, owner
+    # Q6 a); while that row is disabled this short-circuits before touching the
+    # database - the point of CB4.
     COMPLAINT: _FenceTarget(
         load_model=_complaint_model,
         entity_types=("complaint",),

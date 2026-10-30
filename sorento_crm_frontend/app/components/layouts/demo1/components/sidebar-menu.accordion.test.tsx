@@ -15,13 +15,24 @@ vi.mock('next-auth/react', () => ({
     status: 'authenticated',
   }),
 }));
-vi.mock('next/navigation', () => ({ usePathname: () => pathnameRef.current }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => pathnameRef.current,
+  useSearchParams: () => new URLSearchParams(''),
+}));
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({
     permissionSet: new Set(['ideation.board.view', 'projects.projects.view']),
     isLoading: false,
   }),
   useHasAnyPermission: () => false,
+}));
+vi.mock('@/hooks/useAccountProfileForHeader', () => ({
+  useAccountProfileForHeader: () => ({
+    salesperson: null,
+    avatarSrc: undefined,
+    displayName: '',
+    displayEmail: '',
+  }),
 }));
 vi.mock('@/hooks/useTenantModules', () => ({
   useTenantModules: () => ({ enabledModuleKeys: null, isLoading: false }),

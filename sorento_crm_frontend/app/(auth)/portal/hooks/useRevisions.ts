@@ -17,10 +17,8 @@ import {
   PortalUnauthorizedError,
   ReviseSubmissionInput,
   ReviseSubmissionResult,
-  fetchRevisions,
-  fetchSubmission,
-  reviseSubmission,
 } from '../lib/portal-client';
+import { useSubmissionClient } from '../lib/submission-client';
 
 export interface RevisionHistoryState {
   entries: PortalRevisionEntry[];
@@ -39,6 +37,7 @@ export function useRevisionHistory(
   const [loading, setLoading] = useState(Boolean(submissionId));
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState(0);
+  const client = useSubmissionClient();
 
   const reload = useCallback(() => setToken((t) => t + 1), []);
 
@@ -58,7 +57,7 @@ export function useRevisionHistory(
     // which no `.catch` after it would ever see; deferred, it lands in the
     // same "no history" fallback a real network failure already takes.
     Promise.resolve()
-      .then(() => fetchRevisions(kind, submissionId))
+      .then(() => client.fetchRevisions(kind, submissionId))
       .then((items) => {
         if (cancelled) return;
         setEntries(items);
@@ -94,7 +93,7 @@ export function useRevisionHistory(
     return () => {
       cancelled = true;
     };
-  }, [kind, submissionId, token]);
+  }, [kind, submissionId, token, client]);
 
   return { entries, loading, error, reload };
 }
@@ -112,6 +111,7 @@ export function useRevisionPolicy(
 ): { policy: PortalRevisionPolicy | null; loading: boolean } {
   const [policy, setPolicy] = useState<PortalRevisionPolicy | null>(null);
   const [loading, setLoading] = useState(false);
+  const client = useSubmissionClient();
 
   useEffect(() => {
     if (!submissionId) {
@@ -130,7 +130,7 @@ export function useRevisionPolicy(
     // see; deferred, it lands in the same "no policy" fallback a real
     // network failure already takes, rather than crashing the render.
     Promise.resolve()
-      .then(() => fetchSubmission(kind, submissionId))
+      .then(() => client.fetchSubmission(kind, submissionId))
       .then((detail) => {
         if (!cancelled) setPolicy(detail.revision ?? null);
       })
@@ -143,7 +143,7 @@ export function useRevisionPolicy(
     return () => {
       cancelled = true;
     };
-  }, [kind, submissionId]);
+  }, [kind, submissionId, client]);
 
   return { policy, loading };
 }
@@ -152,18 +152,19 @@ export function useRevisionPolicy(
  *  flag so a double tap cannot fire two requests before the server guard does. */
 export function useReviseSubmission(kind: PortalLandingKind, submissionId?: string) {
   const [submitting, setSubmitting] = useState(false);
+  const client = useSubmissionClient();
 
   const revise = useCallback(
     async (input: ReviseSubmissionInput): Promise<ReviseSubmissionResult> => {
       if (!submissionId) throw new Error('This submission has not been saved yet.');
       setSubmitting(true);
       try {
-        return await reviseSubmission(kind, submissionId, input);
+        return await client.reviseSubmission(kind, submissionId, input);
       } finally {
         setSubmitting(false);
       }
     },
-    [kind, submissionId],
+    [kind, submissionId, client],
   );
 
   return { revise, submitting };

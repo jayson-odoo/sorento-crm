@@ -14,6 +14,7 @@
 import { ArrowRight, Trash2 } from 'lucide-react';
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { SALES_OPPORTUNITIES_KEY, SALES_OPPORTUNITY_KEY } from './hooks/useSalesOpportunities';
 import type { SalesOpportunityTransition } from './types/salesOpportunity.types';
@@ -43,7 +44,9 @@ export function useSalesOpportunityActions(
     onTransition,
   }: UseSalesOpportunityActionsOptions = {},
 ): RecordActionSet {
-  const canDelete = useHasPermission('sales.opportunities.delete');
+  // A salesperson limited to their own opportunities never deletes one (PORTAL-P4-REQUESTS S6).
+  const { limited } = useRequestScope('sales_opportunity');
+  const canDelete = useHasPermission('sales.opportunities.delete') && !limited;
 
   const deletion = useDeferredAction({
     actionKey: 'sales_opportunity.delete',
