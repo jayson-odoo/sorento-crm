@@ -174,14 +174,14 @@ def steps_from_trace(trace: object) -> dict:
             if not name or name in _HIDDEN_STEP_TOOLS or name.startswith("("):
                 continue
             ms = event.get("ms")
-            steps["tool_calls"].append(
-                {
-                    "name": name,
-                    "status": str(event.get("status") or ""),
-                    "ms": int(ms) if isinstance(ms, (int, float)) and not isinstance(ms, bool) else 0,
-                    "detail": str(event.get("detail") or ""),
-                }
-            )
+            call = {
+                "name": name,
+                "status": str(event.get("status") or ""),
+                "ms": int(ms) if isinstance(ms, (int, float)) and not isinstance(ms, bool) else 0,
+            }
+            if event.get("detail"):  # a turn stored before slice 6 has none
+                call["detail"] = str(event["detail"])
+            steps["tool_calls"].append(call)
     return steps
 
 
