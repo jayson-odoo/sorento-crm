@@ -385,6 +385,13 @@ async function addLine(card: HTMLElement, lineNo: number) {
   return within(card).findByRole('textbox', { name: `Description on line ${lineNo}` });
 }
 
+/** Picks the catalogue product fixture on a line; the row's labels then name it by its code. */
+async function pickProduct(card: HTMLElement, lineNo: number) {
+  fireEvent.click(within(card).getByRole('combobox', { name: `Product on line ${lineNo}` }));
+  fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+  await within(card).findByRole('textbox', { name: 'Unit price on SRT-BASIN-02' });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   granted = new Set(['projects.projects.view', 'projects.projects.edit', 'projects.projects.delete']);
@@ -555,8 +562,9 @@ describe('QuotationFormClient create', () => {
     await nameScope(await openLines(), 'Townhouse');
     const first = scopeCard('Townhouse');
 
-    fireEvent.change(await addLine(first, 1), { target: { value: 'Bespoke vanity top' } });
-    fireEvent.change(within(first).getByRole('textbox', { name: 'Unit price on line 1' }), {
+    await addLine(first, 1);
+    await pickProduct(first, 1);
+    fireEvent.change(within(first).getByRole('textbox', { name: 'Unit price on SRT-BASIN-02' }), {
       target: { value: '120.00' },
     });
 
@@ -577,7 +585,7 @@ describe('QuotationFormClient create', () => {
           scope_label: 'Townhouse',
           lines: [
             expect.objectContaining({
-              description_snapshot: 'Bespoke vanity top',
+              product_id: 'p9',
               unit_price: '120.00',
               quantity: '1',
             }),
@@ -611,8 +619,23 @@ describe('QuotationFormClient create', () => {
 
     expect(
       await screen.findByText(
-        /One line still needs a product or a description/i,
+        /One line still needs a catalogue product or set\./i,
       ),
+    ).toBeInTheDocument();
+    expect(createQuotationDocument).not.toHaveBeenCalled();
+  });
+
+  it('AC-19: a line with only a description is refused on Save, and nothing is sent', async () => {
+    renderForm();
+    const card = await openLines();
+    await nameScope(card, 'Townhouse');
+    const named = scopeCard('Townhouse');
+    fireEvent.change(await addLine(named, 1), { target: { value: 'Bespoke vanity top' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+
+    expect(
+      await screen.findByText('One line still needs a catalogue product or set.'),
     ).toBeInTheDocument();
     expect(createQuotationDocument).not.toHaveBeenCalled();
   });
@@ -839,8 +862,9 @@ describe('QuotationFormClient guards', () => {
     const card = await openLines();
     await nameScope(card, 'Townhouse');
     const named = scopeCard('Townhouse');
-    fireEvent.change(await addLine(named, 1), { target: { value: 'Grab bar' } });
-    fireEvent.change(within(named).getByRole('textbox', { name: 'Qty on line 1' }), {
+    await addLine(named, 1);
+    await pickProduct(named, 1);
+    fireEvent.change(within(named).getByRole('textbox', { name: 'Qty on SRT-BASIN-02' }), {
       target: { value: 'two' },
     });
 

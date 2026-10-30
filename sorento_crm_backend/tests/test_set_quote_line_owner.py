@@ -183,17 +183,24 @@ def test_a2b_moving_a_line_from_a_set_to_a_product_clears_complete_set():
         assert line.complete_set is None
 
 
-def test_a2b_moving_a_line_from_a_set_to_no_product_clears_complete_set():
+def test_a2b_moving_a_line_from_a_set_to_no_product_is_refused_and_keeps_the_set_line():
+    import pytest
+
+    from app.services.error_handler import AppException
+
     with blank_session() as db:
         env = _env(db)
         first, _second = _two_sets(db, env)
         line = _save(db, env, {"product_set_id": first.id, "unit_price": "900.00", "quantity": "1"})
 
-        line = _save(
-            db, env, {"product_set_id": None, "description_snapshot": "Bespoke vanity"}, line=line
-        )
-
-        assert line.complete_set is None
+        with pytest.raises(AppException) as refused:
+            _save(
+                db,
+                env,
+                {"product_set_id": None, "description_snapshot": "Bespoke vanity"},
+                line=line,
+            )
+        assert refused.value.detail["code"] == "quotation_line_product_required"
 
 
 def test_a2b_a_plain_product_lines_complete_set_is_left_as_stored():
