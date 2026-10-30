@@ -482,3 +482,107 @@ def test_sfq_13_moving_the_request_to_another_project_needs_the_source_cleared(w
     res = w.api.as_(w.sales).put(f"{SR}/{created['id']}", json={"project_id": w.other_project.id})
     assert res.status_code == 422, res.text
     assert res.json()["code"] == "SAMPLE_REQUEST_QUOTATION_INVALID"
+
+
+# ------------------------------------------------------------------ SFQ-27 / SFQ-28 (owner hand test 30 Oct)
+# "When I add the product it must source from the product in the quotation."
+
+
+def _quote_of(w, *products, set_parts=()):
+    project = _fresh_project(w)
+    q = _document(w.db, project, w.admin)
+    for order, p in enumerate(products):
+        _line(w.db, q.scopes[0].v1, product=p, order=order)
+    if set_parts:
+        _line(w.db, q.scopes[0].v1, parts=list(set_parts), desc="a set", order=len(products))
+    w.db.commit()
+    return project, q.doc
+
+
+def _search(w, q, **params):
+    res = w.api.as_(w.sales).get(f"{SR}/products", params={"q": q, **params})
+    assert res.status_code == 200, res.text
+    return [hit["product_code"] for hit in res.json()]
+
+
+def test_sfq_27_with_a_source_the_search_offers_only_the_quotation_products(world):
+    w = world
+    on_quote, in_set, elsewhere = make_product(w.db), make_product(w.db), make_product(w.db)
+    _, doc = _quote_of(w, on_quote, set_parts=[in_set])
+
+    assert _search(w, elsewhere.product_code, quotation_document_id=doc.id) == []
+    assert _search(w, on_quote.product_code, quotation_document_id=doc.id) == [on_quote.product_code]
+    assert _search(w, in_set.product_code, quotation_document_id=doc.id) == [in_set.product_code]
+    # An empty search lists the quotation, so a phone user can pick without typing.
+    assert sorted(_search(w, "", quotation_document_id=doc.id)) == sorted(
+        [on_quote.product_code, in_set.product_code]
+    )
+    # Without a source the catalogue search is unchanged.
+    assert _search(w, elsewhere.product_code) == [elsewhere.product_code]
+
+
+def test_sfq_28_create_refuses_a_product_not_on_the_source_quotation(world):
+    w = world
+    on_quote, elsewhere = make_product(w.db), make_product(w.db)
+    project, doc = _quote_of(w, on_quote)
+    res = w.api.as_(w.sales).post(
+        SR,
+        json=full_payload(
+            product_id=elsewhere.id, project_id=project.id, project_title=None,
+            quotation_document_id=doc.id,
+        ),
+    )
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "SAMPLE_REQUEST_PRODUCT_NOT_ON_QUOTATION"
+
+
+def test_sfq_28_update_refuses_adding_a_product_not_on_the_source_quotation(world):
+    w = world
+    on_quote, elsewhere = make_product(w.db), make_product(w.db)
+    project, doc = _quote_of(w, on_quote)
+    created = w.api.as_(w.sales).post(
+        SR,
+        json=full_payload(
+            product_id=on_quote.id, project_id=project.id, project_title=None,
+            quotation_document_id=doc.id,
+        ),
+    )
+    assert created.status_code == 201, created.text
+    res = w.api.as_(w.sales).put(
+        f"{SR}/{created.json()['id']}",
+        json={"lines": [{"product_id": on_quote.id, "qty": 1}, {"product_id": elsewhere.id, "qty": 1}]},
+    )
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "SAMPLE_REQUEST_PRODUCT_NOT_ON_QUOTATION"
+
+
+def test_sfq_28_a_set_part_on_the_quotation_is_accepted(world):
+    w = world
+    on_quote, in_set = make_product(w.db), make_product(w.db)
+    project, doc = _quote_of(w, on_quote, set_parts=[in_set])
+    res = w.api.as_(w.sales).post(
+        SR,
+        json=full_payload(
+            product_id=in_set.id, project_id=project.id, project_title=None,
+            quotation_document_id=doc.id,
+        ),
+    )
+    assert res.status_code == 201, res.text
+
+
+def test_sfq_27_portal_search_is_limited_to_its_own_project_quotation(portal):
+    p = portal
+    on_quote, elsewhere = make_product(p.db), make_product(p.db)
+    q = _document(p.db, p.inside, _owner(p))
+    _line(p.db, q.scopes[0].v1, product=on_quote)
+    foreign = _document(p.db, p.outside, _owner(p))
+    _line(p.db, foreign.scopes[0].v1, product=elsewhere)
+    p.db.commit()
+
+    url = "/api/v1/public/portal/sample-request/products"
+    own = _as(p, p.granted).get(url, params={"q": "", "quotation_document_id": q.doc.id})
+    assert own.status_code == 200, own.text
+    assert [h["id"] for h in own.json()] == [on_quote.id]
+
+    refused = _as(p, p.granted).get(url, params={"q": "", "quotation_document_id": foreign.doc.id})
+    assert refused.status_code == 422, refused.text

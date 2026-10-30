@@ -49,6 +49,7 @@ import {
   createSampleRequest,
   getSampleRequest,
   getSampleRequestQuotationPrefill,
+  searchSampleRequestProducts,
 } from '../lib/sample-request-service';
 import SampleRequestForm from './SampleRequestForm';
 
@@ -212,3 +213,22 @@ describe('SFQ-26 a recorded source shows on the request', () => {
     expect(await screen.findByText('Quotation: Q-0001 (R2)')).toBeTruthy();
   });
 });
+
+describe('SFQ-27 owner hand test: Add row offers only the quotation products', () => {
+  it('searches with the source quotation once the request comes from one', async () => {
+    renderForm({ projectId: 'proj-1' });
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    fireEvent.click(screen.getByRole('button', { name: /^\+?\s*add item$/i }));
+    const row = rows()[2];
+    const box = within(row).getByRole('combobox', { name: /item code/i });
+    fireEvent.focus(box);
+    fireEvent.change(box, { target: { value: 'basin' } });
+    await waitFor(() =>
+      expect(searchSampleRequestProducts).toHaveBeenCalledWith('basin', {
+        quotation_document_id: 'doc-1',
+        quotation_issue_id: 'iss-1',
+      }),
+    );
+  });
+});
+

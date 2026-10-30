@@ -64,7 +64,10 @@ vi.mock(
   () => ({ lookupCustomersForRequest: vi.fn(async () => []) }),
 );
 
-import { getSampleRequestQuotationPrefill } from '../services/sampleRequestService';
+import {
+  getSampleRequestQuotationPrefill,
+  searchSampleRequestProducts,
+} from '../services/sampleRequestService';
 import SampleRequestForm from './SampleRequestForm';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -158,3 +161,27 @@ describe('SFQ-21 editing a draft never pre-fills', () => {
     expect(getSampleRequestQuotationPrefill).not.toHaveBeenCalled();
   });
 });
+
+describe('SFQ-27 owner hand test: Add row offers only the quotation products', () => {
+  it('searches with the source quotation once the request comes from one', async () => {
+    renderForm({ projectId: 'proj-1' });
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    fireEvent.click(screen.getByRole('button', { name: /^\+?\s*add row$/i }));
+    const row = rows()[2];
+    const box = within(row).getByRole('combobox', { name: /item code/i });
+    if (box.tagName === 'INPUT') {
+      fireEvent.focus(box);
+      fireEvent.change(box, { target: { value: 'basin' } });
+    } else {
+      fireEvent.click(box);
+      fireEvent.change(screen.getByPlaceholderText('Search...'), { target: { value: 'basin' } });
+    }
+    await waitFor(() =>
+      expect(searchSampleRequestProducts).toHaveBeenCalledWith('basin', {
+        quotation_document_id: 'doc-1',
+        quotation_issue_id: null,
+      }),
+    );
+  });
+});
+
