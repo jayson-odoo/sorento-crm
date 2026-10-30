@@ -52,6 +52,8 @@ export function QuotationScopesTab() {
   const amendment = useQuotationAmendmentRequest(projectId, documentId, canEdit);
   const amendments = useQuotationAmendmentMutations(projectId, documentId);
   const openRequest = amendment.data?.status === 'open' ? amendment.data : null;
+  // On by default while a request is open, so the lines to decide are the lines on screen.
+  const [suggestedOnly, setSuggestedOnly] = React.useState(true);
   const decideRow = amendments.decide.mutate;
   const review = React.useMemo<QuotationLinesReview | undefined>(
     () =>
@@ -99,6 +101,8 @@ export function QuotationScopesTab() {
           canApply={canEdit && !isLockedForApproval(record)}
           applying={amendments.apply.isPending}
           onApply={() => amendments.apply.mutate(openRequest.id)}
+          suggestedOnly={suggestedOnly}
+          onSuggestedOnly={setSuggestedOnly}
         />
       )}
 
@@ -154,6 +158,7 @@ export function QuotationScopesTab() {
               // header's Edit quotation (Revise with a reason), not a per-scope revise.
               locked={isLockedForApproval(record)}
               review={review}
+              suggestedOnly={suggestedOnly}
             />
           </CardContent>
         </Card>

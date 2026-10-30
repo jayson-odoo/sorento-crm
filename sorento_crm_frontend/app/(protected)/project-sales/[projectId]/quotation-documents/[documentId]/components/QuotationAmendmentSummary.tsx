@@ -2,6 +2,8 @@
 
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { QuotationAmendmentRequest } from '../../../../_shared/types/project.types';
 import { formatMyrExact } from '../../../../_shared/lib/money';
@@ -16,15 +18,22 @@ export function QuotationAmendmentSummary({
   canApply,
   applying,
   onApply,
+  suggestedOnly,
+  onSuggestedOnly,
 }: {
   request: QuotationAmendmentRequest;
   canApply: boolean;
   applying: boolean;
   onApply: () => void;
+  /** The Lines grid shows only the lines with a suggestion. */
+  suggestedOnly: boolean;
+  onSuggestedOnly: (next: boolean) => void;
 }) {
   const total = request.rows.length;
   const lines = new Set(request.rows.map((row) => row.line_id)).size;
-  const decided = request.rows.filter((row) => row.decision !== 'pending').length;
+  const decided = request.rows.filter(
+    (row) => row.decision !== 'pending',
+  ).length;
   const undecided = total - decided;
   const who = request.requester_name || 'The customer';
 
@@ -32,7 +41,9 @@ export function QuotationAmendmentSummary({
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm lg:flex-row lg:items-center lg:gap-6">
       <div className="min-w-0">
         <p className="text-xs text-muted-foreground">
-          {request.submitted_at ? `${who} · ${formatDateTimeInMalaysia(request.submitted_at)}` : who}
+          {request.submitted_at
+            ? `${who} · ${formatDateTimeInMalaysia(request.submitted_at)}`
+            : who}
         </p>
         <p className="font-medium">
           {total === 0
@@ -54,20 +65,35 @@ export function QuotationAmendmentSummary({
           {`"${request.note}"`}
         </p>
       )}
-      <div className="flex flex-col items-start gap-1 lg:ms-auto lg:items-end">
-        <Button
-          type="button"
-          size="sm"
-          disabled={!canApply || undecided > 0 || applying}
-          onClick={onApply}
-        >
-          {applying ? 'Applying...' : 'Apply decisions'}
-        </Button>
-        {undecided > 0 && (
-          <p className="text-xs text-muted-foreground">
-            {`Accept or reject ${undecided === 1 ? 'the last suggestion' : `${undecided} more suggestions`} to apply.`}
-          </p>
-        )}
+      <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center lg:ms-auto">
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="quotation-amendment-suggested-only"
+            checked={suggestedOnly}
+            onCheckedChange={(next) => onSuggestedOnly(next === true)}
+          />
+          <Label
+            htmlFor="quotation-amendment-suggested-only"
+            className="text-xs"
+          >
+            Suggested lines only
+          </Label>
+        </div>
+        <div className="flex flex-col items-start gap-1 lg:items-end">
+          <Button
+            type="button"
+            size="sm"
+            disabled={!canApply || undecided > 0 || applying}
+            onClick={onApply}
+          >
+            {applying ? 'Applying...' : 'Apply decisions'}
+          </Button>
+          {undecided > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {`Accept or reject ${undecided === 1 ? 'the last suggestion' : `${undecided} more suggestions`} to apply.`}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

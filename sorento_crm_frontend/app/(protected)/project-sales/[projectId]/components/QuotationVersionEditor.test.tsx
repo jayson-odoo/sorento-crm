@@ -2555,3 +2555,52 @@ describe('QuotationVersionEditor product picker, code only (QUOTE-UI-POLISH AC-Q
     }
   });
 });
+
+describe('QuotationVersionEditor review: suggested lines only (QUOTE-CUSTOMER-AMEND)', () => {
+  it('shows only the suggested lines and folds the rest into one row, until it is turned off', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'SRT-WC-01', description: 'Wall-hung WC', sort_order: 0 }),
+      line({ id: 'l2', product_code: 'BM107', description: 'Basin tap body', sort_order: 1 }),
+      line({ id: 'l3', product_code: 'SH-9', description: 'Shower head', sort_order: 2 }),
+    ]);
+    const review = {
+      rows: [
+        {
+          id: 'r1',
+          line_id: 'l2',
+          field: 'quantity' as const,
+          value_from: '10.00',
+          value_to: '8.00',
+          decision: 'pending' as const,
+          decision_reason: null,
+        },
+      ],
+      onDecide: vi.fn(),
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const view = (suggestedOnly: boolean) => (
+      <QueryClientProvider client={client}>
+        <QuotationVersionEditor
+          project={project()}
+          quotation={QUOTATION}
+          review={review}
+          suggestedOnly={suggestedOnly}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view(true));
+
+    expect(await screen.findByText('Basin tap body')).toBeInTheDocument();
+    expect(screen.queryByText('Wall-hung WC')).not.toBeInTheDocument();
+    expect(screen.queryByText('Shower head')).not.toBeInTheDocument();
+    expect(screen.getByText('2 lines without suggestions')).toBeInTheDocument();
+    // Still line 2: hiding does not renumber.
+    expect(itemNumbers()).toEqual(['2']);
+
+    rerender(view(false));
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(/lines without suggestions/)).not.toBeInTheDocument();
+  });
+});
