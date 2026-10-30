@@ -488,11 +488,31 @@ def get_current_user_profile(
             "superior_name": user.superior.name if user.superior else None,
             "product_discontinued_scopes": serialize_scopes(db, str(user.id)),
         }
+        user_dict["salesperson"] = _salesperson_me(db, user)
         return UserResponse(**user_dict)
     except HTTPException:
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+def _salesperson_me(db: Session, user) -> Optional[dict]:
+    """`salesperson` block of /me: the same visible forms /public/portal/me returns, plus the slug."""
+    from app.models.access import RespondContact
+    from app.services.phone_signin_service import is_salesperson
+    from app.services.portal_form_visibility_service import resolve_visible_form_types
+    from app.services.portal_service import PortalService
+
+    if not is_salesperson(db, user):
+        return None
+    contact = db.query(RespondContact).filter(RespondContact.id == user.respond_contact_id).first()
+    if contact is None:
+        return None
+    return {
+        "portal_kinds": sorted(resolve_visible_form_types(db, contact.id)),
+        "portal_slug": PortalService(db).get_or_create_slug(contact),
+        "contact_id": str(contact.id),
+    }
 
 
 @router.get("/me/permissions")

@@ -59,10 +59,49 @@ import {
   Briefcase as WorkIcon,
   Zap,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { type MenuConfig } from './types';
+import { LANDING_LABELS, LANDING_KINDS, orderLandingKinds } from '@/lib/portal-form-kinds';
+import { MY_REQUEST_STAFF_PAGES } from '@/lib/my-requests-staff-pages';
+
+// MY REQUESTS: one item per portal form kind, in portal order. Customer asks and Conversation are
+// MY WORK entries instead (their own CRM pages), so they are not request kinds.
+const MY_REQUEST_ICONS: Partial<Record<(typeof LANDING_KINDS)[number], LucideIcon>> = {
+  complaint: AlertCircle,
+  stock_inquiry: Warehouse,
+  purchase_request: ShoppingCart,
+  sponsorship_form: Gift,
+  sample_request: Package,
+  new_product_application: FileText,
+  price_tag_request: Receipt,
+  sales_opportunity: TrendingUp,
+};
+
+// The four request forms open the STAFF pages (MY_REQUEST_STAFF_PAGES, PORTAL-P4-REQUESTS); the
+// other kinds still render the portal form in place. Project Registration has no item: the
+// salesperson registers projects on the one Projects page.
+const MY_REQUEST_ITEMS: MenuConfig = orderLandingKinds(
+  LANDING_KINDS.filter(
+    (k) =>
+      k !== 'customer_asks' &&
+      k !== 'conversation' &&
+      k !== 'project_registration',
+  ),
+).map((kind) => {
+  const staff = MY_REQUEST_STAFF_PAGES[kind];
+  return {
+    title: LANDING_LABELS[kind],
+    icon: MY_REQUEST_ICONS[kind],
+    path: staff ? staff.path : `/my-requests?type=${kind}`,
+    ...(staff ? { permission: staff.permission } : {}),
+    audience: 'salesperson' as const,
+    portalKind: kind,
+  };
+});
 
 
-export const MENU_SIDEBAR: MenuConfig = [
+/** The staff menu: everything above MY WORK. */
+const STAFF_SIDEBAR: MenuConfig = [
   { heading: 'OVERVIEW' },
   {
     // The home page is the My pending widget (/conversation-sla-tracking/my-pending) over
@@ -75,6 +114,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Ideas',
     icon: Lightbulb,
+    audience: 'staff',
     children: [
       {
         title: 'All ideas',
@@ -116,6 +156,7 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sales/customer-asks',
         permission: 'sales.customer_asks.view',
         moduleKey: 'sales',
+        audience: 'staff',
       },
       {
         title: 'Sales Teams',
@@ -1441,6 +1482,39 @@ export const MENU_SIDEBAR: MenuConfig = [
   // { title: 'Store - Services', icon: Codepen, disabled: true },
   // { title: 'AI Promt', icon: Theater, disabled: true },
   // { title: 'Invoice Generator', icon: ScrollText, disabled: true },
+];
+
+/**
+ * The sidebar. The staff menu is tagged `staff` here, once, so no staff item reaches a salesperson
+ * whatever staff grant they also hold (pp4_0001 grants them `.create` on new product applications),
+ * the next item added to it included. A salesperson sees MY WORK and MY REQUESTS only.
+ */
+export const MENU_SIDEBAR: MenuConfig = [
+  ...STAFF_SIDEBAR.map((item) => (item.audience ? item : { ...item, audience: 'staff' as const })),
+  { heading: 'MY WORK', audience: 'salesperson' },
+  {
+    title: 'Projects',
+    icon: Briefcase,
+    path: '/project-sales/pipeline',
+    permission: 'projects.projects.view_own',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Conversations',
+    icon: MessageSquare,
+    path: '/sla-management/conversations',
+    permission: 'sla_management.conversations.view_own',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Customer asks',
+    icon: Star,
+    path: '/sales/customer-asks',
+    permission: 'sales.customer_asks.view',
+    audience: 'salesperson',
+  },
+  { heading: 'MY REQUESTS', audience: 'salesperson' },
+  ...MY_REQUEST_ITEMS,
 ];
 
 export const MENU_SIDEBAR_CUSTOM: MenuConfig = [

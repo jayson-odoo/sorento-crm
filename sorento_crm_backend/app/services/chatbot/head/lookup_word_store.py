@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
+from typing import Iterable
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -21,6 +22,8 @@ logger = logging.getLogger(__name__)
 LOOKUP_SOURCE = "lookup_word"
 EMBED_BATCH = 100
 _IN_CHUNK = 1000
+#: Rows per batch of `load_lookup_vectors` (BACKEND-MEM-2).
+LOAD_BATCH = 500
 
 
 @dataclass
@@ -225,35 +228,49 @@ def sync_lookup_words(db: Session, *, model: str | None = None, embed: bool = Tr
     return result
 
 
-def load_lookup_vectors(db: Session, model: str) -> int:
-    """Load the current `lookup_word` chunks of `model` into the lookup lists' process cache (one SELECT, no
-    provider call). Returns the vectors loaded."""
+def load_lookup_vectors(db: Session, model: str, only: Iterable[str] | None = None) -> int:
+    """Load the current `lookup_word` chunks of `model` into the lookup lists' process cache (no provider call),
+    every chunk or only those whose text is in `only`. Returns the vectors loaded.
+
+    BACKEND-MEM-2: read `LOAD_BATCH` rows at a time and turned into float32 before the next batch. pgvector hands
+    each vector over as 1536 Python floats, and `.all()` over 7,035 rows held them all at once: +621 MB peak and
+    +231 MB kept per worker, for 43 MB of vectors (documentation/plans/deploy/PLAN-backend-mem-2-30oct.md)."""
     import numpy as np
 
     from app.services.chatbot.head import lookup_lists as ll
 
-    rows = (
-        db.query(EmbeddingChunk.chunk_text, EmbeddingChunk.embedding)
-        .filter(
-            EmbeddingChunk.source_type == LOOKUP_SOURCE,
-            EmbeddingChunk.model_name == model,
-            EmbeddingChunk.is_current.is_(True),
-        )
-        .all()
+    query = db.query(EmbeddingChunk.chunk_text, EmbeddingChunk.embedding).filter(
+        EmbeddingChunk.source_type == LOOKUP_SOURCE,
+        EmbeddingChunk.model_name == model,
+        EmbeddingChunk.is_current.is_(True),
     )
-    if not rows:
-        return 0
-    unit = ll._unit_rows(np.stack([np.asarray(v, dtype=np.float32) for _t, v in rows]))
-    with ll._store_lock:
-        if len(ll._cache) + len(rows) > ll._CACHE_CAP:
-            ll._cache.clear()
-            ll._matrices.clear()
-        loaded = 0
-        for (text, _v), vec in zip(rows, unit):
-            key = ll._key(text, model)
-            if key not in ll._cache:
-                ll._cache[key] = vec
-                loaded += 1
+    if only is None:
+        parts = [query]
+    else:
+        wanted = sorted(set(only))
+        parts = [query.filter(EmbeddingChunk.chunk_text.in_(wanted[i : i + _IN_CHUNK])) for i in range(0, len(wanted), _IN_CHUNK)]
+    loaded = 0
+
+    def store(batch: list) -> int:
+        unit = ll._unit_rows(np.stack([np.asarray(v, dtype=np.float32) for _t, v in batch]))
+        added = 0
+        with ll._store_lock:
+            for (text, _v), vec in zip(batch, unit):
+                key = ll._key(text, model)
+                if key not in ll._cache and len(ll._cache) < ll._CACHE_CAP:  # the cap `embed` keeps; past it `fill` clears and re-embeds
+                    ll._cache[key] = vec
+                    added += 1
+        return added
+
+    for part in parts:
+        batch: list = []
+        for row in part.execution_options(yield_per=LOAD_BATCH):
+            batch.append(row)
+            if len(batch) == LOAD_BATCH:
+                loaded += store(batch)
+                batch = []
+        if batch:
+            loaded += store(batch)
     return loaded
 
 

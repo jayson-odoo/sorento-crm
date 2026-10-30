@@ -611,6 +611,12 @@ class DeletionService:
                 newly_cancelled_so_line_ids.append(line.id)
             line.line_status = CANCELLED
         self.db.flush()
+        if spec.entity_type == "purchase_orders":
+            from app.services.project_order_inquiry_service import (
+                auto_confirm_rows_on_po_lines,
+            )
+
+            auto_confirm_rows_on_po_lines(self.db, [line.id for line in lines])
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,

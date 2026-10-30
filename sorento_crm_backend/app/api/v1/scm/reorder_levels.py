@@ -23,6 +23,7 @@ from app.services.error_handler import AppException
 from app.services.scm import reorder_level_import_service as import_svc
 from app.services.scm import reorder_level_service as svc
 from app.services.scm.upload_intake import read_upload
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -156,6 +157,7 @@ def record_lifecycle_decision(payload: dict = Body(...), db: Session = Depends(g
 
 
 @router.post("/reorder-levels/import/preview")
+@heavy
 def preview_level_import(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -169,6 +171,7 @@ def preview_level_import(
 
 
 @router.post("/reorder-levels/import/apply")
+@heavy
 def apply_level_import(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),

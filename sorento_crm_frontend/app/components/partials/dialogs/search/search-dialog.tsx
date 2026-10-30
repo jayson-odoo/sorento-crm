@@ -7,6 +7,7 @@ import { MENU_SIDEBAR } from '@/config/menu.config';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
+import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import {
   CommandDialog,
   CommandEmpty,
@@ -41,6 +42,8 @@ export function SearchDialog({ trigger }: { trigger: ReactNode }) {
   const { enabledModuleKeys } = useTenantModules();
   // Same effective flag as the sidebar, so a view-as hides the same entries here.
   const isSuperadmin = useEffectiveIsSuperadmin();
+  const { salesperson } = useAccountProfileForHeader();
+  const portalKinds = salesperson?.portalKinds;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [groupedResults, setGroupedResults] = useState<
@@ -81,6 +84,7 @@ export function SearchDialog({ trigger }: { trigger: ReactNode }) {
         permissionSet,
         enabledModuleKeys,
         isSuperadmin,
+        salesperson: portalKinds ? { portalKinds } : null,
       });
       if (!cancelled) setGroupedResults(next);
     };
@@ -88,7 +92,7 @@ export function SearchDialog({ trigger }: { trigger: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [query, providers, permissions, enabledModuleKeys, isSuperadmin]);
+  }, [query, providers, permissions, enabledModuleKeys, isSuperadmin, portalKinds]);
 
   const hasAnyResults = useMemo(
     () => Object.values(groupedResults).some((items) => items.length > 0),

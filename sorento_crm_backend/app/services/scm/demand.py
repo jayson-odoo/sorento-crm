@@ -380,17 +380,16 @@ ACTIVE_DECISION_STATE = "active"
 #: so does every reader of the view.
 REJECTED_ACK_STATE = "rejected"
 
-#: What the REORDER PLAN counts, which is narrower than what the view counts (the captain,
-#: 27 Aug 2026): "reorder planning's project demand reads ACKNOWLEDGED rows only (and rows
-#: changed after acknowledgement); awaiting rows are a count on the plan page, never
-#: demand". An awaiting row is an instruction purchasing has not read yet, and buying
-#: against it is buying against something that may still be amended or refused.
+#: What the REORDER PLAN counts (OI-AUTO-CONFIRM, owner Q4 b): the project buy rows that
+#: are To order, `awaiting` and `changed`, for their uncovered qty. A Done row (covered,
+#: automatic or manual) adds nothing: purchasing has nothing left to buy for it. The system
+#: keeps `ack_state` right by itself, so the plan no longer waits on anybody's press.
 #:
-#: The two rules are deliberately different and both are stated here so neither can be
-#: read as the other: `scm.committed_v` (the board, the dashboard, the demand drill) says
-#: what is owed, and `horizon_committed_select_sql` - which every plan run now reads
-#: through - says what may be BOUGHT today.
-PLANNED_ACK_STATES = ("acknowledged", "changed")
+#: The two rules still differ and both are stated here so neither can be read as the other:
+#: `scm.committed_v` (the board, the dashboard, the demand drill) says what is owed, and
+#: `horizon_committed_select_sql` - which every plan run now reads through - says what may
+#: be BOUGHT today.
+PLANNED_ACK_STATES = ("awaiting", "changed")
 #: The same tuple as a SQL list, so the four predicates below are written from the
 #: constants rather than beside them. Two spellings of one rule is how the view and the
 #: plan come to disagree about a row without anybody editing both.
@@ -665,12 +664,9 @@ def horizon_committed_select_sql(
     `reorder_run_service._planning_rows`, to give a plan run its own committed figure.
 
     The acknowledgement rule (captain, 27 Aug, `PLAN-scm-oi-handshake.md`) is why this is
-    now read on EVERY run rather than only on a horizoned one: an order-inquiry row
-    purchasing has not acknowledged yet is not something to buy against - CS may still
-    amend it and purchasing may still refuse it - so the two project legs count
-    `PLANNED_ACK_STATES` alone. The view goes on counting an awaiting row, because it is
-    still owed to the customer; what the plan page shows for the difference is the
-    "N awaiting acknowledgement" chip, never a purchase.
+    now read on EVERY run rather than only on a horizoned one: the two project legs count
+    `PLANNED_ACK_STATES` alone (the To order rows, OI-AUTO-CONFIRM Q4 b); a Done row is
+    covered and adds nothing. The view counts every owed row.
 
     A NULL `:horizon` (or `:horizon_start`) reproduces `scm.committed_v`'s DATE handling
     exactly: every date comparison short-circuits true, so an unhorizoned run (the daily
@@ -993,8 +989,7 @@ def run_scope_oi_rows(
     THE PREDICATE (A3, captain ruling 23 Sep after review): the CONFIRMED leg's own
     predicate in `horizon_committed_select_sql` - ``verb IN ('ORDER', 'ORDER_BACK')``,
     ``state IN ('raised', 'partly_linked')``, not redirected (`NOT_REDIRECTED_SQL`),
-    ``ack_state IN PLANNED_ACK_STATES`` (acknowledged or changed - an awaiting row is a
-    count on the plan page, never something to buy against), owed (`_OWED_SQL`, qty minus
+    ``ack_state IN PLANNED_ACK_STATES`` (awaiting or changed - a Done row is covered), owed (`_OWED_SQL`, qty minus
     linked minus bundled) `> 0`, printed `qty` = that OWED figure, NEVER the row's raw
     `qty`. The plan's first cut read `state <> cancelled, ack_state <> rejected`, which on
     the 21 Sep prod copy admitted 2,006 placed + 5,713 actioned + 474 awaiting-ack + 12

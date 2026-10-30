@@ -19,6 +19,8 @@ import { flattenMenuItems, getTitleForPath } from '@/lib/menu-utils';
 import { moduleKeyForPath } from '@/lib/route-module-map';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import { MENU_SIDEBAR } from '@/config/menu.config';
+import { filterMenuByAudience } from '@/lib/menu-access-filter';
+import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import {
   useQuickAccess,
   useAddQuickAccess,
@@ -38,7 +40,13 @@ export function QuickAccessBlock() {
   const removeMutation = useRemoveQuickAccess();
   const reorderMutation = useReorderQuickAccess();
 
-  const flattened = useMemo(() => flattenMenuItems(MENU_SIDEBAR), []);
+  const { salesperson } = useAccountProfileForHeader();
+  const portalKinds = salesperson?.portalKinds;
+  // The sidebar's audience filter: staff never see the salesperson block, a salesperson only their kinds.
+  const flattened = useMemo(
+    () => flattenMenuItems(filterMenuByAudience(MENU_SIDEBAR, portalKinds ? { portalKinds } : null)),
+    [portalKinds],
+  );
   const pinnedPaths = useMemo(() => new Set(items.map((i) => i.path)), [items]);
   const pinnableMenuItems = useMemo(() => {
     let list = flattened.filter((m) => !pinnedPaths.has(m.path));

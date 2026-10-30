@@ -101,8 +101,9 @@ export interface OrderInquiryRaiseHistoryEntry {
  */
 export interface OrderInquiryLink {
   id: string;
-  /** Which book the document lives in. `spo` is only ever offered to an ORDER BACK row. */
-  kind: 'po' | 'spo';
+  /** Which book the document lives in. `spo` is only ever offered to an ORDER BACK row.
+   * `reserve` is a CS stock reserve (document "Reserved @ <code>"), not a purchase document. */
+  kind: 'po' | 'spo' | 'reserve';
   /** `202607-S0105`, `SPO-2026/08-0061`. Never an id. */
   document: string;
   /** `L3` when the book numbered the line. Absent when it did not - never invented. */
@@ -302,6 +303,12 @@ export interface OrderInquiryAckFields {
   /** OI-PRODUCT-FOLLOW: the item code before a Confirm moved the row onto the SO line's
    * new product - the "was X" under the Product cell. */
   previous_item_code?: string | null;
+  /** OI-AUTO-CONFIRM: a person's Confirm / Unconfirm over the automatic rule. */
+  ack_override?: 'confirmed' | 'unconfirmed' | string | null;
+  ack_override_at?: string | null;
+  ack_override_by_name?: string | null;
+  /** What is still to order: qty less live cover less bundled, never below zero. */
+  open_qty?: string | number | null;
 }
 
 export interface OrderInquiryRow extends OrderInquiryAckFields {
@@ -590,6 +597,8 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   /** 3.4 (AC-RS-12): the sum of the row's reserve links - already included in
    * `taken_from_po`/`remaining_open`, both of which sum every link with no target filter. */
   reserved_qty?: string;
+  /** "Reserved @ <warehouse code>" when CS reserved stock for the row (not a document link). */
+  reserve_label?: string | null;
   /** Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): the OPEN reserve request row's
    * own `qty_requested` for this row - "0" when `reserve_state` is not `requested`.
    * The Lines grid's `Request to reserve N` pill and the tick's default stage both

@@ -12,7 +12,7 @@ cost, lead time and the linked product's supplier (PQ1), and never writes them.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
@@ -92,148 +92,6 @@ def _check_write(db: Session, token: PortalToken, data: dict, *, current_custome
         )
 
 
-# ------------------------------------------------------------------ lookups
-
-
-@router.get(f"{OWN}/inquiries")
-def portal_my_inquiries(
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """The contact's own RESPONDED stock inquiries, newest first: the "start from" picker."""
-    _assert_visible(db, token.contact_id)
-    q = db.query(StockInquiry).filter(
-        StockInquiry.contact_id == str(token.contact_id), StockInquiry.status == "responded"
-    )
-    if token.space_id is not None:
-        q = q.filter(StockInquiry.space_id == str(token.space_id))
-    rows = q.order_by(StockInquiry.created_at.desc()).limit(50).all()
-    return [
-        {
-            "id": r.id,
-            "inquiry_number": r.inquiry_number,
-            "product_code": r.product_code,
-            "item_description": r.item_description,
-            "project_name": r.project_name,
-            "purchasing_response": r.purchasing_response,
-            "last_responded_at": r.last_responded_at.isoformat() if r.last_responded_at else None,
-        }
-        for r in rows
-    ]
-
-
-@router.get(f"{OWN}/prefill")
-def portal_prefill(
-    stock_inquiry_id: str = Query(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    return svc.prefill(
-        db, stock_inquiry_id, contact_id=str(token.contact_id), space_id=token.space_id
-    )
-
-
-@router.get(f"{OWN}/lookups/{{kind}}")
-def portal_lookup(
-    kind: str,
-    q: str = Query(""),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        return svc.portal_lookup(db, kind, q)
-
-
-@router.get(f"{OWN}/customers")
-def portal_customers(
-    q: str = Query(""),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    # The same one company submit checks the pick in, so listed and accepted cannot drift.
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        return sample_request_service.portal_customers(db, str(token.contact_id), q)
-
-
-# ------------------------------------------------------------------ records
-
-
-@router.get(BASE)
-def portal_list(
-    q: Optional[str] = Query(None),
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        out = svc.list_for(db, actor=_actor(token), q=q, page=page, limit=limit)
-        return {"data": out["items"], "total": out["total"], "page": page, "limit": limit}
-
-
-@router.post(BASE, status_code=201)
-def portal_create(
-    payload: NewProductApplicationWrite,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    company_id = _resolve_company(db, token)
-    try:
-        with company_scope(db, frozenset({company_id})):
-            data = payload.model_dump(exclude_unset=True)
-            _check_write(db, token, data)
-            app = svc.create_draft(
-                db,
-                applicant_id=_linked_user_id(db, token.contact_id),
-                data=data,
-                source="portal",
-                contact_id=str(token.contact_id),
-                space_id=token.space_id,
-            )
-            return _done(db, app)
-    except Exception:
-        db.rollback()
-        raise
-
-
-@router.get(f"{BASE}/{{application_id}}")
-def portal_get(
-    application_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        return svc.serialize_detail(db, _own(db, token, application_id), portal=True)
-
-
-@router.put(f"{BASE}/{{application_id}}")
-def portal_update(
-    application_id: str,
-    payload: NewProductApplicationWrite,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    company_id = _resolve_company(db, token)
-    try:
-        with company_scope(db, frozenset({company_id})):
-            app = _own(db, token, application_id, for_update=True)
-            data = payload.model_dump(exclude_unset=True)
-            svc.assert_unlocked(app)
-            _check_write(db, token, data, current_customer=app.customer_id)
-            svc.update(db, app, actor=_actor(token), data=data)
-            return _done(db, app)
-    except Exception:
-        db.rollback()
-        raise
-
-
 def _move(db: Session, token: PortalToken, application_id: str, fn, **kw):
     _assert_visible(db, token.contact_id)
     company_id = _resolve_company(db, token)
@@ -247,48 +105,208 @@ def _move(db: Session, token: PortalToken, application_id: str, fn, **kw):
         raise
 
 
-@router.post(f"{BASE}/{{application_id}}/submit")
-def portal_submit(
-    application_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    return _move(db, token, application_id, svc.submit)
+# ---------- The contact's application routes, shared with the CRM ----------
 
 
-@router.post(f"{BASE}/{{application_id}}/revise")
-def portal_revise(
-    application_id: str,
-    payload: ReasonIn,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    return _move(db, token, application_id, svc.revise, reason=payload.reason)
+def register_new_product_application_routes(
+    router: APIRouter, token_dependency: Callable[..., Any]
+) -> None:
+    """Register the application routes on ``router``, the caller resolved by ``token_dependency``.
+
+    ONE body per route for two surfaces (PORTAL-P4-REQUESTS S5), the shape of
+    ``portal.register_submission_routes``: the portal mounts them below with ``get_portal_token``;
+    ``app/api/v1/my_requests.py`` mounts them on ``/api/v1/my-requests`` with a transient portal
+    token built from a CRM session, so a salesperson writes their own applications through
+    exactly the code a portal contact does. Their files ride the generic portal attachment routes.
+    """
+
+    # ------------------------------------------------------------------ lookups
 
 
-@router.post(f"{BASE}/{{application_id}}/cancel")
-def portal_cancel(
-    application_id: str,
-    payload: Optional[ReasonIn] = None,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    return _move(
-        db, token, application_id, svc.cancel, reason=payload.reason if payload else None
-    )
+    @router.get(f"{OWN}/inquiries")
+    def portal_my_inquiries(
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """The contact's own RESPONDED stock inquiries, newest first: the "start from" picker."""
+        _assert_visible(db, token.contact_id)
+        q = db.query(StockInquiry).filter(
+            StockInquiry.contact_id == str(token.contact_id), StockInquiry.status == "responded"
+        )
+        if token.space_id is not None:
+            q = q.filter(StockInquiry.space_id == str(token.space_id))
+        rows = q.order_by(StockInquiry.created_at.desc()).limit(50).all()
+        return [
+            {
+                "id": r.id,
+                "inquiry_number": r.inquiry_number,
+                "product_code": r.product_code,
+                "item_description": r.item_description,
+                "project_name": r.project_name,
+                "purchasing_response": r.purchasing_response,
+                "last_responded_at": r.last_responded_at.isoformat() if r.last_responded_at else None,
+            }
+            for r in rows
+        ]
 
 
-@router.get(f"{BASE}/{{application_id}}/download")
-def portal_download(
-    application_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        content, filename = npa_xlsx.to_xlsx(db, _own(db, token, application_id))
-    return Response(
-        content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": content_disposition(filename)},
-    )
+    @router.get(f"{OWN}/prefill")
+    def portal_prefill(
+        stock_inquiry_id: str = Query(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        return svc.prefill(
+            db, stock_inquiry_id, contact_id=str(token.contact_id), space_id=token.space_id
+        )
+
+
+    @router.get(f"{OWN}/lookups/{{kind}}")
+    def portal_lookup(
+        kind: str,
+        q: str = Query(""),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.portal_lookup(db, kind, q)
+
+
+    @router.get(f"{OWN}/customers")
+    def portal_customers(
+        q: str = Query(""),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        # The same one company submit checks the pick in, so listed and accepted cannot drift.
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return sample_request_service.portal_customers(db, str(token.contact_id), q)
+
+
+    # ------------------------------------------------------------------ records
+
+
+    @router.get(BASE)
+    def portal_list(
+        q: Optional[str] = Query(None),
+        page: int = Query(1, ge=1),
+        limit: int = Query(50, ge=1, le=200),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            out = svc.list_for(db, actor=_actor(token), q=q, page=page, limit=limit)
+            return {"data": out["items"], "total": out["total"], "page": page, "limit": limit}
+
+
+    @router.post(BASE, status_code=201)
+    def portal_create(
+        payload: NewProductApplicationWrite,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        company_id = _resolve_company(db, token)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                data = payload.model_dump(exclude_unset=True)
+                _check_write(db, token, data)
+                app = svc.create_draft(
+                    db,
+                    applicant_id=_linked_user_id(db, token.contact_id),
+                    data=data,
+                    source="portal",
+                    contact_id=str(token.contact_id),
+                    space_id=token.space_id,
+                )
+                return _done(db, app)
+        except Exception:
+            db.rollback()
+            raise
+
+
+    @router.get(f"{BASE}/{{application_id}}")
+    def portal_get(
+        application_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.serialize_detail(db, _own(db, token, application_id), portal=True)
+
+
+    @router.put(f"{BASE}/{{application_id}}")
+    def portal_update(
+        application_id: str,
+        payload: NewProductApplicationWrite,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        company_id = _resolve_company(db, token)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                app = _own(db, token, application_id, for_update=True)
+                data = payload.model_dump(exclude_unset=True)
+                svc.assert_unlocked(app)
+                _check_write(db, token, data, current_customer=app.customer_id)
+                svc.update(db, app, actor=_actor(token), data=data)
+                return _done(db, app)
+        except Exception:
+            db.rollback()
+            raise
+
+
+    @router.post(f"{BASE}/{{application_id}}/submit")
+    def portal_submit(
+        application_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        return _move(db, token, application_id, svc.submit)
+
+
+    @router.post(f"{BASE}/{{application_id}}/revise")
+    def portal_revise(
+        application_id: str,
+        payload: ReasonIn,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        return _move(db, token, application_id, svc.revise, reason=payload.reason)
+
+
+    @router.post(f"{BASE}/{{application_id}}/cancel")
+    def portal_cancel(
+        application_id: str,
+        payload: Optional[ReasonIn] = None,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        return _move(
+            db, token, application_id, svc.cancel, reason=payload.reason if payload else None
+        )
+
+
+    @router.get(f"{BASE}/{{application_id}}/download")
+    def portal_download(
+        application_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            content, filename = npa_xlsx.to_xlsx(db, _own(db, token, application_id))
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": content_disposition(filename)},
+        )
+
+
+register_new_product_application_routes(router, get_portal_token)

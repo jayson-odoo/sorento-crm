@@ -8,6 +8,7 @@ import type { PaginationState, SortingState } from '@tanstack/react-table';
 import type { ProjectListParams } from '../../_shared/types/project.types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,6 +63,8 @@ type PipelineView = 'board' | 'grid';
  */
 export function PipelineClient() {
   const router = useRouter();
+  // Start (register, upload) is for `.view` holders; an own-only salesperson gets the list alone.
+  const canStart = usePermissions().permissionSet.has('projects.projects.view');
   const canEdit = useHasPermission('projects.projects.edit');
   const canRegister = useHasAnyPermission(['projects.projects.edit', 'projects.registrations.submit']);
   const [view, setView] = React.useState<PipelineView>('board');
@@ -119,8 +122,9 @@ export function PipelineClient() {
   ]);
 
   const graph = useProjectStatusGraph('project');
-  const developers = useProjectParties({ party_type: 'developer', limit: 200 });
-  const types = useProjectTypes();
+  // Parties and types are `.view` lookups; an own-only user is refused them, so they are not asked for.
+  const developers = useProjectParties({ party_type: 'developer', limit: 200 }, { enabled: canStart });
+  const types = useProjectTypes({ enabled: canStart });
   const move = useChangeProjectStatus();
 
   const listParams = React.useMemo(
@@ -236,52 +240,56 @@ export function PipelineClient() {
   // a filter to be added and one place for it to be forgotten.
   const filterContent = (
     <div className="space-y-3">
-      <div className="space-y-1.5">
-        <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
-          Developer
-        </Label>
-        <SearchableMultiSelect
-          id="filter-developer"
-          value={splitMulti(developerFilter)}
-          onChange={(value) => setDeveloperFilter(joinMulti(value))}
-          clearable
-          renderTriggerLabel={(chosen) =>
-            chosen.length ? (
-              <span className="block truncate">{multiChipLabel('Developer', idFilterLabels(chosen))}</span>
-            ) : (
-              <span className="text-muted-foreground">All developers</span>
-            )
-          }
-          options={(developers.data?.data ?? []).map((party) => ({
-            value: party.id,
-            label: party.name,
-          }))}
-          placeholder="All developers"
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
-          Type
-        </Label>
-        <SearchableMultiSelect
-          id="filter-type"
-          value={splitMulti(typeFilter)}
-          onChange={(value) => setTypeFilter(joinMulti(value))}
-          clearable
-          renderTriggerLabel={(chosen) =>
-            chosen.length ? (
-              <span className="block truncate">{multiChipLabel('Type', idFilterLabels(chosen))}</span>
-            ) : (
-              <span className="text-muted-foreground">All types</span>
-            )
-          }
-          options={(types.data ?? []).map((type) => ({
-            value: type.id,
-            label: type.name,
-          }))}
-          placeholder="All types"
-        />
-      </div>
+      {canStart && (
+        <>
+        <div className="space-y-1.5">
+          <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
+            Developer
+          </Label>
+          <SearchableMultiSelect
+            id="filter-developer"
+            value={splitMulti(developerFilter)}
+            onChange={(value) => setDeveloperFilter(joinMulti(value))}
+            clearable
+            renderTriggerLabel={(chosen) =>
+              chosen.length ? (
+                <span className="block truncate">{multiChipLabel('Developer', idFilterLabels(chosen))}</span>
+              ) : (
+                <span className="text-muted-foreground">All developers</span>
+              )
+            }
+            options={(developers.data?.data ?? []).map((party) => ({
+              value: party.id,
+              label: party.name,
+            }))}
+            placeholder="All developers"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
+            Type
+          </Label>
+          <SearchableMultiSelect
+            id="filter-type"
+            value={splitMulti(typeFilter)}
+            onChange={(value) => setTypeFilter(joinMulti(value))}
+            clearable
+            renderTriggerLabel={(chosen) =>
+              chosen.length ? (
+                <span className="block truncate">{multiChipLabel('Type', idFilterLabels(chosen))}</span>
+              ) : (
+                <span className="text-muted-foreground">All types</span>
+              )
+            }
+            options={(types.data ?? []).map((type) => ({
+              value: type.id,
+              label: type.name,
+            }))}
+            placeholder="All types"
+          />
+        </div>
+        </>
+      )}
       <div className="space-y-1.5">
         <Label htmlFor="filter-approval" className="text-xs text-muted-foreground">
           Approval
@@ -427,7 +435,7 @@ export function PipelineClient() {
         ) : (
           <EmptyState
             title="No projects registered yet"
-            body="Register one from Start."
+            body={canStart ? 'Register one from Start.' : 'Projects assigned to you appear here.'}
           />
         )
       ) : view === 'board' ? (
@@ -479,7 +487,9 @@ export function PipelineClient() {
               <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                 {hasFilters
                   ? 'Clear the filters to see every project.'
-                  : 'Register one from Start.'}
+                  : canStart
+                    ? 'Register one from Start.'
+                    : 'Projects assigned to you appear here.'}
               </p>
             </div>
           }

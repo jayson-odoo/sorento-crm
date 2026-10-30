@@ -13,6 +13,7 @@ from app.api.v1.inventory.stock_status import READ_PERMISSIONS
 from app.database import get_db
 from app.dependencies import require_any_permission_with_api_key
 from app.services import stock_position_service as svc
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -50,6 +51,7 @@ def get_stock_position(
 
 
 @router.get("/export")
+@heavy
 def export_stock_position(
     sort: Optional[str] = Query(None),
     dir: str = Query("asc", pattern="^(asc|desc)$"),

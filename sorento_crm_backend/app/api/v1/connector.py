@@ -20,6 +20,7 @@ from app.dependencies import get_current_user
 from app.services.analytics_connector import consent, datasets
 from app.services.analytics_connector.access import ConnectorCall, ConnectorError, connector_call
 from app.services.analytics_connector.manifest import build_manifest
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -95,6 +96,7 @@ def describe_dataset(key: str, _call: ConnectorCall = Depends(signed_call), db: 
 
 
 @router.post("/query")
+@heavy
 def query(spec: datasets.QuerySpec, _call: ConnectorCall = Depends(signed_call), db: Session = Depends(get_db)):
     return _checked(lambda: datasets.run_query(db, spec))
 

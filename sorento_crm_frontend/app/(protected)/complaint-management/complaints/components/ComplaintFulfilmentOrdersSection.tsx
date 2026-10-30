@@ -15,6 +15,8 @@ import type { FulfilmentOrder, FulfilmentOrderItem } from '../services/complaint
 
 interface ComplaintFulfilmentOrdersSectionProps {
   complaintId: string;
+  /** An own-scope viewer: the DO number is plain text, not a link to a page they cannot open. */
+  readOnly?: boolean;
 }
 
 /** Items carry no id of their own - the popover's rows are keyed by product code + position,
@@ -102,21 +104,29 @@ function FulfilmentItemsPopover({ order }: { order: FulfilmentOrder }) {
   );
 }
 
-const ORDER_COLUMNS: ColumnDef<FulfilmentOrder>[] = [
+const buildOrderColumns = (readOnly: boolean): ColumnDef<FulfilmentOrder>[] => [
   {
     id: 'order_number',
     accessorFn: (row) => row.order_number,
     header: ({ column }) => <DataGridColumnHeader title="DO Number" column={column} />,
-    cell: ({ row }) => (
-      <Link
-        href={`/order-management/orders/${row.original.order_id}`}
-        className="block max-w-[14rem] truncate font-medium text-primary hover:underline underline-offset-2"
-        title={row.original.order_number}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {row.original.order_number}
-      </Link>
-    ),
+    cell: ({ row }) =>
+      readOnly ? (
+        <span
+          className="block max-w-[14rem] truncate font-medium"
+          title={row.original.order_number}
+        >
+          {row.original.order_number}
+        </span>
+      ) : (
+        <Link
+          href={`/order-management/orders/${row.original.order_id}`}
+          className="block max-w-[14rem] truncate font-medium text-primary hover:underline underline-offset-2"
+          title={row.original.order_number}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {row.original.order_number}
+        </Link>
+      ),
     size: 200,
     meta: { headerTitle: 'DO Number' },
   },
@@ -155,13 +165,15 @@ const ORDER_COLUMNS: ColumnDef<FulfilmentOrder>[] = [
 
 export default function ComplaintFulfilmentOrdersSection({
   complaintId,
+  readOnly = false,
 }: ComplaintFulfilmentOrdersSectionProps) {
   const { data: orders, isLoading, error, refetch } = useComplaintFulfilmentOrders(complaintId);
+  const columns = useMemo(() => buildOrderColumns(readOnly), [readOnly]);
 
   return (
     <PanelDataGrid<FulfilmentOrder>
       title="Fulfilment Delivery Orders"
-      columns={ORDER_COLUMNS}
+      columns={columns}
       rows={orders ?? []}
       getRowId={(row) => row.order_id}
       listingKey="complaint_management.complaints.view::fulfilment-orders"

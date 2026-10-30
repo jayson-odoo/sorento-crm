@@ -183,11 +183,12 @@ beforeEach(() => {
 });
 
 describe('SalesOpportunitiesView', () => {
-  it('titles the page with Log opportunity as the header action', () => {
+  it('titles the page with Create (was Log opportunity, L4) as the header action', () => {
     withOpportunities([opportunity()]);
     render(<SalesOpportunitiesView />);
     const actions = screen.getByTestId('header-actions');
-    fireEvent.click(within(actions).getByRole('button', { name: /log opportunity/i }));
+    expect(within(actions).queryByRole('button', { name: /log opportunity/i })).toBeNull();
+    fireEvent.click(within(actions).getByRole('button', { name: 'Create' }));
     expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
@@ -223,10 +224,11 @@ describe('SalesOpportunitiesView', () => {
     expect(link.getAttribute('href')).toBe('/sales/opportunities/opp-1');
   });
 
-  it('offers no Log opportunity to a role without sales.opportunities.add', () => {
+  it('offers no Create to a role without sales.opportunities.add', () => {
     perms.granted = new Set(['sales.opportunities.view']);
     withOpportunities([]);
     render(<SalesOpportunitiesView />);
+    expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
     expect(screen.queryByRole('button', { name: /log opportunity/i })).toBeNull();
   });
 

@@ -447,18 +447,20 @@ export function DataGridListToolbar<TData extends object>({
         variant="outline"
         size="sm"
         className="gap-1.5"
+        aria-label="Export"
+        title="Export"
         onClick={isListQueryExport ? () => setExportOpen(true) : openExport}
       >
         <Download className="size-4" />
-        Export
+        <span className="hidden sm:inline">Export</span>
       </Button>
     ) : (
       <Tooltip>
         <TooltipTrigger asChild>
           <span tabIndex={0}>
-            <Button variant="outline" size="sm" className="gap-1.5" disabled>
+            <Button variant="outline" size="sm" className="gap-1.5" aria-label="Export" title="Export" disabled>
               <Download className="size-4" />
-              Export
+              <span className="hidden sm:inline">Export</span>
             </Button>
           </span>
         </TooltipTrigger>
@@ -477,10 +479,11 @@ export function DataGridListToolbar<TData extends object>({
         className="flex w-full flex-col gap-2 py-5"
         style={rangeDragMoving && heightBeforeDrag.current ? { minHeight: heightBeforeDrag.current } : undefined}
       >
-        {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
+        {/* `sm:flex-wrap`: at a narrow desktop width the two clusters used to push each
             other past the viewport edge instead of stacking, so Quick filters and
-            Group by went out of reach. */}
-        <div className="flex w-full flex-col flex-wrap gap-3 sm:flex-row sm:items-center sm:justify-between">
+            Group by went out of reach. Below sm the row never wraps (owner a25895124 Q3 a):
+            the left cluster shrinks and the primary action stays on the filter row. */}
+        <div className="flex w-full flex-row flex-wrap items-center gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
           {showBulkStrip ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -520,7 +523,7 @@ export function DataGridListToolbar<TData extends object>({
             // beside it, so Columns and Refresh dropped onto a second row at 1280 with
             // ~300px of empty toolbar to their right (AC-D13). Growing costs nothing when
             // the row is genuinely full - the item still shrinks to min-content and wraps.
-            <div className="flex grow flex-wrap items-center gap-2">
+            <div className="contents flex-wrap items-center gap-2 sm:flex sm:min-w-0 sm:flex-initial sm:grow">
               {/*
                 The slot's OWN children have to wrap, not just sit in a wrapping row.
                 Promotions and SPO Allocations both hand the toolbar a nested flex -
@@ -531,15 +534,15 @@ export function DataGridListToolbar<TData extends object>({
               */}
               <div
                 data-slot="data-grid-list-toolbar-search"
-                className="flex min-w-0 flex-wrap items-center gap-2 [&>*]:min-w-0 [&>*]:flex-wrap"
+                className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 sm:basis-auto sm:flex-initial [&>*]:min-w-0 [&>*]:flex-wrap empty:hidden"
               >
                 {searchSlot}
               </div>
               {filters ? (
                 filters.kind === 'listQuery' ? (
-                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setFilterOpen(true)}>
+                  <Button variant="outline" size="sm" className="gap-1.5" aria-label={filters.advancedFilter ? 'Filters On' : 'Filters'} title="Filters" onClick={() => setFilterOpen(true)}>
                     <Filter className="size-4" />
-                    Filters
+                    <span className="hidden sm:inline">Filters</span>
                     {filters.advancedFilter ? (
                       <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">On</Badge>
                     ) : null}
@@ -547,9 +550,15 @@ export function DataGridListToolbar<TData extends object>({
                 ) : (
                   <DropdownMenu modal={filters.modal ?? true}>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        aria-label={filters.active ? `Filters ${filters.activeCount ?? 'On'}` : 'Filters'}
+                        title="Filters"
+                      >
                         <Filter className="size-4" />
-                        Filters
+                        <span className="hidden sm:inline">Filters</span>
                         {filters.active ? (
                           <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
                             {filters.activeCount ?? 'On'}
@@ -567,9 +576,9 @@ export function DataGridListToolbar<TData extends object>({
                 <DataGridColumnVisibility
                   table={table}
                   trigger={
-                    <Button variant="outline" size="sm" className="gap-1.5">
+                    <Button variant="outline" size="sm" className="gap-1.5" aria-label="Columns" title="Columns">
                       <Columns3 className="size-4" />
-                      Columns
+                      <span className="hidden sm:inline">Columns</span>
                     </Button>
                   }
                 />
@@ -594,7 +603,7 @@ export function DataGridListToolbar<TData extends object>({
           )}
 
           {/* RIGHT cluster - secondary overflow + primary CTA (always present). */}
-          <div className={cn('flex flex-wrap items-center gap-2', alignActionsEnd && 'ms-auto justify-end')}>
+          <div className={cn('flex shrink-0 flex-wrap items-center gap-2', alignActionsEnd ? 'ms-auto justify-end' : 'ml-auto sm:ml-0')}>
             {secondaryActions.length === 1 && !secondaryActionsAsMenu ? (
               <ActionButton action={secondaryActions[0]} />
             ) : secondaryActions.length >= 1 ? (

@@ -389,30 +389,6 @@ export function OrderInquiryHeadersList() {
           ),
       },
       {
-        accessorKey: 'lines_total',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Lines" column={column} className="justify-end" />
-        ),
-        size: 90,
-        meta: {
-          headerTitle: 'Lines',
-          headerClassName: 'text-right',
-          cellClassName: 'text-right tabular-nums',
-        },
-        // AC-HL-04: the visible figure is the total; an OUTSTANDING row's title also
-        // states how many of them still wait for a confirm.
-        cell: ({ row }) => {
-          const { lines_total, lines_to_confirm, status } = row.original;
-          const title =
-            status === 'outstanding' ? `${lines_to_confirm} / ${lines_total}` : String(lines_total);
-          return (
-            <span className="block" title={title}>
-              {lines_total}
-            </span>
-          );
-        },
-      },
-      {
         accessorKey: 'qty_total',
         header: ({ column }) => (
           <DataGridColumnHeader title="Qty" column={column} className="justify-end" />
@@ -561,7 +537,7 @@ export function OrderInquiryHeadersList() {
   const emptyMessage = isFiltered
     ? 'No order inquiry matches this search and filter.'
     : stateFilter === 'outstanding'
-      ? 'Nothing to confirm'
+      ? 'Nothing to order'
       : stateFilter === 'all'
         ? 'No order inquiries yet'
         : 'No completed order inquiries yet';

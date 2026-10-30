@@ -37,6 +37,7 @@ class DrainingServer(Server):
     deploy's stop is unaffected: the master does not check heartbeats while it stops."""
 
     HEARTBEAT_EVERY = 5.0
+    ACCEPT_SETTLE_SECONDS = 1.0
 
     def __init__(self, config: Config, notify: Callable[[], None], heartbeat_for: float) -> None:
         super().__init__(config=config)
@@ -46,6 +47,15 @@ class DrainingServer(Server):
     async def shutdown(self, sockets=None) -> None:
         beat = asyncio.ensure_future(self._beat())
         try:
+            # BACKEND-MEM-2 S3: stop accepting first and give a connection accepted just before that a moment to send
+            # its request. uvicorn's shutdown closes every connection with no request in progress yet, so a client
+            # whose bytes were still in flight got a connection reset (4 of 600 requests over 10 recycles at
+            # max_requests 40, measured). The other workers take new connections meanwhile (shared listen socket).
+            servers = getattr(self, "servers", [])  # set by `startup`; a server that never started has none
+            for server in servers:
+                server.close()
+            if servers:
+                await asyncio.sleep(self.ACCEPT_SETTLE_SECONDS)
             await super().shutdown(sockets)
         finally:
             beat.cancel()

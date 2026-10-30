@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { MoveLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useRequestScope } from '@/hooks/useRequestScope';
 
 export interface BackToListProps {
   /** The list route, e.g. `/order-management/orders`. */
@@ -18,6 +19,11 @@ export interface BackToListProps {
    */
   appendListState?: boolean;
   className?: string;
+  /**
+   * A request kind (`useRequestScope`): a limited user of that kind (a salesperson who sees only
+   * their own) gets no page Back, the breadcrumb is their way back.
+   */
+  hideForLimited?: string;
 }
 
 /**
@@ -62,14 +68,22 @@ export default function BackToList({
   label,
   appendListState = true,
   className,
+  hideForLimited,
 }: BackToListProps) {
   const href = useBackToListHref(listPath, appendListState);
 
-  return (
+  const button = (
     <Button asChild variant="outline" className={className}>
       <Link href={href}>
         <MoveLeft /> {label}
       </Link>
     </Button>
   );
+  return hideForLimited ? <HiddenWhenLimited kind={hideForLimited}>{button}</HiddenWhenLimited> : button;
+}
+
+/** Its own component so only the pages that pass `hideForLimited` read the permission hooks. */
+function HiddenWhenLimited({ kind, children }: { kind: string; children: ReactNode }) {
+  const { limited } = useRequestScope(kind);
+  return limited ? null : <>{children}</>;
 }

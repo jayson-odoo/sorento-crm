@@ -1309,8 +1309,8 @@ class PortalService:
         Inside a SAVEPOINT: history is worth having, but it must never be able to roll
         back the submit it describes. The submit's own changes are flushed FIRST so the
         savepoint contains nothing but the history insert - otherwise a rollback to the
-        savepoint would take the status transition with it. Types with no revision
-        adapter (complaint) are a no-op.
+        savepoint would take the status transition with it. A type with no revision
+        adapter is a no-op.
         """
         try:
             from app.services.portal_revision_service import PortalRevisionService
@@ -1403,11 +1403,17 @@ class PortalService:
 
             registrations.portal_delete(self.db, token, submission_id)
             return
+        row = self.deletable_draft(token, kind, submission_id)
+        self.db.delete(row)
+        self.db.commit()
+
+    def deletable_draft(self, token: PortalToken, kind: str, submission_id: str) -> Any:
+        """The draft ``delete_draft`` removes, or its refusal: 404 not the contact's, 400 not a
+        draft. Also the park-time check of the CRM's deferred ``my_request.delete``."""
         row = self._fetch_for_edit(kind, token, submission_id)
         if row.portal_draft_at is None:
             raise handle_validation_error("Only drafts can be deleted.")
-        self.db.delete(row)
-        self.db.commit()
+        return row
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{respond_io_id}.
@@ -2049,6 +2055,8 @@ class PortalService:
             "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "last_revised_at": row.last_revised_at.isoformat() if row.last_revised_at else None,
+            "revision_no": int(row.revision_no or 0),
             "product_code": row.product_code,
             "project_title": row.project_title,
             "customer_name": row.customer_name,
