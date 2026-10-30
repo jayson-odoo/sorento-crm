@@ -1,8 +1,10 @@
 # PLAN: chatbot failure-reply triage (30 Oct 2026)
 
-**Status:** Batch 1 building (feature track M, lead pattern: tester red -> coder -> reviewer).
-Owner answered Q1-Q5 on 30 Oct ~21:15; Q1 escalation routing evidence filed as a second ask
-(routing change waits on it). UAC: `chatbot-fail-triage-acceptance-criteria.md`.
+**Status:** Batch 1 (incl. AC-7 escalation) review READY on 31 Oct after five rounds
+(reviewer + security-reviewer), main merged; console check and owner hand test pending, then
+batch 2 (feature track M, lead pattern: tester red -> coder -> reviewer). Owner answered Q1-Q5
+on 30 Oct ~21:15 and the escalation routing (AC-7) on ~22:05. UAC:
+`chatbot-fail-triage-acceptance-criteria.md`.
 
 ## Owner answers (30 Oct ~21:15)
 
