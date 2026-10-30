@@ -11,5 +11,9 @@ Plan: `PLAN-reserve-request-pick-30oct.md`.
   unticked line does not stop the send.
 - AC-RP-5: With no line ticked, Send request / Park request is disabled.
 - AC-RP-6: From the Stock Debt snapshot drill, a line whose snapshot row reads Short 0 (covered or
-  pinned) opens unticked; lines still short open ticked. One constant switches this off.
+  pinned) opens unticked; lines still short open ticked. One constant switches this off. A covered
+  line ticked back is sent like any other (owner, 30 Oct).
+- AC-RP-8: From the Stock Debt snapshot drill, an OI raised after the snapshot (or a row linked
+  after it on a frozen OI) can be requested: the OI group shows Request CS to reserve when any of
+  its rows is requestable today, and those rows are offered ticked like any line still short.
 - AC-RP-7: Usable and not clipped at 1280px and 375px.

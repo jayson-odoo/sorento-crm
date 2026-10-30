@@ -1,6 +1,6 @@
 # PLAN: Request CS to reserve - tick lines before sending (RESERVE-REQ-PICK, 30 Oct)
 
-Status: planned, small fix track (S: one shared FE dialog + one caller, no backend, no migration,
+Status: built (PR #1995), in review, small fix track (S: one shared FE dialog + one caller, no backend, no migration,
 no auth change). UAC: `reserve-request-pick-acceptance-criteria.md`. Mock:
 `documentation/mockups/RESERVE-REQ-PICK/index.html`.
 
@@ -34,9 +34,16 @@ pinned M9713SS row on OI-2609-0676 that the drill offers although its snapshot l
 5. The dialog header shows "N of M lines" (N ticked, M offered).
 6. Snapshot drill only: rows whose frozen snapshot line reads Short 0 (covered or pinned) open
    pre-unticked. Behind ONE constant `PRE_UNTICK_COVERED_LINES` in `SnapshotDrillDialog.tsx`
-   (owner decision pending; default on, crew's recommendation) so crew can flip it without a
-   behaviour change elsewhere. The OI page passes no pre-unticked rows (its rows are already the
-   operator's own ticks).
+   (on; owner approved 30 Oct) so crew can flip it without a behaviour change elsewhere. The OI page passes no pre-unticked rows (its rows are already the
+   operator's own ticks). Owner 30 Oct ~09:20 "Yes" and 09:24 on the mock: covered rows start
+   unticked but CAN be ticked back and requested.
+7. Snapshot drill: an OI raised (or a row linked) AFTER the snapshot can be requested too. The
+   group's Request CS to reserve shows when any of its rows is requestable today (after-snapshot
+   rows included), and the dialog offers those rows with the frozen ones, ticked like any line
+   still short. Owner 30 Oct ~09:30: "we snapshot the sales order but not the OI". This reverses
+   the STOCK-DEBT-SNAPSHOT mock's "nothing to request from here" for such lines
+   (`documentation/mockups/STOCK-DEBT-SNAPSHOT/index.html:472`). Backend already returns a live
+   `requestable` for after-snapshot rows (`stock_debt_snapshot_service.py:459-467`, `:537-542`).
 
 ## Architecture
 
@@ -63,7 +70,10 @@ pinned M9713SS row on OI-2609-0676 that the drill offers although its snapshot l
 `stock-debt/components/SnapshotClient.drill.test.tsx` (extend): from the drill, a frozen row whose
 line reads Short 0 opens unticked; one with Short > 0 opens ticked.
 
+Plus (rule 6 tick-back, rule 7): a covered row ticked back is sent; a late OI group carries the
+button, its row opens ticked and is sent; a row linked late on a frozen OI joins that group's
+request, ticked.
+
 ## Out of scope
 
 - The 95 legacy OI rows linked to the wrong SO line (finding point 1) - data fix, not code.
-- After-snapshot OIs requestable from the drill (finding point 2) - by design.

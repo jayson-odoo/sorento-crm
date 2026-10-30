@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Request CS to reserve: pick lines (mockup v1)</title>
+<title>Request CS to reserve: pick lines (mockup v2)</title>
 <style>
 /* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), same set as documentation/mockups/STOCK-DEBT-SNAPSHOT/index.html */
 :root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--input:#e4e4e7;--primary:#3b82f6;--primary-soft:#eff6ff;--page:#f7f7f8;--destructive:#dc2626}
@@ -72,8 +72,9 @@ table.dg tr.off td{color:var(--muted-fg)}
 </head>
 <body>
 <div class="doc">
-<h1>Request CS to reserve: pick the lines <span class="mut" style="font-size:14px;font-weight:400">mockup v1, RESERVE-REQ-PICK</span></h1>
+<h1>Request CS to reserve: pick the lines <span class="mut" style="font-size:14px;font-weight:400">mockup v2, RESERVE-REQ-PICK</span></h1>
 <p class="intro">Owner, 30 Oct: "when user want to request to reserve this OI, need to give option to remove some lines that they dont want to request". The ONE shared dialog (OI page and Stock Debt snapshot drill) gets the app's standard grid tick column. Every line opens ticked; untick a line and it is not sent. Real case: Stock Debt 26/10/2026 snapshot, product M9713SS, OI-2609-0676 (customer masked), figures from the dev copy as read in <code>crew/state/files/stock-debt-reserve-request-30oct.md</code>. Only the Location value is a placeholder (each row still defaults to its own pool, unchanged).</p>
+<p class="intro"><b>v2 (owner, 30 Oct):</b> v1 approved ("I can tick it back right if I really want those covered to be requested": yes, section 1). New section 6: an OI raised AFTER the snapshot can now be requested from the drill ("we snapshot the sales order but not the OI"). Sections 1 to 5 unchanged.</p>
 
 <!-- ============================================================ 1 -->
 <section id="s1">
@@ -95,7 +96,7 @@ table.dg tr.off td{color:var(--muted-fg)}
 <div class="df"><span class="chk"><span class="cb"></span>Park this first</span><div class="tools"><span class="btn">Cancel</span><span class="btn pri">Send request</span></div></div>
 </div></div>
 </div></div></div>
-<p class="note">Send request posts ONE row (row B, 2, its pool). The pre-untick of Short 0 lines is the snapshot drill only and sits behind one switch (owner call pending; on in this mock). Tick row A again and it is sent too, exactly as today.</p>
+<p class="note">Send request posts ONE row (row B, 2, its pool). The pre-untick of Short 0 lines is the snapshot drill only and sits behind one switch (owner approved 30 Oct). Tick row A again and it is sent too, exactly as today.</p>
 </section>
 
 <!-- ============================================================ 2 -->
@@ -163,6 +164,35 @@ table.dg tr.off td{color:var(--muted-fg)}
 <div class="df"><span class="chk"><span class="cb"></span>Park this first</span><div class="tools"><span class="btn">Cancel</span><span class="btn pri">Send request</span></div></div>
 </div></div>
 </div></div></div>
+</section>
+
+<!-- ============================================================ 6 -->
+<section id="s6">
+<h2><span class="nb">6</span>v2: an OI raised after the snapshot, requested from the drill</h2>
+<p class="why">Shape of the 26/10 SRT2564-BL case (customer masked): SO line SO427404 was frozen with 12 to deliver and no OI; OI-2610-0159 was raised later and links a row of 11 to it. The drill already shows that row in Now with "after the snapshot". Before: no Request CS to reserve on that group. Now: the group carries the button whenever one of its rows can be requested today, and the dialog lists the late row ticked (its line is still short). A late row on an OI that was already frozen joins that OI's request the same way.</p>
+<div class="row"><div class="desk"><div class="stage" style="background:#fff;padding:16px;min-height:0">
+<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:#fafafa;border-bottom:1px solid var(--border);flex-wrap:wrap"><span style="font-size:12.5px"><b style="color:var(--primary)">OI-2610-0159</b> &#8599;</span><span class="btn pri" style="height:26px;font-size:12px">Request CS to reserve</span></div>
+<div class="scroll" style="border:0;border-radius:0"><table class="dg">
+<colgroup><col style="width:130px"><col style="width:110px"><col style="width:90px"><col style="width:90px"><col style="width:110px"><col></colgroup>
+<thead><tr><th>Sales order</th><th>Required</th><th class="r">Ordered</th><th class="r">Short</th><th>OI row</th><th>Now</th></tr></thead>
+<tbody><tr><td>SO427404</td><td class="mut">frozen date</td><td class="r num">12</td><td class="r num">12</td><td style="color:var(--primary)">11</td><td><span class="mut">Open 11 &middot; Raised &middot; after the snapshot</span></td></tr></tbody>
+</table></div></div>
+</div></div>
+<div class="desk" style="width:896px"><div class="stage" style="min-height:330px">
+<div class="overlay"><div class="dlg">
+<div class="dh"><div class="dt">Request CS to reserve</div><div class="ds">1 of 1 lines</div><span class="x">&#10005;</span></div>
+<div class="db">
+<div class="scroll"><table class="dg">
+<colgroup><col style="width:44px"><col style="width:150px"><col style="width:120px"><col style="width:90px"><col style="width:110px"><col style="width:170px"></colgroup>
+<thead><tr><th><span class="cb on"></span></th><th>Product</th><th>Delivery date</th><th class="r">Remaining</th><th>Requested</th><th>Location</th></tr></thead>
+<tbody><tr class="sel"><td><span class="cb on"></span></td><td class="sku">SRT2564-BL</td><td class="mut">row's date</td><td class="r num">11</td><td><span class="inp r">11</span></td><td><span class="inp">Row's pool<span class="x2">&#9662;</span></span></td></tr></tbody>
+</table></div>
+</div>
+<div class="df"><span class="chk"><span class="cb"></span>Park this first</span><div class="tools"><span class="btn">Cancel</span><span class="btn pri">Send request</span></div></div>
+</div></div>
+</div></div></div>
+<p class="note">Group header, Now chips and OI row link are today's drill (<code>stock-debt/components/SnapshotDrillDialog.tsx</code>); only the button's condition and the dialog's row set change. Dates shown as "frozen date" / "row's date" because crew's finding did not record them.</p>
 </section>
 
 <!-- ============================================================ 5 -->
