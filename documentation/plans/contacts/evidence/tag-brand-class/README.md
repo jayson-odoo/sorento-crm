@@ -20,3 +20,4 @@ would not expand there).
 
 The chatbot / MCP effect (SERENE hidden) is covered by `tests/test_item_class_scope_paths.py`
 (every brand-scoped REST path over X-API-Key + contact_id) and `tests/test_allowed_item_class_scope.py`.
+| 8 | Fix round (review S1): tag Brands row, "Set brands" switched off reads "Brands not set", classes stay; Save stores `{"item_classes": ["__NONE__", "DIY"]}` with no `brands` key; 375px layout fine | 06-tag-classes-only-375.png | PASS |
