@@ -4,7 +4,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -325,5 +325,22 @@ describe('QuotationWhatsAppDialog', () => {
     const shown = (await screen.findByRole('textbox', { name: 'Counter-sign link' })) as HTMLInputElement;
     expect(shown.value).toBe(LINK());
     expect(toast.error).not.toHaveBeenCalledWith('Press Ctrl/Cmd+C to copy the selected link');
+  });
+
+  it('has one dialog title and raises no Description warning (round 4)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      renderDialog();
+      const dialog = await screen.findByRole('dialog', { name: 'Send R2 via WhatsApp' });
+      const headings = within(dialog).getAllByRole('heading');
+      expect(headings).toHaveLength(1);
+      expect(headings[0]).toHaveTextContent('Send R2 via WhatsApp');
+      const said = [...warn.mock.calls, ...error.mock.calls].map((c) => c.map(String).join(' '));
+      expect(said.some((m) => m.includes('Missing `Description`'))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
   });
 });
