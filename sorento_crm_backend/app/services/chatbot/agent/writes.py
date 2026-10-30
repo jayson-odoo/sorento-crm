@@ -1321,11 +1321,11 @@ def _pick(row: Any, keys) -> dict:
     return {k: _plain(get(k)) for k in keys}
 
 
-def _pr_scope(db, user: dict, path_format: str, params: dict):
+def _pr_scope(db, user: dict, path_format: str, params: dict, method: str = "GET"):
     """The request forms' own-scope guard for this person (404 outside it, 403 on a route a limited user may not use)."""
     from app.api.v1._request_own_scope import check
 
-    return check(db, str(user["id"]), "purchase_request", "GET", f"{PR_PREFIX}{path_format}", params)
+    return check(db, str(user["id"]), "purchase_request", method, f"{PR_PREFIX}{path_format}", params)
 
 
 def _pr_header(db, user: dict, request_id: str):
@@ -1416,6 +1416,8 @@ def _pr_decide_read_before(db, user: dict, args: dict) -> dict:
 
     request_id = str(args["request_id"])
     header = _pr_header(db, user, request_id)
+    # The approval POST is closed to a user who has only `view_own`, whatever the row: the route's guard says so.
+    _pr_scope(db, user, "/{request_id}/approval-decision", {"request_id": request_id}, method="POST")
     if header.approval_status != "pending":
         raise AppException(
             status_code=422,
@@ -1492,9 +1494,19 @@ def _pr_decide_changes(args: dict, before: dict, after: dict, shown: dict) -> li
 
 
 def _parked_for(db, header):
-    from app.services.form_action_service import FormActionService
+    """The request's waiting approval decision, and no other parked action."""
+    from app.models.sla import FORM_ACTION_PENDING, SlaFormAction
 
-    return FormActionService(db).pending_for(getattr(header, "request_type", None) or "purchase_request", str(header.id))
+    return (
+        db.query(SlaFormAction)
+        .filter(
+            SlaFormAction.source_entity_type == (getattr(header, "request_type", None) or "purchase_request"),
+            SlaFormAction.source_entity_id == str(header.id),
+            SlaFormAction.status == FORM_ACTION_PENDING,
+            SlaFormAction.action_key == "pr.approval_decision",
+        )
+        .first()
+    )
 
 
 def _pr_cancel_read_before(db, user: dict, args: dict) -> dict:
