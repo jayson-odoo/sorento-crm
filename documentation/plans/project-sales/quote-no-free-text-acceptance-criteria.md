@@ -1,8 +1,8 @@
 # UAC: QUOTE-NO-FREE-TEXT
 
 Status: answered 30 Oct ~22:05 (owner via crew): prod is not live, so no legacy free-text lines exist that matter.
-Q1 no legacy handling, Q3 yes, Q5 (a) API + UI now. Q2 (product delete guard) and Q4 (bespoke flow) are being
-explained to the owner; each lands as its own small commit after his answer (AC-Q2 / AC-Q4 below, not built yet).
+Q1 no legacy handling, Q3 yes, Q5 (a) API + UI now; 22:40: Q2 (a) refuse a quoted product / set delete,
+Q4 (a) bespoke items via New Product Application (no code).
 Card: `CARD-quote-no-free-text-30oct.md`. Plan: `PLAN-quote-no-free-text-30oct.md`.
 
 ## The rule
@@ -37,11 +37,24 @@ neither is refused with HTTP 422, code `quotation_line_product_required`, messag
 - AC-11 No row ever shows "Not a catalogue product"; "Non-standard" still shows for an out-of-series product.
 - AC-12 Usable and not clipped at 375px and 1280px.
 
-## Pending the owner's answer (separate commits)
+## Product / set delete (Q2, owner 30 Oct ~22:40: refuse)
 
-- AC-Q2 (if Q2 = refuse): deleting a product or a product set that sits on any quotation line returns 409 naming
-  the quotation number; product and line unchanged. A product on no quotation still deletes.
-- AC-Q4 (if Q4 = existing flow): no code; the user guide points bespoke items to a New Product Application.
+- AC-13 Deleting a product that is on any quotation line (any version, issued or draft) is refused 409 with the
+  message "This product is on quotation <document_no>, so it cannot be deleted." (first quotation number in
+  document_no order); the product and the line are unchanged. Same through the deferred delete
+  (`record_actions.py` `product.delete` -> `ProductService.delete_product`): the action ends `failed` with that text,
+  which the page toasts (`lib/pending-entity-store.ts:275-276`).
+- AC-14 Same for a product set on any quotation line: 409 "This product set is on quotation <document_no>, so it
+  cannot be deleted."; set and line unchanged; deferred `product_set.delete` ends `failed` with that text.
+- AC-15 A product (or set) on no quotation still deletes exactly as today.
+- The check lives in the service delete methods, like the new-product-application guard
+  (`product_service.py:1301`), so the direct route and the deferred action share it. No migration (FKs stay SET NULL).
+
+## Bespoke items (Q4, owner 30 Oct ~22:40: existing flow)
+
+- AC-Q4 No code: an item not in the catalogue goes through a New Product Application
+  (`procurement.new_product_applications.create`), purchasing opens the code, then it is quoted like any product.
+  No inline create in the editor. User guide note on request (guide-writer).
 
 ## Out of scope
 

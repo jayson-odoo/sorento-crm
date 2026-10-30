@@ -1,7 +1,7 @@
 # PLAN: QUOTE-NO-FREE-TEXT (every quotation line is a catalogue product or set)
 
-Status: Build - card answered 30 Oct ~22:05 (Q1 no legacy handling, Q3 yes, Q5 (a) API + UI); Q2 / Q4 pending the
-owner, each a separate small commit after his answer. Track: full (M, owner-visible rule on an existing screen); no
+Status: Build - card answered 30 Oct ~22:05 (Q1 no legacy handling, Q3 yes, Q5 (a) API + UI); Q2 (a) refuse a quoted
+product / set delete, Q4 (a) New Product Application, no code (owner 22:40). Track: full (M, owner-visible rule on an existing screen); no
 migration.
 
 Source: owner 30 Oct ~21:15, "Free text product shouldn't be allowed, simple as that."
@@ -21,7 +21,10 @@ not in the catalogue goes through a New Product Application first.
 - Frontend mirrors it in `quotationLineDraft.ts` `lineErrors` (:99-103) so the editor shows the error before the
   server does; the server stays the authority.
 - Classes fixed together: every write path (card table) through the one check; the seed script skips unknown codes;
-  product / set delete (Q2) waits for the owner.
+  product / set delete refused while quoted (Q2), in the service delete methods like the NPA guard
+  (`product_service.py:1301`), so the direct route and the deferred `record_actions` delete share it; an
+  execute-time refusal already toasts `error_text` (`lib/pending-entity-store.ts:275-276`). Out of scope: part
+  products frozen inside a set line's `set_parts_snapshot` (JSON, no FK) are not checked.
 - No legacy handling (Q1): prod is not live, so no stored product-less line exists that matters. Revise and
   amendment Apply need no code: they go through `_write_line` or copy only lines that already passed it.
 - FE: `lineErrors` refuses a line with no product and no set; "Not a catalogue product" flag removed
@@ -36,6 +39,6 @@ not in the catalogue goes through a New Product Application first.
 1. tester: red pytest per write path (add, edit-to-null, save-all, form create, form edit) + red vitest for
    `lineErrors` and the flags; rewrite the existing tests that assert an off-catalogue line saves.
 2. coder: service rule + schema text + FE draft/grid/flags; update the existing off-catalogue tests the card lists.
-3. Q2 guard on product / set delete (after the owner's answer, own red + fix commits).
+3. Q2 guard on product / set delete: own test(red) + fix commits (AC-13..AC-15).
 4. Seed script skips unknown codes.
 5. reviewer + security-reviewer (write-path validation), browser pass 1280 + 375, hand test script.
