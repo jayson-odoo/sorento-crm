@@ -151,13 +151,8 @@ export function RequestReserveDialog({
   const rowsSignature = rows
     .map((row) => `${row.id}:${row.remaining}:${row.defaultLocation}`)
     .join('|');
-  const untickedSignature = (untickedRowIds ?? []).join('|');
   React.useEffect(() => {
     if (!open) return;
-    const unticked = new Set(untickedRowIds ?? []);
-    setRowSelection(
-      Object.fromEntries(rows.filter((row) => !unticked.has(row.id)).map((row) => [row.id, true])),
-    );
     setRequested(
       Object.fromEntries(rows.map((row) => [row.id, String(Number(row.remaining || '0'))])),
     );
@@ -166,7 +161,21 @@ export function RequestReserveDialog({
     setPark(false);
     setShowErrors(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, rowsSignature, untickedSignature]);
+  }, [open, rowsSignature]);
+
+  // RESERVE-REQ-PICK review round: ticks reset on their OWN key, the row ids. Keyed on
+  // `rowsSignature` above they were wiped when each row's pools landed after open
+  // (`defaultLocation` is part of it), so a line unticked in that window came back ticked.
+  const rowIdsSignature = rows.map((row) => row.id).join('|');
+  const untickedSignature = (untickedRowIds ?? []).join('|');
+  React.useEffect(() => {
+    if (!open) return;
+    const unticked = new Set(untickedRowIds ?? []);
+    setRowSelection(
+      Object.fromEntries(rows.filter((row) => !unticked.has(row.id)).map((row) => [row.id, true])),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, rowIdsSignature, untickedSignature]);
 
   // G6: `columns` must stay REFERENTIALLY STABLE across a keystroke - `flexRender`
   // renders a columnDef's own `cell` function AS the component type, so a `columns`
@@ -191,7 +200,11 @@ export function RequestReserveDialog({
     () => [
       buildSelectColumn<RequestReserveDialogRow>({
         selectAllRows: true,
-        rowLabel: (row) => `Select ${row.original.item_code ?? 'row'}`,
+        // The date tells apart two lines of one product (a snapshot drill's usual case).
+        rowLabel: (row) =>
+          `Select ${row.original.item_code ?? 'row'}${
+            row.original.delivery_date ? `, ${formatDateInMalaysia(row.original.delivery_date)}` : ''
+          }`,
       }),
       {
         id: 'product',

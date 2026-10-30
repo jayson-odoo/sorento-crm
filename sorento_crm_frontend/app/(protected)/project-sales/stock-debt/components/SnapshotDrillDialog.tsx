@@ -156,7 +156,7 @@ function OiRequestDialog({
   oiId: string;
   /** This product's rows on the drill: frozen, or linked to its lines after the snapshot. */
   drillRowIds: Set<string>;
-  /** Frozen rows whose line reads Short 0: they open unticked. */
+  /** Rows (frozen or linked after the snapshot) on lines that read Short 0: they open unticked. */
   coveredRowIds: string[];
   defaultWarehouseId: string | null;
   onOpenChange: (open: boolean) => void;
