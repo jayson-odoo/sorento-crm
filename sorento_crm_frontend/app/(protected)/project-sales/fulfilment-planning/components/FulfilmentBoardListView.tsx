@@ -673,6 +673,21 @@ export function FulfilmentBoardListView({
         minSize: 110,
         enableSorting: true,
       },
+      // SO-LINE-DESC: AutoCount's line description off the core SO line, read-only.
+      {
+        id: 'description',
+        meta: { headerTitle: 'Description' },
+        accessorFn: (row) => row.description ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.description ?? undefined}>
+            {row.original.description ?? ''}
+          </span>
+        ),
+        size: 240,
+        minSize: 140,
+        enableSorting: true,
+      },
       // PLAN-SO-LOCATION: the SO line's own warehouse, beside the product it is owed in. The
       // Suggested text names a location only where a supply part does, so a Buy row said
       // nowhere where the line was. Same cell as `BoardCellBreakdownDialog`'s Location column.

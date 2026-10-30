@@ -88,15 +88,15 @@ const threeLines = [
 ];
 
 describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', () => {
-  it('has a Location column right after Product', async () => {
+  it('has a Location column right after Description', async () => {
     renderView([contribution()]);
     await screen.findByText('SO428264');
     const headers = screen
       .getAllByRole('columnheader')
       .map((header) => header.textContent?.trim() ?? '');
-    const product = headers.indexOf('Product');
-    expect(product).toBeGreaterThan(-1);
-    expect(headers[product + 1]).toBe('Location');
+    const description = headers.indexOf('Description');
+    expect(description).toBeGreaterThan(-1);
+    expect(headers[description + 1]).toBe('Location');
   });
 
   it('prints the location on a Buy row, whose suggestion names no warehouse', async () => {

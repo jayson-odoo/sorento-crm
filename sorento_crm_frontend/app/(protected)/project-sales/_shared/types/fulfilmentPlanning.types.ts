@@ -1181,6 +1181,8 @@ export interface BoardLineDecision {
  * be supplied from").
  */
 export interface BoardContribution {
+  /** SO-LINE-DESC: AutoCount's line description on the core SO line; `null` when none. */
+  description?: string | null;
   /** FULFIL-SO-REMARK: the line reads as a mockup line (note, line remark or heading). */
   is_mockup?: boolean;
   /**

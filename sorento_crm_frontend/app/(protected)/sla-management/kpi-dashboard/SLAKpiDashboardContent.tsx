@@ -63,6 +63,8 @@ const ENTITY_ROUTES: Record<string, string> = {
   complaint: '/complaint-management/complaints',
   purchase_request: '/procurement-management/purchase-requests',
   sponsorship_form: '/procurement-management/purchase-requests',
+  product_drawing: '/master-data-management/products',
+  product_photo: '/master-data-management/products',
 };
 
 function taskHref(t: KpiTaskRow): string {

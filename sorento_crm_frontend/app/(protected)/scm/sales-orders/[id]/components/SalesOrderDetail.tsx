@@ -993,8 +993,21 @@ export function SalesOrderDetail({
         size: 260,
         meta: { headerTitle: 'Product' },
       },
+      // SO-LINE-DESC: AutoCount's line description, read-only (also in edit mode).
+      {
+        id: 'description',
+        accessorFn: (line) => line.description ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.description ?? undefined}>
+            {row.original.description ?? ''}
+          </span>
+        ),
+        size: 260,
+        meta: { headerTitle: 'Description' },
+      },
       // OI-SPLIT-VIEW (UAC B1): "Split N" and the (i) popup in their own column right after
-      // Product, on Columns like the rest; empty for a line with no splits.
+      // Description, on Columns like the rest; empty for a line with no splits.
       {
         id: 'split',
         // B7a: sorts by the chip's N (the AutoCount extra row not counted).
