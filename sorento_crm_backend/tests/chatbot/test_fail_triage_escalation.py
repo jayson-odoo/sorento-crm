@@ -1028,3 +1028,70 @@ def test_s4_mocha_the_topic_question_offers_product_info_and_routes_it(
     engine_mod.run_turn(_say("s4-3", "Product info"), session_factory=session_factory)
 
     assert seams.pairs() == [("general_enquiries", "purchasing_product")], seams.assignee
+
+
+# =========================================================================== #
+# Review round 3 (NOT READY): blocker 2 (accepted option's agent), blocker 3 (K7)
+# =========================================================================== #
+
+
+def test_r3_b2_a_picked_topic_option_draws_with_its_own_agent_not_another_map_agent_for_the_team(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    """The "Product info" option carries (general_enquiries, purchasing); the company also
+    links (incoming_stock_enquiries, purchasing), the "Stock & ETA" pair for the SAME team.
+    The pick is an accepted offer: its own agent draws, never the other map agent. (The S2
+    rule, map agents before a DEFAULT-filled agent, stays pinned by
+    `test_s2_an_explicit_customer_service_team_draws_with_order_enquiries_not_the_default_agent`.)"""
+    company = _seed_company(session_factory, "ZZT Company Purchasing")
+    _seed_contact(session_factory, phone="+60970000021", company_id=company)
+    _seed_pair(session_factory, company_id=company, agent_code="incoming_stock_enquiries", team_code="purchasing")
+    _seed_pair(session_factory, company_id=company, agent_code="general_enquiries", team_code="purchasing")
+    seams = _observe(monkeypatch)
+    stub_parser(_help())
+    stub_access()
+
+    engine_mod.run_turn(_say("r3-b2-1", "I want to talk to a person"), session_factory=session_factory)
+
+    assert seams.live_bodies() == [], seams.assignee
+    open_question = _session_vars(session_factory).get("open_question") or {}
+    product = [o for o in (open_question.get("options") or []) if TOPIC_PRODUCT in str(o.get("label") or "").lower()]
+    assert len(product) == 1, open_question
+    assert (product[0].get("payload") or {}).get("agent") == "general_enquiries", product
+    stub_parser(_pick(int(product[0]["position"])))
+
+    result = engine_mod.run_turn(_say("r3-b2-2", "Product info"), session_factory=session_factory)
+
+    assert ("incoming_stock_enquiries", "purchasing") not in seams.pairs(), seams.assignee
+    assert seams.pairs() == [("general_enquiries", "purchasing")], seams.assignee
+    assert _assigned(result), result.actions
+
+
+def test_r3_b3_a_failed_draw_for_a_parser_free_string_team_names_no_team(
+    session_factory, stub_parser, stub_access, monkeypatch
+) -> None:
+    """Kill K7: the failure must reach the H-ESC naming step WITH the free-string team (the
+    draw raised for it), not the NoReachableTeam branch. A company with NO agent_teams rows
+    reads every pair as reachable, so the lane draws (general_enquiries, FREE_TEAM) and the
+    real next-assignee handler 404s."""
+    company = _seed_company(session_factory, "ZZT Company Empty")
+    _seed_contact(session_factory, phone="+60970000022", company_id=company)
+    seams = _observe(monkeypatch)
+    stub_parser(
+        _help(
+            user_goal=f"escalate to the {FREE_TEAM} team",
+            routing={"suggested_team": FREE_TEAM, "suggested_agent": None},
+            escalation={"is_escalation_confirmation": True, "escalation_declined": None, "company_pick": None},
+        )
+    )
+    stub_access()
+
+    result = engine_mod.run_turn(_say("r3-b3-1", f"escalate to the '{FREE_TEAM}' team"), session_factory=session_factory)
+
+    said = _reply_text(result)
+    assert [b.get("team_code") for b in seams.live_bodies()] == [FREE_TEAM], (
+        f"the draw is made for the free-string team, so the naming step sees it: {seams.assignee!r}"
+    )
+    assert seams.errors(), "the draw fails"
+    assert "0123" not in said and "refund" not in said.lower(), said
+    assert said == T.H_ESC_NEUTRAL, said

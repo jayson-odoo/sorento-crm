@@ -329,3 +329,85 @@ def test_n1_a_tail_failure_after_the_answer_keeps_the_attachments_action(
     assert resp.status_code == 200, resp.text
     kinds = [a["kind"] for a in resp.json()["actions"]]
     assert kinds == ["send_message", "send_attachments"], kinds
+
+
+# --------------------------------------------------------------------------- #
+# Round 4: AC-3 fails closed when the gate cannot resolve the contact
+# --------------------------------------------------------------------------- #
+
+
+def test_ac3_a_contact_the_gate_cannot_resolve_gets_no_link(portal_console, session_factory) -> None:
+    """Two NULL-workspace rows share the respond id: the resolver denies rather than picks one."""
+    from sqlalchemy import text
+
+    c = portal_console("+60100000617")
+    _grant_price_tag_form(session_factory)
+    db = session_factory()
+    row = db.execute(text("SELECT respond_io_id, phone_number FROM respond_contacts LIMIT 1")).one()
+    db.execute(text("UPDATE respond_contacts SET workspace_id = NULL"))
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, '{}'::jsonb, NULL)"
+        ),
+        {"cid": row.respond_io_id, "phone": "+60100000618"},
+    )
+    db.commit()
+    c.state = {"focus": None, "open_question": None}
+    out = c.say("I want to request price tags", _price_tag_turn())
+    assert out == FORM_NOT_AVAILABLE, out
+    assert _portal_calls(c) == [], c.tool_calls
+
+
+# --------------------------------------------------------------------------- #
+# Round 4: no quick-reply title sent to any contact exceeds 20 characters
+# --------------------------------------------------------------------------- #
+
+BUTTON_MAX = 20
+
+
+def _sent_quick_replies(session_factory, lang: str, labels: str) -> str:
+    import uuid
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(
+        turn_id=str(uuid.uuid4()),
+        item={"reply_language": lang},
+        duplicate=False,
+        reply={"text": "Pick one", "quick_replies": labels},
+        actions=[{"kind": "send_message", "text": "Pick one", "quick_replies": labels}],
+    )
+    engine_mod._localize_result(result, session_factory, True)
+    assert result.reply["quick_replies"] == result.actions[0]["quick_replies"]
+    return result.reply["quick_replies"]
+
+
+def _titles(labels: str) -> list[str]:
+    return [t.strip() for t in labels.split(",")]
+
+
+def test_r4_outstanding_detail_titles_that_overflow_in_ms_are_sent_in_english_whole(session_factory) -> None:
+    english = "Sales order list, Delivery order list"
+    sent = _sent_quick_replies(session_factory, "ms", english)
+    assert all(len(t) <= BUTTON_MAX for t in _titles(sent)), sent
+    assert sent == english, sent
+
+
+def test_r4_a_set_whose_ms_titles_all_fit_is_still_translated(session_factory) -> None:
+    sent = _sent_quick_replies(session_factory, "ms", "Sales orders, Delivery orders")
+    assert sent == "Pesanan jualan, Pesanan penghantaran", sent
+
+
+def test_r4_no_single_label_translates_past_the_button_limit(session_factory) -> None:
+    lang = "ms"  # no zh translation of a short label passes 20 characters
+    """The generic guard, over every catalogued label short enough to be a button title: a set
+    of that one label goes out either as a fitting translation or in English whole."""
+    over = [
+        english
+        for english, entry in label_catalog.LABELS.items()
+        if len(english) <= BUTTON_MAX and "," not in english and english.replace(" ", "").isalpha() and len(entry.get(lang, "")) > BUTTON_MAX
+    ]
+    assert over, "the catalog has no overflowing translation to guard against"
+    for english in over:
+        sent = _sent_quick_replies(session_factory, lang, english)
+        assert all(len(t) <= BUTTON_MAX for t in _titles(sent)), (lang, english, sent)
