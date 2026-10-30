@@ -56,7 +56,7 @@ Every new text has MS and ZH entries in `label_catalog.py`, and a test asserts t
 Owner: "we shouldn't do no topic escalate to marketing product, we should clarify". No default team.
 Evidence (17 failed escalations, backup 1028): 1 truly topic-less, 2 named team missed by the
 parser, 2 topic in the message with parser routing null, 5 follow-ups whose topic was in earlier
-turns, 3 unroutable agent+team pairs, 3 marketing_form SLA missing (config, owner), 1 company uuid
+turns, 3 unroutable agent+team pairs, 3 marketing_form SLA unbound (owner bound it in prod 30 Oct ~22:50, no code), 1 company uuid
 sent as assignee.
 
 - AC-7a agent + team are chosen as ONE pair from the topic's domain (the parser's R-X-08 map:

@@ -22,7 +22,9 @@ Owner answered Q1-Q5 on 30 Oct ~21:15; Q1 escalation routing evidence filed as a
 - Batch 1 escalation (owner Q1 answer 30 Oct ~22:05, UAC AC-7): NO default team; clarify when
   there is no topic; carry the topic from earlier turns; agent + team as one reachable pair per
   company; honest failure text; assignee uuid only from an assignee option. AC-7f (named team in
-  the parser) is a prompt change. Owner still to answer: marketing_form SLA (config).
+  the parser) is a prompt change. marketing_form SLA: the policy existed but was not bound to the
+  team set (backup 1028, `agent_teams.policy_id` null on all 3 rows); owner bound it in prod 30 Oct
+  ~22:50, no code.
 - Review round 1 (30 Oct): NOT READY, findings R1-R7 + nits in the UAC file. Next round: tester red
   tests for R1, R2, R3, R4, R5, R6, R7 and AC-7a..e, then coder (escalation slice on Opus: tangled
   routing state), then reviewer + security-reviewer again.
