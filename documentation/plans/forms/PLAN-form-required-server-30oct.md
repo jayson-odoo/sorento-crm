@@ -1,14 +1,64 @@
 # PLAN: server enforces required fields on form submit (FORM-REQUIRED-SERVER)
 
-Status: Plan (small fix track candidate, no migration, no RBAC change). Lane FORM-REQUIRED-SERVER.
+Status: Review (small fix track: no migration, no RBAC change, no new ingest surface;
+backend only). Lane FORM-REQUIRED-SERVER, PR #2008. UAC: `form-required-server-acceptance-criteria.md`.
 
 ## Problem
 
-Found by PORTAL-P4-REQUESTS (#1953): for stock_inquiry, complaint, purchase_request and
-sponsorship_form the server accepts a submit with required fields missing (200, status
-submitted, number assigned). Only SubmissionForm's required flags stop it in the UI.
+Found by PORTAL-P4-REQUESTS (#1953) while building the owner's "happy and not happy path of
+all form submission" regression (30 Oct). For stock_inquiry, complaint, purchase_request and
+sponsorship_form the server did not enforce required fields: a blank draft could be
+submitted (200, status submitted, number assigned, SLA started, team notified). Only
+SubmissionForm's required flags stopped it, in the browser, and the portal is a public
+token-reached surface.
 
-## Fix (to be filled in after code reading)
+## Where the required flags live
 
-On SUBMIT only (not draft save), the server checks the same required fields the UI marks
-required, per kind, from one source of truth, and refuses with 422 + the list of missing fields.
+- SubmissionForm: `sorento_crm_frontend/app/(auth)/portal/components/SubmissionForm.tsx`
+  `FIELDS` (`required: true` per field), plus the complaint "At least one product" added in
+  `collectMissingRequired` as `product_lines`. No server form definition carried them.
+- Project registration already had its own server list
+  (`project_registration_service.REQUIRED_ON_SUBMIT`), untouched.
+- The external / chatbot / MCP create paths have their own, stricter contracts
+  (`complaints_service.py` `_complaint_submission_required_fields`,
+  `procurement_service.py` `_STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS`,
+  `_PR_REQUIRED_FIELDS_BY_TYPE`), untouched.
+
+## Decision (crew answer (a), 30 Oct)
+
+The server list `sorento_crm_backend/app/services/portal_required_fields.py` is canonical.
+`tests/test_form_required_server.py` parses SubmissionForm's FIELDS and fails if the two
+differ, so there is one truth enforced by CI. FE and BE build from separate Docker contexts,
+so a shared file was not an option.
+
+Follow-up (b), after #1953 merges: expose the list as `required_fields` on `GET /me` and let
+SubmissionForm read it instead of its own flags.
+
+## Fix
+
+- `portal_required_fields.require_complete(kind, row)`: 422,
+  `message = "Fill in the required fields before submitting."`,
+  `detail = <missing names, comma separated>`, `code = VALIDATION_ERROR` (the body project
+  registration answers with, and the shape `portal-client.ts` `throwSubmissionError` reads).
+- `PortalService.submit_draft`: called in each kind's branch after its status guard (so
+  "Cannot submit X with status Y" still wins) and before any write; `portal_draft_at = None`
+  moved below the branches so a refusal leaves the row as it was.
+- `PortalRevisionService.revise`: called after the payload is applied, beside the
+  sponsorship unit-price check.
+- Draft saves are never checked.
+
+## Entry points and integrations checked
+
+- `submit_draft` has one caller, the portal route (`api/v1/public/portal.py`). #1953 mounts the
+  same route body on `/api/v1/my-requests`, so it inherits the check.
+- n8n, MCP and the chatbot create through the external routes, which never call
+  `submit_draft`; none starts failing.
+- Existing data: a stored draft or a rejected row missing a required field now needs that
+  field filled before it can be (re)submitted, which is what the form asks for anyway.
+
+## Tests
+
+- Red 7f5ebcde, fix 00e202df + 0daf0bb5. `tests/test_form_required_server.py` 27 tests.
+- 71 existing tests in 11 files submitted incomplete forms; their fixtures now carry the
+  required fields (no assertion changed). Portal set 1789 passed; wider set 4584 passed,
+  5 failed, all 5 failing on main too.
