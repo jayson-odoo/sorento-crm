@@ -1,8 +1,11 @@
 /**
  * QUOTE-DRAWING-ESCALATE round 2 (owner hand test, 30 Oct): resolving a product drawing or photo
  * task feels like chat. The same side panel opens in `media` mode: no chat ticket fetch (that one
- * reaches Respond.io), the product, the quotations waiting, the followers, a link to Resources,
- * Respond then Resolve ticket.
+ * reaches Respond.io), the product, the quotations waiting, a link to Resources, Respond then
+ * Resolve ticket.
+ *
+ * QUOTE-MEDIA-CHAT: a task with a conversation (`has_conversation`) mounts the chat panel and has no
+ * Respond button (a reply is the Respond); without one it is the panel above. No "Following".
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -51,7 +54,9 @@ vi.mock('./ExtendDueDialog', () => ({
     open ? <div data-testid="extend-dialog" /> : null,
 }));
 vi.mock('./TicketConversationPanel', () => ({
-  default: () => <div data-testid="chat-panel" />,
+  default: ({ ticketId }: { ticketId: string | null }) => (
+    <div data-testid="ticket-conversation-panel" data-ticket-id={ticketId ?? ''} />
+  ),
 }));
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -97,7 +102,9 @@ function detail(
         href: '/project-sales/pr1/quotations/q2',
       },
     ],
-    followers: ['Baser Ramli', 'Siti Noor'],
+    has_conversation: false,
+    // Tolerated while the old payload shape is still read; the panel no longer renders it.
+    ...{ followers: [] as string[] },
     ...overrides,
   };
 }
@@ -148,7 +155,7 @@ beforeEach(() => {
 });
 
 describe('InterventionTicketDrawer media variant', () => {
-  it('shows the title, the product, the quotations waiting and the followers', () => {
+  it('shows the title, the product and the quotations waiting, and no Following section', () => {
     mountDetail(detail());
     renderDrawer();
 
@@ -167,8 +174,7 @@ describe('InterventionTicketDrawer media variant', () => {
     expect(
       screen.getByRole('link', { name: 'QT-0002 · Villa' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Baser Ramli')).toBeInTheDocument();
-    expect(screen.getByText('Siti Noor')).toBeInTheDocument();
+    expect(screen.queryByText('Following')).not.toBeInTheDocument();
   });
 
   it('titles a photo task "Product photo"', () => {
@@ -189,13 +195,29 @@ describe('InterventionTicketDrawer media variant', () => {
     expect(document.querySelector('input[type="file"]')).toBeNull();
   });
 
-  it('does not call the chat ticket fetch and shows no chat panel', () => {
-    mountDetail(detail());
+  it('does not call the chat ticket fetch and shows no chat panel without a conversation', () => {
+    mountDetail(detail({ has_conversation: false }));
     renderDrawer();
 
     expect(useInterventionTicket).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('chat-panel')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ticket-conversation-panel')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Respond$/ })).toBeInTheDocument();
     expect(useMediaRequest).toHaveBeenCalledWith('trk-1');
+  });
+
+  it('with a conversation mounts the chat panel on the ticket and has no Respond button', () => {
+    mountDetail(detail({ has_conversation: true }));
+    renderDrawer();
+
+    const panel = screen.getByTestId('ticket-conversation-panel');
+    expect(panel).toHaveAttribute('data-ticket-id', 'trk-1');
+    expect(
+      screen.queryByRole('button', { name: /^Respond$/ }),
+    ).not.toBeInTheDocument();
+    // The facts block and Resolve ticket stay.
+    expect(screen.getByRole('link', { name: /Upload in Resources/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Resolve ticket/ })).toBeInTheDocument();
+    expect(useInterventionTicket).not.toHaveBeenCalled();
   });
 
   it('asks for the detail only while open', () => {
@@ -205,13 +227,12 @@ describe('InterventionTicketDrawer media variant', () => {
   });
 
   it('shows empty states with a heading and a hint, no button, when nobody is waiting', () => {
-    mountDetail(detail({ quotations: [], followers: [] }));
+    mountDetail(detail({ quotations: [] }));
     renderDrawer();
 
     expect(screen.getByText('Waiting on this')).toBeInTheDocument();
-    expect(screen.getByText('Following')).toBeInTheDocument();
     expect(screen.getByTestId('media-quotations-empty')).toBeInTheDocument();
-    expect(screen.getByTestId('media-followers-empty')).toBeInTheDocument();
+    expect(screen.queryByTestId('media-followers-empty')).not.toBeInTheDocument();
     expect(
       screen.getByTestId('media-quotations-empty').querySelector('button'),
     ).toBeNull();

@@ -287,7 +287,8 @@ describe('QuotationLineFileCell, drawing cell: already escalated', () => {
     expect(label.textContent).toMatch(/29 Oct/);
     expect(escalateButton()).not.toBeInTheDocument();
     const hover = screen.getByTitle(/Escalated/);
-    expect(hover.getAttribute('title')).toMatch(/by 2 people/);
+    expect(hover.getAttribute('title')).toMatch(/^Escalated .+\. Due .+\.$/);
+    expect(hover.getAttribute('title')).not.toMatch(/\bby \d+ (person|people)\b/);
     expect(hover.getAttribute('title')).toMatch(/Due /);
     // The tile itself is the Join control: one button, no link.
     expect(screen.getAllByRole('button')).toHaveLength(1);
@@ -315,9 +316,9 @@ describe('QuotationLineFileCell, drawing cell: already escalated', () => {
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Already escalated: added you to the request'));
   });
 
-  it('a single requester reads "by 1 person"', () => {
+  it('the hover never counts requesters: a ticket has one requester', () => {
     renderCell(line(drawing({ escalation: escalation({ requester_count: 1 }) })));
-    expect(screen.getByTitle(/Escalated/).getAttribute('title')).toMatch(/by 1 person\b/);
+    expect(screen.getByTitle(/Escalated/).getAttribute('title')).not.toMatch(/\bby \d+ (person|people)\b/);
   });
 
   it('state 6: once the team responded the tile reads "Replied <date>", the hover keeps "Responded"', () => {
@@ -563,7 +564,8 @@ describe('QuotationLineFileCell, photo cell: already escalated', () => {
     expect(screen.getByText(/Escalated/).textContent).toMatch(/29 Oct/);
     expect(photoEscalateButton()).not.toBeInTheDocument();
     const hover = screen.getByTitle(/Escalated/);
-    expect(hover.getAttribute('title')).toMatch(/by 2 people/);
+    expect(hover.getAttribute('title')).toMatch(/^Escalated .+\. Due .+\.$/);
+    expect(hover.getAttribute('title')).not.toMatch(/\bby \d+ (person|people)\b/);
     expect(hover.getAttribute('title')).toMatch(/Due /);
     expect(photoJoinButton()).toBeEnabled();
   });

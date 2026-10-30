@@ -124,7 +124,7 @@ def test_a_second_click_answers_joined_true_and_opens_nothing_new(scene):
     assert len(trackers_for(s["db"], s["product"].id)) == 1
 
 
-def test_a_second_person_joins_and_is_counted_over_http(scene):
+def test_a_second_person_gets_their_own_ticket_over_http(scene):
     s = scene
     with acting(s["db"], s["owner"], {VIEW}) as client:
         client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
@@ -132,9 +132,9 @@ def test_a_second_person_joins_and_is_counted_over_http(scene):
         joined = client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
 
     assert joined.status_code in (200, 201), joined.text
-    assert joined.json()["joined"] is True
-    assert joined.json()["escalation"]["requester_count"] == 2
-    assert len(trackers_for(s["db"], s["product"].id)) == 1
+    assert joined.json()["joined"] is False
+    assert joined.json()["escalation"]["requester_count"] == 1
+    assert len(trackers_for(s["db"], s["product"].id)) == 2
 
 
 def test_the_line_read_then_carries_the_escalation_state(scene):
@@ -300,15 +300,15 @@ def test_the_assignee_responds_and_the_task_reads_responded(scene):
     assert tracker.is_responded is True and tracker.is_resolved is False
 
 
-def test_the_assignee_resolves_and_every_requester_is_told_once(scene):
+def test_the_assignee_resolves_each_ticket_and_each_requester_is_told_once(scene):
     s = scene
     tracker = _open_task(s)
     with acting(s["db"], s["stranger"], {VIEW}) as client:
         client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
     with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
-        response = client.post(f"{SLA_BASE}/{tracker.id}/media-resolve")
+        responses = [client.post(f"{SLA_BASE}/{t.id}/media-resolve") for t in trackers_for(s["db"], s["product"].id)]
 
-    assert response.status_code == 200, response.text
+    assert [r.status_code for r in responses] == [200, 200], [r.text for r in responses]
     s["db"].refresh(tracker)
     assert tracker.is_resolved is True
     title = f"Product drawing request for {s['product'].product_code} resolved"
@@ -629,11 +629,11 @@ def _second_quotation(s):
     return version, line, scope
 
 
-def test_the_detail_describes_a_task_with_two_requesters_on_two_quotations(scene):
+def test_the_detail_describes_a_ticket_raised_from_two_quotations(scene):
     s = scene
     version_b, line_b, scope_b = _second_quotation(s)
     _escalate_as(s, s["owner"], s["version"], s["line"])
-    _escalate_as(s, s["stranger"], version_b, line_b)
+    _escalate_as(s, s["owner"], version_b, line_b)
     (tracker,) = trackers_for(s["db"], s["product"].id)
 
     with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
@@ -658,7 +658,6 @@ def test_the_detail_describes_a_task_with_two_requesters_on_two_quotations(scene
     assert len(body["quotations"]) == 2 and len(hrefs) == 2
     for q in body["quotations"]:
         assert q["href"] == f"/project-sales/{q['project_id']}/quotations/{q['quotation_id']}"
-    assert len(body["followers"]) == 2 and len(set(body["followers"])) == 2
 
 
 def test_a_quotation_label_is_a_reference_never_a_uuid(scene):
@@ -672,7 +671,6 @@ def test_a_quotation_label_is_a_reference_never_a_uuid(scene):
     (quotation,) = body["quotations"]
     assert quotation["label"]
     assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", quotation["label"])
-    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", " ".join(body["followers"]))
 
 
 def test_the_detail_is_a_404_for_someone_who_cannot_see_the_task(scene):
@@ -778,3 +776,225 @@ def test_linking_a_drawing_through_the_product_attachments_route_notifies_the_as
         if "Drawing added" in f"{n.title} {n.body or ''}"
     ]
     assert len(added) == 1
+
+
+# =============================================================================================
+# QUOTE-MEDIA-CHAT: the PIC works a media ticket through the chat ticket endpoints, resolve does a
+# chat resolve, and the quotation tile is per viewer.
+# =============================================================================================
+
+TICKET_BASE = "/api/v1/sla-management/conversation-sla-tracking"
+
+
+class _FakeRespond:
+    """No network. One class stands in for ``RespondClient`` (constructor and ``for_identifier``);
+    every text send is recorded on ``sent_texts``."""
+
+    api_key = "x"
+    sent_texts: list = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def for_identifier(cls, db, identifier):
+        return cls()
+
+    def list_messages(self, identifier, limit=50, cursor=None):
+        return {"items": []}
+
+    def send_message(self, identifier, text):
+        type(self).sent_texts.append((identifier, text))
+        return {"id": "m-text"}
+
+
+@pytest.fixture
+def respond_doubles(monkeypatch):
+    """The Respond HTTP client and the window are patched, as the chat ticket route tests do."""
+    import app.services.queue_service as queue_service
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: None)
+    _FakeRespond.sent_texts = []
+    monkeypatch.setattr("app.services.integration_service.RespondClient", _FakeRespond)
+    monkeypatch.setattr(
+        "app.services.respond_messaging_service.get_window_state",
+        lambda *a, **k: {"open": True, "last_incoming_at": None, "checked_at": "", "source": "x"},
+    )
+    return _FakeRespond
+
+
+@pytest.fixture
+def chat_scene(respond_doubles):
+    """Like ``scene``, but the owner is linked to a WhatsApp contact and the Respond sender is
+    the fake above (``scene`` itself fails any test that reaches a real send)."""
+    from app.models.access import RespondContact
+    from app.models.user import User
+
+    with blank_session() as db:
+        env = _setup(db)
+        with company_scope(db, frozenset({env["company_id"]})):
+            team = seed_drawing_team(db)
+            product, version, line = quoted_product(db, env)
+            contact = RespondContact(
+                id=_uid(),
+                phone_number=f"+6011{uuid.uuid4().int % 10**8:08d}",
+                name="ZZT Sales WhatsApp",
+                respond_io_id=f"zzt-rio-{uuid.uuid4().hex[:8]}",
+                session_vars={},
+            )
+            db.add(contact)
+            db.flush()
+            db.query(User).filter(User.id == env["owner"]).update({"respond_contact_id": contact.id})
+            stranger = _user(db, "zzt Stranger")
+            db.commit()
+            yield {
+                "db": db,
+                "env": env,
+                "team": team,
+                "product": product,
+                "version": version,
+                "line": line,
+                "owner": env["owner"],
+                "stranger": stranger,
+                "contact": contact,
+            }
+
+
+def _no_ack(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.product_drawing_request_service.enqueue_request_ack",
+        lambda contact_id, text: None,
+        raising=False,
+    )
+
+
+# ------------------------------------------------------------------ B4: the chat ticket endpoints
+
+
+def test_b4_ticket_detail_conversation_and_send_accept_a_media_ticket_with_a_contact(chat_scene, monkeypatch):
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+    assert tracker.respond_contact_id == s["contact"].id
+    assignee = s["team"]["assignee"]
+
+    with acting(s["db"], assignee, set()) as client:
+        detail = client.get(f"{TICKET_BASE}/{tracker.id}/ticket")
+        conversation = client.get(f"{TICKET_BASE}/{tracker.id}/conversation")
+        sent = client.post(f"{TICKET_BASE}/{tracker.id}/ticket/send", json={"text": "Drawing is on its way"})
+
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["id"] == str(tracker.id)
+    assert conversation.status_code == 200, conversation.text
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["sent_as"] == "text"
+    assert _FakeRespond.sent_texts == [(s["contact"].respond_io_id, "Drawing is on its way")]
+    s["db"].refresh(tracker)
+    assert tracker.is_responded is True, "a reply is the Respond"
+    assert str(tracker.responded_by) == str(assignee)
+    assert tracker.is_resolved is False
+
+
+def test_b4_the_media_detail_says_it_has_a_conversation(chat_scene, monkeypatch):
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        body = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}").json()
+
+    assert body["has_conversation"] is True
+
+
+def test_b4_without_a_contact_the_chat_ticket_endpoints_still_refuse(scene):
+    s = scene
+    tracker = _open_task(s)
+    assert tracker.respond_contact_id is None
+
+    with acting(s["db"], s["team"]["assignee"], set()) as client:
+        detail = client.get(f"{TICKET_BASE}/{tracker.id}/ticket")
+        sent = client.post(f"{TICKET_BASE}/{tracker.id}/ticket/send", json={"text": "hello"})
+        media = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}")
+
+    assert detail.status_code == 404, detail.text
+    assert sent.status_code in (400, 422), sent.text
+    s["db"].refresh(tracker)
+    assert tracker.is_responded is False
+    assert media.json()["has_conversation"] is False
+
+
+# ------------------------------------------------------------------------------- B6: resolve
+
+
+def _spy_resolve_helpers(monkeypatch):
+    from app.services.sla_service import ConversationSLATrackingService
+
+    calls = {"message": [], "close": []}
+    monkeypatch.setattr(
+        ConversationSLATrackingService,
+        "_enqueue_ticket_resolved_message_best_effort",
+        lambda self, tracking: calls["message"].append(str(tracking.id)),
+    )
+    monkeypatch.setattr(
+        ConversationSLATrackingService,
+        "_close_respond_conversation_best_effort",
+        lambda self, tracking: calls["close"].append(str(tracking.id)),
+    )
+    return calls
+
+
+def test_b6_resolving_a_media_ticket_with_a_contact_queues_the_closing_message_and_the_close(
+    chat_scene, monkeypatch
+):
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+    calls = _spy_resolve_helpers(monkeypatch)
+
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        response = client.post(f"{SLA_BASE}/{tracker.id}/media-resolve")
+
+    assert response.status_code == 200, response.text
+    assert calls == {"message": [str(tracker.id)], "close": [str(tracker.id)]}
+
+
+def test_b6_resolving_a_media_ticket_without_a_contact_queues_neither(scene, monkeypatch):
+    s = scene
+    tracker = _open_task(s)
+    calls = _spy_resolve_helpers(monkeypatch)
+
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        response = client.post(f"{SLA_BASE}/{tracker.id}/media-resolve")
+
+    assert response.status_code == 200, response.text
+    s["db"].refresh(tracker)
+    assert tracker.is_resolved is True
+    assert calls == {"message": [], "close": []}
+
+
+# -------------------------------------------------------------------- B8: the tile is per viewer
+
+
+def _drawing_cell(s, user_id):
+    with acting(s["db"], user_id, {VIEW}) as client:
+        lines = client.get(f"{BASE}/quotation-versions/{s['version'].id}/lines")
+    assert lines.status_code == 200, lines.text
+    return next(r for r in lines.json()["data"] if r["id"] == str(s["line"].id))["technical_drawing"]
+
+
+def test_b8_the_quotation_tile_shows_the_viewers_own_ticket_not_a_colleagues(scene):
+    s = scene
+    tracker = _open_task(s)  # the owner's
+
+    mine = _drawing_cell(s, s["owner"])
+    colleague = _drawing_cell(s, s["stranger"])
+
+    assert mine["escalation"] is not None and mine["escalation"]["tracking_id"] == str(tracker.id)
+    assert colleague["escalation"] is None, "a colleague's open ticket must not hide Escalate"
+
+    with acting(s["db"], s["stranger"], {VIEW}) as client:
+        own = client.post(_url(s["version"].id, s["line"].id), json={"kind": "drawing"})
+    assert own.json()["joined"] is False
+    assert own.json()["escalation"]["tracking_id"] != str(tracker.id)
+    assert _drawing_cell(s, s["stranger"])["escalation"]["tracking_id"] == own.json()["escalation"]["tracking_id"]
+    assert _drawing_cell(s, s["owner"])["escalation"]["tracking_id"] == str(tracker.id)

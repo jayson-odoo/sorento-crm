@@ -462,7 +462,7 @@ def test_a_set_line_escalates_its_driver_part_not_the_set(db, env):
 # ---------------------------------------------------------------------------- AC-4 join, not dup
 
 
-def test_a_second_quotation_of_the_same_product_joins_the_same_task(db, env):
+def test_a_second_quotation_of_the_same_product_joins_the_same_requesters_own_task(db, env):
     from app.services import project_quotation_service as quotes
 
     seed_drawing_team(db)
@@ -471,10 +471,10 @@ def test_a_second_quotation_of_the_same_product_joins_the_same_task(db, env):
     line_b = _priced_line(db, env, scope_b, product)
     version_b = quotes.current_version(db, scope_b.id)
     db.commit()
-    first, second = _user(db, "zzt Sales One"), _user(db, "zzt Sales Two")
+    first = _user(db, "zzt Sales One")
 
     _svc().escalate(db, version_id=version_a.id, line_id=line_a.id, user=actor(first), kind="drawing")
-    out = _svc().escalate(db, version_id=version_b.id, line_id=line_b.id, user=actor(second), kind="drawing")
+    out = _svc().escalate(db, version_id=version_b.id, line_id=line_b.id, user=actor(first), kind="drawing")
 
     assert len(trackers_for(db, product.id)) == 1
     assert out["joined"] is True
@@ -583,7 +583,7 @@ def _private_schema_engine():
         pg._BLANK.update(saved)
 
 
-def test_two_simultaneous_escalates_of_one_product_open_one_task_and_two_requesters(sent, monkeypatch):
+def test_two_simultaneous_escalates_of_one_product_by_one_requester_open_one_task(sent, monkeypatch):
     """The real race: two sessions on two connections with real commits, the assignee draw slowed
     so both reach the open-task check together. Runs in a private scratch schema (see
     `_private_schema_engine`) because the commits are real."""
@@ -619,7 +619,8 @@ def test_two_simultaneous_escalates_of_one_product_open_one_task_and_two_request
             seeder.commit()
             seed_drawing_team(seeder)
             product, version, line = quoted_product(seeder, env)
-            first_user, second_user = _user(seeder, "zzt Sales One"), _user(seeder, "zzt Sales Two")
+            first_user = _user(seeder, "zzt Sales One")
+            second_user = first_user  # the lock key carries the requester: one person, two clicks
             seeder.commit()
             product_id, version_id, line_id = product.id, version.id, line.id
             company_id = env["company_id"]
@@ -649,8 +650,8 @@ def test_two_simultaneous_escalates_of_one_product_open_one_task_and_two_request
                 check.close()
             assert errors == []
             assert len([t for t in trackers if not t.is_resolved]) == 1, [t.id for t in trackers]
-            assert {r.triggered_by_id for r in requesters} == {first_user, second_user}
-            assert len(requesters) == 2
+            assert {r.triggered_by_id for r in requesters} == {first_user}
+            assert len(requesters) == 1
         finally:
             seeder.close()
             own.dispose()
@@ -761,9 +762,8 @@ def test_states_are_keyed_by_every_product_asked_for(db, env):
 def test_an_open_task_state_carries_the_cell_fields(db, env):
     seed_drawing_team(db)
     product, version, line = quoted_product(db, env)
-    first, second = _user(db, "zzt Sales One"), _user(db, "zzt Sales Two")
+    first = _user(db, "zzt Sales One")
     _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(first), kind="drawing")
-    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(second), kind="drawing")
     (tracker,) = trackers_for(db, product.id)
 
     state = _svc().escalation_states(db, [product.id])[str(product.id)]
@@ -775,7 +775,7 @@ def test_an_open_task_state_carries_the_cell_fields(db, env):
     assert naive_utc(state["opened_at"]) == tracker.initiated_at
     assert state["responded_at"] is None
     assert naive_utc(state["due_at"]) == tracker.due_at, "before a response the response clock governs"
-    assert state["requester_count"] == 2
+    assert state["requester_count"] == 1
     assert state["last_resolved_at"] is None
 
 
@@ -923,8 +923,9 @@ def test_a_join_does_not_notify_the_assignee_again(db, env):
     seed = seed_drawing_team(db, whatsapp_on_assignment=True, link_whatsapp=True)
     product, version, line = quoted_product(db, env)
 
-    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(_user(db, "zzt Sales One")), kind="drawing")
-    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(_user(db, "zzt Sales Two")), kind="drawing")
+    caller = _user(db, "zzt Sales One")
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller), kind="drawing")
+    _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller), kind="drawing")
 
     (tracker,) = trackers_for(db, product.id)
     _assigned_note(db, seed, tracker)  # exactly one
@@ -1046,10 +1047,11 @@ def test_notify_drawing_linked_is_a_noop_without_an_open_task_and_notifies_with_
 # ----------------------------------------------------------- AC-8 / AC-12 H4: resolve tells requesters
 
 
-def test_h4_resolving_tells_every_requester_once_on_every_channel_they_allow(db, env):
+def test_h4_resolving_tells_each_requester_once_in_app_and_email_and_never_on_whatsapp(db, env):
+    """Q5: each requester has their own task now. The resolved notice keeps in-app and email
+    (their own toggle) and never carries WhatsApp, even with the toggle on and a contact linked."""
     seed = seed_drawing_team(db)
     product, version, line = quoted_product(db, env)
-    # Requesters are salespeople, each with their own toggles and WhatsApp link.
     contact = RespondContact(
         id=_uid(), phone_number="+60110000777", name="ZZT Sales WhatsApp",
         respond_io_id=f"zzt-rio-{uuid.uuid4().hex[:8]}", session_vars={},
@@ -1067,12 +1069,13 @@ def test_h4_resolving_tells_every_requester_once_on_every_channel_they_allow(db,
     db.commit()
     _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(first), kind="drawing")
     _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(second), kind="drawing")
-    (tracker,) = trackers_for(db, product.id)
+    assert len(trackers_for(db, product.id)) == 2
 
-    _svc().resolve(db, tracker.id, actor(seed["assignee"]))
+    for tracker in trackers_for(db, product.id):
+        _svc().resolve(db, tracker.id, actor(seed["assignee"]))
 
     title = f"Product drawing request for {product.product_code} resolved"
-    for requester, expected in ((first, {"in_app", "email", "whatsapp"}), (second, {"in_app"})):
+    for requester, expected in ((first, {"in_app", "email"}), (second, {"in_app"})):
         notes = [n for n in notes_for(db, requester) if n.title == title]
         assert len(notes) == 1, (requester, [n.title for n in notes_for(db, requester)])
         assert channels(db, notes[0]) == expected
@@ -1402,7 +1405,7 @@ def test_the_requester_is_an_event_log_row_naming_the_user_and_the_quotation(db,
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_a_second_user_joins_the_open_task_and_is_counted(db, env, kind):
+def test_a_second_user_opens_their_own_task_and_the_first_stays_theirs(db, env, kind):
     seed_drawing_team(db)
     product, version, line = quoted_product(db, env)
     first, second = _user(db, "zzt Sales One"), _user(db, "zzt Sales Two")
@@ -1411,10 +1414,11 @@ def test_a_second_user_joins_the_open_task_and_is_counted(db, env, kind):
     out = esc(db, version, line, second, kind)
 
     rows = trackers_for(db, product.id, kind)
-    assert len(rows) == 1, "a second escalate must not open a second task"
-    assert out["joined"] is True
-    assert out["escalation"]["requester_count"] == 2
-    assert {r.triggered_by_id for r in requester_rows(db, rows[0].id)} == {first, second}
+    assert len(rows) == 2, "one task per requester"
+    assert out["joined"] is False
+    assert out["escalation"]["requester_count"] == 1
+    assert sorted(r.triggered_by_id for t in rows for r in requester_rows(db, t.id)) == sorted([first, second])
+    assert all(len(requester_rows(db, t.id)) == 1 for t in rows)
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -1445,11 +1449,11 @@ def test_a_drawing_and_a_photo_of_one_product_are_two_tasks_each_joinable(db, en
     (photo_task,) = trackers_for(db, product.id, "photo")
     assert str(drawing_task.id) != str(photo_task.id)
 
-    joined_drawing = esc(db, version, line, two, "drawing")
-    joined_photo = esc(db, version, line, two, "photo")
+    joined_drawing = esc(db, version, line, one, "drawing")
+    joined_photo = esc(db, version, line, one, "photo")
     assert joined_drawing["joined"] is True and joined_photo["joined"] is True
-    assert joined_drawing["escalation"]["requester_count"] == 2
-    assert joined_photo["escalation"]["requester_count"] == 2
+    assert joined_drawing["escalation"]["requester_count"] == 1
+    assert joined_photo["escalation"]["requester_count"] == 1
     assert len(trackers_for(db, product.id, "drawing")) == 1
     assert len(trackers_for(db, product.id, "photo")) == 1
     assert str(joined_drawing["escalation"]["tracking_id"]) == str(drawing_task.id)
@@ -1469,8 +1473,8 @@ def test_resolving_the_drawing_task_leaves_the_photo_task_open_and_joinable(db, 
 
     db.refresh(photo_task)
     assert photo_task.is_resolved is False
-    out = esc(db, version, line, two, "photo")
-    assert out["joined"] is True and out["escalation"]["requester_count"] == 2
+    out = esc(db, version, line, one, "photo")
+    assert out["joined"] is True and out["escalation"]["requester_count"] == 1
 
 
 # ----------------------------------------------------------------- the route: team, brand, policy
@@ -2144,9 +2148,8 @@ def test_h4_resolving_tells_every_requester_once_naming_the_kind(db, env, kind):
     first, second = _user(db, "zzt Sales One"), _user(db, "zzt Sales Two")
     esc(db, version, line, first, kind)
     esc(db, version, line, second, kind)
-    (tracker,) = trackers_for(db, product.id, kind)
-
-    _svc().resolve(db, tracker.id, actor(seed["assignee"]))
+    for tracker in trackers_for(db, product.id, kind):
+        _svc().resolve(db, tracker.id, actor(seed["assignee"]))
 
     for requester in (first, second):
         told = [n for n in notes_for(db, requester) if n.title == _resolved_title(kind, product)]
@@ -2240,3 +2243,329 @@ def test_a_file_linked_by_another_companys_session_does_not_notify_this_companys
         _svc().notify_drawing_linked(db, product.id)
 
     assert _drawing_added_notes(db, seed["assignee"]) == []
+
+
+# =============================================================================================
+# QUOTE-MEDIA-CHAT (PLAN-quote-media-chat-30oct.md): a drawing or photo request is a chat
+# escalation. One ticket per (product, kind, requester); the requester's WhatsApp contact rides on
+# the ticket; one acknowledgement per new ticket; the requester never gets WhatsApp notices.
+# =============================================================================================
+
+NOUN = {"drawing": "technical drawing", "photo": "product photo"}
+SOURCE_TEXT = {"drawing": "Technical drawing for {code} ({no})", "photo": "Product photo for {code} ({no})"}
+ACK_TEXT = (
+    "Your project request: {noun} for {code} ({no}). Routed to your PIC, they will reply shortly."
+)
+
+
+@pytest.fixture
+def acks(monkeypatch):
+    """Records every call of the acknowledgement queue function. ``raising=False`` so a missing
+    function reads as "never called" (an assertion), not as a fixture error."""
+    calls: list = []
+    monkeypatch.setattr(
+        _svc(), "enqueue_request_ack", lambda contact_id, text: calls.append((contact_id, text)), raising=False
+    )
+    return calls
+
+
+@pytest.fixture
+def notice_calls(monkeypatch):
+    """Every ``create_with_channel_preferences`` call's keyword arguments; the real one still runs."""
+    from app.services.notification_service import NotificationService
+
+    calls: list = []
+    real = NotificationService.create_with_channel_preferences
+
+    def spy(self, *args, **kwargs):
+        calls.append(kwargs)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(NotificationService, "create_with_channel_preferences", spy)
+    return calls
+
+
+def linked_user(db, name: str):
+    """A salesperson whose ``users.respond_contact_id`` points at a real WhatsApp contact.
+    Returns ``(user_id, contact)``."""
+    contact = RespondContact(
+        id=_uid(),
+        phone_number=f"+6011{uuid.uuid4().int % 10**8:08d}",
+        name=f"ZZT {name} WhatsApp",
+        respond_io_id=f"zzt-rio-{uuid.uuid4().hex[:8]}",
+        session_vars={},
+    )
+    db.add(contact)
+    db.flush()
+    user_id = _user(db, name)
+    db.query(User).filter(User.id == user_id).update({"respond_contact_id": contact.id})
+    db.commit()
+    return user_id, contact
+
+
+def quotation_no(db, version) -> str:
+    """The number the quotation page prints for a draft: its document's number."""
+    from app.models.projects import ProjectQuotation, ProjectQuotationDocument, ProjectQuotationVersion
+
+    return (
+        db.query(ProjectQuotationDocument.document_no)
+        .join(ProjectQuotation, ProjectQuotation.document_id == ProjectQuotationDocument.id)
+        .join(ProjectQuotationVersion, ProjectQuotationVersion.quotation_id == ProjectQuotation.id)
+        .filter(ProjectQuotationVersion.id == version.id)
+        .scalar()
+    )
+
+
+def _second_quotation_of(db, env, product):
+    from app.services import project_quotation_service as quotes
+
+    _document, scope = _scope(db, env)
+    line = _priced_line(db, env, scope, product)
+    version = quotes.current_version(db, scope.id)
+    db.commit()
+    return version, line
+
+
+# ------------------------------------------------------------------ B1: one ticket per requester
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b1_two_requesters_get_two_tickets_and_a_repeat_joins_the_requesters_own(db, env, kind):
+    seed_drawing_team(db)
+    product, version_a, line_a = quoted_product(db, env)
+    version_b, line_b = _second_quotation_of(db, env, product)
+    a, b = _user(db, "zzt Sales One"), _user(db, "zzt Sales Two")
+
+    first = esc(db, version_a, line_a, a, kind)
+    second = esc(db, version_a, line_a, b, kind)
+
+    rows = trackers_for(db, product.id, kind)
+    assert len(rows) == 2, "B must not join A's ticket"
+    assert first["joined"] is False and second["joined"] is False
+    by_requester = {r.triggered_by_id: t for t in rows for r in requester_rows(db, t.id)}
+    assert set(by_requester) == {a, b}
+    assert all(len(requester_rows(db, t.id)) == 1 for t in rows)
+
+    again = esc(db, version_b, line_b, a, kind)
+
+    assert again["joined"] is True
+    assert len(trackers_for(db, product.id, kind)) == 2, "A's repeat opens nothing"
+    assert str(again["escalation"]["tracking_id"]) == str(by_requester[a].id), "the answer is A's own ticket"
+    reasons = {r.reason for r in requester_rows(db, by_requester[a].id)}
+    assert reasons == {f"quotation_version:{version_a.id}", f"quotation_version:{version_b.id}"}
+    assert {r.reason for r in requester_rows(db, by_requester[b].id)} == {f"quotation_version:{version_a.id}"}
+
+
+# --------------------------------------------------------------------------- the lock parameter
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b1_the_advisory_lock_key_is_source_product_and_requester(db, env, kind):
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    a, b = _user(db, "zzt Sales One"), _user(db, "zzt Sales Two")
+    keys: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        if "pg_advisory_lock" in statement and isinstance(parameters, dict):
+            keys.append(str(parameters.get("k")))
+
+    connection = db.get_bind()
+    event.listen(connection, "before_cursor_execute", _record)
+    try:
+        esc(db, version, line, a, kind)
+        esc(db, version, line, b, kind)
+    finally:
+        event.remove(connection, "before_cursor_execute", _record)
+
+    assert keys == [f"{SOURCES[kind]}:{product.id}:{a}", f"{SOURCES[kind]}:{product.id}:{b}"]
+
+
+# ----------------------------------------------------------- B2: the ticket is on the contact
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b2_a_new_ticket_carries_the_requesters_contact_and_the_exact_source_text(db, env, acks, kind):
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    user_id, contact = linked_user(db, "zzt Sales One")
+
+    esc(db, version, line, user_id, kind)
+
+    (tracker,) = trackers_for(db, product.id, kind)
+    assert tracker.respond_contact_id == contact.id
+    assert tracker.contact is not None and tracker.contact.phone_number == contact.phone_number
+    assert tracker.source_message_text == SOURCE_TEXT[kind].format(
+        code=product.product_code, no=quotation_no(db, version)
+    )
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b2_a_requester_without_a_contact_leaves_it_empty_but_the_source_text_is_set(db, env, acks, kind):
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+
+    esc(db, version, line, _user(db, "zzt Sales One"), kind)
+
+    (tracker,) = trackers_for(db, product.id, kind)
+    assert tracker.respond_contact_id is None
+    assert tracker.contact is None
+    assert tracker.source_message_text == SOURCE_TEXT[kind].format(
+        code=product.product_code, no=quotation_no(db, version)
+    )
+
+
+# ----------------------------------------------------------------------- B3: the acknowledgement
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b3_a_new_ticket_with_a_contact_queues_one_acknowledgement_with_the_exact_text(db, env, acks, kind):
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    user_id, contact = linked_user(db, "zzt Sales One")
+
+    esc(db, version, line, user_id, kind)
+
+    assert acks == [
+        (
+            contact.id,
+            ACK_TEXT.format(noun=NOUN[kind], code=product.product_code, no=quotation_no(db, version)),
+        )
+    ]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b3_a_join_queues_nothing(db, env, acks, kind):
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    version_b, line_b = _second_quotation_of(db, env, product)
+    user_id, _contact = linked_user(db, "zzt Sales One")
+
+    esc(db, version, line, user_id, kind)
+    assert len(acks) == 1, "the new ticket's own acknowledgement"
+    again = esc(db, version_b, line_b, user_id, kind)
+
+    assert again["joined"] is True
+    assert len(acks) == 1, "a join sends nothing"
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b3_no_contact_queues_nothing(db, env, acks, kind):
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+
+    esc(db, version, line, _user(db, "zzt Sales One"), kind)
+
+    assert acks == []
+
+
+# ------------------------------------------------------------------------- B7: notices, no WhatsApp
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b7_the_requesters_resolved_notice_never_sends_whatsapp_and_is_in_app(db, env, notice_calls, kind):
+    seed = seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    user_id, _contact = linked_user(db, "zzt Sales One")
+    db.query(User).filter(User.id == user_id).update(
+        {"notify_whatsapp_on_assignment": True, "notify_email_on_assignment": True}
+    )
+    db.commit()
+    esc(db, version, line, user_id, kind)
+    (tracker,) = trackers_for(db, product.id, kind)
+
+    _svc().resolve(db, tracker.id, actor(seed["assignee"]))
+
+    mine = [kw for kw in notice_calls if str(kw.get("user_id")) == user_id]
+    assert mine, "the requester must still be told"
+    assert all(not kw.get("send_whatsapp") for kw in mine), mine
+    notes = [n for n in notes_for(db, user_id) if n.title == _resolved_title(kind, product)]
+    assert len(notes) == 1
+    assert "in_app" in channels(db, notes[0]) and "whatsapp" not in channels(db, notes[0])
+
+
+def test_b7_the_pics_assignment_notice_keeps_whatsapp(db, env, notice_calls):
+    seed = seed_drawing_team(db, whatsapp_on_assignment=True, link_whatsapp=True)
+    product, version, line = quoted_product(db, env)
+
+    esc(db, version, line, _user(db, "zzt Sales One"), "drawing")
+
+    (tracker,) = trackers_for(db, product.id)
+    pic = [kw for kw in notice_calls if str(kw.get("user_id")) == seed["assignee"]]
+    assert pic and all(kw.get("send_whatsapp") is True for kw in pic), pic
+    assert "whatsapp" in channels(db, _assigned_note(db, seed, tracker))
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b7_h3_a_linked_file_notifies_the_assignee_of_every_open_ticket(db, env, kind):
+    seed = seed_drawing_team(db, members_per_tier=2)
+    product, version, line = quoted_product(db, env)
+    a, b = _user(db, "zzt Sales One"), _user(db, "zzt Sales Two")
+    esc(db, version, line, a, kind)
+    esc(db, version, line, b, kind)
+    ticket_a, ticket_b = sorted(trackers_for(db, product.id, kind), key=lambda t: t.initiated_at)
+    first_pic, second_pic = seed["pool"][1]
+    ticket_a.assigned_to_id, ticket_b.assigned_to_id = first_pic, second_pic
+    db.commit()
+
+    if kind == "drawing":
+        _svc().notify_drawing_linked(db, product.id)
+    else:
+        _svc().notify_photo_linked(db, product.id)
+
+    noun = "Drawing" if kind == "drawing" else "Photo"
+    for pic in (first_pic, second_pic):
+        added = [n for n in notes_for(db, pic) if f"{noun} added" in f"{n.title} {n.body or ''}"]
+        assert len(added) == 1, (pic, [n.title for n in notes_for(db, pic)])
+
+
+# ---------------------------------------------------------------- B8: the tile is per viewer
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_b8_states_for_a_requester_show_only_their_own_open_ticket(db, env, kind):
+    seed = seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    a, b = _user(db, "zzt Sales One"), _user(db, "zzt Sales Two")
+    esc(db, version, line, a, kind)
+    (ticket_a,) = trackers_for(db, product.id, kind)
+    pid = str(product.id)
+
+    mine = _svc().escalation_states_by_kind(db, [pid], requester_id=a)[kind][pid]
+    theirs = _svc().escalation_states_by_kind(db, [pid], requester_id=b)[kind][pid]
+
+    assert mine is not None and str(mine["tracking_id"]) == str(ticket_a.id)
+    assert theirs is None, "B has no ticket while A's is open"
+
+    esc(db, version, line, b, kind)
+    ticket_b = next(t for t in trackers_for(db, product.id, kind) if str(t.id) != str(ticket_a.id))
+    again = _svc().escalation_states_by_kind(db, [pid], requester_id=b)[kind][pid]
+    assert str(again["tracking_id"]) == str(ticket_b.id)
+    assert str(_svc().escalation_states_by_kind(db, [pid], requester_id=a)[kind][pid]["tracking_id"]) == str(
+        ticket_a.id
+    )
+
+    _svc().resolve(db, ticket_b.id, actor(seed["assignee"]))
+    after = _svc().escalation_states_by_kind(db, [pid], requester_id=b)[kind][pid]
+    assert after["tracking_id"] is None and after["last_resolved_at"] is not None
+    assert _svc().escalation_states_by_kind(db, [pid], requester_id=a)[kind][pid]["tracking_id"] is not None
+
+
+# ----------------------------------------------------------- the detail says if there is a chat
+
+
+def test_media_request_detail_has_conversation_follows_the_contact(db, env, acks):
+    seed = seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    with_contact, _contact = linked_user(db, "zzt Sales One")
+    without = _user(db, "zzt Sales Two")
+    esc(db, version, line, with_contact, "drawing")
+    esc(db, version, line, without, "photo")
+    (drawing_task,) = trackers_for(db, product.id, "drawing")
+    (photo_task,) = trackers_for(db, product.id, "photo")
+
+    on = _svc().media_request_detail(db, drawing_task.id, actor(seed["assignee"]), has_resolve_permission=True)
+    off = _svc().media_request_detail(db, photo_task.id, actor(seed["assignee"]), has_resolve_permission=True)
+
+    assert on["has_conversation"] is True
+    assert off["has_conversation"] is False
