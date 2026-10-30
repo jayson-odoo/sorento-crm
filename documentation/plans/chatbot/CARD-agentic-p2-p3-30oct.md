@@ -1,6 +1,6 @@
 # CARD: Agentic P2 auto-route + P3 write actions (behaviour card)
 
-Status: behaviour card, waiting on the owner's answers. No product code until then. Track: full pipeline
+Status: behaviour card filed (crew-ask on PR #1999), waiting on the owner's answers. No product code until then. Track: full pipeline
 (Size L: new routing path on live WhatsApp turns, new write surface, identity change for writes).
 Base: AGENTIC-P1 (PR #1982, owner hand test PASS 30 Oct). Lane AGENTIC-P2-CARD.
 
@@ -110,9 +110,9 @@ router, and Jev cannot replace the parser's entity extraction. Keep it as a sepa
 
 ### Examples (masked, dev data)
 
-**[dev Q4, in crew report]** Five real staff messages with the route the card expects and why. Shapes the card will
-fill from the sample: a single stock lookup (chat), an ETA lookup (chat), a "compare this month vs last month by
-agent" (agent), a "why is <cust> outstanding so high" (agent), a "mark that ask done" (agent, write).
+**[dev Q4: in crew report]** Six real staff messages (masked) with the route the card expects: two single
+lookups (chat), a bare menu answer such as "2" (chat by state, rule 3b), a two-domain ask over several products
+(agent), a category ranking the bot did not finish (agent), and the owner's W0 message (agent, write).
 
 ### Edge cases
 
@@ -120,8 +120,8 @@ agent" (agent), a "why is <cust> outstanding so high" (agent), a "mark that ask 
 - "yes" / "ok proceed" with a pending agent write: agent by state (rule 3a); the classifier never sees it.
 - A message that is a lookup plus a change ("stock of <code> and mark the ask done"): agent (the change wins).
 - Greeting / thanks / casual: bot (it already handles casual).
-- Agent busy for this contact (P1 `single_flight`, `agent/loop.py:500`): the message waits in the existing inbox
-  queue; it is not sent to the bot instead.
+- Agent busy for this contact (P1 `single_flight`, `agent/loop.py:500`): on WhatsApp the message waits behind it
+  (the inbox queue serialises one contact's turns, `chatbot/inbox_queue.py`); it is not sent to the bot instead.
 - Switch turned off mid-conversation: next message goes to the bot; the agent conversation is kept, not
   deleted.
 - A customer contact that is wrongly linked to a user: the router runs only for linked active users, so the
@@ -132,8 +132,8 @@ agent" (agent), a "why is <cust> outstanding so high" (agent), a "mark that ask 
 1. Gold set: 200 real staff messages from the last 60 days (crew Q4), masked by crew, each with its previous 3
    exchanges. Today's staff traffic is almost all single lookups, so a random sample holds too few agent-shaped
    asks to measure missed-agent. The set is enriched with every staff turn that ended `clarify_menu` or
-   `out_of_scope`, plus the P1 eval cases, until it holds at least 40 agent-labelled items. The owner (or crew, owner spot-checks 20) labels each `chat` or `agent`. 60 for tuning the router
-   prompt, 140 held out.
+   `out_of_scope`, plus the P1 eval cases, until it holds at least 40 agent-labelled items. The owner (or crew,
+   owner spot-checks 20) labels each `chat` or `agent`. A third for tuning the router prompt, the rest held out.
 2. Each option runs on the same held-out set, through cassettes after the first paid run.
 3. Measured: agreement with the label; **missed-agent** rate (labelled agent, routed chat); **wasted-agent**
    rate (labelled chat, routed agent); per language; p95 router latency; cost per 1k from the usage log.
@@ -254,16 +254,18 @@ resigned. Owner: "a very good example of agentic movement ... so agents can help
   The same agent rule the portal and own-scope use (`app/services/own_scope.py:1-15`).
 - There is no contact "active" flag. What a contact can do is: `chatbot_allowed` (AI replies,
   `models/access.py` RespondContact), its access types, its customer links (`contact_customer_service.py:132`
-  `unlink_customer`, "the customer and the contact both survive it"), and per-agent windows
-  (`contact_agent_access.valid_to`, `models/access.py:477`).
+  `unlink_customer`, "the customer and the contact both survive it"), and its chatbot-agent windows (general /
+  order / incoming-stock enquiries, `contact_agent_access.valid_to`, `models/access.py:477`; the sheet grants them
+  in `TEMPLATE["agents"]`).
 
 **How the agent handles it.**
 1. Reads the message as one request with two parts (role change for 4 phones, resign for 1). The dealer name
    line is context only; phones decide.
 2. Resolves each phone with `normalise_phone` + `_find_contacts`. For each found contact, checks the explicit
    chain: is it linked to a customer whose sales agent is one of THIS salesperson's agents?
-3. Reads each contact's current role from its access types per company (has an owner type -> Business owner;
-   only `end_user` -> Employee; none -> no access) and its companies (`respond_contact_companies`).
+3. Reads each contact's current role from its access types (holds an owner type of one of its companies ->
+   Business owner; only `end_user` -> Employee; none -> no access) and its companies
+   (`respond_contact_companies`, `app/models/company.py:74`).
 4. Builds one proposal (code writes the summary, not the model):
 
 ```
@@ -272,7 +274,7 @@ Change access for 5 contacts of <dealer> (your customer <cust-code>):
   +60-xxx-0002 <person>   Employee -> Business owner (Sorento)
   +60-xxx-0003 <person>   already Business owner - no change
   +60-xxx-0004            not found in the CRM - skipped
-  +60-xxx-0005 <person>   resigned: AI replies off, unlinked from <cust-code>, agent access ends today.
+  +60-xxx-0005 <person>   resigned: AI replies off, unlinked from <cust-code>, enquiry access ends today.
                           Contact and chat history are kept.
 Reply yes to apply the 3 changes, or tell me what to change.
 ```
@@ -282,7 +284,8 @@ Reply yes to apply the 3 changes, or tell me what to change.
    the domain audit rows (`audit_service`, as the sheet does with `EVENT = "contact.access_sheet"`, here
    `contact.access_agent` with `via = agent`) and one ledger row listing every contact before / after.
 6. Undo: "undo that" proposes the exact inverse from the ledger's before-state (re-link, AI replies back on,
-   owner types removed) as a new confirmed action.
+   enquiry windows restored, and the exact access-type rows this action added deleted) as a new confirmed action.
+   Deleting only rows the ledger says this action added is a narrow remove path; it is not a general downgrade.
 
 **Phones that do not fit** (each listed on its own line in the proposal, never silently dropped):
 - Not in the CRM -> "not found, skipped". The agent does not create contacts (question P3-Q3).
@@ -300,10 +303,10 @@ Reply yes to apply the 3 changes, or tell me what to change.
 
 Hard delete of anything; order cancel (`crm_order_cancel` stays off the agent); prices, costs, discounts,
 credit terms; stock adjustments, GRN, POs to suppliers; payments, invoices, credit notes; users, roles,
-permissions, integrations, API keys, system settings, prompts; any contact's chatbot settings, grants or
-switches of the user's OWN contact (no self-escalation); access facets other than role and the resign set below
-(stock mode, brands, prompts, model, reveals); sending WhatsApp / email to a customer on the agent's own
-initiative; more than 20 records per confirmation.
+permissions, integrations, API keys, system settings, prompts; anything on the user's OWN linked contact (no
+self-escalation: switches, grants, access, Agent mode); on other contacts, any access facet other than the role
+and the resign set (stock mode, brands, locations, model, reveals, prompts); sending WhatsApp / email to a
+customer on the agent's own initiative; more than 20 records per confirmation.
 
 ### Edge cases
 
