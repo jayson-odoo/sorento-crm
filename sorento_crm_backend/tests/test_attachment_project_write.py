@@ -613,3 +613,31 @@ def test_a_file_on_a_project_that_no_longer_exists_is_not_locked(db, world):
 
     assert res.status_code == 200, res.text
     assert _row(db, orphan).is_deleted is True
+
+
+def test_a_shared_file_on_a_project_in_another_company_is_still_refused(db, world):
+    """Security re-review X1: the existing-row lookup must not be company-scoped. A NULL-company
+    attachment is visible from every company, so a caller scoped to company B must not reach
+    company A's project document just because the project row is invisible to them."""
+    from app.models.company import Company
+
+    other_company = str(uuid.uuid4())
+    db.add(Company(id=other_company, name="zzt-apw Other", code=unique_code("APW")[:20]))
+    db.flush()
+    theirs = _seed_file(db, world["project_a"])  # project A is in DEFAULT_COMPANY_ID
+    db.query(Attachment).filter(Attachment.id == theirs).update({"company_id": None})
+    db.flush()
+
+    _as(world, "siti")
+
+    async def _scope_b():
+        scope = frozenset({other_company})
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _scope_b
+
+    res = world["client"].delete(f"{BASE}/{theirs}")
+
+    assert res.status_code == 403, res.text
+    assert _row(db, theirs) is not None

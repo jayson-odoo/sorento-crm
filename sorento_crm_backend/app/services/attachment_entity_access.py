@@ -59,17 +59,21 @@ def assert_can_write_target(
 def assert_can_write_existing(
     db: Session, entity_type: Optional[str], entity_id: Optional[str], current_user: dict
 ) -> None:
-    """The entity a file already sits on. Read without the staff draft filter: a file on a
-    project the caller cannot see (a contact's portal draft) must still be refused, and one on
-    a project that no longer exists has no project rule left to apply, so it is not locked."""
+    """The entity a file already sits on. Read without the staff draft filter AND without the
+    company scope: a file on a project the caller cannot see (a contact's portal draft, or a
+    project in a company outside the caller's scope, since a NULL-company attachment is visible
+    from every company) must still be refused. Only a project that no longer exists has no
+    rule left to apply, so its files are not locked."""
     if normalize_entity_type(entity_type) != PROJECT_ENTITY_TYPE or not _is_uuid(entity_id):
         return
+    from app.models.base import company_scope
     from app.models.projects import Project
 
-    project = db.query(Project).filter(Project.id == str(entity_id)).first()
-    if project is None:
-        return
-    _assert_can_edit(db, project, current_user)
+    with company_scope(db, None):
+        project = db.query(Project).filter(Project.id == str(entity_id)).first()
+        if project is None:
+            return
+        _assert_can_edit(db, project, current_user)
 
 
 def assert_can_write_attachments(

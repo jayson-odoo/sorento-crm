@@ -28,7 +28,8 @@ describe('buildDriveBulkActions', () => {
         selectionHasFolder: false,
         isTrashView: false,
         isResubmitting: false,
-        canRestore: false, canDelete: true,
+        canRestore: false,
+        canDelete: true,
       })
     ).toEqual([]);
   });
@@ -40,7 +41,8 @@ describe('buildDriveBulkActions', () => {
         selectionHasFolder: false,
         isTrashView: false,
         isResubmitting: false,
-        canRestore: false, canDelete: true,
+        canRestore: false,
+        canDelete: true,
       })
     ).toEqual([
       'bulk-move',
@@ -61,7 +63,8 @@ describe('buildDriveBulkActions', () => {
         selectionHasFolder: true,
         isTrashView: false,
         isResubmitting: false,
-        canRestore: false, canDelete: true,
+        canRestore: false,
+        canDelete: true,
       },
       handlers
     );
@@ -84,7 +87,8 @@ describe('buildDriveBulkActions', () => {
       selectionHasFolder: false,
       isTrashView: false,
       isResubmitting: false,
-      canRestore: false, canDelete: true,
+      canRestore: false,
+      canDelete: true,
     });
     expect(all).not.toContain('bulk-rename');
     expect(all).not.toContain('bulk-replace');
@@ -96,7 +100,8 @@ describe('buildDriveBulkActions', () => {
       selectionHasFolder: false,
       isTrashView: false,
       isResubmitting: false,
-      canRestore: false, canDelete: true,
+      canRestore: false,
+      canDelete: true,
     });
     expect(all).not.toContain('bulk-zip');
   });
@@ -136,7 +141,8 @@ describe('buildDriveBulkActions', () => {
         selectionHasFolder: false,
         isTrashView: true,
         isResubmitting: false,
-        canRestore: true, canDelete: true,
+        canRestore: true,
+        canDelete: true,
       })
     ).toEqual(['bulk-restore', 'bulk-permanent-delete']);
   });
@@ -179,7 +185,8 @@ describe('buildDriveBulkActions', () => {
         selectionHasFolder: false,
         isTrashView: true,
         isResubmitting: false,
-        canRestore: true, canDelete: true,
+        canRestore: true,
+        canDelete: true,
       });
       expect(all).toEqual(['bulk-restore', 'bulk-permanent-delete']);
     });

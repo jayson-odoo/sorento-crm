@@ -925,6 +925,9 @@ async def create_attachment(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="on_conflict must be one of 'copy', 'replace', or omitted.",
             )
+        # The project check runs before the collision lookup, so a 409 never tells a caller
+        # who may not write that project which file names it holds.
+        assert_can_write_target(db, entity_type, entity_id, current_user)
         collision = _find_filename_collision(db, directory_id, display_name, entity_type, entity_id)
         existing_to_replace = None
         if collision is not None:
@@ -983,7 +986,7 @@ async def create_attachment(
         # 2. Otherwise, use attachment_type.type_name (sanitized for S3 path)
         # 3. Fallback to "general"
         if entity_type:
-            final_entity_type = entity_type.lower().replace(' ', '_')
+            final_entity_type = normalize_entity_type(entity_type) or "general"
         elif attachment_type:
             final_entity_type = attachment_type.type_name.lower().replace(' ', '_')
         else:
