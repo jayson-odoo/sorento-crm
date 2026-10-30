@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_actor_user_id, get_current_user
 from app.models.base import company_scope, get_company_scope
-from app.services.company_scope_resolver import grants_scope_value, resolve_user_grant_ids
+from app.services.company_scope_resolver import _user_grant_ids, grants_scope_value
 from app.models.sla import (
     FORM_ACTION_CANCELLED,
     FORM_ACTION_CHANNEL_UI,
@@ -461,7 +461,7 @@ def _visible_to_reader(db: Session, row: Optional[SlaFormAction]) -> bool:
     text by entity id. A parked row stores its requester's scope
     (`form_action_service._payload_with_scope`); a row without one (an immediate
     form-SLA action, or one parked before the key existed) falls back to the
-    requester's company grants. A reader with every company sees every row; an
+    requester's explicit company grants. A reader with every company sees every row; an
     all-companies row is shown only to such a reader, since it names no one company.
     """
     if row is None:
@@ -477,7 +477,8 @@ def _visible_to_reader(db: Session, row: Optional[SlaFormAction]) -> bool:
         if row_scope is None:
             return False
     elif row.requested_by_id:
-        row_scope = frozenset(resolve_user_grant_ids(db, str(row.requested_by_id)))
+        # Explicit grants only: an admin's "every company" would make the row public.
+        row_scope = frozenset(_user_grant_ids(db, str(row.requested_by_id)))
     else:
         return False
     # Compares the requester's scope with the reader's, not the record's own company. Only

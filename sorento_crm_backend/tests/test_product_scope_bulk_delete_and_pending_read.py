@@ -320,3 +320,62 @@ def test_current_shows_every_company_to_an_all_companies_reader(api):
         body = _current(client, theirs)
     assert body["pending"] is not None
     assert body["pending"]["id"] == action_id
+
+
+def _grant(db, user_id: str, company_id: str) -> None:
+    from app.models.company import UserCompany
+
+    db.add(UserCompany(user_id=user_id, company_id=company_id))
+    db.commit()
+
+
+def test_current_hides_a_keyless_row_whose_requester_is_granted_another_company(api):
+    """A row without a stored scope (an immediate action, or one parked before the key
+    existed) falls back to its requester's explicit company grants."""
+    from app.models.user import User
+
+    db, _in_company, other = api
+    stranger = str(uuid.uuid4())
+    db.add(User(id=stranger, email=f"{stranger}@zzt.test", name="Other Co", status="ACTIVE"))
+    db.commit()
+    _grant(db, stranger, other)
+    _grant(db, _ACTOR_ID, _SORENTO)
+
+    brand_id = _brand(db)
+    row = SlaFormAction(
+        action_key="brand.delete",
+        source_entity_type="brand",
+        source_entity_id=brand_id,
+        payload_json={},
+        requested_by_id=stranger,
+        status="failed",
+        error_text="ZZT keyless reason",
+        resolved_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.commit()
+
+    with TestClient(app) as client:
+        assert _current(client, brand_id)["last_outcome"] is None
+
+    row.requested_by_id = _ACTOR_ID
+    db.commit()
+    with TestClient(app) as client:
+        assert _current(client, brand_id)["last_outcome"]["id"] == row.id
+
+
+def test_parking_on_another_companys_counting_down_record_does_not_echo_it(api):
+    """A same-key park on a record another company is counting down answers 409, not
+    that company's action id and timing."""
+    db, _in_company, other = api
+    _in_company(other)
+    theirs = _brand(db)
+    with TestClient(app) as client:
+        their_action = _park_brand_delete(client, theirs)
+        _in_company(_SORENTO)
+        res = client.post(
+            "/api/v1/pending-actions",
+            json={"action_key": "brand.delete", "entity_type": "brand", "entity_id": theirs, "payload": {}},
+        )
+    assert res.status_code == 409, res.text
+    assert their_action not in res.text
