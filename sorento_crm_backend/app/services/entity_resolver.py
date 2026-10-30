@@ -2956,10 +2956,11 @@ def _embed_with(db: Session, embed, texts):
 def _iterative_scan_for(db: Session, source_types) -> None:
     """A read narrowed to sources that have no index of their own is post-filtered from the keep-set index: let the
     scan keep going until enough rows survive."""
+    from app.services.embedding_indexes import set_iterative_scan
     from app.services.embedding_settings import HOT_FILTERED_SOURCES
 
     if any(t not in HOT_FILTERED_SOURCES for t in source_types):
-        db.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
+        set_iterative_scan(db)
 
 
 def _in_list_sql(values) -> str:

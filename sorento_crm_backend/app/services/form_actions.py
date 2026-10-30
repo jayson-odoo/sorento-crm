@@ -268,7 +268,7 @@ _declare(
     entity_types=PR_TYPES,
     label="Void",
     getter=_get_request,
-    columns=("status", "voided_by", "voided_at", "void_reason"),
+    columns=("status", "approval_status", "voided_by", "voided_at", "void_reason"),
     runner=lambda db, p: _pr_service(db).void_request(
         p["request_id"],
         void_reason=p.get("void_reason"),

@@ -296,10 +296,15 @@ def rederive(
     from_month: Optional[date] = None,
     to_month: Optional[date] = None,
     apply: bool = False,
+    keep_unset: bool = False,
 ) -> List[Move]:
     """Every sales order whose stored class differs from the rule's answer, grouped per agent
     per month (orders and RM, from -> to), and written when `apply`. Cancelled orders are
     re-derived too (the class is a fact about the order, not about whether it counts).
+
+    `keep_unset` (the bulk script, SALES-SPLIT-TALLY): when the rule's answer is "nothing" the
+    order keeps its stored class, so agents with no class at all and orders with no agent are
+    never cleared.
 
     Every company's orders, whatever the caller's scope (security review L3): the agent and
     its class are shared, so one company's edit must not leave another's orders stale. The
@@ -308,10 +313,10 @@ def rederive(
 
     with company_scope(db, None):
         return _rederive(db, agent_ids=agent_ids, company_id=company_id, from_month=from_month,
-                         to_month=to_month, apply=apply)
+                         to_month=to_month, apply=apply, keep_unset=keep_unset)
 
 
-def _rederive(db, *, agent_ids, company_id, from_month, to_month, apply) -> List[Move]:
+def _rederive(db, *, agent_ids, company_id, from_month, to_month, apply, keep_unset) -> List[Move]:
     q = db.query(
         SalesOrder.id,
         SalesOrder.sales_agent_id,
@@ -332,6 +337,8 @@ def _rederive(db, *, agent_ids, company_id, from_month, to_month, apply) -> List
     for so_id, agent_id, order_date, order_type, stored in q.all():
         day = order_date.date() if hasattr(order_date, "date") else order_date
         after = derived_class(order_type, cache.class_on(str(agent_id) if agent_id else None, day))
+        if after is None and keep_unset:
+            continue
         if after != stored:
             changes[str(so_id)] = (stored, after, agent_id, day)
     if not changes:

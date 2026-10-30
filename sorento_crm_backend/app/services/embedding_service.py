@@ -282,7 +282,7 @@ class EmbeddingReadService:
             )
             if source_type not in HOT_FILTERED_SOURCES and source_type in RECORD_KEEP_SET:
                 # The keep-set index post-filters to one source; keep scanning until enough survive.
-                self.db.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
+                embedding_indexes.set_iterative_scan(self.db)
         else:
             chunk_filters.append(
                 literal_column(f"embedding_chunks.source_type IN ({embedding_indexes.keep_set_sql()})")

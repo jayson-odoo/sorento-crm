@@ -159,7 +159,7 @@ def lookup_purchase_requests(db: Session, words: Iterable[str]) -> RefLookup:
             lines = _pr_lines(db, pr.id)
             head = f"*Purchase request {pr.request_number}*" + (f" - {pr.customer_name}" if pr.customer_name else "")
             status = _words(pr.status).capitalize() or "Unknown"
-            if pr.approval_status:
+            if pr.approval_status and pr.approval_status != pr.status:
                 status += f" - {_words(pr.approval_status)}"
             second = f"Requested {_day(pr.request_date)} - {status}" if pr.request_date else status
             out.cards.append("\n".join([head, second, *_lines_text(lines)]))
