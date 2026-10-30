@@ -123,6 +123,7 @@ def test_a_failed_warm_is_not_retried_by_the_next_turn(db, monkeypatch):
     clock[0] += ll.WARM_RETRY_AFTER
     assert _warm_and_wait(_rows(ts), emb)
     assert down.calls == 2
+    assert m not in ll._gave_up, "a warm that succeeded left the window standing"
 
 
 def test_a_new_text_is_warmed_inside_the_window(db, monkeypatch):
