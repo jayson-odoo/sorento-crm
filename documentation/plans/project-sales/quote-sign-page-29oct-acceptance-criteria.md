@@ -75,3 +75,14 @@ Terms: "sign page" = `/quotation-sign/{token}`; "PDF" = the issued quotation PDF
 
 1. Sign page usable and not clipped at 375px and 1280px (no horizontal page scroll; the line table scrolls inside
    its section).
+
+## AC7 Owner hand test round 1 (30 Oct ~10:10)
+
+1. The Sorento card is titled "Prepared by <name>": the Sorento signature's signer name, else the quotation signatory,
+   else the company name. Blank or whitespace names fall through; the title never shows "-". A new Sorento signature
+   with no typed name and no signatory stores the signing user's name.
+2. The customer card is titled "Accepted by" while unsigned and "Accepted by <signer name>" once accepted.
+3. The sign page shows no "GPS location" row on either card and never asks the browser for location; the accept
+   request sends `gps_lat` / `gps_lng` as null. The columns stay (no migration): new customer signatures simply carry
+   no location, so the PDF prints none for the customer. Staff-side signing keeps its location capture.
+4. Other SignaturePad callers (staff sign dialog, signature block) keep the location prompt and rows: the hide is opt-in.
