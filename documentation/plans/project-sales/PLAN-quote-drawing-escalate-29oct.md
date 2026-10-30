@@ -1,6 +1,6 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Build (card + mock v3 approved by the owner 30 Oct 10:00, N1-N4 = recommendations)
+Status: Build: coder green (card + mock v3 approved by the owner 30 Oct 10:00, N1-N4 = recommendations)
 (M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
 table, no migration)
 
@@ -228,8 +228,10 @@ quotation data.
     `api/v1/sla/sla_tracking.py:1393-1420`); emit `respond` / `resolve` through
     `emit_form_event`; on resolve notify every requester (H4) once.
   - `notify_drawing_linked(db, product_id)`: open tracker -> H3 to its assignee. Called from
-    `product_service` after a product attachment is created or its type changes, when the file
-    counts as a drawing.
+    `ProductAttachmentService.create_product_attachment` (both the new-row and the existing-row
+    branches, after commit), when the file counts as a drawing. **Out of scope:** editing an
+    existing attachment's type to "Technical Specifications" does not notify (no hook on type
+    edits).
 - Quotation line cell (`project_quotation_image_service.line_images`): a product with no
   drawing image but a drawing PDF reads `state: "pdf"` with the PDF's signed `url` and
   `filename` (never stamped at issue, never printed). Every drawing cell carries `escalation`

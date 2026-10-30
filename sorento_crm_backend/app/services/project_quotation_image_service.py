@@ -31,7 +31,9 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.models.product import ProductAttachment
 from app.models.projects import ProjectQuotationLine
+from app.models.resources import Attachment, AttachmentType
 from app.services import product_image_service as images
 
 
@@ -64,6 +66,9 @@ def resolved_attachment_ids(
 DRAWING_CHOSEN = "chosen"
 DRAWING_DEFAULT = "default"
 NO_DRAWINGS = "no_drawings"
+#: A product whose only drawing is a PDF: the cell links to it. Never stamped at issue and never
+#: printed, because the quotation documents embed images only.
+DRAWING_PDF = "pdf"
 
 
 def _candidate(file: images.ProductFile) -> Dict[str, Any]:
@@ -90,6 +95,30 @@ def _cell(state: str, row: Optional[Any], candidates: List[Dict[str, Any]]) -> D
         "candidate_count": len(candidates),
         "candidates": candidates,
     }
+
+
+def _drawing_pdfs(db: Session, product_ids: Sequence[str]) -> Dict[str, Any]:
+    """Per product, its first non-deleted PDF typed "Technical Specifications", in ONE query."""
+    unique = list(dict.fromkeys(str(pid) for pid in product_ids if pid))
+    if not unique:
+        return {}
+    rows = (
+        db.query(ProductAttachment.product_id, Attachment)
+        .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .join(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
+        .filter(
+            ProductAttachment.product_id.in_(unique),
+            AttachmentType.type_name == images.DRAWING_TYPE,
+            Attachment.mime_type == "application/pdf",
+            Attachment.is_deleted.is_(False),
+        )
+        .order_by(Attachment.created_at.asc(), Attachment.id.asc())
+        .all()
+    )
+    found: Dict[str, Any] = {}
+    for product_id, attachment in rows:
+        found.setdefault(str(product_id), attachment)
+    return found
 
 
 def line_product_id(line: Any) -> Optional[str]:
@@ -153,6 +182,11 @@ def line_images(
             }
         )
 
+    from app.services import product_drawing_request_service as drawing_requests
+
+    pdfs = _drawing_pdfs(db, product_ids)
+    escalations = drawing_requests.escalation_states(db, product_ids)
+
     cells: Dict[str, Dict[str, Any]] = {}
     for line in lines:
         key = str(line.id)
@@ -192,8 +226,13 @@ def line_images(
             drawing_cell = _cell(images.OFF_CATALOG, None, [])
         elif drawing_files:
             drawing_cell = _cell(DRAWING_DEFAULT, drawing_files[0].attachment, drawing_candidates)
+        elif pid and str(pid) in pdfs:
+            drawing_cell = _cell(DRAWING_PDF, pdfs[str(pid)], [])
+            # A PDF has no useful thumbnail: both urls open the file itself.
+            drawing_cell["url"] = drawing_cell["preview_url"] or drawing_cell["url"]
         else:
             drawing_cell = _cell(NO_DRAWINGS, None, [])
+        drawing_cell["escalation"] = escalations.get(str(pid)) if pid else None
 
         if not pickable:
             for cell in (photo_cell, drawing_cell):

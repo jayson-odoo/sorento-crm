@@ -43,6 +43,8 @@ FORM_SLA_TYPES = (
     "price_tag_request",
     # SR-CORE: the detail page carries the SLA tab; no stage config ships, so it reads empty.
     "sample_request",
+    # Quotation line drawing request: one task per product, started by the line's Escalate.
+    "product_drawing",
 )
 
 
@@ -127,6 +129,7 @@ _ENTITY_NUMBER_SOURCE: dict = {
     # which tells the reader nothing about which request is late.
     "price_tag_request": ("price_tag_requests", "doc_number", True),
     "sample_request": ("projects.sample_requests", "request_no", False),
+    "product_drawing": ("products", "product_code", False),
 }
 
 
@@ -256,6 +259,8 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/dealer-kit/price-tag-requests/{source_entity_id}"
     if source_entity_type == "sample_request":
         return f"/project-sales/sample-requests/{source_entity_id}"
+    if source_entity_type == "product_drawing":
+        return f"/master-data-management/products/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
 
 
@@ -1440,7 +1445,9 @@ class FormSLAOrchestrator:
         # Destination link mirroring the pending-tasks row click: routed form types open
         # their in-system record; others (e.g. ticket) open the ticket in the CRM.
         # _FE_RECORD_ROUTES must match MyPendingSLAWidget.ENTITY_ROUTES.
-        _FE_RECORD_ROUTES = {"stock_inquiry", "complaint", "purchase_request", "sponsorship_form"}
+        _FE_RECORD_ROUTES = {
+            "stock_inquiry", "complaint", "purchase_request", "sponsorship_form", "product_drawing",
+        }
         if s_type in _FE_RECORD_ROUTES:
             form_url = full_link
         else:

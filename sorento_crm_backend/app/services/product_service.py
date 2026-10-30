@@ -3316,6 +3316,7 @@ class ProductAttachmentService:
             self._apply_brochure_choice(existing, chosen)
             self.db.commit()
             self.db.refresh(existing)
+            self._notify_if_drawing(existing)
             row = self.db.query(ProductAttachment).options(
                 joinedload(ProductAttachment.product),
                 joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
@@ -3340,12 +3341,26 @@ class ProductAttachmentService:
         self._apply_brochure_choice(product_attachment, chosen)
         self.db.commit()
         self.db.refresh(product_attachment)
+        self._notify_if_drawing(product_attachment)
 
         return self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         ).filter(ProductAttachment.id == product_attachment.id).first()
     
+    def _notify_if_drawing(self, link) -> None:
+        """Tell the assignee of an open drawing request that a drawing was linked (best-effort).
+
+        Create path only: a later edit of an attachment's type does not come through here.
+        """
+        try:
+            from app.services import product_drawing_request_service as drawing_requests
+
+            if drawing_requests.attachment_is_drawing(self.db, link.attachment_id):
+                drawing_requests.notify_drawing_linked(self.db, link.product_id)
+        except Exception:
+            logger.warning("drawing request notice after a product attachment link failed", exc_info=True)
+
     def _apply_brochure_choice(self, link, chosen: Optional[bool]) -> None:
         """Set or clear the brochure image flag through the one service that owns it.
 

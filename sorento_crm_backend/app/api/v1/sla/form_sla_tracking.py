@@ -7,6 +7,7 @@ Manual escalate is gated by the `sla.form.escalate` permission (seeded + granted
 to all roles in migration 235).
 """
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -260,3 +261,42 @@ def release_form_handling(
     """Release the handling lock (holder only). Opens the form for anyone eligible."""
     tracker = HandlingLockService(db).release_handling(tracking_id, current_user)
     return _serialize(db, tracker, viewer_user_id=current_user.get("id"))
+
+
+def _drawing_action(db: Session, action, tracking_id: str, current_user: dict) -> dict:
+    from app.services.error_handler import handle_not_found
+
+    try:
+        UUID(str(tracking_id))
+    except ValueError:
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    tracker = action(db, tracking_id, current_user)
+    return {
+        "tracking_id": str(tracker.id),
+        "is_responded": bool(tracker.is_responded),
+        "is_resolved": bool(tracker.is_resolved),
+    }
+
+
+@router.post("/{tracking_id}/drawing-respond")
+def respond_drawing_request(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The assignee's Respond on a product drawing task (My pending tasks)."""
+    from app.services import product_drawing_request_service as drawing_requests
+
+    return _drawing_action(db, drawing_requests.respond, tracking_id, current_user)
+
+
+@router.post("/{tracking_id}/drawing-resolve")
+def resolve_drawing_request(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The assignee's Resolve on a product drawing task; tells every requester."""
+    from app.services import product_drawing_request_service as drawing_requests
+
+    return _drawing_action(db, drawing_requests.resolve, tracking_id, current_user)

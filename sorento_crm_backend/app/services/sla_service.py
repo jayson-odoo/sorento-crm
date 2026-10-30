@@ -2301,6 +2301,11 @@ class ConversationSLATrackingService:
             PurchaseRequestHeader.revision_no,
         )
         ticket_map = _num_map(Ticket.id, Ticket.ticket_number, ids_by_type.get("ticket") or set())
+        from app.models.product import Product
+
+        product_map = _num_map(
+            Product.id, Product.product_code, ids_by_type.get("product_drawing") or set()
+        )
 
         contact_map: dict[str, Optional[str]] = {}
         if contact_ids:
@@ -2327,6 +2332,8 @@ class ConversationSLATrackingService:
                 ref = pr_map.get(sid)
             elif et == "ticket" and sid:
                 ref = ticket_map.get(sid)
+            elif et == "product_drawing" and sid:
+                ref = product_map.get(sid)
             elif r.respond_contact_id:
                 ref = contact_map.get(str(r.respond_contact_id))
             result[str(r.id)] = ref
