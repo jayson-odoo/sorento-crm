@@ -37,8 +37,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_actor_user_id, get_current_user
-from app.models.base import company_scope
-from app.services.company_scope_resolver import grants_scope_value
+from app.models.base import company_scope, get_company_scope
+from app.services.company_scope_resolver import grants_scope_value, resolve_user_grant_ids
 from app.models.sla import (
     FORM_ACTION_CANCELLED,
     FORM_ACTION_CHANNEL_UI,
@@ -56,7 +56,11 @@ from app.services.error_handler import (
 )
 from app.services.form_action_grace import record_action_window_seconds
 from app.services.form_action_registry import get_action
-from app.services.form_action_service import FormActionService
+from app.services.form_action_service import (
+    _SCOPE_PAYLOAD_KEY,
+    FormActionService,
+    _scope_from_payload,
+)
 
 # Module scope, not per-request: the lazy commit below calls `action_for(row.action_key)`,
 # and on an API worker that has never served a POST the registry would be empty - the
@@ -77,6 +81,10 @@ _OUTCOME_STATUS = {
     FORM_ACTION_FAILED: "failed",
     FORM_ACTION_INELIGIBLE: "failed",
 }
+
+# How many of a record's latest ended actions `last_outcome` looks through for one the
+# reader may see. A record's history is short; this only bounds a pathological one.
+_OUTCOME_SCAN_LIMIT = 20
 
 
 class _CreateRequest(BaseModel):
@@ -445,13 +453,43 @@ def _serialize_pending(db: Session, row: SlaFormAction) -> dict:
     }
 
 
+def _visible_to_reader(db: Session, row: Optional[SlaFormAction]) -> bool:
+    """Whether the reader's company scope covers the company the action was parked in.
+
+    `sla_form_actions` has no company column and the scope filter only reaches
+    `CompanyScopedMixin` models, so `/current` read any company's countdown and failure
+    text by entity id. A parked row stores its requester's scope
+    (`form_action_service._payload_with_scope`); a row without one (an immediate
+    form-SLA action, or one parked before the key existed) falls back to the
+    requester's company grants. A reader with every company sees every row; an
+    all-companies row is shown only to such a reader, since it names no one company.
+    """
+    if row is None:
+        return False
+    reader = get_company_scope(db)
+    if reader is None:
+        return True
+    if not isinstance(reader, frozenset) or not reader:
+        return False
+    stored = row.payload_json or {}
+    if _SCOPE_PAYLOAD_KEY in stored:
+        row_scope = _scope_from_payload(stored)
+        if row_scope is None:
+            return False
+    elif row.requested_by_id:
+        row_scope = frozenset(resolve_user_grant_ids(db, str(row.requested_by_id)))
+    else:
+        return False
+    return isinstance(row_scope, frozenset) and bool(row_scope & reader)
+
+
 def _last_outcome(db: Session, entity_type: str, entity_id: str) -> Optional[dict]:
-    """How the most recent action on this record ended.
+    """How the most recent action on this record ended, among those the reader may see.
 
     Whether it applied is the ONE thing the countdown cannot infer from its own
     disappearance, so it is answered here rather than assumed there.
     """
-    row = (
+    rows = (
         db.query(SlaFormAction)
         .filter(
             SlaFormAction.source_entity_type == entity_type,
@@ -463,8 +501,10 @@ def _last_outcome(db: Session, entity_type: str, entity_id: str) -> Optional[dic
             SlaFormAction.resolved_at.desc().nullslast(),
             SlaFormAction.created_at.desc(),
         )
-        .first()
+        .limit(_OUTCOME_SCAN_LIMIT)
+        .all()
     )
+    row = next((r for r in rows if _visible_to_reader(db, r)), None)
     if row is None:
         return None
     ended_at = row.committed_at or row.resolved_at
@@ -626,6 +666,8 @@ def get_current_pending_action(
         row = service.pending_for(entity_type, entity_id)
         _commit_if_due(service, row)
         row = service.pending_for(entity_type, entity_id)
+        if not _visible_to_reader(db, row):
+            row = None
         return {
             "pending": _serialize_pending(db, row) if row else None,
             "last_outcome": _last_outcome(db, entity_type, entity_id),
