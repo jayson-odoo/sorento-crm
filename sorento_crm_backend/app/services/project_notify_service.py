@@ -511,6 +511,58 @@ def notify_quotation_changes_requested(
     )
 
 
+def notify_quotation_amendment_requested(
+    db: Session,
+    *,
+    project: Project,
+    document,
+    record,
+    request,
+    line_count: int,
+) -> int:
+    """The customer suggested quantities or prices on the quotation link (QUOTE-CUSTOMER-AMEND).
+
+    Same recipients as a free-text request (the owner, else management), and on WhatsApp as
+    well as in-app and email, the channels the approval alerts use: until somebody answers,
+    the customer cannot sign. One notice per request, so the dedup key is the request.
+    """
+    reference = getattr(record, "our_ref_text", None) or getattr(document, "document_no", "")
+    who = (getattr(request, "requester_name", None) or "").strip() or "The customer"
+    if line_count:
+        lines = f"{line_count} line{'' if line_count == 1 else 's'}"
+        text = f"{who} suggested changes to {lines} on {reference}."
+    else:
+        text = f"{who} sent a note on {reference}."
+    note = " ".join((getattr(request, "note", None) or "").split())
+    if note:
+        excerpt = note if len(note) <= 400 else f"{note[:400]}..."
+        text = f'{text} "{excerpt}"'
+
+    recipients = (
+        [str(project.owner_user_id)]
+        if project.owner_user_id
+        else management_user_ids(db, project.company_id)
+    )
+    return _send(
+        db,
+        user_ids=recipients,
+        notif_type="project_quotation_amendment_requested",
+        title=f"{project_label(project)}: changes suggested on {reference}",
+        body=text,
+        data={
+            **_approval_data(project, document),
+            "issue_id": str(getattr(record, "id", "") or ""),
+            "issue_no": getattr(record, "issue_no", None),
+            "our_ref": reference,
+            "request_id": str(getattr(request, "id", "") or ""),
+        },
+        project_id=str(project.id),
+        dedup_key=f"{getattr(record, 'id', '')}:amendment_requested:{getattr(request, 'id', '')}",
+        send_whatsapp=True,
+        data_for=_whatsapp_for(db, project, document, text),
+    )
+
+
 def notify_po_mismatch(
     db: Session,
     *,

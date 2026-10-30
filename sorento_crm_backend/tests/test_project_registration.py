@@ -93,11 +93,12 @@ def test_registering_a_project_stamps_code_owner_and_comparison_key():
 
 
 def test_a_blocking_clash_refuses_the_registration_and_writes_nothing():
-    """ADR-0004 is a hard block: the second person is told who holds it.
+    """ADR-0004 is a hard block: the second person is told WHICH project holds it.
 
-    The message has to name the incumbent's code and owner, because "already
-    registered" with no detail leaves the user with nowhere to go, and the whole
-    point is to send them to that person (or to the request-to-join path).
+    The message names the incumbent's title and code, so the user has somewhere to go
+    (the request-to-join path). It does not name the holder: PS-REGISTER-CHECK-FIRST
+    (#1991, owner ruling) shows a salesperson without projects.view only clash / no
+    clash, never another salesperson's name.
     """
     with blank_session() as db:
         company_id = _sorento(db)
@@ -125,7 +126,8 @@ def test_a_blocking_clash_refuses_the_registration_and_writes_nothing():
 
         assert exc.value.status_code == 409
         assert first.project_code in exc.value.detail["message"]
-        assert f"{MARKER} Ali" in exc.value.detail["message"]
+        assert '"Setia Alam Phase 3B"' in exc.value.detail["message"]
+        assert f"{MARKER} Ali" not in exc.value.detail["message"]
 
         # Nothing partial left behind: no second project, and the numbering
         # sequence was not consumed by the rejected attempt.
