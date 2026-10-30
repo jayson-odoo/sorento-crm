@@ -481,3 +481,24 @@ def test_a_set_typo_is_not_offered_when_a_part_is_hidden_from_chat(db):
     offered = {a.canonical_code for r in result.resolutions for a in r.alternatives if a.entity_type == "product_set"}
 
     assert "ZZSTWC8826-P" not in offered and "ZZSTWC8826-S" in offered, sorted(offered)
+
+
+def test_a_set_typo_is_not_offered_when_a_part_is_outside_the_contacts_brands(db):
+    """Reviewer, partial-codes round: the fuzzy set tier reads the chat's own visibility rule, so a
+    part the contact's brand scope hides fails its set (checked positively), as in the shortlist."""
+    from app.models.base import set_brand_scope
+    from app.models.product import Product
+    from tests.chatbot.test_code_lookup_round1 import _brand
+
+    mine, other = _brand(db, "MINE"), _brand(db, "OTHER")
+    ids = _seed_sets(db, SETS_8826)
+    for code, pid in ids.items():
+        brand = other if code == "ZZSTWCX8826-P" else mine
+        db.query(Product).filter(Product.id == pid).update({"brand_id": brand.id})
+    db.flush()
+    set_brand_scope(db, frozenset({mine.id}))
+
+    result = entity_resolver.resolve_references(db, ["zzstwc8862"], allowed_entity_types=["product"], enable_embedding_fallback=False)
+    offered = {a.canonical_code for r in result.resolutions for a in r.alternatives if a.entity_type == "product_set"}
+
+    assert "ZZSTWC8826-P" not in offered and "ZZSTWC8826-S" in offered, sorted(offered)

@@ -3255,27 +3255,41 @@ PRE_EXTRACTED_TOKEN_CEILING = 50
 FREE_TEXT_CANDIDATES = 8
 
 
+def visible_set_clauses(db: Session) -> list:
+    """The filters that leave only the product sets this contact may be told about: active,
+    with members, and EVERY member id among the products they may see (chat-searchable, the
+    set's own company, brand scope through the ORM listener). Checked positively, so a member
+    the scope hides fails the set instead of dropping out of a "hidden" read. Moved here from
+    `chatbot/head/candidates.py` (CHATBOT-SET-STOCK) so the resolver's set tiers and the chat
+    read one rule."""
+    from sqlalchemy import not_
+
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    members = db.query(ProductSetMember.id).filter(ProductSetMember.product_set_id == ProductSet.id)
+    visible = (
+        db.query(Product.id)
+        .filter(chat_searchable_products(), Product.company_id == ProductSet.company_id)
+        .correlate(ProductSet)
+    )
+    unseen = members.filter(not_(ProductSetMember.product_id.in_(visible.scalar_subquery())))
+    return [ProductSet.is_active.is_(True), members.exists(), not_(unseen.exists())]
+
+
 def _trgm_product_sets(db: Session, norm: str) -> list[ResolvedEntity]:
     """CHATBOT-SET-STOCK: the product tier's did-you-mean, over set codes (owner, 31 Oct: a set
     resolves "same as how we resolve product code"). Same fold, threshold, limit and variant
-    ordering as the product probe; ORM, so the company listener scopes it. A set with a part
-    the product probe would not offer (not chat-searchable) is not offered either."""
-    from app.models.product_set import ProductSet, ProductSetMember
+    ordering as the product probe; ORM, so the company listener scopes it. Only sets the contact
+    may be told about are offered (`visible_set_clauses`, the chat's own rule)."""
+    from app.models.product_set import ProductSet
 
     code = _ws_insensitive_lower(ProductSet.set_code)
     sim = func.similarity(code, norm)
     is_variant = func.left(code, len(norm)) == norm
-    hidden_part = (
-        db.query(ProductSetMember.id)
-        .join(Product, Product.id == ProductSetMember.product_id)
-        .filter(ProductSetMember.product_set_id == ProductSet.id, ~chat_searchable_products())
-        .correlate(ProductSet)
-        .exists()
-    )
     with db.begin_nested():
         rows = (
             db.query(ProductSet, sim.label("sim"), is_variant.label("is_variant"))
-            .filter(ProductSet.is_active.is_(True), sim >= TRGM_THRESHOLD, code != norm, ~hidden_part)
+            .filter(sim >= TRGM_THRESHOLD, code != norm, *visible_set_clauses(db))
             .order_by(is_variant.desc(), sim.desc(), ProductSet.set_code)
             .limit(TRGM_LIMIT)
             .all()
@@ -5975,11 +5989,11 @@ def resolve_references(
         tok_types = _types_for(tr.token)
         if tok_types is not None and not tok_types:
             continue
-        # A token that DID match (only kinds the caller did not ask for, D10b) is offered the
-        # kinds the caller asked for, as before sets had a trigram tier (CHATBOT-SET-STOCK): a
-        # set code that matched exactly is never offered its sibling sets instead. A token that
-        # matched nothing is offered every kind it may resolve to, sets included.
-        scope = caller_types if (tr.matches and caller_types is not None) else tok_types
+        # A token that DID match (only kinds the caller did not ask for, D10b) is offered what
+        # it was offered before sets had a trigram tier (CHATBOT-SET-STOCK): every kind but
+        # sets, so a set code that matched exactly is never offered its sibling sets instead. A
+        # token that matched nothing is offered every kind it may resolve to, sets included.
+        scope = (tok_types - {"product_set"}) if (tr.matches and tok_types is not None) else tok_types
         try:
             hits = _trgm_lookup(db, tr.token, scope if scope is not None else _ALL_TRGM_TYPES)
         except Exception:
