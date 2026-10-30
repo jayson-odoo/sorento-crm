@@ -221,9 +221,18 @@ def _describe_blockers(
         db, str(actor_user_id), own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN
     ):
         return "This development is already registered. Ask a sales manager about it."
+    # A user without the view grant (a salesperson who may only submit) is told WHICH project,
+    # so they can register as a secondary lead on it, but never who holds it.
+    can_see_holder = True
+    if actor_user_id:
+        from app.services.user_service import UserPermissionService
+
+        can_see_holder = own_scope.PROJECTS_VIEW in set(
+            UserPermissionService(db).get_user_permission_slugs(str(actor_user_id)) or ()
+        )
     owner_ids = [b.owner_user_id for b in blockers if b.owner_user_id]
     names = {}
-    if owner_ids:
+    if owner_ids and can_see_holder:
         from app.models.user import User
 
         names = {
@@ -234,13 +243,45 @@ def _describe_blockers(
     parts = []
     for blocker in blockers:
         who = names.get(blocker.owner_user_id) or "an unassigned owner"
-        parts.append(f'"{blocker.title}" ({blocker.project_code}), held by {who}')
+        held = f", held by {who}" if can_see_holder else ""
+        parts.append(f'"{blocker.title}" ({blocker.project_code}){held}')
 
     joined = "; ".join(parts)
     return (
         f"This development is already registered as {joined}. "
-        "Ask to join the project, or raise a dispute for a manager to decide."
+        "Ask to join the project, or register as a secondary lead for a manager to decide."
     )
+
+
+def assert_no_blocking_clash(
+    db: Session,
+    *,
+    company_id: str,
+    actor_user_id: Optional[str],
+    developer_party_id: Optional[str],
+    title: str,
+    surface_threshold: Optional[float] = None,
+    block_threshold: Optional[float] = None,
+) -> None:
+    """409 when an open project under the developer is the same development."""
+    blockers = [
+        candidate
+        for candidate in find_clashes(
+            db,
+            company_id=company_id,
+            developer_party_id=developer_party_id,
+            title=title,
+            surface_threshold=surface_threshold,
+            block_threshold=block_threshold,
+        )
+        if candidate.blocks
+    ]
+    if blockers:
+        raise AppException(
+            status_code=409,
+            message=_describe_blockers(db, blockers, actor_user_id),
+            code="project_already_registered",
+        )
 
 
 def register_project(
@@ -279,27 +320,15 @@ def register_project(
     # `skip_clash_check` (PROJECT-REG-PORTAL D7): a possible duplicate is the caller's call,
     # and only an exact developer + title repeat is refused (by the DB identity index). Staff
     # registration keeps its lock.
-    blockers = (
-        []
-        if skip_clash_check
-        else [
-            candidate
-            for candidate in find_clashes(
-                db,
-                company_id=company_id,
-                developer_party_id=developer_party_id,
-                title=clean_title,
-                surface_threshold=surface_threshold,
-                block_threshold=block_threshold,
-            )
-            if candidate.blocks
-        ]
-    )
-    if blockers:
-        raise AppException(
-            status_code=409,
-            message=_describe_blockers(db, blockers, actor_user_id),
-            code="project_already_registered",
+    if not skip_clash_check:
+        assert_no_blocking_clash(
+            db,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            developer_party_id=developer_party_id,
+            title=clean_title,
+            surface_threshold=surface_threshold,
+            block_threshold=block_threshold,
         )
 
     project = Project(
@@ -1220,6 +1249,9 @@ def update_project(
     Phase 9", then rename it to the colleague's project. The DB unique index catches
     the exact-key case, but only the matcher catches the near-duplicate.
     """
+    # A project has no lead on edit (owner ruling 30 Oct): a sent lead_id is dropped before any
+    # guard, so it can neither link nor change which refusal the request meets.
+    payload = {k: v for k, v in payload.items() if k != "lead_id"}
     assert_can_edit_project(db, project, actor_user_id, permissions)
     check_company_refs(db, str(project.company_id), _changed_refs(db, project, payload))
 
@@ -1275,46 +1307,7 @@ def update_project(
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
 
-    own_leads_only = "projects.registrations.submit" in permissions and EDIT_PERMISSION not in permissions
-    target_lead = payload["lead_id"] if "lead_id" in payload else project.lead_id
-    if target_lead:
-        # The lead governs the customer (LEAD-GOVERNS-REGISTER E4, E9). The right to link it is
-        # decided first, so a refused lead answers the same whatever customer came with it.
-        from app.services import project_lead_service as leads
-
-        changing = target_lead != project.lead_id
-        lead = leads.lead_for_registration(
-            db,
-            target_lead,
-            actor_user_id=actor_user_id,
-            own_leads_only=own_leads_only and changing,
-            permissions=permissions if changing else None,
-        )
-        if lead.customer_id:
-            # A null customer counts as absent: the lead's customer is never cleared (LGR-E9).
-            if "customer_id" in payload and not payload["customer_id"] and not changing:
-                payload = {k: v for k, v in payload.items() if k != "customer_id"}
-            elif changing or payload.get("customer_id"):
-                picked = leads.customer_from_lead(lead, payload.get("customer_id"))
-                if changing:
-                    payload = {**payload, "customer_id": picked}
     apply_sales_details(db, project, payload)
-
-    # Present-and-null is an unlink; absent leaves the link alone (#1339).
-    if "lead_id" in payload:
-        from app.services.project_lead_service import set_project_lead
-
-        set_project_lead(
-            db,
-            project,
-            payload["lead_id"],
-            actor_user_id=actor_user_id,
-            permissions=permissions,
-            own_leads_only=own_leads_only,
-        )
-    from app.services.project_lead_service import fill_lead_customer
-
-    fill_lead_customer(db, project, actor_user_id=actor_user_id, permissions=permissions)
     return project
 
 
@@ -1380,6 +1373,42 @@ def set_critical(project: Project, critical: bool) -> None:
     project.is_critical = critical
 
 
+def project_has_live_document(db: Session, project: Project) -> bool:
+    """True when the Documents tab would list at least one file: a non-deleted attachment
+    carrying entity_type 'project' and this project's id (any attachment type). The session's
+    company-scope listener applies to Attachment exactly as it does to the list."""
+    from app.models.resources import Attachment
+
+    return (
+        db.query(Attachment.id)
+        .filter(
+            Attachment.entity_type == "project",
+            Attachment.entity_id == str(project.id),
+            Attachment.is_deleted.is_(False),
+        )
+        .first()
+        is not None
+    )
+
+
+def _assert_requirements_uploaded(db: Session, project: Project, to_status_id: str) -> None:
+    """Registered -> Spec In needs a requirements document on the project."""
+    rows = {
+        str(s.id): s.key
+        for s in db.query(Status).filter(Status.id.in_([project.status_id, to_status_id])).all()
+    }
+    if (
+        rows.get(str(project.status_id)) == "registered"
+        and rows.get(str(to_status_id)) == "specified"
+        and not project_has_live_document(db, project)
+    ):
+        raise AppException(
+            status_code=422,
+            message="Upload the requirements document before moving this project to Spec In.",
+            code="project_requirements_missing",
+        )
+
+
 def change_status(
     db: Session,
     project: Project,
@@ -1420,6 +1449,7 @@ def change_status(
         status_service.assert_transition_allowed(
             db, entity_type, project.status_id, to_status_id, scope_id=scope_id
         )
+        _assert_requirements_uploaded(db, project, to_status_id)
 
     project.status_id = to_status_id
     db.flush()

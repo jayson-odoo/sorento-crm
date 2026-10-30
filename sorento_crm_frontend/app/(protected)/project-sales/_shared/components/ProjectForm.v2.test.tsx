@@ -355,9 +355,7 @@ async function pickAsync(label: string | RegExp, typed: string, optionName: stri
 }
 // LEAD-GOVERNS-REGISTER D2: a new project's Customer comes from the picked Lead, so "pickCustomer"
 // now picks the lead whose customer is Aman Hartanah CONTOH.
-const pickCustomer = (typed = 'Menara') => pickAsync(/^Lead/, typed, /Menara Lead CONTOH/);
-const pickCustomerlessLead = () =>
-  pickAsync(/^Lead/, 'Tanpa', /Menara Tanpa Pelanggan CONTOH/);
+const pickCustomer = (typed = 'Aman') => pickAsync(/^Customer/, typed, /Aman Hartanah CONTOH/);
 function openDetails() {
   const header = screen.getByRole('button', { name: /^Details/ });
   if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
@@ -385,6 +383,19 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------- A
+/**
+ * PS-REGISTER-CHECK-FIRST: create mode opens on the Check step; walk it to Details.
+ * Types the title if the field is empty, Checks, waits for the result, presses Next.
+ */
+async function toDetails(text = 'Setia Alam Phase 3B') {
+  const box = screen.getByLabelText(/project title/i) as HTMLTextAreaElement;
+  if (!box.value) fireEvent.change(box, { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+  await screen.findByText('No clash');
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+  await screen.findByRole('button', { name: /^Customer and salesperson/ });
+}
+
 describe('A1 title first, as a textarea', () => {
   it('the title is a textarea and the first control of Who and what', () => {
     const { container } = renderForm();
@@ -395,39 +406,41 @@ describe('A1 title first, as a textarea', () => {
   it('Developer, Project type and Template follow the title', async () => {
     renderForm();
     const developer = screen.getByLabelText('Developer');
-    const type = screen.getByLabelText('Project type');
     const follows = (el: Element) =>
       Boolean(titleBox().compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
     expect(follows(developer)).toBe(true);
-    expect(follows(type)).toBe(true);
+    // Project type sits on the Details step now, after the Check step that holds the title.
+    await toDetails();
+    expect(screen.getByLabelText('Project type')).toBeInTheDocument();
   });
 });
 
-describe('A2 Lead, customer and salesperson', () => {
-  it('names the section Lead, customer and salesperson and holds Lead and Salesperson', () => {
+describe('A2 Customer and salesperson (AC-L1)', () => {
+  it('AC-L1 names the section Customer and salesperson and holds Customer and Salesperson', async () => {
     renderForm();
+    await toDetails();
     expect(screen.queryByRole('button', { name: /^Salesperson and customer/ })).toBeNull();
-    const header = screen.getByRole('button', { name: /Lead, customer and salesperson/ });
+    expect(screen.queryByRole('button', { name: /Lead, customer and salesperson/ })).toBeNull();
+    const header = screen.getByRole('button', { name: /^Customer and salesperson/ });
     const section = header.closest('[data-slot="card"]') as HTMLElement;
     expect(within(section).getByLabelText('Salesperson')).toBeInTheDocument();
-    expect(within(section).getByLabelText(/^Lead/)).toBeInTheDocument();
+    expect(within(section).getByLabelText(/^Customer/)).toBeInTheDocument();
   });
 
-  it('Lead sits in the bottom section, not Details, and keeps its create row', async () => {
+  it('AC-L1 there is no Lead field and no Create lead row anywhere', async () => {
     renderForm();
+    await toDetails();
     openDetails();
-    const details = screen.getByRole('button', { name: /^Details/ }).closest('[data-slot="card"]') as HTMLElement;
-    expect(within(details).queryByLabelText(/^Lead/)).toBeNull();
-    const lead = screen.getByLabelText(/^Lead/);
-    fireEvent.change(lead, { target: { value: 'Pavilion' } });
-    expect(await screen.findByRole('button', { name: /Create lead/ })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'Pavilion' } });
+    expect(screen.queryByRole('button', { name: /Create lead/ })).toBeNull();
   });
 });
 
 describe('A3 Customer is an async search over the customers select', () => {
-  it('a lead with no customer: searches GET /api/v1/order-management/customers/select with the typed query', async () => {
+  it('AC-L1 searches GET /api/v1/order-management/customers/select with the typed query', async () => {
     renderForm();
-    await pickCustomerlessLead();
+    await toDetails();
     fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'Aman' } });
     await screen.findByRole('button', { name: /Aman Hartanah CONTOH/ });
     const get = callsTo('GET', '/api/v1/order-management/customers/select').pop();
@@ -437,7 +450,7 @@ describe('A3 Customer is an async search over the customers select', () => {
 
   it('options show the customer name only, never the debtor code', async () => {
     renderForm();
-    await pickCustomerlessLead();
+    await toDetails();
     fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'CONTOH' } });
     await screen.findByRole('button', { name: /Bestari Dealer CONTOH/ });
     expect(document.body.textContent).not.toMatch(/C-000\d/);
@@ -445,7 +458,7 @@ describe('A3 Customer is an async search over the customers select', () => {
 
   it('offers no create row and says "No customers found" on an empty result', async () => {
     renderForm();
-    await pickCustomerlessLead();
+    await toDetails();
     fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'zzzz' } });
     expect(await screen.findByText('No customers found')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /create customer/i })).toBeNull();
@@ -453,24 +466,26 @@ describe('A3 Customer is an async search over the customers select', () => {
   });
 });
 
-describe('A4 Register needs title and a Lead (its customer comes with it)', () => {
-  it('create: disabled with a title only, enabled once a Lead is picked, sends lead_id', async () => {
+describe('A4 Register needs title and a Customer (AC-L1)', () => {
+  it('AC-L1 create: disabled with a title only, enabled once a Customer is picked, sends customer_id and no lead_id key', async () => {
     renderForm();
+    await toDetails('Menara Baru CONTOH');
     const register = screen.getByRole('button', { name: 'Register project' });
     expect(register).toBeDisabled();
-    typeTitle('Menara Baru CONTOH');
     expect(register).toBeDisabled();
     await pickCustomer();
     await waitFor(() => expect(register).toBeEnabled());
     fireEvent.click(register);
     await waitFor(() => expect(registerBody()).toBeTruthy());
-    expect(registerBody()).toMatchObject({ title: 'Menara Baru CONTOH', lead_id: 'lead-1' });
+    expect(registerBody()).toMatchObject({ title: 'Menara Baru CONTOH', customer_id: 'cust-1' });
+    expect(registerBody()).not.toHaveProperty('lead_id');
     await waitFor(() => expect(push).toHaveBeenCalledWith('/project-sales/new1'));
   });
 
-  it('edit: Lead is optional, Save changes is enabled without one', () => {
+  it('AC-L5 edit: Save changes is enabled and sends no lead_id key', () => {
     renderForm({ mode: 'edit', project: editProject() });
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
   });
 });
 
@@ -482,7 +497,11 @@ describe('B1 Developer, Architect, Main contractor search the parties endpoint',
     ['Main contractor', 'main_contractor', 'Bina'],
   ])('%s searches by party_type and query, not a fixed limit-200 list', async (label, type, typed) => {
     renderForm();
-    openDetails();
+    // Developer sits on the Check step; Architect and Main contractor on Details.
+    if (label !== 'Developer') {
+      await toDetails();
+      openDetails();
+    }
     fireEvent.change(screen.getByLabelText(label), { target: { value: typed } });
     await waitFor(() => {
       const hit = callsTo('GET', '/project-sales/parties/').find((c) => {
@@ -503,7 +522,10 @@ describe('B2 / B3 create a party on the spot', () => {
   ])('with projects.parties.edit, %s offers a create row that POSTs and selects', async (label, type, rowText) => {
     granted.add('projects.parties.edit');
     renderForm();
-    openDetails();
+    if (label !== 'Developer') {
+      await toDetails('Menara Pilih CONTOH');
+      openDetails();
+    }
     fireEvent.change(screen.getByLabelText(label), { target: { value: 'Kelana Baru' } });
     fireEvent.click(await screen.findByRole('button', { name: new RegExp(`${rowText} .*Kelana Baru`, 'i') }));
     await waitFor(() => expect(callsTo('POST', '/project-sales/parties/')).toHaveLength(1));
@@ -512,7 +534,10 @@ describe('B2 / B3 create a party on the spot', () => {
       party_type: type,
     });
 
-    typeTitle('Menara Pilih CONTOH');
+    if (label === 'Developer') {
+      typeTitle('Menara Pilih CONTOH');
+      await toDetails();
+    }
     await pickCustomer();
     const key = { developer: 'developer_party_id', architect: 'architect_party_id', main_contractor: 'main_contractor_party_id' }[type]!;
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
@@ -524,7 +549,10 @@ describe('B2 / B3 create a party on the spot', () => {
     'without projects.parties.edit, %s has no create row',
     async (label) => {
       renderForm();
-      openDetails();
+      if (label !== 'Developer') {
+        await toDetails();
+        openDetails();
+      }
       fireEvent.change(screen.getByLabelText(label), { target: { value: 'Kelana Baru' } });
       await waitFor(() => expect(callsTo('GET', '/project-sales/parties/').length).toBeGreaterThan(0));
       expect(screen.queryByRole('button', { name: /^Create (developer|architect|main contractor)/i })).toBeNull();
@@ -534,8 +562,9 @@ describe('B2 / B3 create a party on the spot', () => {
 
 // ---------------------------------------------------------------- C1
 describe('C1 Check and AI extract sit side by side under the title', () => {
-  it('both buttons share one row, after the title; no separate Add photo button', () => {
-    renderForm();
+  it('both buttons share one row, after the title; no separate Add photo button', async () => {
+    // Create mode keeps Check in the wizard footer; the shared row is the edit form's.
+    renderForm({ mode: 'edit', project: editProject() });
     const check = screen.getByRole('button', { name: 'Check' });
     const ai = screen.getByRole('button', { name: 'AI extract' });
     expect(check.parentElement).toBe(ai.parentElement);
@@ -556,11 +585,11 @@ describe('D2 a blocking clash becomes Register interest', () => {
     clashAnswer = () => ({ candidates: [BLOCKING], would_block: true });
   });
 
-  it('shows ONE line "Project already registered: <code> <title>" with the code linking to the project', async () => {
+  it('AC-W4 shows ONE line "Clash: <code> <title>" with the code linking to the project', async () => {
     renderForm();
     await checkTitle();
     const line = await waitFor(() => {
-      const found = linesWithText('Project already registered: PRJ-000009 Setia Alam Phase 3B CONTOH');
+      const found = linesWithText('Clash: PRJ-000009 Setia Alam Phase 3B CONTOH');
       expect(found).toHaveLength(1);
       return found[0];
     });
@@ -572,22 +601,24 @@ describe('D2 a blocking clash becomes Register interest', () => {
     expect(screen.queryByText(/Blocked by an existing project/)).toBeNull();
   });
 
-  it('the one primary reads "Register interest in <code>", enabled, with Cancel kept', async () => {
+  it('AC-R2 the one primary reads "Register as secondary lead on <code>", enabled, with Cancel kept', async () => {
     renderForm();
     await checkTitle();
-    const primary = await screen.findByRole('button', { name: 'Register interest in PRJ-000009' });
+    const primary = await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' });
     expect(primary).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Register project' })).toBeNull();
     expect(screen.queryByText(/Dispute/)).toBeNull();
   });
 
-  it('D4 the primary opens a dialog that needs a note, posts kind dispute and goes to the project', async () => {
+  it('AC-R2 D4 the primary opens a dialog that needs a note, posts kind dispute and goes to the project', async () => {
     renderForm();
     await checkTitle();
-    fireEvent.click(await screen.findByRole('button', { name: 'Register interest in PRJ-000009' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Register interest in PRJ-000009')).toBeInTheDocument();
+    expect(within(dialog).getByText('Register as secondary lead on PRJ-000009')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Register as secondary lead' })).toBeInTheDocument();
+    expect(screen.queryByText(/register interest/i)).toBeNull();
     const note = within(dialog).getByLabelText(/How and when did you find this project\?/);
     expect(note.tagName).toBe('TEXTAREA');
     fireEvent.submit(note.closest('form') as HTMLFormElement);
@@ -610,34 +641,33 @@ describe('D2 a blocking clash becomes Register interest', () => {
         : { candidates: [BLOCKING], would_block: true };
     renderForm();
     await checkTitle();
-    await screen.findByRole('button', { name: 'Register interest in PRJ-000009' });
+    await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' });
     await pickAsync('Developer', 'Perdana', /Perdana CONTOH/);
+    await toDetails(); // the result was cleared; Check again, then Next
     expect(await screen.findByRole('button', { name: 'Register project' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Register interest in/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Register as secondary lead on/ })).toBeNull();
   });
 });
 
-describe('D3 a non-blocking candidate is information only', () => {
-  it('shows "Similar project: <code> <title>" with no action; the primary stays Register project', async () => {
+describe('D3 a non-blocking candidate is shown as No clash (AC-W3)', () => {
+  it('AC-W3 a non-blocking candidate shows just "No clash": no similar row, no action', async () => {
     clashAnswer = () => ({ candidates: [SIMILAR], would_block: false });
     renderForm();
     await checkTitle('Setia Alam Phase 3C CONTOH');
-    const line = await waitFor(() => {
-      const found = linesWithText('Similar project: PRJ-000010 Setia Alam Phase 3C CONTOH');
-      expect(found).toHaveLength(1);
-      return found[0];
-    });
-    expect(within(line).queryByRole('button')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Register project' })).toBeInTheDocument();
-    expect(screen.queryByText(/Dispute/)).toBeNull();
+    expect(await screen.findByText('No clash')).toBeInTheDocument();
+    expect(screen.queryByText(/Similar project/)).toBeNull();
+    expect(screen.queryByText(/PRJ-000010/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
   });
 });
 
 // ---------------------------------------------------------------- G3
 describe('G3 no Brands field', () => {
-  it.each(['create', 'edit'] as const)('%s mode has no Brands control', (mode) => {
-    if (mode === 'create') renderForm();
-    else renderForm({ mode: 'edit', project: editProject() });
+  it.each(['create', 'edit'] as const)('%s mode has no Brands control', async (mode) => {
+    if (mode === 'create') {
+      renderForm();
+      await toDetails();
+    } else renderForm({ mode: 'edit', project: editProject() });
     openDetails();
     expect(screen.queryByLabelText(/brands/i)).toBeNull();
     expect(screen.queryByText(/^Brands$/)).toBeNull();
@@ -646,7 +676,7 @@ describe('G3 no Brands field', () => {
 
   it('the register body carries no brand_ids', async () => {
     renderForm();
-    typeTitle('Menara Tanpa Jenama CONTOH');
+    await toDetails('Menara Tanpa Jenama CONTOH');
     await pickCustomer();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(registerBody()).toBeTruthy());
@@ -656,9 +686,10 @@ describe('G3 no Brands field', () => {
 
 // ---------------------------------------------------------------- J1
 describe('J1 salesperson footer', () => {
-  it('submit-only user: Cancel, Save draft and Submit for approval; no Register project', () => {
+  it('submit-only user: Cancel, Save draft and Submit for approval; no Register project', async () => {
     granted = new Set(['projects.registrations.submit']);
     renderForm();
+    await toDetails();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeInTheDocument();
     const primary = screen.getByRole('button', { name: 'Submit for approval' });
@@ -666,11 +697,10 @@ describe('J1 salesperson footer', () => {
     expect(screen.queryByRole('button', { name: 'Register project' })).toBeNull();
   });
 
-  it('submit-only user: Save draft needs only a title; Submit for approval also needs a Lead', async () => {
+  it('submit-only user: Save draft needs only a title; Submit for approval also needs a Customer', async () => {
     granted = new Set(['projects.registrations.submit']);
     renderForm();
-    expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
-    typeTitle('Draf Menara CONTOH');
+    await toDetails('Draf Menara CONTOH');
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeDisabled();
     await pickCustomer();
@@ -680,9 +710,10 @@ describe('J1 salesperson footer', () => {
   it.each([
     ['edit only', ['projects.projects.edit']],
     ['edit and submit', ['projects.projects.edit', 'projects.registrations.submit']],
-  ])('staff with %s sees Register project only', (_n, slugs) => {
+  ])('staff with %s sees Register project only', async (_n, slugs) => {
     granted = new Set(slugs);
     renderForm();
+    await toDetails();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Submit for approval' })).toBeNull();
@@ -778,7 +809,8 @@ describe('AI extract from the form', () => {
     );
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(titleBox().value).toBe(TITLE);
-    // LGR-D6: the extract never sets Customer; Register waits for a Lead.
+    await toDetails();
+    // AC-L6: the extract never sets Customer; Register waits for one.
     expect(screen.getByRole('button', { name: 'Register project' })).toBeDisabled();
     expect(screen.queryByText('Bestari Dealer CONTOH')).toBeNull();
     await pickCustomer();
@@ -789,10 +821,11 @@ describe('AI extract from the form', () => {
       developer_party_id: 'd1',
       architect_party_id: 'new-architect',
       main_contractor_party_id: 'new-main_contractor',
-      lead_id: 'lead-1',
+      customer_id: 'cust-1',
       state: 'Selangor',
       mukim: 'Petaling',
     });
+    expect(registerBody()).not.toHaveProperty('lead_id');
     expect(calls.some((c) => c.method === 'POST' && c.url.includes('/customers'))).toBe(false);
   });
 
@@ -802,6 +835,7 @@ describe('AI extract from the form', () => {
     await runExtract(dialog);
     fireEvent.click(screen.getByRole('button', { name: 'Confirm and prefill' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await toDetails();
     expect(callsTo('POST', '/project-sales/parties/')).toHaveLength(0);
     await pickCustomer();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
@@ -849,6 +883,7 @@ describe('AI extract with the real backend shape (C6)', () => {
     expect(within(row).getByText('Batu')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm and prefill' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await toDetails();
     await pickCustomer();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(registerBody()).toBeTruthy());
@@ -882,14 +917,14 @@ describe('D8 a submit-only salesperson registers interest', () => {
     renderForm();
     await checkTitle();
     await waitFor(() =>
-      expect(linesWithText('Project already registered: PRJ-000009 Setia Alam Phase 3B CONTOH')).toHaveLength(1),
+      expect(linesWithText('Clash: PRJ-000009 Setia Alam Phase 3B CONTOH')).toHaveLength(1),
     );
   });
 
-  it('after Register interest the user lands on the Projects list with a toast, not on the project', async () => {
+  it('AC-R2 after Register as secondary lead the user lands on the Projects list with a toast, not on the project', async () => {
     renderForm();
     await checkTitle();
-    fireEvent.click(await screen.findByRole('button', { name: 'Register interest in PRJ-000009' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' }));
     const dialog = await screen.findByRole('dialog');
     const note = within(dialog).getByLabelText(/How and when did you find this project\?/);
     fireEvent.change(note, { target: { value: 'Met the developer in March.' } });
@@ -897,19 +932,21 @@ describe('D8 a submit-only salesperson registers interest', () => {
     await waitFor(() => expect(callsTo('POST', '/projects/p9/takeover-requests')).toHaveLength(1));
     await waitFor(() => expect(push).toHaveBeenCalledWith('/project-sales/pipeline'));
     expect(push).not.toHaveBeenCalledWith('/project-sales/p9');
-    expect(toast.success).toHaveBeenCalledWith('Interest registered in PRJ-000009');
+    expect(toast.success).toHaveBeenCalledWith('Registered as secondary lead on PRJ-000009');
   });
 });
 
-describe('J3c a submit-only user now has the Lead field (LGR-D8)', () => {
-  it('shows the Lead control in the bottom section', () => {
+describe('J3c a submit-only user has Customer and no Lead (AC-L1)', () => {
+  it('AC-L1 shows the Customer control and no Lead control', async () => {
     granted = new Set(['projects.projects.view_own', 'projects.registrations.submit']);
     renderForm();
-    expect(screen.getByLabelText(/^Lead/)).toBeInTheDocument();
+    await toDetails();
+    expect(screen.getByLabelText(/^Customer/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
   });
 });
 
-describe('edit mode Customer prefilled from a linked lead (round 3)', () => {
+describe('AC-L5 edit mode Customer is the editable picker', () => {
   const linked = () =>
     editProject({ customer_id: 'cust-1', customer_name: 'Aman Hartanah CONTOH' } as Partial<Project>);
   const putBody = () => calls.find((c) => c.method === 'PUT')?.body as Record<string, unknown> | undefined;

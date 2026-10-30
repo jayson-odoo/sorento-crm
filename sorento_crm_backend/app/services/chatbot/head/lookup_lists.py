@@ -915,6 +915,12 @@ GEMINI_EMBED_DIMENSIONS = 1536
 WARM_RETRY_WAITS = (15, 30, 60)
 _sleep = time.sleep
 _jitter = random.random
+#: LOOKUP-WARM-STORM: a warm that failed or left texts uncached is tried again after this many seconds, or at once
+#: for a text it did not try. Before, every turn of the process started it again.
+WARM_RETRY_AFTER = 900
+_now = time.monotonic
+#: Per model: when the last warm gave up, and the texts still uncached then.
+_gave_up: dict[str, tuple[float, frozenset[str]]] = {}
 
 
 def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chunk_size: int) -> Embedder:
@@ -1041,6 +1047,7 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
     embed.needs_warm = True  # type: ignore[attr-defined]
     embed.model = model  # type: ignore[attr-defined]
     embed.is_cached = lambda texts: all(_key(t, model) in _cache for t in list(texts))  # type: ignore[attr-defined]
+    embed.missing = lambda texts: {t for t in list(texts) if _key(t, model) not in _cache}  # type: ignore[attr-defined]
     return embed
 
 
@@ -1112,7 +1119,8 @@ def row_texts(rows: list[LookupRow]) -> list[str]:
 
 def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
     """Embed every row text on a background thread so a cold cache never blocks a turn. One warm-up
-    at a time; a failure is swallowed (the next turn tries again, the turn itself is spelling only)."""
+    at a time; a failure is swallowed (the turn itself is spelling only). A warm that gave up is tried again only
+    after `WARM_RETRY_AFTER`, or at once when the rows hold a text it did not try."""
     if embed is None or not rows:
         return
     texts = row_texts(rows)
@@ -1120,6 +1128,13 @@ def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
     is_cached = getattr(embed, "is_cached", None)
     if is_cached is not None and is_cached(texts):
         return
+    missing = getattr(embed, "missing", None)
+    model = getattr(embed, "model", "?")
+    if missing is not None:
+        with _store_lock:
+            gave_up = _gave_up.get(model)
+        if gave_up is not None and _now() - gave_up[0] < WARM_RETRY_AFTER and missing(texts) <= gave_up[1]:
+            return
     if not _warm_lock.acquire(blocking=False):
         return
 
@@ -1129,12 +1144,20 @@ def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
             from_file = getattr(embed, "fill", embed)(texts)
             logger.info(
                 "lookup lists warm: %d texts cached on %s in %.1f s (%d from the shared file)",
-                len(texts), getattr(embed, "model", "?"), time.monotonic() - started,
-                from_file if isinstance(from_file, int) else 0,
+                len(texts), model, time.monotonic() - started, from_file if isinstance(from_file, int) else 0,
             )
         except Exception:  # noqa: BLE001 - advisory
             logger.warning("lookup lists warm failed", exc_info=True)
         finally:
+            if missing is not None:
+                left = missing(texts)
+                with _store_lock:
+                    earlier = _gave_up.pop(model, None)
+                    untried = (earlier[1] - set(texts)) if earlier else frozenset()
+                    if left:
+                        _gave_up[model] = (_now(), frozenset(left | untried))
+                    elif untried:
+                        _gave_up[model] = (earlier[0], frozenset(untried))
             _warm_lock.release()
 
     _import_sdk()

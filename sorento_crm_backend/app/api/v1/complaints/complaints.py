@@ -586,7 +586,7 @@ def get_complaint_fulfilment_orders(
 
 
 @router.get("/{complaint_id}/revisions")
-async def get_complaint_revisions(
+def get_complaint_revisions(
     complaint_id: str,
     current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.view")),
     db: Session = Depends(get_db),
