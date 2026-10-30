@@ -286,11 +286,19 @@ class AgentChange(BaseModel):
     after: str
 
 
+class AgentStepWaiting(BaseModel):
+    """A done step whose form action waits out its grace window (the console's Withdraw countdown)."""
+
+    commit_at: str | None = None
+    window_seconds: int | None = None
+
+
 class AgentActionStep(BaseModel):
     summary: str | None = None
     status: str
     error: str | None = None
     changes: list[AgentChange] = Field(default_factory=list)
+    waiting: AgentStepWaiting | None = None
 
 
 class AgentConversationAction(BaseModel):

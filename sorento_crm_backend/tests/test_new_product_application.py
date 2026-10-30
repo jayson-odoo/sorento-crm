@@ -1672,10 +1672,16 @@ def _lapse_unlink(w, action_id, link_id, user):
         {"commit_at": datetime.utcnow() - timedelta(seconds=1)}, synchronize_session=False
     )
     w.db.commit()
-    return w.api.as_(user).get(
-        "/api/v1/pending-actions/current",
-        params={"entity_type": REGISTRY[UNLINK_KEY].entity_types[0], "entity_id": link_id},
-    )
+    from app.models.base import company_scope
+
+    # `/current` answers only a reader whose company scope covers the action, and this
+    # client's scope dependency is stubbed without setting one (UNSET is fail-closed):
+    # read as the all-companies session the stub stands in for.
+    with company_scope(w.db, None):
+        return w.api.as_(user).get(
+            "/api/v1/pending-actions/current",
+            params={"entity_type": REGISTRY[UNLINK_KEY].entity_types[0], "entity_id": link_id},
+        )
 
 
 def _linked_draft(w, store):

@@ -22,7 +22,8 @@ from tests.chatbot.test_console_turn_endpoint import (  # noqa: F401 - fixtures 
 BASE = "/api/v1/system/chatbot/agent/actions"
 ACTION_ID = "33333333-3333-3333-3333-333333333333"
 STEPS = [{"summary": "Mark SRT-1 for Acme done", "status": "done", "error": None}]
-REASONS = ["not_found", "not_newest", "expired", "not_proposed", "entry_refused", "changed"]
+REASONS = ["not_found", "not_newest", "expired", "not_proposed", "entry_refused", "changed", "applied", "not_waiting"]
+WITHDRAW = "steps/1/withdraw"
 
 
 def _url(verb: str, action_id: str = ACTION_ID) -> str:
@@ -58,7 +59,7 @@ def patch_actions(monkeypatch):
 
         return fake
 
-    for verb in ("confirm", "cancel"):
+    for verb in ("confirm", "cancel", "withdraw"):
         monkeypatch.setattr(actions, verb, make(verb))
         monkeypatch.setattr(route_mod, verb, make(verb), raising=False)
     return rec
@@ -80,7 +81,7 @@ def test_confirm_returns_the_outcome_fields_and_passes_the_console_context(clien
     assert body["status"] == "executed"
     assert body["reply_text"] == "Done."
     # Slice 6 V1: every step also carries its changes in words (none for this stub).
-    assert body["steps"] == [dict(step, changes=[]) for step in STEPS]
+    assert body["steps"] == [dict(step, changes=[], waiting=None) for step in STEPS]
     args, kwargs = _passed(patch_actions, "confirm")
     assert "ZZT-C1" in args + list(kwargs.values())
     assert ACTION_ID in args + list(kwargs.values())
@@ -100,7 +101,22 @@ def test_cancel_returns_the_outcome_fields(client, patch_actions):
     assert ACTION_ID in args + list(kwargs.values())
 
 
-@pytest.mark.parametrize("verb", ["confirm", "cancel"])
+def test_withdraw_returns_the_outcome_and_passes_the_step_index_and_operator(client, patch_actions):
+    resp = client.post(_url(WITHDRAW), json={"contact_respond_id": "ZZT-C1"})
+
+    assert resp.status_code == 200, resp.text
+    assert set(resp.json()) == {"action_id", "status", "reply_text", "steps"}
+    args, kwargs = _passed(patch_actions, "withdraw")
+    assert args[1:4] == ["ZZT-C1", ACTION_ID, 1]
+    assert kwargs.get("operator_user_id")
+
+
+def test_withdraw_with_a_step_that_is_not_a_number_is_422(client, patch_actions):
+    assert client.post(_url("steps/x/withdraw"), json={"contact_respond_id": "ZZT-C1"}).status_code == 422
+    assert patch_actions.calls == []
+
+
+@pytest.mark.parametrize("verb", ["confirm", "cancel", WITHDRAW])
 def test_without_the_console_permission_the_route_is_403_and_nothing_runs(client, patch_actions, verb):
     _GRANTS.discard(VIEW)
 
@@ -110,7 +126,7 @@ def test_without_the_console_permission_the_route_is_403_and_nothing_runs(client
     assert patch_actions.calls == []
 
 
-@pytest.mark.parametrize("verb", ["confirm", "cancel"])
+@pytest.mark.parametrize("verb", ["confirm", "cancel", WITHDRAW])
 @pytest.mark.parametrize("reason", REASONS)
 def test_a_refusal_is_a_409_action_refused_with_the_reason(client, patch_actions, verb, reason):
     from app.services.chatbot.agent.actions import ActionRefused
@@ -123,7 +139,7 @@ def test_a_refusal_is_a_409_action_refused_with_the_reason(client, patch_actions
     assert resp.json()["detail"] == {"code": "action_refused", "reason": reason}
 
 
-@pytest.mark.parametrize("verb", ["confirm", "cancel"])
+@pytest.mark.parametrize("verb", ["confirm", "cancel", WITHDRAW])
 @pytest.mark.parametrize(
     "body",
     [{}, {"contact_respond_id": ""}, {"contact_respond_id": 7}],
