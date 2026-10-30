@@ -1,6 +1,30 @@
 # CARD: Agentic P2 auto-route + P3 write actions (behaviour card)
 
-Status: behaviour card filed (crew-ask on PR #1999), waiting on the owner's answers. No product code until then. Track: full pipeline
+Status: owner answered 30 Oct ~11:10 (below). P3 writes build first: `PLAN-agentic-p3-writes-30oct.md`.
+
+## Owner answers (30 Oct ~11:10, verbatim)
+
+"go live in console, I prefer Jev cause it is fast and cost saving, correct me if I am wrong, 3a, 4b, 5a and
+configurable, 6a i think we should be able to empower the model with more tools instead of needing to hard code
+too many things, with that we can leverage the power of LLM to scale, 7 b agent swithc alone, 8 a, and the AI
+should be able to know right? downgrading or upgrading should be available also, 9a, 10 b"
+
+What each answer settles (crew reading, applied to this card):
+
+| Q | Ruling | Effect on the card |
+| --- | --- | --- |
+| P2-Q1 | (a) console first | Routing goes live in the console; WhatsApp after the eval. |
+| P2-Q2 | Jev | The router is Jev, behind one router interface. On "correct me if I am wrong": Jev is the fastest and cheapest per call of the three; the caveats stand (English-first, Malay not documented, waitlist, new vendor). The gold set must include Malay, Chinese and mixed staff messages and record latency and cost. If Jev access or the eval fails: stop and file a crew-ask; no silent switch to Flash-Lite. |
+| P2-Q3 | (a) | Low confidence -> today's bot. |
+| P2-Q4 | (b) | Crew labels, owner spot-checks 20. |
+| P2-Q5 | (a), configurable | 50 agent turns per contact per day by default; a global setting plus a per-contact override. |
+| P3-Q1 | (a), plus a principle | W0, W1, W2 then W3. Principle: give the model general, composable tools with server-side permission checks, not hard-coded per-request flows. |
+| P3-Q2 | (b) the Agent switch alone | No `agent.write` grant: the switch on + the linked user's own slugs decide. W0 then needs `user_management.contacts.edit` for the salesperson; the owner's reply on that is pending, so W0's permission is not built until he answers. |
+| P3-Q3 | (a) + both directions | Resign as proposed; role changes BOTH ways in the first W0 slice (Business owner <-> Employee); "resign", "upgrade", "downgrade" are read semantically by the model, never by word lists. |
+| P3-Q4 | (a) | WhatsApp confirm is read semantically, within the server limits of rule 3. |
+| P3-Q5 | (b) | Writes first, in the console Agent tab; routing after. |
+
+Where this card's text below still says `agent.write` or proposes `edit_own`, the table above wins. No product code until then. Track: full pipeline
 (Size L: new routing path on live WhatsApp turns, new write surface, identity change for writes).
 Base: AGENTIC-P1 (PR #1982, owner hand test PASS 30 Oct). Lane AGENTIC-P2-CARD.
 
