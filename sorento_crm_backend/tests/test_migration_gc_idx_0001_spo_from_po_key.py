@@ -294,6 +294,7 @@ def test_the_retry_builds_what_is_missing_and_then_does_nothing(monkeypatch):
 
     # The scratch schema has no embedding_chunks; the retry's embedding part is covered in test_migration_lec_0002_online_build.py.
     monkeypatch.setattr(embedding_indexes, "MIGRATION_INDEXES", ())
+    monkeypatch.setattr(embedding_indexes, "COVERAGE_INDEXES", ())
 
     with _scratch() as (schema, conn):
         scratch_engine = _scratch_engine(schema)

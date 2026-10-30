@@ -66,6 +66,7 @@ export const ProductSchema = z.object({
   warranty_months: optionalNumber((n) => n >= 0, 'Warranty months cannot be negative.', true),
   has_serial_tracking: z.boolean(),
   has_batch_tracking: z.boolean(),
+  show_so_line_description: z.boolean(),
   reorder_level: requiredNumber({ min: 0, integer: true }),
   reorder_quantity: requiredNumber({ min: 0, integer: true }),
   // Chatbot stock ask v2 (PLAN-chatbot-stock-ask-v2-24sep.md S1): X and Y,

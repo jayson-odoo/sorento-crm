@@ -396,6 +396,7 @@ function FileCell({ row, kind }: { row: GridRow; kind: LineFileKind }) {
       label={grid.labelOf(row)}
       pickedId={staged.draft[field] ?? ''}
       editable={grid.editing && !staged.removed}
+      canEscalate={stored !== null}
       onPick={(attachmentId) => grid.update(row.key, { [field]: attachmentId })}
       onPreview={(shown) => grid.openPreview(kind, shown)}
     />
@@ -1032,8 +1033,8 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     accessorFn: (row) => row.staged.draft.image_attachment_id,
     header: 'Photo',
     cell: PhotoCell,
-    size: 44,
-    minSize: 40,
+    size: 56,
+    minSize: 56,
     meta: {
       headerTitle: 'Photo',
       headerClassName: TIGHT,
@@ -1156,7 +1157,8 @@ const COLUMNS: ColumnDef<GridRow>[] = [
 
 /**
  * Review mode's widths (QUOTE-CUSTOMER-AMEND): the row-actions column holds a removal's badge over
- * its Accept / Reject, and Qty holds a decision pair. View mode's ten columns sum to 852px;
+ * its Accept / Reject, and Qty holds a decision pair. View mode's ten columns sum to 864px (the
+ * Photo column is 56px like Drawing, so its Escalate tile fits: QUOTE-DRAWING-ESCALATE);
  * Description gives up what these two gain, so review sums to 892px, inside the 893px the grid
  * shows at 1280 with the sidebar open (measured in the browser pass). Same ids and order, so a
  * saved column order holds in both modes.
@@ -1164,7 +1166,7 @@ const COLUMNS: ColumnDef<GridRow>[] = [
 const REVIEW_WIDTHS: Record<string, { size: number; minSize: number }> = {
   row_actions: { size: 56, minSize: 56 },
   qty: { size: 72, minSize: 64 },
-  description: { size: 156, minSize: 140 },
+  description: { size: 144, minSize: 140 },
 };
 const REVIEW_COLUMNS: ColumnDef<GridRow>[] = COLUMNS.map((column) =>
   column.id && REVIEW_WIDTHS[column.id] ? { ...column, ...REVIEW_WIDTHS[column.id] } : column,

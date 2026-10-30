@@ -3,6 +3,8 @@ import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   ClashPreview,
+  MediaKind,
+  MediaEscalationResult,
   Project,
   ProjectCollaborator,
   ProjectListParams,
@@ -987,6 +989,21 @@ export async function updateQuotationLine(
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the line'));
+  return response.json();
+}
+
+/** Ask the marketing product team for the drawing or photo of this line's product, or join the open request. */
+export async function escalateLineMedia(
+  versionId: string,
+  lineId: string,
+  kind: MediaKind,
+): Promise<MediaEscalationResult> {
+  const response = await apiFetch(
+    `${BASE}/quotation-versions/${versionId}/lines/${lineId}/media-escalation`,
+    { method: 'POST', body: JSON.stringify({ kind }) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to escalate the request'));
   return response.json();
 }
 

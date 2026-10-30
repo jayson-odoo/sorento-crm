@@ -2218,6 +2218,10 @@ class ConversationSLATrackingService:
         for r in form_rows:
             cfg = cfg_by_key.get((str(r.source_entity_type), getattr(r, "team_set_code", None)))
             if cfg is None:
+                # Product media requests have no stage config (they run on the general-enquiries
+                # route), and their two actions are the row's own buttons.
+                if str(r.source_entity_type) in ("product_drawing", "product_photo"):
+                    out[str(r.id)] = "Resolve" if r.is_responded else "Respond"
                 continue
             if not bool(r.is_responded) and cfg.respond_event:
                 event = cfg.respond_event
@@ -2301,6 +2305,13 @@ class ConversationSLATrackingService:
             PurchaseRequestHeader.revision_no,
         )
         ticket_map = _num_map(Ticket.id, Ticket.ticket_number, ids_by_type.get("ticket") or set())
+        from app.models.product import Product
+
+        product_map = _num_map(
+            Product.id,
+            Product.product_code,
+            (ids_by_type.get("product_drawing") or set()) | (ids_by_type.get("product_photo") or set()),
+        )
 
         contact_map: dict[str, Optional[str]] = {}
         if contact_ids:
@@ -2327,6 +2338,8 @@ class ConversationSLATrackingService:
                 ref = pr_map.get(sid)
             elif et == "ticket" and sid:
                 ref = ticket_map.get(sid)
+            elif et in ("product_drawing", "product_photo") and sid:
+                ref = product_map.get(sid)
             elif r.respond_contact_id:
                 ref = contact_map.get(str(r.respond_contact_id))
             result[str(r.id)] = ref

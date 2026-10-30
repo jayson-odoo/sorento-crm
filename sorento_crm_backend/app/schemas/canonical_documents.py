@@ -91,8 +91,8 @@ class _CanonicalLine(BaseModel):
     product_ref: Optional[str] = Field(None, max_length=255)
     # v2 code/name fallback (D1). Products are never back-created - a code the
     # catalogue does not hold stays retryable, the same as an unresolved ref -
-    # so `product_name` is accepted and never used: a typo must never become a
-    # SKU. `warehouse_code` follows the same ref-then-code ladder as the ref,
+    # so `product_name` never resolves a product (a typo must never become a
+    # SKU); a sales order line stores it as the line description (SO-LINE-DESC). `warehouse_code` follows the same ref-then-code ladder as the ref,
     # but an unresolved SENT code lands NULL with a warning rather than
     # retryable (D10) - a warehouse is optional, a product is not.
     product_code: Optional[str] = Field(None, max_length=100)

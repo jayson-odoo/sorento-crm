@@ -543,6 +543,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
                 {!r.project_id && r.project_name ? ' (not registered)' : ''}
               </span>
             </Field>
+            {r.quotation_ref && <Field label="Quotation">{r.quotation_ref}</Field>}
             <Field label="For (scope)">{r.scope_note}</Field>
             <Field label="Request Delivery Date">
               {day(r.delivery_date)}

@@ -702,6 +702,8 @@ export interface QuotationLineImage {
   candidate_count: number;
   /** Those photographs, for the picker that sets the line's `image_attachment_id`. */
   candidates?: QuotationLineFileCandidate[];
+  /** The product's photo request; null when none was ever opened. */
+  escalation?: MediaEscalationState | null;
 }
 
 /** One image a line's photo or drawing could be: a signed thumbnail and the original. */
@@ -717,14 +719,37 @@ export interface QuotationLineFileCandidate {
  * issued id, `default` the product's first drawing by upload.
  */
 export interface QuotationLineDrawing {
-  state: 'chosen' | 'default' | 'no_drawings' | 'off_catalog';
+  /** `pdf`: the product's only drawing is a PDF (a link, never printed). */
+  state: 'chosen' | 'default' | 'pdf' | 'no_drawings' | 'off_catalog';
   url?: string | null;
   preview_url?: string | null;
   attachment_id?: string | null;
   filename?: string | null;
   candidate_count: number;
   candidates?: QuotationLineFileCandidate[];
+  /** The product's drawing request; null when none was ever opened. */
+  escalation?: MediaEscalationState | null;
 }
+
+/**
+ * A drawing request on a product. Task fields are null once it is resolved, which leaves only
+ * `last_resolved_at`. Datetimes are ISO strings.
+ */
+export interface MediaEscalationState {
+  tracking_id: string | null;
+  opened_at: string | null;
+  responded_at: string | null;
+  due_at: string | null;
+  requester_count: number | null;
+  last_resolved_at: string | null;
+}
+
+export interface MediaEscalationResult {
+  joined: boolean;
+  escalation: MediaEscalationState | null;
+}
+
+export type MediaKind = 'drawing' | 'photo';
 
 /** The photo and drawing cells for a product on a line not saved yet. */
 export interface QuotationLineImages {

@@ -27,7 +27,8 @@ const num = (n: number) => n.toLocaleString('en-US');
 /** Settings -> Embeddings: the one embedder for lookup words and records, and how fast a switch backfills. */
 export default function EmbeddingsSettingsPage() {
   const settings = useEmbeddingSettings();
-  const overview = useEmbeddingsOverview();
+  // Polled only while records search is still moving to the embedder, so its progress line stays live.
+  const overview = useEmbeddingsOverview({ poll: (o) => !!o && o.records_search_model !== o.setting.model });
   const save = useSaveEmbeddingSettings();
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');

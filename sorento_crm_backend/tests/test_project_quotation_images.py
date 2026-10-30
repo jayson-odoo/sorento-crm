@@ -420,6 +420,52 @@ def test_one_table_of_lines_costs_one_pass_not_one_query_per_line(monkeypatch):
         assert len(statements) <= 5, statements
 
 
+def test_a_table_with_an_open_drawing_request_stays_inside_the_same_query_ceiling():
+    """The drawing cell's escalation state must not add a query per line, open task or not."""
+    from sqlalchemy import event
+
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_service as quotes
+    from .test_product_drawing_request import actor, seed_drawing_team
+
+    with blank_session() as db:
+        env = _setup(db)
+        seed_drawing_team(db)
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=env["owner"])
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=env["owner"]
+        )
+        version = quotes.current_version(db, scope.id)
+        from app.services import product_drawing_request_service as drawing_requests
+
+        for index in range(10):
+            product = _product(db, env)
+            line = _priced_line(db, env, scope, product)
+            if index < 5:
+                drawing_requests.escalate(
+                    db, version_id=version.id, line_id=line.id, user=actor(env["owner"]), kind="drawing"
+                )
+        lines = quotes.list_lines(db, version.id)
+        db.flush()
+
+        statements: list[str] = []
+
+        def _count(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        engine = db.get_bind()
+        event.listen(engine, "before_cursor_execute", _count)
+        try:
+            payload = quotes.serialize_lines(db, lines)
+        finally:
+            event.remove(engine, "before_cursor_execute", _count)
+
+        assert len(payload) == 10
+        assert sum(row["technical_drawing"]["escalation"] is not None for row in payload) == 5
+        assert len(statements) <= 5, statements
+
+
 def test_freezing_is_only_ever_a_fill_never_an_overwrite():
     """A line that already carries an id keeps it, whatever the product says today. That is what
     makes re-issuing safe, and it is also the guard against a future caller running the freeze on
