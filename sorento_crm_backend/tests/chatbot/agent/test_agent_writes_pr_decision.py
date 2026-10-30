@@ -20,6 +20,7 @@ Assumed names (the plan fixes the tool names and the rules, not every argument):
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 import uuid
@@ -75,7 +76,9 @@ def scene(world, *, grace=None, slugs=(APPROVE, VIEW)):
     w.db.query(User).filter(User.id == linked).one().respond_contact_id = contact["pk"]
     w.db.commit()
     w.respond_id, w.user_id, w.agent_contact = contact["respond_id"], linked, contact
-    return w
+    # `_setup` hands back the fixture's one World each time; a copy keeps this scene's own request,
+    # contact, linked user and SLA chain when a test builds more than one person.
+    return copy.copy(w)
 
 
 def operator(w, *slugs) -> str:
