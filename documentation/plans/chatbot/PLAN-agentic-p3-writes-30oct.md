@@ -19,7 +19,12 @@ below, instead of as a Phase 1 mock first. The PR body names this deviation.
   Confirm / Cancel buttons.
 - 10b: writes first, in the console Agent tab. Routing (P2, Jev) after.
 - 8a + both directions: dealer-contact role changes (Business owner <-> Employee) and resign, read semantically.
-  W0's permission waits for the owner's reply (crew); W0 is slice 3, not built until then.
+- W0 permission (owner 30 Oct ~11:15, "agree with your catch on 7b"): a new slug `user_management.contacts.edit_own`
+  (seeded granted to no role, like `pp2_0001_view_own_perms`, and registered in `app/rbac/permission_registry.py`).
+  The holder may change role / resign only for contacts linked (`respond_contact_customers`) to customers whose
+  `sales_agent_id` is one of the user's own active sales agents (`sales/portal_agent.agents_for_contact` on the
+  user's `respond_contact_id`). Holding the general `user_management.contacts.edit` also allows it, for any
+  contact, as the access sheet does today.
 
 ## Slices
 
@@ -27,7 +32,7 @@ below, instead of as a Phase 1 mock first. The PR body names this deviation.
 | --- | --- |
 | 1 | The write foundation (proposal, ledger, confirm / cancel, re-check, actor) + W1 customer asks (read + update) |
 | 2 | W2 sales opportunities (read, stages, create, update) |
-| 3 | W0 dealer-contact role / resign (after the owner's permission reply) |
+| 3 | W0 dealer-contact role (both ways) / resign, under `user_management.contacts.edit_own` |
 | 4 | Console proposal UI + browser pass |
 | 5 | W3 purchase-request decision through `dispatch_or_defer` (grace window) |
 

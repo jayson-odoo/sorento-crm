@@ -19,12 +19,12 @@ What each answer settles (crew reading, applied to this card):
 | P2-Q4 | (b) | Crew labels, owner spot-checks 20. |
 | P2-Q5 | (a), configurable | 50 agent turns per contact per day by default; a global setting plus a per-contact override. |
 | P3-Q1 | (a), plus a principle | W0, W1, W2 then W3. Principle: give the model general, composable tools with server-side permission checks, not hard-coded per-request flows. |
-| P3-Q2 | (b) the Agent switch alone | No `agent.write` grant: the switch on + the linked user's own slugs decide. W0 then needs `user_management.contacts.edit` for the salesperson; the owner's reply on that is pending, so W0's permission is not built until he answers. |
+| P3-Q2 | (b) the Agent switch alone, plus the W0 catch (owner 30 Oct ~11:15: "agree with your catch on 7b") | No `agent.write` grant: the switch on + the linked user's own slugs decide, for reads and general writes. W0 (dealer-contact role / resign) uses a NEW narrower permission `user_management.contacts.edit_own`: change role / resign only for contacts linked to customers of the user's own sales agents. Not the general `user_management.contacts.edit`. |
 | P3-Q3 | (a) + both directions | Resign as proposed; role changes BOTH ways in the first W0 slice (Business owner <-> Employee); "resign", "upgrade", "downgrade" are read semantically by the model, never by word lists. |
 | P3-Q4 | (a) | WhatsApp confirm is read semantically, within the server limits of rule 3. |
 | P3-Q5 | (b) | Writes first, in the console Agent tab; routing after. |
 
-Where this card's text below still says `agent.write` or proposes `edit_own`, the table above wins. No product code until then. Track: full pipeline
+Where this card's text below still says `agent.write`, the table above wins. No product code until then. Track: full pipeline
 (Size L: new routing path on live WhatsApp turns, new write surface, identity change for writes).
 Base: AGENTIC-P1 (PR #1982, owner hand test PASS 30 Oct). Lane AGENTIC-P2-CARD.
 
