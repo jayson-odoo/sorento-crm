@@ -297,8 +297,9 @@ describe('DataGridListToolbar', () => {
     // The row that holds the two clusters is the one that has to wrap; at 375 it
     // is already a column, so the rule only bites at a narrow desktop width.
     const clusterRow = toolbar!.firstElementChild;
-    // Owner ruling a25895124 Q3 a (Create stays on the filter row on phones): the row no
-    // longer wraps below sm (`flex-nowrap`), it wraps from sm up.
+    // Lead decision after owner a25895124 Q3 a (portal phone toolbar): the row wraps at every
+    // width again (search on its own line, icons + Create on the next), and from sm up.
+    expect(clusterRow).toHaveClass('flex-wrap');
     expect(clusterRow).toHaveClass('sm:flex-wrap');
     expect(clusterRow).toHaveClass('sm:flex-row');
   });
