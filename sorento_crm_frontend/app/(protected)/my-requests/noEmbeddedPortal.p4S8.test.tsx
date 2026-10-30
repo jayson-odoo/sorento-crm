@@ -1,7 +1,11 @@
 /**
- * PORTAL-P4-REQUESTS S8 (owner card v1 Q5 c): no embedded portal view is left inside the CRM.
+ * PORTAL-P4-REQUESTS S8 (owner card v1 Q5 c): the /my-requests ROUTES embed no portal view.
  * All 8 MY REQUESTS kinds open on their STAFF pages; every /my-requests route redirects (to a staff
  * page, or the landing = the Stock Inquiry staff list); no portal component is importable from here.
+ *
+ * Hand test 3 (owner a25895124 Q1 a) narrows this: a LIMITED salesperson's staff list page itself renders
+ * the portal's list body (see the `*.portalList.test.tsx` next to each list). That lives in the lists, not
+ * under app/(protected)/my-requests, so every assertion below stands; only this comment was reworded.
  */
 import fs from 'node:fs';
 import path from 'node:path';

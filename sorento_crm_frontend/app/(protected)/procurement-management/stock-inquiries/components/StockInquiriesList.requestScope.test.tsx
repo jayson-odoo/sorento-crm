@@ -100,16 +100,16 @@ beforeEach(() => {
 });
 
 describe('Stock Inquiry list, limited user', () => {
-  it('shows Create Stock Inquiry (holds .add)', async () => {
+  it('shows Create (holds .add; L4: the label is exactly Create)', async () => {
     renderList(LIMITED);
     expect(await screen.findByText('SI-26-0184')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /Create Stock Inquiry/ }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Create' }).length).toBeGreaterThan(0);
   });
 
   it('hides Create when .add is not held', async () => {
     renderList(['procurement.stock_inquiries.view_own']);
     expect(await screen.findByText('SI-26-0184')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Create Stock Inquiry/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
   });
 
   it('offers no bulk Delete after selecting a row', async () => {
@@ -156,5 +156,14 @@ describe('every column header sorts (P4-23), for limited and staff alike', () =>
       if (!sortable) missing.push(title);
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe('Create label (L4, owner a25895124 Q3 a)', () => {
+  it('staff: the primary action reads exactly "Create", never "Create Stock Inquiry"', async () => {
+    renderList(STAFF);
+    await screen.findByText('SI-26-0184');
+    expect(screen.getAllByRole('button', { name: 'Create' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /Create Stock Inquiry/ })).toBeNull();
   });
 });

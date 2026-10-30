@@ -109,16 +109,16 @@ beforeEach(() => {
 });
 
 describe('Complaint list, limited user', () => {
-  it('shows Create Complaint (holds .add)', async () => {
+  it('shows Create (holds .add; L4: the label is exactly Create)', async () => {
     renderList(LIMITED);
     expect(await screen.findByText('CMP-0001')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /Create Complaint/ }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Create' }).length).toBeGreaterThan(0);
   });
 
   it('hides Create when .add is not held', async () => {
     renderList(['complaint_management.complaints.view_own']);
     expect(await screen.findByText('CMP-0001')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Create Complaint/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
   });
 
   it('offers no bulk Delete after selecting a row', async () => {
@@ -208,5 +208,14 @@ describe('lookups behind master-data permissions (owner hand test 2, item 1)', (
     await screen.findByText('CMP-0001');
     await waitFor(() => expect(rootCauseSelect).toHaveBeenCalled());
     await waitFor(() => expect(resolutionSelect).toHaveBeenCalled());
+  });
+});
+
+describe('Create label (L4, owner a25895124 Q3 a)', () => {
+  it('staff: the primary action reads exactly "Create", never "Create Complaint"', async () => {
+    renderList(STAFF);
+    await screen.findByText('CMP-0001');
+    expect(screen.getAllByRole('button', { name: 'Create' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /Create Complaint/ })).toBeNull();
   });
 });

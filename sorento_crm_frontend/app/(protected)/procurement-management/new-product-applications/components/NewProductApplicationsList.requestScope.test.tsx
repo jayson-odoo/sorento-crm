@@ -94,9 +94,18 @@ describe('every New Product Application column header sorts, for limited and sta
 });
 
 describe('New for a limited user', () => {
-  it('a limited user with create gets New', async () => {
+  it('a limited user with create gets Create (L4: was New)', async () => {
     mount(LIMITED);
     await screen.findByText('NPA-000001');
-    expect(screen.getByRole('button', { name: /^new$/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^create$/i })).toBeTruthy();
+  });
+});
+
+describe('Create label (L4, owner a25895124 Q3 a)', () => {
+  it('staff: the primary action reads exactly "Create", never "New"', async () => {
+    mount(STAFF);
+    await screen.findByText('NPA-000001');
+    expect(screen.getAllByRole('button', { name: 'Create' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /^new$/i })).toBeNull();
   });
 });

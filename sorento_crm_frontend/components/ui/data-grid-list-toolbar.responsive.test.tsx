@@ -67,3 +67,38 @@ describe('DataGridListToolbar below sm', () => {
     expect(row).toHaveClass('sm:flex-row');
   });
 });
+
+/**
+ * PORTAL-P4-REQUESTS L4 (hand test 3, owner a25895124 Q3 a): the primary action stays on the filter row on
+ * phones for every list. Class contract (jsdom has no breakpoints): the toolbar's clusters row is a
+ * wrapping ROW at every width (`flex-row flex-wrap`, never `flex-col` at the base), so Create sits beside
+ * Filters / Columns / Export instead of dropping to a second row; the desktop (sm+) classes are unchanged.
+ */
+describe('DataGridListToolbar: the primary action stays on the filter row', () => {
+  const rowOf = (container: HTMLElement) =>
+    container.querySelector('[data-slot="data-grid-list-toolbar"]')!.firstElementChild as HTMLElement;
+
+  it('the clusters row is a row at every width, not a column below sm', () => {
+    const { container } = render(<Harness toolbarProps={toolbarProps} />);
+    const row = rowOf(container);
+    expect(row).toHaveClass('flex-row');
+    expect(row).toHaveClass('flex-wrap');
+    expect(row).not.toHaveClass('flex-col');
+  });
+
+  it('Filters and the primary action are in that one row', () => {
+    const { container } = render(<Harness toolbarProps={toolbarProps} />);
+    const row = rowOf(container);
+    expect(row.contains(screen.getByRole('button', { name: 'Filters' }))).toBe(true);
+    expect(row.contains(screen.getByRole('button', { name: 'Create thing' }))).toBe(true);
+  });
+
+  it('desktop layout classes are unchanged (sm: items-center + justify-between)', () => {
+    const { container } = render(<Harness toolbarProps={toolbarProps} />);
+    const row = rowOf(container);
+    expect(row).toHaveClass('sm:items-center');
+    expect(row).toHaveClass('sm:justify-between');
+    expect(row).toHaveClass('gap-3');
+    expect(row).toHaveClass('w-full');
+  });
+});
