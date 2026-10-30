@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClashCandidate, Project } from '../types/project.types';
 
@@ -351,7 +351,7 @@ async function toDetails(text = 'Setia Alam Phase 3B') {
   fireEvent.click(screen.getByRole('button', { name: 'Check' }));
   await screen.findByText('No clash');
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByRole('button', { name: /Lead, customer and salesperson/ });
+  await screen.findByRole('button', { name: /^Customer and salesperson/ });
 }
 
 async function fillWho() {
@@ -374,17 +374,9 @@ async function fillWho() {
   );
 }
 
-/**
- * LEAD-GOVERNS-REGISTER D2: a new project needs a Lead and the Customer comes from it, so
- * "picking the customer" is picking the lead whose customer is Aman Hartanah.
- */
+/** AC-L1: a new project's Customer is the search picker; nothing fills it from a lead. */
 async function pickCustomer() {
-  await pickParty(/^Lead/, 'Menara', 'Menara Lead');
-}
-
-/** The Lead picker sits in the bottom section now, not in Details. */
-async function pickLead() {
-  await pickParty(/^Lead/, 'Menara', 'Menara Lead');
+  await pickParty(/^Customer/, 'Aman', 'Aman Hartanah');
 }
 
 /** Details starts folded in create mode (AC-PF033); open it by hand for its fields. */
@@ -430,7 +422,7 @@ beforeEach(() => {
 });
 
 describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
-  it('create mode opens Who and what and Lead, customer and salesperson, collapses Details', async () => {
+  it('create mode opens Who and what and Customer and salesperson, collapses Details', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
     expect(screen.getByRole('button', { name: /Who and what/ })).toHaveAttribute(
@@ -441,7 +433,7 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
       'aria-expanded',
       'false',
     );
-    expect(screen.getByRole('button', { name: /Lead, customer and salesperson/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /^Customer and salesperson/ })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
@@ -449,7 +441,7 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
 
   it('edit mode opens every section', () => {
     renderForm({ mode: 'edit', project: baseProject() });
-    for (const name of [/Who and what/, /^Details/, /Lead, customer and salesperson/]) {
+    for (const name of [/Who and what/, /^Details/, /^Customer and salesperson/]) {
       expect(screen.getByRole('button', { name })).toHaveAttribute('aria-expanded', 'true');
     }
   });
@@ -719,130 +711,41 @@ describe('ProjectForm: Salesperson (AC-PF040-043)', () => {
   });
 });
 
-vi.mock('../../leads/components/LeadWizardDialog', () => ({
-  LeadWizardDialog: ({
-    initialTitle,
-    onDone,
-  }: {
-    initialTitle?: string;
-    onDone: (lead?: { id: string; lead_code: string; title: string }) => void;
-  }) => (
-    <div role="dialog" aria-label="Create lead">
-      <span>wizard title: {initialTitle}</span>
-      <button
-        type="button"
-        onClick={() =>
-          onDone({
-            id: 'lead-new',
-            lead_code: 'LEAD-000077',
-            title: initialTitle ?? '',
-            customer_id: 'cust-1',
-            customer_name: 'Aman Hartanah',
-            owner_user_id: 'u-me',
-          } as never)
-        }
-      >
-        Finish wizard
-      </button>
-    </div>
-  ),
-}));
-
-describe('ProjectForm: Lead link (AC-PF050-058)', () => {
-  it('will not register a project without a lead; its customer comes with it (LEAD-GOVERNS-REGISTER D2)', async () => {
+describe('ProjectForm: no lead on registration (AC-L1)', () => {
+  it('AC-L1 will not register a project without a customer', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeDisabled();
-    await pickLead();
+    await pickCustomer();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeEnabled();
   });
 
-  it('lets an existing project without a lead save', async () => {
-    renderForm({ mode: 'edit', project: baseProject({ lead_id: null, lead_code: null }) });
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
-  });
-
-  it('lists a lead by its title with the code apart, never a dot-joined label', async () => {
+  it('AC-L1 shows no Lead field and no Create lead option, in create or edit', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
-    fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Menara' } });
-    expect(await screen.findByRole('button', { name: 'Menara Lead' })).toBeInTheDocument();
-    expect(screen.queryByText(/ · /)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Create lead/ })).toBeNull();
+    cleanup();
+    renderForm({ mode: 'edit', project: baseProject() });
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
   });
 
-  it('offers to create the lead from inside the dropdown and links the one created', async () => {
-    listLeads.mockResolvedValue({ data: [], pagination: { total: 0, page: 1, limit: 20 } });
+  it('AC-L1 the register body carries the picked customer_id and no lead_id key', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
-    fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Tower Q' } });
-    fireEvent.click(await screen.findByRole('button', { name: /Create lead .Tower Q./ }));
-
-    const wizard = await screen.findByRole('dialog', { name: 'Create lead' });
-    expect(within(wizard).getByText('wizard title: Tower Q')).toBeInTheDocument();
-    fireEvent.click(within(wizard).getByRole('button', { name: 'Finish wizard' }));
-
+    await pickCustomer();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
-    await waitFor(() =>
-      expect(registerProject).toHaveBeenCalledWith(
-        expect.objectContaining({ lead_id: 'lead-new' }),
-      ),
-    );
+    await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
+    const body = registerProject.mock.calls[0][0] as Record<string, unknown>;
+    expect(body).toMatchObject({ customer_id: 'cust-1' });
+    expect(body).not.toHaveProperty('lead_id');
   });
 
-  it('searches open leads with the typed text, capped at 20', async () => {
-    renderForm({ mode: 'create' });
-    await toDetails();
-    fireEvent.change(screen.getByLabelText(/^Lead/), { target: { value: 'Menara' } });
-    await waitFor(() =>
-      expect(listLeads).toHaveBeenCalledWith({ query: 'Menara', outcome: ['open'], limit: 20 }),
-    );
-  });
-
-  it('shows the current lead on the trigger in edit mode though listLeads never returns it', () => {
-    renderForm({
-      mode: 'edit',
-      project: baseProject({ lead_id: 'lead-9', lead_code: 'LEAD-000009' }),
-    });
-    expect(screen.getByDisplayValue(/LEAD-000009/)).toBeInTheDocument();
-    expect(listLeads).not.toHaveBeenCalled();
-  });
-
-  it('sends lead_id on create when a lead is picked', async () => {
-    renderForm({ mode: 'create' });
-    await fillWho();
-    await pickLead();
-    fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
-    await waitFor(() =>
-      expect(registerProject).toHaveBeenCalledWith(
-        expect.objectContaining({ lead_id: 'lead-1' }),
-      ),
-    );
-  });
-
-  it('sends lead_id null on edit when the lead is cleared', async () => {
-    renderForm({
-      mode: 'edit',
-      project: baseProject({ lead_id: 'lead-9', lead_code: 'LEAD-000009' }),
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Clear lead' }));
+  it('AC-L5 an edit never sends lead_id, even for a project that has a lead', async () => {
+    renderForm({ mode: 'edit', project: baseProject({ lead_id: 'lead-9', lead_code: 'LEAD-000009' }) });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() =>
-      expect(updateProject).toHaveBeenCalledWith(
-        'p1',
-        expect.objectContaining({ lead_id: null }),
-      ),
-    );
-  });
-
-  it('leaves lead_id alone on edit when the lead is not touched', async () => {
-    renderForm({
-      mode: 'edit',
-      project: baseProject({ lead_id: 'lead-9', lead_code: 'LEAD-000009' }),
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(updateProject).toHaveBeenCalled());
-    const body = updateProject.mock.calls[0][1] as { lead_id?: string | null };
-    expect(body.lead_id === undefined || body.lead_id === 'lead-9').toBe(true);
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    expect(updateProject.mock.calls[0][1]).not.toHaveProperty('lead_id');
   });
 });
 

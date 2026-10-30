@@ -348,9 +348,7 @@ async function pickAsync(label: string | RegExp, typed: string, optionName: stri
 }
 // LEAD-GOVERNS-REGISTER D2: a new project's Customer comes from the picked Lead, so "pickCustomer"
 // now picks the lead whose customer is Aman Hartanah CONTOH.
-const pickCustomer = (typed = 'Menara') => pickAsync(/^Lead/, typed, /Menara Lead CONTOH/);
-const pickCustomerlessLead = () =>
-  pickAsync(/^Lead/, 'Tanpa', /Menara Tanpa Pelanggan CONTOH/);
+const pickCustomer = (typed = 'Aman') => pickAsync(/^Customer/, typed, /Aman Hartanah CONTOH/);
 function openDetails() {
   const header = screen.getByRole('button', { name: /^Details/ });
   if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
@@ -391,7 +389,7 @@ async function runCheck(text = 'Setia Alam Phase 3B CONTOH') {
 async function toDetails() {
   await runCheck();
   fireEvent.click(await screen.findByRole('button', { name: 'Next' }));
-  await screen.findByRole('button', { name: /Lead, customer and salesperson/ });
+  await screen.findByRole('button', { name: /^Customer and salesperson/ });
 }
 
 describe('AC-W1 create mode opens on step 1 only', () => {
@@ -412,7 +410,7 @@ describe('AC-W1 create mode opens on step 1 only', () => {
     expect(screen.queryByLabelText('Project type')).toBeNull();
     expect(screen.queryByLabelText(/^Lead/)).toBeNull();
     expect(screen.queryByLabelText('Salesperson')).toBeNull();
-    expect(screen.queryByRole('button', { name: /Lead, customer and salesperson/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Customer and salesperson/ })).toBeNull();
   });
 
   it.each(['Register project', 'Save draft', 'Submit for approval'])('AC-W1 step 1 has no "%s" button', (name) => {
@@ -509,12 +507,13 @@ describe('AC-W6 editing after a Check clears it', () => {
 });
 
 describe('AC-W7 step 2 Details', () => {
-  it('AC-W7 Next shows Details and Lead, customer and salesperson, with the step strip on Details', async () => {
+  it('AC-W7 Next shows Details and Customer and salesperson, with the step strip on Details', async () => {
     renderForm();
     await toDetails();
     expect(currentStep()).toHaveTextContent('Details');
     expect(screen.getByRole('button', { name: /^Details/ })).toBeInTheDocument();
-    expect(screen.getByLabelText(/^Lead/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Customer/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
     expect(screen.getByLabelText('Salesperson')).toBeInTheDocument();
   });
 
@@ -537,15 +536,16 @@ describe('AC-W7 step 2 Details', () => {
     expect(screen.queryByRole('button', { name: 'Register project' })).toBeNull();
   });
 
-  it('AC-W7 Register project keeps today\'s rule: disabled until a Lead is picked, then sends title and lead_id', async () => {
+  it('AC-W7 Register project keeps today\'s rule: disabled until a Customer is picked, then sends title and customer_id (no lead_id)', async () => {
     renderForm();
     await toDetails();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeDisabled();
-    await pickAsync(/^Lead/, 'Menara', /Menara Lead CONTOH/);
+    await pickCustomer();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Register project' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(registerBody()).toBeTruthy());
-    expect(registerBody()).toMatchObject({ title: 'Setia Alam Phase 3B CONTOH', lead_id: 'lead-1' });
+    expect(registerBody()).toMatchObject({ title: 'Setia Alam Phase 3B CONTOH', customer_id: 'cust-1' });
+    expect(registerBody()).not.toHaveProperty('lead_id');
   });
 
   it('AC-W7 Back returns to step 1 keeping the typed title and developer', async () => {
@@ -561,11 +561,11 @@ describe('AC-W7 step 2 Details', () => {
   it('AC-W7 Back keeps values typed on step 2', async () => {
     renderForm();
     await toDetails();
-    await pickAsync(/^Lead/, 'Menara', /Menara Lead CONTOH/);
+    await pickCustomer();
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await screen.findByLabelText(/project title/i);
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(await screen.findByLabelText(/^Lead/)).toHaveValue('Menara Lead CONTOH');
+    expect(await screen.findByLabelText(/^Customer/)).toHaveValue('Aman Hartanah CONTOH');
   });
 });
 
@@ -592,7 +592,7 @@ describe('AC-W8 AI extract on step 1', () => {
     await waitFor(() => expect(developerBox()).toHaveValue('SP Setia CONTOH'));
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Next' }));
-    await pickAsync(/^Lead/, 'Menara', /Menara Lead CONTOH/);
+    await pickCustomer();
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     await waitFor(() => expect(registerBody()).toBeTruthy());
     expect(registerBody()).toMatchObject({
@@ -609,7 +609,7 @@ describe('AC-W9 edit mode is not a wizard', () => {
     renderForm({ mode: 'edit', project: editProject() });
     expect(stepStrip()).toBeNull();
     expect(screen.getByRole('button', { name: /^Details/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Lead, customer and salesperson/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Customer and salesperson/ })).toBeInTheDocument();
     expect(screen.getByLabelText(/project title/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
@@ -670,7 +670,7 @@ describe('AC-W4 a clash found at submit time on step 2', () => {
     clashAnswer = () => (++n === 1 ? { candidates: [], would_block: false } : { candidates: [BLOCKING], would_block: true });
     renderForm();
     await toDetails();
-    await pickAsync(/^Lead/, 'Menara', /Menara Lead CONTOH/);
+    await pickCustomer();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Register project' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
     expect(
@@ -680,7 +680,7 @@ describe('AC-W4 a clash found at submit time on step 2', () => {
       expect(linesWithText('Clash: PRJ-000009 Setia Alam Phase 3B CONTOH')).toHaveLength(1),
     );
     // Still on step 2, and nothing was registered.
-    expect(screen.getByLabelText(/^Lead/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Customer/)).toBeInTheDocument();
     expect(registerBody()).toBeUndefined();
   });
 });

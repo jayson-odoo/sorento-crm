@@ -272,7 +272,7 @@ async function toDetails(text = 'Setia Alam Phase 3B') {
   fireEvent.click(screen.getByRole('button', { name: 'Check' }));
   await screen.findByText('No clash');
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByRole('button', { name: /Lead, customer and salesperson/ });
+  await screen.findByRole('button', { name: /^Customer and salesperson/ });
 }
 
 describe('editing a pending project: the typed name hint (RW14)', () => {

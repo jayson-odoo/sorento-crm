@@ -84,96 +84,24 @@ def _register(w, **body):
     return as_user(w, w.owner).post(LIST, json=body)
 
 
-def test_e1_registering_without_a_lead_is_refused_and_creates_no_project(v2):
+def test_e1_registering_without_a_lead_succeeds_and_links_none(v2):
+    """AC-L2: registration needs no lead (flipped from 'refused with project_lead_required')."""
     name = title("NoLead")
     res = _register(v2, title=name, customer_id=v2.customer.id)
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "project_lead_required"
-    assert projects_titled(v2, name) == 0
-
-
-def test_e2_the_project_takes_the_customer_of_its_lead(v2):
-    lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
-    name = title("FromLead")
-    res = _register(v2, title=name, lead_id=lead.id)
     assert res.status_code == 201, res.text
-    assert profile_of(v2, res.json()["id"]).customer_id == v2.customer.id
+    assert projects_titled(v2, name) == 1
+    assert project_of(v2, res.json()["id"]).lead_id is None
 
 
-def test_e2_an_equal_customer_in_the_request_is_accepted(v2):
-    lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
-    res = _register(v2, title=title("Equal"), lead_id=lead.id, customer_id=v2.customer.id)
+def _register_linked(w, lead, name):
+    """A staff project holding `lead`, linked straight in the database (registering no longer
+    links a lead, AC-L4), with the lead's customer on its profile."""
+    res = _register(w, title=name, customer_id=lead.customer_id or w.customer.id)
     assert res.status_code == 201, res.text
-    assert profile_of(v2, res.json()["id"]).customer_id == v2.customer.id
-
-
-def test_e2_a_different_customer_than_the_leads_is_refused_and_nothing_changes(v2):
-    other = new_customer(v2)
-    lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
-    name = title("Mismatch")
-    res = _register(v2, title=name, lead_id=lead.id, customer_id=other.id)
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "project_customer_not_lead_customer"
-    assert projects_titled(v2, name) == 0
-    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
-
-
-def test_e3_a_lead_without_a_customer_needs_one_on_the_request(v2):
-    lead = lead_row(v2, customer_id=None, owner=v2.owner)
-    name = title("NeedsCustomer")
-    res = _register(v2, title=name, lead_id=lead.id)
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "project_customer_required"
-    assert projects_titled(v2, name) == 0
-
-
-def test_e3_the_picked_customer_is_stored_and_fills_the_empty_lead(v2):
-    lead = lead_row(v2, customer_id=None, owner=v2.owner)
-    res = _register(v2, title=title("FillsLead"), lead_id=lead.id, customer_id=v2.customer.id)
-    assert res.status_code == 201, res.text
-    assert profile_of(v2, res.json()["id"]).customer_id == v2.customer.id
-    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
-
-
-def test_e5_a_lead_already_linked_to_a_project_is_409(v2):
-    lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
-    first = _register(v2, title=title("First"), lead_id=lead.id, customer_id=v2.customer.id)
-    assert first.status_code == 201, first.text
-    second = _register(v2, title=title("Second"), lead_id=lead.id, customer_id=v2.customer.id)
-    assert second.status_code == 409, second.text
-    assert second.json()["code"] == "lead_already_linked"
-
-
-def test_e4_changing_the_lead_sets_the_customer_of_the_new_lead(v2):
-    other = new_customer(v2)
-    first = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
-    second = lead_row(v2, customer_id=other.id, owner=v2.owner)
-    made = _register(v2, title=title("Switch"), lead_id=first.id, customer_id=v2.customer.id)
-    assert made.status_code == 201, made.text
-    pid = made.json()["id"]
-
-    res = as_user(v2, v2.owner).put(f"{STAFF}/{pid}", json={"lead_id": second.id})
-    assert res.status_code == 200, res.text
-    assert project_of(v2, pid).lead_id == second.id
-    assert profile_of(v2, pid).customer_id == other.id
-
-
-def test_e4_changing_to_a_lead_with_another_customer_than_requested_is_refused(v2):
-    other = new_customer(v2)
-    third = new_customer(v2)
-    first = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
-    second = lead_row(v2, customer_id=other.id, owner=v2.owner)
-    pid = _register(
-        v2, title=title("SwitchBad"), lead_id=first.id, customer_id=v2.customer.id
-    ).json()["id"]
-
-    res = as_user(v2, v2.owner).put(
-        f"{STAFF}/{pid}", json={"lead_id": second.id, "customer_id": third.id}
-    )
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "project_customer_not_lead_customer"
-    assert project_of(v2, pid).lead_id == first.id
-    assert profile_of(v2, pid).customer_id == v2.customer.id
+    row = project_of(w, res.json()["id"])
+    row.lead_id = lead.id
+    w.db.commit()
+    return res.json()["id"]
 
 
 def _give_customer(w, project_id, customer_id):
@@ -183,32 +111,9 @@ def _give_customer(w, project_id, customer_id):
     w.db.commit()
 
 
-def test_e4_linking_a_customerless_lead_fills_its_empty_customer_from_the_project(v2):
-    old = seed_project(v2.db, v2.company_id, title("Filler"), owner=v2.owner)
-    _give_customer(v2, old.id, v2.customer.id)
-    lead = lead_row(v2, customer_id=None, owner=v2.owner)
-    res = as_user(v2, v2.owner).put(f"{STAFF}/{old.id}", json={"lead_id": lead.id})
-    assert res.status_code == 200, res.text
-    assert project_of(v2, old.id).lead_id == lead.id
-    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
-
-
-def test_e4_linking_never_overwrites_a_lead_customer_that_is_set(v2):
-    other = new_customer(v2)
-    old = seed_project(v2.db, v2.company_id, title("Keeper"), owner=v2.owner)
-    _give_customer(v2, old.id, v2.customer.id)
-    lead = lead_row(v2, customer_id=other.id, owner=v2.owner)
-    res = as_user(v2, v2.owner).put(f"{STAFF}/{old.id}", json={"lead_id": lead.id})
-    assert res.status_code == 200, res.text
-    assert reload_lead(v2, lead.id).customer_id == other.id
-    assert profile_of(v2, old.id).customer_id == other.id
-
-
 def test_e4_an_edit_without_a_lead_change_leaves_the_stored_customer(v2):
     lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
-    pid = _register(
-        v2, title=title("Keep"), lead_id=lead.id, customer_id=v2.customer.id
-    ).json()["id"]
+    pid = _register_linked(v2, lead, title("Keep"))
     res = as_user(v2, v2.owner).put(f"{STAFF}/{pid}", json={"title": title("Renamed")})
     assert res.status_code == 200, res.text
     assert profile_of(v2, pid).customer_id == v2.customer.id
@@ -242,20 +147,9 @@ def test_f1_a_lead_without_a_customer_qualifies_as_before(v2):
     assert profile is None or profile.customer_id is None
 
 
-def test_e4_a_later_customer_pick_without_a_lead_change_fills_the_empty_lead(v2):
-    old = seed_project(v2.db, v2.company_id, title("LinkedEmpty"), owner=v2.owner)
-    lead = lead_row(v2, customer_id=None, owner=v2.owner)
-    old.lead_id = lead.id
-    v2.db.commit()
-    res = as_user(v2, v2.owner).put(f"{STAFF}/{old.id}", json={"customer_id": v2.customer.id})
-    assert res.status_code == 200, res.text
-    assert profile_of(v2, old.id).customer_id == v2.customer.id
-    assert reload_lead(v2, lead.id).customer_id == v2.customer.id
-
-
 def test_e9_a_null_customer_id_never_clears_the_leads_customer_on_put(v2):
     lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
-    pid = _register(v2, title=title("NullKeep"), lead_id=lead.id).json()["id"]
+    pid = _register_linked(v2, lead, title("NullKeep"))
     assert profile_of(v2, pid).customer_id == v2.customer.id
     res = as_user(v2, v2.owner).put(f"{STAFF}/{pid}", json={"customer_id": None})
     assert res.status_code == 200, res.text

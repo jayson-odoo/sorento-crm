@@ -355,9 +355,7 @@ async function pickAsync(label: string | RegExp, typed: string, optionName: stri
 }
 // LEAD-GOVERNS-REGISTER D2: a new project's Customer comes from the picked Lead, so "pickCustomer"
 // now picks the lead whose customer is Aman Hartanah CONTOH.
-const pickCustomer = (typed = 'Menara') => pickAsync(/^Lead/, typed, /Menara Lead CONTOH/);
-const pickCustomerlessLead = () =>
-  pickAsync(/^Lead/, 'Tanpa', /Menara Tanpa Pelanggan CONTOH/);
+const pickCustomer = (typed = 'Aman') => pickAsync(/^Customer/, typed, /Aman Hartanah CONTOH/);
 function openDetails() {
   const header = screen.getByRole('button', { name: /^Details/ });
   if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
@@ -395,7 +393,7 @@ async function toDetails(text = 'Setia Alam Phase 3B') {
   fireEvent.click(screen.getByRole('button', { name: 'Check' }));
   await screen.findByText('No clash');
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByRole('button', { name: /Lead, customer and salesperson/ });
+  await screen.findByRole('button', { name: /^Customer and salesperson/ });
 }
 
 describe('A1 title first, as a textarea', () => {
@@ -417,34 +415,32 @@ describe('A1 title first, as a textarea', () => {
   });
 });
 
-describe('A2 Lead, customer and salesperson', () => {
-  it('names the section Lead, customer and salesperson and holds Lead and Salesperson', async () => {
+describe('A2 Customer and salesperson (AC-L1)', () => {
+  it('AC-L1 names the section Customer and salesperson and holds Customer and Salesperson', async () => {
     renderForm();
     await toDetails();
     expect(screen.queryByRole('button', { name: /^Salesperson and customer/ })).toBeNull();
-    const header = screen.getByRole('button', { name: /Lead, customer and salesperson/ });
+    expect(screen.queryByRole('button', { name: /Lead, customer and salesperson/ })).toBeNull();
+    const header = screen.getByRole('button', { name: /^Customer and salesperson/ });
     const section = header.closest('[data-slot="card"]') as HTMLElement;
     expect(within(section).getByLabelText('Salesperson')).toBeInTheDocument();
-    expect(within(section).getByLabelText(/^Lead/)).toBeInTheDocument();
+    expect(within(section).getByLabelText(/^Customer/)).toBeInTheDocument();
   });
 
-  it('Lead sits in the bottom section, not Details, and keeps its create row', async () => {
+  it('AC-L1 there is no Lead field and no Create lead row anywhere', async () => {
     renderForm();
     await toDetails();
     openDetails();
-    const details = screen.getByRole('button', { name: /^Details/ }).closest('[data-slot="card"]') as HTMLElement;
-    expect(within(details).queryByLabelText(/^Lead/)).toBeNull();
-    const lead = screen.getByLabelText(/^Lead/);
-    fireEvent.change(lead, { target: { value: 'Pavilion' } });
-    expect(await screen.findByRole('button', { name: /Create lead/ })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'Pavilion' } });
+    expect(screen.queryByRole('button', { name: /Create lead/ })).toBeNull();
   });
 });
 
 describe('A3 Customer is an async search over the customers select', () => {
-  it('a lead with no customer: searches GET /api/v1/order-management/customers/select with the typed query', async () => {
+  it('AC-L1 searches GET /api/v1/order-management/customers/select with the typed query', async () => {
     renderForm();
     await toDetails();
-    await pickCustomerlessLead();
     fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'Aman' } });
     await screen.findByRole('button', { name: /Aman Hartanah CONTOH/ });
     const get = callsTo('GET', '/api/v1/order-management/customers/select').pop();
@@ -455,7 +451,6 @@ describe('A3 Customer is an async search over the customers select', () => {
   it('options show the customer name only, never the debtor code', async () => {
     renderForm();
     await toDetails();
-    await pickCustomerlessLead();
     fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'CONTOH' } });
     await screen.findByRole('button', { name: /Bestari Dealer CONTOH/ });
     expect(document.body.textContent).not.toMatch(/C-000\d/);
@@ -464,7 +459,6 @@ describe('A3 Customer is an async search over the customers select', () => {
   it('offers no create row and says "No customers found" on an empty result', async () => {
     renderForm();
     await toDetails();
-    await pickCustomerlessLead();
     fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'zzzz' } });
     expect(await screen.findByText('No customers found')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /create customer/i })).toBeNull();
@@ -472,8 +466,8 @@ describe('A3 Customer is an async search over the customers select', () => {
   });
 });
 
-describe('A4 Register needs title and a Lead (its customer comes with it)', () => {
-  it('create: disabled with a title only, enabled once a Lead is picked, sends lead_id', async () => {
+describe('A4 Register needs title and a Customer (AC-L1)', () => {
+  it('AC-L1 create: disabled with a title only, enabled once a Customer is picked, sends customer_id and no lead_id key', async () => {
     renderForm();
     await toDetails('Menara Baru CONTOH');
     const register = screen.getByRole('button', { name: 'Register project' });
@@ -483,13 +477,15 @@ describe('A4 Register needs title and a Lead (its customer comes with it)', () =
     await waitFor(() => expect(register).toBeEnabled());
     fireEvent.click(register);
     await waitFor(() => expect(registerBody()).toBeTruthy());
-    expect(registerBody()).toMatchObject({ title: 'Menara Baru CONTOH', lead_id: 'lead-1' });
+    expect(registerBody()).toMatchObject({ title: 'Menara Baru CONTOH', customer_id: 'cust-1' });
+    expect(registerBody()).not.toHaveProperty('lead_id');
     await waitFor(() => expect(push).toHaveBeenCalledWith('/project-sales/new1'));
   });
 
-  it('edit: Lead is optional, Save changes is enabled without one', () => {
+  it('AC-L5 edit: Save changes is enabled and sends no lead_id key', () => {
     renderForm({ mode: 'edit', project: editProject() });
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
   });
 });
 
@@ -701,7 +697,7 @@ describe('J1 salesperson footer', () => {
     expect(screen.queryByRole('button', { name: 'Register project' })).toBeNull();
   });
 
-  it('submit-only user: Save draft needs only a title; Submit for approval also needs a Lead', async () => {
+  it('submit-only user: Save draft needs only a title; Submit for approval also needs a Customer', async () => {
     granted = new Set(['projects.registrations.submit']);
     renderForm();
     await toDetails('Draf Menara CONTOH');
@@ -814,7 +810,7 @@ describe('AI extract from the form', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(titleBox().value).toBe(TITLE);
     await toDetails();
-    // LGR-D6: the extract never sets Customer; Register waits for a Lead.
+    // AC-L6: the extract never sets Customer; Register waits for one.
     expect(screen.getByRole('button', { name: 'Register project' })).toBeDisabled();
     expect(screen.queryByText('Bestari Dealer CONTOH')).toBeNull();
     await pickCustomer();
@@ -825,10 +821,11 @@ describe('AI extract from the form', () => {
       developer_party_id: 'd1',
       architect_party_id: 'new-architect',
       main_contractor_party_id: 'new-main_contractor',
-      lead_id: 'lead-1',
+      customer_id: 'cust-1',
       state: 'Selangor',
       mukim: 'Petaling',
     });
+    expect(registerBody()).not.toHaveProperty('lead_id');
     expect(calls.some((c) => c.method === 'POST' && c.url.includes('/customers'))).toBe(false);
   });
 
@@ -939,16 +936,17 @@ describe('D8 a submit-only salesperson registers interest', () => {
   });
 });
 
-describe('J3c a submit-only user now has the Lead field (LGR-D8)', () => {
-  it('shows the Lead control in the bottom section', async () => {
+describe('J3c a submit-only user has Customer and no Lead (AC-L1)', () => {
+  it('AC-L1 shows the Customer control and no Lead control', async () => {
     granted = new Set(['projects.projects.view_own', 'projects.registrations.submit']);
     renderForm();
     await toDetails();
-    expect(screen.getByLabelText(/^Lead/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Customer/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
   });
 });
 
-describe('edit mode Customer prefilled from a linked lead (round 3)', () => {
+describe('AC-L5 edit mode Customer is the editable picker', () => {
   const linked = () =>
     editProject({ customer_id: 'cust-1', customer_name: 'Aman Hartanah CONTOH' } as Partial<Project>);
   const putBody = () => calls.find((c) => c.method === 'PUT')?.body as Record<string, unknown> | undefined;
