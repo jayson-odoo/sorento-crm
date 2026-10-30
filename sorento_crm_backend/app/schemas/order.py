@@ -1,5 +1,5 @@
 """Order management schemas."""
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional, List
 from datetime import datetime
 from decimal import Decimal
@@ -144,6 +144,7 @@ class OrderCreate(OrderBase):
 
 
 class OrderUpdate(BaseModel):
+    # Omit it, or send null, to keep the stored date (DO-IMPORT-DATE).
     order_date: Optional[datetime] = None
     estimated_delivery_date: Optional[datetime] = None
     actual_delivery_date: Optional[datetime] = None
@@ -176,6 +177,15 @@ class OrderUpdate(BaseModel):
     tax_amount: Optional[Decimal] = None
     total_amount: Optional[Decimal] = None
     remarks: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_order_date_keeps_stored(cls, data):
+        # A sent null used to clear the DO date; it now means "unchanged", so no
+        # caller fails and no stored date is lost.
+        if isinstance(data, dict) and "order_date" in data and data["order_date"] is None:
+            data = {k: v for k, v in data.items() if k != "order_date"}
+        return data
 
 
 class OrderStatusSimple(BaseModel):
