@@ -32,6 +32,18 @@ def _env_key(monkeypatch):
     monkeypatch.delenv("JEV_BASE_URL", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _router_on(session_factory):
+    """J3: routing is off by default; these tests are about the routed paths."""
+    import uuid
+
+    from app.models.user import SystemSetting
+
+    db = session_factory()
+    db.add(SystemSetting(id=str(uuid.uuid4()), name="ZZT router on", chatbot_router_enabled=True))
+    db.commit()
+
+
 @pytest.fixture()
 def jev(monkeypatch):
     from app.services.chatbot import jev_client, router
