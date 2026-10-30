@@ -1549,3 +1549,56 @@ def test_run_live_row_of_a_non_span_version_carries_no_span_fallback(session_fac
     row = _run_live_spans(session_factory, monkeypatch, "{}", lookup_spans=False)
     assert row.get("span_fallback") in (None, False) and row.get("span_fallback_reason") is None, row
     assert row.get("span_fallback") is None, "a non-span template writes neither key (or null)"
+
+
+# CHATBOT-FAIL-TRIAGE-B2 S3: new expect keys portal_form, suggested_team, size.
+B2_GOLD = "scripts/chatbot_eval/gold/parser_fail_triage_b2.jsonl"
+
+
+def test_b2_gold_file_loads():
+    rows = pg.load_gold(B2_GOLD)
+    assert len(rows) == 32
+    assert len({r["id"] for r in rows}) == len(rows)
+
+
+def test_b2_new_expect_keys_are_known(tmp_path):
+    for key, val in (("portal_form", "price_tag_request"), ("suggested_team", None), ("size", 200)):
+        assert len(pg.load_gold(_write(tmp_path, [_row("a", "hi", {key: val})]))) == 1, key
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [_row("a", "hi", {"still_bogus": 1})]))
+
+
+def test_portal_form_graded_by_equality():
+    assert pg.grade_parse({"portal_form": "price_tag_request"}, {"portal_form": "price_tag_request"})[0] is True
+    assert pg.grade_parse({"portal_form": "complaint"}, {"portal_form": "price_tag_request"})[0] is False
+    assert pg.grade_parse({}, {"portal_form": "price_tag_request"})[0] is False
+    assert pg.grade_parse({}, {"portal_form": None})[0] is True
+    assert pg.grade_parse({"portal_form": "complaint"}, {"portal_form": None})[0] is False
+
+
+def test_suggested_team_read_from_routing():
+    v = {"routing": {"suggested_team": "marketing_product"}}
+    assert pg.grade_parse(v, {"suggested_team": "marketing_product"})[0] is True
+    assert pg.grade_parse(v, {"suggested_team": "marketing"})[0] is False
+    assert pg.grade_parse({"routing": {"suggested_team": None}}, {"suggested_team": None})[0] is True
+    assert pg.grade_parse({"routing": {}}, {"suggested_team": None})[0] is True
+    assert pg.grade_parse(v, {"suggested_team": None})[0] is False
+    assert pg.grade_parse({}, {"suggested_team": "sales"})[0] is False
+
+
+def _size_ent(value, key="size"):
+    return {"hint": "specification", "spec_key": key, "spec_value": value, "spec_unit": "mm"}
+
+
+def test_size_is_the_number_of_the_size_specification_entity():
+    v = {"entities": [{"hint": "product", "canonical_code": None}, _size_ent(200)]}
+    assert pg.grade_parse(v, {"size": 200})[0] is True
+    assert pg.grade_parse(v, {"size": 250})[0] is False
+    assert pg.grade_parse({"entities": [_size_ent(200, key="trap_length")]}, {"size": 200})[0] is False
+    assert pg.grade_parse({"entities": []}, {"size": 200})[0] is False
+
+
+def test_size_null_means_no_size_specification_entity():
+    assert pg.grade_parse({"entities": [{"hint": "product", "canonical_code": None}]}, {"size": None})[0] is True
+    assert pg.grade_parse({"entities": [_size_ent(200)]}, {"size": None})[0] is False
+    assert pg.grade_parse({"entities": [_size_ent(200, key="trap_length")]}, {"size": None})[0] is True

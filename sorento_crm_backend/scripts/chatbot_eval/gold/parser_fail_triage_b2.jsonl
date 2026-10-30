@@ -1,0 +1,32 @@
+{"id": "b2-size-01", "message": "SRTWC286200MM", "expect": {"product": "SRTWC286", "size": 200}}
+{"id": "b2-size-02", "message": "srtwc286-200mm stock", "expect": {"product": "SRTWC286", "size": 200}}
+{"id": "b2-size-03", "message": "SRTWC286 250MM", "expect": {"product": "SRTWC286", "size": 250}}
+{"id": "b2-size-04", "message": "do you have wc8066 150mm", "expect": {"product": "wc8066", "size": 150}}
+{"id": "b2-size-05", "message": "SRTWC8036 200 mm ready stock?", "expect": {"product": "SRTWC8036", "size": 200}}
+{"id": "b2-size-06", "message": "MWC8154 20cm", "expect": {"product": "MWC8154", "size": 200}}
+{"id": "b2-size-07", "message": "SRTWC286-SH-200", "expect": {"size": null}}
+{"id": "b2-size-08", "message": "SRTWC286200", "expect": {"size": null}}
+{"id": "b2-size-09", "message": "CB2838 x10", "expect": {"size": null}}
+{"id": "b2-size-10", "message": "SRT5733 stock 200 pcs", "expect": {"size": null}}
+{"id": "b2-team-01", "message": "Please escalate to product marketing team", "expect": {"suggested_team": "marketing_product"}}
+{"id": "b2-team-02", "message": "pass me to the promotion marketing people", "expect": {"suggested_team": "marketing_promotion"}}
+{"id": "b2-team-03", "message": "escalate to warehouse team", "expect": {"suggested_team": "warehouse"}}
+{"id": "b2-team-04", "message": "escalate marketing", "expect": {"suggested_team": "marketing"}}
+{"id": "b2-team-05", "message": "can I talk to marketing", "expect": {"suggested_team": "marketing"}}
+{"id": "b2-team-06", "message": "can the sales team call me", "expect": {"suggested_team": "sales"}}
+{"id": "b2-team-07", "message": "please escalate this", "expect": {"suggested_team": null}}
+{"id": "b2-portal-01", "message": "give me link to request pricetag", "expect": {"domain_hint": "portal_link", "portal_form": "price_tag_request"}}
+{"id": "b2-portal-02", "message": "can i get portal link to request pricetag", "expect": {"domain_hint": "portal_link", "portal_form": "price_tag_request"}}
+{"id": "b2-portal-03", "message": "where is the form to request price tags", "expect": {"domain_hint": "portal_link", "portal_form": "price_tag_request"}}
+{"id": "b2-portal-04", "message": "minta link untuk request price tag", "expect": {"domain_hint": "portal_link", "portal_form": "price_tag_request"}}
+{"id": "b2-portal-05", "message": "send me the price tag template", "expect": {"portal_form": null}}
+{"id": "b2-portal-06", "message": "link for complaint form", "expect": {"domain_hint": "portal_link", "portal_form": "complaint"}}
+{"id": "b2-portal-07", "message": "purchase request link", "expect": {"domain_hint": "portal_link", "portal_form": "purchase_request"}}
+{"id": "b2-cost-01", "message": "my cost for SRTKS1248", "expect": {"domain_hint": "purchase_cost", "intent_hint": "check_po_cost"}}
+{"id": "b2-cost-02", "message": "dealer cost SRTWC8122", "expect": {"domain_hint": "purchase_cost", "intent_hint": "check_po_cost"}}
+{"id": "b2-cost-03", "message": "what is the costing for CSS8811-GM", "expect": {"domain_hint": "purchase_cost", "intent_hint": "check_po_cost"}}
+{"id": "b2-cost-04", "message": "cost price SRTKS1035", "expect": {"domain_hint": "purchase_cost", "intent_hint": "check_po_cost"}}
+{"id": "b2-cost-05", "message": "harga kos saya untuk MWC8154", "expect": {"domain_hint": "purchase_cost", "intent_hint": "check_po_cost"}}
+{"id": "b2-cost-06", "message": "我的成本 SRTWT5828", "expect": {"domain_hint": "purchase_cost", "intent_hint": "check_po_cost"}}
+{"id": "b2-cost-07", "message": "how much does SRTWC8122 cost", "expect": {"domain_hint": "master_products"}}
+{"id": "b2-cost-08", "message": "selling price SRTWC8122", "expect": {"domain_hint": "promotion"}}
