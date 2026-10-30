@@ -1,6 +1,6 @@
 # PLAN: Conversations inbox search finds message text (CONVO-SEARCH-MESSAGES)
 
-Status: in review (small fix track: no migration, no auth/RBAC change, no new ingest surface; the
+Status: built, in PR #2003 review (small fix track: no migration, no auth/RBAC change, no new ingest surface; the
 production diff is ~230 changed lines, the rest is tests, this plan, its UAC and the hand-test
 script). UAC: `convo-search-messages-30oct-acceptance-criteria.md`.
 
