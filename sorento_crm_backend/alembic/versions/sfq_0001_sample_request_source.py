@@ -9,13 +9,13 @@ Additive only and idempotent (`IF NOT EXISTS`) so the shared dev DB, which conve
 `create_all`, can take it in any order.
 
 Revision ID: sfq_0001_sample_request_source
-Revises: tbc_0001_allowed_item_classes
+Revises: agp3_0002_contacts_edit_own
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "sfq_0001_sample_request_source"
-down_revision = "tbc_0001_allowed_item_classes"
+down_revision = "agp3_0002_contacts_edit_own"
 branch_labels = None
 depends_on = None
 
