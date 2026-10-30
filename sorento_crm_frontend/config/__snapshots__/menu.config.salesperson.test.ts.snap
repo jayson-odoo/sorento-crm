@@ -393,6 +393,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Brands",
           },
           {
+            "path": "/master-data-management/item-classes",
+            "title": "Item Classes",
+          },
+          {
             "path": "/master-data-management/units-of-measure",
             "title": "Units of Measure",
           },
@@ -796,6 +800,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           {
             "path": "/master-data-management/lookup-sets",
             "title": "Lookup Sets",
+          },
+          {
+            "path": "/system-management/embeddings",
+            "title": "Embeddings",
           },
         ],
         "title": "Configuration",

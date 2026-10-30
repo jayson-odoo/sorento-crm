@@ -49,6 +49,7 @@ describe('MY REQUESTS New Product Application opens the staff pages', () => {
     expect(MY_REQUEST_STAFF_PAGES.new_product_application).toEqual({
       path: NPA_PATH,
       permission: 'procurement.new_product_applications.view_own',
+      create: 'procurement.new_product_applications.create',
     });
     expect(myRequestStaffPath('new_product_application')).toBe(NPA_PATH);
   });

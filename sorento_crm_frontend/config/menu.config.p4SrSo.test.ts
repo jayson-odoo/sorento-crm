@@ -52,10 +52,12 @@ describe('MY REQUESTS Sample Request + Sales Opportunity open the staff pages', 
     expect(MY_REQUEST_STAFF_PAGES.sample_request).toEqual({
       path: '/project-sales/sample-requests',
       permission: 'projects.sample_requests.view_own',
+      create: 'projects.sample_requests.create',
     });
     expect(MY_REQUEST_STAFF_PAGES.sales_opportunity).toEqual({
       path: '/sales/opportunities',
       permission: 'sales.opportunities.view_own',
+      create: 'sales.opportunities.add',
     });
     expect(myRequestStaffPath('sample_request')).toBe('/project-sales/sample-requests');
     expect(myRequestStaffPath('sales_opportunity')).toBe('/sales/opportunities');

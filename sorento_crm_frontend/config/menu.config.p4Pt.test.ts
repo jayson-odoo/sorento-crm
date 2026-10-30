@@ -45,6 +45,7 @@ describe('MY REQUESTS Price Tag Request opens the staff table', () => {
     expect(MY_REQUEST_STAFF_PAGES.price_tag_request).toEqual({
       path: '/dealer-kit/price-tag-requests',
       permission: 'dealer_kit.price_tag_requests.view_own',
+      create: 'dealer_kit.price_tag_requests.create',
     });
     expect(myRequestStaffPath('price_tag_request')).toBe('/dealer-kit/price-tag-requests');
   });
