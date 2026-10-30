@@ -222,6 +222,11 @@ export default function ConversationThreadPane({
             isLoadingNewer={thread.isLoadingNewer}
             searchController={thread.search}
             highlightTerm={thread.highlightTerm || matchTerm}
+            // The drawer's enquiry anchor, reused for the search match: it
+            // holds the list off its first pin-to-bottom, which otherwise won
+            // the race against the jump on a cold first open (browser pass).
+            highlightMessageId={matchMessageId}
+            highlightLabel="Matches your search"
             focusMessageId={thread.focusMessageId}
             focusNonce={thread.focusNonce}
             comments={commentsQuery.data ?? []}

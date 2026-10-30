@@ -66,6 +66,7 @@ interface ChatListStubProps {
   onJumpToMessage?: (messageId: string) => void;
   highlightTerm?: string;
   focusMessageId?: string | null;
+  highlightMessageId?: string | number | null;
 }
 
 vi.mock('@/components/common/RespondChatList', () => ({
@@ -77,11 +78,13 @@ vi.mock('@/components/common/RespondChatList', () => ({
     onJumpToMessage,
     highlightTerm,
     focusMessageId,
+    highlightMessageId,
   }: ChatListStubProps) => (
     <div
       data-testid="chat-list"
       data-highlight-term={highlightTerm ?? ''}
       data-focus-message-id={focusMessageId ?? ''}
+      data-highlight-message-id={highlightMessageId ?? ''}
       data-contact={contactName ?? ''}
       data-notes={comments.length}
       data-has-media-proxy={proxy ? 'yes' : 'no'}
@@ -514,11 +517,14 @@ describe('ConversationThreadPane', () => {
     const list = screen.getByTestId('chat-list');
     expect(list).toHaveAttribute('data-focus-message-id', 'msg-77');
     expect(list).toHaveAttribute('data-highlight-term', 'sofa');
+    // Anchored like the drawer's enquiry, so the first pin-to-bottom cannot win.
+    expect(list).toHaveAttribute('data-highlight-message-id', 'msg-77');
   });
 
   it('CONVO-SEARCH-MESSAGES: a name match opens on the live tail as before', () => {
     render(<ConversationThreadPane contact={contact()} searchTerm="aisyah" canReply />);
     expect(loadPage).not.toHaveBeenCalledWith(expect.objectContaining({ around: expect.anything() }));
     expect(screen.getByTestId('chat-list')).toHaveAttribute('data-highlight-term', '');
+    expect(screen.getByTestId('chat-list')).toHaveAttribute('data-highlight-message-id', '');
   });
 });
