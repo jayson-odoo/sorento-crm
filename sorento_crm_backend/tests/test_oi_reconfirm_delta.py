@@ -23,6 +23,7 @@ import pytest
 
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     ACK_CHANGED,
     DECISION_ACTIVE,
     INQUIRY_ACTIONED,
@@ -340,8 +341,7 @@ def test_a_carried_buy_row_is_kept_not_cancelled_and_re_raised(api):
     client, world = api
     order, line_a, line_b = _two_lines(api)
     row_a = _order_row(world, line_a)
-    row_a.ack_state = ACK_ACKNOWLEDGED
-    world.db.commit()
+    assert row_a.ack_state == ACK_AWAITING, "no link behind it: To order"
     _TOLD.clear()
 
     response = _confirm(client, order.id, [_line_payload(line_b.id, buy_qty="10")])
@@ -356,7 +356,7 @@ def test_a_carried_buy_row_is_kept_not_cancelled_and_re_raised(api):
     kept = rows[0]
     assert kept.state == INQUIRY_RAISED
     assert kept.qty == Decimal("25")
-    assert kept.ack_state == ACK_ACKNOWLEDGED
+    assert kept.ack_state == ACK_AWAITING, "OI-AUTO-CONFIRM: still no link, still To order"
     assert str(kept.supply_decision_id) == str(_decision_id(world, order)), (
         "re-filed under the new revision, so `confirmed_unplaced_buy_rows` still finds it"
     )

@@ -631,12 +631,12 @@ PERMISSION_REGISTRY.extend([
         "slug": "projects.order_inquiries.acknowledge",
         "name": "Acknowledge Order Inquiry Rows",
         "description": (
-            "Purchasing grant: acknowledge an order inquiry row - which is the moment "
-            "documents are linked to it - reject one with a reason, run Link now, and "
-            "upload the purchase order and SPO books from the Order Inquiries page. "
-            "Separate from `projects.order_inquiry.action`, which is marking a row's "
-            "supply state: acknowledging is purchasing taking CS's instruction on, and "
-            "CS may not do it for them."
+            "Purchasing grant: the manual override on an order inquiry row. The system marks "
+            "a row Done by itself when its documents cover it; this grant lets a person "
+            "Confirm (mark Done by hand) or Unconfirm (put back to To order) over that rule. "
+            "It also covers rejecting a row with a reason, running Link now, and uploading "
+            "the purchase order and SPO books from the Order Inquiries page. Separate from "
+            "`projects.order_inquiry.action`, which is marking a row's supply state."
         ),
     },
     {

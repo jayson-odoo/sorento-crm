@@ -53,6 +53,7 @@ from app.models.procurement import (
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     INQUIRY_ACTIONED,
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
@@ -471,7 +472,9 @@ class World:
             stock_location=self.warehouse.warehouse_code,
             verb=IV_ORDER,
             state=INQUIRY_RAISED,
-            ack_state=ACK_ACKNOWLEDGED,
+            # OI-AUTO-CONFIRM: an unlinked row is To order; "acknowledged" with no link is no
+            # longer a state the system produces.
+            ack_state=ACK_AWAITING,
         )
         self.db.add(row)
         self.db.flush()
@@ -560,8 +563,8 @@ def test_row_raises_against_matching_line():
         assert Decimal(str(row.qty)) == Decimal("30")
         assert row.delivery_date == D_OCT
         assert row.stock_location == w.warehouse.warehouse_code
-        assert row.ack_state == ACK_ACKNOWLEDGED
-        assert str(row.acknowledged_by) == w.actor
+        assert row.ack_state == ACK_AWAITING, "no link behind the sheet row: To order"
+        assert row.acknowledged_by is None
 
 
 def test_two_rows_split_one_line():

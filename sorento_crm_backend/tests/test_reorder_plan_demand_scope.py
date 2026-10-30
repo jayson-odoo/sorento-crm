@@ -191,7 +191,7 @@ def _project_so_with_lines(db, *, lines: list[dict], company_id: str = SORENTO_C
             so_line_id=pso_line.id, qty=spec["qty"], verb=IV_ORDER,
             state=spec.get("inquiry_state", INQUIRY_RAISED),
             supply_decision_id=decision.id,
-            ack_state=spec.get("ack_state", ACK_ACKNOWLEDGED),
+            ack_state=spec.get("ack_state", ACK_AWAITING),
             delivery_date=spec.get("delivery_date"),
         )
         db.add(row)
@@ -204,7 +204,7 @@ def _project_so_with_lines(db, *, lines: list[dict], company_id: str = SORENTO_C
 
 
 def _add_form_row(db, project_so: dict, *, product_code: str, warehouse_code: str, qty,
-                   delivery_date, ack_state: str = ACK_ACKNOWLEDGED,
+                   delivery_date, ack_state: str = ACK_AWAITING,
                    inquiry_state: str = INQUIRY_RAISED) -> OrderInquiryRow:
     """A FORM-leg row (`demand.py`'s third leg, `supply_decision_id IS NULL`) on the SAME
     Order Inquiry as `project_so`'s confirmed lines - matched by `item_code`/
@@ -301,6 +301,9 @@ def _committed_for(db, run_id, pid) -> float:
     return float((_inputs_for(db, run_id, pid)["inputs"] or {}).get("committed") or 0)
 
 
+# OI-AUTO-CONFIRM Q4 = b (AC-AC-22): the plan counts To order rows (awaiting / changed) for
+# their uncovered qty; a Done (acknowledged) row adds nothing. The helpers below therefore
+# seed an owed row as `awaiting` by default, and the universe's one Done row as `acknowledged`.
 def _seed_scope_universe(db) -> dict:
     """T4-T8's shared seed (UAC seed paragraph, widened for the B1/B2 review-kill gaps):
     one retail line in range, SO A carrying an in-range acked row, an OUT-of-range acked
@@ -332,7 +335,7 @@ def _seed_scope_universe(db) -> dict:
         {"product_id": pid, "warehouse_id": wid, "qty": 11, "delivery_date": date(2026, 9, 1)},
         {"product_id": pid, "warehouse_id": wid, "qty": 99, "delivery_date": date(2027, 1, 4)},
         {"product_id": pid, "warehouse_id": wid, "qty": 50, "delivery_date": date(2026, 9, 10),
-         "ack_state": ACK_AWAITING},
+         "ack_state": ACK_ACKNOWLEDGED},
     ])
     so_b = _project_so_with_lines(db, lines=[
         {"product_id": pid, "warehouse_id": wid, "qty": 13, "delivery_date": date(2026, 9, 20)},
@@ -429,7 +432,7 @@ def _project_so_delivered_line_with_order_back(
         id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
         so_line_id=pso_line.id, qty=Decimal(qty), verb=IV_ORDER_BACK,
         state=INQUIRY_RAISED, supply_decision_id=decision.id,
-        ack_state=ACK_ACKNOWLEDGED, stock_location=donor_warehouse_code,
+        ack_state=ACK_AWAITING, stock_location=donor_warehouse_code,
     )
     order_row = None
     if sibling_order:
@@ -437,7 +440,7 @@ def _project_so_delivered_line_with_order_back(
             id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
             so_line_id=pso_line.id, qty=Decimal(qty), verb=IV_ORDER,
             state=INQUIRY_RAISED, supply_decision_id=decision.id,
-            ack_state=ACK_ACKNOWLEDGED,
+            ack_state=ACK_AWAITING,
         )
         db.add(order_row)
     db.add(order_back_row)
@@ -536,7 +539,7 @@ def test_t3_replan_carries_demand_class_and_so_numbers_onto_the_new_run(scm_app)
 # T4-T8 - the scope is actually APPLIED (service level, synchronous run)
 # =============================================================================
 
-def test_t4_project_scoped_to_one_so_counts_only_that_sos_in_range_acked_qty(scm_app):
+def test_t4_project_scoped_to_one_so_counts_only_that_sos_in_range_to_order_qty(scm_app):
     """committed: SO A's confirmed in-range qty (11) + SO A's FORM-leg row (5) = 16 - SO
     B's form row (3) and reserve (2) must NOT leak in, which is what would happen if the
     `so_scoped` join were missing from the FORM leg specifically
@@ -564,7 +567,7 @@ def test_t4_project_scoped_to_one_so_counts_only_that_sos_in_range_acked_qty(scm
     assert float(inputs.get("project_supply_reduction") or 0) == 6.0
 
 
-def test_t5_project_with_no_order_scope_counts_every_in_range_acked_so(scm_app):
+def test_t5_project_with_no_order_scope_counts_every_in_range_to_order_so(scm_app):
     """committed: (SO A confirmed 11 + form 5) + (SO B confirmed 13 + form 3) = 32 - an
     unscoped Project run nets every project order in range, both legs, both SOs."""
     _, db, _, _ = scm_app
@@ -785,7 +788,7 @@ def _project_so_single_order_row(
     row = OrderInquiryRow(
         id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
         so_line_id=pso_line.id, qty=Decimal(str(row_qty)), verb=IV_ORDER,
-        state=INQUIRY_RAISED, supply_decision_id=decision.id, ack_state=ACK_ACKNOWLEDGED,
+        state=INQUIRY_RAISED, supply_decision_id=decision.id, ack_state=ACK_AWAITING,
     )
     db.add(row)
     db.flush()
@@ -889,7 +892,7 @@ def test_t9_candidate_orders_lists_open_project_sos_with_their_row_counts(scm_ap
     a = by_so[so_a["so_number"]]
     assert a["rows_total"] == 2
     assert a["rows_in_range"] == 2
-    assert a["rows_awaiting"] == 1
+    assert "rows_awaiting" not in a, "AC-AC-22: nothing waits on a press any more"
     assert a["first_delivery"] == "2026-09-01"
     assert a["last_delivery"] == "2026-09-10"
 
@@ -897,7 +900,7 @@ def test_t9_candidate_orders_lists_open_project_sos_with_their_row_counts(scm_ap
     b = by_so[so_b["so_number"]]
     assert b["rows_total"] == 1
     assert b["rows_in_range"] == 1
-    assert b["rows_awaiting"] == 0
+    assert "rows_awaiting" not in b
     assert b["first_delivery"] == b["last_delivery"] == "2026-09-20"
 
     assert so_closed["so_number"] not in by_so, "a closed SO (no open rows) must be absent"
@@ -1021,14 +1024,14 @@ def test_rf1_2_3_4_raise_window_counts_rows_raised_in_it_without_moving_anything
     assert a["rows_raised_in_window"] == 1
     assert b["rows_raised_in_window"] == 0
 
-    # AC-RF-4: rows_in_range / rows_awaiting / rows_total read the same with or without
+    # AC-RF-4: rows_in_range / rows_total read the same with or without
     # the raise window.
     assert unwindowed.status_code == 200, unwindowed.text
     by_so_nw = {row["so_number"]: row for row in unwindowed.json()}
     for so_number, row in ((so_a["so_number"], a), (so_b["so_number"], b)):
         baseline = by_so_nw[so_number]
         assert row["rows_in_range"] == baseline["rows_in_range"]
-        assert row["rows_awaiting"] == baseline["rows_awaiting"]
+        assert "rows_awaiting" not in row and "rows_awaiting" not in baseline
         assert row["rows_total"] == baseline["rows_total"]
 
 

@@ -349,7 +349,6 @@ export interface CandidateOrder {
   customer_name: string | null;
   rows_total: number;
   rows_in_range: number;
-  rows_awaiting: number;
   /** Rows raised (first uploaded, `order_inquiry_rows.created_at`) inside
    *  `raised_from`/`raised_to` (`reorder-plan-raised-filter`, 22 Sep 2026). Equals
    *  `rows_total` when no raise window is set. */

@@ -28,6 +28,7 @@ from app.services.scm.upload_intake import (
     read_upload,
     read_upload_retained,
 )
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -121,6 +122,7 @@ def get_outstanding_upload_config(_user: dict = Depends(_WRITE)):
 
 
 @router.post("/outstanding/{kind}/preview")
+@heavy
 def preview_outstanding_import(
     kind: str,
     file: UploadFile = File(..., description="AutoCount outstanding-orders extract (.xlsx)"),

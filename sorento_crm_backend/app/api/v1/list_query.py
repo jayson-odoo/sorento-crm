@@ -33,6 +33,7 @@ from app.services.workflow_submission_dynamic_list_query import (
     build_dynamic_field_metas_for_definition,
     get_published_schema_for_definition,
 )
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -400,6 +401,7 @@ def advanced_search(
 
 
 @router.post("/export")
+@heavy
 def export_rows(
     body: ListExportRequest,
     current_user: dict = Depends(get_current_user),

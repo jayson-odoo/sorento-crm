@@ -283,7 +283,8 @@ def test_h7_cancelled_and_cancel_balance_exception_rows_are_left_alone(api, monk
     _reload(db, row, exception)
     assert row.state == INQUIRY_CANCELLED
     assert exception.state == INQUIRY_RAISED
-    assert exception.ack_state == ACK_AWAITING
+    # AC-AC-10e (owner 30 Oct): every live row on a cancelled line is done.
+    assert exception.ack_state == ACK_ACKNOWLEDGED
     # ORDERBACK-DELTA (owner, 13 Oct 2026 22:40): every saved decision is one line, so the
     # Cancel SO press still tells purchasing CANCEL even with no live row left to cancel.
     assert _cancel_only(calls)
@@ -409,24 +410,26 @@ def test_h12_a_refused_press_cancels_no_row_and_dispatches_nothing(api, monkeypa
     assert not _handover_calls(calls)
 
 
-def test_h13_the_ingest_flag_still_flips_an_acknowledged_row_to_changed(api):
-    """AC-H13 [GUARD, passes today]: `flag_rows_for_cancelled_lines` (the AutoCount ingest
-    callers) keeps its behaviour; nothing here pushes to AutoCount."""
+def test_h13_the_ingest_flag_marks_a_live_row_on_a_cancelled_line_done_without_changed(api):
+    """AC-H13 / AC-AC-10e: `flag_rows_for_cancelled_lines` (the AutoCount ingest callers)
+    leaves the row done with no changed stamp; nothing here pushes to AutoCount."""
     client, world = api
     w = _cb_world(world)
     core_a, mirror_a, product_a = w["a"]
     db = world.db
     inquiry = _inquiry(db, world.company_id, w["order"].id)
     row = _oi_row(db, world.company_id, inquiry.id, mirror_a.id, product_a.product_code, "36")
+    core_a.line_status = "cancelled"
     db.commit()
+    before = row.changed_at
 
     flagged = flag_rows_for_cancelled_lines(db, [core_a.id])
     db.commit()
 
     assert flagged == 1
     _reload(db, row)
-    assert row.ack_state == ACK_CHANGED
-    assert row.changed_at is not None
+    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.changed_at == before
     assert row.state == INQUIRY_RAISED
 
 

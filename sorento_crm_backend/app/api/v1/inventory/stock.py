@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
+from app.utils.heavy_work import heavy
 
 
 def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
@@ -438,6 +439,7 @@ def get_stock_alerts(
 
 
 @router.get("/balance/export")
+@heavy
 def export_stock_balance(
     warehouse_id: Optional[str] = Query(None),
     warehouse_ids: Optional[list[str]] = Query(None, description="Canonical warehouse UUIDs (repeated / csv / JSON array)."),
@@ -542,6 +544,7 @@ def get_stock_ledger_by_stock(
     status_code=status.HTTP_202_ACCEPTED,
     responses={200: {"description": "Validation only (validate_only=true)", "model": ValidateImportResponse}},
 )
+@heavy
 def bulk_import_stock(
     import_data: BulkImportStockRequest,
     current_user: dict = Depends(require_permission("inventory.stock.import")),

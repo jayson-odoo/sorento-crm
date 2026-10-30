@@ -332,7 +332,7 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
     them, so this helper builds a row in 1C's shape.
     """
     from app.models.project_so import (  # noqa: PLC0415 - deliberately deferred, see docstring
-        ACK_ACKNOWLEDGED,
+        ACK_AWAITING,
         IV_ORDER,
         INQUIRY_RAISED,
         OrderInquiry,
@@ -407,14 +407,13 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
         id=_u(), company_id=SORENTO_COMPANY_ID, order_inquiry_id=inquiry.id,
         so_line_id=pso_line.id, qty=buy_qty, verb=IV_ORDER,
         state=inquiry_state or INQUIRY_RAISED, supply_decision_id=decision.id,
-        # ACKNOWLEDGED (`PLAN-scm-oi-handshake.md`): the reorder plan buys against
-        # instructions purchasing has taken on, and an awaiting one is a count on the plan
-        # page rather than demand. `scm.committed_v` counts either, so the view-level tests
-        # in this file read the same figure whichever way this is seeded; the RUN-level
-        # ones do not, and a confirmed Buy a buyer is working is what they are about. A
-        # caller may state `awaiting` instead, which is what proves the plan leaves it
-        # alone (`test_reorder_per_product.py`, AC-R4).
-        ack_state=ack_state or ACK_ACKNOWLEDGED,
+        # AWAITING (OI-AUTO-CONFIRM, Q4 b): the reorder plan buys against every To order row
+        # (`awaiting` / `changed`) for its uncovered qty; a Done (`acknowledged`) row adds
+        # nothing. `scm.committed_v` counts either, so the view-level tests in this file
+        # read the same figure whichever way this is seeded. A caller may state
+        # `acknowledged` instead, which is what proves the plan leaves a Done row alone
+        # (`test_reorder_per_product.py`, AC-R4).
+        ack_state=ack_state or ACK_AWAITING,
     )
     db.add(row)
     db.flush()

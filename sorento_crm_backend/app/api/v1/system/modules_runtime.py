@@ -43,6 +43,7 @@ from app.services.app_module_bundle_service import (
     list_bundles_from_db,
     update_bundle,
 )
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -270,6 +271,7 @@ def uninstall_module_route(
 # ---------------------------------------------------------------------------
 
 @router.post("/upload")
+@heavy
 def upload_module_zip(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission("system.modules.manage")),
@@ -391,6 +393,7 @@ def remove_module(
 # ---------------------------------------------------------------------------
 
 @router.get("/{module_key}/export")
+@heavy
 def export_module(
     module_key: str,
     current_user: dict = Depends(require_permission("system.modules.manage")),
