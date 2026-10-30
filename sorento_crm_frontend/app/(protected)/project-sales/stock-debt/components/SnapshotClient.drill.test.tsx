@@ -910,4 +910,20 @@ describe('RESERVE-REQ-PICK AC-RP-8: an OI raised after the snapshot can be reque
     const [, payload] = createReserveRequest.mock.calls[0] as [string, { rows: Array<{ row_id: string }> }];
     expect(payload.rows.map((r) => r.row_id).sort()).toEqual(['row-17a', 'row-17b', 'row-17c', 'row-17q']);
   });
+
+  // Review round: the covered rule is per LINE, so a late row on a line that reads Short 0
+  // is covered like a frozen one (owner: late rows "ticked like any uncovered row").
+  it('a late row on a line that reads Short 0 opens unticked, like a frozen one', async () => {
+    const COVERED_LATE_LINE = {
+      ...LATE_LINE,
+      short_qty: 0,
+      status: 'pinned',
+    };
+    getSnapshotRowLines.mockResolvedValue({ lines: [...LINES, COVERED_LATE_LINE] });
+    const request = await openRequestOn('OI-2610-0901');
+    const table = await within(request).findByRole('table');
+    await within(table).findByText('10/02/2027');
+    expect(within(rowWith(table, '10/02/2027')).getByRole('checkbox')).not.toBeChecked();
+    expect(within(request).getByText('0 of 1 lines')).toBeInTheDocument();
+  });
 });

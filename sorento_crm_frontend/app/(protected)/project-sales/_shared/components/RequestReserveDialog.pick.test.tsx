@@ -17,6 +17,8 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
+// Review round: false = the stock-grid read has not landed yet (the hook's own loading shape).
+let optionsReady = true;
 const OPTIONS_BY_KEY: Record<string, { default: string; options: { value: string; label: string }[] }> = {
   'row-1': { default: 'BRW', options: [{ value: 'BRW', label: 'BRW' }] },
   'row-2': { default: 'MWH', options: [{ value: 'MWH', label: 'MWH' }] },
@@ -25,11 +27,11 @@ vi.mock('../hooks/useReserveRowOptions', () => ({
   useReserveRowOptions: (entries: Array<{ key: string }>) =>
     Object.fromEntries(
       entries.map((entry) => {
-        const own = OPTIONS_BY_KEY[entry.key];
+        const own = optionsReady ? OPTIONS_BY_KEY[entry.key] : undefined;
         return [
           entry.key,
           {
-            isLoading: false,
+            isLoading: !optionsReady,
             defaultWarehouseId: own?.default ?? null,
             options: own?.options ?? [],
             availableQtyByWarehouseId: {},
@@ -111,7 +113,8 @@ function renderDialog(overrides: Partial<React.ComponentProps<typeof RequestRese
   };
 }
 
-const lineBox = (itemCode: string) => screen.getByRole('checkbox', { name: `Select ${itemCode}` });
+const lineBox = (itemCode: string) =>
+  screen.getByRole('checkbox', { name: new RegExp(`^Select ${itemCode}(,|$)`) });
 const allBox = () => screen.getByRole('checkbox', { name: /select all/i });
 const sendButton = () => screen.getByRole('button', { name: /send request/i });
 
@@ -123,6 +126,7 @@ async function sentRows() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  optionsReady = true;
 });
 
 describe('AC-RP-1 / AC-RP-2: every line opens ticked, header reads N of M lines', () => {
@@ -194,13 +198,16 @@ describe('AC-RP-3: only ticked lines are sent', () => {
 });
 
 describe('AC-RP-4: an unticked line is inert', () => {
-  it("disables an unticked line's Requested", async () => {
+  it("disables an unticked line's Requested and Location", async () => {
     renderDialog();
     await screen.findByText('CKS1050');
-    const requested = document.getElementById('reserve-requested-row-2') as HTMLInputElement;
-    expect(requested).not.toBeDisabled();
+    expect(document.getElementById('reserve-requested-row-2')).not.toBeDisabled();
+    expect(document.getElementById('reserve-location-row-2')).not.toBeDisabled();
     fireEvent.click(lineBox('CKS1050'));
     expect(document.getElementById('reserve-requested-row-2')).toBeDisabled();
+    expect(document.getElementById('reserve-location-row-2')).toBeDisabled();
+    // The ticked line stays editable.
+    expect(document.getElementById('reserve-location-row-1')).not.toBeDisabled();
   });
 
   it('an out-of-range Requested on an unticked line does not block Send', async () => {
@@ -242,5 +249,53 @@ describe('AC-RP-5: nothing ticked, nothing to send', () => {
     expect(lineBox('CKS1050')).toBeChecked();
     expect(screen.getByText('2 of 2 lines')).toBeInTheDocument();
     expect(sendButton()).not.toBeDisabled();
+  });
+});
+
+describe('Review round: ticks survive the stock-grid read landing after open', () => {
+  it('a line unticked before the pools load stays unticked, and is not sent', async () => {
+    optionsReady = false;
+    const view = renderDialog();
+    await screen.findByText('CKS1050');
+    fireEvent.click(lineBox('CKS1050'));
+    expect(screen.getByText('1 of 2 lines')).toBeInTheDocument();
+    optionsReady = true;
+    view.rerenderWith({});
+    await waitFor(() => expect(screen.getAllByText('BRW').length).toBeGreaterThan(0));
+    expect(lineBox('CKS1050')).not.toBeChecked();
+    expect(screen.getByText('1 of 2 lines')).toBeInTheDocument();
+    fireEvent.click(sendButton());
+    expect(await sentRows()).toEqual([{ row_id: 'row-1', qty_requested: 12, warehouse_id: 'BRW' }]);
+  });
+
+  it('a pre-unticked line ticked back before the pools load stays ticked, and is sent', async () => {
+    optionsReady = false;
+    const view = renderDialog({ untickedRowIds: ['row-2'] });
+    await screen.findByText('CKS1050');
+    fireEvent.click(lineBox('CKS1050'));
+    expect(screen.getByText('2 of 2 lines')).toBeInTheDocument();
+    optionsReady = true;
+    view.rerenderWith({});
+    await waitFor(() => expect(screen.getAllByText('BRW').length).toBeGreaterThan(0));
+    expect(lineBox('CKS1050')).toBeChecked();
+    fireEvent.click(sendButton());
+    expect(await sentRows()).toEqual([
+      { row_id: 'row-1', qty_requested: 12, warehouse_id: 'BRW' },
+      { row_id: 'row-2', qty_requested: 2, warehouse_id: 'MWH' },
+    ]);
+  });
+});
+
+describe('Review round: each tick box names its line', () => {
+  it('two lines of one product are told apart by delivery date', async () => {
+    renderDialog({
+      rows: [
+        worklistRow({ id: 'row-1', item_code: 'M9713SS', qty: '2', delivery_date: '2026-10-07' }),
+        worklistRow({ id: 'row-2', item_code: 'M9713SS', qty: '2', delivery_date: '2027-04-07' }),
+      ] as never,
+    });
+    await screen.findAllByText('M9713SS');
+    expect(screen.getByRole('checkbox', { name: 'Select M9713SS, 07/10/2026' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select M9713SS, 07/04/2027' })).toBeChecked();
   });
 });
