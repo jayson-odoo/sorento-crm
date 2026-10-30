@@ -1407,16 +1407,16 @@ def set_critical(project: Project, critical: bool) -> None:
 
 
 def project_has_live_document(db: Session, project: Project) -> bool:
-    """True when at least one non-deleted attachment of any type is linked to the project."""
-    from app.models.entity_attachment import EntityAttachmentLink
+    """True when the Documents tab would list at least one file: a non-deleted attachment
+    carrying entity_type 'project' and this project's id (any attachment type). The session's
+    company-scope listener applies to Attachment exactly as it does to the list."""
     from app.models.resources import Attachment
 
     return (
-        db.query(EntityAttachmentLink.id)
-        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
+        db.query(Attachment.id)
         .filter(
-            EntityAttachmentLink.entity_type == "project",
-            EntityAttachmentLink.entity_id == str(project.id),
+            Attachment.entity_type == "project",
+            Attachment.entity_id == str(project.id),
             Attachment.is_deleted.is_(False),
         )
         .first()
