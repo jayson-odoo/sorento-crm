@@ -193,3 +193,22 @@ describe('SFQ-24 a project with several quotations shows a picker', () => {
     expect(screen.getByText('Q-0001 (R2)')).toBeTruthy();
   });
 });
+
+describe('SFQ-26 a recorded source shows on the request', () => {
+  it('names the quotation on a loaded draft', async () => {
+    asMock(getSampleRequest).mockResolvedValue({
+      id: 'sr-1',
+      request_no: 'SR-000001',
+      status: 'draft',
+      status_label: 'Draft',
+      project_id: 'proj-1',
+      project_code: 'PRJ-1',
+      project_name: 'Tower',
+      quotation_document_id: 'doc-1',
+      quotation_ref: 'Q-0001 (R2)',
+      lines: [],
+    });
+    renderForm({ requestId: 'sr-1' });
+    expect(await screen.findByText('Quotation: Q-0001 (R2)')).toBeTruthy();
+  });
+});
