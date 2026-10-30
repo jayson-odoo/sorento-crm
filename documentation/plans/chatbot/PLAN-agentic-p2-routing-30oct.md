@@ -1,8 +1,8 @@
 # PLAN: Agentic P2 - auto-route each staff message to the chat bot or the agent (Jev)
 
-Status: plan filed; waiting on the owner (Jev access: his sign-up and the vendor data agreement) and on the
-crew-labelled gold set. No product code until both are in. Track: full (routing on live turns later, a new
-vendor, settings migration). Lane AGENTIC-P2-ROUTING.
+Status: building (owner 30 Oct ~17:10: "yeah let's go jev routing, I got api key already"). Slice 1 = key
+storage, Jev client, router + state rules, console Auto mode, eval harness; red tests first. Gold-set eval runs
+locally on crew's machine. Track: full (new vendor, settings migration). Lane AGENTIC-P2-JEV-ROUTER (PR #2010).
 
 Card: `CARD-agentic-p2-p3-30oct.md` Part 1 and the owner's answers (30 Oct ~11:10). Data: crew's dev queries
 and `RESEARCH-JEV-parser-cost.md` (delivered in the crew report, not committed: public repo).
@@ -50,8 +50,13 @@ returns a probability per option.
 - The criteria text is a prompt label (`chatbot_router`), published by the owner like every prompt.
 - Interface: `router.route(db, ctx, text, history) -> RouteDecision(route, score, reason, provider, ms,
   tokens_in)`; Jev is the only implementation. Usage logged as `feature = "chatbot_router"`.
-- Key: stored encrypted (`FIELD_ENCRYPTION_KEY`, `app/utils/field_encryption.py`) on the AI assistant
-  config, beside the other provider keys; never in env files.
+- Key: stored exactly like the other AI provider keys: a new `EncryptedText` column
+  `ai_assistant_configs.jev_api_key_ciphertext` (pattern `app/models/ai_assistant.py:49-50`
+  `gemini_api_key_ciphertext`), written by `AIAssistantConfigService.update` (pattern
+  `app/services/ai_assistant_service.py:464-465`), returned only masked (`:481` `_mask_key`), entered on the AI
+  assistant settings form (`system-management/ai-assistant/components/AIAssistantSettingsForm.tsx`). Fallback:
+  env `JEV_API_KEY` when the column is empty (local runs and the eval). The key never appears in a prompt,
+  log, trace, PR, chat or the repo.
 
 ### 4. Where it runs (console first)
 
@@ -65,6 +70,45 @@ slice, behind `chatbot_router_enabled`.
 `system_settings.chatbot_router_enabled` (bool, off), `chatbot_router_min_score` (0.7, 0.5..0.95),
 `chatbot_agent_daily_turns` (50, 0 = no cap); `respond_contacts.chatbot_agent_daily_turns` (int, null = the
 global value). Edited on the existing Chatbot settings screen and the contact's Chatbot tab.
+
+## Jev wire format (from the official SDK `typesafe-sdk` 0.7.5, read not run)
+
+`POST https://api.typesafe.ai/v1/systemone` (`typesafe_sdk/_core/constants.py` `SYSTEM_ONE_PATH`;
+`typesafe_sdk/constants.py` `DEFAULT_BASE_URL`), header `Authorization: Bearer <key>`
+(`_core/transport.py:143`), JSON body (`_core/endpoints.py` `prepare_system_one`;
+`_schemas/models.py` `SystemOneRequest`):
+
+```json
+{"model": "jev-latest", "state": "<message + last 3 exchanges>",
+ "questions": {"route": {"type": "choice", "instructions": "<prompt label chatbot_router>",
+                         "criteria": {"chat": "<...>", "agent": "<...>"}}}}
+```
+
+Response (`SystemOneResponse`): `{"model", "answers": {"route": {"type": "choice", "choice", "confidence",
+"probabilities": {"chat", "agent"}}}, "usage": {"input_tokens", "output_tokens"}}`. Called with the backend's
+`httpx` (already in `requirements.txt`); the SDK is not added (it pulls `httpx2`). Base URL overridable by env
+`JEV_BASE_URL`; model by the prompt label's model field (default `jev-latest`).
+
+## Build contract, slice 1 (tests import these names)
+
+- `app/services/chatbot/router.py`: `RouteDecision(route: "chat"|"agent", score: float|None, reason: str,
+  provider: str|None, ms: int, tokens_in: int)`; `decide(db, ctx, text, *, history, has_media, now=None, jev=None)
+  -> RouteDecision` (state rules 2.1-2.4 then Jev; reasons `pending_action`, `open_question`, `media`,
+  `daily_cap`, `jev`, `low_confidence`, `router_failed`); `jev_key(db) -> str|None` (column, then env).
+- `app/services/chatbot/jev_client.py`: `choose(key, *, state, instructions, criteria, model="jev-latest",
+  timeout=1.5, base_url=None) -> {"choice", "confidence", "probabilities", "input_tokens", "output_tokens"}`;
+  raises `JevError` on any HTTP / shape failure (message never contains the key).
+- Settings: `system_settings.chatbot_router_enabled`, `chatbot_router_min_score`, `chatbot_agent_daily_turns`;
+  `respond_contacts.chatbot_agent_daily_turns`; `ai_assistant_configs.jev_api_key_ciphertext`. One migration
+  `p2r_0001_jev_router` on main's current head.
+- Route: `POST /api/v1/system/chatbot/console/auto-turn` `{contact_respond_id, text}` -> `{route: RouteDecision,
+  turn: <console turn response> | <agent turn response>}`; same permission as `/agent/turn`.
+- Daily cap counts today's (Malaysia day) agent turns of the contact (`chatbot.turns`, `ingress="agent"`).
+- Usage row `feature="chatbot_router"` per Jev call.
+- Eval harness `scripts/chatbot_eval/router_eval.py`: reads a JSONL gold file (`{id, text, previous_3, label,
+  language}`), calls `jev_client.choose` with `JEV_API_KEY` from env (no DB needed), writes per-item results +
+  a summary (agreement, missed-agent, wasted-agent, per language, p50 / p95 ms, tokens) to `--out`; `--limit`,
+  `--threshold`; spend guard: stops when the summed input tokens would exceed `--max-input-tokens`.
 
 ## Gold set and eval
 
