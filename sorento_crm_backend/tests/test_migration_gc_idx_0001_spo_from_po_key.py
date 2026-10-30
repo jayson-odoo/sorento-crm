@@ -288,8 +288,12 @@ def _scratch_engine(schema):
     )
 
 
-def test_the_retry_builds_what_is_missing_and_then_does_nothing():
+def test_the_retry_builds_what_is_missing_and_then_does_nothing(monkeypatch):
+    from app.services import embedding_indexes
     from scripts import ensure_goods_chain_indexes as retry
+
+    # The scratch schema has no embedding_chunks; the retry's embedding part is covered in test_migration_lec_0002_online_build.py.
+    monkeypatch.setattr(embedding_indexes, "MIGRATION_INDEXES", ())
 
     with _scratch() as (schema, conn):
         scratch_engine = _scratch_engine(schema)

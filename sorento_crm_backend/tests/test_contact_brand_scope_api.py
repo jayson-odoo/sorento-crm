@@ -77,7 +77,7 @@ def test_get_unscoped_contact_is_empty(db, caller) -> None:
     db.commit()
     resp = client.get(f"{BASE}/{c.id}/brands")
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"brand_ids": [], "brands": []}
+    assert resp.json() == {"brand_ids": [], "brands": [], "brand_class_ids": {}, "item_classes": []}
 
 
 def test_put_replaces_the_list(db, caller) -> None:
@@ -102,7 +102,7 @@ def test_put_empty_list_stores_null(db, caller) -> None:
     db.commit()
     resp = client.put(f"{BASE}/{c.id}/brands", json={"brand_ids": []})
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"brand_ids": [], "brands": []}
+    assert resp.json() == {"brand_ids": [], "brands": [], "brand_class_ids": {}, "item_classes": []}
     assert _stored(db, c.id) is None
 
 

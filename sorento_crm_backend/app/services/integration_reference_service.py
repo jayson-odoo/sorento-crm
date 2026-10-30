@@ -74,6 +74,8 @@ SUPPORTED_ENTITY_TYPES = {
     "order_lines",
     # autocount-brands-ingest AC-15: brands joined the ingest surface.
     "brands",
+    # ITEM-CLASS-MASTER (contract 2.11).
+    "item_classes",
     # Finance S0 (#1309, contract 2.6): `finance.billing_documents`. The one entity type
     # whose table is not in `public`; see `_module_table`.
     "billing_documents",

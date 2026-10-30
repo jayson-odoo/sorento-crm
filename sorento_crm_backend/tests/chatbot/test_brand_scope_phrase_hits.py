@@ -39,15 +39,17 @@ class _VectorStub:
 
 
 def _phrase_hits(db, world, monkeypatch, *, scoped: bool) -> set[str]:
-    import app.services.embedding_worker as worker
+    import app.services.embedding_settings as embedding_settings
+    import app.services.entity_resolver as er
     from app.models.base import set_brand_scope
     from app.services.entity_resolver import _rag_resolve_phrase
 
-    monkeypatch.setattr(worker, "_embed_text_chunks", lambda texts: [[0.0] * 8 for _ in texts])
+    monkeypatch.setattr(er, "_SEARCH_SEAMS", {})
+    monkeypatch.setattr(embedding_settings, "embed_search_texts", lambda texts, model, **k: [[0.0] * 8 for _ in texts])
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
     set_brand_scope(db, frozenset({world.mocha.id}) if scoped else None)
     rows = [
-        SimpleNamespace(source_type="product", source_id=str(p.id), source_key=p.product_code, similarity=0.9)
+        SimpleNamespace(source_type="product_spec", source_id=str(p.id), source_key=p.product_code, similarity=0.9)
         for p in world.products
     ]
     hits = _rag_resolve_phrase(_VectorStub(db, rows), "any phrase", frozenset({"product"}))

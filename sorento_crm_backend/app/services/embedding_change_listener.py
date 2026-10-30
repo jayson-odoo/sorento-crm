@@ -150,8 +150,12 @@ def enqueue_pending(bind, rows: list[dict]) -> list[dict]:
     that both find nothing pending can each insert one row; that duplicate is harmless (the
     first claim supersedes it). Returns the rows inserted.
     """
+    from app.services.embedding_settings import RECORD_KEEP_SET
+
     by_key: dict[tuple[str, str], dict] = {}
     for row in rows:
+        if row["source_type"] not in RECORD_KEEP_SET:
+            continue  # LOOKUP-EMBED-CENTRAL: only the keep set is embedded
         by_key[(row["source_type"], str(row["source_id"]))] = row
     if not by_key:
         return []
@@ -375,6 +379,34 @@ def _attach_project_listeners() -> None:
             _queue_parent(connection, target)
 
 
+def _attach_product_spec_listeners() -> None:
+    """`product_spec` (LOOKUP-EMBED-CENTRAL): a specification row with rendered text is what a product is
+    searched by. Queued when the row is inserted with text or its text changes to a non-empty value; the
+    queue source id is the product id."""
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.models.product import Product
+    from app.models.product_spec import ProductSpecifications
+
+    def _queue(connection, target, event_type: str) -> None:
+        company_id = connection.execute(
+            select(Product.__table__.c.company_id).where(Product.__table__.c.id == target.product_id)
+        ).scalar()
+        _queue_from_mapper(connection, "product_spec", target.product_id, event_type, company_id)
+
+    @event.listens_for(ProductSpecifications, "after_insert")
+    def _spec_inserted(_mapper, connection, target):
+        if (target.rendered_text or "").strip():
+            _queue(connection, target, "product_spec.created")
+
+    @event.listens_for(ProductSpecifications, "after_update")
+    def _spec_updated(_mapper, connection, target):
+        if not sa_inspect(target).attrs.rendered_text.history.has_changes():
+            return
+        if (target.rendered_text or "").strip():
+            _queue(connection, target, "product_spec.updated")
+
+
 def register_embedding_change_listeners() -> None:
     global _REGISTERED
     if _REGISTERED:
@@ -398,4 +430,5 @@ def register_embedding_change_listeners() -> None:
     _attach_listeners(Customer, "customer")
     _attach_listeners(Transporter, "transporter")
     _attach_project_listeners()
+    _attach_product_spec_listeners()
     _REGISTERED = True

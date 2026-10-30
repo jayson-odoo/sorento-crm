@@ -186,6 +186,32 @@ class ItemType(Base, CompanyScopedMixin):
     )
 
 
+class ItemClass(Base, CompanyScopedMixin):
+    """AutoCount `Item.ItemClass` (SERENE, DIY; blank on most items) as reference data, the
+    ItemType rule exactly: back-created code = name = raw value by the products ingest
+    (`product_rules.ensure_reference`). A contact's access can be narrowed to some classes
+    within a brand (`contact_brand_scope`). PLAN-item-class-29oct.md D1."""
+    __tablename__ = "item_classes"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    item_class_code = Column(String(50), nullable=False)
+    item_class_name = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
+
+    products = relationship("Product", back_populates="item_class")
+
+    __table_args__ = (
+        Index(
+            "uq_item_classes_company_item_class_code",
+            "company_id", "item_class_code",
+            unique=True,
+        ),
+    )
+
+
 class UnitOfMeasure(Base, CompanyScopedMixin):
     __tablename__ = "units_of_measure"
     
@@ -254,6 +280,12 @@ class Product(Base, CompanyScopedMixin):
     # Unrelated to `item_type` below, the CRM's own product/bundle/service/other enum.
     item_type_id = Column(
         UUID(as_uuid=False), ForeignKey("item_types.id", ondelete="SET NULL"), nullable=True,
+        index=True,
+    )
+    # AutoCount ItemClass (migration item_class_0001), set by the products ingest or the
+    # product form. Narrows a contact's brand access (`contact_brand_scope.brand_predicate`).
+    item_class_id = Column(
+        UUID(as_uuid=False), ForeignKey("item_classes.id", ondelete="SET NULL"), nullable=True,
         index=True,
     )
     # Self-referential variant graph. A variant points at its (longest existing
@@ -335,6 +367,7 @@ class Product(Base, CompanyScopedMixin):
 
     category = relationship("ProductCategory", back_populates="products")
     brand = relationship("Brand", back_populates="products")
+    item_class = relationship("ItemClass", back_populates="products")
     variant_of = relationship("Product", remote_side=[id], backref="variants")
     base_uom = relationship("UnitOfMeasure", back_populates="products", foreign_keys=[base_uom_id])
     product_suppliers = relationship(

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact Brands card mock</title>
+<!--
+  ITEM-CLASS Phase 1 mock (PLAN-item-class-29oct.md D5, owner Q4 (a)): the existing contact
+  Profile > Brands card gains, under each chosen brand, an optional "<brand> classes" multi-select.
+  Static mock only, no data. Real build reuses:
+    components/contacts/ContactBrandScopeSection.tsx   (the card; extended in place)
+    components/common/SearchableMultiSelect             (both pickers, clearable)
+    components/ui/label, components/ui/button, components/ui/skeleton
+    app/(protected)/master-data-management/shared/hooks/use-brand-select-query (brand options)
+    a new useItemClassSelectQuery(brandId) next to it -> GET /master-data/item-classes/select?brand_id=
+    hooks/useContactBrandScope.ts + services/contactBrandScopeService.ts (PUT gains brand_class_ids)
+  A brand whose products carry no class shows no class row (only offer options that work).
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --chip:#eef2ff; --chipfg:#3730a3; --primary:#1b84ff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --chip:#1e2547; --chipfg:#c7d2fe; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --chip:#1e2547; --chipfg:#c7d2fe; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 Inter, system-ui, sans-serif; padding:24px 16px; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  .note { color:var(--muted); font-size:12px; margin:0 0 20px; }
+  .grid { display:grid; gap:20px; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); max-width:1280px; }
+  .state { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; display:grid; gap:12px; }
+  label { font-weight:500; font-size:13px; }
+  .field { display:grid; gap:6px; }
+  .select { min-height:36px; border:1px solid var(--line); border-radius:6px; padding:5px 8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .placeholder { color:var(--muted); }
+  .chip { background:var(--chip); color:var(--chipfg); border-radius:4px; padding:2px 6px; font-size:12px; display:inline-flex; gap:4px; align-items:center; }
+  .chip b { font-weight:400; opacity:.7; }
+  .sub { margin-left:14px; padding-left:12px; border-left:2px solid var(--line); }
+  .sub label { font-weight:400; color:var(--muted); }
+  button { justify-self:start; border:0; border-radius:6px; background:var(--primary); color:#fff; padding:6px 12px; font-size:13px; }
+  button[disabled] { opacity:.45; }
+</style>
+</head>
+<body>
+<h1>Contact Profile > Brands (with item classes)</h1>
+<p class="note">Mock for review. Four states of the same card; the brand picker is unchanged, each chosen brand gets an optional class picker.</p>
+<div class="grid">
+
+  <section>
+    <div class="state">1. No brand limit (today's default)</div>
+    <div class="card">
+      <div class="field"><label>Brands</label><div class="select"><span class="placeholder">All brands</span></div></div>
+      <button disabled>Save</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="state">2. SORENTO chosen, every class</div>
+    <div class="card">
+      <div class="field"><label>Brands</label><div class="select"><span class="chip">SORENTO <b>x</b></span></div></div>
+      <div class="field sub"><label>SORENTO classes</label><div class="select"><span class="placeholder">All classes</span></div></div>
+      <button disabled>Save</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="state">3. SORENTO limited to SERENE (edited, unsaved)</div>
+    <div class="card">
+      <div class="field"><label>Brands</label><div class="select"><span class="chip">SORENTO <b>x</b></span></div></div>
+      <div class="field sub"><label>SORENTO classes</label><div class="select"><span class="chip">SERENE <b>x</b></span></div></div>
+      <button>Save</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="state">4. Two brands, one narrowed; OTHERS has no classes so no class row</div>
+    <div class="card">
+      <div class="field"><label>Brands</label><div class="select"><span class="chip">OTHERS <b>x</b></span><span class="chip">SORENTO <b>x</b></span></div></div>
+      <div class="field sub"><label>SORENTO classes</label><div class="select"><span class="chip">DIY <b>x</b></span><span class="chip">SERENE <b>x</b></span></div></div>
+      <button disabled>Save</button>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>
