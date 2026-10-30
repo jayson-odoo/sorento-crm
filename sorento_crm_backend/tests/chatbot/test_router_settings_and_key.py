@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from tests.chatbot.test_escalation_control_api import (  # noqa: F401 - fixtures + helpers
     BASE,
+    _ACTOR,
     _GRANTS,
     _permissions,
     _seed_contact,
@@ -165,6 +166,14 @@ def test_writing_the_override_needs_the_contact_edit_grant(db, client):  # noqa:
 # ------------------------------------------------------------------ the Jev key
 
 
+def _real_actor(db):
+    """The ai-assistant PUT writes updated_by_user_id (FK to users): the caller must be a real row."""
+    from tests.chatbot.agent._seed import seed_user
+
+    _ACTOR["id"] = seed_user(db, contact_pk=None)
+    db.commit()
+
+
 def _payload(**over) -> dict:
     body = {
         "provider": "openai", "model": "gpt-4o-mini", "temperature": 0, "system_prompt": "",
@@ -237,6 +246,7 @@ def test_the_key_never_appears_in_any_api_response(db, client):  # noqa: F811
     })
     _settings_row(db)
     contact_id = _seed_contact(db)
+    _real_actor(db)
     put = client.put(AI_CONFIG, json=_payload(jev_api_key=KEY))
     assert put.status_code == 200, put.text
     assert put.json()["jev_api_key_masked"] == "****5566"
@@ -255,6 +265,7 @@ def test_the_key_never_appears_in_any_api_response(db, client):  # noqa: F811
 
 def test_writing_the_jev_key_needs_the_ai_settings_edit_grant(db, client):  # noqa: F811
     _GRANTS.update({"system.ai_assistant_settings.edit"})
+    _real_actor(db)
     assert client.put(AI_CONFIG, json=_payload(jev_api_key=KEY)).json()["jev_api_key_masked"] == "****5566"  # control
     _GRANTS.discard("system.ai_assistant_settings.edit")
     resp = client.put(AI_CONFIG, json=_payload(jev_api_key="ZZT-other-key-0000"))
