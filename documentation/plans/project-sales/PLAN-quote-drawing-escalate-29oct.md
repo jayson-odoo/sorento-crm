@@ -1,6 +1,6 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Review READY on the rework (reviewer READY, security CLEAN, browser pass 1280/375), waiting on CI and the owner hand test; standard track, no migration, no setup.
+Status: Owner hand-test fix (30 Oct 17:35, Escalate on an unsaved row posted an empty version id): fixed, browser re-pass pending; standard track, no migration, no setup.
 (M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
 table, no migration)
 
