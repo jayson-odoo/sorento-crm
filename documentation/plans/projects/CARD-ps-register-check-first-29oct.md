@@ -1,4 +1,10 @@
-# CARD: PS-REGISTER-CHECK-FIRST v1.3 (30 Oct 2026)
+# CARD: PS-REGISTER-CHECK-FIRST v1.4 (30 Oct 2026)
+
+**Owner mock v3 note (30 Oct 10:02), drawn in mock v4:** the upload only uploads. A Registered project with no
+document shows "Upload Requirement" as its header call to action and Spec In off ("Upload a requirement first");
+once it has one document Spec In is the call to action again. The "Upload and move to Spec In" button is gone. The
+server gate (422 `project_requirements_missing`) stays as the backstop; the page reads the document count from the
+Documents tab's existing query (`[projectId]/components/ProjectDocumentsPanel.tsx:61-69`), so no new API field.
 
 **Owner mock v2 notes (30 Oct 09:54), drawn in mock v3:** (1) the Check shows only Clash or No clash: non-blocking
 "similar" rows are not shown (rule 3 now reads "No clash"); the server's `find_clashes` and its thresholds are
