@@ -14,20 +14,19 @@ import { FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PdfViewer } from '@/components/common/PdfViewer';
-import {
-  fetchPortalAttachmentBytes,
-  portalAttachmentDownloadUrl,
-  type PortalAttachment,
-} from '../lib/portal-client';
+import type { PortalAttachment } from '../lib/portal-client';
+import { useSubmissionClient, type SubmissionClient } from '../lib/submission-client';
 import { distinctName } from '@/lib/product-display';
 
 /**
- * A PDF's bytes through the portal token route. The signed `url` is cross-origin with no
- * CORS headers, so the viewer cannot read it from a script.
+ * A PDF's bytes through the portal token route (on a CRM page, the client's My Requests twin). The
+ * signed `url` is cross-origin with no CORS headers, so the viewer cannot read it from a script.
  */
-function portalPdfLoader(attachmentId: string) {
+function portalPdfLoader(client: SubmissionClient, attachmentId: string) {
   return async () => {
-    const response = await fetchPortalAttachmentBytes(portalAttachmentDownloadUrl(attachmentId));
+    const response = await client.fetchPortalAttachmentBytes(
+      client.portalAttachmentDownloadUrl(attachmentId),
+    );
     if (!response.ok) throw new Error('The file could not be read');
     return response.arrayBuffer();
   };
@@ -72,6 +71,7 @@ export default function POCrossCheckViewer({
   attachments,
   lines,
 }: POCrossCheckViewerProps) {
+  const client = useSubmissionClient();
   return (
     <Card>
       <CardHeader className="py-3 px-4">
@@ -105,7 +105,7 @@ export default function POCrossCheckViewer({
                       {att.url && isPdf ? (
                         <PdfViewer
                           url={att.url}
-                          loadData={portalPdfLoader(att.attachment_id)}
+                          loadData={portalPdfLoader(client, att.attachment_id)}
                           documentKey={att.attachment_id}
                           fileName={filename}
                           title={filename}

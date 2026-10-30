@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { LoaderCircleIcon } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { toast } from '@/lib/toast';
+import { useEnterCrmView } from '@/hooks/useEnterCrmView';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { startContactImpersonation } from '@/services/contactImpersonationService';
+import { startContactImpersonation, stopContactImpersonation } from '@/services/contactImpersonationService';
 import type { RespondContact } from '../types/contact.types';
 
 /**
@@ -31,6 +33,8 @@ export function ContactImpersonateDialog({
   onClose: () => void;
 }) {
   const [starting, setStarting] = useState(false);
+  const router = useRouter();
+  const enterCrmView = useEnterCrmView();
   const label = contact?.name || contact?.phone_number || contact?.id || '';
 
   return (
@@ -59,6 +63,19 @@ export function ContactImpersonateDialog({
               setStarting(true);
               try {
                 const session = await startContactImpersonation(contact.id);
+                if (session.crmUserId) {
+                  // A salesperson contact: the CRM view of that user in this tab.
+                  try {
+                    await enterCrmView(session.crmUserId);
+                  } catch (err) {
+                    await stopContactImpersonation().catch(() => {});
+                    throw err;
+                  }
+                  toast.success(`Now impersonating ${label}`);
+                  onClose();
+                  router.push('/my-requests');
+                  return;
+                }
                 toast.success(`Now impersonating ${label}`);
                 onClose();
                 if (typeof window !== 'undefined') {

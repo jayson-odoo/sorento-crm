@@ -49,6 +49,7 @@ import type {
   ProjectRegisterBody,
   ProjectUpdateBody,
 } from '../types/project.types';
+import { isProjectApproved } from '../lib/projectApproval';
 import { isAwaitingDecision } from './ApprovalStatePill';
 import { ProjectAIExtractDialog, type ProjectExtractFill } from './ProjectAIExtractDialog';
 
@@ -89,7 +90,11 @@ export function ProjectForm(props: ProjectFormProps) {
   const canCreateParty = useHasPermission(PARTY_EDIT_PERMISSION);
   // A salesperson with the submit slug but no edit rights saves a draft or submits for
   // approval instead of registering (PROJECT-REGISTER-V2 J1).
-  const submitOnly = !canEditProjects && canSubmitRegistration;
+  // A staff or approved project being edited follows the general rule (Save changes).
+  const submitOnly =
+    !canEditProjects &&
+    canSubmitRegistration &&
+    !(mode === 'edit' && project && isProjectApproved(project));
 
   const register = useRegisterProject();
   const update = useUpdateProject(project?.id ?? '');
@@ -162,8 +167,11 @@ export function ProjectForm(props: ProjectFormProps) {
   const fetchArchitectOptions = useFetchPartyOptions('architect');
   const fetchContractorOptions = useFetchPartyOptions('main_contractor');
   const fetchCustomerOptions = useFetchCustomerOptions();
-  const types = useProjectTypes();
-  const templates = useProjectTemplates(typeId || undefined);
+  // Both routes need projects.types.view: without it the type and template show as the
+  // project's own text and nothing is requested.
+  const canViewTypes = useHasPermission('projects.types.view');
+  const types = useProjectTypes({ enabled: canViewTypes });
+  const templates = useProjectTemplates(typeId || undefined, { enabled: canViewTypes });
   const states = useLookupSetOptions('my_state');
   const users = useQuery({
     queryKey: ['user-lookup', 'project-owner'],
@@ -364,7 +372,7 @@ export function ProjectForm(props: ProjectFormProps) {
       setMainContractorId(fill.main_contractor.id);
       setContractorOption({ value: fill.main_contractor.id, label: fill.main_contractor.name });
     }
-    if (fill.project_type && fill.project_type.id !== typeId) {
+    if (canViewTypes && fill.project_type && fill.project_type.id !== typeId) {
       setTypeId(fill.project_type.id);
       setTemplateId('');
     }
@@ -452,6 +460,67 @@ export function ProjectForm(props: ProjectFormProps) {
       // handled by the hook's onError
     }
   }
+
+  // Both routes need projects.types.view: without it the type and template show as the
+  // project's own text and nothing is requested.
+  const typeField = (
+    <div className="space-y-1.5">
+      <Label id="project-type-label" htmlFor="project-type">
+        Project type
+      </Label>
+      {!canViewTypes ? (
+        <p id="project-type" aria-labelledby="project-type-label" className="text-sm">
+          {project?.type_name || '-'}
+        </p>
+      ) : (
+        <SearchableSelect
+          id="project-type"
+          value={typeId}
+          onChange={(next) => {
+            // A new type must clear the template too, or a stale template from the previous
+            // type is submitted and the project gets roles it should not offer. In the
+            // handler, not an effect, so opening an edit form never wipes the project's own
+            // template.
+            setTypeId(next);
+            if (next !== typeId) setTemplateId('');
+          }}
+          clearable
+          loadError={types.error}
+          onRetry={() => void types.refetch()}
+          options={(types.data ?? []).map((type) => ({ value: type.id, label: type.name }))}
+          placeholder="Select a type"
+        />
+      )}
+    </div>
+  );
+  const templateField = (
+    <div className="space-y-1.5">
+      <Label id="project-template-label" htmlFor="project-template">
+        To-do list template
+      </Label>
+      {!canViewTypes ? (
+        <p id="project-template" aria-labelledby="project-template-label" className="text-sm">
+          {project?.template_name || '-'}
+        </p>
+      ) : (
+        <SearchableSelect
+          id="project-template"
+          value={templateId}
+          onChange={setTemplateId}
+          clearable
+          loadError={templates.error}
+          onRetry={() => void templates.refetch()}
+          options={(templates.data ?? []).map((template) => ({
+            value: template.id,
+            label: template.name,
+            description: template.has_forked_status_graph ? 'Has its own stage flow' : undefined,
+          }))}
+          placeholder="Select a to-do list template"
+          emptyMessage="No to-do list templates for this type"
+        />
+      )}
+    </div>
+  );
 
   const titleInput = (
     <Textarea
@@ -610,82 +679,15 @@ export function ProjectForm(props: ProjectFormProps) {
                       />
                     </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="project-type">Project type</Label>
-                    <SearchableSelect
-                      id="project-type"
-                      value={typeId}
-                      onChange={(next) => {
-                        // A new type must clear the template too, or a stale template from
-                        // the previous type is submitted and the project gets roles it should
-                        // not offer. In the handler, not an effect, so opening an edit form
-                        // never wipes the project's own template.
-                        setTypeId(next);
-                        if (next !== typeId) setTemplateId('');
-                      }}
-                      clearable
-                      loadError={types.error}
-                      onRetry={() => void types.refetch()}
-                      options={(types.data ?? []).map((type) => ({
-                        value: type.id,
-                        label: type.name,
-                      }))}
-                      placeholder="Select a type"
-                    />
-                  </div>
+                  {typeField}
                 </div>
               </>
             )}
             {wizard && (
-              <div className="space-y-1.5">
-                <div className="space-y-1.5">
-                  <Label htmlFor="project-type">Project type</Label>
-                  <SearchableSelect
-                    id="project-type"
-                    value={typeId}
-                    onChange={(next) => {
-                      // A new type must clear the template too, or a stale template from
-                      // the previous type is submitted and the project gets roles it should
-                      // not offer. In the handler, not an effect, so opening an edit form
-                      // never wipes the project's own template.
-                      setTypeId(next);
-                      if (next !== typeId) setTemplateId('');
-                    }}
-                    clearable
-                    loadError={types.error}
-                    onRetry={() => void types.refetch()}
-                    options={(types.data ?? []).map((type) => ({
-                      value: type.id,
-                      label: type.name,
-                    }))}
-                    placeholder="Select a type"
-                  />
-                </div>
-              </div>
+              <div className="space-y-1.5">{typeField}</div>
             )}
 
-            {typeId && (
-              <div className="space-y-1.5">
-                <Label htmlFor="project-template">To-do list template</Label>
-                <SearchableSelect
-                  id="project-template"
-                  value={templateId}
-                  onChange={setTemplateId}
-                  clearable
-                  loadError={templates.error}
-                  onRetry={() => void templates.refetch()}
-                  options={(templates.data ?? []).map((template) => ({
-                    value: template.id,
-                    label: template.name,
-                    description: template.has_forked_status_graph
-                      ? 'Has its own stage flow'
-                      : undefined,
-                  }))}
-                  placeholder="Select a to-do list template"
-                  emptyMessage="No to-do list templates for this type"
-                />
-              </div>
-            )}
+            {typeId && templateField}
           </FormSection>
         )}
 

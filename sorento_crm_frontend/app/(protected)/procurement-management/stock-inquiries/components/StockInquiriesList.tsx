@@ -34,6 +34,8 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
 import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { useStockInquiries } from '../hooks/useStockInquiries';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockInquiry } from '../types/stockInquiry.types';
@@ -61,9 +63,20 @@ const FILTERS_VERSION = 1;
 
 type StockInquiriesFilters = { statuses: string[] };
 
+/**
+ * A salesperson limited to their own stock inquiries gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
 export default function StockInquiriesList() {
+  const { limited } = useRequestScope('stock_inquiry');
+  if (limited) return <MyRequestPortalList kind="stock_inquiry" />;
+  return <StaffStockInquiriesList />;
+}
+
+function StaffStockInquiriesList() {
   const router = useRouter();
   const pathname = usePathname();
+  const statusLabels = STOCK_INQUIRY_STATUS_LABELS;
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -155,7 +168,7 @@ export default function StockInquiriesList() {
   };
 
   const statusFilterLabel = (() => {
-    const labels = statusFilter.map((v) => STOCK_INQUIRY_STATUS_LABELS[v] ?? v);
+    const labels = statusFilter.map((v) => statusLabels[v] ?? v);
     if (labels.length === 0) return '';
     if (labels.length === 1) return labels[0];
     return `${labels[0]} +${labels.length - 1} more`;
@@ -194,7 +207,6 @@ export default function StockInquiriesList() {
           <DataGridColumnHeader title="Rev" column={column} />
         ),
         size: 80,
-        enableSorting: false,
         // Denormalized on the row - no per-row query (UAC H4).
         cell: ({ row }) => {
           const label = revisionBadgeLabel(row.original.revision_no);
@@ -361,7 +373,6 @@ export default function StockInquiriesList() {
           <DataGridColumnHeader title="Assigned To" column={column} />
         ),
         size: 160,
-        enableSorting: false,
         cell: ({ row }) => (
           <span
             className="truncate"
@@ -381,7 +392,6 @@ export default function StockInquiriesList() {
           <DataGridColumnHeader title="Handled By" column={column} />
         ),
         size: 160,
-        enableSorting: false,
         cell: ({ row }) => (
           <span
             className="truncate"
@@ -401,7 +411,6 @@ export default function StockInquiriesList() {
           <DataGridColumnHeader title="Print Count" column={column} />
         ),
         size: 110,
-        enableSorting: false,
         cell: ({ row }) => (
           <EntityDownloadsButton
             entityType="stock_inquiry"
@@ -446,7 +455,7 @@ export default function StockInquiriesList() {
       }
     >
       <Plus />
-      Create Stock Inquiry
+      Create
     </Button>
   );
 
@@ -490,7 +499,7 @@ export default function StockInquiriesList() {
                   </div>
                   <Separator />
                   <div className="py-1">
-                    {Object.entries(STOCK_INQUIRY_STATUS_LABELS).map(
+                    {Object.entries(statusLabels).map(
                       ([value, label]) => {
                         const checked = statusFilter.includes(value);
                         return (

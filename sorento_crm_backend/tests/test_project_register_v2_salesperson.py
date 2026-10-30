@@ -82,10 +82,8 @@ def test_j1b_anything_else_is_refused(v2):
     res = as_user(v2, v2.sub_a).put(f"{STAFF}/{waiting}", json={"title": title("Late edit")})
     assert res.status_code == 403, res.text
 
-    decided = submit_new(v2, v2.sub_a).json()["id"]
-    assert approve_as_manager(v2, decided, owner=v2.sub_a).status_code == 200
-    res = as_user(v2, v2.sub_a).put(f"{STAFF}/{decided}", json={"title": title("Approved edit")})
-    assert res.status_code == 403, res.text
+    # Approved own registration: see tests/test_portal_p4_submit_only_approved_projects.py
+    # (owner ruling a54382059, 29 Oct: approved projects follow the general edit rule).
 
     # Someone else's registration: not theirs (403 or the own-records 404), never saved.
     rejected = submit_new(v2, v2.sub_a).json()["id"]

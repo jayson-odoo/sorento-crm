@@ -34,6 +34,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { useQuery } from '@tanstack/react-query';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import { getUserLookup } from '@/services/userSelectService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
@@ -144,11 +146,22 @@ interface PurchaseRequestsListProps {
   reportPermission?: string;
 }
 
-export default function PurchaseRequestsList({
+/**
+ * A salesperson limited to their own purchase requests or sponsorship forms gets the portal's own list body, through My Requests
+ * (PORTAL-P4-REQUESTS L2, owner a25895124 Q1 a); everyone else the staff list below, unchanged.
+ */
+export default function PurchaseRequestsList(props: PurchaseRequestsListProps = {}) {
+  const kind = props.requestType ?? 'purchase_request';
+  const { limited } = useRequestScope(kind);
+  if (limited) return <MyRequestPortalList kind={kind} />;
+  return <StaffPurchaseRequestsList {...props} />;
+}
+
+function StaffPurchaseRequestsList({
   requestType,
   basePath = DEFAULT_BASE_PATH,
   reportPermission,
-}: PurchaseRequestsListProps = {}) {
+}: PurchaseRequestsListProps) {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -285,7 +298,6 @@ export default function PurchaseRequestsList({
         accessorKey: 'revision_no',
         header: ({ column }) => <DataGridColumnHeader title="Rev" column={column} />,
         size: 80,
-        enableSorting: false,
         // Denormalized on the row - no per-row query (UAC H4).
         cell: ({ row }) => {
           const label = revisionBadgeLabel(row.original.revision_no);
@@ -396,7 +408,6 @@ export default function PurchaseRequestsList({
           <DataGridColumnHeader title="Assigned To" column={column} />
         ),
         size: 140,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.assigned_to_name ?? undefined}>
             {row.original.assigned_to_name ?? '-'}
@@ -410,7 +421,6 @@ export default function PurchaseRequestsList({
           <DataGridColumnHeader title="Handled By" column={column} />
         ),
         size: 140,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.handled_by_name ?? undefined}>
             {row.original.handled_by_name ?? '-'}

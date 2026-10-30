@@ -265,6 +265,10 @@ class ComplaintResponse(ComplaintBase):
     # source instead of two status lists that drift. Declared here because a
     # response_model silently drops any field it does not name.
     response_write_allowed: Optional[bool] = None
+    # Contact-initiated revisions (portal revision engine): the Revisions tab reads
+    # `revision_no > 0` as "this record has a lineage".
+    revision_no: Optional[int] = None
+    last_revised_at: Optional[datetime] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
     product_lines: Optional[list[ComplaintProductLineResponse]] = []
 
