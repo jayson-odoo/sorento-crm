@@ -3,6 +3,7 @@ import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   ClashPreview,
+  DrawingEscalationResult,
   Project,
   ProjectCollaborator,
   ProjectListParams,
@@ -987,6 +988,20 @@ export async function updateQuotationLine(
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the line'));
+  return response.json();
+}
+
+/** Ask the configured team for the drawing of this line's product, or join the open request. */
+export async function escalateLineDrawing(
+  versionId: string,
+  lineId: string,
+): Promise<DrawingEscalationResult> {
+  const response = await apiFetch(
+    `${BASE}/quotation-versions/${versionId}/lines/${lineId}/drawing-escalation`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to escalate the drawing'));
   return response.json();
 }
 

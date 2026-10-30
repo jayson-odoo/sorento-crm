@@ -48,7 +48,7 @@ function countdownLabel(due: string, nowMs: number): { text: string; msLeft: num
   return { text: msLeft >= 0 ? `in ${magnitude}` : `${magnitude} overdue`, msLeft };
 }
 
-function chipClass(msLeft: number | null): string {
+export function chipClass(msLeft: number | null): string {
   if (msLeft == null) return 'border-border text-muted-foreground';
   if (msLeft < 0) return 'border-destructive/40 bg-destructive/10 text-destructive';
   if (msLeft < AT_RISK_MS)

@@ -53,7 +53,8 @@ export type FormSLASourceType =
   | 'ticket'
   | 'workflow_submission'
   | 'price_tag_request'
-  | 'sample_request';
+  | 'sample_request'
+  | 'product_drawing';
 
 export async function getFormSLATrackers(
   sourceEntityType: FormSLASourceType,
@@ -374,6 +375,9 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
   price_tag_request: ['submit'],
   // No stage config ships for sample requests; the detail tab reads empty.
   sample_request: [],
+  // Started by Escalate on a quotation line; the assignee's Respond and Resolve buttons on My
+  // pending tasks emit the other two (a product page has no state change to emit them).
+  product_drawing: ['escalate', 'respond', 'resolve'],
 };
 
 export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
@@ -385,4 +389,5 @@ export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   workflow_submission: 'Workflow Submission',
   price_tag_request: 'Price Tag Request',
   sample_request: 'Sample Request',
+  product_drawing: 'Product Drawing',
 };

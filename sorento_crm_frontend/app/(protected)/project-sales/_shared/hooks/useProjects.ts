@@ -35,6 +35,7 @@ import {
   deletePriceFloor,
   deleteQuotation,
   deleteQuotationLine,
+  escalateLineDrawing,
   deleteSeries,
   getEffectivePriceFloor,
   getSeriesPricedRows,
@@ -1227,6 +1228,27 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
   });
 
   return { create, update, remove };
+}
+
+/**
+ * Escalate a line's missing drawing. The request belongs to the PRODUCT, so every quotation that
+ * lists it shows the new state: the prefix key refetches every open lines table, not just this
+ * version's.
+ */
+export function useEscalateDrawing(versionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (lineId: string) => escalateLineDrawing(versionId, lineId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'lines'] });
+      toast.success(
+        result.joined
+          ? 'Already escalated: added you to the request'
+          : 'Escalated: you will be told when the request is resolved',
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 }
 
 /**

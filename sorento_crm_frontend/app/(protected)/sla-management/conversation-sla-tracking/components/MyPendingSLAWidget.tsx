@@ -55,6 +55,7 @@ import {
   getTakeoverState,
   resolveConversationSLATracking,
   escalateConversationSLATracking,
+  actOnDrawingRequest,
   type MyPendingSLAItem,
   type TeamPendingItem,
   type TakeoverInfo,
@@ -84,6 +85,7 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
   complaint: { base: '/complaint-management/complaints', label: 'Complaint' },
   purchase_request: { base: '/procurement-management/purchase-requests', label: 'Purchase request' },
   sponsorship_form: { base: '/procurement-management/purchase-requests', label: 'Sponsorship form' },
+  product_drawing: { base: '/master-data-management/products', label: 'Product drawing' },
 };
 
 type AnyTask = MyPendingSLAItem | TeamPendingItem;
@@ -435,6 +437,22 @@ export default function MyPendingSLAWidget() {
     }
   };
 
+  // A product drawing task has no record page that emits its respond / resolve events, so the
+  // row carries the two buttons itself.
+  const [drawingBusyId, setDrawingBusyId] = useState<string | null>(null);
+  const handleDrawingAction = async (id: string, action: 'respond' | 'resolve') => {
+    setDrawingBusyId(id);
+    try {
+      await actOnDrawingRequest(id, action);
+      toast.success(action === 'respond' ? 'Marked as responded' : 'Drawing request resolved');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : `Failed to ${action}`);
+    } finally {
+      setDrawingBusyId(null);
+    }
+  };
+
   const handleEscalate = async () => {
     if (!escalateTarget) return;
     const reason = escalateReason.trim();
@@ -739,6 +757,20 @@ export default function MyPendingSLAWidget() {
                     )}
                   </>
                 )
+              )}
+              {!isTeam && item.source_entity_type === 'product_drawing' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7"
+                  disabled={drawingBusyId === item.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDrawingAction(item.id, mineItem.is_responded ? 'resolve' : 'respond');
+                  }}
+                >
+                  {mineItem.is_responded ? 'Resolve' : 'Respond'}
+                </Button>
               )}
               {/* Extend the resolution deadline. Only on My Pending rows (the
                   viewer owns them → assignee gate satisfied). /my-pending now emits

@@ -186,6 +186,19 @@ export async function resolveConversationSLATracking(id: string): Promise<void> 
   }
 }
 
+/** The assignee's Respond or Resolve on a product drawing task (the one form-SLA type with buttons). */
+export async function actOnDrawingRequest(
+  id: string,
+  action: 'respond' | 'resolve',
+): Promise<void> {
+  const response = await apiFetch(`/api/v1/sla-management/form-sla-tracking/${id}/drawing-${action}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, `Failed to ${action} the drawing request`));
+  }
+}
+
 /**
  * Manually escalate a conversation SLA tracking row to the next tier with a reason.
  * Stored as "manual: <reason>"; reassigns + notifies per policy. Capped at tier 3.

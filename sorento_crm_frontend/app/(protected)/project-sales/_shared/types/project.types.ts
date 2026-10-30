@@ -717,13 +717,34 @@ export interface QuotationLineFileCandidate {
  * issued id, `default` the product's first drawing by upload.
  */
 export interface QuotationLineDrawing {
-  state: 'chosen' | 'default' | 'no_drawings' | 'off_catalog';
+  /** `pdf`: the product's only drawing is a PDF (a link, never printed). */
+  state: 'chosen' | 'default' | 'pdf' | 'no_drawings' | 'off_catalog';
   url?: string | null;
   preview_url?: string | null;
   attachment_id?: string | null;
   filename?: string | null;
   candidate_count: number;
   candidates?: QuotationLineFileCandidate[];
+  /** The product's drawing request; null when none was ever opened. */
+  escalation?: DrawingEscalationState | null;
+}
+
+/**
+ * A drawing request on a product. Task fields are null once it is resolved, which leaves only
+ * `last_resolved_at`. Datetimes are ISO strings.
+ */
+export interface DrawingEscalationState {
+  tracking_id: string | null;
+  opened_at: string | null;
+  responded_at: string | null;
+  due_at: string | null;
+  requester_count: number | null;
+  last_resolved_at: string | null;
+}
+
+export interface DrawingEscalationResult {
+  joined: boolean;
+  escalation: DrawingEscalationState | null;
 }
 
 /** The photo and drawing cells for a product on a line not saved yet. */
