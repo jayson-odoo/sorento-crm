@@ -20,7 +20,7 @@ export function useSaveEmbeddingSettings() {
     onSuccess: (_data, input) => {
       queryClient.invalidateQueries({ queryKey: EMBEDDING_SETTINGS_KEY });
       queryClient.invalidateQueries({ queryKey: ['system-settings'] });
-      queryClient.invalidateQueries({ queryKey: ['embeddings'] });
+      queryClient.invalidateQueries({ queryKey: ['embeddings'] }, { cancelRefetch: false });
       toast.success(input.recordsBackfillStarted ? 'Embedding settings saved, records backfill started' : 'Embedding settings saved');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to save settings'),

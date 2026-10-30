@@ -28,7 +28,7 @@ const embedMissing = vi.fn();
 const backfill = vi.fn();
 
 vi.mock('../hooks/useEmbeddings', () => ({
-  useEmbeddingsOverview: () => overviewQuery(),
+  useEmbeddingsOverview: (opts?: unknown) => overviewQuery(opts),
   useLookupWords: (list: string) => wordsQuery(list),
   useTryPhrase: () => tryMutation(),
   useEmbedMissing: () => embedMissing(),
@@ -58,6 +58,17 @@ beforeEach(() => {
   backfill.mockReturnValue({ mutate, mutateAsync: mutate, isPending: false });
 });
 afterEach(() => cleanup());
+
+describe('overview polling (EMBED-PAGE-PERF)', () => {
+  it('polls the overview only while the Records tab shows', () => {
+    renderPage();
+    expect(overviewQuery).toHaveBeenLastCalledWith({ poll: false });
+    fireEvent.click(screen.getByText('Records'));
+    expect(overviewQuery).toHaveBeenLastCalledWith({ poll: true });
+    fireEvent.click(screen.getByText('Lookup words'));
+    expect(overviewQuery).toHaveBeenLastCalledWith({ poll: false });
+  });
+});
 
 describe('header strip', () => {
   it('shows the embedder model, lookup coverage, record coverage and the search model', () => {

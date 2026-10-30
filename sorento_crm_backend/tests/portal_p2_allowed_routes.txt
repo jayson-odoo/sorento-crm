@@ -82,6 +82,7 @@ GET /projects/{project_id}/purchase-orders
 GET /projects/{project_id}/quotation-documents
 GET /projects/{project_id}/quotation-documents/letter-templates
 GET /projects/{project_id}/quotation-documents/{document_id}
+GET /projects/{project_id}/quotation-documents/{document_id}/amendment-request
 GET /projects/{project_id}/quotation-documents/{document_id}/issues
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx
@@ -189,6 +190,7 @@ POST /projects/{project_id}/approve
 POST /projects/{project_id}/purchase-orders
 POST /projects/{project_id}/purchase-orders/upload
 POST /projects/{project_id}/quotation-documents
+POST /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/apply
 POST /projects/{project_id}/quotation-documents/{document_id}/approval-revise
 POST /projects/{project_id}/quotation-documents/{document_id}/approval-status
 POST /projects/{project_id}/quotation-documents/{document_id}/approve
@@ -250,6 +252,7 @@ PUT /fulfilment-planning/lines/{contribution_key}/draft
 PUT /leads/{lead_id}
 PUT /planning-changes/{batch_id}/rows/{row_id}
 PUT /projects/{project_id}
+PUT /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/rows/{row_id}
 PUT /projects/{project_id}/stakeholders/{stakeholder_id}
 PUT /projects/{project_id}/tasks/{task_id}
 PUT /purchase-order-versions/{po_version_id}
