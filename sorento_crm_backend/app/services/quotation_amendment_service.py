@@ -496,13 +496,21 @@ def _assert_no_later_draft(
 
 
 def apply_request(
-    db: Session, *, request: QuotationAmendmentRequest, actor_user_id: str
+    db: Session,
+    *,
+    request: QuotationAmendmentRequest,
+    actor_user_id: str,
+    written: Optional[List[ProjectQuotationLine]] = None,
 ) -> List[ProjectQuotationVersion]:
     """Draft the next revision of every scope with an accepted suggestion. Returns the drafts.
 
     Every refusal is checked before the first write, so a refused Apply leaves nothing behind.
     The result is a DRAFT: nothing is issued, and a below-floor price stops it issuing until a
     manager approves (``assert_issuable``).
+
+    ``written``, when passed, receives every line an accepted value was written onto, so the
+    caller can send the same below-floor alert a hand edit sends (``pop_breach_events``) once
+    the write is committed.
     """
     _assert_open(request)
     rows = _rows_of(db, request)
@@ -563,13 +571,15 @@ def apply_request(
                 scopes.delete_line(db, version=draft, line=copy)
                 copies.pop(str(row.line_id), None)
                 continue
-            scopes.upsert_line(
+            line = scopes.upsert_line(
                 db,
                 version=draft,
                 actor_user_id=actor_user_id,
                 payload={row.field: Decimal(row.value_to)},
                 line=copy,
             )
+            if written is not None and line not in written:
+                written.append(line)
         drafts.append(draft)
 
     request.status = STATUS_APPLIED

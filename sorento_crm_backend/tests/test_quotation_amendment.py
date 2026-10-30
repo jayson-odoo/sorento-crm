@@ -1735,3 +1735,36 @@ def test_staff_routes_need_the_right_permissions(staff):
         assert apply.status_code == 403
     db.expire_all()
     assert _rows(db, request)[(str(w.lines["WC"].id), "quantity")].decision == "pending"
+
+
+def test_staff_apply_alerts_a_below_floor_accepted_price_like_a_hand_edit(staff, monkeypatch):
+    """Apply sends the management breach alert a hand edit sends, for the accepted price under
+    its floor (WC 380.00 < 390.00) and not for the one above it (BSN 150.00 > 130.00)."""
+    from app.services import project_notify_service as notify
+
+    client, db, w = staff
+    alerts = []
+    monkeypatch.setattr(
+        notify,
+        "notify_floor_breach",
+        lambda db, *, project, event, actor_user_id=None: alerts.append(event) or 1,
+    )
+    request = _submit(
+        db,
+        w,
+        [
+            _change(w.lines["WC"], unit_price="380.00"),
+            _change(w.lines["BSN"], unit_price="150.00"),
+        ],
+    )
+    _decide(db, w, request, {})
+    db.commit()
+
+    response = client.post(f"{_root(w)}/amendment-requests/{request.id}/apply")
+    assert response.status_code == 200, response.text
+
+    assert len(alerts) == 1
+    (event,) = alerts
+    assert event["product_code"] == f"ZZT-WC-1001{w.tag}"
+    assert Decimal(str(event["unit_price"])) == Decimal("380.00")
+    assert Decimal(str(event["floor_value"])) == Decimal("390.00")

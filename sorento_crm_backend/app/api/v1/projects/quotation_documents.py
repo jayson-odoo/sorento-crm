@@ -727,9 +727,13 @@ def apply_quotation_amendment_request(
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
         request = amendments.get_request_for_document_or_404(db, document, request_id)
+        written: list = []
         drafts = amendments.apply_request(
-            db, request=request, actor_user_id=current_user["id"]
+            db, request=request, actor_user_id=current_user["id"], written=written
         )
+        # An accepted price below its floor alerts management exactly as a hand edit does.
+        for line in written:
+            _notify_breaches(db, line, current_user["id"])
         db.commit()
         return {
             "request": amendments.serialize_request(db, request),
