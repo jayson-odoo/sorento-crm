@@ -52,6 +52,26 @@ def _linked_user_id(db: Session, contact_id: str) -> Optional[str]:
     return db.query(User.id).filter(User.respond_contact_id == str(contact_id)).scalar()
 
 
+def _assert_own_quoted_project(db: Session, token: PortalToken, project_id: Optional[str]) -> None:
+    """A contact linked to a CRM user who may see only their own projects reads and records the
+    quotation of their own projects only (SAMPLE-FROM-QUOTE, SFQ-10): the same rule the staff
+    pre-fill route applies, which the company-wide portal project rule alone does not."""
+    from app.services import own_scope
+
+    user_id = _linked_user_id(db, token.contact_id)
+    if not (project_id and user_id):
+        return
+    if own_scope.user_is_limited(
+        db, user_id, own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN
+    ) and not own_scope.project_in_scope(db, own_scope.me(db, user_id), str(project_id)):
+        raise AppException(
+            status_code=422,
+            message="Pick one of your own projects.",
+            code="SAMPLE_REQUEST_PROJECT_NOT_ALLOWED",
+            details={"field": "project_id"},
+        )
+
+
 def _own(db: Session, token: PortalToken, request_id: str):
     return svc.get_for(
         db,
@@ -97,6 +117,7 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
         _assert_visible(db, token.contact_id)
         contact = PortalService(db).get_contact(token)
         svc.assert_portal_project_allowed(db, contact=contact, project_id=project_id)
+        _assert_own_quoted_project(db, token, project_id)
         with company_scope(db, frozenset(contact_company_ids(db, contact=contact))):
             return svc.quotation_prefill(db, project_id, document_id)
 
@@ -149,6 +170,8 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                 svc.assert_portal_customer_allowed(
                     db, contact_id=token.contact_id, customer_id=data.get("customer_id")
                 )
+                if data.get("quotation_document_id"):
+                    _assert_own_quoted_project(db, token, data.get("project_id"))
                 req = svc.create_draft(
                     db,
                     salesperson_id=_linked_user_id(db, token.contact_id),
@@ -193,6 +216,8 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                     svc.assert_portal_project_allowed(
                         db, contact=PortalService(db).get_contact(token), project_id=data["project_id"]
                     )
+                if data.get("quotation_document_id"):
+                    _assert_own_quoted_project(db, token, data.get("project_id") or req.project_id)
                 # Only a CHANGED debtor is re-checked: a draft whose debtor later left the
                 # agent's book must still be saveable with the customer it already has.
                 if data.get("customer_id") != req.customer_id:

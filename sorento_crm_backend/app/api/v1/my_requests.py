@@ -135,6 +135,8 @@ _TOKEN_NAMESPACE = uuid.UUID("6f1d3c2a-4b7e-4f0a-9a51-2c8e5d0b7a13")
 #: The write slug a route of the own-router kinds needs besides the kind's view_own.
 _WRITE_SLUGS = {
     ("POST", "/submissions/sample_request"): "projects.sample_requests.create",
+    # The quotation pre-fill reads like the staff route: only someone who may create one.
+    ("GET", "/sample-request/quotation-prefill"): "projects.sample_requests.create",
     ("POST", "/submissions/new_product_application"): "procurement.new_product_applications.create",
     ("POST", "/sales-opportunities"): "sales.opportunities.add",
     ("PATCH", "/sales-opportunities/{opportunity_id}"): "sales.opportunities.edit",
