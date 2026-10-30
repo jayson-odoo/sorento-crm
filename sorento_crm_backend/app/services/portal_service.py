@@ -42,7 +42,7 @@ from app.services.crockford import (
     CROCKFORD_TOKEN_LEN,
     crockford_token,
 )
-from app.services import submission_status
+from app.services import portal_required_fields, submission_status
 from app.services.document_number import display_document_number
 from app.services.error_handler import (
     AppException,
@@ -1102,6 +1102,9 @@ class PortalService:
         if payload:
             self._apply_payload(kind, row, payload)
             self._replace_request_lines_if_needed(kind, row, payload)
+        # A draft may be incomplete; a submission may not (FORM-REQUIRED-SERVER). Read
+        # off the row after the body above, so a resubmit of a saved draft is checked too.
+        portal_required_fields.require_complete(kind, row)
 
         # Status transition + notification.
         previous_status = row.status

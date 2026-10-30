@@ -40,7 +40,7 @@ from app.models.portal import (
 )
 from app.models.price_tag import PriceTagRequest
 from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine, StockInquiry
-from app.services import submission_status
+from app.services import portal_required_fields, submission_status
 from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_conflict, handle_not_found, handle_unprocessable
 from app.services.submission_status import APPEALED_LABEL
@@ -1604,6 +1604,8 @@ class PortalRevisionService:
         # `PortalService._require_sponsorship_unit_prices`.
         if source_entity_type == "sponsorship_form":
             portal._require_sponsorship_unit_prices(row)  # noqa: SLF001
+        # Same reasoning for the required fields (FORM-REQUIRED-SERVER).
+        portal_required_fields.require_complete(source_entity_type, row)
 
         # 6. Snapshot the stage output this revision invalidates, then clear it on the
         #    entity: an answer to the superseded version must never read as current
