@@ -793,6 +793,9 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     # by `so_remark_rules.is_mockup_line`.
     line_remark = Column(Text, nullable=True)
     section_heading = Column(Text, nullable=True)
+    # SO-LINE-DESC: AutoCount's line description (`SODTL.Description`), sent as the canonical
+    # line's `product_name`. Absent on a push keeps it, null clears it.
+    description = Column(Text, nullable=True)
     # The rest of the money the sales book states per line, and the reason the detail page
     # could only ever print a unit price beside a quantity. Both NULL when the file said
     # nothing: a discount of 0 claims a discount of nothing was given, and a line total of

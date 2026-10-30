@@ -119,6 +119,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       warranty_months: null,
       has_serial_tracking: false,
       has_batch_tracking: false,
+      show_so_line_description: false,
       reorder_level: 10,
       reorder_quantity: 50,
       chatbot_max_qty: null,
@@ -192,6 +193,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       warranty_months: product.warranty_months ?? null,
       has_serial_tracking: product.has_serial_tracking,
       has_batch_tracking: product.has_batch_tracking,
+      show_so_line_description: product.show_so_line_description ?? false,
       reorder_level: product.reorder_level,
       reorder_quantity: product.reorder_quantity,
       chatbot_max_qty: product.chatbot_max_qty ?? null,
@@ -244,6 +246,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         warranty_months: toOptionalNumber(data.warranty_months, isEditMode),
         has_serial_tracking: data.has_serial_tracking,
         has_batch_tracking: data.has_batch_tracking,
+        show_so_line_description: data.show_so_line_description,
         reorder_level: data.reorder_level,
         reorder_quantity: data.reorder_quantity,
         chatbot_max_qty: toOptionalNumber(data.chatbot_max_qty, isEditMode),
@@ -920,6 +923,24 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                             Track batches with expiry dates
                           </FormDescription>
                         </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="show_so_line_description"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <FormLabel className="text-base">
+                          Show SO line description in OI email
+                        </FormLabel>
                         <FormControl>
                           <Switch
                             checked={field.value}

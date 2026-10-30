@@ -565,6 +565,12 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                         Batch Tracking: {product.has_batch_tracking ? 'Yes' : 'No'}
                       </Badge>
                       <Badge
+                        variant={product.show_so_line_description ? 'success' : 'secondary'}
+                      >
+                        SO line description in OI email:{' '}
+                        {product.show_so_line_description ? 'Yes' : 'No'}
+                      </Badge>
+                      <Badge
                         variant={product.is_discontinued ? 'destructive' : 'secondary'}
                         title="Auto-derived: True when description starts with ****"
                       >

@@ -471,6 +471,8 @@ class _Row:
         #: FULFIL-SO-REMARK: `so_remark_rules.is_mockup_line` for this line, and the order's
         #: `remark_type` (Sponsorship / Purchase Request / None). Read by the Confirm guide.
         "is_mockup", "remark_type",
+        #: SO-LINE-DESC: the core line's AutoCount description, off the same line row.
+        "description",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -1710,6 +1712,7 @@ class FulfilmentBoardService:
                 so_doc_type=order.doc_type,
                 # R7 (query-count): off the SAME `line` row this read already fetched -
                 # see `_Row.__slots__`'s own docstring.
+                description=line.description,
                 source_ref=line.source_ref,
                 company_id=str(line.company_id) if line.company_id else None,
                 **_remark_facts(order, line),
@@ -1868,6 +1871,7 @@ class FulfilmentBoardService:
                     line_no=change_row.line_no,
                     so_line_no=core_line.line_no,
                     item_code=change_row.item_code,
+                    description=core_line.description,
                     product_id=str(core_line.product_id) if core_line.product_id else None,
                     project_sales_order_id=str(project_line.project_sales_order_id),
                     project_line_id=str(project_line.id),
@@ -1960,6 +1964,7 @@ class FulfilmentBoardService:
                     so_line_no=core_line.line_no,
                     **_remark_facts(order, core_line),
                     item_code=product.product_code,
+                    description=core_line.description,
                     product_id=str(core_line.product_id) if core_line.product_id else None,
                     project_sales_order_id=str(project_line.project_sales_order_id),
                     project_line_id=str(project_line.id),
@@ -5553,6 +5558,8 @@ class FulfilmentBoardService:
             "project_line_id": row.project_line_id,
             "so_number": row.so_number,
             "so_doc_type": row.so_doc_type,
+            #: SO-LINE-DESC: AutoCount's line description, `None` when none was sent.
+            "description": row.description,
             "customer_name": row.customer_name,
             #: Addressing only, and the key a pivot BY CUSTOMER groups on: two different
             #: customers can carry the same name, and grouping by the label would merge them.
