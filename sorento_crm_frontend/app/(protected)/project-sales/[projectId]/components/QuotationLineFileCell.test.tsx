@@ -84,7 +84,7 @@ function line(technical_drawing: QuotationLineDrawing, overrides: Partial<Quotat
   } as QuotationLine;
 }
 
-function renderCell(l: QuotationLine | null) {
+function renderCell(l: QuotationLine | null, canEscalate = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -96,6 +96,7 @@ function renderCell(l: QuotationLine | null) {
         label="PRD-CCC-03"
         pickedId=""
         editable={false}
+        canEscalate={canEscalate}
         onPick={() => {}}
         onPreview={() => {}}
       />
@@ -443,7 +444,7 @@ function photoLine(product_image: Record<string, unknown>, overrides: Partial<Qu
   } as unknown as QuotationLine;
 }
 
-function renderPhotoCell(l: QuotationLine | null, editable = false) {
+function renderPhotoCell(l: QuotationLine | null, editable = false, canEscalate = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -455,6 +456,7 @@ function renderPhotoCell(l: QuotationLine | null, editable = false) {
         label="PRD-CCC-03"
         pickedId=""
         editable={editable}
+        canEscalate={canEscalate}
         onPick={() => {}}
         onPreview={() => {}}
       />
@@ -655,5 +657,25 @@ describe('QuotationLineFileCell, photo cell: no Escalate where a photo exists or
     const { container } = renderPhotoCell(null);
     expect(container).toBeEmptyDOMElement();
     expect(apiFetch).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Owner hand test (30 Oct 17:35): a row picked or re-pointed in this session is not a saved line,
+// so it has nothing to escalate yet; posting for it hit /quotation-versions//lines/... (Not Found).
+// ---------------------------------------------------------------------------------------------
+
+describe('QuotationLineFileCell, a row that is not a saved line', () => {
+  it('shows "no drawing" and no Escalate when it cannot escalate', () => {
+    renderCell(line(drawing()), false);
+
+    expect(screen.getByText('no drawing')).toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /^Escalate missing/ })).toHaveLength(0);
+  });
+
+  it('keeps the photo cell and no Escalate when it cannot escalate', () => {
+    renderPhotoCell(photoLine(photo()), false, false);
+
+    expect(screen.queryAllByRole('button', { name: /^Escalate missing/ })).toHaveLength(0);
   });
 });

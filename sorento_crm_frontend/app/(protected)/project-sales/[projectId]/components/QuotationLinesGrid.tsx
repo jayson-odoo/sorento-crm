@@ -237,6 +237,7 @@ function FileCell({ row, kind }: { row: GridRow; kind: LineFileKind }) {
       label={grid.labelOf(row)}
       pickedId={staged.draft[field] ?? ''}
       editable={grid.editing && !staged.removed}
+      canEscalate={stored !== null}
       onPick={(attachmentId) => grid.update(row.key, { [field]: attachmentId })}
       onPreview={(shown) => grid.openPreview(kind, shown)}
     />

@@ -100,6 +100,7 @@ export function QuotationLineFileCell({
   label,
   pickedId,
   editable,
+  canEscalate,
   onPick,
   onPreview,
 }: {
@@ -108,6 +109,9 @@ export function QuotationLineFileCell({
   label: string;
   pickedId: string;
   editable: boolean;
+  /** The cell describes a SAVED line's own product, so a missing file can be escalated. A row
+   *  added or re-pointed in this session has no saved line to ask for yet (owner hand test). */
+  canEscalate: boolean;
   onPick: (attachmentId: string) => void;
   onPreview: (shown: LineFileShown) => void;
 }) {
@@ -138,6 +142,7 @@ export function QuotationLineFileCell({
 
   if (!canPick) {
     if (
+      canEscalate &&
       kind === 'photo' &&
       !thumbnail &&
       line.product_image?.state === 'no_photos'
@@ -170,7 +175,10 @@ export function QuotationLineFileCell({
       );
     }
     if (kind === 'drawing' && state === 'no_drawings') {
-      return <MediaEscalation kind="drawing" line={line} code={code} />;
+      if (canEscalate) return <MediaEscalation kind="drawing" line={line} code={code} />;
+      return (
+        <span className="block text-2xs leading-tight text-muted-foreground">no drawing</span>
+      );
     }
     return (
       <span className="block text-2xs leading-tight text-muted-foreground">
