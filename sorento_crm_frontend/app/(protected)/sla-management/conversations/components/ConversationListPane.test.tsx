@@ -118,7 +118,11 @@ describe('ConversationListPane (AC-N1)', () => {
   it('selects a row and highlights the selected one', () => {
     const { onSelect } = renderPane();
     fireEvent.click(screen.getByTestId('inbox-row-10025531'));
-    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ contact_ref: '10025531' }));
+    // No search applied: an empty term, so the thread opens on the live tail.
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ contact_ref: '10025531' }),
+      '',
+    );
 
     render(
       <ConversationListPane
