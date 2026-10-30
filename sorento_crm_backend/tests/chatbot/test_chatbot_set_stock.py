@@ -375,3 +375,83 @@ def test_set_parts_never_join_the_picker_beside_a_loose_product(mode):
 
     assert "Which product do you mean" not in str(out.get("gate_clarification") or ""), out.get("gate_clarification")
     assert set(ids.values()) <= {e.get("uuid") for e in out.get("compatible_entities") or []}, out.get("compatible_entities")
+
+
+# ---------------------------------------------------------------- partial codes (owner hand test round 2, 31 Oct)
+
+
+def _ids_sent(calls) -> set[str]:
+    """Every product id any tool received, whatever its parameter name."""
+    out: set[str] = set()
+    for _name, args in calls:
+        for key, value in (args or {}).items():
+            if key.endswith("product_ids") and isinstance(value, list):
+                out.update(str(v) for v in value)
+    return out
+
+
+@pytest.mark.parametrize(
+    "text, raw, domain, intent, sets",
+    [
+        ("photo wc8826", "wc8826", "product_attachment", "check_product_attachment", SETS_8826),
+        ("wc8826 eta", "wc8826", "incoming", "check_incoming", SETS_8826),
+        ("stock wc7405", "wc7405", "inventory", "check_stock", SETS_7405),
+        ("ada stok wc7405?", "wc7405", "inventory", "check_stock", SETS_7405),
+    ],
+)
+def test_a_partial_code_reaches_the_sets_the_way_it_reaches_products(text, raw, domain, intent, sets):
+    """Owner, 31 Oct: "photo srtwc8826" expanded both sets but "photo wc8826" answered only
+    SRTWC8826-SC. A partial code finds a set exactly as it finds a product code: every set whose
+    code holds it, in the resolver tier that finds the product."""
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        from app.services.company_scope import register_company_scope_listeners
+
+        register_company_scope_listeners()
+        _seed_sets(db, sets)
+        found = {m.canonical_code for m in _matches(db, raw) if m.entity_type == "product_set"}
+        and_found = {
+            m.canonical_code
+            for m in entity_resolver.resolve_references_intersection(db, [raw], allowed_entity_types=["product"]).intersection
+            if m.entity_type == "product_set"
+        }
+
+    assert found == set(sets), ("OR", sorted(found))
+    assert and_found == set(sets), ("AND", sorted(and_found))
+
+
+def test_partial_codes_in_or_mode_reach_every_part(session_factory, seeded, stub_access, monkeypatch):
+    """The owner's "photo wc8826" resolved in OR mode (the file kind is an entity of its own), where
+    the tier-2 product probe falls back from prefix to substring and the set probe did not. Two
+    partial codes put the resolve in OR mode the same way; every part of both families is fetched."""
+    from tests.chatbot.test_code_lookup_set_codes import _message
+    from tests.chatbot.test_engine import _envelope, _parser_output
+    from app.services.ai_assistant_service import MCPRuntimeClient
+    from app.services.chatbot import engine as engine_mod
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    db = session_factory()
+    ids = _seed_sets(db, SETS_7405)
+    ids.update(_seed_sets(db, SETS_8826))
+    db.commit()
+    verdict = _parser_output(
+        intent_hint="check_incoming", domain_hint="incoming", user_goal="ask",
+        entities=[
+            {"raw": "wc8826", "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+            {"raw": "wc7405", "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+        ],
+    )
+    calls: list = []
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **k: parser_mod.ParserConfig(
+        system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True))
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: verdict)
+    monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda self, n, a: calls.append((n, a)) or '{"ok": true, "items": []}')
+    stub_access()
+
+    result = engine_mod.run_turn(_envelope(message=_message("wc8826 and wc7405 eta")), session_factory=session_factory)
+
+    text = (result.reply or {}).get("text") or ""
+    assert "product set" not in text, text
+    assert set(ids.values()) <= _ids_sent(calls), (sorted(_ids_sent(calls)), text)
