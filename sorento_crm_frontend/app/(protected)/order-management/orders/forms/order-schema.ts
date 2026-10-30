@@ -64,7 +64,11 @@ const totalCheck = (data: { total_amount: number; subtotal_amount: number; disco
 const totalCheckError = { message: 'Total amount calculation error.', path: ['total_amount'] };
 
 export const OrderSchema = OrderFields.extend({
-  order_date: z.date({ required_error: 'Order date is required.' }),
+  // A cleared input sends null, so null gets the same message as a missing date.
+  order_date: z.date({
+    required_error: 'Order date is required.',
+    invalid_type_error: 'Order date is required.',
+  }),
 }).refine(totalCheck, totalCheckError);
 
 /**

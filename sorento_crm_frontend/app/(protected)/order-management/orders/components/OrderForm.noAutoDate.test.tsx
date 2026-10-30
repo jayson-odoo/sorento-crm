@@ -102,7 +102,7 @@ describe('OrderForm on an undated DO', () => {
     expect(sent.debtor_name).toBe('Seed Debtor Edited');
     expect(sent.order_date ?? undefined).toBeUndefined();
     expect(JSON.stringify(sent)).not.toContain('order_date');
-    expect(sent.estimated_delivery_date ?? null).toBeNull();
+    expect(sent.estimated_delivery_date).toBeNull();
   });
 
   it('still takes a real date the user types', async () => {
@@ -114,6 +114,31 @@ describe('OrderForm on an undated DO', () => {
     await waitFor(() => expect(updateMutation.mutateAsync).toHaveBeenCalledTimes(1));
     const sent = sentData();
     expect((sent.order_date as Date).toISOString().slice(0, 10)).toBe('2026-10-15');
+  });
+});
+
+describe('OrderForm clearing a date', () => {
+  it('a typed then cleared DO date shows empty, not today, and is not sent', async () => {
+    mockOrder({});
+    await renderForm('o-1');
+    await waitFor(() => screen.getByDisplayValue('Seed Debtor'));
+    fireEvent.change(doDateInput(), { target: { value: '2026-10-15' } });
+    fireEvent.change(doDateInput(), { target: { value: '' } });
+    await waitFor(() => expect(doDateInput().value).toBe(''));
+    fireEvent.click(screen.getByRole('button', { name: /Update Delivery Order/i }));
+    await waitFor(() => expect(updateMutation.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(JSON.stringify(sentData())).not.toContain('order_date');
+  });
+
+  it('clearing a dated DO shows empty and the required message', async () => {
+    mockOrder({ order_date: '2026-09-27' });
+    await renderForm('o-1');
+    await waitFor(() => expect(doDateInput().value).toBe('2026-09-27'));
+    fireEvent.change(doDateInput(), { target: { value: '' } });
+    await waitFor(() => expect(doDateInput().value).toBe(''));
+    fireEvent.click(screen.getByRole('button', { name: /Update Delivery Order/i }));
+    await waitFor(() => expect(screen.getByText('Order date is required.')).toBeInTheDocument());
+    expect(updateMutation.mutateAsync).not.toHaveBeenCalled();
   });
 });
 

@@ -404,8 +404,9 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                           <Input
                             type="date"
                             value={field.value ? field.value.toISOString().slice(0, 10) : ''}
+                            // null, not undefined: undefined shows the create default (today).
                             onChange={(e) =>
-                              field.onChange(e.target.value ? new Date(e.target.value) : undefined)
+                              field.onChange(e.target.value ? new Date(e.target.value) : null)
                             }
                             disabled={fromAutoCount('order_date')}
                           />
@@ -427,7 +428,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                             type="date"
                             value={field.value ? field.value.toISOString().slice(0, 10) : ''}
                             onChange={(e) =>
-                              field.onChange(e.target.value ? new Date(e.target.value) : undefined)
+                              field.onChange(e.target.value ? new Date(e.target.value) : null)
                             }
                           />
                         </FormControl>
@@ -449,7 +450,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                             type="date"
                             value={field.value ? field.value.toISOString().slice(0, 10) : ''}
                             onChange={(e) =>
-                              field.onChange(e.target.value ? new Date(e.target.value) : undefined)
+                              field.onChange(e.target.value ? new Date(e.target.value) : null)
                             }
                           />
                         </FormControl>
