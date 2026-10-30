@@ -36,6 +36,7 @@ from app.services.error_handler import AppException
 from app.services.sales import dealer_target_import, target_service
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.multi_value import multi_uuids, multi_values
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -151,6 +152,7 @@ MAX_PICKS_BYTES = 512 * 1024
 
 
 @router.get("/import/template")
+@heavy
 def dealer_targets_template(
     year: Optional[int] = Query(None, ge=2000, le=2100),
     _user: dict = Depends(require_permission(EDIT)),
@@ -165,6 +167,7 @@ def dealer_targets_template(
 
 
 @router.post("/import", response_model=SalesTargetImportResult)
+@heavy
 def import_dealer_targets(
     file: UploadFile = File(...),
     picks: Optional[str] = Form(None),

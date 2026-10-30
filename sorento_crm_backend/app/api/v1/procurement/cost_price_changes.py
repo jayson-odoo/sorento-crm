@@ -20,6 +20,7 @@ from app.services.procurement import cost_price_change_service as service
 from app.services.procurement.supplier_price_list_reader import MAX_FILE_BYTES
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
@@ -33,6 +34,7 @@ def _scoped(company_scope) -> frozenset:
 
 
 @router.post("/probe")
+@heavy
 def probe_price_list(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission(UPLOAD_PERM)),
@@ -48,6 +50,7 @@ def probe_price_list(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
+@heavy
 def upload_price_list(
     request: Request,
     file: UploadFile = File(...),

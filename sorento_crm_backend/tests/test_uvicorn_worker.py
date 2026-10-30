@@ -109,3 +109,47 @@ def test_the_worker_serves_through_the_draining_server(monkeypatch, tmp_path):
     assert len(served) == 1 and isinstance(served[0], uvicorn_worker.DrainingServer), served
     assert served[0]._notify == worker.notify
     assert served[0]._heartbeat_for == 150
+
+
+# ---- BACKEND-MEM-2 S3: a worker at its request limit drains like a signalled one
+def test_the_request_limit_drains_without_a_reset_and_runs_the_lifespan_shutdown(monkeypatch):
+    """The inbox drains stop in the app's lifespan shutdown (app/main.py shutdown_event -> stop_inbox_queue ->
+    begin_shutdown); a request-limit exit reaches it like a signal does. A request on a connection accepted just
+    before the limit closed the listener is still answered (the accept settle), not reset."""
+    import socket
+    import threading
+    import urllib.request
+
+    monkeypatch.setattr(uvicorn_worker.DrainingServer, "ACCEPT_SETTLE_SECONDS", 0.3)
+    events: list[str] = []
+
+    async def app(scope, receive, send):
+        if scope["type"] == "lifespan":
+            while True:
+                msg = await receive()
+                if msg["type"] == "lifespan.startup":
+                    await send({"type": "lifespan.startup.complete"})
+                elif msg["type"] == "lifespan.shutdown":
+                    events.append("shutdown")
+                    await send({"type": "lifespan.shutdown.complete"})
+                    return
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    config = uvicorn.Config(app=app, port=0, limit_max_requests=1, log_level="warning")
+    server = uvicorn_worker.DrainingServer(config, lambda: None, 5.0)
+    t = threading.Thread(target=server.run)
+    t.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    port = server.servers[0].sockets[0].getsockname()[1]
+    late = socket.create_connection(("127.0.0.1", port))  # accepted, request not sent yet
+    assert urllib.request.urlopen(f"http://127.0.0.1:{port}/").read() == b"ok"  # reaches the limit
+    time.sleep(0.15)  # the limit is seen and the listener closes; the late client sends now
+    late.sendall(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    assert late.recv(100).startswith(b"HTTP/1.1 200")
+    late.close()
+    t.join(10)
+    assert not t.is_alive() and events == ["shutdown"]

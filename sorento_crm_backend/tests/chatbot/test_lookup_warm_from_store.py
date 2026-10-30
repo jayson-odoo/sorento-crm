@@ -241,3 +241,39 @@ def test_a_persistently_rate_limited_chunk_stops_after_every_wait(db, monkeypatc
     assert sleeps == list(ll.WARM_RETRY_WAITS)
     assert always.calls == len(ll.WARM_RETRY_WAITS) + 1
     assert stored(db, m) == set()
+
+
+# ---- BACKEND-MEM-2 S1: the store load streams, and a later warm reads only the texts it lacks
+def test_store_load_converts_in_batches_not_all_rows_at_once(db, monkeypatch):
+    """`.all()` held every vector as 1536 Python floats at once (+621 MB peak per worker at 7,035 rows, plan
+    PLAN-backend-mem-2-30oct.md finding 2); the load now turns each batch into float32 before reading the next."""
+    m, ts = model(), texts(5)
+    seed_documents(db, ts)
+    ll._vector_embedder(m, Fake(), 5).fill(ts)
+    new_process()
+    monkeypatch.setattr(lookup_word_store, "LOAD_BATCH", 2)
+    sizes: list[int] = []
+    real = ll._unit_rows
+    monkeypatch.setattr(ll, "_unit_rows", lambda mat: (sizes.append(len(mat)), real(mat))[1])
+    assert lookup_word_store.load_lookup_vectors(db, m) == 5
+    assert sorted(sizes, reverse=True) == [2, 2, 1]
+    assert all(ll._key(t, m) in ll._cache for t in ts)
+
+
+def test_a_later_warm_reads_only_the_missing_texts_from_the_store(db, monkeypatch):
+    """The first warm of a process loads the whole store; a later one (a new customer in a turn's rows) reads only
+    the texts the cache lacks, not all 7,035 vectors again, and still sends nothing another process stored."""
+    m, ts = model(), texts(4)
+    seed_documents(db, ts)
+    ll._vector_embedder(m, Fake(), 4).fill(ts[:3])  # "another process" stored the first three
+    new_process()
+    emb = ll._vector_embedder(m, Fake(forbid=True), 4)
+    assert emb.fill(ts[:2]) == 3  # first warm: the whole store
+    ll._vector_embedder(m, Fake(), 4).fill(ts[3:])  # another process stores the fourth
+    ll._cache.pop(ll._key(ts[3], m))  # ...which this process has not seen
+    loaded_rows: list[int] = []
+    real = ll._unit_rows
+    monkeypatch.setattr(ll, "_unit_rows", lambda mat: (loaded_rows.append(len(mat)), real(mat))[1])
+    second = Fake(forbid=True)
+    assert ll._vector_embedder(m, second, 4).fill(ts) == 1
+    assert loaded_rows == [1] and second.calls == 0

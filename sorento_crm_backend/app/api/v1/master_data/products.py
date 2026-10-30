@@ -25,6 +25,7 @@ from app.schemas.product import (
 from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 from app.services.stock_ask_limits import guard_chatbot_limits_edit, NULL_LIMITS
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -369,6 +370,7 @@ def update_product(
     status_code=status.HTTP_202_ACCEPTED,
     responses={200: {"description": "Validation only (validate_only=true)", "model": ValidateImportResponse}},
 )
+@heavy
 def bulk_import_products(
     import_data: BulkImportProductsRequest,
     current_user: dict = Depends(get_current_user),
