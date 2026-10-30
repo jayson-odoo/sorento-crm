@@ -38,7 +38,11 @@ escalated it is told.
 - **AC-6 Normal SLA flow.** The task appears on the home Dashboards page, "My pending tasks" (My
   Pending tab for the assignee, My Team tab for their lead), as "Product drawing . <product code>"
   with Respond, then Resolve; responding and resolving update the task directly (no configured events). Overdue escalation,
-  extend and take-over work as for any form-SLA task. The row opens the product page.
+  extend and take-over work as for any form-SLA task. Clicking the row, Respond or Resolve opens the
+  chat's side panel in media mode (no chat fetch): product and its page, the SLA chips, an "Upload
+  in Resources" link (no upload in the panel), the quotations waiting, the followers, Respond, then
+  "Resolve ticket" with its confirm; `GET .../form-sla-tracking/{id}/media-request` serves it.
+  The file is linked to the product from Resources, which fires the "added" notice.
 - **AC-7 Adding a drawing does not resolve.** Linking a drawing (image or PDF) to a product with an
   open task leaves the task open and sends the assignee one notification.
 - **AC-8 Resolve tells the requesters.** Resolving sends every requester one in-app notification

@@ -77,13 +77,15 @@ vi.mock('./InterventionTicketDrawer', () => ({
     ticketId,
     open,
     onSent,
+    variant,
   }: {
     ticketId: string | null;
     open: boolean;
     onSent?: () => void;
+    variant?: string;
   }) =>
     open ? (
-      <div data-testid="ticket-drawer" data-ticket-id={ticketId ?? ''}>
+      <div data-testid="ticket-drawer" data-ticket-id={ticketId ?? ''} data-variant={variant ?? 'enquiry'}>
         <button data-testid="drawer-sent" onClick={() => onSent?.()}>
           sent
         </button>
@@ -1022,32 +1024,32 @@ describe('MyPendingSLAWidget product drawing rows', () => {
     expect(hasActionButton(/^Respond$/i)).toBe(false);
   });
 
-  it('clicking the row opens the product page, where the drawing is uploaded', async () => {
+  it('the previous row-click-to-product-page behaviour is replaced by the side panel', async () => {
     getMyPendingSLA.mockResolvedValue([drawingItem]);
     renderWidget();
 
     await screen.findByText('Product drawing');
     fireEvent.click(screen.getByText('Product drawing'));
-    expect(push).toHaveBeenCalledWith('/master-data-management/products/product-uuid');
+    expect(push).not.toHaveBeenCalledWith('/master-data-management/products/product-uuid');
   });
 
-  it('clicking Respond calls the drawing action with respond, then reloads the list', async () => {
+  it('clicking Respond opens the side panel in media mode and acts inline on nothing', async () => {
     actOnDrawingRequest.mockReset();
-    actOnDrawingRequest.mockResolvedValue(undefined);
     getMyPendingSLA.mockResolvedValue([drawingItem]);
     renderWidget();
 
     await screen.findByText('Product drawing');
     fireEvent.click(getActionButton(/^Respond$/i));
 
-    await waitFor(() => expect(actOnDrawingRequest).toHaveBeenCalledWith('pd1', 'respond'));
-    await waitFor(() => expect(getMyPendingSLA.mock.calls.length).toBeGreaterThan(1));
+    const drawer = await screen.findByTestId('ticket-drawer');
+    expect(drawer).toHaveAttribute('data-ticket-id', 'pd1');
+    expect(drawer).toHaveAttribute('data-variant', 'media');
+    expect(actOnDrawingRequest).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
   });
 
-  it('clicking Resolve on a responded row calls the drawing action with resolve', async () => {
+  it('clicking Resolve on a responded row opens the side panel in media mode', async () => {
     actOnDrawingRequest.mockReset();
-    actOnDrawingRequest.mockResolvedValue(undefined);
     getMyPendingSLA.mockResolvedValue([
       { ...drawingItem, is_responded: true, due_kind: 'resolve', next_action: 'Resolve' },
     ]);
@@ -1056,7 +1058,31 @@ describe('MyPendingSLAWidget product drawing rows', () => {
     await screen.findByText('Product drawing');
     fireEvent.click(getActionButton(/^Resolve$/i));
 
-    await waitFor(() => expect(actOnDrawingRequest).toHaveBeenCalledWith('pd1', 'resolve'));
+    const drawer = await screen.findByTestId('ticket-drawer');
+    expect(drawer).toHaveAttribute('data-variant', 'media');
+    expect(actOnDrawingRequest).not.toHaveBeenCalled();
+  });
+
+  it('clicking the row itself opens the side panel, not the product page', async () => {
+    getMyPendingSLA.mockResolvedValue([drawingItem]);
+    renderWidget();
+
+    await screen.findByText('Product drawing');
+    fireEvent.click(screen.getByText('Product drawing'));
+
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute('data-variant', 'media');
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('an enquiry row still opens the chat drawer', async () => {
+    getMyPendingSLA.mockResolvedValue([convoItem]);
+    renderWidget();
+
+    await screen.findByText('Enquiry');
+    fireEvent.click(screen.getByText('Enquiry'));
+
+    const drawers = screen.queryAllByTestId('ticket-drawer');
+    for (const drawer of drawers) expect(drawer).toHaveAttribute('data-variant', 'enquiry');
   });
 
   it('hides Resolve on a responded drawing row when the viewer lacks the resolve permission', async () => {
@@ -1163,21 +1189,23 @@ describe('MyPendingSLAWidget product photo rows', () => {
     expect(hasActionButton(/^Respond$/i)).toBe(false);
   });
 
-  it('clicking the row opens the product page', async () => {
+  it('clicking the row opens the side panel in media mode', async () => {
     getMyPendingSLA.mockResolvedValue([photoItem]);
     renderWidget();
 
     await screen.findByText('Product photo');
     fireEvent.click(screen.getByText('Product photo'));
-    expect(push).toHaveBeenCalledWith('/master-data-management/products/product-uuid');
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute('data-variant', 'media');
+    expect(push).not.toHaveBeenCalled();
   });
 
-  it('Respond and Resolve call the shared media action with the row id', async () => {
+  it('Respond and Resolve open the side panel in media mode for the row', async () => {
     getMyPendingSLA.mockResolvedValue([photoItem]);
     const first = renderWidget();
     await screen.findByText('Product photo');
     fireEvent.click(getActionButton(/^Respond$/i));
-    await waitFor(() => expect(actOnDrawingRequest).toHaveBeenCalledWith('pp1', 'respond'));
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute('data-ticket-id', 'pp1');
+    expect(screen.getByTestId('ticket-drawer')).toHaveAttribute('data-variant', 'media');
     first.unmount();
 
     getMyPendingSLA.mockResolvedValue([
@@ -1186,7 +1214,8 @@ describe('MyPendingSLAWidget product photo rows', () => {
     renderWidget();
     await screen.findByText('Product photo');
     fireEvent.click(getActionButton(/^Resolve$/i));
-    await waitFor(() => expect(actOnDrawingRequest).toHaveBeenCalledWith('pp1', 'resolve'));
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute('data-variant', 'media');
+    expect(actOnDrawingRequest).not.toHaveBeenCalled();
   });
 
   it('a photo row and a drawing row sit side by side with their own labels', async () => {

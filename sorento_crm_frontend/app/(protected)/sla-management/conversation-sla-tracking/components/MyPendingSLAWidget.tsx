@@ -55,7 +55,6 @@ import {
   getTakeoverState,
   resolveConversationSLATracking,
   escalateConversationSLATracking,
-  actOnDrawingRequest,
   type MyPendingSLAItem,
   type TeamPendingItem,
   type TakeoverInfo,
@@ -90,6 +89,11 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
 };
 
 type AnyTask = MyPendingSLAItem | TeamPendingItem;
+
+/** Product drawing and photo tasks are worked in the side panel, not on a record page. */
+function isMediaTask(item: AnyTask): boolean {
+  return item.source_entity_type === 'product_drawing' || item.source_entity_type === 'product_photo';
+}
 
 /** Form-vs-conversation is decided by the backend (is_form_sla, from FORM_SLA_TYPES)
  * - never re-derived here, or types the FE route map doesn't know (e.g. 'ticket')
@@ -218,6 +222,8 @@ export default function MyPendingSLAWidget() {
   // Ticket rows arrive already merged into `/my-pending` (flagged
   // `is_intervention_ticket`), so there is no separate ticket list to load here.
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
+  // A product drawing or photo task opens the same side panel in media mode.
+  const [openMediaId, setOpenMediaId] = useState<string | null>(null);
 
   const takeoverMutation = useTakeoverSLATracking();
   const reassignMutation = useReassignSLATracking();
@@ -408,6 +414,10 @@ export default function MyPendingSLAWidget() {
         setOpenTicketId(ticket.id);
         return;
       }
+      if (isMediaTask(item)) {
+        setOpenMediaId(item.id);
+        return;
+      }
       const record = entityHref(item);
       if (record) {
         router.push(record);
@@ -435,22 +445,6 @@ export default function MyPendingSLAWidget() {
       toast.error(e instanceof Error ? e.message : 'Failed to resolve');
     } finally {
       setResolving(false);
-    }
-  };
-
-  // A product drawing task has no record page that emits its respond / resolve events, so the
-  // row carries the two buttons itself.
-  const [drawingBusyId, setDrawingBusyId] = useState<string | null>(null);
-  const handleDrawingAction = async (id: string, action: 'respond' | 'resolve') => {
-    setDrawingBusyId(id);
-    try {
-      await actOnDrawingRequest(id, action);
-      toast.success(action === 'respond' ? 'Marked as responded' : 'Drawing request resolved');
-      await load();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : `Failed to ${action}`);
-    } finally {
-      setDrawingBusyId(null);
     }
   };
 
@@ -767,10 +761,9 @@ export default function MyPendingSLAWidget() {
                   size="sm"
                   variant="outline"
                   className="h-7"
-                  disabled={drawingBusyId === item.id}
                   onClick={(e) => {
                     e.stopPropagation();
-                    void handleDrawingAction(item.id, mineItem.is_responded ? 'resolve' : 'respond');
+                    setOpenMediaId(item.id);
                   }}
                 >
                   {mineItem.is_responded ? 'Resolve' : 'Respond'}
@@ -1155,6 +1148,21 @@ export default function MyPendingSLAWidget() {
         // the send mutation would refresh nothing here: a reply must reload it
         // explicitly or the row keeps its pre-reply countdown chips.
         onSent={() => void load()}
+      />
+
+      {/* A product drawing or photo task: same side panel, media mode. */}
+      <InterventionTicketDrawer
+        variant="media"
+        ticketId={openMediaId}
+        open={!!openMediaId}
+        onOpenChange={(o) => {
+          if (o) return;
+          setOpenMediaId(null);
+          void Promise.all([load(), loadTeam()]);
+        }}
+        onResolved={() => void load()}
+        onSent={() => void load()}
+        onReassigned={() => void Promise.all([load(), loadTeam()])}
       />
     </div>
   );
