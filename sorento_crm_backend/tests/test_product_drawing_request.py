@@ -2264,7 +2264,10 @@ def acks(monkeypatch):
     function reads as "never called" (an assertion), not as a fixture error."""
     calls: list = []
     monkeypatch.setattr(
-        _svc(), "enqueue_request_ack", lambda contact_id, text: calls.append((contact_id, text)), raising=False
+        _svc(),
+        "enqueue_request_ack",
+        lambda contact_id, text, tracking_id=None: calls.append((contact_id, text)),
+        raising=False,
     )
     return calls
 
@@ -2569,3 +2572,49 @@ def test_media_request_detail_has_conversation_follows_the_contact(db, env, acks
 
     assert on["has_conversation"] is True
     assert off["has_conversation"] is False
+
+
+# ------------------------------------------------- R4: a contact with no Respond.io id
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_r4_a_contact_without_a_respond_id_is_no_conversation(db, env, acks, kind):
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    user_id, contact = linked_user(db, "zzt Sales One")
+    db.query(RespondContact).filter(RespondContact.id == contact.id).update({"respond_io_id": ""})
+    db.commit()
+
+    esc(db, version, line, user_id, kind)
+
+    (tracker,) = trackers_for(db, product.id, kind)
+    assert tracker.respond_contact_id is None
+    assert acks == []
+
+
+# ------------------------------------------------- R5 K6: the ack is queued after the commit
+
+
+def test_k6_the_ack_is_queued_only_once_the_ticket_is_committed(db, env, monkeypatch):
+    seed_drawing_team(db)
+    product, version, line = quoted_product(db, env)
+    user_id, contact = linked_user(db, "zzt Sales One")
+    seen: list = []
+
+    def _ack(contact_id, text, tracking_id=None):
+        # Read before anything below opens a transaction of its own.
+        open_transaction = db.in_transaction()
+        tracker = db.query(ConversationSLATracking).filter(ConversationSLATracking.id == tracking_id).first()
+        seen.append(
+            {
+                "open_transaction": open_transaction,
+                "tracker_contact": tracker.respond_contact_id if tracker else None,
+                "requesters": len(requester_rows(db, tracking_id)),
+            }
+        )
+
+    monkeypatch.setattr(_svc(), "enqueue_request_ack", _ack)
+
+    esc(db, version, line, user_id, "drawing")
+
+    assert seen == [{"open_transaction": False, "tracker_contact": contact.id, "requesters": 1}]

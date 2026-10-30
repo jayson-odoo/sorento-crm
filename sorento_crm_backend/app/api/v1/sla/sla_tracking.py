@@ -2415,6 +2415,7 @@ def post_sla_tracking_conversation_reply(
     db: Session = Depends(get_db),
 ):
     """Send a text message to the Respond.io contact for this SLA tracking."""
+    _require_send_scope(db, str(tracking_id), current_user["id"])
     try:
         respond_user_id = _sla_reply_respond_user_id(current_user)
         service = ConversationSLATrackingService(db)
@@ -2497,6 +2498,42 @@ def get_sla_tracking_record(
         raise handle_internal_error(str(e))
 
 
+def _require_send_scope(db: Session, tracking_id: str, user_id: str) -> None:
+    """Who may message the contact of this tracking: the same rule as the ticket drawer's own
+    send (assignee, their teams, admins), a 404 otherwise so the id is not confirmed. A plain
+    form-SLA row is outside it: its detail page replies through these routes without a
+    ticket, as it always did. A drawing or photo request on a contact is inside it."""
+    from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
+
+    try:
+        UUID(str(tracking_id))
+    except ValueError:
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    service = ConversationSLATrackingService(db)
+    tracking = (
+        db.query(ConversationSLATracking)
+        .filter(ConversationSLATracking.id == str(tracking_id))
+        .first()
+    )
+    if tracking is None:
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES and not is_media_conversation(
+        tracking
+    ):
+        return
+    if not service.can_user_act_on_tracking(user_id, tracking):
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+
+
+def _sla_send_gate(
+    entity_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """``_require_send_scope`` as a dependency of the shared chat send routes below."""
+    _require_send_scope(db, entity_id, current_user["id"])
+
+
 def _resolve_sla_conversation_contact(db: Session, tracking_id: str):
     """(respond_io identifier, internal respond_contact_id) for a conversation SLA
     tracking. Identifier is the linked RespondContact's respond_io_id (not the
@@ -2526,5 +2563,6 @@ router.include_router(
         resolver=_resolve_sla_conversation_contact,
         chat_use_case="conversation_chat",
         context_builder=None,
+        send_dependencies=[Depends(_sla_send_gate)],
     )
 )

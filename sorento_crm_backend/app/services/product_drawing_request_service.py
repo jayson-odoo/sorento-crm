@@ -378,12 +378,17 @@ def escalate(db: Session, *, version_id: str, line_id: str, user: dict, kind: st
                 kind=kind,
             )
             if tracker.respond_contact_id:
-                ack = (str(tracker.respond_contact_id), _ack_text(db, kind, product_id, str(version_id)))
+                ack = (
+                    str(tracker.respond_contact_id),
+                    _ack_text(db, kind, product_id, str(version_id)),
+                    str(tracker.id),
+                )
         _record_requester(db, tracker, version_id=str(version_id), user_id=user_id)
         db.commit()
     if ack is not None:
         # After the commit, so a queued message never names a task that rolled back (B3).
-        enqueue_request_ack(*ack)
+        contact_id, ack_text, tracking_id = ack
+        enqueue_request_ack(contact_id, ack_text, tracking_id=tracking_id)
     return {
         "joined": joined,
         "escalation": escalation_states(db, [product_id], kind, requester_id=user_id)[str(product_id)],
@@ -432,19 +437,28 @@ def _ack_text(db: Session, kind: str, product_id: str, version_id: str) -> str:
 
 
 def _requester_contact_id(db: Session, user_id: str) -> Optional[str]:
-    """The requester's linked WhatsApp contact, only when that contact row exists (B2)."""
+    """The requester's linked WhatsApp contact, only when that contact row exists and carries a
+    Respond.io id (B2): without one the panel could not send, so the task stays a form row."""
     from app.models.user import User
 
     contact_id = db.query(User.respond_contact_id).filter(User.id == str(user_id)).scalar()
     if not contact_id:
         return None
-    found = db.query(RespondContact.id).filter(RespondContact.id == str(contact_id)).first()
+    found = (
+        db.query(RespondContact.id)
+        .filter(
+            RespondContact.id == str(contact_id),
+            func.coalesce(func.trim(RespondContact.respond_io_id), "") != "",
+        )
+        .first()
+    )
     return str(found[0]) if found is not None else None
 
 
-def enqueue_request_ack(contact_id: str, text: str) -> None:
+def enqueue_request_ack(contact_id: str, text: str, tracking_id: Optional[str] = None) -> None:
     """Queue the requester's one WhatsApp acknowledgement of a new task (B3) on the `respond_io`
-    queue. Best-effort: the task has already committed, so a queue that is away is logged."""
+    queue; ``tracking_id`` is the task its outbox row hangs off. Best-effort: the task has
+    already committed, so a queue that is away is logged."""
     try:
         from app.services.queue_service import enqueue_job
         from app.tasks.respond_io_tasks import send_media_request_ack
@@ -453,6 +467,7 @@ def enqueue_request_ack(contact_id: str, text: str) -> None:
             send_media_request_ack,
             str(contact_id),
             text,
+            str(tracking_id) if tracking_id else None,
             queue_name="respond_io",
             job_timeout=120,
         )
@@ -681,6 +696,12 @@ def media_request_detail(db: Session, tracking_id: str, user: dict, *, has_resol
         .order_by(ConversationSLAEventLog.event_at.asc(), ConversationSLAEventLog.id.asc())
         .all()
     )
+    # One requester per task (B1): the first requester row names them.
+    requester_name = None
+    if rows:
+        requester = db.query(User.name, User.email).filter(User.id == str(rows[0][0])).first()
+        requester_name = (requester[0] or requester[1]) if requester else None
+
     version_ids = list(
         dict.fromkeys(
             reason[len(_VERSION_REASON_PREFIX):]
@@ -732,6 +753,7 @@ def media_request_detail(db: Session, tracking_id: str, user: dict, *, has_resol
         "product_href": f"/master-data-management/products/{product_id}",
         "resources_href": "/resource-management/attachment-directories",
         "assignee_name": assignee_name,
+        "requester_name": requester_name,
         "assignee_team_id": str(team_id) if team_id else None,
         "is_assignee": is_assignee,
         "can_resolve": bool(
@@ -776,7 +798,16 @@ def respond(db: Session, tracking_id: str, user: dict) -> ConversationSLATrackin
 
 def resolve(db: Session, tracking_id: str, user: dict) -> ConversationSLATracking:
     tracking = _tracker_for_actor(db, tracking_id, user)
-    if tracking.is_resolved:
+    # Read under a row lock held until the resolve commits: of two resolves in the same second
+    # only one gets past here, so the requester's notice and the chat closing message go once.
+    already = (
+        db.query(ConversationSLATracking.is_resolved)
+        .filter(ConversationSLATracking.id == str(tracking.id))
+        .with_for_update()
+        .scalar()
+    )
+    if already or tracking.is_resolved:
+        _safe_rollback(db)
         raise AppException(status_code=409, message="This request is already resolved.", code="already_resolved")
     fields: Dict[str, Any] = {"is_resolved": True, "resolved_by": str(user["id"])}
     if not tracking.is_responded:
@@ -789,34 +820,17 @@ def resolve(db: Session, tracking_id: str, user: dict) -> ConversationSLATrackin
     return tracking
 
 
-def _contact_has_other_open_media_task(db: Session, tracking: ConversationSLATracking) -> bool:
-    """Another open drawing or photo task on the same contact (the chat-side sibling check is
-    conversation-scoped, so it does not see these)."""
-    return (
-        db.query(ConversationSLATracking.id)
-        .filter(
-            ConversationSLATracking.respond_contact_id == tracking.respond_contact_id,
-            ConversationSLATracking.id != tracking.id,
-            ConversationSLATracking.source_entity_type.in_(list(SOURCE_TYPES.values())),
-            *open_tracker_scope(),
-        )
-        .first()
-        is not None
-    )
-
-
 def _close_like_a_chat_ticket(db: Session, tracking: ConversationSLATracking) -> None:
     """B6: what a chat resolve does after its commit, through the chat resolve's own helpers.
     The resolved message always; the Respond close (and n8n's close hook) only when no other
-    open ticket shares the contact. Each helper is best-effort and never raises."""
+    open row shares the contact, by the chat resolve's own rule. Each helper is best-effort and
+    never raises."""
     from app.services.sla_service import ConversationSLATrackingService
 
     try:
         service = ConversationSLATrackingService(db)
         service._enqueue_ticket_resolved_message_best_effort(tracking)
-        if not service._has_other_open_conversation_siblings(tracking) and not _contact_has_other_open_media_task(
-            db, tracking
-        ):
+        if not service._contact_has_other_open_tickets(tracking):
             service._close_respond_conversation_best_effort(tracking)
             service._notify_close_convo_webhook_best_effort(tracking)
     except Exception as exc:  # noqa: BLE001 - the resolve already committed

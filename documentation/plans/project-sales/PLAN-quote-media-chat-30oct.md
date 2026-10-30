@@ -1,6 +1,6 @@
 # PLAN: Drawing and photo requests use the chat escalation flow
 
-Status: Phase 3 (review fix round 1, then browser re-run); standard track (expected diff over 300 lines), no migration, no setup.
+Status: Phase 3 (review fixes in; browser re-run on the final head); standard track (expected diff over 300 lines), no migration, no setup beyond a linked WhatsApp contact for the requester.
 
 Follow-up to #1983 (merged; plan archived at
 `documentation/plans/_archive/project-sales/PLAN-quote-drawing-escalate-29oct.md`). Owner hand test
@@ -63,6 +63,9 @@ so 1a's "no duplicate task" still holds per person.
 
 ## Not in scope
 
+- The send scope gate added here (security review S1) covers chat tickets and drawing or photo
+  requests with a contact. Plain form-SLA rows keep their existing unscoped reply path (their
+  detail page composer uses it); closing that is a separate lane.
 - The chatbot's own handling of the salesperson's WhatsApp replies (unchanged: after the PIC's
   first panel reply n8n is told a human answered, as for chat tickets).
 - A reply typed in the Respond app does not stamp Respond on these tasks (the agent-replied

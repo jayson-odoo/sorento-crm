@@ -76,6 +76,7 @@ function detail(
     product_href: '/master-data-management/products/p-1',
     resources_href: '/resource-management/attachment-directories',
     assignee_name: 'Aina',
+    requester_name: 'Baser Ramli',
     assignee_team_id: 'team-1',
     is_assignee: true,
     can_resolve: true,
@@ -103,8 +104,6 @@ function detail(
       },
     ],
     has_conversation: false,
-    // Tolerated while the old payload shape is still read; the panel no longer renders it.
-    ...{ followers: [] as string[] },
     ...overrides,
   };
 }
@@ -175,6 +174,20 @@ describe('InterventionTicketDrawer media variant', () => {
       screen.getByRole('link', { name: 'QT-0002 · Villa' }),
     ).toBeInTheDocument();
     expect(screen.queryByText('Following')).not.toBeInTheDocument();
+  });
+
+  it('the description line names the requester and the assignee', () => {
+    mountDetail(detail());
+    renderDrawer();
+
+    expect(screen.getByText('From Baser Ramli · With Aina')).toBeInTheDocument();
+  });
+
+  it('the description line keeps whichever name it has', () => {
+    mountDetail(detail({ assignee_name: null }));
+    renderDrawer();
+
+    expect(screen.getByText('From Baser Ramli')).toBeInTheDocument();
   });
 
   it('titles a photo task "Product photo"', () => {

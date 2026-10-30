@@ -124,6 +124,14 @@ export default function MediaRequestDrawer({
   };
 
   const showExtend = canExtend && !isResolved && !!request?.due_at_resolution;
+  // One line, the people on the ticket: who raised it and who works it.
+  const description =
+    [
+      request?.requester_name ? `From ${request.requester_name}` : null,
+      request?.assignee_name ? `With ${request.assignee_name}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ') || 'Request';
 
   // A reply stamps Respond server-side: re-read the facts (chips) and tell the worklist.
   const onReplied = () => {
@@ -226,10 +234,8 @@ export default function MediaRequestDrawer({
               )}
             </div>
           </div>
-          <SheetDescription className="text-xs">
-            {request?.assignee_name
-              ? `With ${request.assignee_name}`
-              : 'Request'}
+          <SheetDescription className="truncate text-xs" title={description}>
+            {description}
           </SheetDescription>
         </SheetHeader>
 

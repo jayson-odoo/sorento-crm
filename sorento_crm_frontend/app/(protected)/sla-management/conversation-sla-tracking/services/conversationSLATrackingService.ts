@@ -209,6 +209,8 @@ export interface MediaRequestDetail {
   product_href: string;
   resources_href: string;
   assignee_name: string | null;
+  /** The salesperson who raised it (one requester per ticket). */
+  requester_name: string | null;
   assignee_team_id: string | null;
   is_assignee: boolean;
   can_resolve: boolean;

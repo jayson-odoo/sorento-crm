@@ -863,7 +863,7 @@ def chat_scene(respond_doubles):
 def _no_ack(monkeypatch):
     monkeypatch.setattr(
         "app.services.product_drawing_request_service.enqueue_request_ack",
-        lambda contact_id, text: None,
+        lambda contact_id, text, tracking_id=None: None,
         raising=False,
     )
 
@@ -998,3 +998,326 @@ def test_b8_the_quotation_tile_shows_the_viewers_own_ticket_not_a_colleagues(sce
     assert own.json()["escalation"]["tracking_id"] != str(tracker.id)
     assert _drawing_cell(s, s["stranger"])["escalation"]["tracking_id"] == own.json()["escalation"]["tracking_id"]
     assert _drawing_cell(s, s["owner"])["escalation"]["tracking_id"] == str(tracker.id)
+
+
+# =============================================================================================
+# QUOTE-MEDIA-CHAT fix round 1: a media ticket with a contact is reachable through the chat ticket
+# endpoints, so every read and send on it is scoped to the assignee's teams (S1, S2); the Respond
+# close waits for every other open row on the contact (N1); the panel names the requester (B5).
+# =============================================================================================
+
+SLA_TRACKING_VIEW = "sla_management.conversation_sla_tracking.view"
+#: A stranger who can read trackers and resolve, but is outside the assignee's teams.
+STRANGER_PERMS = {SLA_TRACKING_VIEW, RESOLVE}
+
+
+def test_s2_a_stranger_with_reader_and_resolve_permissions_cannot_read_or_send_on_a_media_ticket(
+    chat_scene, monkeypatch
+):
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+    assert tracker.respond_contact_id == s["contact"].id
+
+    with acting(s["db"], s["stranger"], STRANGER_PERMS) as client:
+        responses = {
+            "ticket": client.get(f"{TICKET_BASE}/{tracker.id}/ticket"),
+            "conversation": client.get(f"{TICKET_BASE}/{tracker.id}/conversation"),
+            "page": client.get(f"{TICKET_BASE}/{tracker.id}/conversation/page"),
+            "media": client.get(
+                f"{TICKET_BASE}/{tracker.id}/media", params={"url": "https://example.com/a.jpg"}
+            ),
+            "comments": client.get(f"{TICKET_BASE}/{tracker.id}/comments"),
+            "send": client.post(f"{TICKET_BASE}/{tracker.id}/ticket/send", json={"text": "hello"}),
+        }
+
+    assert {name: r.status_code for name, r in responses.items()} == {name: 404 for name in responses}, {
+        name: r.text for name, r in responses.items()
+    }
+    assert _FakeRespond.sent_texts == []
+    s["db"].refresh(tracker)
+    assert tracker.is_responded is False
+
+
+def test_s1_a_stranger_cannot_send_on_a_media_ticket_through_the_reply_or_chat_template_routes(
+    chat_scene, monkeypatch
+):
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+    reached: list = []
+    monkeypatch.setattr(
+        "app.services.respond_chat_template_service.precheck_manual_template",
+        lambda *a, **k: reached.append("template") or {"template_name": "t", "rendered_body": "b"},
+    )
+    monkeypatch.setattr(
+        "app.services.respond_chat_template_service.deliver_manual_template_now",
+        lambda *a, **k: reached.append("deliver") or {"response": {}},
+    )
+    monkeypatch.setattr(
+        "app.services.respond_chat_template_service.precheck_chat_send",
+        lambda *a, **k: reached.append("chat") or {"sent_as": "text"},
+    )
+
+    with acting(s["db"], s["stranger"], STRANGER_PERMS) as client:
+        reply = client.post(f"{TICKET_BASE}/{tracker.id}/conversation/reply", json={"message": "hello"})
+        chat = client.post(f"{TICKET_BASE}/{tracker.id}/conversation/send-message", json={"text": "hello"})
+        template = client.post(
+            f"{TICKET_BASE}/{tracker.id}/conversation/template-message",
+            json={"template_id": "tpl-1", "params": {}, "tracking_id": str(tracker.id)},
+        )
+
+    assert [reply.status_code, chat.status_code, template.status_code] == [404, 404, 404], [
+        reply.text,
+        chat.text,
+        template.text,
+    ]
+    assert reached == [], "a refused sender must not reach the send machinery"
+    assert _FakeRespond.sent_texts == []
+    s["db"].refresh(tracker)
+    assert tracker.is_responded is False
+
+
+def test_s1_the_assignee_still_sends_through_the_reply_route(chat_scene, monkeypatch):
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+
+    with acting(s["db"], s["team"]["assignee"], set()) as client:
+        reply = client.post(f"{TICKET_BASE}/{tracker.id}/conversation/reply", json={"message": "on it"})
+
+    assert reply.status_code == 200, reply.text
+    assert _FakeRespond.sent_texts == [(s["contact"].respond_io_id, "on it")]
+
+
+def test_n1_resolve_keeps_the_conversation_open_while_another_form_row_shares_the_contact(
+    chat_scene, monkeypatch
+):
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+    # Another open form-SLA row (a complaint stage) on the same WhatsApp contact.
+    sibling = ConversationSLATracking(
+        policy_id=tracker.policy_id,
+        current_tier=1,
+        due_at=tracker.due_at,
+        is_responded=False,
+        is_resolved=False,
+        company_id=tracker.company_id,
+        source_entity_type="complaint",
+        source_entity_id=_uid(),
+        respond_contact_id=s["contact"].id,
+    )
+    s["db"].add(sibling)
+    s["db"].commit()
+    calls = _spy_resolve_helpers(monkeypatch)
+
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        response = client.post(f"{SLA_BASE}/{tracker.id}/media-resolve")
+
+    assert response.status_code == 200, response.text
+    assert calls == {"message": [str(tracker.id)], "close": []}
+
+
+def test_b5_the_media_detail_names_the_requester(chat_scene, monkeypatch):
+    from app.models.user import User
+
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+    owner = s["db"].query(User).filter(User.id == s["owner"]).one()
+
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        body = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}").json()
+
+    assert body["requester_name"] == (owner.name or owner.email)
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", body["requester_name"])
+
+
+# ------------------------------------------------- R1: one close rule, in both directions
+
+
+def _chat_ticket_on(s, tracker, *, assignee):
+    """An open chat ticket (no source entity) on the same WhatsApp contact."""
+    row = ConversationSLATracking(
+        policy_id=tracker.policy_id,
+        current_tier=1,
+        due_at=tracker.due_at,
+        is_responded=False,
+        is_resolved=False,
+        company_id=tracker.company_id,
+        respond_contact_id=s["contact"].id,
+        assigned_to_id=assignee,
+    )
+    s["db"].add(row)
+    s["db"].commit()
+    return row
+
+
+def test_r1_k3_a_media_resolve_keeps_the_conversation_open_while_a_chat_ticket_shares_the_contact(
+    chat_scene, monkeypatch
+):
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+    _chat_ticket_on(s, tracker, assignee=s["team"]["assignee"])
+    calls = _spy_resolve_helpers(monkeypatch)
+
+    with acting(s["db"], s["team"]["assignee"], {RESOLVE}) as client:
+        response = client.post(f"{SLA_BASE}/{tracker.id}/media-resolve")
+
+    assert response.status_code == 200, response.text
+    assert calls == {"message": [str(tracker.id)], "close": []}
+
+
+def test_r1_a_chat_resolve_keeps_the_conversation_open_while_a_media_request_shares_the_contact(
+    chat_scene, monkeypatch
+):
+    from app.schemas.sla import ConversationSLATrackingUpdate
+    from app.services.sla_service import ConversationSLATrackingService
+
+    _no_ack(monkeypatch)
+    s = chat_scene
+    media = _open_task(s)
+    chat = _chat_ticket_on(s, media, assignee=s["team"]["assignee"])
+    calls = _spy_resolve_helpers(monkeypatch)
+
+    ConversationSLATrackingService(s["db"]).update_tracking(
+        str(chat.id),
+        ConversationSLATrackingUpdate(is_resolved=True, resolved_by=str(s["team"]["assignee"])),
+    )
+
+    assert calls == {"message": [str(chat.id)], "close": []}
+
+
+def test_r1_a_chat_resolve_with_nothing_else_open_on_the_contact_still_closes(chat_scene, monkeypatch):
+    from app.schemas.sla import ConversationSLATrackingUpdate
+    from app.services.sla_service import ConversationSLATrackingService
+
+    _no_ack(monkeypatch)
+    s = chat_scene
+    media = _open_task(s)
+    chat = _chat_ticket_on(s, media, assignee=s["team"]["assignee"])
+    media.is_resolved = True
+    s["db"].commit()
+    calls = _spy_resolve_helpers(monkeypatch)
+
+    ConversationSLATrackingService(s["db"]).update_tracking(
+        str(chat.id),
+        ConversationSLATrackingUpdate(is_resolved=True, resolved_by=str(s["team"]["assignee"])),
+    )
+
+    assert calls == {"message": [str(chat.id)], "close": [str(chat.id)]}
+
+
+# ---------------------------------------------------- R5 K1/K2: the assignee works the ticket
+
+
+def test_k1_the_assignee_lists_and_writes_comments_on_a_media_ticket(chat_scene, monkeypatch):
+    _no_ack(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.ticket_comment_service.mirror_comment_to_respond", lambda *a, **k: None
+    )
+    s = chat_scene
+    tracker = _open_task(s)
+
+    with acting(s["db"], s["team"]["assignee"], set()) as client:
+        created = client.post(f"{TICKET_BASE}/{tracker.id}/comments", json={"body": "Asked the factory"})
+        listed = client.get(f"{TICKET_BASE}/{tracker.id}/comments")
+
+    assert created.status_code == 201, created.text
+    assert listed.status_code == 200, listed.text
+    assert [c["body"] for c in listed.json()] == ["Asked the factory"]
+
+
+def test_k2_the_assignee_reads_the_page_the_search_and_the_media_proxy(chat_scene, monkeypatch):
+    from starlette.responses import Response
+
+    import app.services.media_proxy_service as media_proxy_service
+
+    _no_ack(monkeypatch)
+
+    async def _stream(url):
+        return Response(content=b"img", media_type="image/jpeg")
+
+    monkeypatch.setattr(media_proxy_service, "stream", _stream)
+    s = chat_scene
+    tracker = _open_task(s)
+
+    with acting(s["db"], s["team"]["assignee"], set()) as client:
+        page = client.get(f"{TICKET_BASE}/{tracker.id}/conversation/page")
+        search = client.get(f"{TICKET_BASE}/{tracker.id}/conversation/search", params={"q": "drawing"})
+        media = client.get(f"{TICKET_BASE}/{tracker.id}/media", params={"url": "https://example.com/a.jpg"})
+
+    assert [page.status_code, search.status_code, media.status_code] == [200, 200, 200], [
+        page.text,
+        search.text,
+        media.text,
+    ]
+    assert media.content == b"img"
+
+
+# --------------------------------------------- R2: the acknowledgement job, in the window
+
+
+class _NoCloseSession:
+    def __init__(self, inner):
+        self._inner = inner
+
+    def close(self):
+        return None
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def test_r2_the_ack_job_sends_the_exact_text_in_window_and_logs_against_the_ticket(chat_scene, monkeypatch):
+    import app.database as database_module
+    import app.services.crm_chat_outbound_webhook as outbound
+    import app.services.respond_messaging_service as messaging
+    from app.models.chat_history import ChatHistory
+    from app.models.integration import IntegrationLog
+    from app.tasks.respond_io_tasks import send_media_request_ack
+
+    _no_ack(monkeypatch)
+    s = chat_scene
+    tracker = _open_task(s)
+    text = "Your project request: technical drawing for X (Q). Routed to your PIC, they will reply shortly."
+    sent: list = []
+    templated: list = []
+    webhooks: list = []
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def send_message(self, identifier, body):
+            sent.append((identifier, body))
+            return {"messageId": 1_787_640_441_538_999}
+
+    monkeypatch.setattr("app.services.integration_service.RespondClient", _Client)
+    monkeypatch.setattr(
+        messaging, "render_in_window_text", lambda *a, **k: templated.append(k) or "TEMPLATE BODY"
+    )
+    monkeypatch.setattr(outbound, "enqueue_crm_chat_outbound_webhook", lambda *a, **k: webhooks.append(k))
+    monkeypatch.setattr(database_module, "SessionLocal", lambda: _NoCloseSession(s["db"]))
+
+    result = send_media_request_ack(str(s["contact"].id), text, str(tracker.id))
+
+    assert result["status"] == "success" and result["sent_as"] == "text"
+    assert sent == [(s["contact"].respond_io_id, text)], "in-window: the exact text, no template"
+    assert templated == []
+    assert webhooks == [], "the CRM speaking is not a human answer"
+    logs = (
+        s["db"]
+        .query(IntegrationLog)
+        .filter(
+            IntegrationLog.integration_channel == "respond_io",
+            IntegrationLog.business_table == "conversation_sla_tracking",
+            IntegrationLog.business_id == str(tracker.id),
+        )
+        .all()
+    )
+    assert [log.status for log in logs] == ["success"]
+    thread = s["db"].query(ChatHistory).filter(ChatHistory.contact_id == s["contact"].respond_io_id).all()
+    assert [(r.type, r.message) for r in thread] == [("outgoing", text)], "the PIC sees it at once"
