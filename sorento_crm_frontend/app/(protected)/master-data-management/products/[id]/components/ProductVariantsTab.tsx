@@ -29,6 +29,7 @@ import ProductVariantPickerDialog from './ProductVariantPickerDialog';
 import ProductAlternativesSection from './ProductAlternativesSection';
 import ProductCompatibilitySection from './ProductCompatibilitySection';
 import { codeWithName, distinctName } from '@/lib/product-display';
+import { useHasPermission } from '@/hooks/usePermissions';
 
 interface ProductVariantsTabProps {
   /** The current product's id - required for variant curation mutations. */
@@ -85,6 +86,7 @@ export default function ProductVariantsTab({
   const children = variants ?? [];
   const family = familyMembers ?? [];
 
+  const canEdit = useHasPermission('master_data.products.edit');
   const setFamily = useSetFamilyCode();
   const resetFamily = useResetFamilyCode();
   const [editingFamily, setEditingFamily] = useState(false);
@@ -177,7 +179,7 @@ export default function ProductVariantsTab({
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <h3 className="font-semibold">Family</h3>
             {familyCodeManual && <Badge variant="warning">Manual</Badge>}
-            {!editingFamily && (
+            {canEdit && !editingFamily && (
               <div className="ms-auto flex flex-wrap items-center gap-2">
                 <Button variant="outline" size="sm" onClick={startFamilyEdit}>
                   <Pencil className="size-4" />
@@ -270,6 +272,7 @@ export default function ProductVariantsTab({
                 Manual
               </Badge>
             )}
+            {canEdit && (
             <div className="ms-auto flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
@@ -300,6 +303,7 @@ export default function ProductVariantsTab({
                 </Button>
               )}
             </div>
+            )}
           </div>
           {variantOf ? (
             <Link
@@ -337,30 +341,34 @@ export default function ProductVariantsTab({
             <h3 className="font-semibold">
               Variants{children.length ? ` (${children.length})` : ''}
             </h3>
-            <Button
-              variant="outline"
-              size="sm"
-              className="ms-auto"
-              onClick={() => setChildPickerOpen(true)}
-            >
-              <Plus className="size-4" />
-              Add variant
-            </Button>
+            {canEdit && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ms-auto"
+                onClick={() => setChildPickerOpen(true)}
+              >
+                <Plus className="size-4" />
+                Add variant
+              </Button>
+            )}
           </div>
           {children.length === 0 ? (
             <div className="rounded-md border border-dashed px-3 py-6 text-center">
               <p className="text-sm text-muted-foreground">
                 No variants of this product.
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3"
-                onClick={() => setChildPickerOpen(true)}
-              >
-                <Plus className="size-4" />
-                Add variant
-              </Button>
+              {canEdit && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => setChildPickerOpen(true)}
+                >
+                  <Plus className="size-4" />
+                  Add variant
+                </Button>
+              )}
             </div>
           ) : (
             <div className="flex flex-col gap-2">
@@ -388,17 +396,19 @@ export default function ProductVariantsTab({
                       ) : null}
                     </div>
                   </Link>
-                  <Button
-                    mode="icon"
-                    variant="ghost"
-                    size="sm"
-                    className="shrink-0"
-                    title="Remove variant"
-                    onClick={() => setChildToRemove(child)}
-                    aria-label="Remove variant"
-                  >
-                    <X className="size-4" />
-                  </Button>
+                  {canEdit && (
+                    <Button
+                      mode="icon"
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      title="Remove variant"
+                      onClick={() => setChildToRemove(child)}
+                      aria-label="Remove variant"
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>
