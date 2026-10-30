@@ -483,7 +483,7 @@ export function DataGridListToolbar<TData extends object>({
             other past the viewport edge instead of stacking, so Quick filters and
             Group by went out of reach. Below sm the row never wraps (owner a25895124 Q3 a):
             the left cluster shrinks and the primary action stays on the filter row. */}
-        <div className="flex w-full flex-row flex-nowrap items-center gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex w-full flex-row flex-wrap items-center gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
           {showBulkStrip ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -523,7 +523,7 @@ export function DataGridListToolbar<TData extends object>({
             // beside it, so Columns and Refresh dropped onto a second row at 1280 with
             // ~300px of empty toolbar to their right (AC-D13). Growing costs nothing when
             // the row is genuinely full - the item still shrinks to min-content and wraps.
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-initial sm:grow">
+            <div className="contents flex-wrap items-center gap-2 sm:flex sm:min-w-0 sm:flex-initial sm:grow">
               {/*
                 The slot's OWN children have to wrap, not just sit in a wrapping row.
                 Promotions and SPO Allocations both hand the toolbar a nested flex -
@@ -534,7 +534,7 @@ export function DataGridListToolbar<TData extends object>({
               */}
               <div
                 data-slot="data-grid-list-toolbar-search"
-                className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-initial [&>*]:min-w-0 [&>*]:flex-wrap"
+                className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 sm:basis-auto sm:flex-initial [&>*]:min-w-0 [&>*]:flex-wrap"
               >
                 {searchSlot}
               </div>
@@ -603,7 +603,7 @@ export function DataGridListToolbar<TData extends object>({
           )}
 
           {/* RIGHT cluster - secondary overflow + primary CTA (always present). */}
-          <div className={cn('flex shrink-0 flex-wrap items-center gap-2', alignActionsEnd && 'ms-auto justify-end')}>
+          <div className={cn('ml-auto flex shrink-0 flex-wrap items-center gap-2 sm:ml-0', alignActionsEnd && 'ms-auto justify-end')}>
             {secondaryActions.length === 1 && !secondaryActionsAsMenu ? (
               <ActionButton action={secondaryActions[0]} />
             ) : secondaryActions.length >= 1 ? (
