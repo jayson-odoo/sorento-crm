@@ -554,11 +554,11 @@ def _did_you_mean_per_code(
 
 # CHATBOT-FAIL-TRIAGE AC-2: the reasons a fetch fails that the contact can act on. They are our
 # own markers: the lane's empty-set reason, the route's `detail.code` (the lane appends it to the
-# reason), and the attachment tools' no-filter reason. Anything else stays "could not fetch".
+# reason), and the no-filter reason of the document tools. Anything else stays "could not fetch".
 _REASON_EMPTY_SET = "the described set qualifies nothing"
 _REASON_SUBJECT_REQUIRED = "subject_required"
 _REASON_NOT_PERMITTED = "customer_not_permitted"
-_REASONS_ATTACHMENT_FILTER = ("over the attachment cap", "needs a document or entity filter")
+_REASON_NO_FILTER = "needs a document or entity filter"
 
 
 def _failed_fetch_block(error: str, header: str, shown_label: str, codes: str) -> str:
@@ -567,7 +567,7 @@ def _failed_fetch_block(error: str, header: str, shown_label: str, codes: str) -
         return "That report is not available on your account."
     if _REASON_SUBJECT_REQUIRED in error:
         return f"Which customer or salesperson should I check the {shown_label} for?"
-    if any(marker in error for marker in _REASONS_ATTACHMENT_FILTER):
+    if _REASON_NO_FILTER in error:
         return f"Which product do you want the {shown_label} for? Send me the code."
     if _REASON_EMPTY_SET in error and codes:
         return f"No current {shown_label} found for {codes}."

@@ -547,8 +547,16 @@ def chat_turn_complete(
         row = _turn_row(db, turn_id)
         dry_run = bool(getattr(row, "is_test", False))
         row_is_test = dry_run
-        reply = {
-            "text": TAIL_ERROR_REPLY,
+        # CHATBOT-FAIL-TRIAGE AC-1g: a tail that failed AFTER it closed the row `done` had
+        # composed its answer; that answer is sent and the failure is only logged. The
+        # error sentence is for a turn with no composed answer.
+        stored = getattr(row, "response", None)
+        composed = stored.get("reply") if getattr(row, "status", None) == "done" and isinstance(stored, dict) else None
+        text = composed.get("text") if isinstance(composed, dict) else None
+        if not (isinstance(text, str) and text.strip()):
+            composed, text = None, TAIL_ERROR_REPLY
+        reply = composed or {
+            "text": text,
             "quick_replies": None,
             "result_set": None,
             "attachments_src": None,
@@ -563,9 +571,9 @@ def chat_turn_complete(
             actions=[
                 {
                     "kind": "send_message",
-                    "text": TAIL_ERROR_REPLY,
-                    "quick_replies": None,
-                    "result_set": None,
+                    "text": text,
+                    "quick_replies": reply.get("quick_replies"),
+                    "result_set": reply.get("result_set"),
                     "dry_run": dry_run,
                 }
             ],

@@ -12391,23 +12391,18 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     # CUSTOMER-ASKS-REFER-ONLY: a reply this tail composed (the casual, canned, escalation
     # and business lanes) that referred the customer is a Customer asks row, the same rule
     # `_run_answer` applies. The row is closed first, as there.
-    # CHATBOT-FAIL-TRIAGE AC-1g: the row is closed and the answer composed, so a failure
-    # here is logged and never replaces the answer the contact is about to get.
-    try:
-        _record_customer_asks(
-            session_factory,
-            turn_id=turn_id,
-            contact_respond_id=str(contact_respond_id or ""),
-            state=state,
-            stock_entries=[],
-            reply_text=jsc.js_string(reply.get("text") or ""),
-            refer_context=None,
-            ctx=ctx,
-            dry_run=dry_run,
-            chat_console=chat_console,
-        )
-    except Exception:  # noqa: BLE001 - best effort after the answer is composed
-        logger.exception("chatbot turn %s: customer asks write failed after the answer", turn_id)
+    _record_customer_asks(
+        session_factory,
+        turn_id=turn_id,
+        contact_respond_id=str(contact_respond_id or ""),
+        state=state,
+        stock_entries=[],
+        reply_text=jsc.js_string(reply.get("text") or ""),
+        refer_context=None,
+        ctx=ctx,
+        dry_run=dry_run,
+        chat_console=chat_console,
+    )
 
     return CompleteResult(
         turn_id=turn_id,
