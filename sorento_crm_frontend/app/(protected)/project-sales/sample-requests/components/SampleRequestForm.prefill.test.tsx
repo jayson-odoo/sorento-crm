@@ -183,5 +183,20 @@ describe('SFQ-27 owner hand test: Add row offers only the quotation products', (
       }),
     );
   });
+
+  it('lists the quotation products when the box is opened without typing (phone)', async () => {
+    renderForm({ projectId: 'proj-1' });
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    fireEvent.click(screen.getByRole('button', { name: /^\+?\s*add row$/i }));
+    const box = within(rows()[2]).getByRole('combobox', { name: /item code/i });
+    if (box.tagName === 'INPUT') fireEvent.focus(box);
+    else fireEvent.click(box);
+    await waitFor(() =>
+      expect(searchSampleRequestProducts).toHaveBeenCalledWith('', {
+        quotation_document_id: 'doc-1',
+        quotation_issue_id: null,
+      }),
+    );
+  });
 });
 
