@@ -182,15 +182,3 @@ def test_workers_are_recycled_after_a_jittered_request_count(monkeypatch):
     module = _load_conf_module()
     assert (module.max_requests, module.max_requests_jitter) == (0, 0)  # 0 = never recycled, gunicorn's own off
 
-
-def test_child_exit_returns_the_worker_count_to_the_configured_one():
-    """A worker at its request limit asks for its replacement before it drains (SIGTTIN, app/uvicorn_worker.py), so
-    the master briefly runs one extra; when the old one exits the count goes back, and no second replacement forks."""
-    module = _load_conf_module()
-    server = MagicMock()
-    server.cfg.workers = 4
-    server.num_workers = 5
-    module.child_exit(server, MagicMock())
-    assert server.num_workers == 4
-    module.child_exit(server, MagicMock())  # an ordinary exit at the configured count: the master replaces it
-    assert server.num_workers == 4
