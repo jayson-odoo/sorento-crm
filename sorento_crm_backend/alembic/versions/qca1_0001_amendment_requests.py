@@ -9,12 +9,12 @@ documentation/plans/project-sales/quote-customer-amend-29oct-migration.sql. Addi
 so a re-run, or a dev DB built by create_all, is harmless.
 
 Revision ID: qca1_0001_amendment_requests
-Revises: agp1_0001_agent_foundation
+Revises: tbc_0001_allowed_item_classes
 """
 from alembic import op
 
 revision = "qca1_0001_amendment_requests"
-down_revision = "agp1_0001_agent_foundation"
+down_revision = "tbc_0001_allowed_item_classes"
 branch_labels = None
 depends_on = None
 

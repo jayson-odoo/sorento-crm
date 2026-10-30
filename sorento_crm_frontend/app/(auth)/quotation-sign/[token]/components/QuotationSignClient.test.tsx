@@ -44,6 +44,10 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
   return {
     our_ref: 'PRJQ-2026-0003-R1',
     issue_no: 1,
+    amendment_request: null,
+    superseded_by_ref: null,
+    can_sign: true,
+    sign_blocked_reason: null,
     sender_logo_url: null,
     signatory_phone: null,
     doc_date: '2026-02-26',
@@ -61,6 +65,7 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
         scope_total: '235000.00',
         lines: [
           {
+            id: 'line-1',
             item_label: '1',
             description: 'Water closet',
             technical_spec: 'Rimless, 4/2.6L',
@@ -74,6 +79,7 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
             amount: '102000.00',
           },
           {
+            id: 'line-2',
             item_label: '2',
             description: 'Alternate basin mixer',
             technical_spec: null,
@@ -149,6 +155,7 @@ describe('QuotationSignClient reading the quotation', () => {
             scope_total: '102000.00',
             lines: [
               {
+                id: 'line-3',
                 item_label: '1',
                 description: 'Close coupled pedestal',
                 technical_spec: null,
@@ -162,6 +169,7 @@ describe('QuotationSignClient reading the quotation', () => {
                 amount: '273161.70',
               },
               {
+                id: 'line-4',
                 item_label: '2',
                 description: 'Cistern only, no separate charge',
                 technical_spec: null,
@@ -423,6 +431,7 @@ function scopeOf(label: string, total: string, descriptions: string[]) {
     scope_label: label,
     scope_total: total,
     lines: descriptions.map((description, index) => ({
+      id: `line-${index}`,
       item_label: String(index + 1),
       description,
       technical_spec: null,
