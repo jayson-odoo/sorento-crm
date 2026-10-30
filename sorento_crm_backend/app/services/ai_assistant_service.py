@@ -530,6 +530,38 @@ class AIAssistantGovernanceService:
         self.db.commit()
 
 
+def mcp_schema_to_openai_tool(name: str, meta: dict[str, Any]) -> dict[str, Any]:
+    """Wrap an MCP tool (name, description, inputSchema) as an OpenAI function tool.
+
+    ``contact_id`` / ``space_id`` are MCP-server guard params required for
+    n8n/WhatsApp callers but irrelevant for the in-app AI assistant - the
+    runtime force-empties them in ``_run_agent_loop`` before calling MCP.
+    Surfacing them to the LLM only causes it to ask the user for them
+    instead of invoking the tool, so strip them from the schema here.
+    """
+    schema = meta.get("inputSchema") if isinstance(meta.get("inputSchema"), dict) else {}
+    if not schema or not isinstance(schema, dict):
+        parameters: dict[str, Any] = {"type": "object", "properties": {}}
+    else:
+        parameters = dict(schema)
+        parameters.setdefault("type", "object")
+        parameters.setdefault("properties", {})
+    props = dict(parameters.get("properties") or {})
+    for guard in ("contact_id", "space_id"):
+        props.pop(guard, None)
+    parameters["properties"] = props
+    required = [r for r in (parameters.get("required") or []) if r not in ("contact_id", "space_id")]
+    parameters["required"] = required
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": (meta.get("description") or "")[:4000],
+            "parameters": parameters,
+        },
+    }
+
+
 class AIAssistantChatService:
     def __init__(self, db: Session):
         self.db = db
@@ -1457,35 +1489,8 @@ class AIAssistantChatService:
     # ---------- Agent loop (OpenAI function calling → MCP tools) ----------
 
     def _mcp_schema_to_openai_tool(self, name: str, meta: dict[str, Any]) -> dict[str, Any]:
-        """Wrap an MCP tool (name, description, inputSchema) as an OpenAI function tool.
-
-        ``contact_id`` / ``space_id`` are MCP-server guard params required for
-        n8n/WhatsApp callers but irrelevant for the in-app AI assistant - the
-        runtime force-empties them in ``_run_agent_loop`` before calling MCP.
-        Surfacing them to the LLM only causes it to ask the user for them
-        instead of invoking the tool, so strip them from the schema here.
-        """
-        schema = meta.get("inputSchema") if isinstance(meta.get("inputSchema"), dict) else {}
-        if not schema or not isinstance(schema, dict):
-            parameters: dict[str, Any] = {"type": "object", "properties": {}}
-        else:
-            parameters = dict(schema)
-            parameters.setdefault("type", "object")
-            parameters.setdefault("properties", {})
-        props = dict(parameters.get("properties") or {})
-        for guard in ("contact_id", "space_id"):
-            props.pop(guard, None)
-        parameters["properties"] = props
-        required = [r for r in (parameters.get("required") or []) if r not in ("contact_id", "space_id")]
-        parameters["required"] = required
-        return {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": (meta.get("description") or "")[:4000],
-                "parameters": parameters,
-            },
-        }
+        """Wrap an MCP tool as an OpenAI function tool; see `mcp_schema_to_openai_tool`."""
+        return mcp_schema_to_openai_tool(name, meta)
 
     def _serve_capability_answer(
         self,

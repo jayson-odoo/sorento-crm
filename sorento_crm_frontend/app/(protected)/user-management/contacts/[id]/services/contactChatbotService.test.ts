@@ -144,3 +144,32 @@ describe('contactChatbotService - send files as links switch (PHOTO-SEND-CAP)', 
     expect(JSON.parse(apiFetch.mock.calls[1][1].body).chatbot_files_as_links).toBe(false);
   });
 });
+
+describe('contactChatbotService - agent mode switch (AGENTIC-P1)', () => {
+  it('reads the switch off the contact, and a contact without the field defaults off', async () => {
+    getContact.mockResolvedValueOnce({ chatbot_agent_enabled: true });
+    expect((await getContactChatbotProfile('c1')).agent_enabled).toBe(true);
+
+    getContact.mockResolvedValueOnce({});
+    expect((await getContactChatbotProfile('c1')).agent_enabled).toBe(false);
+  });
+
+  it('sends the switch as chatbot_agent_enabled on save, true and false', async () => {
+    getContact.mockResolvedValueOnce({});
+    const profile = await getContactChatbotProfile('c1');
+    apiFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ chatbot_agent_enabled: true }), { status: 200 }),
+    );
+
+    const saved = await saveContactChatbotProfile('c1', { ...profile, agent_enabled: true });
+
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body).chatbot_agent_enabled).toBe(true);
+    expect(saved.agent_enabled).toBe(true);
+
+    apiFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ chatbot_agent_enabled: false }), { status: 200 }),
+    );
+    await saveContactChatbotProfile('c1', { ...profile, agent_enabled: false });
+    expect(JSON.parse(apiFetch.mock.calls[1][1].body).chatbot_agent_enabled).toBe(false);
+  });
+});

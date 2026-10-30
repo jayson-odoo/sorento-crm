@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { optionalNumber } from '@/lib/number-field-schema';
 
-export const OrderSchema = z.object({
+const OrderFields = z.object({
   order_number: z
     .string()
     .min(1, { message: 'Order number is required.' })
     .max(100, { message: 'Order number must not exceed 100 characters.' }),
-  order_date: z.date({ required_error: 'Order date is required.' }),
+  // Optional here; OrderSchema (create, or a DO that already has a date) requires it.
+  order_date: z.date().optional().nullable(),
   estimated_delivery_date: z.date().optional().nullable(),
   actual_delivery_date: z.date().optional().nullable(),
   customer_id: z.string().optional().nullable(),
@@ -50,16 +51,31 @@ export const OrderSchema = z.object({
     .number()
     .min(0, { message: 'Total amount cannot be negative.' }),
   remarks: z.string().max(2000, { message: 'Remarks must not exceed 2000 characters.' }).optional().nullable(),
-}).refine((data) => {
+});
+
+const totalCheck = (data: { total_amount: number; subtotal_amount: number; discount_amount?: number | null; tax_amount?: number | null }) => {
   // Calculate total if not provided
   if (data.total_amount === 0) {
     const calculatedTotal = data.subtotal_amount - (data.discount_amount || 0) + (data.tax_amount || 0);
     return calculatedTotal >= 0;
   }
   return true;
-}, {
-  message: 'Total amount calculation error.',
-  path: ['total_amount'],
-});
+};
+const totalCheckError = { message: 'Total amount calculation error.', path: ['total_amount'] };
 
-export type OrderSchemaType = z.infer<typeof OrderSchema>;
+export const OrderSchema = OrderFields.extend({
+  // A cleared input sends null, so null gets the same message as a missing date.
+  order_date: z.date({
+    required_error: 'Order date is required.',
+    invalid_type_error: 'Order date is required.',
+  }),
+}).refine(totalCheck, totalCheckError);
+
+/**
+ * Editing a DO that has no document date (imported undated, kept out of reports until a
+ * person fills the real date): the date may stay empty. Never used once a date exists, so
+ * an existing date cannot be wiped.
+ */
+export const UndatedOrderSchema = OrderFields.refine(totalCheck, totalCheckError);
+
+export type OrderSchemaType = z.infer<typeof UndatedOrderSchema>;
