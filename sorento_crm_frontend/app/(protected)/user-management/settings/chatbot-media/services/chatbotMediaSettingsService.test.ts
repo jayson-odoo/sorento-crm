@@ -60,6 +60,11 @@ describe('getChatbotMediaSettings', () => {
     // Lane REPORT-RATE-LIMIT-CONFIG: the report cap's own defaults, 10 per 10 minutes.
     expect(settings.report_ask_rate_limit).toBe(10);
     expect(settings.report_ask_rate_window_minutes).toBe(10);
+    // AGENTIC-P1: the agent budgets' own defaults.
+    expect(settings.chatbot_agent_max_rounds).toBe(8);
+    expect(settings.chatbot_agent_max_seconds).toBe(45);
+    expect(settings.chatbot_agent_max_input_tokens).toBe(150000);
+    expect(settings.chatbot_agent_compact_tokens).toBe(40000);
   });
 
   it('reads the stored report rate limit, a stored 0 included (0 means no limit)', async () => {
@@ -175,6 +180,10 @@ describe('saveChatbotMediaSettings', () => {
       low_stock_sync_wait_seconds: 40,
       report_ask_rate_limit: 10,
       report_ask_rate_window_minutes: 10,
+      chatbot_agent_max_rounds: 8,
+      chatbot_agent_max_seconds: 45,
+      chatbot_agent_max_input_tokens: 150000,
+      chatbot_agent_compact_tokens: 40000,
       ...overrides,
     };
   }

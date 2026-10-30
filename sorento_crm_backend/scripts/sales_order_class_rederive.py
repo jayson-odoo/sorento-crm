@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Re-derive every sales order's class from the dated agent classes (SALES-UNIFIED round 3,
 owner rulings Q8 and Q10 (a)): the stated order type, else the agent's class on the order's
-date, else nothing.
+date, else nothing. An order whose answer is "nothing" keeps its stored class: the bulk run
+never clears one (SALES-SPLIT-TALLY, the 30 Oct prod dry run would have cleared every order of
+the agents with no class and of no agent).
 
 Dry run by default: prints, per agent per month, how many orders and how much RM would move
 from which class to which, and the totals. Writes nothing. `--apply` writes the same moves in
@@ -47,6 +49,7 @@ def main(argv=None) -> int:
                 from_month=parse_month(args.since, "from") if args.since else None,
                 to_month=parse_month(args.until, "to") if args.until else None,
                 apply=args.apply,
+                keep_unset=True,
             )
             totals = defaultdict(lambda: [0, Decimal(0)])
             print("agent\tmonth\tfrom\tto\torders\tRM")

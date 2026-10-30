@@ -172,6 +172,11 @@ class SystemSettingUpdate(BaseModel):
     # The chatbot report engine's cap (lane REPORT-RATE-LIMIT-CONFIG). 0 = no limit.
     report_ask_rate_limit: Optional[int] = Field(None, ge=0, le=1000)
     report_ask_rate_window_minutes: Optional[int] = Field(None, ge=1, le=1440)
+    # AGENTIC-P1: budgets for one agent turn.
+    chatbot_agent_max_rounds: Optional[int] = Field(None, ge=1, le=30)
+    chatbot_agent_max_seconds: Optional[int] = Field(None, ge=5, le=300)
+    chatbot_agent_max_input_tokens: Optional[int] = Field(None, ge=10000, le=2000000)
+    chatbot_agent_compact_tokens: Optional[int] = Field(None, ge=5000, le=500000)
     chatbot_stock_denial_enabled: Optional[bool] = None
     # PLAN-local-buy-routing-toggle.md: local-supplier Buy routing is a switch, off
     # by default. Off means the rule does not run at all (no pill, every Buy raises).
@@ -223,6 +228,12 @@ class SystemSettingUpdate(BaseModel):
     # (the dialog then falls back to the row's own site pool, R3). Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
     oi_reserve_default_pool_warehouse_id: Optional[str] = None
+    # LOOKUP-EMBED-CENTRAL: the lookup embedder and the backfill rate. Same rule as every block
+    # above - they must appear HERE and in the GET dict, because both are manual. The records-search
+    # model is deliberately NOT a field: only the guard writes it.
+    embedding_provider: Optional[Literal["openai", "gemini"]] = None
+    embedding_model: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9._-]{1,128}$")
+    embedding_backfill_rpm: Optional[int] = Field(None, ge=1, le=600)
 
 
 class ChatbotLane(BaseModel):
@@ -468,6 +479,10 @@ def get_settings(
                 "low_stock_sync_wait_seconds": getattr(settings, "low_stock_sync_wait_seconds", 40) if settings else None,
                 "report_ask_rate_limit": getattr(settings, "report_ask_rate_limit", 10) if settings else None,
                 "report_ask_rate_window_minutes": getattr(settings, "report_ask_rate_window_minutes", 10) if settings else None,
+                "chatbot_agent_max_rounds": getattr(settings, "chatbot_agent_max_rounds", 8) if settings else None,
+                "chatbot_agent_max_seconds": getattr(settings, "chatbot_agent_max_seconds", 45) if settings else None,
+                "chatbot_agent_max_input_tokens": getattr(settings, "chatbot_agent_max_input_tokens", 150000) if settings else None,
+                "chatbot_agent_compact_tokens": getattr(settings, "chatbot_agent_compact_tokens", 40000) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
                 # PLAN-local-buy-routing-toggle.md: BOTH manual builders, or the setting
                 # never reaches the General settings screen at all.
@@ -504,6 +519,13 @@ def get_settings(
                     if settings
                     else None
                 ),
+                # LOOKUP-EMBED-CENTRAL: the records-search model is read-only here.
+                "embedding_provider": getattr(settings, "embedding_provider", None) if settings else None,
+                "embedding_model": getattr(settings, "embedding_model", None) if settings else None,
+                "embedding_records_search_model": (
+                    getattr(settings, "embedding_records_search_model", None) if settings else None
+                ),
+                "embedding_backfill_rpm": getattr(settings, "embedding_backfill_rpm", 20) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -1109,8 +1131,13 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         if column in update_data and update_data[column] is None:
             update_data[column] = False
 
+    embedder_before = (settings.embedding_provider, settings.embedding_model)
     for key, value in update_data.items():
         setattr(settings, key, value)
+    embedder_changed = (
+        any(k in update_data for k in ("embedding_provider", "embedding_model"))
+        and (settings.embedding_provider, settings.embedding_model) != embedder_before
+    )
 
     if cost_price_verification_changed:
         from app.services.audit_service import log_audit
@@ -1130,6 +1157,24 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 
     db.commit()
     db.refresh(settings)
+    if embedder_changed:
+        # A new lookup embedder re-embeds the records in the background; the guard flips the search model
+        # only once every document has a vector of the new model. None of this may undo the save.
+        try:
+            from app.services import queue_service
+            from app.services.embedding_backfill_service import clear_failures
+            from app.tasks.embedding_backfill import run_records_backfill
+
+            if settings.embedding_model:
+                clear_failures(db, settings.embedding_model)  # the new model starts without old failure counts
+                db.commit()
+            from app.api.v1.system.embeddings import RECORDS_BACKFILL_STOP_KEY
+
+            queue_service.redis_conn.delete(RECORDS_BACKFILL_STOP_KEY)  # an earlier Stop must not halt the new run
+            queue_service.enqueue_job(run_records_backfill, queue_name="imports")
+        except Exception:  # noqa: BLE001 - the save stands; the backfill can be started from the Embeddings screen
+            db.rollback()
+            logging.getLogger(__name__).warning("embedding backfill could not be queued after a settings save", exc_info=True)
     if "chatbot_composer_enabled" in update_data:
         from app.modules.chatbot.lane_vocabulary import clear_composer_cache
 

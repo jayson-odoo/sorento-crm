@@ -471,6 +471,8 @@ class ContactChatbotUpdate(BaseModel):
     chatbot_skip_period_questions: bool | None = None
     # PHOTO-SEND-CAP: "Send files as links". Absent = leave alone.
     chatbot_files_as_links: bool | None = None
+    # AGENTIC-P1: "Agent mode" switch. Absent = leave alone.
+    chatbot_agent_enabled: bool | None = None
     # CONTACT-REGION: absent = leave alone; empty, unknown or explicit null = 422.
     regions: list[Literal["west", "east"]] = Field(default=None, min_length=1)  # type: ignore[assignment]
     # MODEL-PER-CONTACT: object sets provider + model, null clears both, absent leaves alone.
@@ -529,6 +531,8 @@ def update_contact_chatbot(
             contact.chatbot_skip_period_questions = body.chatbot_skip_period_questions
         if body.chatbot_files_as_links is not None:
             contact.chatbot_files_as_links = body.chatbot_files_as_links
+        if body.chatbot_agent_enabled is not None:
+            contact.chatbot_agent_enabled = body.chatbot_agent_enabled
         if "regions" in body.model_fields_set:
             contact.regions = [r for r in ("west", "east") if r in body.regions]
         if "llm" in body.model_fields_set:
@@ -993,11 +997,12 @@ def set_contact_brands(
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
-    """Replace the contact's accessible brands (empty = clear, every brand)."""
+    """Replace the contact's accessible brands (empty = clear, every brand) and per brand its
+    item classes (none = every class of that brand)."""
     try:
         from app.services.contact_brand_scope import set_contact_brands as write
 
-        return write(db, contact_id, payload.brand_ids)
+        return write(db, contact_id, payload.brand_ids, payload.brand_class_ids)
     except HTTPException:
         raise
     except Exception as e:

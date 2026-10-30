@@ -537,11 +537,13 @@ describe('QuotationVersionEditor', () => {
 
     renderEditor();
 
-    expect(await screen.findByText('Below floor')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Floor was RM 700\.00, set on a parent category/),
-    ).toBeInTheDocument();
-    expect(screen.getByText('List RM 1,000.00')).toBeInTheDocument();
+    // Owner meeting 29 Oct: the flag sits UNDER the price, in the Rate cell, and names the
+    // minimum price; the product cell no longer carries it.
+    const pill = await screen.findByText('Minimum price RM 700.00');
+    const list = screen.getByText('List RM 1,000.00');
+    expect(pill.closest('td')).toBe(list.closest('td'));
+    expect(screen.getByText('Set on a parent category.').closest('td')).toBe(list.closest('td'));
+    expect(screen.queryByText('Below floor')).toBeNull();
   });
 
   it('marks a custom item as such, since it can never be standard', async () => {
@@ -635,15 +637,16 @@ describe('QuotationVersionEditor', () => {
     });
     await renderEditing();
 
-    expect(screen.queryByText('Below floor')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Minimum price/)).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' }), {
-      target: { value: '90.00' },
-    });
+    const priceInput = screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' });
+    fireEvent.change(priceInput, { target: { value: '90.00' } });
 
-    expect(await screen.findByText('Below floor', {}, { timeout: 5000 })).toBeInTheDocument();
-    // The floor is NAMED, so the refusal can be argued with rather than merely obeyed.
-    expect(screen.getByText(/Floor is RM ?94\.00/)).toBeInTheDocument();
+    // The minimum price is NAMED, so the refusal can be argued with rather than merely obeyed,
+    // and it shows under the price being typed.
+    const pill = await screen.findByText('Minimum price RM 94.00', {}, { timeout: 5000 });
+    expect(pill.closest('td')).toBe(priceInput.closest('td'));
+    expect(screen.queryByText('Below floor')).toBeNull();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
       QUOTATION.id,
       expect.objectContaining({ unit_price: '90.00' }),

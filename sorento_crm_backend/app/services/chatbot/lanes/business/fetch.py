@@ -497,7 +497,8 @@ ORDER_STATUS_TO_SCOPE: dict[str, str] = {
 SO_NOT_ENABLED_MESSAGE = "Sales order figures are not enabled for your account."
 
 #: The outstanding report's group page size, pinned equal to the MCP presenter's
-#: `OUTSTANDING_GROUP_CAP` (the backend image cannot import that package).
+#: `OUTSTANDING_GROUP_CAP` (the backend image cannot import that package) and to the route's document page
+#: (`reports.ask.DOCUMENT_PAGE`): the three 20s must agree for the "next N" wording.
 OUTSTANDING_GROUP_PAGE = 20
 
 ORDER_TOOLS: frozenset[str] = frozenset(
@@ -2903,6 +2904,13 @@ _ROW_PICK_OFFERS = (
 
 #: An undelivered-orders total's own offer (owner 28 Oct 09:30; `presenters._ASK_SO_LIST_OFFER`), dropped the same way.
 _SO_LIST_OFFER = "Reply 1 for the sales order list."
+#: REPORT-OUTSTANDING-SUMMARY: a pending-delivery summary's own offer (`presenters._ASK_DO_LIST_OFFER`).
+_DO_LIST_OFFER = "Reply 1 for the delivery order list."
+#: The list each outstanding kind's offer opens: the offer's words, and the label its one pick is held under.
+_LIST_OFFERS = {
+    "outstanding": (_SO_LIST_OFFER, "Sales order list", "sales_order"),
+    "pending_delivery": (_DO_LIST_OFFER, "Delivery order list", "delivery_order"),
+}
 
 
 #: The filter word the route's `not_applied` names each route param by.
@@ -2942,7 +2950,7 @@ def _with_not_applied(text: str, words: list[str]) -> str:
 def _without_row_offers(text: str) -> str:
     for offer in _ROW_PICK_OFFERS:
         text = text.replace("\n\n" + offer, "")
-    return text.replace("\n\n" + _SO_LIST_OFFER, "")
+    return text.replace("\n\n" + _SO_LIST_OFFER, "").replace("\n\n" + _DO_LIST_OFFER, "")
 
 
 def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2969,6 +2977,7 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     pick = None
     if frame is not None:
         frame.pop("shown", None)
+        frame.pop("group_offset", None)  # item 6: a page is never held; "more" carries its own offset
         if isinstance(drill, dict) and drill.get("group_by") == frame.get("group_by") and drill.get("rows"):
             frame["shown"] = drill
             if frame.get("group_by") in ("product", "category", "sales_agent", "customer") and not frame.get("compare_to"):
@@ -2985,19 +2994,58 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                     ],
                     "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
                 }
-        if not frame.get("group_by") and frame.get("basis") == "outstanding" and _SO_LIST_OFFER in text:
+        offer = _LIST_OFFERS.get(frame.get("basis"))
+        if offer is not None and offer[0] in text:
+            # A summary that broke down by the user's own axis printed no rank numbers: its one offer is the list.
             # Owner 28 Oct 09:30 (AC-RU-17a): an undelivered-orders total offers the open sales orders behind it; "1"
-            # re-runs THIS frame grouped by sales order (`report_ask.settle`, `so_list_outcome`).
-            from app.services.chatbot.lanes.business.report_ask import SO_LIST
+            # re-runs THIS frame grouped by sales order (`report_ask.settle`, `so_list_outcome`). REPORT-OUTSTANDING-
+            # SUMMARY: a pending-delivery summary offers its delivery orders the same way.
+            from app.services.chatbot.lanes.business.report_ask import LIST_PICKS
 
+            code = LIST_PICKS[frame["basis"]]
             pick = {
                 "kind": "top_selling_pick",
-                "last_result_set": [{"idx": 1, "label": "Sales order list", "code": SO_LIST, "entity_type": "sales_order", "keys": []}],
-                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": SO_LIST}},
+                "last_result_set": [{"idx": 1, "label": offer[1], "code": code, "entity_type": offer[2], "keys": []}],
+                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": code}},
+            }
+    if (
+        frame is not None and pick is None and frame.get("group_by") in ("sales_order", "delivery_order")
+        and isinstance(envelope.get("group_window"), dict)  # a list with a "more" to answer; a short one arms nothing
+    ):
+        # Eval hard guard: item 3's document list (no subject) is the frame on screen; its "more" is answered under an
+        # open pick (`turn/apply._answer_top_selling_pick`), so it arms its kind's list pick ("1" re-lists page one).
+        from app.services.chatbot.lanes.business.report_ask import LIST_PICKS
+
+        code, offer = LIST_PICKS.get(frame.get("basis")), _LIST_OFFERS.get(frame.get("basis"))
+        if code is not None and offer is not None:
+            pick = {
+                "kind": "top_selling_pick",
+                "last_result_set": [{"idx": 1, "label": offer[1], "code": code, "entity_type": offer[2], "keys": []}],
+                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": code}},
             }
     question = _sole_subject_question(envelope, args)
     if question:
         text, frame, pick = question, None, None
+    # A detail list ("1" under a summary) pages too: the summary stays the frame, the carry names the list.
+    listed = detail and isinstance(args, dict) and args.get("group_by") in ("sales_order", "delivery_order")
+    window = envelope.get("group_window") if frame is not None or listed else None
+    set_window = None
+    if isinstance(window, dict):
+        from app.services.chatbot import composers
+
+        if composers.enabled():
+            # Item 6 (owner 29 Oct, as before #1922): a cut summary arms "more", as the old report's output did.
+            o, k, t = window.get("offset"), window.get("shown"), window.get("total")
+            if all(isinstance(v, int) and not isinstance(v, bool) for v in (o, k, t)):
+                from app.services.chatbot.lanes.business.report_ask import LIST_PICKS
+
+                set_window = {
+                    "first": o + 1, "last": o + k, "total": t, "next": max(0, min(OUTSTANDING_GROUP_PAGE, t - o - k)),
+                    "carry": {
+                        "report_groups": True, "total": t, "shown": o + k if k else o,
+                        **({"list": LIST_PICKS[args["basis"]]} if listed and args.get("basis") in LIST_PICKS else {}),
+                    },
+                }
     if pick is None:
         text = _without_row_offers(text)  # an offer for a list this reply never armed would hand the next number to an older list
     return {
@@ -3018,6 +3066,7 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
         "requested_attributes": [],
         "keys_served": False,
         "outstanding_report": True,
+        **({"set_window": set_window} if set_window else {}),
     }
 
 
@@ -3148,6 +3197,75 @@ def _file_rows(e: dict[str, Any], *, links: bool) -> dict[str, Any]:
     return {**e, "items": out}
 
 
+def drop_restricted_fields(envelope: dict, granted: set[str], axis: str | None = None) -> None:
+    """Drop, in place, every field the envelope marks restricted that `granted` does not hold.
+
+    The one place a restricted field is dropped for a contact: `output_structurer` (today's
+    chatbot) and the agent's tool dispatch both call it. `axis` is the group-by axis of the
+    ask, if any; a restricted axis is answered flat.
+    """
+    e = envelope
+    restricted = e.get("restricted_fields")
+    if not (isinstance(restricted, dict) and restricted):
+        return
+
+    def _keep_field(f: Any) -> bool:
+        """Keep, drop, or SWAP. A restricted field that carries `granted_value` is
+        a plain field with a granted suffix (D1, the compact stock block's
+        "*Total:* 51 (O/S: 36)"): under the grant its value becomes the granted one,
+        without it the plain value stays and the suffix never reaches the reader.
+        A restricted field with no `granted_value` is dropped whole, as before."""
+        if not _has_key(f):
+            return True
+        perm = restricted.get(jsc.js_string(f["key"]))
+        if perm is None:
+            return True
+        has_granted_value = isinstance(f, dict) and "granted_value" in f
+        if perm in granted:
+            if has_granted_value:
+                f["value"] = f.pop("granted_value")
+            return True
+        if has_granted_value:
+            f.pop("granted_value", None)
+            return True
+        return False
+
+    def _filter_rows(rows: Any) -> None:
+        for row in rows or []:
+            if jsc.truthy(row) and isinstance(jsc.get(row, "fields"), list):
+                row["fields"] = [f for f in row["fields"] if _keep_field(f)]
+
+    _filter_rows(e.get("items"))
+    _filter_rows(e.get("summary_items"))
+    # A3/A5's GROUPED shape carries the same rows a second time, and the first
+    # cut of this rule filtered `items` only - so `group_by=product` on a PO
+    # question rendered every supplier a dealer must never see, and
+    # `group_by=supplier` printed the restricted value as the SECTION HEADING,
+    # where no field filter could ever reach it. Both are closed here: every
+    # group's rows go through the same `_keep_field`, and the AXIS itself is
+    # refused below when the grant is not held.
+    for grp in e.get("groups") or []:
+        if not (jsc.truthy(grp) and isinstance(grp, dict)):
+            continue
+        _filter_rows(grp.get("items"))
+        _filter_rows(grp.get("summary_items"))
+
+    # THE HEADING IS NOT A FIELD. A group's `label` is the axis value itself, so a
+    # restricted axis leaks by being grouped ON, whatever the rows carry. The answer
+    # is to drop the grouping and answer FLAT rather than to redact the headings:
+    # "Supplier A / Supplier B" with the names blanked still tells the dealer how many
+    # suppliers there are and which rows share one, and an ungrouped list is the
+    # honest answer to a question we may not break down.
+    # The axis NAME and the restricted FIELD KEY are the same word by construction:
+    # a tool may only group on an axis it renders as a field, and `group_by=supplier`
+    # groups on the `supplier` field the presenter marked restricted. So the lookup
+    # is the same `restricted` map, with no second table to keep in step.
+    axis_perm = restricted.get(axis) if axis else None
+    if axis_perm is not None and axis_perm not in granted:
+        e["groups"] = []
+        e["group_by_dropped"] = axis
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -3214,63 +3332,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if isinstance(restricted, dict) and restricted:
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
-
-        def _keep_field(f: Any) -> bool:
-            """Keep, drop, or SWAP. A restricted field that carries `granted_value` is
-            a plain field with a granted suffix (D1, the compact stock block's
-            "*Total:* 51 (O/S: 36)"): under the grant its value becomes the granted one,
-            without it the plain value stays and the suffix never reaches the reader.
-            A restricted field with no `granted_value` is dropped whole, as before."""
-            if not _has_key(f):
-                return True
-            perm = restricted.get(jsc.js_string(f["key"]))
-            if perm is None:
-                return True
-            has_granted_value = isinstance(f, dict) and "granted_value" in f
-            if perm in granted:
-                if has_granted_value:
-                    f["value"] = f.pop("granted_value")
-                return True
-            if has_granted_value:
-                f.pop("granted_value", None)
-                return True
-            return False
-
-        def _filter_rows(rows: Any) -> None:
-            for row in rows or []:
-                if jsc.truthy(row) and isinstance(jsc.get(row, "fields"), list):
-                    row["fields"] = [f for f in row["fields"] if _keep_field(f)]
-
-        _filter_rows(e.get("items"))
-        _filter_rows(e.get("summary_items"))
-        # A3/A5's GROUPED shape carries the same rows a second time, and the first
-        # cut of this rule filtered `items` only - so `group_by=product` on a PO
-        # question rendered every supplier a dealer must never see, and
-        # `group_by=supplier` printed the restricted value as the SECTION HEADING,
-        # where no field filter could ever reach it. Both are closed here: every
-        # group's rows go through the same `_keep_field`, and the AXIS itself is
-        # refused below when the grant is not held.
-        for grp in e.get("groups") or []:
-            if not (jsc.truthy(grp) and isinstance(grp, dict)):
-                continue
-            _filter_rows(grp.get("items"))
-            _filter_rows(grp.get("summary_items"))
-
-        # THE HEADING IS NOT A FIELD. A group's `label` is the axis value itself, so a
-        # restricted axis leaks by being grouped ON, whatever the rows carry. The answer
-        # is to drop the grouping and answer FLAT rather than to redact the headings:
-        # "Supplier A / Supplier B" with the names blanked still tells the dealer how many
-        # suppliers there are and which rows share one, and an ungrouped list is the
-        # honest answer to a question we may not break down.
-        # The axis NAME and the restricted FIELD KEY are the same word by construction:
-        # a tool may only group on an axis it renders as a field, and `group_by=supplier`
-        # groups on the `supplier` field the presenter marked restricted. So the lookup
-        # is the same `restricted` map, with no second table to keep in step.
-        axis = group_axis(ctx)
-        axis_perm = restricted.get(axis) if axis else None
-        if axis_perm is not None and axis_perm not in granted:
-            e["groups"] = []
-            e["group_by_dropped"] = axis
+        drop_restricted_fields(e, granted, group_axis(ctx))
 
     if ctx.get("set_by_code") and not e.get("groups"):
         _group_set_rows(e, ctx["set_by_code"])

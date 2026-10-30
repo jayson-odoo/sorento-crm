@@ -11,6 +11,7 @@ export interface UseProductFiltersReturn {
   filters: ProductFilters;
   setCategoryId: (categoryId: string | undefined) => void;
   setBrandId: (brandId: string | undefined) => void;
+  setItemClassId: (itemClassId: string | undefined) => void;
   setStatus: (status: boolean | undefined) => void;
   setPriceRange: (min?: number, max?: number) => void;
   setSearch: (search: string | undefined) => void;
@@ -38,6 +39,13 @@ export function useProductFilters(): UseProductFiltersReturn {
     setFilters((prev) => ({
       ...prev,
       brand_id: brandId,
+    }));
+  }, []);
+
+  const setItemClassId = useCallback((itemClassId: string | undefined) => {
+    setFilters((prev) => ({
+      ...prev,
+      item_class_id: itemClassId,
     }));
   }, []);
 
@@ -79,6 +87,7 @@ export function useProductFilters(): UseProductFiltersReturn {
     return !!(
       filters.category_id ||
       filters.brand_id ||
+      filters.item_class_id ||
       filters.is_active !== undefined ||
       filters.price_range ||
       filters.search ||
@@ -90,6 +99,7 @@ export function useProductFilters(): UseProductFiltersReturn {
     filters,
     setCategoryId,
     setBrandId,
+    setItemClassId,
     setStatus,
     setPriceRange,
     setSearch,

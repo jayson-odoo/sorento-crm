@@ -1,6 +1,6 @@
-"""Retry the indexes `gc_idx_0001_spo_from_po_key` and `bfd_idx_0001_billing_from_doc_no` could not build.
+"""Retry the indexes `gc_idx_0001_spo_from_po_key`, `bfd_idx_0001_billing_from_doc_no` and `lec_0002_embedding_indexes` could not build.
 
-GOODSCHAIN-INDEX-QUERY, BILLING-FROM-DOC-INDEX. Those revisions let a deploy succeed when an
+GOODSCHAIN-INDEX-QUERY, BILLING-FROM-DOC-INDEX, LOOKUP-EMBED-CENTRAL. Those revisions let a deploy succeed when an
 index build times out (`app/utils/online_index.py`), so something has to try again: `start.sh`
 runs this in the background on every backend start, after `alembic upgrade head`. With every
 index VALID it is one catalog lookup per index. Two builders at once (blue and green starting together, or a
@@ -23,11 +23,17 @@ log = logging.getLogger("ensure_goods_chain_indexes")
 
 def run(engine) -> bool:
     """True when every index is VALID afterwards."""
+    from app.services import embedding_indexes
     from app.utils import online_index
 
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as bind:
+        # The keep-set HNSW build took 131 s at the default and 34 s at 512MB, against the 180 s budget.
+        bind.exec_driver_sql("SET maintenance_work_mem = '512MB'")
         return online_index.ensure_indexes_online(
-            bind, online_index.GOODS_CHAIN_KEY_INDEXES + online_index.BILLING_FROM_DOC_INDEXES
+            bind,
+            online_index.GOODS_CHAIN_KEY_INDEXES
+            + online_index.BILLING_FROM_DOC_INDEXES
+            + embedding_indexes.MIGRATION_INDEXES,
         )
 
 

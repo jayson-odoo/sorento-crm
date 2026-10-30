@@ -41,6 +41,9 @@ vi.mock('next/navigation', () => ({
 vi.mock('../../shared/hooks/use-product-category-select-query', () => ({
   useProductCategorySelectQuery: () => ({ data: [] }),
 }));
+vi.mock('../../shared/hooks/use-item-class-select-query', () => ({
+  useItemClassSelectQuery: () => ({ data: [] }),
+}));
 vi.mock('../../shared/hooks/use-brand-select-query', () => ({
   useBrandSelectQuery: () => ({ data: [] }),
 }));

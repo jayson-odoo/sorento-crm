@@ -93,17 +93,17 @@ def test_b2_the_lead_rule_keeps_reset_none_and_the_project_rule_is_monthly():
 @pytest.fixture
 def embed_calls(monkeypatch):
     """The real meaning signal over a counting fake of the one network call."""
-    from app.services import embedding_worker
+    from app.services import embedding_settings
     from app.services import project_registration_service as svc
 
     real = REAL_SEMANTIC
     calls: list = []
 
-    def fake(chunks, timeout=30):
+    def fake(chunks, model=None, timeout=30, **kw):
         calls.append({"chunks": list(chunks), "timeout": timeout})
         return [[0.0, 0.0, 0.0] for _ in chunks]
 
-    monkeypatch.setattr(embedding_worker, "_embed_text_chunks", fake)
+    monkeypatch.setattr(embedding_settings, "embed_search_texts", fake)
     svc.clear_embedding_cache()
     yield SimpleCalls(calls, real, svc)
     svc.clear_embedding_cache()
@@ -150,17 +150,17 @@ def test_b3_the_portal_detail_goes_through_the_same_cache(world, embed_calls, mo
 
 
 def test_b3_a_failing_embed_keeps_the_detail_readable_and_is_not_retried(world, monkeypatch):
-    from app.services import embedding_worker
+    from app.services import embedding_settings
     from app.services import project_registration_service as svc
 
     real = REAL_SEMANTIC
     attempts: list = []
 
-    def boom(chunks, timeout=30):
+    def boom(chunks, model=None, timeout=30, **kw):
         attempts.append(len(chunks))
         raise RuntimeError("provider down")
 
-    monkeypatch.setattr(embedding_worker, "_embed_text_chunks", boom)
+    monkeypatch.setattr(embedding_settings, "embed_search_texts", boom)
     svc.clear_embedding_cache()
     ids = [pending(world, title=f"GUDANG {n} DI ATAS LOT 9001, MUKIM TEBRAU", mukim="Tebrau") for n in range(3)]
     monkeypatch.setattr(svc, "semantic_matches", real)

@@ -75,6 +75,8 @@ export interface ContactChatbotProfile {
   skip_period_questions: boolean;
   /** PHOTO-SEND-CAP: the bot sends this contact one text with file links. Default off. */
   files_as_links: boolean;
+  /** AGENTIC-P1: the read-only agent may run for this contact (`chatbot_agent_enabled`). Default off. */
+  agent_enabled: boolean;
   /** MODEL-PER-CONTACT (read side): the effective model and its source. Never sent back. */
   chatbot_llm?: ChatbotLlm | null;
 }
@@ -186,6 +188,7 @@ function profileFromContact(contact: {
   chatbot_allowed?: boolean;
   chatbot_skip_period_questions?: boolean;
   chatbot_files_as_links?: boolean;
+  chatbot_agent_enabled?: boolean;
   chatbot_llm?: ChatbotLlm | null;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
@@ -204,6 +207,7 @@ function profileFromContact(contact: {
     chatbot_allowed: contact.chatbot_allowed === true,
     skip_period_questions: Boolean(contact.chatbot_skip_period_questions),
     files_as_links: Boolean(contact.chatbot_files_as_links),
+    agent_enabled: Boolean(contact.chatbot_agent_enabled),
     chatbot_llm: contact.chatbot_llm ?? null,
   };
 }
@@ -235,6 +239,7 @@ export async function saveContactChatbotProfile(
       chatbot_eta_offset_applied: input.eta_offset_applied,
       chatbot_skip_period_questions: input.skip_period_questions,
       chatbot_files_as_links: input.files_as_links,
+      chatbot_agent_enabled: input.agent_enabled,
       // Present only when the operator touched it; `JSON.stringify` drops undefined.
       llm: input.llm,
       // `escalation_allowed` is NOT sent here: it has its own save

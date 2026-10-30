@@ -806,7 +806,8 @@ class TestExactProductCodeWinsOverSiblings:
         assert captured, "the report must run: the typed code exists, so nothing is ambiguous"
         name, args = captured[0]
         assert name == "crm_report_ask", name
-        assert args.get("product_code") == "ZZT7445", (
+        # REPORT-OUTSTANDING-SUMMARY item 8 (owner 29 Oct): the resolver's exact row, by id (a code would be a prefix).
+        assert _codes_of(session_factory, args.get("product_ids")) == ["ZZT7445"], (
             f"the code the customer typed exists exactly, so it is the subject - never a "
             f"family sibling: {args}"
         )
@@ -1011,10 +1012,8 @@ class TestCustomerEntityBecomesCustomerIds:
         assert args.get("customer_ids") == [CUSTOMER_UUID], (
             f"the resolved customer must be sent as customer_ids (AC-1113b/AC-1136): {args}"
         )
-        assert args.get("product_code") == PRODUCT_CODE, (
-            f"crm_outstanding_report takes product_code (exact string), not product_ids "
-            f"(the route's own contract - see PLAN 'Backend contract'): {args}"
-        )
+        # REPORT-OUTSTANDING-SUMMARY item 8: the resolver's exact row, by id (a product_code would be a prefix).
+        assert args.get("product_ids") and "product_code" not in args, args
 
 
 # --------------------------------------------------------------------------- #
@@ -2631,3 +2630,15 @@ class TestABusinessQueryUnderAnOpenOfferIsANewAsk:
             f"the old question's product must not survive in a new ask's own "
             f"filters: {open_question!r}"
         )
+
+
+def _codes_of(session_factory, ids) -> list[str]:
+    """The product codes behind the ids a report ask was sent (REPORT-OUTSTANDING-SUMMARY item 8)."""
+    from sqlalchemy import text as sql_text
+
+    db = session_factory()
+    try:  # raw SQL: no session company scope to hide the rows
+        rows = db.execute(sql_text("SELECT product_code FROM products WHERE id::text = ANY(:ids)"), {"ids": list(ids or [])})
+        return sorted(c for (c,) in rows)
+    finally:
+        db.close()
