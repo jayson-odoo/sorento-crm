@@ -608,7 +608,22 @@ describe('Send suggestions opens a confirm step that holds the note', () => {
 describe('why Sign is off, said once', () => {
   const withTerms = { terms: '<p>CLAUSE A</p>' };
 
-  it('an open request disables Sign, says so, and hides the terms tick and its reason', async () => {
+  const preparedBy = () => screen.getByRole('heading', { name: /Prepared by/ });
+  const noSignBlock = () => {
+    expect(screen.queryByLabelText('Your name')).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Your name' })).toBeNull();
+    for (const tab of ['Draw', 'Type', 'Initials']) {
+      expect(screen.queryByRole('tab', { name: tab })).toBeNull();
+    }
+    expect(screen.queryByText('Sign here')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sign and accept' })).toBeNull();
+    expect(screen.queryByText(OPEN_SENTENCE)).toBeNull();
+    expect(screen.queryByText(TICK_HINT)).toBeNull();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Accepted by' })).toBeNull();
+  };
+
+  it('an open request hides the whole sign block: only the waiting banner stands in its place', async () => {
     await open({
       ...withTerms,
       can_sign: false,
@@ -619,15 +634,11 @@ describe('why Sign is off, said once', () => {
       ]),
     });
 
-    // Give the pad a signature first (the Type tab), so the ONLY thing left that can keep Sign
-    // off is the open request: the name comes from `attn_name` and the tick is hidden.
-    await screen.findByRole('button', { name: 'Sign and accept' });
-    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Type' }), { button: 0 });
-
-    expect(isOff(screen.getByRole('button', { name: 'Sign and accept' }))).toBe(true);
-    expect(screen.getByText(OPEN_SENTENCE)).toBeInTheDocument();
-    expect(screen.queryByText(TICK_HINT)).toBeNull();
-    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(await screen.findByText('Your suggestions are with Sorento')).toBeInTheDocument();
+    noSignBlock();
+    expect(screen.queryByRole('button', { name: 'Suggest changes' })).toBeNull();
+    // The Sorento signature card is not part of the sign block.
+    expect(preparedBy()).toBeInTheDocument();
   });
 
   it('control: the same steps with no open request leave Sign enabled', async () => {
@@ -687,6 +698,52 @@ describe('an answered request shows its answers in the cells', () => {
     expect(screen.queryByRole('button', { name: 'Suggest changes' })).toBeNull();
     const sign = screen.queryByRole('button', { name: 'Sign and accept' });
     if (sign) expect(isOff(sign)).toBe(true);
+  });
+});
+
+describe('the sign block after the request is answered', () => {
+  const decided = [
+    rowOf('line-1', 'quantity', '110.00', 'rejected', 'Not this time'),
+    rowOf('line-3', 'unit_price', '150.00', 'rejected', 'Already at the project price.'),
+  ];
+
+  it('answered with NO revision: the name, the pad and Sign and accept come back', async () => {
+    await open({
+      can_sign: true,
+      sign_blocked_reason: null,
+      amendment_request: { ...request('applied', decided), revised: false },
+    });
+
+    expect(await screen.findByRole('button', { name: 'Sign and accept' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Your name' })).toBeInTheDocument();
+    for (const tab of ['Draw', 'Type', 'Initials']) {
+      expect(screen.getByRole('tab', { name: tab })).toBeInTheDocument();
+    }
+    // The waiting banner is gone, and the answers still show in the cells.
+    expect(screen.queryByText('Your suggestions are with Sorento')).toBeNull();
+    await screen.findByText('Sanitary ware');
+    expect(within(tr('14')).getByText('Not accepted')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Prepared by/ })).toBeInTheDocument();
+  });
+
+  it('answered WITH a revision: its own answered card, no name, no pad, no Sign', async () => {
+    await open({
+      can_sign: false,
+      sign_blocked_reason: 'amendment_applied',
+      amendment_request: {
+        ...request('applied', [rowOf('line-1', 'quantity', '110.00', 'accepted')]),
+        revised: true,
+      },
+    });
+
+    expect(await screen.findByText(/Sorento answered/)).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Your name' })).toBeNull();
+    for (const tab of ['Draw', 'Type', 'Initials']) {
+      expect(screen.queryByRole('tab', { name: tab })).toBeNull();
+    }
+    expect(screen.queryByRole('button', { name: 'Sign and accept' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Suggest changes' })).toBeNull();
+    expect(screen.getByRole('heading', { name: /Prepared by/ })).toBeInTheDocument();
   });
 });
 
