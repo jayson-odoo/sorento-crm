@@ -1,7 +1,7 @@
 'use client';
 
 import { Badge } from '@/components/ui/badge';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import type { ConsoleRoute } from '../types/chatbotConsole.types';
 
 /** Plain words for the router's reason codes; `router_failed:*` and `not_eligible:*` carry a detail after the colon. */
@@ -39,18 +39,20 @@ export function RoutePill({ route }: { route: ConsoleRoute }) {
           </Badge>
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-4" align="start">
-        <dl className="space-y-2 text-sm">
-          {rows.map(([label, value]) => (
-            <div key={label} className="flex items-center justify-between gap-4">
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="truncate text-foreground" title={value}>
-                {value}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </PopoverContent>
+      <PopoverPortal>
+        <PopoverContent className="w-72 p-4" align="start">
+          <dl className="space-y-2 text-sm">
+            {rows.map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">{label}</dt>
+                <dd className="truncate text-foreground" title={value}>
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }
