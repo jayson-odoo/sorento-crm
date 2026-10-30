@@ -219,9 +219,12 @@ def test_set_stock_gold_file():
     assert sum(i.startswith("ss-stem-") for i in ids) >= 5
     assert any("x 6 sets" in r["message"] for r in rows)
     assert any(r["message"] == "stock srtwc8826" for r in rows)
+    # Owner, card v4 Q1 (a): every product ask expands a set, so ETA, photo and delivery asks too.
+    assert any(r["id"].startswith(p) for r in rows for p in ("ss-eta-",)) and any(r["id"].startswith("ss-photo-") for r in rows)
     for r in rows:
-        assert r["expect"]["domain_hint"] == "inventory", r["id"]
-        assert r["id"].startswith(("ss-stem-", "ss-full-")), r["id"]
+        if r["id"].startswith(("ss-stem-", "ss-full-")):
+            assert r["expect"]["domain_hint"] == "inventory", r["id"]
+        assert r["id"].startswith(("ss-stem-", "ss-full-", "ss-eta-", "ss-photo-", "ss-delivery-")), r["id"]
         assert r["expect"]["canonical"] is None, r["id"]
 
 

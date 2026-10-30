@@ -6,3 +6,7 @@
 {"id": "ss-stem-06", "message": "srtwc8840 got stock or not", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
 {"id": "ss-full-01", "message": "stock SRTWC8826-S", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
 {"id": "ss-full-02", "message": "SRTWC7405-RL-S-PJ x 6 stock", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
+{"id": "ss-eta-01", "message": "srtwc8826 eta", "expect": {"canonical": null, "domain_hint": "incoming"}}
+{"id": "ss-eta-02", "message": "bila srtwc7405 sampai?", "expect": {"canonical": null, "domain_hint": "incoming"}}
+{"id": "ss-photo-01", "message": "photo srtwc8826-s", "expect": {"canonical": null, "domain_hint": "product_attachment"}}
+{"id": "ss-delivery-01", "message": "delivery for srtwc8608-rl", "expect": {"canonical": null}}
