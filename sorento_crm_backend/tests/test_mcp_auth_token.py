@@ -139,8 +139,12 @@ def test_revoke_previous_ends_the_grace_window_now(db, actor):
 
     m.rotate(db, actor.id)
     new = m.rotate(db, actor.id)
+    with pytest.raises(m.RevokeTooSoon):
+        m.revoke_previous(db, actor.id)  # the backend would have nothing to send (review nit 3)
+    _age(db)
     m.revoke_previous(db, actor.id)
     assert m.mcp_answer(db)["token_sha256"] == [_sha(new)]
+    assert m.current_token(db) == new
 
 
 def test_enforce_needs_a_token_first(db, actor):
@@ -192,6 +196,7 @@ def test_every_action_is_audited_without_a_value(db, actor):
     old = m.rotate(db, actor.id)
     new = m.rotate(db, actor.id)
     m.set_enforce(db, True, actor.id)
+    _age(db)
     m.revoke_previous(db, actor.id)
     rows = _audit_rows(db)
     actions = [r.new_values["action"] for r in sorted(rows, key=lambda r: r.changed_at)]
@@ -337,7 +342,7 @@ def test_put_accepts_only_the_enforce_switch(api, body):
     assert "x" * 40 not in resp.text
 
 
-def test_enforce_then_revoke_through_the_api(api):
+def test_enforce_then_revoke_through_the_api(api, db):
     client, allow = api
     allow.add(SECRETS_SLUG)
     client.post(SETTINGS + "/rotate")
@@ -345,6 +350,8 @@ def test_enforce_then_revoke_through_the_api(api):
     assert client.get(SETTINGS).json()["previous_valid_until"] is not None
     on = client.put(SETTINGS, json={"enforce": True})
     assert on.status_code == 200 and on.json()["enforce"] is True
+    assert client.post(SETTINGS + "/revoke-previous").status_code == 409
+    _age(db)
     revoked = client.post(SETTINGS + "/revoke-previous")
     assert revoked.status_code == 200 and revoked.json()["previous_valid_until"] is None
 
@@ -448,7 +455,19 @@ def test_the_release_seeds_a_first_token_so_the_staff_assistant_keeps_its_scope(
     if _row(db) is None:
         db.add(SystemSetting(id=str(uuid.uuid4())))
         db.commit()
-    _migration()._seed_first_token(db.connection())
+    # Through upgrade() itself, so the seed cannot be dropped from it (review nit 1). The DDL
+    # is already applied on this schema; only the seed's UPDATE is run for real.
+    migration = _migration()
+
+    class _Op:
+        def execute(self, _sql):
+            pass
+
+        def get_bind(self):
+            return db.connection()
+
+    migration.op = _Op()
+    migration.upgrade()
     db.commit()
     seeded = _row(db).mcp_auth_token_ciphertext
     assert seeded

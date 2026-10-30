@@ -1,6 +1,6 @@
 # PLAN: MCP auth token set from the settings screen (no .env)
 
-Status: review fix round done (reviewer B1, S1-S3, N1-N2; security should-fixes), awaiting owner answers on the
+Status: in review, reviewer READY after one fix round (B1, S1-S3, N1-N2, nit 3; security should-fixes applied), awaiting owner answers on the
 design card and hand test (full track, size M: auth + additive migration + settings UI).
 UAC: `mcp-token-ui-acceptance-criteria.md`
 Lane: MCP-TOKEN-UI (owner, 31 Oct 00:35). Releases are on hold until this ships.

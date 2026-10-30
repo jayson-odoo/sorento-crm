@@ -804,7 +804,10 @@ def revoke_previous_mcp_token(
     """End the previous token's rotation grace window now."""
     from app.services import mcp_auth_token
 
-    mcp_auth_token.revoke_previous(db, _actor_id(db, current_user))
+    try:
+        mcp_auth_token.revoke_previous(db, _actor_id(db, current_user))
+    except mcp_auth_token.RevokeTooSoon as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return mcp_auth_token.describe(db)
 
 

@@ -47,6 +47,11 @@ SEND_NEW_AFTER_SECONDS = 10.0
 TOKEN_BYTES = 32  # 43 url-safe characters, over the 32-character floor SEC-MCP-AUTH set
 
 
+class RevokeTooSoon(ValueError):
+    """Revoking inside SEND_NEW_AFTER_SECONDS of a rotate would leave this process nothing to
+    send: the new token is not sent yet and the previous one would be gone (review nit 3)."""
+
+
 class EnforceWithoutToken(ValueError):
     """Enforce cannot be switched on without a readable token: it would refuse every caller."""
 
@@ -249,6 +254,11 @@ def set_enforce(db: Session, enforce: bool, actor_user_id: Optional[str]) -> Non
 def revoke_previous(db: Session, actor_user_id: Optional[str]) -> None:
     """End the previous token's grace window now."""
     row, skip = _locked_row(db)
+    rotated = _aware(row.mcp_auth_token_rotated_at)
+    if rotated is not None and (_now() - rotated).total_seconds() < SEND_NEW_AFTER_SECONDS:
+        db.rollback()
+        _release(db, skip)
+        raise RevokeTooSoon("The new token is still being picked up; try again in a few seconds.")
     row.mcp_auth_previous_token_ciphertext = None
     row.mcp_auth_previous_expires_at = None
     _finish(db, row, skip, "previous_revoked", actor_user_id)
