@@ -1099,6 +1099,8 @@ class ContactService:
             "chatbot_skip_period_questions": bool(getattr(contact, "chatbot_skip_period_questions", False)),
             # PHOTO-SEND-CAP: the A/B switch, default OFF (attachment mode). Listed by hand.
             "chatbot_files_as_links": bool(getattr(contact, "chatbot_files_as_links", False)),
+            # AGENTIC-P1: the per-contact switch for the read-only agent, default OFF.
+            "chatbot_agent_enabled": bool(getattr(contact, "chatbot_agent_enabled", False)),
             # CONTACT-BRAND-SCOPE: listed by hand like every field above. The list endpoint
             # fills it for a whole page in one query; here, one contact when a session is given.
             "brands": brands,
