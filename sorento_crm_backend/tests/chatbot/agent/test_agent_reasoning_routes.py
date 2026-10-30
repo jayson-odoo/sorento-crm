@@ -1,0 +1,82 @@
+"""AGENTIC-REASONING-VIS: both console routes return each round's reasoning beside its tool calls. Kept apart:
+the console harness brings an autouse permission patch."""
+from __future__ import annotations
+
+from tests.chatbot.agent._seed import seed_agent_contact
+from tests.chatbot.agent._turns import seed_turn
+from tests.chatbot.test_console_turn_endpoint import (  # noqa: F401 - fixtures and helpers
+    VIEW,
+    _GRANTS,
+    _permissions,
+    client,
+)
+
+TURN = "/api/v1/system/chatbot/agent/turn"
+CONVERSATION = "/api/v1/system/chatbot/agent/conversation"
+STOCK = "crm_inventory_stock_balance_list"
+
+TRACE = [
+    {"kind": "agent_round", "kind_of_call": "round", "prompt_tokens": 10, "completion_tokens": 2, "tool_calls": 1},
+    {"kind": "agent_reasoning", "round": 1, "text": "First find the stock balance."},
+    {"kind": "agent_tool", "name": STOCK, "status": "ok", "ms": 5, "detail": "Stock balance: 1 row"},
+    {"kind": "agent_round", "kind_of_call": "round", "prompt_tokens": 20, "completion_tokens": 3, "tool_calls": 1},
+    {"kind": "agent_reasoning", "round": 2, "text": "Answer with the figure."},
+]
+
+EXPECTED_REASONING = [
+    {"round": 1, "text": "First find the stock balance."},
+    {"round": 2, "text": "Answer with the figure."},
+]
+
+
+def _world(session_factory):
+    from app.services.chatbot.agent import memory
+    from app.services.chatbot.agent.access import build_context, grants_hash
+
+    db = session_factory()
+    contact = seed_agent_contact(db)
+    ctx = build_context(db, contact["respond_id"])
+    conv = memory.current_conversation(db, contact["respond_id"], user_id=ctx.user_id, grants_hash=grants_hash(ctx))
+    row = seed_turn(db, conv, minute=1, text="q", reply="a")
+    row.trace = TRACE
+    db.commit()
+    return contact, conv, row
+
+
+def test_the_conversation_read_returns_each_rounds_reasoning(client, session_factory):
+    contact, _conv, _row = _world(session_factory)
+    turn = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]}).json()["turns"][0]
+    assert turn["steps"]["reasoning"] == EXPECTED_REASONING
+    assert [(c["name"], c["round"]) for c in turn["steps"]["tool_calls"]] == [(STOCK, 1)]
+    # Never the reply.
+    assert "stock balance" not in turn["reply_text"].lower()
+
+
+def test_the_turn_response_returns_the_reasoning_of_the_stored_row(client, session_factory, monkeypatch):
+    import app.api.v1.system.chatbot as route_mod
+    from app.services.chatbot.agent.loop import AgentTurnResult
+
+    contact, conv, row = _world(session_factory)
+
+    def fake(db, **kw):
+        return AgentTurnResult(
+            turn_id=row.id, conversation_id=str(conv.id), reply_text="a", status="answered", limit_hit=None, rounds=2,
+            usage={"prompt_tokens": 30, "completion_tokens": 5, "cached_tokens": 0, "calls": 2},
+            tool_calls=[{"name": STOCK, "status": "ok", "ms": 5}],
+        )
+
+    monkeypatch.setattr(route_mod, "run_agent_turn", fake)
+    body = client.post(TURN, json={"contact_respond_id": contact["respond_id"], "text": "q"}).json()
+    assert body["steps"]["reasoning"] == EXPECTED_REASONING
+    assert "First find" not in body["reply_text"]
+
+
+def test_the_reasoning_is_refused_without_the_console_permission(client, session_factory):
+    contact, _conv, _row = _world(session_factory)
+    _GRANTS.discard(VIEW)
+    try:
+        response = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]})
+    finally:
+        _GRANTS.add(VIEW)
+    assert response.status_code == 403
+    assert "First find" not in response.text

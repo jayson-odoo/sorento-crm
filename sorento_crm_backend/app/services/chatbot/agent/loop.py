@@ -50,6 +50,8 @@ MCP_CALL_TIMEOUT = 10.0
 NOT_VERIFIED = "(not verified)"
 #: Per-call ceilings. Every call also counts against the turn's max_seconds.
 ROUND_CALL_CAP = 60.0
+# The most of one round's reasoning a turn keeps for the console (8 rounds stay under the trace's 32 KB entry cap).
+REASONING_CHARS = 4000
 SIDE_CALL_CAP = 30.0
 #: The final no-tools answer may overrun the turn by this much, so a limit still gets a reply.
 FINAL_GRACE = 10.0
@@ -749,6 +751,14 @@ def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) ->
     return _UUID_TEXT.sub("", text)
 
 
+def reasoning_for_steps(text: Any) -> str:
+    """A round's reasoning as the console shows it: no record ids, at most REASONING_CHARS."""
+    if not isinstance(text, str):
+        return ""
+    cleaned = re.sub(r"[ \t]{2,}", " ", _UUID_TEXT.sub("", text)).strip()
+    return cleaned if len(cleaned) <= REASONING_CHARS else cleaned[:REASONING_CHARS].rstrip() + "\u2026"
+
+
 def _is_rows(data: Any) -> bool:
     return isinstance(data, list) or (isinstance(data, dict) and any(isinstance(v, list) for v in data.values()))
 
@@ -835,7 +845,9 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             raise TimeoutError("the turn ran out of time")
         started = clock()
         try:
-            result = send(messages, tools=tools, reasoning_effort=effort, model=model, timeout=timeout)
+            result = send(
+                messages, tools=tools, reasoning_effort=effort, model=model, timeout=timeout, include_thoughts=True
+            )
         except Exception as exc:  # noqa: BLE001 - detail is logged, the user sees a fixed reason
             logger.warning("agent: model call failed (%s)", kind, exc_info=True)
             raise _ProviderFailed() from exc
@@ -857,6 +869,11 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 "tool_calls": len(result.tool_calls or []),
             },
         )
+        thought = reasoning_for_steps(getattr(result, "reasoning_text", ""))
+        if thought and kind != "compaction":
+            # For the console's steps only: never the reply, the history or a log line. A round's call
+            # comes before its count goes up, and the forced final answer follows the last round.
+            trace.add("agent_reasoning", {"kind_of_call": kind, "round": run.rounds + 1, "text": thought})
         record_turn_llm_usage(
             db,
             feature=FEATURE,

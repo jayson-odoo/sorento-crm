@@ -238,6 +238,15 @@ class AgentStepsToolCall(BaseModel):
     ms: int = 0
     #: The call in plain words: what it was for, with what, and how it ended.
     detail: str = ""
+    #: The model round the call ran in (1-based).
+    round: int = 1
+
+
+class AgentReasoning(BaseModel):
+    """The model's reasoning for one round, as the provider summarised it. Console only."""
+
+    round: int
+    text: str
 
 
 class AgentSteps(BaseModel):
@@ -248,6 +257,7 @@ class AgentSteps(BaseModel):
     completion_tokens: int = 0
     cached_tokens: int = 0
     tool_calls: list[AgentStepsToolCall] = Field(default_factory=list)
+    reasoning: list[AgentReasoning] = Field(default_factory=list)
 
 
 class AgentPendingAction(BaseModel):

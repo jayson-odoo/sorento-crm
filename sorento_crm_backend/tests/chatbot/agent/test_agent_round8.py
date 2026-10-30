@@ -26,9 +26,10 @@ def test_steps_are_built_from_the_stored_trace():
         "completion_tokens": 35,
         "cached_tokens": 100,
         "tool_calls": [
-            {"name": "crm_report_ask", "status": "ok", "ms": 120},
-            {"name": "crm_resolve", "status": "empty", "ms": 3},
+            {"name": "crm_report_ask", "status": "ok", "ms": 120, "round": 1},
+            {"name": "crm_resolve", "status": "empty", "ms": 3, "round": 1},
         ],
+        "reasoning": [],
     }
 
 
