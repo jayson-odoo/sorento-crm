@@ -609,13 +609,20 @@ def test_a6_revise_copies_the_set_and_the_parts_to_the_new_version():
 # ------------------------------------------------------------------ A7
 
 
-def test_a7_a_line_with_neither_still_needs_a_description_and_a_set_line_does_not():
+def test_a7_a_line_with_neither_is_refused_and_a_set_line_is_not():
     with blank_session() as db:
         env = _env(db)
-        with pytest.raises(AppException) as refused:
-            _save(db, env, {"unit_price": "10.00", "quantity": "1"})
-        assert refused.value.detail["code"] == "quotation_line_description_required"
-        assert refused.value.detail["message"] == "A non-standard item needs a description."
+        for payload in (
+            {"unit_price": "10.00", "quantity": "1"},
+            {"description_snapshot": "Bespoke", "unit_price": "10.00", "quantity": "1"},
+        ):
+            with pytest.raises(AppException) as refused:
+                _save(db, env, payload)
+            assert refused.value.detail["code"] == "quotation_line_product_required"
+            assert (
+                refused.value.detail["message"]
+                == "Every line needs a catalogue product or product set."
+            )
 
         product_set = _set(db, env["company_id"], env["category"], env["uom"])
         line = _set_line(db, env)

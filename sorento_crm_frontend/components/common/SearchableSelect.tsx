@@ -110,6 +110,9 @@ export type SearchableSelectProps = {
    * name a label or a test's `getByLabelText` wants.
    */
   'aria-label'?: string;
+  /** Forwarded to the trigger, for a caller that shows an error under it. */
+  'aria-invalid'?: boolean;
+  'aria-describedby'?: string;
   placeholder?: string;
   emptyMessage?: string;
   /**
@@ -176,6 +179,8 @@ export function SearchableSelect({
   initialQuery = '',
   id,
   'aria-label': ariaLabel,
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedBy,
   size,
   placeholder = 'Select...',
   emptyMessage = 'No results found.',
@@ -385,6 +390,8 @@ export function SearchableSelect({
           disabled={isDisabled}
           id={id}
           aria-label={ariaLabel}
+          aria-invalid={ariaInvalid}
+          aria-describedby={ariaDescribedBy}
           data-slot="searchable-select-trigger"
           // Radix SelectTrigger exposes role=combobox; keep parity so callers and tests
           // can find the trigger by role, and screen readers announce expanded state.

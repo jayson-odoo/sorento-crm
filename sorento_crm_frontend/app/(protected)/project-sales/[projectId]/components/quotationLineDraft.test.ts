@@ -98,8 +98,34 @@ describe('the draft of a set line', () => {
 
   it('does not ask a set line for a description (the set name is the description)', () => {
     expect(lineErrors({ ...emptyDraft(), product_set_id: 'set-1' })).toEqual({});
-    expect(lineErrors(emptyDraft())).toEqual({
-      description: 'A non-standard item needs a description',
-    });
+  });
+});
+
+describe('lineErrors: every line names a catalogue product or set (QUOTE-NO-FREE-TEXT AC-9, AC-10)', () => {
+  const MESSAGE = 'Pick a catalogue product or set';
+
+  it('refuses a line with a description but no product and no set', () => {
+    const errors = lineErrors({ ...emptyDraft(), description: 'Bespoke stone counter' });
+    expect(Object.values(errors)).toEqual([MESSAGE]);
+  });
+
+  it('refuses an untouched line with nothing at all, with the same message', () => {
+    expect(Object.values(lineErrors(emptyDraft()))).toEqual([MESSAGE]);
+  });
+
+  it('has no error once a product is set, with or without a description', () => {
+    expect(lineErrors({ ...emptyDraft(), product_id: 'p1' })).toEqual({});
+    expect(
+      lineErrors({ ...emptyDraft(), product_id: 'p1', description: 'Reworded for the customer' }),
+    ).toEqual({});
+  });
+
+  it('has no error once a set is set', () => {
+    expect(lineErrors({ ...emptyDraft(), product_set_id: 'set-1' })).toEqual({});
+  });
+
+  it('shows the error again when the product of a described line is cleared', () => {
+    const cleared = { ...emptyDraft(), product_id: '', description: 'Wall-hung basin' };
+    expect(Object.values(lineErrors(cleared))).toEqual([MESSAGE]);
   });
 });

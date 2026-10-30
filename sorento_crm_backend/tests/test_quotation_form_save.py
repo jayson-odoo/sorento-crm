@@ -99,7 +99,8 @@ def test_create_writes_the_document_its_scopes_and_every_line_in_one_request(api
                     "lines": [
                         {"product_id": product.id, "unit_price": "250.00", "quantity": "4"},
                         {
-                            "description_snapshot": "Off-catalog basin mixer",
+                            "product_id": product.id,
+                            "description_snapshot": "Reworded basin mixer",
                             "unit_price": "80.00",
                             "quantity": "2",
                             "band_label": "BILL NO 3",
@@ -130,8 +131,8 @@ def test_create_writes_the_document_its_scopes_and_every_line_in_one_request(api
 
     townhouse_lines = _lines_of_scope(db, body["scopes"][0]["id"])
     # Array order is the line order, and the section heading rides on the line that opens it.
-    assert [line.product_id for line in townhouse_lines] == [product.id, None]
-    assert townhouse_lines[1].description_snapshot == "Off-catalog basin mixer"
+    assert [line.product_id for line in townhouse_lines] == [product.id, product.id]
+    assert townhouse_lines[1].description_snapshot == "Reworded basin mixer"
     assert townhouse_lines[1].band_label == "BILL NO 3"
     # The product fill is the server's, exactly as the bulk line route does it.
     assert townhouse_lines[0].description_snapshot
@@ -140,7 +141,7 @@ def test_create_writes_the_document_its_scopes_and_every_line_in_one_request(api
 
 
 def test_a_refused_line_rolls_the_whole_create_back(api):
-    """AC-QF015: an off-catalog line with no description is refused, and NOTHING is left."""
+    """AC-QF015: a line with no product and no set is refused, and NOTHING is left."""
     client, db, _company_id, _user_id, project, _party = api
     product = _seed_product(db)
     before = len(_documents(db, project.id))
@@ -154,16 +155,14 @@ def test_a_refused_line_rolls_the_whole_create_back(api):
                     "scope_label": f"{MARKER} Townhouse",
                     "lines": [
                         {"product_id": product.id, "unit_price": "250.00", "quantity": "1"},
-                        {"unit_price": "10.00", "quantity": "1"},
+                        {"description_snapshot": "Free text", "unit_price": "10.00", "quantity": "1"},
                     ],
                 }
             ]
         },
     )
     assert response.status_code == 422, response.text
-    assert response.json().get("code") == "quotation_line_description_required" or (
-        "description" in response.text
-    )
+    assert response.json().get("code") == "quotation_line_product_required"
     db.expire_all()
     assert len(_documents(db, project.id)) == before
     assert (
@@ -238,6 +237,7 @@ def _created(client, db, project_id: str, product) -> dict:
                     "lines": [
                         {"product_id": product.id, "unit_price": "250.00", "quantity": "4"},
                         {
+                            "product_id": product.id,
                             "description_snapshot": "Old line",
                             "unit_price": "5.00",
                             "quantity": "1",
@@ -278,6 +278,7 @@ def test_edit_applies_header_rename_new_scope_and_full_line_set_in_one_patch(api
                             "quantity": "4",
                         },
                         {
+                            "product_id": product.id,
                             "description_snapshot": "New line",
                             "unit_price": "10.00",
                             "quantity": "3",
@@ -363,7 +364,12 @@ def test_edit_sending_lines_to_an_issued_scope_is_refused_and_writes_nothing(api
                 {
                     "id": townhouse["id"],
                     "lines": [
-                        {"description_snapshot": "Sneaked in", "unit_price": "1", "quantity": "1"}
+                        {
+                            "product_id": product.id,
+                            "description_snapshot": "Sneaked in",
+                            "unit_price": "1",
+                            "quantity": "1",
+                        }
                     ],
                 }
             ],
@@ -593,19 +599,28 @@ def test_the_create_form_reads_the_company_letter_templates(api, monkeypatch):
     assert body["terms_html"] == bodies["terms"]
 
 
-_ONE_PRICED_SCOPE = [
-    {
-        "scope_label": f"{MARKER} Townhouse",
-        "lines": [{"description_snapshot": "Vanity top", "unit_price": "250.00", "quantity": "4"}],
-    }
-]
+def _one_priced_scope(db) -> list:
+    product = _seed_product(db)
+    return [
+        {
+            "scope_label": f"{MARKER} Townhouse",
+            "lines": [
+                {
+                    "product_id": product.id,
+                    "description_snapshot": "Vanity top",
+                    "unit_price": "250.00",
+                    "quantity": "4",
+                }
+            ],
+        }
+    ]
 
 
 def test_a_letter_edited_on_create_is_stored_with_its_merge_fields_filled(api, monkeypatch):
     """AC-QF056: what the salesperson typed in the create form's tabs is what the quotation
     holds, with the merge fields rendered against the saved document: its number, its Attn and
     the total of the lines saved in the same request (rendered AFTER the scopes exist)."""
-    client, _db, _company_id, _user_id, project, _party = api
+    client, db, _company_id, _user_id, project, _party = api
     _fake_templates(monkeypatch)
 
     response = _create(
@@ -615,7 +630,7 @@ def test_a_letter_edited_on_create_is_stored_with_its_merge_fields_filled(api, m
             "attn_name": "Kelly",
             "cover_letter_html": "<p>Hi {{attn_name}}, see {{our_ref}}, RM {{grand_total}}.</p>",
             "terms_html": "<p>Edited terms.</p>",
-            "scopes": _ONE_PRICED_SCOPE,
+            "scopes": _one_priced_scope(db),
         },
     )
     assert response.status_code == 201, response.text
@@ -631,7 +646,7 @@ def test_a_blank_letter_on_create_takes_the_template_with_the_real_total(api, mo
     answered) gets the company template, rendered after the scopes, so its total is not 0.00."""
     from app.services import project_quotation_template_service as templates
 
-    client, _db, _company_id, _user_id, project, _party = api
+    client, db, _company_id, _user_id, project, _party = api
     monkeypatch.setattr(
         templates,
         "active_template",
@@ -639,7 +654,7 @@ def test_a_blank_letter_on_create_takes_the_template_with_the_real_total(api, mo
     )
 
     response = _create(
-        client, project.id, {"cover_letter_html": "  ", "scopes": _ONE_PRICED_SCOPE}
+        client, project.id, {"cover_letter_html": "  ", "scopes": _one_priced_scope(db)}
     )
     assert response.status_code == 201, response.text
     body = response.json()

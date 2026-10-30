@@ -109,4 +109,21 @@ describe('agentConsoleService actions', () => {
     expect(error.reason).toBe('not_proposed');
     expect(error.message).toBe('This proposal was already decided.');
   });
+
+  it('withdraws one waiting step of an action for the contact', async () => {
+    const { withdrawAgentStep } = await import('./agentConsoleService');
+    apiFetch.mockResolvedValueOnce(json({ action_id: 'a1', status: 'executed', reply_text: 'Withdrawn.', steps: [] }));
+    await withdrawAgentStep('C1', 'a1', 2);
+    expect(apiFetch.mock.calls[0][0]).toBe('/api/v1/system/chatbot/agent/actions/a1/steps/2/withdraw');
+    expect(apiFetch.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({ contact_respond_id: 'C1' });
+  });
+
+  it('a withdraw refused because the change applied reads in plain words', async () => {
+    const { ActionRefusedError, withdrawAgentStep } = await import('./agentConsoleService');
+    apiFetch.mockResolvedValueOnce(json({ detail: { code: 'action_refused', reason: 'applied' } }, 409));
+    const error = await withdrawAgentStep('C1', 'a1', 0).catch((e) => e);
+    expect(error).toBeInstanceOf(ActionRefusedError);
+    expect(error.message).toBe('That change already applied, so it can no longer be withdrawn.');
+  });
 });
