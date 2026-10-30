@@ -77,7 +77,9 @@ def _setup(w, kind, *, approval_grace=None):
 def _draft(w):
     c = w.as_contact(w.contact)
     res = c.post(f"{SUB}/{w.kind}", json={
-        "fields": {"customer_name": "ZZT Example Trading", "purpose": "showroom stock"},
+        # requested_by_contact_id: the field the portal form requires (FORM-REQUIRED-SERVER).
+        "fields": {"customer_name": "ZZT Example Trading", "purpose": "showroom stock",
+                   "requested_by_contact_id": w.contact},
         "products": [{"item_code": "ZZT-TILE-1", "quantity": 4, "unit_price": 25, "total": 100}],
     })
     assert res.status_code == 200, res.text

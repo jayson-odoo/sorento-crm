@@ -8,6 +8,7 @@ Run: pytest tests/test_portal_revise_flow.py -v
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from unittest.mock import patch
 
 import pytest
@@ -380,8 +381,13 @@ def test_complaint_is_revised_like_the_others_when_the_setting_allows(db):
     contact = seed_contact(db)
     from app.models.complaints import Complaint
 
+    # A complete complaint: a revise demands the fields the form requires (FORM-REQUIRED-SERVER).
     complaint = Complaint(
-        id=str(uuid.uuid4()), status="submitted", contact_id=contact.id, space_id=CONTACT_SPACE
+        id=str(uuid.uuid4()), status="submitted", contact_id=contact.id, space_id=CONTACT_SPACE,
+        delivery_order_number="DO-ZZT-1", customer_name="ZZT customer", contact_person="ZZT Ali",
+        contact_number="0123456789", customer_type="dealer", complaint_date=date(2026, 10, 30),
+        within_warranty="yes", defects_discovered="upon_delivery", complaint_type="product_defect",
+        defect_description="Chipped", salesperson="ZZT Aminah", product_code="ZZT-TILE-1",
     )
     db.add(complaint)
     db.commit()

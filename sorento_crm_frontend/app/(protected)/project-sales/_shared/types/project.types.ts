@@ -1099,13 +1099,6 @@ export interface ProjectSample {
   updated_at?: string | null;
 }
 
-export interface ProjectSampleBody {
-  quotation_version_id: string;
-  submitted_on?: string | null;
-  developer_feedback?: string | null;
-  salesperson_notes?: string | null;
-}
-
 export interface ProjectPurchaseOrder {
   id: string;
   project_id: string;

@@ -72,6 +72,7 @@ def _seed(db, kind="sponsorship_form"):
         source="portal",
         contact_id=contact_id,
         space_id="space-1",
+        requested_by_contact_id=contact_id,  # required on submit (FORM-REQUIRED-SERVER)
         portal_draft_at=datetime.utcnow(),
     )
     db.add_all([contact, token, header])

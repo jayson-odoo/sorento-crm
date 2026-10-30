@@ -1068,7 +1068,11 @@ def _chatbot_agent_fallback() -> str:
         "result of this turn), list anything you could not find in not_found with the call_id that "
         "showed it, list the parts of your plan you answered in answered, and list in not_checked what "
         "you did not check. Answer concisely in the language of this message, not a guess from earlier "
-        "turns."
+        "turns.\n\n"
+        "FORMAT\n"
+        "Your reply is read on WhatsApp. Use WhatsApp formatting: *bold* for names and key figures, "
+        "- at the start of a line for bullet points, 1. 2. 3. for numbered steps, and a blank line between "
+        "parts. Do not use Markdown headings or double asterisks."
     )
 
 

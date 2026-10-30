@@ -12,6 +12,8 @@ export interface AgentToolCall {
   name: string;
   status: string;
   ms: number;
+  /** The call in plain words (what it was for, with what, how it ended); absent on an older turn. */
+  detail?: string;
 }
 
 export interface AgentTurnResponse {
@@ -36,10 +38,28 @@ export interface AgentPendingAction {
   turn_id?: string;
 }
 
+/** One field of one record, before and after, in words. */
+export interface AgentChange {
+  record: string;
+  field: string;
+  before: string;
+  after: string;
+}
+
 export interface AgentActionStep {
   summary: string | null;
   status: 'done' | 'failed' | 'skipped' | 'proposed' | string;
   error: string | null;
+  changes?: AgentChange[];
+}
+
+/** A proposal made in a turn, as it stands now: kept across reloads. */
+export interface AgentConversationAction {
+  id: string;
+  status: 'proposed' | 'executed' | 'partial' | 'rejected' | 'cancelled' | 'expired' | string;
+  decided_at: string | null;
+  decided_by_name: string | null;
+  steps: AgentActionStep[];
 }
 
 export interface AgentActionResponse {
@@ -55,7 +75,7 @@ export interface AgentSteps {
   prompt_tokens: number;
   completion_tokens: number;
   cached_tokens: number;
-  tool_calls: { name: string; status: string; ms: number }[];
+  tool_calls: { name: string; status: string; ms: number; detail?: string }[];
 }
 
 export interface AgentConversationTurn {
@@ -69,6 +89,8 @@ export interface AgentConversationTurn {
   limit_hit?: AgentTurnResponse['limit_hit'];
   tool_calls?: { name: string; status: string }[];
   steps?: AgentSteps;
+  /** The actions this turn proposed, with what they changed. */
+  actions?: AgentConversationAction[];
 }
 
 export interface AgentConversationResponse {

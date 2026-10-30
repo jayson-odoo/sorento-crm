@@ -79,7 +79,8 @@ def test_confirm_returns_the_outcome_fields_and_passes_the_console_context(clien
     assert body["action_id"] == ACTION_ID
     assert body["status"] == "executed"
     assert body["reply_text"] == "Done."
-    assert body["steps"] == STEPS
+    # Slice 6 V1: every step also carries its changes in words (none for this stub).
+    assert body["steps"] == [dict(step, changes=[]) for step in STEPS]
     args, kwargs = _passed(patch_actions, "confirm")
     assert "ZZT-C1" in args + list(kwargs.values())
     assert ACTION_ID in args + list(kwargs.values())

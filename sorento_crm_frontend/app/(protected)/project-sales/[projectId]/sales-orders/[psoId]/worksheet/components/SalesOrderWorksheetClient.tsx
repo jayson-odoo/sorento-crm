@@ -433,7 +433,7 @@ function WorksheetView({
                   Rebuild the sales order from its purchase order and delivery schedule.
                 </p>
                 <Button asChild variant="outline" size="sm" className="mt-4">
-                  <Link href={`/project-sales/${projectId}?tab=orders`}>
+                  <Link href={`/project-sales/${projectId}?tab=sales-orders`}>
                     Go to the orders
                   </Link>
                 </Button>
