@@ -1304,6 +1304,104 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     )
 
 
+AMENDMENT_STATUSES = ("open", "applied", "superseded")
+AMENDMENT_FIELDS = ("quantity", "unit_price", "remove")
+AMENDMENT_DECISIONS = ("pending", "accepted", "rejected")
+
+
+class QuotationAmendmentRequest(Base, CompanyScopedMixin):
+    """The customer's suggested quantities and prices on one issue (QUOTE-CUSTOMER-AMEND).
+
+    One OPEN request per issue, held by a partial unique index rather than by the application
+    check alone, so two submits racing past the check still leave one. The issued lines are
+    never touched by a request: Apply drafts the next revision instead.
+    """
+
+    __tablename__ = "quotation_amendment_requests"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_issues.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # open | applied | superseded (a newer revision was issued while it was open).
+    status = Column(String(16), nullable=False, server_default="open", default="open")
+    requester_name = Column(String(200), nullable=True)
+    note = Column(Text, nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    submitted_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    applied_at = Column(DateTime(timezone=False), nullable=True)
+    applied_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_quotation_amendment_requests_open",
+            "issue_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
+        CheckConstraint(
+            "status IN ('open', 'applied', 'superseded')",
+            name="ck_quotation_amendment_requests_status",
+        ),
+        {"schema": "projects"},
+    )
+
+
+class QuotationAmendmentRequestRow(Base, CompanyScopedMixin):
+    """One suggested change: one field of one ISSUED line, decided on its own.
+
+    One row per field rather than per line, so the salesperson can accept the quantity and
+    reject the price of the same line. `value_to` is null for a removal.
+    """
+
+    __tablename__ = "quotation_amendment_request_rows"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    request_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_amendment_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    field = Column(String(16), nullable=False)
+    value_from = Column(Numeric(12, 2), nullable=True)
+    value_to = Column(Numeric(12, 2), nullable=True)
+    decision = Column(String(16), nullable=False, server_default="pending", default="pending")
+    decision_reason = Column(String(500), nullable=True)
+    decided_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    decided_at = Column(DateTime(timezone=False), nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "request_id", "line_id", "field", name="uq_quotation_amendment_rows_line_field"
+        ),
+        CheckConstraint(
+            "field IN ('quantity', 'unit_price', 'remove')",
+            name="ck_quotation_amendment_rows_field",
+        ),
+        CheckConstraint(
+            "decision IN ('pending', 'accepted', 'rejected')",
+            name="ck_quotation_amendment_rows_decision",
+        ),
+        {"schema": "projects"},
+    )
+
+
 class QuotationSignature(Base, CompanyScopedMixin):
     """One captured signature: drawn, typed or initialled, all of them ending as one image.
 

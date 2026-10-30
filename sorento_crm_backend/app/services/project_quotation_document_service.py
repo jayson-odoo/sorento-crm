@@ -596,6 +596,11 @@ def issue(
         )
     record.grand_total = grand
     db.flush()
+    # A request still open on an older revision can no longer be answered there: the customer
+    # now holds this one, with its own link (QUOTE-CUSTOMER-AMEND AC-QCA-25).
+    from app.services import quotation_amendment_service as amendments
+
+    amendments.close_open_requests_superseded_by(db, document, record)
     # Issuing SPENDS an approval: a manager approved those prices, so the document moves off
     # `approved` and the next revision that dips below the floor has to be approved on its own
     # merits. A no-op on a quotation that was never on the graph.
@@ -1049,6 +1054,32 @@ def get_issue_by_sign_token(db: Session, token: str) -> ProjectQuotationIssue:
     return record
 
 
+def later_issue(
+    db: Session, record: ProjectQuotationIssue
+) -> Optional[ProjectQuotationIssue]:
+    """The newest issue of the same document after this one, or None when this is the latest."""
+    return (
+        db.query(ProjectQuotationIssue)
+        .filter(
+            ProjectQuotationIssue.document_id == record.document_id,
+            ProjectQuotationIssue.issue_no > record.issue_no,
+        )
+        .order_by(ProjectQuotationIssue.issue_no.desc())
+        .first()
+    )
+
+
+def assert_not_superseded(db: Session, record: ProjectQuotationIssue) -> None:
+    """A replaced revision is neither signed nor amended: the customer is pointed at the new one."""
+    newer = later_issue(db, record)
+    if newer is not None:
+        raise AppException(
+            status_code=409,
+            message=f"This quotation has been replaced by {newer.our_ref_text}.",
+            code="quotation_superseded",
+        )
+
+
 def accept_issue(
     db: Session,
     *,
@@ -1081,6 +1112,27 @@ def accept_issue(
     """
     if record.accepted_at is not None:
         return record
+    assert_not_superseded(db, record)
+    # Owner decision Q1 (a), 30 Oct 2026: no signature while suggested changes are unanswered,
+    # and none on a revision whose suggestions were applied, since a new revision follows.
+    from app.services import quotation_amendment_service as amendments
+
+    asked = amendments.request_for_issue(db, record.id)
+    if asked is not None and asked.status == amendments.STATUS_OPEN:
+        raise AppException(
+            status_code=409,
+            message="You can sign once Sorento has answered your suggestions.",
+            code="quotation_amendment_open",
+        )
+    if asked is not None and asked.status == amendments.STATUS_APPLIED:
+        raise AppException(
+            status_code=409,
+            message=(
+                "Sorento has answered your suggestions. "
+                "Your salesperson will send the revised quotation."
+            ),
+            code="quotation_amendment_applied",
+        )
     if (record.terms_rendered or "").strip() and terms_accepted is not True:
         raise AppException(
             status_code=422,
@@ -1173,10 +1225,9 @@ def request_changes(
     The read is taken ``FOR UPDATE`` so two submissions from the same thumb serialise instead of
     racing: without the lock both see a null note and both notify.
 
-    The reverse order is deliberately ALLOWED. Somebody who asked for changes can still decide to
-    sign, and refusing a signature the customer wants to give would be worse than the mixed
-    record; the request stays on the row as the history it is, and acceptance is what the page
-    then reports.
+    The reverse order is ALLOWED for this free-text request: somebody who asked for changes can
+    still decide to sign. A suggested-changes request (``quotation_amendment_service``) is the
+    exception, by owner decision Q1 (a): while one is open, ``accept_issue`` refuses.
     """
     text_note = (note or "").strip()
     if not text_note:
@@ -1348,6 +1399,9 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
                 "scope_total": Decimal(pair.scope_total or 0),
                 "lines": [
                     {
+                        # The handle a suggested change names. Only lines of this issue are
+                        # accepted back, so the id gives nothing beyond the page itself.
+                        "id": str(line.id),
                         # Same definition the PDF and the workbook use. The customer signing this
                         # page and the customer reading the PDF must see the same item numbers.
                         # Same definition the PDF and the workbook use, imported INSIDE the
@@ -1398,6 +1452,22 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         company_name = company.name if company else None
         company_logo_url = company.logo_url if company else None
 
+    from app.services import quotation_amendment_service as amendments
+
+    asked = amendments.request_for_issue(db, record.id)
+    newer = later_issue(db, record)
+    # One reason, the first that applies, so the page never prints two.
+    if record.accepted_at is not None:
+        blocked = "accepted"
+    elif newer is not None:
+        blocked = "superseded"
+    elif asked is not None and asked.status == amendments.STATUS_OPEN:
+        blocked = "amendment_open"
+    elif asked is not None and asked.status == amendments.STATUS_APPLIED:
+        blocked = "amendment_applied"
+    else:
+        blocked = None
+
     return {
         "our_ref": (
             quotation_no(document.document_no, record.issue_no)
@@ -1428,4 +1498,9 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         "changes_requested_note": record.changes_requested_note,
         "changes_requested_by_name": record.changes_requested_by_name,
         "is_changes_requested": record.changes_requested_at is not None,
+        # Floors are internal pricing, so the customer's copy of the request carries none.
+        "amendment_request": amendments.serialize_request(db, asked, with_floors=False),
+        "superseded_by_ref": newer.our_ref_text if newer is not None else None,
+        "can_sign": blocked is None,
+        "sign_blocked_reason": blocked,
     }

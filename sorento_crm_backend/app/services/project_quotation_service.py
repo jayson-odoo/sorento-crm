@@ -369,13 +369,20 @@ def update_quotation(
 
 
 def revise(
-    db: Session, *, quotation: ProjectQuotation, actor_user_id: str
+    db: Session,
+    *,
+    quotation: ProjectQuotation,
+    actor_user_id: str,
+    line_map: Optional[Dict[str, ProjectQuotationLine]] = None,
 ) -> ProjectQuotationVersion:
     """Freeze the current version and open the next one, carrying the lines (AC-E3).
 
     Carrying the lines rather than starting blank: a revision is almost always "the same
     quotation with three prices moved", and re-keying forty lines is how people end up
     editing the frozen one in a spreadsheet instead.
+
+    A copied line gets a NEW id and no back-reference. A caller that has to find the copy of a
+    given line (Apply of a customer amendment) passes ``line_map`` and gets ``old id -> copy``.
     """
     assert_scope_unlocked(db, quotation)
     live = current_version(db, quotation.id)
@@ -393,39 +400,40 @@ def revise(
     db.flush()
 
     for line in list_lines(db, live.id):
-        db.add(
-            ProjectQuotationLine(
-                company_id=quotation.company_id,
-                version_id=nxt.id,
-                product_id=line.product_id,
-                product_set_id=line.product_set_id,
-                set_parts_snapshot=line.set_parts_snapshot,
-                product_code_snapshot=line.product_code_snapshot,
-                description_snapshot=line.description_snapshot,
-                list_price_snapshot=line.list_price_snapshot,
-                image_attachment_id=line.image_attachment_id,
-                drawing_attachment_id=line.drawing_attachment_id,
-                # The printed columns: a revision is the same quotation with some prices moved,
-                # and dropping these silently re-typed the bill-of-quantities layout to nothing.
-                item_label=line.item_label,
-                brand_snapshot=line.brand_snapshot,
-                technical_spec=line.technical_spec,
-                complete_set=line.complete_set,
-                band_label=line.band_label,
-                is_rate_only=line.is_rate_only,
-                unit_price=line.unit_price,
-                quantity=line.quantity,
-                uom=line.uom,
-                unit_type=line.unit_type,
-                line_total=line.line_total,
-                is_non_standard=line.is_non_standard,
-                floor_value_applied=line.floor_value_applied,
-                floor_level_applied=line.floor_level_applied,
-                is_below_floor=line.is_below_floor,
-                sort_order=line.sort_order,
-                notes=line.notes,
-            )
+        copy = ProjectQuotationLine(
+            company_id=quotation.company_id,
+            version_id=nxt.id,
+            product_id=line.product_id,
+            product_set_id=line.product_set_id,
+            set_parts_snapshot=line.set_parts_snapshot,
+            product_code_snapshot=line.product_code_snapshot,
+            description_snapshot=line.description_snapshot,
+            list_price_snapshot=line.list_price_snapshot,
+            image_attachment_id=line.image_attachment_id,
+            drawing_attachment_id=line.drawing_attachment_id,
+            # The printed columns: a revision is the same quotation with some prices moved,
+            # and dropping these silently re-typed the bill-of-quantities layout to nothing.
+            item_label=line.item_label,
+            brand_snapshot=line.brand_snapshot,
+            technical_spec=line.technical_spec,
+            complete_set=line.complete_set,
+            band_label=line.band_label,
+            is_rate_only=line.is_rate_only,
+            unit_price=line.unit_price,
+            quantity=line.quantity,
+            uom=line.uom,
+            unit_type=line.unit_type,
+            line_total=line.line_total,
+            is_non_standard=line.is_non_standard,
+            floor_value_applied=line.floor_value_applied,
+            floor_level_applied=line.floor_level_applied,
+            is_below_floor=line.is_below_floor,
+            sort_order=line.sort_order,
+            notes=line.notes,
         )
+        db.add(copy)
+        if line_map is not None:
+            line_map[str(line.id)] = copy
     db.flush()
     _recalculate_total(db, nxt)
 
@@ -619,6 +627,42 @@ def resolve_product_image(db: Session, product_id: str) -> Optional[str]:
     return product_image_service.chosen_attachment_id(db, product_id)
 
 
+def line_floor(
+    db: Session,
+    *,
+    line: ProjectQuotationLine,
+    quotation: ProjectQuotation,
+    product: Optional[Product],
+    product_set: Optional[ProductSet] = None,
+    series_pricing: Optional[Dict[str, tuple]] = None,
+) -> Optional["pricing.ResolvedFloor"]:
+    """The floor one line is judged against, or None. The ONE rule: the line writer uses it,
+    and so does anything that has to say in advance whether a price would breach (a customer
+    amendment's suggested price)."""
+    if line.product_set_id:
+        if product_set is None:
+            product_set = (
+                db.query(ProductSet).filter(ProductSet.id == line.product_set_id).first()
+            )
+        if product_set is None:
+            return None
+        return pricing.resolve_set_floor(
+            db,
+            company_id=quotation.company_id,
+            product_set=product_set,
+            list_price=line.list_price_snapshot,
+            series_id=quotation.series_id,
+        )
+    return pricing.resolve_floor(
+        db,
+        company_id=quotation.company_id,
+        product=product,
+        list_price=line.list_price_snapshot,
+        series_id=quotation.series_id,
+        series_pricing=series_pricing,
+    )
+
+
 def _apply_guardrails(
     db: Session,
     *,
@@ -651,21 +695,6 @@ def _apply_guardrails(
         line.is_non_standard = not pricing.is_set_in_series(
             db, quotation.series_id, line.product_set_id
         )
-        if product_set is None:
-            product_set = (
-                db.query(ProductSet).filter(ProductSet.id == line.product_set_id).first()
-            )
-        floor = (
-            pricing.resolve_set_floor(
-                db,
-                company_id=quotation.company_id,
-                product_set=product_set,
-                list_price=line.list_price_snapshot,
-                series_id=quotation.series_id,
-            )
-            if product_set is not None
-            else None
-        )
     else:
         line.is_non_standard = product is None or not pricing.is_in_series(
             db,
@@ -673,14 +702,14 @@ def _apply_guardrails(
             product=product,
             membership=membership,
         )
-        floor = pricing.resolve_floor(
-            db,
-            company_id=quotation.company_id,
-            product=product,
-            list_price=line.list_price_snapshot,
-            series_id=quotation.series_id,
-            series_pricing=series_pricing,
-        )
+    floor = line_floor(
+        db,
+        line=line,
+        quotation=quotation,
+        product=product,
+        product_set=product_set,
+        series_pricing=series_pricing,
+    )
     if floor is None:
         line.floor_value_applied = None
         line.floor_level_applied = None

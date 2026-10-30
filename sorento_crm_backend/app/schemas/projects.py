@@ -2188,6 +2188,68 @@ class QuotationSignChangesRequest(BaseModel):
     requester_name: Optional[str] = Field(None, max_length=200)
 
 
+class QuotationAmendmentLineChange(BaseModel):
+    """One line the customer changed. Quantity and price are STRINGS so a bad value is refused by
+    the service with the lane's own code, not by pydantic. There is deliberately no field for a
+    description, code, brand or spec: the server cannot be asked to write one, and any such key
+    a client sends is ignored."""
+
+    line_id: str = Field(max_length=64)
+    quantity: Optional[str] = Field(None, max_length=32)
+    unit_price: Optional[str] = Field(None, max_length=32)
+    remove: bool = False
+
+
+class QuotationAmendmentSubmitRequest(BaseModel):
+    requester_name: Optional[str] = Field(None, max_length=200)
+    note: Optional[str] = Field(None, max_length=4000)
+    lines: List[QuotationAmendmentLineChange] = Field(default_factory=list, max_length=500)
+
+
+class QuotationAmendmentDecideRequest(BaseModel):
+    # Checked by the service (accepted | rejected | pending, reason <= 500), so the rule is
+    # stated once.
+    decision: str = Field(max_length=16)
+    reason: Optional[str] = None
+
+
+class QuotationAmendmentRowResponse(BaseModel):
+    id: str
+    line_id: str
+    field: str
+    value_from: Optional[Decimal] = None
+    value_to: Optional[Decimal] = None
+    decision: str = "pending"
+    decision_reason: Optional[str] = None
+
+
+class QuotationAmendmentStaffRowResponse(QuotationAmendmentRowResponse):
+    # Staff only: a floor is internal pricing, so the customer's page has no such keys.
+    below_floor: bool = False
+    floor_value: Optional[Decimal] = None
+
+
+class QuotationAmendmentResponse(BaseModel):
+    """What the customer's page shows of their own request."""
+
+    id: str
+    status: str
+    submitted_at: Optional[datetime] = None
+    requester_name: Optional[str] = None
+    note: Optional[str] = None
+    applied_at: Optional[datetime] = None
+    rows: List[QuotationAmendmentRowResponse] = Field(default_factory=list)
+
+
+class QuotationAmendmentStaffResponse(QuotationAmendmentResponse):
+    rows: List[QuotationAmendmentStaffRowResponse] = Field(default_factory=list)
+
+
+class QuotationAmendmentApplyResponse(BaseModel):
+    request: QuotationAmendmentStaffResponse
+    version_ids: List[str] = Field(default_factory=list)
+
+
 class QuotationSignatureResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -2224,6 +2286,7 @@ ProjectQuotationDocumentResponse.model_rebuild()
 
 
 class QuotationSignScopeLine(BaseModel):
+    id: Optional[str] = None
     item_label: Optional[str] = None
     description: Optional[str] = None
     technical_spec: Optional[str] = None
@@ -2244,10 +2307,10 @@ class QuotationSignScope(BaseModel):
 
 
 class QuotationSignPageResponse(BaseModel):
-    """The read-only quotation a customer sees on the counter-sign link.
+    """The quotation a customer sees on the counter-sign link.
 
-    Deliberately does NOT carry ids: the page needs no handle on anything, and a public payload
-    that leaks internal identifiers invites somebody to try them elsewhere.
+    The only ids it carries are the issue's own lines and its own request's rows, which a
+    suggested change has to name; the server accepts back only lines of this issue.
     """
 
     our_ref: Optional[str] = None
@@ -2275,3 +2338,8 @@ class QuotationSignPageResponse(BaseModel):
     changes_requested_note: Optional[str] = None
     changes_requested_by_name: Optional[str] = None
     is_changes_requested: bool = False
+    amendment_request: Optional[QuotationAmendmentResponse] = None
+    superseded_by_ref: Optional[str] = None
+    can_sign: bool = True
+    # accepted | superseded | amendment_open | amendment_applied, or null when signable.
+    sign_blocked_reason: Optional[str] = None
