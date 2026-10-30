@@ -539,6 +539,16 @@ describe('AC-L5 edit mode', () => {
     expect(bodyOf(updateProject)).not.toHaveProperty('lead_id');
   });
 
+  it('AC-L5 clearing the Customer on edit sends customer_id null and no lead_id key (guard)', async () => {
+    renderForm({ mode: 'edit', project: baseProject() });
+    fireEvent.click(screen.getByRole('button', { name: /^Clear .*customer/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    const body = bodyOf(updateProject);
+    expect(body).toHaveProperty('customer_id', null);
+    expect(body).not.toHaveProperty('lead_id');
+  });
+
   it('AC-L5 saving an unrelated field sends no lead_id key either', async () => {
     renderForm({ mode: 'edit', project: baseProject() });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
