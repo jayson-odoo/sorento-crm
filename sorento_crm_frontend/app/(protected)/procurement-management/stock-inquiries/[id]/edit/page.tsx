@@ -1,6 +1,6 @@
 'use client';
 
-import { use } from 'react';
+import { Suspense, use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft } from 'lucide-react';
@@ -33,12 +33,15 @@ export default function EditStockInquiryPage({
       </Container>
 
       <Container>
-        <StockInquiryForm
-          inquiryId={id}
-          onSuccess={() => {
-            router.push(`/procurement-management/stock-inquiries/${id}`);
-          }}
-        />
+        {/* A salesperson's own form reads ?from= / ?revise= (useSearchParams). */}
+        <Suspense fallback={null}>
+          <StockInquiryForm
+            inquiryId={id}
+            onSuccess={() => {
+              router.push(`/procurement-management/stock-inquiries/${id}`);
+            }}
+          />
+        </Suspense>
       </Container>
     </>
   );

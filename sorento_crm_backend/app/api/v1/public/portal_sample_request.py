@@ -10,7 +10,7 @@ All rules are in ``sample_request_service``; this module resolves the contact an
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
@@ -52,82 +52,6 @@ def _linked_user_id(db: Session, contact_id: str) -> Optional[str]:
     return db.query(User.id).filter(User.respond_contact_id == str(contact_id)).scalar()
 
 
-@router.get("/sample-request/products")
-def portal_search_products(
-    q: str = Query(""),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        return svc.search_products(db, q)
-
-
-@router.get("/sample-request/customers")
-def portal_search_customers(
-    q: str = Query(""),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    # The same one company submit checks the pick in, so listed and accepted cannot drift.
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        return svc.portal_customers(db, str(token.contact_id), q)
-
-
-@router.get("/submissions/sample_request")
-def portal_list(
-    q: Optional[str] = Query(None),
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        return svc.list_for(
-            db,
-            actor=_actor(token),
-            contact_id=str(token.contact_id),
-            q=q,
-            page=page,
-            limit=limit,
-        )
-
-
-@router.post("/submissions/sample_request", status_code=201)
-def portal_create(
-    payload: SampleRequestWrite,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    company_id = _resolve_company(db, token)
-    try:
-        with company_scope(db, frozenset({company_id})):
-            data = payload.model_dump(exclude_unset=True)
-            svc.assert_portal_project_allowed(
-                db, contact=PortalService(db).get_contact(token), project_id=data.get("project_id")
-            )
-            svc.assert_portal_customer_allowed(
-                db, contact_id=token.contact_id, customer_id=data.get("customer_id")
-            )
-            req = svc.create_draft(
-                db,
-                salesperson_id=_linked_user_id(db, token.contact_id),
-                data=data,
-                source="portal",
-                contact_id=str(token.contact_id),
-                space_id=token.space_id,
-            )
-            db.commit()
-            db.refresh(req)
-            return svc.serialize_detail(db, req)
-    except Exception:
-        db.rollback()
-        raise
-
-
 def _own(db: Session, token: PortalToken, request_id: str):
     return svc.get_for(
         db,
@@ -136,106 +60,198 @@ def _own(db: Session, token: PortalToken, request_id: str):
     )
 
 
-@router.get("/submissions/sample_request/{request_id}")
-def portal_get(
-    request_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        return svc.serialize_detail(db, _own(db, token, request_id))
+# ---------- The contact's sample request routes, shared with the CRM ----------
 
 
-@router.put("/submissions/sample_request/{request_id}")
-def portal_update(
-    request_id: str,
-    payload: SampleRequestWrite,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    company_id = _resolve_company(db, token)
-    try:
-        with company_scope(db, frozenset({company_id})):
-            req = _own(db, token, request_id)
-            data = payload.model_dump(exclude_unset=True)
-            if data.get("project_id"):
+def register_sample_request_routes(router: APIRouter, token_dependency: Callable[..., Any]) -> None:
+    """Register the sample request routes on ``router``, the caller resolved by ``token_dependency``.
+
+    ONE body per route for two surfaces (PORTAL-P4-REQUESTS S4), the shape of
+    ``portal.register_submission_routes``: the portal mounts them below with ``get_portal_token``;
+    ``app/api/v1/my_requests.py`` mounts them on ``/api/v1/my-requests`` with a transient portal
+    token built from a CRM session, so a salesperson writes their own sample requests through
+    exactly the code a portal contact does.
+    """
+
+    @router.get("/sample-request/products")
+    def portal_search_products(
+        q: str = Query(""),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.search_products(db, q)
+
+
+    @router.get("/sample-request/customers")
+    def portal_search_customers(
+        q: str = Query(""),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        # The same one company submit checks the pick in, so listed and accepted cannot drift.
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.portal_customers(db, str(token.contact_id), q)
+
+
+    @router.get("/submissions/sample_request")
+    def portal_list(
+        q: Optional[str] = Query(None),
+        page: int = Query(1, ge=1),
+        limit: int = Query(50, ge=1, le=200),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.list_for(
+                db,
+                actor=_actor(token),
+                contact_id=str(token.contact_id),
+                q=q,
+                page=page,
+                limit=limit,
+            )
+
+
+    @router.post("/submissions/sample_request", status_code=201)
+    def portal_create(
+        payload: SampleRequestWrite,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        company_id = _resolve_company(db, token)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                data = payload.model_dump(exclude_unset=True)
                 svc.assert_portal_project_allowed(
-                    db, contact=PortalService(db).get_contact(token), project_id=data["project_id"]
+                    db, contact=PortalService(db).get_contact(token), project_id=data.get("project_id")
                 )
-            # Only a CHANGED debtor is re-checked: a draft whose debtor later left the
-            # agent's book must still be saveable with the customer it already has.
-            if data.get("customer_id") != req.customer_id:
                 svc.assert_portal_customer_allowed(
                     db, contact_id=token.contact_id, customer_id=data.get("customer_id")
                 )
-            svc.update_draft(db, req, actor=_actor(token), data=data)
-            db.commit()
-            db.refresh(req)
-            return svc.serialize_detail(db, req)
-    except Exception:
-        db.rollback()
-        raise
+                req = svc.create_draft(
+                    db,
+                    salesperson_id=_linked_user_id(db, token.contact_id),
+                    data=data,
+                    source="portal",
+                    contact_id=str(token.contact_id),
+                    space_id=token.space_id,
+                )
+                db.commit()
+                db.refresh(req)
+                return svc.serialize_detail(db, req)
+        except Exception:
+            db.rollback()
+            raise
 
 
-@router.post("/submissions/sample_request/{request_id}/submit")
-def portal_submit(
-    request_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    company_id = _resolve_company(db, token)
-    try:
-        with company_scope(db, frozenset({company_id})):
+    @router.get("/submissions/sample_request/{request_id}")
+    def portal_get(
+        request_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.serialize_detail(db, _own(db, token, request_id))
+
+
+    @router.put("/submissions/sample_request/{request_id}")
+    def portal_update(
+        request_id: str,
+        payload: SampleRequestWrite,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        company_id = _resolve_company(db, token)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                req = _own(db, token, request_id)
+                data = payload.model_dump(exclude_unset=True)
+                if data.get("project_id"):
+                    svc.assert_portal_project_allowed(
+                        db, contact=PortalService(db).get_contact(token), project_id=data["project_id"]
+                    )
+                # Only a CHANGED debtor is re-checked: a draft whose debtor later left the
+                # agent's book must still be saveable with the customer it already has.
+                if data.get("customer_id") != req.customer_id:
+                    svc.assert_portal_customer_allowed(
+                        db, contact_id=token.contact_id, customer_id=data.get("customer_id")
+                    )
+                svc.update_draft(db, req, actor=_actor(token), data=data)
+                db.commit()
+                db.refresh(req)
+                return svc.serialize_detail(db, req)
+        except Exception:
+            db.rollback()
+            raise
+
+
+    @router.post("/submissions/sample_request/{request_id}/submit")
+    def portal_submit(
+        request_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        company_id = _resolve_company(db, token)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                req = _own(db, token, request_id)
+                svc.submit(db, req, actor=_actor(token))
+                db.commit()
+                db.refresh(req)
+                return svc.serialize_detail(db, req)
+        except Exception:
+            db.rollback()
+            raise
+
+
+    @router.post("/submissions/sample_request/{request_id}/cancel")
+    def portal_cancel(
+        request_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Only while Draft or Submitted; once the coordinator is on it, staff cancel."""
+        _assert_visible(db, token.contact_id)
+        company_id = _resolve_company(db, token)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                req = _own(db, token, request_id)
+                frm = svc.status_key(db, req)
+                if frm not in (svc.DRAFT, svc.SUBMITTED):
+                    raise svc.illegal_move(frm, svc.CANCELLED)
+                svc.move(db, req, actor=_actor(token), to=svc.CANCELLED)
+                db.commit()
+                db.refresh(req)
+                return svc.serialize_detail(db, req)
+        except Exception:
+            db.rollback()
+            raise
+
+
+    @router.get("/submissions/sample_request/{request_id}/pdf")
+    def portal_pdf(
+        request_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
             req = _own(db, token, request_id)
-            svc.submit(db, req, actor=_actor(token))
-            db.commit()
-            db.refresh(req)
-            return svc.serialize_detail(db, req)
-    except Exception:
-        db.rollback()
-        raise
+            return Response(
+                content=svc.render_pdf(db, req),
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": content_disposition(f"{req.request_no}.pdf", inline=True)
+                },
+            )
 
 
-@router.post("/submissions/sample_request/{request_id}/cancel")
-def portal_cancel(
-    request_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """Only while Draft or Submitted; once the coordinator is on it, staff cancel."""
-    _assert_visible(db, token.contact_id)
-    company_id = _resolve_company(db, token)
-    try:
-        with company_scope(db, frozenset({company_id})):
-            req = _own(db, token, request_id)
-            frm = svc.status_key(db, req)
-            if frm not in (svc.DRAFT, svc.SUBMITTED):
-                raise svc.illegal_move(frm, svc.CANCELLED)
-            svc.move(db, req, actor=_actor(token), to=svc.CANCELLED)
-            db.commit()
-            db.refresh(req)
-            return svc.serialize_detail(db, req)
-    except Exception:
-        db.rollback()
-        raise
-
-
-@router.get("/submissions/sample_request/{request_id}/pdf")
-def portal_pdf(
-    request_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    _assert_visible(db, token.contact_id)
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        req = _own(db, token, request_id)
-        return Response(
-            content=svc.render_pdf(db, req),
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": content_disposition(f"{req.request_no}.pdf", inline=True)
-            },
-        )
+register_sample_request_routes(router, get_portal_token)

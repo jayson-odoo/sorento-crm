@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -27,11 +28,14 @@ export default async function NewSponsorshipFormPage({
         }
       />
       <div className="mt-6">
-        <PurchaseRequestForm
-          defaultRequestType="sponsorship_form"
-          defaultProjectId={project_id}
-          successRedirectUrl="/procurement-management/sponsorship-forms"
-        />
+        {/* A salesperson's own form reads ?from= / ?revise= (useSearchParams). */}
+        <Suspense fallback={null}>
+          <PurchaseRequestForm
+            defaultRequestType="sponsorship_form"
+            defaultProjectId={project_id}
+            successRedirectUrl="/procurement-management/sponsorship-forms"
+          />
+        </Suspense>
       </div>
     </Container>
   );

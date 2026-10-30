@@ -924,8 +924,11 @@ def serialize_projects(
             }
         )
     if "projects.registrations.submit" in permissions and "projects.projects.edit" not in permissions:
-        # A submit-only user edits only their own draft or rejected registration (J3b).
+        # A submit-only user edits only their own draft or rejected registration (J3b); a staff
+        # project or an approved one follows the general rule computed above.
         for row, project in zip(out, projects):
+            if is_approved(project):
+                continue
             row["can_edit"] = bool(
                 actor_user_id
                 and project.owner_user_id == actor_user_id

@@ -15,10 +15,12 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useEnterCrmView } from '@/hooks/useEnterCrmView';
 import { PortalLanding } from './components/PortalLanding';
 import { PortalVerifyCard } from './components/PortalVerifyCard';
 import {
   PortalUnauthorizedError,
+  clearImpersonationToken,
   demoteTokenToSession,
   fetchMeWithGrace,
   isImpersonationToken,
@@ -38,6 +40,7 @@ function PortalRootContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>('boot');
+  const enterCrmView = useEnterCrmView();
 
   useEffect(() => {
     let cancelled = false;
@@ -79,7 +82,19 @@ function PortalRootContent() {
           // Defensive: if an impersonation link lacked the marker, make sure
           // the token does not persist beyond this tab.
           if (!isImpersonationToken()) demoteTokenToSession();
-          setMode('legacy-landing');
+          // A salesperson's contact: the admin gets that user's CRM view, not this portal.
+          if (me.crm_user_id) {
+            try {
+              await enterCrmView(me.crm_user_id);
+              // The CRM view needs no portal token: drop the one this link carried.
+              clearImpersonationToken();
+              if (!cancelled) router.replace('/my-requests');
+              return;
+            } catch {
+              // the CRM view could not start: today's landing
+            }
+          }
+          if (!cancelled) setMode('legacy-landing');
           return;
         }
         const slug = (me.portal_slug || '').trim();

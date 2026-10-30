@@ -55,6 +55,7 @@ describe.each([
         path: '/sales/customer-asks',
         permission: 'sales.customer_asks.view',
         moduleKey: 'sales',
+        audience: 'staff',
       },
       {
         title: 'Sales Teams',
