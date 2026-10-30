@@ -468,6 +468,11 @@ function ProductCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const label = grid.labelOf(row);
   const editable = grid.editing && !staged.removed;
 
+  // Marked once the row has been touched or reached, never on a row nobody has been to yet.
+  const productError =
+    isUntouched(staged.draft) && !grid.visited.has(row.key)
+      ? undefined
+      : lineErrors(staged.draft).product;
   return (
     <div className="min-w-0 space-y-1">
       {editable ? (
@@ -502,6 +507,9 @@ function ProductCell({ row: tableRow }: CellContext<GridRow, unknown>) {
         </span>
       )}
       {editable && staged.draft.product_set_id ? <SetBadge /> : null}
+      {editable && productError && (
+        <p className="text-xs text-destructive">{productError}</p>
+      )}
       <LineFlags
         quotationId={grid.quotationId}
         line={staged.line}
@@ -528,13 +536,6 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
     );
   }
 
-  // Marked as it is typed, or once the cell has been left empty, but never on a row nobody has
-  // reached yet: empty is not wrong until somebody has been there.
-  const message =
-    isUntouched(staged.draft) && !grid.visited.has(row.key)
-      ? undefined
-      : lineErrors(staged.draft).description;
-  const errorId = `${row.key}-description-error`;
   return (
     <div className="min-w-0">
       <Textarea
@@ -542,8 +543,6 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
         rows={1}
         value={value}
         aria-label={`Description on ${grid.labelOf(row)}`}
-        aria-invalid={message ? true : undefined}
-        aria-describedby={message ? errorId : undefined}
         placeholder="Type what the customer reads"
         className="field-sizing-content min-h-8 resize-none px-2 py-1.5"
         onChange={(event) =>
@@ -551,11 +550,6 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
         }
         onBlur={() => grid.markVisited(row.key)}
       />
-      {message && (
-        <p id={errorId} className="mt-1 text-xs text-destructive">
-          {message}
-        </p>
-      )}
     </div>
   );
 }

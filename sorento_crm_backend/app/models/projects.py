@@ -1622,8 +1622,8 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
         ForeignKey("projects.quotation_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
-    # Nullable: an off-catalog line is legitimate (a bespoke item, or something not yet
-    # in the catalogue) and always raises the non-standard alert (AC-E5).
+    # Nullable only because a set line has no product_id. The service requires a product OR a
+    # set on every line (quotation_line_product_required).
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )

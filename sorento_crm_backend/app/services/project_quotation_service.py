@@ -905,6 +905,25 @@ def _write_line(
             **payload,
         }
 
+    # Every line is a catalogue product or a product set, whatever its description says.
+    # Raised before the line is added or mutated, so a bulk save or form create rolls back whole.
+    has_product = (
+        payload["product_id"]
+        if "product_id" in payload
+        else (line.product_id if line is not None else None)
+    )
+    has_set = (
+        payload["product_set_id"]
+        if "product_set_id" in payload
+        else (line.product_set_id if line is not None else None)
+    )
+    if not has_product and not has_set:
+        raise AppException(
+            status_code=422,
+            message="Every line needs a catalogue product or product set.",
+            code="quotation_line_product_required",
+        )
+
     unit_type = payload.get("unit_type")
     if unit_type and unit_type not in UNIT_TYPES:
         raise AppException(
@@ -975,12 +994,6 @@ def _write_line(
             line.complete_set = None
     if product is not None:
         _snapshot_product(db, line, product)
-    elif product_set is None and not line.description_snapshot:
-        raise AppException(
-            status_code=422,
-            message="A non-standard item needs a description.",
-            code="quotation_line_description_required",
-        )
 
     line.line_total = (
         Decimal(line.unit_price or 0) * Decimal(line.quantity or 0)

@@ -260,6 +260,9 @@ def seed(db: Session) -> dict:
         for line in _quotation_lines():
             code = (line.get("code") or "").strip()
             product = codes.get(code.upper()) if code else None
+            if product is None:
+                print(f"skip quotation line {code or '(no code)'}: not in the catalogue")
+                continue
             qty = Decimal(str(line["qty"]))
             price = Decimal(str(line["unit_price"]))
             line_total = Decimal(str(line["total"]))
@@ -267,7 +270,7 @@ def seed(db: Session) -> dict:
                 ProjectQuotationLine(
                     company_id=SORENTO_COMPANY_ID,
                     version_id=version.id,
-                    product_id=str(product.id) if product else None,
+                    product_id=str(product.id),
                     # The snapshot carries the code even when the catalogue does not
                     # have it. That unresolved line is the real state of the item
                     # master and the sales order draft should say so, not inherit a

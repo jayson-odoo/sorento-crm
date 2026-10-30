@@ -1277,16 +1277,17 @@ class ProjectQuotationVersionResponse(BaseModel):
 
 class ProjectQuotationLineBase(BaseModel):
     product_id: Optional[str] = Field(
-        None, description="Null for an off-catalog line, which always raises the alert."
+        None,
+        description="A catalogue product. Either this or product_set_id is required (422).",
     )
     product_set_id: Optional[str] = Field(
         None,
         pattern=UUID_PATTERN,
-        description="A product set quoted as ONE line. Never together with product_id (422).",
+        description="A product set quoted as ONE line. Either this or product_id is required, never both (422).",
     )
     description_snapshot: Optional[str] = Field(
         None,
-        description="Required when there is no product or set: it is what the customer reads.",
+        description="The text printed for the line. Optional: the product or set supplies one.",
     )
     unit_price: Decimal = Decimal("0")
     quantity: Decimal = Decimal("1")
