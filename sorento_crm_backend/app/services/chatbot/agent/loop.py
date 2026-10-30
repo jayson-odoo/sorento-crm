@@ -528,7 +528,7 @@ class AgentTurnResult:
     rounds: int
     usage: dict
     tool_calls: list[dict]
-    #: The proposal this turn stored: {"id", "lines", "expires_at"}, or None.
+    #: The proposal this turn stored: {"id", "turn_id", "lines", "expires_at"}, or None.
     pending_action: dict | None = None
 
 
@@ -1074,7 +1074,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 db, ctx, conversation_id=conversation_id, turn_id=turn_id, steps=steps, action_id=action_id
             )
             lines = actions.proposal_lines(stored)
-            pending = {"id": str(stored.id), "lines": lines, "expires_at": actions._expires_at(stored).isoformat()}
+            pending = actions.pending_dict(stored)
             reply = f"{reply}\n\n{proposal_block(lines)}"
         except Exception:  # noqa: BLE001 - the turn still closes
             logger.warning("agent: storing the proposal failed", exc_info=True)

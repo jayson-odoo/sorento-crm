@@ -85,6 +85,16 @@ def pending_action(db, contact_respond_id: str, *, now: datetime | None = None) 
     return row
 
 
+def pending_dict(action: AgentAction) -> dict:
+    """The proposal as the API and the turn result carry it."""
+    return {
+        "id": str(action.id),
+        "turn_id": str(action.turn_id),
+        "lines": proposal_lines(action),
+        "expires_at": _expires_at(action).isoformat(),
+    }
+
+
 def proposal_lines(action: AgentAction) -> list[str]:
     return [str(s.get("summary") or "") for s in action.steps or []]
 

@@ -146,3 +146,46 @@ def test_an_unknown_action_for_a_real_agent_contact_is_a_409_not_found(client, s
 
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"] == {"code": "action_refused", "reason": "not_found"}
+
+
+# ------------------------------------------------------------------ GET conversation carries the pending action
+
+
+def test_the_conversation_read_returns_the_pending_action_for_a_reloaded_console(client, session_factory):
+    from app.models.chatbot_agent import AgentAction
+    from tests.chatbot.agent._seed import seed_agent_contact
+
+    db = session_factory()
+    contact = seed_agent_contact(db)
+    action = AgentAction(
+        id=str(uuid.uuid4()), conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()),
+        contact_respond_id=contact["respond_id"], user_id=contact["user_id"], status="proposed",
+        steps=[{"tool": "crm_customer_ask_update", "summary": "Mark SRT-1 for Acme done", "status": "proposed"}],
+    )
+    db.add(action)
+    db.commit()
+
+    resp = client.get(
+        "/api/v1/system/chatbot/agent/conversation", params={"contact_respond_id": contact["respond_id"]}
+    )
+
+    assert resp.status_code == 200, resp.text
+    pending = resp.json()["pending_action"]
+    assert set(pending) == {"id", "lines", "expires_at", "turn_id"}
+    assert pending["id"] == str(action.id) and pending["turn_id"] == str(action.turn_id)
+    assert pending["lines"] == ["Mark SRT-1 for Acme done"]
+
+
+def test_the_conversation_read_has_no_pending_action_when_nothing_is_proposed(client, session_factory):
+    from tests.chatbot.agent._seed import seed_agent_contact
+
+    db = session_factory()
+    contact = seed_agent_contact(db)
+    db.commit()
+
+    resp = client.get(
+        "/api/v1/system/chatbot/agent/conversation", params={"contact_respond_id": contact["respond_id"]}
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["pending_action"] is None

@@ -252,6 +252,7 @@ class AgentPendingAction(BaseModel):
     """The changes a turn proposed, waiting for the user's yes (AGENTIC-P3)."""
 
     id: str
+    turn_id: str
     lines: list[str] = Field(default_factory=list)
     expires_at: str
 
@@ -289,6 +290,8 @@ class AgentConversationTurn(BaseModel):
 class AgentConversationResponse(BaseModel):
     conversation_id: str | None = None
     turns: list[AgentConversationTurn] = Field(default_factory=list)
+    #: The contact's current proposal waiting for a yes, so a reloaded console can still show it.
+    pending_action: AgentPendingAction | None = None
 
 
 class AgentConversationNewRequest(BaseModel):

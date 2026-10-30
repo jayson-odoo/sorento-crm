@@ -808,9 +808,11 @@ def agent_conversation(
         ctx = build_context(db, contact_respond_id)
     except AgentRefused as exc:
         raise _agent_refused(exc)
+    waiting = agent_actions.pending_action(db, contact_respond_id)
+    pending = agent_actions.pending_dict(waiting) if waiting is not None else None
     conv = agent_memory.latest_conversation(db, contact_respond_id)
     if conv is None or not agent_memory.belongs_to(conv, ctx.user_id, grants_hash(ctx)):
-        return AgentConversationResponse(conversation_id=None, turns=[])
+        return AgentConversationResponse(conversation_id=None, turns=[], pending_action=pending)
     turns = []
     for row in agent_memory.conversation_turns(db, conv):
         envelope = row.envelope if isinstance(row.envelope, dict) else {}
@@ -832,7 +834,7 @@ def agent_conversation(
                 steps=agent_memory.steps_from_trace(row.trace),
             )
         )
-    return AgentConversationResponse(conversation_id=str(conv.id), turns=turns)
+    return AgentConversationResponse(conversation_id=str(conv.id), turns=turns, pending_action=pending)
 
 
 @router.post("/agent/conversation/new", response_model=AgentConversationNewResponse)
