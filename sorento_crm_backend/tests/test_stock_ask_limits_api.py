@@ -450,6 +450,7 @@ def test_put_category_without_edit_unchanged_value_still_saves(api, world, db):
 
 def test_put_product_with_edit_persists_and_response_carries_both(api, world, db):
     role = _role(db, "zzt_prod_full")
+    _grant(db, role, "master_data.products.edit")
     _grant(db, role, "master_data.chatbot_stock_limits.edit")
     user_id = _user_with_role(db, role)
     db.commit()
@@ -468,7 +469,9 @@ def test_put_product_with_edit_persists_and_response_carries_both(api, world, db
 
 
 def test_put_product_without_edit_changing_value_is_403_naming_the_permission(api, world, db):
-    user_id = _user_with_role(db, None)
+    role = _role(db, "zzt_prod_no_limits_403")
+    _grant(db, role, "master_data.products.edit")
+    user_id = _user_with_role(db, role)
     db.commit()
 
     client, state = api
@@ -489,7 +492,9 @@ def test_put_product_without_edit_unchanged_value_still_saves(api, world, db):
     )
     db.commit()
 
-    user_id = _user_with_role(db, None)
+    role = _role(db, "zzt_prod_no_limits_same")
+    _grant(db, role, "master_data.products.edit")
+    user_id = _user_with_role(db, role)
     db.commit()
 
     client, state = api
@@ -524,6 +529,7 @@ def test_put_category_negative_max_qty_is_422(api, world, db):
 
 def test_put_product_negative_eta_offset_is_422(api, world, db):
     role = _role(db, "zzt_prod_422")
+    _grant(db, role, "master_data.products.edit")
     _grant(db, role, "master_data.chatbot_stock_limits.edit")
     user_id = _user_with_role(db, role)
     db.commit()
@@ -645,6 +651,7 @@ def test_post_category_without_edit_and_no_chatbot_limits_in_body_still_creates(
 
 def test_post_product_with_edit_persists_chatbot_limits(api, world, db):
     role = _role(db, "zzt_prod_create_full")
+    _grant(db, role, "master_data.products.add")
     _grant(db, role, "master_data.chatbot_stock_limits.edit")
     user_id = _user_with_role(db, role)
     db.commit()
@@ -671,7 +678,9 @@ def test_post_product_with_edit_persists_chatbot_limits(api, world, db):
 
 
 def test_post_product_without_edit_setting_chatbot_limits_is_403(api, world, db):
-    user_id = _user_with_role(db, None)
+    role = _role(db, "zzt_prod_create_no_limits_403")
+    _grant(db, role, "master_data.products.add")
+    user_id = _user_with_role(db, role)
     db.commit()
 
     client, state = api
@@ -693,7 +702,9 @@ def test_post_product_without_edit_setting_chatbot_limits_is_403(api, world, db)
 
 
 def test_post_product_without_edit_and_no_chatbot_limits_in_body_still_creates(api, world, db):
-    user_id = _user_with_role(db, None)
+    role = _role(db, "zzt_prod_create_plain")
+    _grant(db, role, "master_data.products.add")
+    user_id = _user_with_role(db, role)
     db.commit()
 
     client, state = api

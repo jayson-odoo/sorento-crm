@@ -384,7 +384,7 @@ def test_search_specs_never_ranks_a_hidden_product(db):
 # Routes                                                                      #
 # --------------------------------------------------------------------------- #
 @pytest.fixture
-def api(db, world):
+def api(db, world, monkeypatch):
     def _override_get_db():
         yield db
 
@@ -395,6 +395,15 @@ def api(db, world):
         set_company_scope(db, scope)
         return scope
 
+    # The product write routes require `master_data.products.*`; this file tests
+    # what a write persists, not who may make it (tests/test_product_write_gates.py).
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug.startswith("master_data.products."),
+    )
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_current_user] = lambda: principal
     # The module guard on every router authenticates through this one.
