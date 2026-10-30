@@ -207,7 +207,6 @@ const eslintConfig = [
       'app/(protected)/project-sales/*/components/QuotationLinePhoto.tsx',
       'app/(protected)/project-sales/*/components/QuotationVersionEditor.tsx',
       'app/(protected)/project-sales/*/components/QuotationsPanel.tsx',
-      'app/(protected)/project-sales/*/components/SamplesPanel.tsx',
       'app/(protected)/project-sales/*/components/StakeholdersPanel.tsx',
       'app/(protected)/project-sales/*/components/TaskTimelineView.tsx',
       'app/(protected)/project-sales/*/components/TasksPanel.tsx',

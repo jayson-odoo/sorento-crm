@@ -22,6 +22,7 @@ from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot.agent import actions, memory, writes
+from app.services.chatbot.agent.formatting import to_whatsapp
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
 from app.services.chatbot.agent.tools import (
     ANSWER,
@@ -691,6 +692,67 @@ def _unique_call_id(raw: Any, used: set[str]) -> str:
     return out
 
 
+def _collect_names(data: Any, names: dict[str, str]) -> None:
+    """id -> the name a result gave it, for the ids a tool call's arguments mention."""
+    if isinstance(data, dict):
+        label = next((str(data[k]) for k in ("title", "name", "customer_name", "product_code", "code", "label") if data.get(k)), None)
+        if label and isinstance(data.get("id"), str):
+            names.setdefault(data["id"].lower(), label)
+        for v in data.values():
+            _collect_names(v, names)
+    elif isinstance(data, list):
+        for v in data:
+            _collect_names(v, names)
+
+
+def _row_count(data: Any) -> int:
+    if isinstance(data, list):
+        return len(data)
+    if isinstance(data, dict):
+        return sum(len(v) for v in data.values() if isinstance(v, list))
+    return 0
+
+
+def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) -> str:
+    """One tool call in plain words: what it was for, with what (ids as the names results gave, unknown
+    ids left out) and how it ended. Never an id."""
+    label = TOOL_LABELS.get(name) or name.replace("crm_", "").replace("_", " ")
+    shown = []
+    for key, value in (args if isinstance(args, dict) else {}).items():
+        if key in GUARD_PARAMS:
+            continue
+        values = value if isinstance(value, list) else [value]
+        if key.endswith(("_id", "_ids")):
+            words = [names[str(v).lower()] for v in values if str(v).lower() in names]
+        else:
+            words = [str(v) for v in values if isinstance(v, (str, int, float)) and not isinstance(v, bool)]
+        if words:
+            shown.append(f"{key.replace('_', ' ').removesuffix(' ids').removesuffix(' id')}: {', '.join(words)}"[:80])
+    head = f"{label} ({'; '.join(shown)})" if shown else label
+    if out.status == "proposed":
+        ending = f"{(out.data or {}).get('summary', '')} - proposed".strip(" -")
+        text = f"{head}: {ending}"
+    elif out.status == "empty":
+        text = f"{head}: nothing found"
+    elif out.status == "ok":
+        rows = _row_count(out.data)
+        if rows:
+            text = f"{head}: {rows} row{'s' if rows != 1 else ''}"
+        else:
+            text = f"{head}: nothing found" if _is_rows(out.data) else f"{head}: done"
+    elif out.status == "timeout":
+        text = f"{head}: timed out"
+    elif out.status == "error":
+        text = f"{head}: failed"
+    else:
+        text = f"{head}: refused: {out.message}".strip()
+    return _UUID_TEXT.sub("", text)
+
+
+def _is_rows(data: Any) -> bool:
+    return isinstance(data, list) or (isinstance(data, dict) and any(isinstance(v, list) for v in data.values()))
+
+
 def _args_for_digest(args: Any) -> Any:
     if not isinstance(args, dict):
         return {}
@@ -871,6 +933,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             schemas += decision_schemas(str(waiting.id))
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
         action_id = str(uuid.uuid4())
+        id_names: dict[str, str] = {}
         plan_parts: list[str] = []
         own_ids = (str(ctx.contact_respond_id), str(ctx.contact_pk))
 
@@ -1007,6 +1070,9 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                     )
                 ms = int((clock() - started) * 1000)
                 payload = out.to_json(call_id)
+                if out.status in ("ok", "empty"):
+                    _collect_names(out.data, id_names)
+                detail = tool_detail(name, args, out, id_names)
                 run.any_tool_result = True
                 ledger[call_id] = {
                     "name": name, "status": out.status,
@@ -1025,6 +1091,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                         "ms": ms,
                         "result_chars": len(payload),
                         "more": out.more,
+                        "detail": detail,
                     },
                 )
                 replies[idx] = payload
@@ -1095,6 +1162,8 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         reply = f"The agent could not answer: {error}."
     if not reply:
         reply = "The agent has no answer for this."
+    if status != "failed":
+        reply = to_whatsapp(reply)
     pending = None
     if status != "failed" and steps:
         # After verification: the block is built by code from the stored steps, so its figures are not flagged.

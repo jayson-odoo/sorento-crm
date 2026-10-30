@@ -57,6 +57,7 @@ def _purchase_request(world, project_id):
         space_id="zzt-space",
         project_id=project_id,
         customer_name="zzt customer",
+        requested_by_contact_id=world.a,  # required on submit (FORM-REQUIRED-SERVER)
         portal_draft_at=datetime.utcnow(),
     )
     world.db.add(row)

@@ -1,4 +1,6 @@
 venv/
+# A worktree may link venv in as a symlink, which "venv/" does not match.
+venv
 __pycache__/
 *.pyc
 *.rdb

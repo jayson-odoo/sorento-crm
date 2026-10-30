@@ -200,7 +200,7 @@ export function SalesOrderDetailClient({
             : 'It may have been rebuilt or deleted.'}
         </p>
         <Button asChild variant="outline" className="mt-4">
-          <Link href={`/project-sales/${projectId}?tab=orders`}>Back to orders</Link>
+          <Link href={`/project-sales/${projectId}?tab=sales-orders`}>Back to orders</Link>
         </Button>
       </div>
     );
@@ -805,7 +805,7 @@ export function SalesOrderDetailClient({
         onDelete={async () => {
           await removeOrder.mutateAsync(psoId);
         }}
-        onSuccess={() => router.push(`/project-sales/${projectId}?tab=orders`)}
+        onSuccess={() => router.push(`/project-sales/${projectId}?tab=sales-orders`)}
         successMessage="Sales order deleted"
       />
     </div>
