@@ -96,5 +96,6 @@ product check.
 
 - AC-AC-23 A one-time data migration: every live `awaiting` / `changed` row the rule marks done becomes
   `acknowledged` (by NULL); every person-confirmed `acknowledged` row gets the manual Confirm of
-  AC-AC-17c; no row moves from Done to To order. Checked on a dev copy before the hand test.
+  AC-AC-17c; no PERSON-confirmed row moves from Done to To order (a system-done row, `acknowledged_by`
+  NULL, is re-read by the rule like the live writer does). Checked on a dev copy before the hand test.
 - AC-AC-24 The migration is idempotent: a second run changes nothing.

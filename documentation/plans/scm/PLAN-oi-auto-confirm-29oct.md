@@ -1,6 +1,6 @@
 # PLAN: OI rows auto-confirm, OI auto-complete, Confirm / Unconfirm as manual override (OI-AUTO-CONFIRM)
 
-Status: Review fix round 2 - re-review at 81feb5780c: earlier blockers fixed, sweep green (1971/0); open: retired-SPO test gap, cancelled-line actioned rows, reject of a manual host, product read; hand test filed. Track: full (L). Draft PR #1986.
+Status: Owner rulings 30 Oct built (backfill OK; cancelled SO line rows always Done; person-confirmed rows stay Done); delta review round 3 test flips in progress; hand test after the final backfill on the copy. Track: full (L). PR #1986.
 
 ## Owner ruling (29 Oct 2026, ~21:55)
 
