@@ -109,3 +109,74 @@ def test_the_worker_serves_through_the_draining_server(monkeypatch, tmp_path):
     assert len(served) == 1 and isinstance(served[0], uvicorn_worker.DrainingServer), served
     assert served[0]._notify == worker.notify
     assert served[0]._heartbeat_for == 150
+
+
+# ---- BACKEND-MEM-2 S3: a worker at its request limit asks for its replacement before it drains
+def _limited(asked, limit=3):
+    server = uvicorn_worker.DrainingServer(
+        uvicorn.Config(app=None, limit_max_requests=limit), lambda: None, 150.0, ask_replacement=lambda: asked.append(1)
+    )
+    return server
+
+
+def test_the_request_limit_asks_the_master_for_a_replacement_once():
+    asked: list[int] = []
+    server = _limited(asked)
+    server.server_state.total_requests = 3
+    assert asyncio.run(server.on_tick(0)) is True
+    assert asyncio.run(server.on_tick(1)) is True
+    assert asked == [1]
+
+
+def test_a_signalled_shutdown_asks_for_nothing():
+    """A deploy's stop or a TTOU retires the worker on purpose: no replacement."""
+    asked: list[int] = []
+    server = _limited(asked)
+    server.server_state.total_requests = 3  # even when the count is at the limit too
+    server.should_exit = True
+    assert asyncio.run(server.on_tick(0)) is True
+    assert asked == []
+
+
+def test_below_the_limit_nothing_happens():
+    asked: list[int] = []
+    server = _limited(asked)
+    server.server_state.total_requests = 2
+    assert asyncio.run(server.on_tick(0)) is False
+    assert asked == []
+
+
+def test_the_request_limit_runs_the_lifespan_shutdown(tmp_path):
+    """The inbox drains stop in the app's lifespan shutdown (app/main.py shutdown_event -> stop_inbox_queue ->
+    begin_shutdown); a request-limit exit reaches it like a signal does."""
+    import threading
+    import urllib.request
+
+    events: list[str] = []
+
+    async def app(scope, receive, send):
+        if scope["type"] == "lifespan":
+            while True:
+                msg = await receive()
+                if msg["type"] == "lifespan.startup":
+                    await send({"type": "lifespan.startup.complete"})
+                elif msg["type"] == "lifespan.shutdown":
+                    events.append("shutdown")
+                    await send({"type": "lifespan.shutdown.complete"})
+                    return
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    asked: list[int] = []
+    config = uvicorn.Config(app=app, port=0, limit_max_requests=1, log_level="warning")
+    server = uvicorn_worker.DrainingServer(config, lambda: None, 5.0, ask_replacement=lambda: asked.append(1))
+    t = threading.Thread(target=server.run)
+    t.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    port = server.servers[0].sockets[0].getsockname()[1]
+    assert urllib.request.urlopen(f"http://127.0.0.1:{port}/").read() == b"ok"
+    t.join(10)
+    assert not t.is_alive() and events == ["shutdown"] and asked == [1]

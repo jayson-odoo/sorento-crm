@@ -14,9 +14,11 @@ and `DrainingServer` makes that shutdown as graceful as a deploy's stop.
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 import sys
 import time
-from typing import Callable
+from typing import Callable, Optional
 
 from gunicorn.arbiter import Arbiter
 from uvicorn import Config, Server
@@ -38,10 +40,30 @@ class DrainingServer(Server):
 
     HEARTBEAT_EVERY = 5.0
 
-    def __init__(self, config: Config, notify: Callable[[], None], heartbeat_for: float) -> None:
+    def __init__(
+        self, config: Config, notify: Callable[[], None], heartbeat_for: float,
+        ask_replacement: Optional[Callable[[], None]] = None,
+    ) -> None:
         super().__init__(config=config)
         self._notify = notify
         self._heartbeat_for = heartbeat_for
+        self._ask_replacement = ask_replacement
+        self._replacement_asked = False
+
+    async def on_tick(self, counter: int) -> bool:
+        """BACKEND-MEM-2 S3: a worker that reaches `max_requests` (not a signal: a deploy's stop or a `TTOU` retires
+        it on purpose) asks the master for its replacement before it drains, so the colour never runs a worker short.
+        The drain itself is the same as a signal's: the lifespan shutdown stops the inbox (app/main.py)."""
+        should_exit = await super().on_tick(counter)
+        # uvicorn's request limit returns True without setting `should_exit`; a signal sets it.
+        limit = self.config.limit_max_requests
+        if (
+            should_exit and not self.should_exit and not self._replacement_asked and self._ask_replacement is not None
+            and limit is not None and self.server_state.total_requests >= limit
+        ):
+            self._replacement_asked = True
+            self._ask_replacement()
+        return should_exit
 
     async def shutdown(self, sockets=None) -> None:
         beat = asyncio.ensure_future(self._beat())
@@ -63,7 +85,9 @@ class InboxUvicornWorker(UvicornWorker):
     async def _serve(self) -> None:
         # uvicorn's own `_serve`, with DrainingServer in place of Server.
         self.config.app = self.wsgi
-        server = DrainingServer(self.config, self.notify, self.cfg.graceful_timeout)
+        server = DrainingServer(
+            self.config, self.notify, self.cfg.graceful_timeout, ask_replacement=lambda: os.kill(self.ppid, signal.SIGTTIN)
+        )
         self._install_sigquit_handler()
         await server.serve(sockets=self.sockets)
         if not server.started:

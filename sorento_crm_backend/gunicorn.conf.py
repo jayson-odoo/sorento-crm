@@ -75,6 +75,14 @@ graceful_timeout = 150
 # into a 5x re-offer rate.
 keepalive = int(os.environ.get("GUNICORN_KEEP_ALIVE", "75"))
 
+# BACKEND-MEM-2 S3: a worker keeps the memory of its busiest moment until it exits, and without a request limit it
+# exits only at the next deploy (documentation/plans/deploy/PLAN-backend-mem-2-30oct.md). At about 650 requests per
+# worker per hour, 2000 plus up to 500 of jitter recycles each worker every 2.5-4 h, never all together. A worker at
+# its limit asks for its replacement before it drains (app/uvicorn_worker.py), so capacity never drops; `child_exit`
+# below returns the count afterwards. 0 turns recycling off (gunicorn's own default).
+max_requests = int(os.environ.get("GUNICORN_MAX_REQUESTS", "2000"))
+max_requests_jitter = int(os.environ.get("GUNICORN_MAX_REQUESTS_JITTER", "500"))
+
 accesslog = "-"
 errorlog = "-"
 loglevel = "info"
@@ -99,3 +107,15 @@ def post_fork(server, worker):
     from app.database import engine
 
     engine.dispose(close=False)
+
+
+def child_exit(server, worker):
+    """Runs in the master after a worker exits (BACKEND-MEM-2 S3).
+
+    A worker retired at its request limit sent SIGTTIN first, so its replacement was forked before it began to
+    drain and the master runs one worker over the configured count; once it has gone, the count goes back and no
+    second replacement forks. Side effect: a manual `TTIN` (adding a worker by hand) is also undone at the next exit
+    of any worker. `TTIN` then `TTOU`, the documented recycle round, is unaffected (`TTOU` lowers the count itself).
+    """
+    if server.num_workers > server.cfg.workers:
+        server.num_workers -= 1
