@@ -680,13 +680,17 @@ def quotation_prefill(
             .all()
         ):
             latest[str(issue.document_id)] = issue
+    # Newest first; the document number breaks a tie (documents made in one transaction share a
+    # timestamp, and numbers only grow).
     issued = sorted(
         (d for d in docs if str(d.id) in latest),
-        key=lambda d: latest[str(d.id)].issued_at,
+        key=lambda d: (latest[str(d.id)].issued_at, d.document_no),
         reverse=True,
     )
     drafts = sorted(
-        (d for d in docs if str(d.id) not in latest), key=lambda d: d.created_at, reverse=True
+        (d for d in docs if str(d.id) not in latest),
+        key=lambda d: (d.created_at, d.document_no),
+        reverse=True,
     )
     ordered = issued + drafts
     result["documents"] = [
