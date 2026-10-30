@@ -35,7 +35,8 @@ so 1a's "no duplicate task" still holds per person.
   `users.respond_contact_id` (when it points at an existing contact) as `respond_contact_id`, the
   contact's phone as `contact_phone_number`, and `source_message_text` =
   `Technical drawing for <product code> (<quotation no>)` or `Product photo for <product code>
-  (<quotation no>)`. No contact: those stay empty and the task behaves as in #1983 (Q4).
+  (<quotation no>)`. No contact: the contact and phone stay empty (the source text is still
+  set, it names the request in the panel) and the task behaves as in #1983 (Q4).
 - **B3 Acknowledgement (Q2).** A new task with a contact queues ONE WhatsApp to that contact on the
   `respond_io` queue:
   `Your project request: technical drawing for <product code> (<quotation no>). Routed to your PIC, they will reply shortly.`
@@ -46,7 +47,7 @@ so 1a's "no duplicate task" still holds per person.
   becomes "form-SLA row and not a media task with a contact". A send marks the task responded
   (the same `mark_ticket_responded`), so a reply is the Respond.
 - **B5 Panel.** `MediaRequestDrawer` keeps its facts block (product, Waiting on this, Upload in
-  Resources) and, when the task has a conversation, mounts the same `TicketConversationPanel` the
+  Resources; its description line reads `From <requester> · With <assignee>`) and, when the task has a conversation, mounts the same `TicketConversationPanel` the
   chat drawer uses, with no Respond button (the reply is the Respond). Without a contact it is
   today's panel with Respond (Q4). "Following" goes: a ticket has one requester, named in the
   description line.
