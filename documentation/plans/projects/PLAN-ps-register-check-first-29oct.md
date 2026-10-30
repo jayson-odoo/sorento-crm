@@ -1,10 +1,8 @@
 # PLAN: PS-REGISTER-CHECK-FIRST (29 Oct 2026)
 
-Status: Build, BE red tests (owner answered Q-A..Q-E all (a) 30 Oct; mock v2 ask filed 30 Oct for the wizard + tabs
-notes; FE slices W and T wait for v2 approval). Track M (feature
-track, local lane; no schema: Requirements is an `attachment_types` row). Build waits for owner approval AND #1953
-(PORTAL-P4-REQUESTS) merge. Merge origin/main again once #1978
-(PS-WORDING) lands (both edit `ProjectForm.tsx`).
+Status: Build. Mock v4 approved 30 Oct 10:27 (Spec In hidden at 0 documents), V1-V3 = (a); red tests being amended
+to the final UAC; crew said build now (30 Oct), so merge origin/main and resolve once #1953 (PORTAL-P4-REQUESTS)
+lands (it edits ProjectForm.tsx, projects.py, project_service.py). Track M (feature track, local lane; no schema).
 
 Card: `CARD-ps-register-check-first-29oct.md`. UAC: `ps-register-check-first-acceptance-criteria.md` (written after
 the owner answers the card). Mock: `documentation/mockups/PS-REGISTER-CHECK-FIRST/index.html`.
@@ -39,25 +37,27 @@ step-2 field list easy to change); lead-name uniqueness (card Q-A).
   stage moves, so API and any future caller get it; the first-PO automatic move (`project_po_service.py:209`) writes
   the status itself and stays ungated by design (Q-B a). One helper `has_requirements_document(db, project_id)` reads
   `entity_attachment_links` + `attachments` + `attachment_types.code`.
-- Seed: `ensure_requirements_document_type` joins `project_seed_service.run` (startup, additive, idempotent), so the
-  FE can resolve the kind by code before the first upload. Data, no schema.
+- Gate input: any live document linked to the project (owner, mock v3 note 3); no attachment type, no seed.
 - Clash: one helper `assert_no_blocking_clash(...)` lifted from `register_project` (`project_service.py:283-303`) and
   called by `register_project`, `crm_register(submit=True)` and `crm_submit`. Same 409 and message for every caller
   (class: every path that turns a registration into a submitted one).
 - Rename: strings only; stored `kind` and notification type keys unchanged.
 - FE wizard: create-mode step state inside `ProjectForm` (no new form), `WizardSteps` + Create-lead footer pattern;
   step-2 sections stay today's JSX so Monday's required-field ruling stays a local change.
-- FE gate: the stage action catches 422 `project_requirements_missing` and opens the dialog; the server is the only
-  judge (no new read field).
+- FE gate: the header reads the document count from the Documents tab's query `['project-documents', id]` (shared
+  cache): 0 documents on a Registered project -> "Upload Requirement" CTA, Spec In hidden; the upload invalidates the
+  query and the header flips. The server 422 stays the backstop (toast). No new API field.
+- Secondary leads table: `components/common/PanelDataGrid.tsx` (raw `components/ui/table` is barred by
+  `components/ui/raw-table.inventory.test.ts`).
 
 ## Slices
 
 1. BE gate + seed (AC-G1..G6, G9).
 2. BE salesperson Check (AC-S1..S4).
 3. Rename BE + FE (AC-R1..R5).
-4. FE requirements dialog + upload kind (AC-G7, G8).
-5. FE wizard (AC-W1..W10), after mock v2 approval.
-6. FE tabs (AC-T1..T3), after mock v2 approval and V1-V3.
+4. FE Upload Requirement CTA + dialog (AC-G7..G10).
+5. FE wizard with Clash / No clash (AC-W1..W10).
+6. FE secondary leads table (AC-R6) and tabs (AC-T1..T3).
 
 ## Test list
 
