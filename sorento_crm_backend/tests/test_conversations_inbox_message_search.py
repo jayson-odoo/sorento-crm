@@ -42,11 +42,11 @@ T0 = datetime(2026, 8, 10, 8, 0, 0)
 
 
 def _msg(db, rio: str, body: str, sent_at: datetime, *, direction: str = "incoming",
-         message_id: str | None = "auto") -> str | None:
+         message_id: str | None = "auto", channel: str = "whatsapp") -> str | None:
     mid = uuid.uuid4().hex[:16] if message_id == "auto" else message_id
     db.add(
         ChatHistory(
-            channel="whatsapp",
+            channel=channel,
             contact_id=rio,
             phone_number="+60119999999",
             message=body,
@@ -166,6 +166,26 @@ def test_a_message_without_an_id_is_not_a_match(client, db, world):
     assert _search(client, "wardrobe") == []
 
 
+def test_a_message_on_another_channel_is_not_a_match(client, db, world):
+    """The thread reads the WhatsApp channel only, so it could not open this match."""
+    _msg(db, "zzt-io-4", "bookshelf enquiry", T0 + timedelta(hours=1), channel="telegram")
+    assert _search(client, "bookshelf") == []
+
+
+def test_a_digit_search_still_finds_ordinary_messages(client, db, world):
+    _msg(db, "zzt-io-4", "my order SO-77123 arrived", T0 + timedelta(hours=1))
+    assert _names(_search(client, "77123")) == ["ZZT Stranger"]
+
+
+def test_the_snippet_keeps_the_term_near_the_front_of_a_long_message(client, db, world):
+    """The row is ONE truncated line; a long lead would hide the hit behind the ellipsis."""
+    body = "Hi boss, " + "lorem ipsum dolor sit amet " * 6 + "the ottoman is torn, " + "x " * 80
+    _msg(db, "zzt-io-4", body, T0 + timedelta(hours=1))
+    snippet = _search(client, "ottoman")[0]["match"]["snippet"]
+    assert snippet.startswith("…")
+    assert snippet.index("ottoman") <= 20
+
+
 def test_wildcards_in_a_message_search_are_literal(client, db, world):
     _msg(db, "zzt-io-4", "50% discount", T0 + timedelta(hours=1))
     assert _names(_search(client, "50%")) == ["ZZT Stranger"]
@@ -209,3 +229,45 @@ def test_paging_over_message_matches_is_one_query_and_loses_nothing(db):
         assert pages < 20
     assert len(seen) == len(set(seen)) == 90
     assert stamps == sorted(stamps, reverse=True)
+
+
+def test_paging_interleaves_name_hits_and_message_hits_without_gaps(db):
+    """Name hits sort by last message, message hits by match time, on ONE keyset."""
+    from app.services import conversation_inbox_service as inbox
+
+    contacts, messages = [], []
+    for i in range(40):
+        rio = f"zzt-mix-{i:03d}"
+        by_name = i % 2 == 0
+        contacts.append({"id": str(uuid.uuid4()), "phone_number": f"+6017{i:07d}",
+                         "name": f"ZZT Ottoman {i:03d}" if by_name else f"ZZT Plain {i:03d}",
+                         "respond_io_id": rio, "session_vars": {}})
+        stamp = T0 + timedelta(minutes=3 * i)
+        body = "small talk" if by_name else "about the ottoman"
+        messages.append({"channel": "whatsapp", "contact_id": rio, "phone_number": "+60",
+                         "message": body, "sent_at": stamp, "type": "incoming",
+                         "message_id": f"zzt-x-{i}"})
+        # Message hits get a LATER non-matching message, so their last message
+        # time and their match time disagree.
+        if not by_name:
+            messages.append({"channel": "whatsapp", "contact_id": rio, "phone_number": "+60",
+                             "message": "later", "sent_at": stamp + timedelta(days=2),
+                             "type": "incoming", "message_id": f"zzt-x-{i}-b"})
+    db.execute(insert(RespondContact), contacts)
+    db.execute(insert(ChatHistory), messages)
+    db.commit()
+    viewer = _user(db, "mix")
+
+    seen, keys, cursor = [], [], None
+    while True:
+        page = inbox.list_conversations(
+            db, viewer_user_id=viewer, tab="all", q="ottoman", cursor=cursor, limit=7
+        )
+        for row in page["items"]:
+            seen.append(row["contact_ref"])
+            keys.append(row["match"]["sent_at"] if row["match"] else row["last_message_at"])
+        cursor = page["next_cursor"]
+        if not cursor:
+            break
+    assert sorted(seen) == sorted(f"zzt-mix-{i:03d}" for i in range(40))
+    assert keys == sorted(keys, reverse=True)

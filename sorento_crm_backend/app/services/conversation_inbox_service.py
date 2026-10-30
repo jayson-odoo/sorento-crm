@@ -47,6 +47,7 @@ from sqlalchemy import (
     cast,
     func,
     literal,
+    not_,
     null,
     or_,
     select,
@@ -60,7 +61,8 @@ from app.models.chat_history import ChatHistory
 from app.models.sla import ConversationSLATracking
 from app.models.ticket_comment import ConversationTicketComment
 from app.services.error_handler import handle_validation_error
-from app.services.otp_redaction import MASK, OTP_TEXT_RE, mask_otp_text
+from app.services.conversation_thread_service import ThreadContact
+from app.services.otp_redaction import OTP_TEXT_RE, mask_otp_text
 
 TAB_MINE = "mine"
 TAB_MENTIONED = "mentioned"
@@ -71,8 +73,11 @@ TABS = (TAB_MINE, TAB_MENTIONED, TAB_UNASSIGNED, TAB_ALL)
 DEFAULT_LIMIT = 30
 MAX_LIMIT = 100
 SNIPPET_MAX = 160
-#: Characters kept either side of a search hit in a message match's snippet.
-MATCH_SNIPPET_RADIUS = 60
+#: Characters kept before / after a search hit in a message match's snippet. The
+#: lead is short because the row is one truncated line (~40 characters at 375px):
+#: a long lead pushes the highlighted term behind the ellipsis.
+MATCH_SNIPPET_LEAD = 16
+MATCH_SNIPPET_TAIL = 100
 
 
 # --------------------------------------------------------------------------- #
@@ -163,17 +168,29 @@ def _mentions_cte(viewer_user_id: str):
     )
 
 
-def _message_match_cte(pattern: str):
-    """The newest message per contact whose text contains the search term.
+def _message_match_cte(needle: str, pattern: str):
+    """The newest WhatsApp message per contact whose text contains the search term.
 
-    The raw ``ILIKE`` is what ``ix_chat_histories_message_trgm`` (alembic 327) serves;
-    the second ``ILIKE`` re-checks the OTP-masked text so a sign-in code can never be
-    found by typing its digits (the same rule as the in-thread search). Rows with no
-    ``message_id`` are skipped: the thread opens a match by message id.
+    The ``ILIKE`` is what ``ix_chat_histories_message_trgm`` (alembic 327) serves.
+    Channel is pinned to the thread's own (``ThreadContact.channel``): a match the
+    thread cannot open by id is not a result, and neither is a row with no
+    ``message_id``.
+
+    A sign-in code must never be findable by its digits (the in-thread search rule).
+    The mask only rewrites a run of digits after "code is", so a term with no digit
+    cannot hit it and needs no check. Do NOT "simplify" this into an always-on
+    ``regexp_replace(...) ILIKE`` re-check: Postgres has no statistics for that
+    expression, a phrase then estimates at one row, and the planner picks a nested
+    loop that took 7.6 s at 400k messages (review of #2003). A term WITH a digit
+    skips OTP-shaped messages outright instead, which estimates sanely.
     """
-    masked = func.regexp_replace(
-        ChatHistory.message, OTP_TEXT_RE.pattern, "\\1" + MASK, "gi"
-    )
+    conditions = [
+        ChatHistory.channel == ThreadContact.channel,
+        ChatHistory.message_id.isnot(None),
+        ChatHistory.message.ilike(pattern, escape="\\"),
+    ]
+    if any(ch.isdigit() for ch in needle):
+        conditions.append(not_(ChatHistory.message.regexp_match(OTP_TEXT_RE.pattern, flags="i")))
     return (
         select(
             ChatHistory.contact_id.label("contact_key"),
@@ -182,11 +199,7 @@ def _message_match_cte(pattern: str):
             ChatHistory.message_id.label("match_message_id"),
             ChatHistory.type.label("match_direction"),
         )
-        .where(
-            ChatHistory.message_id.isnot(None),
-            ChatHistory.message.ilike(pattern, escape="\\"),
-            masked.ilike(pattern, escape="\\"),
-        )
+        .where(*conditions)
         .distinct(ChatHistory.contact_id)
         .order_by(
             ChatHistory.contact_id,
@@ -203,8 +216,8 @@ def _match_snippet(body: Optional[str], needle: str) -> str:
     idx = text.lower().find(needle.lower())
     if idx < 0:
         return _snippet(text) or ""
-    start = max(0, idx - MATCH_SNIPPET_RADIUS)
-    end = min(len(text), idx + len(needle) + MATCH_SNIPPET_RADIUS)
+    start = max(0, idx - MATCH_SNIPPET_LEAD)
+    end = min(len(text), idx + len(needle) + MATCH_SNIPPET_TAIL)
     out = text[start:end].strip()
     return ("…" if start > 0 else "") + out + ("…" if end < len(text) else "")
 
@@ -298,7 +311,7 @@ def list_conversations(
             RespondContact.name.ilike(pattern, escape="\\"),
             RespondContact.phone_number.ilike(pattern, escape="\\"),
         )
-        msg_match = _message_match_cte(pattern)
+        msg_match = _message_match_cte(needle, pattern)
         source = source.outerjoin(
             msg_match, msg_match.c.contact_key == RespondContact.respond_io_id
         )

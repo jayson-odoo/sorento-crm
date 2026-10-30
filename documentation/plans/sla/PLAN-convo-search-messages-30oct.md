@@ -1,6 +1,8 @@
 # PLAN: Conversations inbox search finds message text (CONVO-SEARCH-MESSAGES)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: in review (small fix track: no migration, no auth/RBAC change, no new ingest surface; the
+production diff is ~230 changed lines, the rest is tests, this plan, its UAC and the hand-test
+script). UAC: `convo-search-messages-30oct-acceptance-criteria.md`.
 
 ## Journey
 
@@ -33,7 +35,10 @@ the text of any stored message, inbound or outbound.
 - Click opens the thread centred on the matched message (`around=` page) with the term highlighted.
 - Tabs and `view_own` scoping apply unchanged (same statement, same conditions).
 - Plain case-insensitive substring: works for Malay / Chinese / English alike.
-- OTP texts: matched against the masked text, so a sign-in code is never an oracle.
+- OTP texts: a term with no digit cannot hit a masked code; a term WITH a digit skips OTP-shaped
+  messages. (An always-on `regexp_replace` re-check was tried first and measured 7.6 s on a phrase
+  at 400k messages: no statistics, a 1-row estimate, a nested loop. See the CTE docstring.)
+- Matches are WhatsApp-channel only, the channel the thread reads, so every match opens.
 
 ## Tests (red first)
 
