@@ -25,6 +25,7 @@ ALL = "all"  # the "every brand" sentinel, neutral in an intersection
 SECTIONS: tuple[str, ...] = (
     "access_types",
     "brands",
+    "item_classes",
     "companies",
     "market_segments",
     "regions",
@@ -44,7 +45,8 @@ _SECTION_RANK = {s: i for i, s in enumerate(SECTIONS)}
 
 #: Section names in words (403 messages, redacted labels, the apply dialog).
 SECTION_TITLES: dict[str, str] = {
-    "access_types": "Access types", "brands": "Brands", "companies": "Companies",
+    "access_types": "Access types", "brands": "Brands", "item_classes": "Allowed item classes",
+    "companies": "Companies",
     "market_segments": "Market segments", "regions": "Regions", "chatbot": "Chatbot",
     "portal_forms": "Portal forms", "requires_registered_project": "Requires registered project",
     "field_reveals": "Field reveals", "agents": "Chatbot agents", "agent_fields": "Agent field access",
@@ -126,6 +128,16 @@ class Catalog:
             else:
                 with company_scope(db, None):
                     out = {str(i): n for i, n in db.query(Brand.id, Brand.brand_name)}
+        elif name == "item_classes":
+            # TAG-BRAND-CLASS: code -> name, one per code, "No class" first; as brands, picked
+            # and validated under the caller's company scope, shown unscoped.
+            from app.services.contact_brand_scope import item_class_options
+
+            if self.scope_brands:
+                out = {o["code"]: o["name"] for o in item_class_options(db)}
+            else:
+                with company_scope(db, None):
+                    out = {o["code"]: o["name"] for o in item_class_options(db)}
         elif name == "companies":
             from app.models.company import Company
 
@@ -160,6 +172,8 @@ class Catalog:
 
     def names(self, name: str, ids: Iterable[str]) -> list[str]:
         m = self._load(name)
+        if name == "item_classes":  # a code is readable on its own (an inactive class keeps it)
+            return sorted(m.get(str(i), str(i)) for i in ids)
         gone = "unavailable brand" if name == "brands" else f"removed {name.replace('_', ' ')[:-1]}"
         return sorted(m.get(str(i), gone) for i in ids)
 
@@ -170,6 +184,7 @@ class Catalog:
 _NAME_MAP = {
     ("access_types", "access_types"): "access_types",
     ("brands", "brands"): "brands",
+    ("item_classes", "item_classes"): "item_classes",
     ("companies", "companies"): "companies",
     ("market_segments", "market_segments"): "market_segments",
     ("attachment_types", "attachment_types"): "attachment_types",
@@ -249,6 +264,23 @@ def _v_brands(db, cat, section, value):
     if value == ALL:
         return
     _check_known(cat, "brands", _str_list(section, value))
+
+
+def _v_item_classes(db, cat, section, value):
+    from app.services.contact_brand_scope import known_class_codes, normalise_class_codes
+
+    if value == ALL:
+        return
+    raw = _str_list(section, value)
+    if len(raw) > 500 or any(len(v) > 50 for v in raw):
+        raise _bad(section, "too many classes, or a code longer than 50 characters")
+    codes = normalise_class_codes(raw)
+    if not codes:
+        raise _bad(section, "needs at least one class (or \"all\")")
+    known = known_class_codes(db, codes)  # the caller's company scope, as the contact card
+    for v in codes:
+        if v not in known:
+            raise _bad(v, "unknown value in item_classes")
 
 
 def _v_regions(db, cat, section, value):
@@ -412,6 +444,7 @@ def _v_spec(db, cat, section, value):
 _VALIDATE: dict[str, Callable] = {
     "access_types": _v_codes("access_types"),
     "brands": _v_brands,
+    "item_classes": _v_item_classes,
     "companies": _v_codes("companies"),
     "market_segments": _v_codes("market_segments"),
     "regions": _v_regions,
@@ -476,6 +509,10 @@ def leaves(tag: TagRef) -> list[tuple[str, str, Any]]:
             out.append((section, section, frozenset(value)))
         elif section == "brands":
             out.append((section, section, ALL if value == ALL else frozenset(value)))
+        elif section == "item_classes":
+            from app.services.contact_brand_scope import normalise_class_codes
+
+            out.append((section, section, ALL if value == ALL else frozenset(normalise_class_codes(value))))
         elif section in ("requires_registered_project", "outbound_enabled"):
             out.append((section, section, value))
         elif section in ("chatbot", "portal_forms", "field_reveals", "agents"):
@@ -583,7 +620,7 @@ def _merge_kind(section: str, key: str) -> str:
                 "hide_zero_locations": "or"}[key]
     if section == "spec_visibility":
         return "intersect" if key == "spec_keys" else "union"
-    if section == "brands":
+    if section in ("brands", "item_classes"):
         return "regions"  # an empty intersection has no value to write: a conflict, like regions
     return "intersect"  # access_types, companies, market_segments, attachment_types
 
@@ -603,6 +640,7 @@ def _label(cat: Catalog, section: str, key: str) -> str:
 
     fixed = {
         "access_types": "Access types", "brands": "Brands", "companies": "Companies",
+        "item_classes": "Allowed item classes",
         "market_segments": "Market segments", "regions": "Regions",
         "requires_registered_project": "Requires registered project",
         "attachment_types": "Attachment types", "outbound_enabled": "Messaging",
@@ -684,6 +722,11 @@ class _Reader:
             return frozenset(self._pivot(section)[cid])
         if section == "brands":
             return frozenset(str(b) for b in c.brand_ids) if c.brand_ids else ALL
+        if section == "item_classes":
+            from app.services.contact_brand_scope import normalise_class_codes
+
+            codes = normalise_class_codes(c.allowed_item_class_codes)
+            return frozenset(codes) if codes else ALL
         if section == "regions":
             return frozenset(c.regions or ["west"])
         if section == "requires_registered_project":
@@ -1009,6 +1052,8 @@ def settings_catalog(db: Session, can: Callable[[str], bool], is_superadmin: Cal
     out = {
         "access_types": opts("access_types"),
         "brands": opts("brands"),
+        # "No class" first, then by name (not re-sorted: the picker shows them in this order).
+        "item_classes": [{"value": c, "label": n} for c, n in cat._load("item_classes").items()],
         "market_segments": opts("market_segments"),
         "attachment_types": opts("attachment_types"),
         "field_reveals": [{"value": k, "label": label} for k, label in sorted(FIELD_REVEAL_KEYS)],
