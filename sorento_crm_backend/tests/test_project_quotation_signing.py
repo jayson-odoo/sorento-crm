@@ -650,3 +650,38 @@ def test_accept_does_not_require_the_tick_when_the_issue_has_no_terms(terms):
 
         assert response.status_code == 200, response.text
         assert response.json()["is_accepted"] is True
+
+
+# ------------------------------------------- QUOTE-SIGN-PAGE AC7: Sorento signer name
+
+
+def test_sign_as_sorento_with_no_name_and_no_signatory_stores_the_signing_users_name():
+    with blank_session() as db:
+        _project_row, document, owner, _scopes = _setup(db)
+        document.signatory_name = None
+        db.flush()
+
+        signature = qdocs.sign_as_sorento(
+            db,
+            document=document,
+            actor_user_id=owner,
+            payload={"mode": "draw", "image_data_uri": A_SIGNATURE},
+        )
+
+        assert signature.signer_name == f"{MARKER} Baser"
+
+
+def test_sign_as_sorento_keeps_the_signatory_when_there_is_one():
+    with blank_session() as db:
+        _project_row, document, owner, _scopes = _setup(db)
+        document.signatory_name = "SALES REP A"
+        db.flush()
+
+        signature = qdocs.sign_as_sorento(
+            db,
+            document=document,
+            actor_user_id=owner,
+            payload={"mode": "draw", "image_data_uri": A_SIGNATURE},
+        )
+
+        assert signature.signer_name == "SALES REP A"

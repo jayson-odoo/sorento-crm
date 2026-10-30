@@ -308,33 +308,6 @@ describe('QuotationSignClient signing form', () => {
   });
 });
 
-describe('QuotationSignClient signature provenance', () => {
-  it('reads the signing location as a place, and drops the raw numbers', async () => {
-    getQuotationSignPage.mockResolvedValue(
-      page({
-        is_accepted: true,
-        accepted_at: '2026-08-04T02:15:00',
-        customer_signature: {
-          id: 's3',
-          signer_name: 'Kelly Tan',
-          mode: 'draw',
-          image_data_uri: 'data:image/png;base64,CUSTOMER',
-          signed_at: '2026-08-04T02:15:00',
-          ip_address: '203.0.113.20',
-          gps_lat: '3.0392672',
-          gps_lng: '101.8066021',
-          // Resolved by the backend, from the same offline table the PDF renders from.
-          gps_place: 'Kajang, Selangor',
-        },
-      }),
-    );
-    renderPage();
-
-    expect(await screen.findByText('near Kajang, Selangor')).toBeInTheDocument();
-    expect(screen.queryByText(/3\.03927/)).not.toBeInTheDocument();
-  });
-});
-
 /**
  * S17 - the customer's other answer.
  *
@@ -809,5 +782,121 @@ describe('QuotationSignClient not-ready button (fix round 1)', () => {
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Type' }), { button: 0 });
     expect(screen.getByRole('button', { name: 'Sign and accept' })).toHaveAccessibleDescription('');
     expect(screen.queryByText(NAME_HINT)).not.toBeInTheDocument();
+  });
+});
+
+
+describe('QuotationSignClient AC7 titles and location', () => {
+  const sig = (name: string | null, extra: object = {}) => ({
+    id: 'sx',
+    signer_name: name,
+    mode: 'draw',
+    image_data_uri: 'data:image/png;base64,SIG',
+    signed_at: '2026-08-04T02:15:00',
+    ip_address: '203.0.113.9',
+    gps_lat: '3.1390100',
+    gps_lng: '101.6868500',
+    gps_place: 'Kajang, Selangor',
+    ...extra,
+  });
+
+  it('titles the Sorento card from the signature signer name', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({ sorento_signature: sig('SALES REP A'), signatory_name: 'OTHER REP' }),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Prepared by SALES REP A')).toBeInTheDocument();
+    expect(screen.queryByText('Signed for Sorento')).not.toBeInTheDocument();
+  });
+
+  it.each([null, '', '   '])('falls back to the signatory when signer_name is %j', async (blank) => {
+    getQuotationSignPage.mockResolvedValue(
+      page({ sorento_signature: sig(blank), signatory_name: 'SALES REP A' }),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Prepared by SALES REP A')).toBeInTheDocument();
+  });
+
+  it('falls back to the company name when both names are blank, and never shows "-"', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({ sorento_signature: sig('  '), signatory_name: null }),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Prepared by Sorento Sdn Bhd')).toBeInTheDocument();
+    expect(screen.queryByText('-', { selector: '[data-slot="card-title"]' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Signed for Sorento')).not.toBeInTheDocument();
+  });
+
+  it('titles the unsigned customer card "Accepted by"', async () => {
+    getQuotationSignPage.mockResolvedValue(page());
+    renderPage();
+
+    expect(await screen.findByText('Accepted by')).toBeInTheDocument();
+    expect(screen.queryByText('Accept this quotation')).not.toBeInTheDocument();
+  });
+
+  it('titles the accepted customer card with the signer name', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({
+        is_accepted: true,
+        accepted_at: '2026-08-04T02:15:00',
+        customer_signature: sig('CONTACT B'),
+      }),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Accepted by CONTACT B')).toBeInTheDocument();
+    expect(screen.queryByText('Your signature')).not.toBeInTheDocument();
+  });
+
+  it('shows no GPS location anywhere, even when the payload carries coordinates', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({
+        sorento_signature: sig('SALES REP A'),
+        is_accepted: true,
+        accepted_at: '2026-08-04T02:15:00',
+        customer_signature: sig('CONTACT B'),
+      }),
+    );
+    renderPage();
+
+    await screen.findByText('Accepted by CONTACT B');
+    expect(screen.queryByText(/GPS location/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Kajang/)).not.toBeInTheDocument();
+  });
+
+  it('never asks the browser for location, and sends null coordinates on accept', async () => {
+    const getCurrentPosition = vi.fn((success: PositionCallback) =>
+      success({
+        coords: { latitude: 3.139, longitude: 101.687 },
+        timestamp: Date.now(),
+      } as GeolocationPosition),
+    );
+    Object.defineProperty(navigator, 'geolocation', {
+      value: { getCurrentPosition },
+      configurable: true,
+    });
+    HTMLCanvasElement.prototype.toDataURL = vi.fn(() => 'data:image/png;base64,TYPED');
+    getQuotationSignPage.mockResolvedValue(page({ terms: null, attn_name: null }));
+    acceptQuotation.mockResolvedValue(
+      page({ is_accepted: true, accepted_at: '2026-08-04T02:15:00' }),
+    );
+    renderPage();
+
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Your name' }), {
+      target: { value: 'CONTACT B' },
+    });
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Type' }), { button: 0 });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign and accept' }));
+
+    await waitFor(() => expect(acceptQuotation).toHaveBeenCalledTimes(1));
+    expect(acceptQuotation).toHaveBeenCalledWith(
+      'tok-123',
+      expect.objectContaining({ gps_lat: null, gps_lng: null }),
+    );
+    expect(getCurrentPosition).not.toHaveBeenCalled();
   });
 });
