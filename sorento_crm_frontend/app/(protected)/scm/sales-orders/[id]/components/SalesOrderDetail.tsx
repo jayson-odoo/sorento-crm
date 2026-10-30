@@ -1007,7 +1007,7 @@ export function SalesOrderDetail({
         meta: { headerTitle: 'Description' },
       },
       // OI-SPLIT-VIEW (UAC B1): "Split N" and the (i) popup in their own column right after
-      // Product, on Columns like the rest; empty for a line with no splits.
+      // Description, on Columns like the rest; empty for a line with no splits.
       {
         id: 'split',
         // B7a: sorts by the chip's N (the AutoCount extra row not counted).

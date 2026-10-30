@@ -3144,6 +3144,7 @@ class ProjectOrderInquiryService:
                 line["was"] = was
                 line["item_code"] = live[0].item_code
                 item["item_code"] = live[0].item_code
+                line.pop("item_wrap", None)
                 self.decorate_handover_line(line, item.get("core_line_id"))
                 phrase = _NEW_ITEM_CODE
                 line["remark"] = f"{line['remark']}, {phrase}" if line.get("remark") else phrase
@@ -5098,9 +5099,6 @@ class ProjectOrderInquiryService:
                     "line": {**sample["line"], "item_code": f.item_code},
                 }
             ]
-            self.decorate_handover_line(
-                told[line_id][0]["line"], f.line.core_sales_order_line_id
-            )
         if not told:
             return
         queue[:] = kept
@@ -5198,6 +5196,7 @@ class ProjectOrderInquiryService:
             entry = item["line"]
             entry["remark"] = row.remark
             entry["was"] = _format_handover_was(was or None)
+            self.decorate_handover_line(entry, item.get("core_line_id"))
             entry["continued"] = index > 0
             item["verb_keys"] = self._plan_row_keys(row, template)
 
