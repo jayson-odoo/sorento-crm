@@ -174,6 +174,21 @@ def test_r13_a_view_own_operator_cannot_stamp_a_prospect_to_another_agent(db):
     assert refused(res, none)
 
 
+def test_r13_a_view_own_operator_cannot_create_a_prospect_with_no_agent(db):
+    """Security round 3 should-fix: the service stamps no agent on a bare prospect, so a view_own person
+    would create a row they cannot see. They must name one of their own agents."""
+    w, narrow, wide, *_ = scene(db)
+    bare = {k: v for k, v in prospect_args(None).items() if k != "sales_agent_id"}
+
+    control, step = propose(db, w, narrow.user_id, CREATE, prospect_args(narrow.agent.id), narrow.agent.id)
+    res, none = propose(db, w, narrow.user_id, CREATE, bare)
+    broad, _ = propose(db, w, wide.user_id, CREATE, dict(bare))
+
+    assert control.status == "proposed" and step is not None
+    assert broad.status == "proposed"  # a full-view person may log an unassigned prospect
+    assert refused(res, none)
+
+
 @pytest.mark.parametrize("narrowed, expected", [(True, "rejected"), (False, "executed")])
 def test_r13_a_prospect_stamp_is_rechecked_after_the_operator_is_narrowed(db, narrowed, expected):
     w, narrow, wide, *_ = scene(db)

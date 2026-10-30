@@ -502,10 +502,11 @@ def _customer_code(db, customer_id: str) -> str:
     return row[0]
 
 
-def _assert_own_target(db, user: dict, args: dict) -> None:
+def _assert_own_target(db, user: dict, args: dict, *, creating: bool = False) -> None:
     """The route's own-customer rule (`_assert_still_theirs`, security review H1) for this person, applied
     before anything is written: a user who sees only their own opportunities may not put one on a
-    customer or an agent that is not theirs. Reuses the route's own-agent logic."""
+    customer or an agent that is not theirs. Reuses the route's own-agent logic. A create with neither
+    names no agent at all, and the service stamps none, so such a person could not see the row."""
     from app.api.v1.sales.opportunities import _own_agent_ids
     from app.models.order import Customer
     from app.services.error_handler import AppException
@@ -520,7 +521,7 @@ def _assert_own_target(db, user: dict, args: dict) -> None:
         customer_agent = db.query(Customer.sales_agent_id).filter(Customer.id == args["customer_id"]).scalar()
     if (agent_id and str(agent_id) not in own) or (
         args.get("customer_id") and str(customer_agent or "") not in own
-    ):
+    ) or (creating and not agent_id and not args.get("customer_id")):
         raise AppException(status_code=403, message="Pick one of your own customers or sales agents.", code="FORBIDDEN")
 
 
@@ -552,7 +553,7 @@ def _opp_create_read_before(db, user: dict, args: dict) -> dict:
     if not args.get("customer_id") and not args.get("prospect_name"):
         raise AppException(status_code=422, message="Give a customer or a prospect name.", code="VALIDATION_ERROR")
     target = _customer_code(db, args["customer_id"]) if args.get("customer_id") else args["prospect_name"]
-    _assert_own_target(db, user, args)
+    _assert_own_target(db, user, args, creating=True)
     return {"_show": {"target": target}}
 
 
