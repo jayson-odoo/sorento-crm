@@ -162,8 +162,10 @@ def narrow_code_tokens_by_specs(
     """
     if not tokens or not specs:
         return None
+    # A bare size carries `any_keys` (the dimension keys): the spec is held when any one of
+    # them holds the value (OR within a spec, AND across specs), as `narrow_held_family` reads it.
     wanted = [
-        (str(s.get("key")), s.get("value"))
+        (str(s.get("key")), s.get("value"), [str(k) for k in s.get("any_keys") or [] if k])
         for s in specs
         if isinstance(s, dict) and s.get("key") and s.get("key") != "brand" and s.get("value") is not None
     ]
@@ -181,7 +183,11 @@ def narrow_code_tokens_by_specs(
         family = _family_rows(db, code_word)
         if len(family) < 2:
             continue
-        picked = [code for code, values, _text in family if all(_holds(values, key, value) for key, value in wanted)]
+        picked = [
+            code
+            for code, values, _text in family
+            if all(any(_holds(values, k, value) for k in (any_keys or [key])) for key, value, any_keys in wanted)
+        ]
         if not picked or len(picked) == len(family):
             continue
         if any(_fold(code) == code_word for code in picked):
