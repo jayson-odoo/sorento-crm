@@ -50,10 +50,6 @@ import {
   type LineEdits,
 } from './quotationSuggest';
 
-/** Why Sign is off while suggested changes wait for an answer (owner decision Q1 a). */
-const AMENDMENT_OPEN_SENTENCE =
-  'You can sign once Sorento has answered your suggestions.';
-
 /** "Quotation No. X", whether or not the ref already carries the label. */
 function quotationLabel(ref: string): string {
   return /^quotation no\./i.test(ref.trim())
@@ -242,10 +238,7 @@ function CustomerSignature({
 }) {
   const { accept } = useQuotationSignMutations(token);
   const named = signerName.trim().length > 0;
-  // An open request: the pad stays visible but locked, with its one reason, and the terms tick
-  // is hidden because ticking it could not enable anything.
-  const waiting = page.sign_blocked_reason === 'amendment_open';
-  const hasTerms = Boolean(page.terms?.trim()) && !waiting;
+  const hasTerms = Boolean(page.terms?.trim());
   const [ticked, setTicked] = React.useState(false);
   // Set once the customer taps Sign and accept (or the locked pad) before it is ready: the hint
   // then turns to the warning colour until everything is in.
@@ -319,6 +312,21 @@ function CustomerSignature({
           </p>
         </CardContent>
       </Card>
+    );
+  }
+
+  // A request is open (owner, hand test round 2): the sign block goes away entirely and the
+  // waiting banner stands in its place, until Sorento answers.
+  if (page.sign_blocked_reason === 'amendment_open') {
+    return (
+      <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm">
+        <p className="font-medium">Your suggestions are with Sorento</p>
+        {page.amendment_request?.submitted_at && (
+          <p className="text-muted-foreground">
+            {`Sent ${formatDateTimeInMalaysia(page.amendment_request.submitted_at)}.`}
+          </p>
+        )}
+      </div>
     );
   }
 
@@ -396,8 +404,6 @@ function CustomerSignature({
 
   /** The first step still missing, named for the hint and the element to bring into view. */
   function hintFor(hasContent: boolean): string | null {
-    // Checked first, and alone: the two disabled reasons never show together.
-    if (waiting) return AMENDMENT_OPEN_SENTENCE;
     if (!named) {
       return hasTerms
         ? 'Type your name and tick the terms box to accept.'
@@ -408,7 +414,6 @@ function CustomerSignature({
   }
 
   function showMissingStep() {
-    if (waiting) return;
     setNudged(true);
     const target = !named
       ? nameRef.current
@@ -427,20 +432,9 @@ function CustomerSignature({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 py-5">
-        {waiting && page.amendment_request ? (
-          <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
-            <p className="font-medium">Your suggestions are with Sorento</p>
-            {page.amendment_request.submitted_at && (
-              <p className="text-muted-foreground">
-                {`Sent ${formatDateTimeInMalaysia(page.amendment_request.submitted_at)}.`}
-              </p>
-            )}
-          </div>
-        ) : (
-          <p className="min-w-0 break-words text-sm text-muted-foreground">
-            Signing below accepts this quotation.
-          </p>
-        )}
+        <p className="min-w-0 break-words text-sm text-muted-foreground">
+          Signing below accepts this quotation.
+        </p>
 
         <div className="space-y-1.5">
           <Label htmlFor="quotation-sign-name">Your name</Label>
@@ -485,7 +479,7 @@ function CustomerSignature({
             typedNameDefault={signerName}
             // Locked until there is a name to put beside the ink. The pad owns its own Apply
             // button, so gating it here is the only way to keep the two in the right order.
-            disabled={waiting || !named || !termsOk || accept.isPending}
+            disabled={!named || !termsOk || accept.isPending}
             onNotReadyAttempt={showMissingStep}
             renderFooterHint={({ hasContent, hintId }) => {
               const hint = hintFor(hasContent);
