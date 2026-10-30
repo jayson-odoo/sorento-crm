@@ -1,8 +1,9 @@
 # PLAN: QUOTE-NO-FREE-TEXT (every quotation line is a catalogue product or set)
 
-Status: Build - card answered 30 Oct ~22:05 (Q1 no legacy handling, Q3 yes, Q5 (a) API + UI); Q2 (a) refuse a quoted
-product / set delete, Q4 (a) New Product Application, no code (owner 22:40). Track: full (M, owner-visible rule on an existing screen); no
-migration.
+Status: Merge-ready pending the owner's hand test (PR #2020) - built red-first in three rounds, reviewer READY,
+security S1 fixed and re-checked, browser pass 1280 + 375 PASS at 2a018ead9d. Owner answers: Q1 no legacy, Q2 refuse a
+quoted product / set delete, Q3 drop "Not a catalogue product", Q4 New Product Application (no code), Q5 API + UI.
+Track: full (M); no migration.
 
 Source: owner 30 Oct ~21:15, "Free text product shouldn't be allowed, simple as that."
 Behaviour card (rules, every write path with file:line, real data, Q1-Q5): `CARD-quote-no-free-text-30oct.md`.
