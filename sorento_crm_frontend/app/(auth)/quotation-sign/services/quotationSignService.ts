@@ -7,7 +7,8 @@ import { extractApiError } from '@/lib/api-client';
  *
  *   GET  /api/v1/public/quotation-sign/{token}                  -> QuotationSignPage
  *   POST /api/v1/public/quotation-sign/{token}/accept           -> QuotationSignPage (same shape)
- *   POST /api/v1/public/quotation-sign/{token}/request-changes  -> QuotationSignPage (same shape)
+ *   (`/request-changes`, the older free-text request, stays on the backend; this page no longer
+ *   sends it.)
  *   POST /api/v1/public/quotation-sign/{token}/amendment-request -> QuotationSignPage (same shape)
  *
  * `amendment-request` carries the customer's suggested quantities and prices (QUOTE-CUSTOMER-AMEND).
@@ -207,13 +208,6 @@ export async function getQuotationSignPage(token: string): Promise<QuotationSign
   return response.json();
 }
 
-export type QuotationSignChangesBody = {
-  /** Required. The backend refuses a blank one, and so does the form. */
-  note: string;
-  /** No signature is captured on a request, so this is the only name it can carry. */
-  requester_name: string | null;
-};
-
 export async function acceptQuotation(
   token: string,
   body: QuotationSignAcceptBody,
@@ -226,24 +220,6 @@ export async function acceptQuotation(
   if (!response.ok) {
     throw new QuotationSignError(
       await extractApiError(response, 'Your signature could not be saved.'),
-      response.status,
-    );
-  }
-  return response.json();
-}
-
-export async function requestQuotationChanges(
-  token: string,
-  body: QuotationSignChangesBody,
-): Promise<QuotationSignPage> {
-  const response = await fetch(signUrl(`/${encodeURIComponent(token)}/request-changes`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new QuotationSignError(
-      await extractApiError(response, 'Your request could not be sent.'),
       response.status,
     );
   }

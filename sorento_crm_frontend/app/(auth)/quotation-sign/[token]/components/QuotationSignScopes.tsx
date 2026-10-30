@@ -350,7 +350,7 @@ function SuggestRow({
                 {rateError}
               </p>
             ) : rateChanged ? (
-              <p className="mt-1 text-xs text-muted-foreground">{`quoted ${line.unit_price}`}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{`quoted ${formatMyrExact(line.unit_price)}`}</p>
             ) : null}
           </>
         ) : (

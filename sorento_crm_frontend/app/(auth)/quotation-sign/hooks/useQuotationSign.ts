@@ -6,11 +6,9 @@ import {
   acceptQuotation,
   getQuotationSignPage,
   QuotationSignError,
-  requestQuotationChanges,
   submitAmendmentRequest,
   type QuotationSignAcceptBody,
   type QuotationSignAmendmentBody,
-  type QuotationSignChangesBody,
   type QuotationSignPage,
 } from '../services/quotationSignService';
 
@@ -51,20 +49,6 @@ export function useQuotationSignMutations(token: string) {
   });
 
   /**
-   * The other decision, written into the cache the same way and for the same reason: the customer
-   * has just told us the price is wrong, and the one thing they need back is confirmation that it
-   * arrived. A refetch would answer that with a spinner.
-   */
-  const requestChanges = useMutation({
-    mutationFn: (body: QuotationSignChangesBody) => requestQuotationChanges(token, body),
-    onSuccess: (page: QuotationSignPage) => {
-      queryClient.setQueryData(quotationSignPageKey(token), page);
-      toast.success('Thank you. Your request has been sent to Sorento.');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  /**
    * The customer's suggested changes, answered with the page like the other two. A 409 means the
    * page moved on under a stale tab (a newer revision, or a request already open), so the page is
    * read again to show what it now is.
@@ -83,5 +67,5 @@ export function useQuotationSignMutations(token: string) {
     },
   });
 
-  return { accept, requestChanges, submitAmendment };
+  return { accept, submitAmendment };
 }

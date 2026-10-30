@@ -871,6 +871,8 @@ export interface QuotationAmendmentRequest {
   /** The issue's total, and the total with the accepted rows applied. */
   total_issued: string;
   total_after: string;
+  /** Scopes a suggestion touches that already carry a hand-made draft: Apply would refuse. */
+  blocked_scopes: { quotation_id: string; scope_label: string }[];
 }
 
 export interface QuotationOutcomeBody {

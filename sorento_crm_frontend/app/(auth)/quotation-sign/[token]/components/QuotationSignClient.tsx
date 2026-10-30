@@ -275,9 +275,14 @@ function CustomerSignature({
 
   // Answered: the outcome is in the table's cells; this says so once, and what happens next.
   if (page.sign_blocked_reason === 'amendment_applied' && page.amendment_request) {
+    // Counted by LINE, as the customer changed them: a line counts as accepted when any of its
+    // suggestions was.
     const rows = page.amendment_request.rows;
-    const yes = rows.filter((row) => row.decision === 'accepted').length;
-    const no = rows.length - yes;
+    const lineIds = Array.from(new Set(rows.map((row) => row.line_id)));
+    const yes = lineIds.filter((id) =>
+      rows.some((row) => row.line_id === id && row.decision === 'accepted'),
+    ).length;
+    const no = lineIds.length - yes;
     return (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -289,7 +294,9 @@ function CustomerSignature({
         </CardHeader>
         <CardContent className="space-y-2 py-5">
           <p className="min-w-0 break-words text-sm font-medium">
-            {`Sorento answered: ${yes} accepted, ${no} not accepted.`}
+            {lineIds.length === 0
+              ? 'Sorento has read your note.'
+              : `Sorento answered: ${yes} accepted, ${no} not accepted.`}
           </p>
           <p className="min-w-0 break-words text-sm text-muted-foreground">
             Your salesperson will send the revised quotation for signing.

@@ -45,31 +45,53 @@ export function QuotationScopesTab() {
   } = useQuotationDocumentScreen();
   const quotations = useQuotations(projectId);
 
-  const [decidingScopeId, setDecidingScopeId] = React.useState<string | null>(null);
+  const [decidingScopeId, setDecidingScopeId] = React.useState<string | null>(
+    null,
+  );
 
   // The customer's suggestions on the latest issue, decided in the grid's own cells. Only an
   // OPEN request is offered for deciding; an answered one is history on the sign link.
-  const amendment = useQuotationAmendmentRequest(projectId, documentId, canEdit);
+  const amendment = useQuotationAmendmentRequest(
+    projectId,
+    documentId,
+    canEdit,
+  );
   const amendments = useQuotationAmendmentMutations(projectId, documentId);
   const openRequest = amendment.data?.status === 'open' ? amendment.data : null;
-  // On by default while a request is open, so the lines to decide are the lines on screen.
-  const [suggestedOnly, setSuggestedOnly] = React.useState(true);
+  // On by default while a request with line suggestions is open, so the lines to decide are the
+  // lines on screen; a note-only request has none to narrow to. Null until the reader chooses.
+  const [suggestedChoice, setSuggestedOnly] = React.useState<boolean | null>(
+    null,
+  );
+  const suggestedOnly = suggestedChoice ?? (openRequest?.rows.length ?? 0) > 0;
+  const reviewBlocked = (openRequest?.blocked_scopes?.length ?? 0) > 0;
   const decideRow = amendments.decide.mutate;
   const review = React.useMemo<QuotationLinesReview | undefined>(
     () =>
       openRequest
         ? {
             rows: openRequest.rows,
-            disabled: amendments.decide.isPending || amendments.apply.isPending,
+            // A touched scope with a hand-made draft cannot take these decisions (Apply refuses).
+            disabled:
+              reviewBlocked ||
+              amendments.decide.isPending ||
+              amendments.apply.isPending,
             onDecide: (rowId, decision, reason) =>
               decideRow({ requestId: openRequest.id, rowId, decision, reason }),
           }
         : undefined,
-    [amendments.apply.isPending, amendments.decide.isPending, decideRow, openRequest],
+    [
+      amendments.apply.isPending,
+      amendments.decide.isPending,
+      decideRow,
+      openRequest,
+      reviewBlocked,
+    ],
   );
 
   const scopes = record.scopes ?? [];
-  const activeScope = scopes.find((scope) => scope.id === activeScopeId) ?? scopes[0] ?? null;
+  const activeScope =
+    scopes.find((scope) => scope.id === activeScopeId) ?? scopes[0] ?? null;
   const activeQuotation =
     (quotations.data ?? []).find((row) => row.id === activeScope?.id) ?? null;
 
@@ -79,10 +101,14 @@ export function QuotationScopesTab() {
     return (
       <Card>
         <CardContent className="px-6 py-10 text-center">
-          <h3 className="text-sm font-semibold">No lines on this quotation yet</h3>
+          <h3 className="text-sm font-semibold">
+            No lines on this quotation yet
+          </h3>
           {canEdit && (
             <Button asChild variant="outline" size="sm" className="mt-4">
-              <Link href={`/project-sales/${projectId}/quotation-documents/${documentId}/edit`}>
+              <Link
+                href={`/project-sales/${projectId}/quotation-documents/${documentId}/edit`}
+              >
                 <SquarePen className="size-4" aria-hidden />
                 Edit quotation
               </Link>
@@ -167,9 +193,12 @@ export function QuotationScopesTab() {
       ) : (
         <Card>
           <CardContent className="px-6 py-10 text-center">
-            <h3 className="text-sm font-semibold">This scope could not be opened</h3>
+            <h3 className="text-sm font-semibold">
+              This scope could not be opened
+            </h3>
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Its lines are not available right now. Reload the page to try again.
+              Its lines are not available right now. Reload the page to try
+              again.
             </p>
           </CardContent>
         </Card>
