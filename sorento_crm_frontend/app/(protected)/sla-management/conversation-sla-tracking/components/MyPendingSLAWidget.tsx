@@ -84,9 +84,16 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
   complaint: { base: '/complaint-management/complaints', label: 'Complaint' },
   purchase_request: { base: '/procurement-management/purchase-requests', label: 'Purchase request' },
   sponsorship_form: { base: '/procurement-management/purchase-requests', label: 'Sponsorship form' },
+  product_drawing: { base: '/master-data-management/products', label: 'Product drawing' },
+  product_photo: { base: '/master-data-management/products', label: 'Product photo' },
 };
 
 type AnyTask = MyPendingSLAItem | TeamPendingItem;
+
+/** Product drawing and photo tasks are worked in the side panel, not on a record page. */
+function isMediaTask(item: AnyTask): boolean {
+  return item.source_entity_type === 'product_drawing' || item.source_entity_type === 'product_photo';
+}
 
 /** Form-vs-conversation is decided by the backend (is_form_sla, from FORM_SLA_TYPES)
  * - never re-derived here, or types the FE route map doesn't know (e.g. 'ticket')
@@ -215,6 +222,8 @@ export default function MyPendingSLAWidget() {
   // Ticket rows arrive already merged into `/my-pending` (flagged
   // `is_intervention_ticket`), so there is no separate ticket list to load here.
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
+  // A product drawing or photo task opens the same side panel in media mode.
+  const [openMediaId, setOpenMediaId] = useState<string | null>(null);
 
   const takeoverMutation = useTakeoverSLATracking();
   const reassignMutation = useReassignSLATracking();
@@ -403,6 +412,10 @@ export default function MyPendingSLAWidget() {
       const ticket = asTicket(item);
       if (ticket) {
         setOpenTicketId(ticket.id);
+        return;
+      }
+      if (isMediaTask(item)) {
+        setOpenMediaId(item.id);
         return;
       }
       const record = entityHref(item);
@@ -739,6 +752,22 @@ export default function MyPendingSLAWidget() {
                     )}
                   </>
                 )
+              )}
+              {!isTeam &&
+                (item.source_entity_type === 'product_drawing' ||
+                  item.source_entity_type === 'product_photo') &&
+                (!mineItem.is_responded || canResolve) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenMediaId(item.id);
+                  }}
+                >
+                  {mineItem.is_responded ? 'Resolve' : 'Respond'}
+                </Button>
               )}
               {/* Extend the resolution deadline. Only on My Pending rows (the
                   viewer owns them → assignee gate satisfied). /my-pending now emits
@@ -1119,6 +1148,21 @@ export default function MyPendingSLAWidget() {
         // the send mutation would refresh nothing here: a reply must reload it
         // explicitly or the row keeps its pre-reply countdown chips.
         onSent={() => void load()}
+      />
+
+      {/* A product drawing or photo task: same side panel, media mode. */}
+      <InterventionTicketDrawer
+        variant="media"
+        ticketId={openMediaId}
+        open={!!openMediaId}
+        onOpenChange={(o) => {
+          if (o) return;
+          setOpenMediaId(null);
+          void Promise.all([load(), loadTeam()]);
+        }}
+        onResolved={() => void load()}
+        onSent={() => void load()}
+        onReassigned={() => void Promise.all([load(), loadTeam()])}
       />
     </div>
   );

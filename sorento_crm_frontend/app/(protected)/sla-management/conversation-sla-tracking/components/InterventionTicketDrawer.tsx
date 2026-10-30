@@ -55,6 +55,7 @@ import { contactHistoryHref } from '../lib/historyLinks';
 import ExtendDueDialog from './ExtendDueDialog';
 import ReassignDialog from './ReassignDialog';
 import TicketConversationPanel, { type TicketJumpRequest } from './TicketConversationPanel';
+import MediaRequestDrawer from './MediaRequestDrawer';
 import TicketSlaChips from './TicketSlaChips';
 
 interface InterventionTicketDrawerProps {
@@ -82,6 +83,30 @@ interface InterventionTicketDrawerProps {
    * just moved into My Pending instead of out of it.
    */
   onTakenOver?: () => void;
+  /**
+   * `enquiry` (default) is the chat ticket. `media` is a product drawing or photo task: the same
+   * shell, without the chat ticket fetch (which reaches Respond.io), `ticketId` being the task's
+   * tracking id.
+   */
+  variant?: 'enquiry' | 'media';
+}
+
+/** Picks the panel. Two components rather than a branch inside one: the chat panel's hooks must
+ * not run for a media task. */
+export default function InterventionTicketDrawer({ variant = 'enquiry', ...props }: InterventionTicketDrawerProps) {
+  if (variant === 'media') {
+    return (
+      <MediaRequestDrawer
+        ticketId={props.ticketId}
+        open={props.open}
+        onOpenChange={props.onOpenChange}
+        onResolved={props.onResolved}
+        onSent={props.onSent}
+        onReassigned={props.onReassigned}
+      />
+    );
+  }
+  return <EnquiryTicketDrawer {...props} />;
 }
 
 /**
@@ -90,7 +115,7 @@ interface InterventionTicketDrawerProps {
  * composer that stamps this ticket. Siblings for the same contact show the same
  * thread with their own header and clocks.
  */
-export default function InterventionTicketDrawer({
+function EnquiryTicketDrawer({
   ticketId,
   open,
   onOpenChange,
@@ -98,7 +123,7 @@ export default function InterventionTicketDrawer({
   onSent,
   onReassigned,
   onTakenOver,
-}: InterventionTicketDrawerProps) {
+}: Omit<InterventionTicketDrawerProps, 'variant'>) {
   const [confirmResolve, setConfirmResolve] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [extendOpen, setExtendOpen] = useState(false);

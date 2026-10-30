@@ -649,6 +649,8 @@ _FORM_SLA_TYPES = (
     "workflow_submission",
     "price_tag_request",
     "sample_request",
+    "product_drawing",
+    "product_photo",
 )
 
 

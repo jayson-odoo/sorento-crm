@@ -219,6 +219,7 @@ POST /purchase-orders/{po_id}/delivery-schedules/upload
 POST /purchase-orders/{po_id}/lines
 POST /purchase-orders/{po_id}/schedule-findings/{finding_id}/acknowledge
 POST /quotation-versions/{version_id}/lines
+POST /quotation-versions/{version_id}/lines/{line_id}/media-escalation
 POST /quotation-versions/{version_id}/recompute
 POST /quotations/{quotation_id}/outcome
 POST /quotations/{quotation_id}/revise

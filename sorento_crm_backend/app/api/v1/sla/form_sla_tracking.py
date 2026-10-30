@@ -7,6 +7,7 @@ Manual escalate is gated by the `sla.form.escalate` permission (seeded + granted
 to all roles in migration 235).
 """
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -260,3 +261,66 @@ def release_form_handling(
     """Release the handling lock (holder only). Opens the form for anyone eligible."""
     tracker = HandlingLockService(db).release_handling(tracking_id, current_user)
     return _serialize(db, tracker, viewer_user_id=current_user.get("id"))
+
+
+def _drawing_action(db: Session, action, tracking_id: str, current_user: dict) -> dict:
+    from app.services.error_handler import handle_not_found
+
+    try:
+        UUID(str(tracking_id))
+    except ValueError:
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    tracker = action(db, tracking_id, current_user)
+    return {
+        "tracking_id": str(tracker.id),
+        "is_responded": bool(tracker.is_responded),
+        "is_resolved": bool(tracker.is_resolved),
+    }
+
+
+@router.post("/{tracking_id}/media-respond")
+def respond_media_request(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The assignee's Respond on a product drawing or photo task (My pending tasks)."""
+    from app.services import product_drawing_request_service as drawing_requests
+
+    return _drawing_action(db, drawing_requests.respond, tracking_id, current_user)
+
+
+@router.post("/{tracking_id}/media-resolve")
+def resolve_media_request(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.resolve")),
+    db: Session = Depends(get_db),
+):
+    """The assignee's Resolve on a product drawing or photo task; tells every requester."""
+    from app.services import product_drawing_request_service as drawing_requests
+
+    return _drawing_action(db, drawing_requests.resolve, tracking_id, current_user)
+
+
+@router.get("/{tracking_id}/media-request")
+def get_media_request(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """What the side panel shows for a product drawing or photo task."""
+    from app.services import product_drawing_request_service as drawing_requests
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    try:
+        UUID(str(tracking_id))
+    except ValueError:
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    has_resolve = UserPermissionService(db).check_user_has_permission(
+        current_user["id"], "sla_management.conversation_sla_tracking.resolve"
+    )
+    return drawing_requests.media_request_detail(
+        db, tracking_id, current_user, has_resolve_permission=bool(has_resolve)
+    )
