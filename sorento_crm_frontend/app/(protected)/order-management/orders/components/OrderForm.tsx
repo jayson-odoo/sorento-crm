@@ -30,7 +30,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateOrder, useUpdateOrder, useOrder } from '../hooks/useOrders';
-import { OrderSchema, type OrderSchemaType } from '../forms/order-schema';
+import { OrderSchema, UndatedOrderSchema, type OrderSchemaType } from '../forms/order-schema';
 import type { OrderFormData } from '../types/order.types';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import {
@@ -107,7 +107,9 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
     if (!order || !isEditMode) return undefined;
     return {
       order_number: order.order_number ?? '',
-      order_date: order.order_date ? dateOnlyUTC(order.order_date) ?? new Date() : new Date(),
+      // Never invent a date: an undated DO stays out of reports until a person types one.
+      // null, not undefined: an undefined value falls back to the create default (today).
+      order_date: dateOnlyUTC(order.order_date) ?? null,
       estimated_delivery_date: dateOnlyUTC(order.estimated_delivery_date),
       actual_delivery_date: dateOnlyUTC(order.actual_delivery_date),
       customer_id: order.customer_id ? String(order.customer_id) : '',
@@ -152,8 +154,10 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
     };
   }, [order, isEditMode]);
 
+  const undatedDo = isEditMode && !!order && !order.order_date;
+
   const form = useForm<OrderSchemaType>({
-    resolver: zodResolver(OrderSchema),
+    resolver: zodResolver(undatedDo ? UndatedOrderSchema : OrderSchema),
     defaultValues: {
       order_number: '',
       order_date: defaultOrderDate,
@@ -237,7 +241,8 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       // Transform data to ensure proper format
       const formData: OrderFormData = {
         order_number: data.order_number,
-        order_date: data.order_date,
+        // Empty stays unsent (undefined), so the BE leaves an undated DO undated.
+        order_date: data.order_date ?? undefined,
         // Send explicit null (not undefined) for cleared dates so the BE actually
         // clears them - undefined is dropped by JSON.stringify and skipped by the
         // backend's exclude_unset, so clearing the field would otherwise be a no-op.
@@ -394,7 +399,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                     name="order_date"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Delivery Order Date *</FormLabel>
+                        <FormLabel>Delivery Order Date{undatedDo ? '' : ' *'}</FormLabel>
                         <FormControl>
                           <Input
                             type="date"
