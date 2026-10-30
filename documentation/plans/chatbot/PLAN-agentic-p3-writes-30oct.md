@@ -203,7 +203,7 @@ class WriteDef: name, user_permission, schema, read_before, summary, execute, re
 WRITES: dict[str, WriteDef]          # slice 1: exactly {"crm_customer_ask_update"}
 USER_READS: dict[str, ...]           # in-process reads as the user: "crm_customer_asks_list", "crm_agent_actions_recent"
 def permitted_writes(db, ctx) -> list[WriteDef]          # WRITES the linked user holds the slug for
-def run_as_user(db, ctx, fn: Callable[[dict], Any]) -> Any
+def run_as_user(db, ctx, fn: Callable[[dict], Any], *, tool_name: str | None = None) -> Any
     # loads the user dict, sets the USER's company scope (company_scope_resolver._scope_for_user) and the
     # audit actor (actor_type "user", auth_method "agent", contact_id ctx.contact_pk, tool_name), calls
     # fn(user_dict), restores the previous scope and actor even on error
@@ -213,6 +213,11 @@ def propose_step(db, ctx, name: str, args: Any, *, seen_ids: set[str]) -> tuple[
     # (route 404/403 -> denied with the route's message, other errors -> error). Success -> (ToolResult with
     # status "proposed", data {"summary"}), step {"tool", "args", "before", "summary", "status": "proposed"}
 ```
+
+Tester's resolved points (31 Oct red round): ids in `USER_READS` results join the turn's seen ids;
+`confirm_action` / `cancel_action` are exempt from the ids rule (the action id is checked by `confirm`); a confirm
+in the proposing turn is `invalid` (the row is stored at turn end); an unknown action id is 409 `not_found`; a
+route `AppException` message appears verbatim in the step error; the changed-record error names the field.
 
 `app/services/chatbot/agent/actions.py`:
 
