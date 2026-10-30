@@ -29,6 +29,7 @@ from app.audit_context import clear_actor
 from app.models.access import RespondContactCustomer
 from app.models.base import company_scope
 from app.models.chatbot_agent import AgentAction
+from app.models.company import UserCompany
 from app.services.audit_service import register_audit_listeners
 from app.services.company_scope import register_company_scope_listeners
 from app.services.llm_provider import ChatResult
@@ -70,7 +71,9 @@ from tests.chatbot.test_console_turn_endpoint import _ACTOR, VIEW, client  # noq
 RECENT = "crm_agent_actions_recent"
 CONFIRM = "confirm_action"
 CANCEL = "cancel_action"
-LINE = re.compile(r"A change is waiting for the user's decision \(action ([0-9a-f-]{36})\): (.*)")
+LINE = re.compile(r"A change is waiting for the user's decision \(action ([0-9a-f-]{36}), (\d+) change\(s\)\)\.")
+REFERENCE = "Waiting change, for reference only:"
+VIEW_ALL = "sales.customer_asks.view_all"
 
 
 @pytest.fixture(autouse=True)
@@ -132,6 +135,9 @@ def decide_from_view(captured: dict, name: str = CONFIRM):
     def item(messages, tools):
         m = LINE.search(messages[0]["content"])
         captured["line"] = m.group(0) if m else None
+        captured["reference"] = next(
+            (x["content"] for x in messages if x["role"] != "system" and REFERENCE in str(x.get("content"))), None
+        )
         captured["enum"] = enum_of(tools, name)
         if m is None:
             return answer_("Nothing is waiting.")
@@ -176,7 +182,9 @@ def test_r2_a_later_turn_confirms_using_only_the_id_in_its_prompt_and_schema(db)
     second, _ = go(db, w, [decide_from_view(captured), answer_("Done, the ask is updated.")], text_="yes go ahead")
 
     assert captured["line"] is not None, "the system prompt has no line naming the waiting change"
-    assert str(row.id) in captured["line"] and row.steps[0]["summary"] in captured["line"]
+    assert str(row.id) in captured["line"] and "1 change(s)" in captured["line"]
+    assert row.steps[0]["summary"] not in captured["line"]
+    assert captured["reference"] and row.steps[0]["summary"] in captured["reference"]
     assert captured["enum"] == [str(row.id)], "confirm_action does not restrict action_id to the pending id"
     after = ask_now(db, w.asks[0].id)
     assert after.state == "done" and after.note == NOTE
@@ -423,6 +431,7 @@ def test_a_row_claimed_by_another_session_between_the_recheck_and_the_claim_writ
 def operator_with(db, *slugs):
     """A console operator who is NOT the contact's linked user."""
     uid = seed_user(db, contact_pk=None, slugs=slugs)
+    db.add(UserCompany(user_id=uid, company_id=SORENTO))  # the operator's own company scope, as a real staff user has
     db.commit()
     return uid
 
@@ -457,10 +466,16 @@ def test_r1_a_write_called_in_a_turn_of_an_operator_without_the_slug_is_refused(
 
 
 def test_r1_an_operator_with_the_slug_proposes_in_a_turn_and_the_action_belongs_to_the_linked_user(db):
-    w = ask_world(db)
-    holder = operator_with(db, ASK_VIEW, ASK_EDIT)
+    # Both people hold view_all, so the all-agents list (their intersection) shows the ask to the model.
+    w = ask_world(db, slugs=(ASK_VIEW, ASK_EDIT, VIEW_ALL))
+    holder = operator_with(db, ASK_VIEW, ASK_EDIT, VIEW_ALL)
+    script = [
+        round_of(tc(LIST_ASKS, {"all_agents": True}, "l1")),
+        round_of(tc(UPDATE_ASK, {"ask_id": str(w.asks[0].id), "state": "done", "note": NOTE}, "u1")),
+        answer_("I have prepared the changes."),
+    ]
 
-    result, _ = go(db, w, proposal_script(w.asks), operator=holder)
+    result, _ = go(db, w, script, operator=holder)
 
     assert result.pending_action is not None
     row = action_row(db, result.pending_action["id"])
@@ -515,7 +530,7 @@ def test_r1_an_operator_with_the_slug_confirms_and_the_audit_names_both_people(c
     from app.models.audit import AuditLog
 
     db, w, row = pending_ask_action(session_factory)
-    holder = operator_with(db, ASK_VIEW, ASK_EDIT)
+    holder = operator_with(db, ASK_VIEW, ASK_EDIT, VIEW_ALL)  # reaches the ask the linked user's agent owns
     _ACTOR["id"] = holder
 
     resp = console.post(URL.format(row.id, "confirm"), json={"contact_respond_id": w.respond_id})
