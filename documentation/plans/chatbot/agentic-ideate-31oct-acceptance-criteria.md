@@ -111,8 +111,8 @@ Q4 is (a), owner 31 Oct: any bot question.
 
 1. A staff member with the Agent switch on, in the console, writes "I have an idea: the stock list is too long on my phone".
 2. Jev routes it to the agent. The agent fills in the fields and proposes the idea.
-3. The reply shows what will be logged, in full, plus any similar ideas of theirs. Nothing has been created. On the
-   console's Agent tab this is the confirm card with a button. On the routed tab it is text, and they confirm by typing.
+3. The reply shows what will be logged, in full, plus any similar ideas of theirs. Nothing has been created. The
+   console shows it with Confirm and Cancel buttons in the one thread (#2051 removed the Agent tab), and they can also confirm by typing.
 4. They confirm, by the button or by typing yes. The idea is created, flagged test, and the reply gives its number, its link and the optional fields not
    given. Or they cancel, and nothing is created.
 5. Later they write "change that idea's title to Nearest warehouse first". The agent finds it, proposes the edit, they

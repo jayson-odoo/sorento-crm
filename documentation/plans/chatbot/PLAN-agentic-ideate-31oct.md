@@ -282,7 +282,7 @@ and crew's condition for the bar is met. The total did not improve, though, and 
   wording (`router.py:3`).
 - An idea from a contact with a different chat history scored 0.14 and went to the bot, against 0.80 and 0.82 for a similar message on another. The
   history is the likely cause, unconfirmed. The eval's idea rows mostly carry no history, so real scores may vary more than the eval shows.
-- The two console-tab Reset controls differ: Reset clears the Bot tab only, and New conversation clears the agent. The hand-test script says so.
+- The two console-tab Reset controls differed then: Reset cleared the Bot tab only, and New conversation cleared the agent. #2051 has since merged both tabs into one thread with one New conversation button, and the hand-test script follows it. None of them clears what the router reads (`_state`).
 
 ### Owner's hand test, first round (31 Oct)
 
