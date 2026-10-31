@@ -67,7 +67,7 @@ def decide_route(
         return RouteDecision("chat", f"not_eligible:{refusal}")
     if has_media:
         return RouteDecision("chat", "media")
-    if agent_actions.pending_action(db, contact_respond_id, user_id=str(user.id)) is not None:
+    if user is not None and agent_actions.pending_action(db, contact_respond_id, user_id=str(user.id)) is not None:
         return RouteDecision("agent", "pending_action")
 
     # `None` = the contact's stored session, `{}` = a console Reset (remembers nothing).

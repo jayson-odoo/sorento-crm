@@ -39,6 +39,7 @@ import logging
 import threading
 import time
 import uuid
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from sqlalchemy import false, func, or_, text, update
@@ -799,6 +800,147 @@ def _close_skipped(factory: Callable[[], Any], turn_id: str, reason: str, claime
     )
 
 
+#: Posted when the agent could not answer a routed row. Fixed text: no exception detail, no
+#: apology word and no "busy"; the bot never re-runs a row the router gave to the agent.
+AGENT_FAILED_LINE = "I couldn't finish this one just now. Please send your question again in a minute."
+
+
+def _routed_to_agent(contact: str, stored: dict, factory: Callable[[], Any]) -> Any:
+    """The router's decision when it sends this row to the agent, else None. Any doubt (no text, a
+    router exception, any other side) is today's bot (AGENTIC-KNOWLEDGE W1 S3)."""
+    from app.services.chatbot import router, turn_runtime
+
+    inner: Any = stored
+    for key in ("message", "message", "message"):
+        inner = inner.get(key) if isinstance(inner, dict) else None
+    has_media = isinstance(inner, dict) and isinstance(inner.get("attachment"), dict)
+    text_value = turn_runtime._envelope_text(stored)
+    if not text_value and not has_media:
+        return None
+    db = factory()
+    try:
+        decision = router.decide_route(
+            db, contact_respond_id=contact, text=text_value or "", session_vars=None, has_media=has_media
+        )
+        return decision if getattr(decision, "side", None) == "agent" else None
+    except Exception:  # noqa: BLE001 - a router failure is the bot, never a lost message
+        logger.warning("chatbot inbox: router failed for %s; the bot answers", contact, exc_info=True)
+        db.rollback()
+        return None
+    finally:
+        db.close()
+
+
+def _stamp_route(factory: Callable[[], Any], turn_id: str, decision: Any) -> None:
+    """The decision on the inbox row: a `route` stage on its trace, and the router's usage row
+    pointed at the turn. Telemetry: never fails the row."""
+    from app.models.ai_assistant import AIAssistantUsageLog
+    from app.services.chatbot import router
+
+    db = factory()
+    try:
+        if getattr(decision, "usage_id", None):
+            db.query(AIAssistantUsageLog).filter(AIAssistantUsageLog.id == decision.usage_id).update(
+                {"chatbot_turn_id": str(turn_id)}
+            )
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+        if row is not None:
+            record = router.trace_record(decision)  # its own "why" names the console: this row is WhatsApp
+            record["why"] = "The WhatsApp inbox asks the router before each text message; a state rule decides first, then Jev."
+            row.trace = [*(row.trace or []), record]
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("chatbot inbox: route stamp failed for turn %s", turn_id, exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _run_agent_row(
+    turn_id: str, claimed_at: Any, contact: str, stored: dict, block: dict, factory: Callable[[], Any],
+    decision: Any = None,
+) -> str:
+    """Answer a routed row with the agent and post its reply through `_post`. A failure posts the
+    fixed line; the bot is never run for the row."""
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.agent import loop
+
+    run = _RowRun(turn_id, contact, (0, 0.0), claimed_at, factory)
+    reply = AGENT_FAILED_LINE
+    answered = False
+    facts: dict[str, Any] = {"agent": True}
+    db = factory()
+    try:
+        result = loop.run_agent_turn(
+            db, contact_respond_id=contact, text=turn_runtime._envelope_text(stored) or "", is_test=False
+        )
+        facts["agent_turn_id"] = str(result.turn_id)
+        facts["agent_status"] = str(result.status)
+        # A failed turn, or one with nothing to say, carries internal wording: the customer gets the fixed line.
+        if (
+            result.status != "failed"
+            and isinstance(result.reply_text, str)
+            and result.reply_text.strip()
+            and result.reply_text.strip() != loop.NO_ANSWER_REPLY
+        ):
+            reply = result.reply_text
+            answered = True
+    except Exception as exc:  # noqa: BLE001 - AgentBusy, AgentRefused, anything: one honest line
+        logger.warning("chatbot inbox: agent failed for turn %s", turn_id, exc_info=True)
+        facts["agent_error"] = type(exc).__name__
+        db.rollback()
+    finally:
+        db.close()
+    if decision is not None:
+        _stamp_route(factory, turn_id, decision)
+    _append_record(
+        factory, turn_id,
+        status="answered" if answered else "failed",
+        summary="Answered by the agent." if answered else "The agent could not answer; the customer was told to ask again.",
+        why="The router sent this message to the agent.", facts=facts,
+    )
+    result_like = SimpleNamespace(
+        actions=[{"kind": "send_message", "text": reply}],
+        reply=reply,
+        branch_kind="agent",
+        ctx={"contact": block},
+    )
+    if answered:
+        _set_row(factory, turn_id, claimed_at, branch_kind="agent")  # the row's fact carries the branch
+    outcome = _post(factory, run, result_like, "done", "sent")
+    if outcome != "done" and answered:
+        _clear_knowledge_miss_offer(factory, contact)
+    return outcome
+
+
+def _clear_knowledge_miss_offer(factory: Callable[[], Any], contact: str) -> None:
+    """The reply never reached the customer, so the offer it ended with must not stay armed: cleared
+    only while the open question is still the knowledge-miss offer."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.access import RespondContact
+    from app.models.base import company_scope
+    from app.services import knowledge_service
+
+    db = factory()
+    try:
+        with company_scope(db, None):
+            for row in db.query(RespondContact).filter(RespondContact.respond_io_id == contact).all():
+                sv = dict(row.session_vars) if isinstance(row.session_vars, dict) else {}
+                question = sv.get("open_question")
+                payload = question.get("payload") if isinstance(question, dict) else None
+                if isinstance(payload, dict) and payload.get("source") == knowledge_service.KNOWLEDGE_MISS_SOURCE:
+                    sv.pop("open_question")
+                    row.session_vars = sv
+                    flag_modified(row, "session_vars")
+        db.commit()
+    except Exception:  # noqa: BLE001 - the customer is told to ask again either way
+        logger.warning("chatbot inbox: clearing the knowledge-miss offer failed for %s", contact, exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], Any]) -> str:
     """Run one claimed row: takeover check, turn, POST, done mark. Returns what happened."""
     from app.services.chatbot import engine
@@ -849,6 +991,10 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
     if direct_ingress._human_intervened(block) is True:
         _close_skipped(factory, turn_id, "human_intervened", claimed_at)
         return "skipped"
+
+    decision = _routed_to_agent(contact, stored, factory)
+    if decision is not None:
+        return _run_agent_row(turn_id, claimed_at, contact, stored, block, factory, decision)
 
     run = _RowRun(turn_id, contact, order_key, claimed_at, factory)
     _local.run = run

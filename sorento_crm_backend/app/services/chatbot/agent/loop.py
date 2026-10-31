@@ -8,6 +8,7 @@ turn's tool results.
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 import json
 import logging
@@ -30,7 +31,11 @@ from app.services.chatbot.agent.tools import (
     PLAN,
     PLAN_SCHEMA,
     redact_ids,
+    CONTACT_TOOLS,
     GUARD_PARAMS,
+    HANDOFF,
+    HANDOFF_SCHEMA,
+    KNOWLEDGE,
     REGISTRY,
     RESOLVE,
     TOOL_LABELS,
@@ -594,6 +599,10 @@ class _ProviderFailed(Exception):
     """A model call failed. The detail is logged, never shown."""
 
 
+#: The reply of a turn that ended with nothing to say (a customer never gets it: the inbox swaps it).
+NO_ANSWER_REPLY = "The agent has no answer for this."
+
+
 class AgentBusy(Exception):
     """Another turn for the same contact is still running."""
 
@@ -694,7 +703,7 @@ class _WrappedProvider:
         )
 
 
-def _system_prompt(db, user_name: str, tool_names: Any = ()) -> str:
+def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "user") -> str:
     from app.services import ai_prompt_registry
 
     text = ai_prompt_registry.get_prompt(db, PROMPT_KEY).text
@@ -702,6 +711,12 @@ def _system_prompt(db, user_name: str, tool_names: Any = ()) -> str:
     # knowledge search. Both appended at runtime, idempotent on their headers.
     from app.services import knowledge_service
 
+    today = datetime.now(timezone.utc).date().isoformat()
+    if principal == "contact":
+        # A customer: no staff knowledge or user guide protocol and no "outside this user's access" line.
+        if knowledge_service.KNOWLEDGE_TOOL in tool_names:
+            text = f"{text.rstrip()}\n\n{knowledge_service.KNOWLEDGE_CONTACT_PROTOCOL}"
+        return f"{text}\n\nToday's date is {today}. You are answering a Sorento customer on WhatsApp."
     if "USER GUIDE PROTOCOL" not in text:
         text = text.rstrip() + "\n\n" + ai_prompt_registry._synthesizer_fallback()
     # The knowledge paragraph only where the tool is offered this turn.
@@ -717,8 +732,31 @@ def _system_prompt(db, user_name: str, tool_names: Any = ()) -> str:
             f"{text}\n\nOutside this user's or this contact's access: {'; '.join(left_out)}. When asked about these, say they "
             "are outside this user's or this contact's access; never say the CRM lacks them."
         )
-    today = datetime.now(timezone.utc).date().isoformat()
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
+
+
+def handoff_armed(ledger: dict[str, dict]) -> bool:
+    """Did `crm_knowledge_handoff` run ok this turn and say the offer can be made?"""
+    return any(
+        e.get("name") == HANDOFF and e.get("status") == "ok" and isinstance(e.get("data"), dict) and e["data"].get("armed")
+        for e in ledger.values()
+    )
+
+
+def _contact_reply_backstop(db, ctx, reply: str) -> str:
+    """A barred contact is never offered an escalation: any offer sentence in the reply becomes the
+    salesman line (`escalation_control.strip_text`). Fails closed to the stripped form on a profile error."""
+    from app.services.chatbot import escalation_control, turn_runtime
+
+    try:
+        profile = turn_runtime.load_profile(db, ctx.contact_respond_id, space_id=ctx.space_id)[0]
+        barred = profile.escalation_allowed is False
+    except Exception:  # noqa: BLE001
+        logger.warning("agent: profile load failed for the reply backstop", exc_info=True)
+        profile, barred = None, True
+    if not barred:
+        return reply
+    return escalation_control.strip_text(reply, None, profile)[0]
 
 
 def _unique_call_id(raw: Any, used: set[str]) -> str:
@@ -823,24 +861,31 @@ def run_agent_turn(
     catalog=None,
     clock: Callable[[], float] = time.monotonic,
     operator_user_id: str | None = None,
+    is_test: bool = True,
     context_before: str = "",
     context_after: str = "",
 ) -> AgentTurnResult:
-    """`context_before` and `context_after` are quoted data for the model (the console passes the thread's bot
+    """`is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
+    operator behind it, its rate limit keys on the contact.
+
+    `context_before` and `context_after` are quoted data for the model (the console passes the thread's bot
     replies from before and after the last agent turn). Each goes in a message of its own, never the system
     role, and neither goes in at all while a change waits for a yes: only the model reads that yes."""
     ctx = build_context(db, contact_respond_id)  # AgentRefused propagates
+    if not is_test and not operator_user_id:
+        enforce_agent_rate_limit(f"contact:{contact_respond_id}")
     with single_flight(contact_respond_id):  # AgentBusy propagates
         return _run(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
-            operator_user_id=operator_user_id, context_before=context_before, context_after=context_after,
+            operator_user_id=operator_user_id, is_test=is_test, context_before=context_before,
+            context_after=context_after,
         )
 
 
 def _run(
     db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
-    context_before="", context_after="",
+    is_test=True, context_before="", context_after="",
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
@@ -849,7 +894,7 @@ def _run(
     t0 = clock()
     budgets = budgets_from_settings(db)
     conv = memory.current_conversation(
-        db, contact_respond_id, user_id=ctx.user_id, grants_hash=grants_hash(ctx)
+        db, contact_respond_id, user_id=ctx.user_id or None, grants_hash=grants_hash(ctx)
     )
     trace = TurnTrace()
     run = _Run()
@@ -861,7 +906,7 @@ def _run(
         id=str(uuid.uuid4()),
         contact_respond_id=contact_respond_id,
         ingress="agent",
-        is_test=True,
+        is_test=is_test,
         status="processing",
         envelope=envelope,
         started_at=datetime.now(timezone.utc),
@@ -991,11 +1036,16 @@ def _run(
 
         if operator_user_id and str(operator_user_id) != str(ctx.user_id):
             ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
-        waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+        # A contact has no user to confirm for: a staff user's pending action never reaches its turn.
+        waiting = (
+            None if ctx.principal == "contact"
+            else actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+        )
         offered = permitted_tools(db, ctx)
         reads, write_tools = writes.permitted_user_reads(db, ctx), writes.permitted_writes(db, ctx)
         system = _system_prompt(
-            db, ctx.user_name, {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools)}
+            db, ctx.user_name, {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools)},
+            principal=ctx.principal,
         )
         if waiting is not None:
             system = f"{system}\n\n{waiting_line(waiting)}"
@@ -1011,6 +1061,8 @@ def _run(
         schemas = tool_schemas(offered, catalog)
         schemas += [r.schema for r in reads]
         schemas += [w.schema for w in write_tools]
+        if ctx.principal == "contact" and any(t.name == KNOWLEDGE for t in offered):
+            schemas.append(copy.deepcopy(HANDOFF_SCHEMA))
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
             schemas += decision_schemas(str(waiting.id))
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
@@ -1144,7 +1196,10 @@ def _run(
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
                 seconds = max(1, int(min(remaining(), MCP_CALL_TIMEOUT)))
-                if name in writes.WRITES:
+                if ctx.principal == "contact" and name not in CONTACT_TOOLS and name != HANDOFF:
+                    # A contact has no user: no write, user read, confirm or cancel, whatever the model names.
+                    out = ToolResult("denied", message=f"{name} is not a tool you may use.")
+                elif name in writes.WRITES:
                     out = _propose(db, ctx, name, args, steps, seen_ids, action_id)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
@@ -1255,9 +1310,42 @@ def _run(
     if status == "failed":
         reply = f"The agent could not answer: {error}."
     if not reply:
-        reply = "The agent has no answer for this."
+        reply = NO_ANSWER_REPLY
     if status != "failed":
         reply = to_whatsapp(reply)
+        # Code-added after the model's answer: the knowledge-miss line and the offer, once.
+        say = next(
+            (
+                str((e.get("data") or {}).get("say") or "")
+                for e in ledger.values()
+                if e.get("name") == HANDOFF and e.get("status") == "ok" and isinstance(e.get("data"), dict)
+            ),
+            "",
+        )
+        from app.services import knowledge_service
+
+        offer_armed = handoff_armed(ledger)
+        if say and offer_armed and status != "answered":
+            # The offer sentence is in the reply if and only if the offer gets armed: a limited turn arms nothing.
+            say = knowledge_service.KNOWLEDGE_MISS_LINE
+        if say and say not in reply:
+            if reply.strip() in ("", NO_ANSWER_REPLY):
+                reply = say  # nothing else to say: the hand-off sentence stands alone
+            else:
+                reply = f"{reply}\n\n{say}".strip()
+        if ctx.principal == "contact":
+            reply = _contact_reply_backstop(db, ctx, reply)
+        if (
+            say and offer_armed and status == "answered" and not is_test
+            and knowledge_service.KNOWLEDGE_MISS_OFFER in reply
+        ):
+            # The write lives here, after the answer and the backstop: never in a test turn, after a
+            # failure, or when the offer sentence did not survive into the reply.
+            try:
+                knowledge_service.arm_knowledge_miss_offer(db, ctx.contact_pk)
+            except Exception:  # noqa: BLE001 - the offer is lost, the turn still closes
+                logger.warning("agent: arming the knowledge-miss offer failed", exc_info=True)
+                db.rollback()
     pending = None
     if status != "failed" and steps:
         # After verification: the block is built by code from the stored steps, so its figures are not flagged.

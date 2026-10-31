@@ -45,6 +45,11 @@ class AgentContext:
     #: The console operator acting for this contact (AGENTIC-P3 R1); None in chat, or when the
     #: operator is the linked user. Set per turn by the caller, never by `build_context`.
     operator_user_id: str | None = None
+    #: "user" (an active CRM user is linked to the contact: it runs as that user) or "contact"
+    #: (no linked user: it runs as the contact itself, gated by `tools.CONTACT_TOOLS`).
+    principal: str = "user"
+    #: The contact's ACTIVE access codes (knowledge audience rules); empty for a user principal.
+    access_codes: frozenset[str] = frozenset()
 
 
 def eligible_contact(db, contact_respond_id: str):
@@ -55,6 +60,7 @@ def eligible_contact(db, contact_respond_id: str):
     from app.models.access import RespondContact
     from app.models.base import company_scope
     from app.models.user import User, UserStatus
+    from app.services import chatbot_allowed_service
 
     with company_scope(db, None):
         contact = (
@@ -65,9 +71,14 @@ def eligible_contact(db, contact_respond_id: str):
         )
         if contact is None:
             return None, None, "contact_not_found"
-        if not contact.chatbot_allowed:
+        # As the bot: EVERY row sharing the id must allow AI replies (a namesake row cannot be undone).
+        if not chatbot_allowed_service.is_allowed(db, contact_respond_id):
             return contact, None, "ai_replies_off"
-        if not contact.chatbot_agent_enabled:
+        # The agent switch follows the AI gate: EVERY row sharing the id must have it on.
+        flags = db.query(RespondContact.chatbot_agent_enabled).filter(
+            RespondContact.respond_io_id == contact_respond_id
+        ).all()
+        if not contact.chatbot_agent_enabled or not all(f[0] for f in flags):
             return contact, None, "switch_off"
         user = (
             db.query(User)
@@ -75,8 +86,7 @@ def eligible_contact(db, contact_respond_id: str):
             .order_by(User.created_at, User.id)
             .first()
         )
-        if user is None:
-            return contact, None, "no_linked_user"
+        # No linked active user is no longer a refusal: the contact runs as itself (W1).
         return contact, user, None
 
 
@@ -98,12 +108,14 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
     if refusal is not None:
         raise AgentRefused(refusal)
     pk = str(contact.id)
-    user_id = str(user.id)
-    user_name = user.name or ""
+    principal = "user" if user is not None else "contact"
+    ambiguous = user is None and _row_count(db, contact_respond_id) > 1
+    user_id = str(user.id) if user is not None else ""
+    user_name = (user.name or "") if user is not None else ""
 
     space_id = default_space_id(db)
     try:
-        grants = frozenset(str(k) for k in granted_keys(db, pk))
+        grants = frozenset(str(k) for k in granted_keys(db, pk)) if not ambiguous else frozenset()
     except Exception:  # noqa: BLE001 - fail closed: no grant means no restricted field
         logger.warning("agent: field-reveal lookup failed for %s", contact_respond_id, exc_info=True)
         grants = frozenset()
@@ -132,15 +144,48 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         user_id=user_id,
         user_name=user_name,
         grants=grants,
-        stock_allowed=getattr(contact, "chatbot_stock_allowed", True) is not False,
+        # An ambiguous contact (one respond.io id on several rows) fails closed, as `load_profile` does.
+        stock_allowed=getattr(contact, "chatbot_stock_allowed", True) is not False and not ambiguous,
         brand_scope=None if brand_scope is None else frozenset(str(b) for b in brand_scope),
+        principal=principal,
+        access_codes=_active_access_codes(db, pk) if principal == "contact" and not ambiguous else frozenset(),
     )
+    if principal == "contact":
+        return dataclasses.replace(ctx, tool_names=tuple(t.name for t in permitted_tools(db, ctx)))
     from app.services.chatbot.agent.tools import ARG_PERMISSIONS, _permitted
 
     held = sorted({slug for slug in ARG_PERMISSIONS.values() if _permitted(db, user_id, slug)})
     return dataclasses.replace(
         ctx, tool_names=tuple(t.name for t in permitted_tools(db, ctx)), arg_permissions=tuple(held)
     )
+
+
+def _row_count(db, contact_respond_id: str) -> int:
+    from app.models.access import RespondContact
+    from app.models.base import company_scope
+
+    with company_scope(db, None):
+        return db.query(RespondContact).filter(RespondContact.respond_io_id == contact_respond_id).count()
+
+
+def _active_access_codes(db, contact_pk: str) -> frozenset[str]:
+    """The contact's assigned access codes whose catalogue row is active. Fail closed: none."""
+    from app.models.access import ContactAccessType
+    from app.services.contact_access_type_service import ContactAccessTypeService
+
+    try:
+        codes = ContactAccessTypeService(db).get_contact_access_codes(contact_pk)
+        if not codes:
+            return frozenset()
+        active = (
+            db.query(ContactAccessType.code)
+            .filter(ContactAccessType.code.in_(codes), ContactAccessType.is_active.is_(True))
+            .all()
+        )
+        return frozenset(str(r[0]) for r in active)
+    except Exception:  # noqa: BLE001 - no codes means no restricted document
+        logger.warning("agent: access code lookup failed for %s", contact_pk, exc_info=True)
+        return frozenset()
 
 
 def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
@@ -159,5 +204,7 @@ def grants_hash(ctx: AgentContext) -> str:
         ",".join(sorted(ctx.tool_names)),
         scope,
         ",".join(sorted(ctx.arg_permissions)),
+        ctx.principal,
+        ",".join(sorted(ctx.access_codes)),
     ]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
