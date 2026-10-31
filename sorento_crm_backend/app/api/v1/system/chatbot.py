@@ -59,19 +59,14 @@ from app.schemas.chat_topic_audit import (
 from app.schemas.chatbot_turn import (
     AgentActionRequest,
     AgentActionResponse,
-    AgentConversationAction,
     AgentConversationNewRequest,
     AgentConversationNewResponse,
-    AgentConversationResponse,
-    AgentConversationToolCall,
-    AgentConversationTurn,
-    AgentTurnRequest,
-    AgentTurnResponse,
     ChatbotTurnDetailResponse,
     ChatbotTurnListResponse,
     ChatbotTurnResponse,
     ConsoleMediaStatusResponse,
     ConsolePromptVersion,
+    ConsoleThreadResponse,
     ConsoleTurnRequest,
     ConsoleTurnResponse,
     FailedContactListResponse,
@@ -79,8 +74,8 @@ from app.schemas.chatbot_turn import (
 )
 from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import memory as agent_memory
+from app.services.chatbot.agent.loop import AgentBusy, single_flight
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
-from app.services.chatbot.agent.loop import AgentBusy, enforce_agent_rate_limit, run_agent_turn
 from app.services.chatbot import console_service
 from app.services.chatbot.analytics import topic_audit
 from app.services.chatbot.contracts import TURN_STAGES
@@ -682,6 +677,7 @@ def console_turn(
         media=payload.media.model_dump() if payload.media is not None else None,
         reply_to=payload.reply_to.model_dump() if payload.reply_to is not None else None,
         operator_user_id=user.get("id"),
+        force_agent=payload.force_agent,
     )
     return ConsoleTurnResponse(
         turn_id=result.turn_id,
@@ -703,45 +699,22 @@ def console_turn(
     )
 
 
-# --------------------------------------------------------------------------- #
-# AGENTIC-P1: the read-only agent behind the console's Agent mode. Same grant as
-# `/console/turn`; reads only, nothing reaches WhatsApp.
-# --------------------------------------------------------------------------- #
-
-
-@router.post("/agent/turn", response_model=AgentTurnResponse)
-def agent_turn(
-    payload: AgentTurnRequest,
-    user: dict = Depends(require_permission(VIEW)),
+@router.get("/console/thread", response_model=ConsoleThreadResponse)
+def console_thread(
+    contact_respond_id: str = Query(..., min_length=1, max_length=64),
+    run_id: str = Query(..., min_length=1, max_length=128),
+    _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
-    """One turn of the agent for a contact whose Agent switch is on and which has a linked
-    active user. A refusal is a 409 carrying the reason; a second turn for the same contact
-    while one runs is a 409 agent_busy."""
-    enforce_agent_rate_limit(user["id"])
-    try:
-        result = run_agent_turn(
-            db,
-            contact_respond_id=payload.contact_respond_id,
-            text=payload.text,
-            operator_user_id=user.get("id"),
-        )
-    except AgentRefused as exc:
-        raise _agent_refused(exc)
-    except AgentBusy:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "agent_busy"})
-    return AgentTurnResponse(
-        turn_id=result.turn_id,
-        conversation_id=result.conversation_id,
-        reply_text=result.reply_text,
-        status=result.status,
-        limit_hit=result.limit_hit,
-        rounds=result.rounds,
-        usage=result.usage,
-        tool_calls=result.tool_calls,
-        steps=agent_memory.steps_for_turn(db, result.turn_id),
-        pending_action=result.pending_action,
-    )
+    """The console thread for one contact, so a reload brings it back: this run's bot turns and the
+    current agent conversation's turns, oldest first. Read only."""
+    return console_service.console_thread(db, contact_respond_id=contact_respond_id, run_id=run_id)
+
+
+# --------------------------------------------------------------------------- #
+# AGENTIC-P1: the agent's confirm, cancel and withdraw behind the console. Same grant as
+# `/console/turn`; nothing reaches WhatsApp.
+# --------------------------------------------------------------------------- #
 
 
 def _action_response(outcome) -> AgentActionResponse:
@@ -815,96 +788,29 @@ def _agent_refused(exc: AgentRefused) -> HTTPException:
     )
 
 
-def _actions_by_turn(db, turn_ids: list[str], user_id: str) -> dict[str, list[AgentConversationAction]]:
-    """This user's actions per proposing turn, as they stand now (so a reload still shows what was done)."""
-    from app.models.chatbot_agent import AgentAction
-    from app.models.user import User
-
-    if not turn_ids:
-        return {}
-    found = (
-        db.query(AgentAction)
-        .filter(AgentAction.turn_id.in_(turn_ids), AgentAction.user_id == str(user_id))
-        .order_by(AgentAction.created_at, AgentAction.id)
-        .all()
-    )
-    names = {
-        str(i): n
-        for i, n in db.query(User.id, User.name).filter(
-            User.id.in_({a.decided_by_user_id for a in found if a.decided_by_user_id})
-        )
-    } if found else {}
-    out: dict[str, list[AgentConversationAction]] = {}
-    for a in found:
-        out.setdefault(str(a.turn_id), []).append(
-            AgentConversationAction(
-                id=str(a.id),
-                status=a.status,
-                decided_at=a.decided_at,
-                decided_by_name=names.get(str(a.decided_by_user_id)) if a.decided_by_user_id else None,
-                steps=[agent_actions.step_out(st, default_status="proposed") for st in a.steps or []],
-            )
-        )
-    return out
-
-
-@router.get("/agent/conversation", response_model=AgentConversationResponse)
-def agent_conversation(
-    contact_respond_id: str = Query(..., min_length=1, max_length=64),
-    _user: dict = Depends(require_permission(VIEW)),
-    db: Session = Depends(get_db),
-):
-    """The contact's current conversation. Read only: the row is made by the first turn."""
-    try:
-        ctx = build_context(db, contact_respond_id)
-    except AgentRefused as exc:
-        raise _agent_refused(exc)
-    waiting = agent_actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
-    pending = agent_actions.pending_dict(waiting) if waiting is not None else None
-    conv = agent_memory.latest_conversation(db, contact_respond_id)
-    if conv is None or not agent_memory.belongs_to(conv, ctx.user_id, grants_hash(ctx)):
-        return AgentConversationResponse(conversation_id=None, turns=[], pending_action=pending)
-    rows = agent_memory.conversation_turns(db, conv)
-    by_turn = _actions_by_turn(db, [str(r.id) for r in rows], ctx.user_id)
-    turns = []
-    for row in rows:
-        envelope = row.envelope if isinstance(row.envelope, dict) else {}
-        response = row.response if isinstance(row.response, dict) else {}
-        digest = [d for d in (response.get("tool_digest") or []) if isinstance(d, dict)]
-        turns.append(
-            AgentConversationTurn(
-                turn_id=str(row.id),
-                text=str(envelope.get("text") or ""),
-                reply_text=str(response.get("reply_text") or ""),
-                status=row.status,
-                created_at=row.created_at,
-                rounds=response.get("rounds"),
-                limit_hit=response.get("limit_hit"),
-                tool_calls=[
-                    AgentConversationToolCall(name=str(d.get("name") or ""), status=str(d.get("status") or ""))
-                    for d in digest
-                ],
-                steps=agent_memory.steps_from_trace(row.trace),
-                actions=by_turn.get(str(row.id), []),
-            )
-        )
-    return AgentConversationResponse(conversation_id=str(conv.id), turns=turns, pending_action=pending)
-
-
 @router.post("/agent/conversation/new", response_model=AgentConversationNewResponse)
 def agent_conversation_new(
     payload: AgentConversationNewRequest,
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
+    """Start the agent afresh. A proposal still waiting is expired first (nobody decided it), so a later yes
+    cannot confirm a change from the conversation that was just left; a contact the agent may no longer run
+    for gets that too. Waits for nothing: a turn running for the contact makes this a 409 agent_busy."""
     try:
-        ctx = build_context(db, payload.contact_respond_id)
-    except AgentRefused as exc:
-        raise _agent_refused(exc)
-    conv = agent_memory.new_conversation(
-        db, payload.contact_respond_id, user_id=ctx.user_id, grants_hash=grants_hash(ctx)
-    )
-    db.commit()
+        with single_flight(payload.contact_respond_id):
+            agent_actions.expire_proposed(db, payload.contact_respond_id)
+            db.commit()
+            try:
+                ctx = build_context(db, payload.contact_respond_id)
+            except AgentRefused as exc:
+                raise _agent_refused(exc)
+            conv = agent_memory.new_conversation(
+                db, payload.contact_respond_id, user_id=ctx.user_id, grants_hash=grants_hash(ctx)
+            )
+            db.commit()
+    except AgentBusy:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "agent_busy"})
     return AgentConversationNewResponse(conversation_id=str(conv.id))
 
 
