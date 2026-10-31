@@ -24,14 +24,15 @@ Contract: section (a) of `CARD-agentic-unify-31oct.md` and the Console tabs of `
 
 ## New conversation and reload
 
-- **AC-13** One "New conversation" button starts both sides afresh: a new run for the bot and a new agent conversation. A proposal still waiting is cancelled, so a later "yes" cannot confirm a change no longer on screen.
+- **AC-13** One "New conversation" button starts both sides afresh: a new run for the bot and a new agent conversation. A proposal still waiting expires, with no decider recorded, for any operator: nothing was written, and the record names nobody who did nothing (a deliberate exception to rule R11, as `store_proposal` already expires older proposals). A later "yes" cannot confirm it. The reset is refused 409 while a turn runs for that contact, and the button is disabled during a running turn and a grace countdown, so an open Undo never leaves the screen.
 - **AC-14** After a reload the thread is back for that contact, in order: this run's bot turns and this agent conversation's turns, each with its pill, steps, write cards and sent files. A media turn shows its caption, never a blank bubble, and a turn still in progress adds no "(no reply)" line. A waiting proposal can still be confirmed, and a running countdown still shows. A loading skeleton shows until the read lands, and a message sent before it lands loses nothing.
 - **AC-15** The read returns only this contact's turns from this run and this agent conversation, never live WhatsApp turns or another run's. It is gated by `system.chat_history.view`, like the rest of the console, and is paginated within the list-limit guard if it takes a limit.
-- **AC-16** Switching contact shows that contact's thread. A reply still in flight for the first contact never lands in the second's thread or stored session.
+- **AC-16** Switching contact shows that contact's thread. A reply still in flight for the first contact never lands in the second's thread or stored session, and its session still reaches the first contact's store.
+- **AC-16b** A thread read never duplicates or reorders a turn: only a thread's first read adds turns, later reads update what is there, and a turn appears once whichever of its read and its reply lands first.
 
 ## Memory
 
-- **AC-17** An agent turn sees the recent bot replies of the same thread. A question that follows a bot answer, then routed to the agent, can use that answer. Asserted on what the provider receives. These replies and the customer text with them never enter the system role (rule R10): they go as a data message, so they cannot forge instructions or an approval.
+- **AC-17** An agent turn sees the recent bot replies of the same thread. A question that follows a bot answer, then routed to the agent, can use that answer. Asserted on what the provider receives. These replies and the customer text with them never enter the system role (rule R10): they go as quoted data messages, in time order around the agent's history, so they cannot forge a speaker. While a proposal waits they are left out of that turn altogether, because only the model reads the "yes" and quoted text must not be able to supply one.
 - **AC-18** The bot's input is unchanged: its parser and memory do not read agent turns. Pinned, because a change there needs a prompt gate.
 - **AC-19** Bot replies shown to the agent are bounded, and counted within its existing input budget.
 
