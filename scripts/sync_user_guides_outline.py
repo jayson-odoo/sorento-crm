@@ -186,7 +186,8 @@ class Outline:
         """The API token's own user id, or None when Outline will not say."""
         try:
             return self._post("auth.info", {})["data"]["user"]["id"]
-        except Exception:
+        except Exception as exc:
+            print(f"  [warn] auth.info failed ({exc}); the sync's own edits cannot be told apart")
             return None
 
     def get_document(self, doc_id: str) -> dict[str, Any]:
@@ -262,7 +263,10 @@ def validate_guides() -> list[str]:
     if leaked:
         problems.append(f"held folder(s) {leaked} are in PARENT_TITLES (the publish allowlist)")
 
-    folders = sorted(p.name for p in GUIDES_DIR.iterdir() if p.is_dir())
+    # A folder holding no markdown (images only, say) is not a guide folder.
+    folders = sorted(
+        p.name for p in GUIDES_DIR.iterdir() if p.is_dir() and any(p.rglob("*.md"))
+    )
     for folder in folders:
         if folder not in PARENT_TITLES and folder not in HELD_FOLDERS:
             problems.append(
@@ -632,6 +636,7 @@ def pull(args: argparse.Namespace) -> None:
     state = load_state()
 
     docs = o.list_documents(collection_id)
+    self_id = o.current_user_id()
     learn_state_by_title(state, docs)
     rev = {v: k for k, v in state.items()}
     parent_id_to_folder = {}
@@ -668,6 +673,14 @@ def pull(args: argparse.Namespace) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         full_body = f"# {title}\n\n{body_md.strip()}\n"
         if out_path.exists() and out_path.read_text() == full_body:
+            continue
+        editor = (full.get("updatedBy") or {}).get("id")
+        if self_id is not None and editor == self_id and out_path.exists():
+            # Last written by the sync itself (a push): the repo is its source,
+            # and Outline's copy differs only by its markdown normalisation or
+            # by an OLDER push that ran late. Pulling it would revert a newer
+            # repo edit (reviewer, DOCS-SYNC-AUTO).
+            print(f"  [keep] {rel_path}  (last written by the sync's own push)")
             continue
         if repo_is_newer(out_path, full):
             print(f"  [keep] {rel_path}  (repo copy is newer than Outline's, push it)")

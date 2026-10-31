@@ -18,8 +18,11 @@ Nobody runs the sync by hand any more. `.github/workflows/outline-user-guides-sy
 | **pull** (Outline -> repo) | every 6 hours | `pull`, then opens or refreshes ONE PR on `bot/outline-user-guides-sync`, labelled `docs-sync` |
 
 Both share one concurrency group (`outline-user-guides-sync`), so two pushes never overlap and a
-pull never runs while a push is writing. A running sync is never cancelled; a newer queued run
-replaces an older queued one, which is safe because every run checks out `main`'s current head.
+pull never runs while a push is writing. A running sync is never cancelled, but GitHub keeps only
+ONE queued run per group: a newer queued run (push or pull) replaces the older one. A push replaced
+by a push loses nothing (every run checks out `main`'s current head). A push replaced by the
+6-hourly pull is lost until the next guide merge pushes again, or dispatch `mode=push` by hand. The
+pull can not undo it meanwhile: it never pulls a page last written by the sync's own push.
 
 So the loop is: merge a guide PR -> it is on Outline a minute later. Edit on Outline -> within 6h a
 `docs-sync` PR brings it back -> merge it (its push finds those pages already the same).
@@ -30,7 +33,10 @@ Neither side overwrites the other's newer edit:
   prints `[keep] ... (repo copy is newer than Outline's, push it)`).
 - **push** keeps an Outline page a person edited after the repo page's last commit
   (`outline_is_newer`, prints `[keep] ... (Outline copy edited after the repo commit, pull it)`).
-  Edits made by the sync's own API user (an earlier push) do not count. To overwrite anyway,
+  Edits made by the sync's own API user (an earlier push) do not count, and pull likewise never
+  pulls a page that user last wrote. **So the token must belong to a dedicated Outline account
+  nobody edits guides as**: with a person's token, that person's Outline edits would read as the
+  sync's own and the next push would overwrite them. To overwrite anyway,
   dispatch the workflow with `mode=push` and `force` ticked (`OUTLINE_SYNC_FORCE=1` locally).
 - push skips a page whose title and text already match (`[same]`).
 
@@ -138,7 +144,7 @@ In GitHub repo settings → Secrets and variables → Actions, add:
 
 | Name | Value |
 |---|---|
-| `OUTLINE_API_TOKEN` | your Outline API token (workspace-scoped) |
+| `OUTLINE_API_TOKEN` | an API token of a dedicated Outline account used only by the sync (see the keep guards above) |
 | `OUTLINE_BASE_URL` | `https://doc.foundryx.my` (optional, has default) |
 | `OUTLINE_COLLECTION_ID` | `18f78b01-bf5a-4032-934c-d5679609d553` (optional) |
 

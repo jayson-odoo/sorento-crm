@@ -150,16 +150,6 @@ def test_repo_guides_validate_clean():
     assert mod.validate_guides() == []
 
 
-def test_every_published_title_fits_outline_limit():
-    mod = _load_module()
-    for md in mod.discover_files():
-        rel = mod.relpath(md)
-        if rel.split("/")[0] in mod.HELD_FOLDERS:
-            continue
-        title = mod.first_h1_or_filename(md)
-        assert len(title) <= mod.MAX_TITLE_LEN, (rel, len(title))
-
-
 def test_check_fails_on_long_title(monkeypatch, tmp_path):
     mod = _load_module()
     _fake_guides(mod, monkeypatch, tmp_path, {"warehouse/x.md": "# " + "a" * 101 + "\n"})
@@ -337,3 +327,54 @@ def test_push_keeps_an_outline_edit_not_yet_pulled(monkeypatch, tmp_path, capsys
     fake.updated.clear()
     mod.push(None)
     assert "a1" in fake.updated
+
+
+def test_pull_learns_ids_and_writes_no_duplicate_page(monkeypatch, tmp_path):
+    """pull() itself: a doc the push created (id not in state) maps back to its repo page."""
+    import json
+
+    mod = _load_module()
+    root = _fake_guides(mod, monkeypatch, tmp_path, {"warehouse/a.md": "# Page A\n\nrepo\n"})
+    parent = mod.PARENT_TITLES["warehouse"]
+    fake = _FakeOutline(
+        existing=[
+            {"id": "p1", "title": parent, "parentDocumentId": None, "text": "x"},
+            {"id": "c1", "title": "Page A", "parentDocumentId": "p1", "text": "edited on outline",
+             "updatedAt": "2026-10-31T06:00:00.000Z", "updatedBy": {"id": "human"}},
+        ]
+    )
+    monkeypatch.setattr(mod, "_repo_committed_at", lambda _p: None)
+    monkeypatch.setattr(mod, "load_env", lambda: ("http://x", "t", "cid"))
+    monkeypatch.setattr(mod, "Outline", lambda **_k: fake)
+    mod.pull(None)
+    assert sorted(p.name for p in (root / "warehouse").iterdir()) == ["a.md"]
+    assert (root / "warehouse" / "a.md").read_text() == "# Page A\n\nedited on outline\n"
+    state = json.loads((root / ".outline-sync.json").read_text())
+    assert state["warehouse/a.md"] == "c1" and state["warehouse/__parent__"] == "p1"
+
+
+def test_pull_keeps_a_page_last_written_by_the_sync(monkeypatch, tmp_path, capsys):
+    mod = _load_module()
+    root = _fake_guides(mod, monkeypatch, tmp_path, {"warehouse/a.md": "# Page A\n\nnewer repo\n"})
+    parent = mod.PARENT_TITLES["warehouse"]
+    fake = _FakeOutline(
+        existing=[
+            {"id": "p1", "title": parent, "parentDocumentId": None, "text": "x"},
+            {"id": "c1", "title": "Page A", "parentDocumentId": "p1", "text": "older push",
+             "updatedAt": "2026-10-31T06:00:00.000Z", "updatedBy": {"id": "bot"}},
+        ]
+    )
+    monkeypatch.setattr(mod, "_repo_committed_at", lambda _p: None)
+    monkeypatch.setattr(mod, "load_env", lambda: ("http://x", "t", "cid"))
+    monkeypatch.setattr(mod, "Outline", lambda **_k: fake)
+    mod.pull(None)
+    assert (root / "warehouse" / "a.md").read_text() == "# Page A\n\nnewer repo\n"
+    assert "last written by the sync" in capsys.readouterr().out
+
+
+def test_check_ignores_a_folder_without_markdown(monkeypatch, tmp_path):
+    mod = _load_module()
+    root = _fake_guides(mod, monkeypatch, tmp_path, {})
+    (root / "images").mkdir()
+    (root / "images" / "x.png").write_bytes(b"png")
+    assert mod.validate_guides() == []
