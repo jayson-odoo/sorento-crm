@@ -1,7 +1,7 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** code complete on PR #2038. Reviewer READY and security PASS at 2cf0483d55, then three small fixes with their own red and
-kill proof. Waiting for crew's CI label and hidden gate, the console pass and the owner's hand test. Track: size M, lead pattern.
+**Status:** code complete on PR #2038. CI green at 9e1b4c42e9; console pass done; two model-wording fixes from it pushed after that. Reviewer on
+that delta, a live recheck, crew's hidden gate and the owner's hand test are still to come. Track: size M, lead pattern.
 UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
 
 Slices: **S1** = R1 routing. **S2** = R3 multi-turn. **S3** = R2 idea tools. They land as commits on this one lane branch.
@@ -267,8 +267,21 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 - Editing use cases replaces the whole list, and list rows carry no use cases, so "add a use case" can drop the others (the card does
   show the new value). Give the rows their use cases, or a merge rule.
 - Look-alike quotes (U+201D, U+FF02) are not escaped in the proposal. All the text stays visible.
+- `raw_transcript` on the agent path holds the fields the model gave, not the user's own words (a write tool sees only its arguments), so ss
+  loses the original wording that the bot's capture keeps. Decide whether to carry the turn's text through to the write.
 - A re-proposed idea whose ss status has moved past `captured` replays and reads "could not be reached" (`call_create_idea`
   requires `captured`), and any ss 4xx reads the same. Unlikely while ideas are off the board; give these their own line then.
+
+### What the console pass showed (31 Oct, 33 turns on the test copy)
+
+- No create reached any shared service, no errors, no 429s. `asked_back` stayed on the agent 3 of 3 times, a small sample, and did not stick after a
+  plain answer. A propose turn cost 2 rounds, 6,854 tokens in, 484 out. A typed confirm's cost is not shown in the console, so it was not measured.
+- R3 covers bot questions that hold state (an open pick, a required ask, a held list), proved through the real console path by
+  `test_agent_ideas_console.py`. A question the bot only words as a sentence holds no state, so Jev still decides the reply: state rules never read
+  wording (`router.py:3`).
+- An idea from a contact with a different chat history scored 0.14 and went to the bot, against 0.80 and 0.82 for a similar message on another. The
+  history is the likely cause, unconfirmed. The eval's idea rows mostly carry no history, so real scores may vary more than the eval shows.
+- The two console-tab Reset controls differ: Reset clears the Bot tab only, and New conversation clears the agent. The hand-test script says so.
 
 ### Accepted, not changed
 
