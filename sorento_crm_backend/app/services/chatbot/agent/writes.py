@@ -1728,6 +1728,8 @@ LIST_IDEAS = "crm_ideas_list"
 #: it when the agent reaches WhatsApp (and drop the second source in `_ideas_list`).
 IDEA_IS_TEST = True
 MAX_SIMILAR_IDEAS = 3
+#: Newest agent actions of the contact read for ideas it made.
+MAX_IDEA_ACTIONS = 200
 IDEA_NOT_CREATED = "The idea was not created because the Ideas workspace could not be reached. Try again later."
 IDEA_OWN_ONLY = "You can only edit your own ideas."
 #: Idea field (agent name) -> (ss name, label in words).
@@ -1868,7 +1870,8 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
     link = _idea_link(result.get("idea_id"))
     number = result.get("idea_number")
     missing = ", ".join(_missing_list(payload))
-    note = f"Idea {number}" + (f": {link}" if link else "") + f". Not given: {missing}."
+    number = number or None  # ss may send none: the note then names no number
+    note = (f"Idea {number}" if number else "The idea") + (f": {link}" if link else "") + f". Not given: {missing}."
     if IDEA_IS_TEST:
         note += " This is a test idea, so it is not on the board."
     return {
@@ -1930,10 +1933,10 @@ def _idea_ss_rows(db, ctx, args: dict) -> list[dict]:
 
     params = {"mine": "true", **({"search": args["search"]} if args.get("search") else {})}
     data = run_as_user(db, ctx, lambda user: call_ss(db, user, "GET", ss_path("embed", "ideas"), params=params).json(), tool_name=LIST_IDEAS)
-    items = data if isinstance(data, list) else (data or {}).get("ideas") if isinstance(data, dict) else []
+    # ss answers a bare list; anything else is no rows.
     return [
         {"id": i["id"], "idea_number": i.get("ideaNumber"), "title": i.get("title"), "status": i.get("status")}
-        for i in items or [] if isinstance(i, dict) and i.get("id")
+        for i in (data if isinstance(data, list) else []) if isinstance(i, dict) and i.get("id")
     ]
 
 
@@ -1952,7 +1955,13 @@ def _ideas_list(db, ctx, args: dict) -> ToolResult:
     # creates made are added here; this goes away when IDEA_IS_TEST flips.
     seen = {str(r["id"]).lower() for r in rows}
     needle = str(args.get("search") or "").strip().lower()
-    for action in db.query(AgentAction).filter(AgentAction.contact_respond_id == ctx.contact_respond_id).order_by(AgentAction.created_at.desc()):
+    own_actions = (
+        db.query(AgentAction)
+        .filter(AgentAction.contact_respond_id == ctx.contact_respond_id, AgentAction.user_id == str(ctx.user_id))
+        .order_by(AgentAction.created_at.desc())
+        .limit(MAX_IDEA_ACTIONS)
+    )
+    for action in own_actions:
         for step in action.steps or []:
             made = str(step.get("result_id") or "")
             after = step.get("after") or {}
