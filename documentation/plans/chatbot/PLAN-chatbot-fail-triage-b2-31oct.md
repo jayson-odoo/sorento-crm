@@ -2,8 +2,8 @@
 
 **Status:** Build. Feature track M, lead pattern (tester red -> coder -> reviewer + security-reviewer). Parser candidate
 E, md5 e90461ef, PASSED crew's hidden gate 31 Oct and is pinned: `PROMPT-fail-triage-b2-e90461ef.patch` rebuilds it from
-production md5 57d7d412; no further prompt edit without a new gate. Publishing waits for owner Q1-Q4 and #2018. AC-6 code
-done except the no-variant reply (Q3); AC-5 waits Q1, Q2. Batch 1 is PR #2018 (lane CHATBOT-FAIL-TRIAGE). Parent plan and
+production md5 57d7d412; no further prompt edit without a new gate. Owner answered Q1-Q4 on 31 Oct; publishing waits for the
+owner's review of the text and #2018. AC-5 and the no-variant reply in build. Batch 1 is PR #2018 (lane CHATBOT-FAIL-TRIAGE). Parent plan and
 UAC: `PLAN-chatbot-fail-triage-30oct.md`, `chatbot-fail-triage-acceptance-criteria.md` (Batch 2 + AC-7f + R1), copied
 unchanged so they merge cleanly with #2018.
 
@@ -102,6 +102,28 @@ registry, so trap length needs no naming. Two variants matching: stays a pick be
 | "Please escalate to product marketing team" | `suggested_team` marketing_product | routes there |
 | "escalate marketing" | `suggested_team` "marketing" (own word) | clarify among the marketing teams (`lanes/escalation.py:1222,1254`, already on main) |
 | "give me link to request pricetag" | portal_link, `portal_form` price_tag_request | portal link on the price tag form (#2018 code) |
+
+## Owner answers, 31 Oct ~08:40 (supersede the AC-5 table above and the card's Q1-Q3)
+
+- Q1 (a), decided in code, but: end users and staff with no purchase cost permission keep "not allowed to access purchase
+  cost". Dealer vs staff is the contact's TAG, not the access level: both hold the same levels.
+- AC-5 output: the dealer cost is not really stored, it is in the PDF. A dealer's "my cost" gets the product's live dealer
+  promotions through the EXISTING promotion lookup and presentation, links included, no `dealer_cost` number. The dealer
+  opens the promotion to work out the cost. E1 and Q2c fall away.
+- Q2 (b) follow `serving_policy`, unified with promotions. Q2b (a) no-date promotions are live, same logic.
+- Q3: AC-6 parser side is the glued case only (measured); no new wording, reuse the existing "not found" clause.
+- Q4 (a): owner gets text + md5 + edit list and reviews it before pasting into prod.
+
+Tag evidence (`sorento_prod_1028`, aggregates): dealers = Sorento Dealer Brand 215, Sorento Mocha Dealer Tag 112, Mocha
+Dealer Tag 32. Staff = Office Staff 58, Project Salesperson 16, Retail Salesperson 15, Admin 1. Untagged 49. No contact
+holds both. Purchase cost reveal: 0 of the 359 dealers. 145 of the 359 dealers hold only the `end_user` level, so through
+the existing lookup they see end-user promotions, or none: a known consequence of "use our existing logic".
+
+Lead decision, filed with crew: a dealer is a contact with an active tag whose `settings.chatbot.tier` is `dealer`, read the
+way `contact_llm_choice.py:36` reads the model. No word match on tag names, no migration. The owner or crew sets the tier on
+the 3 tags once; until then every dealer gets today's denial, so it fails safe. Do not press Apply on those tags.
+
+Size no variant holds: the existing "None with size 300mm" clause (`lanes/business/answer.py:3098`), then today's variants.
 
 ## Prompt edits (one version, base = production text, F1)
 
