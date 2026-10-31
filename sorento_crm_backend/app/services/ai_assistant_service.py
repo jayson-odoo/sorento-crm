@@ -387,8 +387,13 @@ class MCPRuntimeClient:
     def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         rid = str(uuid.uuid4())
         payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}}
+        headers = self._headers()
+        # With no bearer and Enforce off the MCP server strips the staff markers
+        # (`sorento_crm_mcp/auth.py`), so the call would run as the act-as user (AGENTIC-UNIFY AC-26).
+        if self.staff and "Authorization" not in headers:
+            raise MCPToolCallError("The AI assistant has no MCP token: set it on Settings > Integrations.")
         with httpx.Client(timeout=self.timeout_seconds) as client:
-            resp = client.post(self.base_url, json=payload, headers=self._headers())
+            resp = client.post(self.base_url, json=payload, headers=headers)
             resp.raise_for_status()
             body = self._decode_streamable_body(resp)
         if isinstance(body, dict) and "error" in body:
@@ -2323,7 +2328,7 @@ class AIAssistantChatService:
         sources: list[dict[str, Any]],
         resolution: ResolutionResult | None = None,
         page_snapshot: PageSnapshotPayload | None = None,
-        user_id: str | None = None,
+        user_id: str,
         conversation_id: str | None = None,
         user_message_id: str | None = None,
         record_ctx: dict[str, Any] | None = None,
@@ -2911,7 +2916,7 @@ class AIAssistantChatService:
         record_ctx: dict[str, Any],
         page_snapshot: PageSnapshotPayload | None = None,
         turn_cache: _TurnToolCache | None = None,
-        user_id: str | None = None,
+        user_id: str,
     ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
         """Render a grounded answer from the deterministic record-context facts.
 

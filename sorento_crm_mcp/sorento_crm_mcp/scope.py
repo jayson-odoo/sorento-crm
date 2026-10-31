@@ -12,7 +12,7 @@ header only matters on an authenticated request, and a caller holding the token 
 key that reads every company, so the opt-out grants nothing new.
 
 AGENTIC-UNIFY PR 1: a staff-marked read runs as the staff member, not the key's act-as user. The
-assistant names them in `X-MCP-Staff-User`, a scoped read without that id is refused, and
+assistant names them in `X-MCP-Staff-User`, a staff-marked read without that id is refused, and
 `CRMClient.request` forwards the id to the CRM as `X-Staff-User` (`forwarded_staff_id`).
 """
 from __future__ import annotations
@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 SCOPE_PARAMS = ("contact_id", "space_id")
 STAFF_HEADER = "x-mcp-scope"
 STAFF_VALUE = "staff"
-# The staff user the assistant is answering. A scoped read needs it, and it reaches the CRM as
-# CRM_STAFF_HEADER (`forwarded_staff_id`).
+# The staff user the assistant is answering. A staff-marked read needs it, and it reaches the CRM
+# as CRM_STAFF_HEADER (`forwarded_staff_id`).
 STAFF_USER_HEADER = "x-mcp-staff-user"
 CRM_STAFF_HEADER = "X-Staff-User"
 
@@ -106,23 +106,23 @@ def _missing_scope(query: dict[str, Any] | None, body: Any) -> list[str]:
 def check_scope(spec: Any, query: dict[str, Any] | None, body: Any, ctx: Any) -> str | None:
     """The one scope check every catalog tool call runs (`server._compile_tool`).
 
-    Returns the refusal to answer with, or None to go ahead. A staff-marked read of a scoped tool
-    with no staff id is refused: it could only run as the key's act-as user, across every company.
+    Returns the refusal to answer with, or None to go ahead. A staff-marked read of any tool with no
+    staff id is refused: it could only run as the key's act-as user.
     A staff opt-out that skipped a contact refusal is logged (tool, staff user id)."""
     staff = is_staff_request(ctx)
-    if staff and staff_may_skip(spec) and is_scoped(spec):
+    if staff and staff_may_skip(spec):
         staff_user = _staff_user_id(_request_headers(ctx))
         if not staff_user:
             return json.dumps(
                 {
                     "error": "scope_required",
-                    "detail": f"Tool '{spec.name}' reads company-owned data and needs the staff member's id.",
+                    "detail": f"Tool '{spec.name}' reads as the staff member and needs their id.",
                     "missing": [STAFF_USER_HEADER],
                     "data": [],
                     "total": 0,
                 }
             )
-        if _missing_scope(query, body):
+        if is_scoped(spec) and _missing_scope(query, body):
             logger.info(
                 "staff-scope MCP call without a contact: tool=%s staff_user=%s",
                 spec.name,

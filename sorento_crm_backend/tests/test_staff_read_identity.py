@@ -289,6 +289,13 @@ def _probe_client(db) -> TestClient:
     def offlist(request: Request, user=Depends(get_current_user_or_api_key), database=Depends(get_db)):
         return snapshot(request, user, database)
 
+    @r.get("/zzt/ext-off/{entity}")
+    def ext_off(
+        entity: str,
+        user=Depends(require_external_permission_for_path({"thing": "zzt.thing.view"}, param="entity")),
+    ):
+        return {"ok": True}
+
     @r.get("/zzt/permmod")
     def permmod(user=Depends(require_permission_with_api_key("order_management.orders.view"))):
         return {"ok": True}
@@ -325,8 +332,7 @@ PROBE_READS = [
     ("GET", "/api/v1/zzt/any"),
     ("GET", "/api/v1/zzt/ext"),
     ("GET", "/api/v1/zzt/ext-integration"),
-    ("GET", "/api/v1/zzt/ext-path/thing"),
-    ("GET", "/api/v1/zzt/ext-path/int"),
+    ("GET", "/api/v1/zzt/ext-path/{}"),
     ("GET", "/api/v1/zzt/permmod"),
     ("GET", "/api/v1/zzt/modguard"),
 ]
@@ -1219,3 +1225,106 @@ def test_ac9_the_named_user_is_logged_on_an_identity_read(env, probe, caplog):
     assert any(staff in rec.getMessage() for rec in caplog.records), (
         "AC-9: no log line names the staff user id on an identity read"
     )
+
+
+# =========================================================================== #
+# Pins: handler checks that read a user's slugs or role (AC-27)               #
+# =========================================================================== #
+def test_ac27_external_for_path_off_the_list_is_403_staff_identity_invalid(env, probe):
+    staff = mk_user(env.db, "staff", perms=["zzt.thing.view"])
+    env.use_actas(perms=["zzt.thing.view"])
+    resp = probe.get("/api/v1/zzt/ext-off/thing", headers=env.ident(staff))
+    assert resp.status_code == 403, resp.text
+    assert INVALID_CODE in resp.text, "an unlisted read must be refused as an identity, not as a missing slug"
+
+
+def _project_with_a_customer(env, phone: str):
+    from app.models.projects import ProjectSalesProfile
+    from tests._mc_lookup_seed import customer
+    from tests.test_portal_p2_own_scope_projects import _project
+
+    cust = customer(env.db, company_id=SORENTO)
+    cust.phone_number = phone
+    project = _project(env.db, SORENTO, None)
+    env.db.add(ProjectSalesProfile(project_id=project.id, customer_id=cust.id))
+    env.db.flush()
+    return project
+
+
+def _listed_phone(resp, project_id):
+    assert resp.status_code == 200, resp.text[:300]
+    (row,) = [r for r in resp.json()["data"] if r["id"] == project_id]
+    return row["customer_phone"]
+
+
+def test_ac27_project_field_gate_needs_the_slug_on_both_users(env):
+    """`_reader_permissions` (projects.py:266): the customer phone is behind
+    `order_management.customers.view`; a named staff member holding it does not lend it."""
+    env.use_actas(perms=["projects.projects.view"])
+    project = _project_with_a_customer(env, "0312345678")
+    staff = mk_user(
+        env.db, "staff", perms=["projects.projects.view", "order_management.customers.view"],
+        companies=[SORENTO], last_active=SORENTO,
+    )
+    path = "/api/v1/project-sales/projects/"
+    session = env.client.get(path, params={"limit": 100}, headers=env.session(staff))
+    assert _listed_phone(session, project.id) == "0312345678", "fixture: the session sees the phone"
+    identity = env.client.get(path, params={"limit": 100}, headers=env.ident(staff))
+    assert _listed_phone(identity, project.id) is None, "AC-27: act-as lacks the slug, so the field stays gated"
+    detail = env.client.get(f"{path}{project.id}", headers=env.ident(staff))
+    assert detail.status_code == 200 and detail.json()["customer_phone"] is None
+
+
+def test_ac27_project_field_gate_opens_when_both_users_hold_the_slug(env):
+    both = ["projects.projects.view", "order_management.customers.view"]
+    env.use_actas(perms=both)
+    project = _project_with_a_customer(env, "0312345678")
+    staff = mk_user(env.db, "staff", perms=both, companies=[SORENTO], last_active=SORENTO)
+    identity = env.client.get("/api/v1/project-sales/projects/", params={"limit": 100}, headers=env.ident(staff))
+    assert _listed_phone(identity, project.id) == "0312345678"
+
+
+def test_ac27_current_stock_list_does_not_widen_to_a_named_superadmins_grants(env):
+    """attachments.py:664: no actor on an identity read, so the shared-attachment widening
+    (resources_service.py:1469) stays off. The link is to another company's product."""
+    from app.models.resources import Attachment
+    from tests._mc_lookup_seed import attachment_type, product, product_attachment
+
+    env.use_actas(perms=["inventory.stock.view"])
+    kind = attachment_type(env.db, name="Stock List")
+    shared = Attachment(
+        id=uid(), original_filename="ZZT-stock.pdf", stored_filename="ZZT-stock.pdf",
+        file_path="https://cdn.test/zzt-stock.pdf", attachment_type_id=kind.id, is_deleted=False, company_id=None,
+    )
+    env.db.add(shared)
+    env.db.flush()
+    other = product(env.db, company_id=env.co_b, code=unique_code("PB"))
+    product_attachment(env.db, company_id=env.co_b, product_id=other.id, attachment_id=shared.id)
+    boss = mk_user(env.db, "boss", roles=("superadmin",), last_active=env.co_a)
+
+    path = "/api/v1/resource-management/attachments/current-stock-list"
+    session = env.client.get(path, headers=env.session(boss))
+    assert session.status_code == 200, session.text[:300]
+    assert other.product_code in session.text, "fixture: a superadmin session sees the other company's link"
+    identity = env.client.get(path, headers=env.ident(boss))
+    assert identity.status_code == 200, identity.text[:300]
+    assert other.product_code not in identity.text, "AC-27: the widening follows the grants of nobody on an identity read"
+
+
+@pytest.mark.parametrize(
+    "fn,slug", [("require_invoiced_access", "sales.reports.view"), ("require_unpaid_access", "finance.billing_documents.view")]
+)
+def test_ac27_the_invoiced_and_unpaid_gates_ask_both_users(env, fn, slug):
+    from app.services.error_handler import AppException
+    from app.services.sales import invoiced_sales
+
+    gate = getattr(invoiced_sales, fn)
+    staff = mk_user(env.db, "staff", perms=[slug])
+    lacking = mk_user(env.db, "actas-lacking")
+    holding = mk_user(env.db, "actas-holding", perms=[slug])
+    with pytest.raises(AppException) as err:
+        gate(env.db, {"id": staff, "key_user_id": lacking})
+    assert err.value.status_code == 403
+    gate(env.db, {"id": staff, "key_user_id": holding})  # both hold it: passes
+    with pytest.raises(AppException):
+        gate(env.db, {"id": lacking, "key_user_id": holding})

@@ -75,7 +75,8 @@ def test_default_client_sends_no_staff_marker(seen):
     assert "x-mcp-scope" not in seen[0].headers
 
 
-def test_staff_client_sends_the_staff_marker(seen):
+def test_staff_client_sends_the_staff_marker(seen, monkeypatch):
+    _token(monkeypatch, TOKEN)  # AC-26: a staff client without a token makes no call
     MCPRuntimeClient("http://mcp:8765/mcp", staff=True, staff_user_id="u-1").call_tool("crm_x", {})
     assert seen[0].headers["x-mcp-scope"] == "staff"
 

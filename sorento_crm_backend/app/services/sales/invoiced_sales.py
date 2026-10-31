@@ -336,10 +336,10 @@ INVOICED_SLUG = "sales.reports.view"
 
 def require_invoiced_access(db: Any, current_user: dict) -> None:
     """403 unless the caller (a user, or an API key's act-as user) holds `sales.reports.view`."""
-    from app.services.user_service import UserPermissionService
+    from app.services.user_service import holds_permission
 
     # The route dependencies' own check (superadmin and admin pass), so the rule is one rule.
-    if not UserPermissionService(db).check_user_has_permission(str(current_user["id"]), INVOICED_SLUG):
+    if not holds_permission(db, current_user, INVOICED_SLUG):
         raise AppException(
             status_code=403,
             message="Invoiced sales need the sales reports permission; ask delivered or ordered sales",
@@ -355,9 +355,9 @@ UNPAID_SLUG = "finance.billing_documents.view"
 def require_unpaid_access(db: Any, current_user: dict) -> None:
     """The chatbot route's unpaid gate on the act-as user (superadmin and admin pass). The contact's Outstanding reveal
     is checked separately, next to the other outstanding kinds."""
-    from app.services.user_service import UserPermissionService
+    from app.services.user_service import holds_permission
 
-    if not UserPermissionService(db).check_user_has_permission(str(current_user["id"]), UNPAID_SLUG):
+    if not holds_permission(db, current_user, UNPAID_SLUG):
         raise AppException(
             status_code=403,
             message="Unpaid invoices need the finance billing documents permission",

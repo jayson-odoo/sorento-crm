@@ -26,7 +26,7 @@ from app.services.entity_resolver import ResolutionResult
 from app.services.llm_provider import ChatResult
 from tests._pg_fixture import blank_session
 from tests.test_ai_assistant_record_context_preroute import _Spy, _USAGE, _parse
-from tests.test_staff_read_identity import RECORD_KINDS, _record_row, grant, mk_user
+from tests.test_staff_read_identity import RECORD_KINDS, _record_row, env, grant, mk_user  # noqa: F401
 
 STAFF_ID = "95709c37-0fb4-5c00-8686-536c019e6fb7"
 
@@ -52,7 +52,7 @@ def test_ac1_a_staff_client_with_an_id_sends_both_headers(monkeypatch):
     monkeypatch.setattr(
         svc_module.httpx, "Client", lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)})
     )
-    monkeypatch.setattr("app.services.mcp_auth_token.current_token", lambda db=None: None)
+    monkeypatch.setattr("app.services.mcp_auth_token.current_token", lambda db=None: "x" * 40)
     MCPRuntimeClient("http://mcp:8765/mcp", staff=True, staff_user_id=STAFF_ID).list_tools()
     assert seen[0].headers["x-mcp-scope"] == "staff"
     assert seen[0].headers["x-mcp-staff-user"] == STAFF_ID
@@ -320,3 +320,12 @@ def test_ac20_panel_view_own_gets_facts_only_for_their_own_record(db_session, pa
     _ask(panel, user, kind, theirs)
     foreign_facts, _ = _facts_given(panel)
     assert foreign_facts is None, f"AC-20 {kind}: the client-supplied id named someone else's record"
+
+
+# --- the settings page's tool list with no MCP token --------------------------------------------------
+def test_ac26_the_settings_tool_list_with_no_token_is_503_with_a_detail(env, monkeypatch):
+    monkeypatch.setattr("app.services.mcp_auth_token.current_token", lambda db=None: None)
+    viewer = mk_user(env.db, "settings-viewer", perms=["system.ai_assistant_settings.view"])
+    resp = env.client.get("/api/v1/system/ai-assistant/tools", headers=env.session(viewer))
+    assert resp.status_code == 503, f"{resp.status_code} {resp.text[:200]}"
+    assert resp.json().get("detail"), "the page shows this where the tool list would be"

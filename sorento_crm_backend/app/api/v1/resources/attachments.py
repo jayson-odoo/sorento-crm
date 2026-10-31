@@ -659,7 +659,9 @@ def _attachment_response_with_linked_entities(
         data.get("file_path"),
         provider=getattr(attachment, "storage_provider", None),
     )
-    actor_id = (current_user or {}).get("id")
+    # The widening below follows one user's grants, and a named user does not lend theirs: an
+    # identity read stays in the active company (AGENTIC-UNIFY AC-27).
+    actor_id = None if (current_user or {}).get("key_user_id") else (current_user or {}).get("id")
     linked = service.get_linked_entities(
         attachment_id, actor_id=actor_id, company_id=getattr(attachment, "company_id", None)
     )

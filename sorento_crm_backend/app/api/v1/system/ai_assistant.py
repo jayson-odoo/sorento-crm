@@ -73,7 +73,7 @@ from app.schemas.ai_assistant import (
     UsageSummaryResponse,
     WishlistClusterItem,
 )
-from app.services.ai_assistant_service import AIAssistantChatService, AIAssistantConfigService
+from app.services.ai_assistant_service import AIAssistantChatService, AIAssistantConfigService, MCPToolCallError
 from app.services.ai_wishlist_service import AiWishlistService
 from app.services.llm_provider import get_provider
 from app.services.provider_model_catalog import (
@@ -256,7 +256,11 @@ def list_ai_assistant_tools(
     db: Session = Depends(get_db),
 ):
     chat = AIAssistantChatService(db)
-    return chat.list_mcp_tools(current_user["id"])
+    try:
+        return chat.list_mcp_tools(current_user["id"])
+    except MCPToolCallError as exc:
+        # No MCP token yet: the settings page shows this `detail` where the tool list would be.
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
 @router.get("/ai-assistant/greeting", response_model=GreetingResponse)

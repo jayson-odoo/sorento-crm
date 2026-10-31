@@ -25,9 +25,9 @@ Decision table (PLAN §3.9 / §3.11, four-state - see ``app/models/base.py``):
   X-API-Key + contact_id&space_id resolved     | frozenset(contact's company_ids)
   X-API-Key + contact params, contact/none     | frozenset()  (empty → 0 rows, AC-F3)
   X-API-Key, no contact params                 | None (all companies, backward-compat)
-  Shared key + X-Staff-User (a read)           | the staff member's active company, as a session
-    + contact_id&space_id                      |   intersected with the contact's companies
-    bad id, inactive, no grants                |   UNSET (fail-closed)
+  Shared key + X-Staff-User, a catalog read    | the staff member's active company, as a session
+    off the list, a contact pair, a bad id,    |   UNSET (fail-closed)
+    an unusable user, no grants                |
   Portal / public view token (header or ?token) | frozenset(contact's companies)
                                                 |   → incumbent when it has none
   no principal / public / unauth               | UNSET (fail-closed, 0 rows)
@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from typing import Optional, Tuple
@@ -65,11 +66,61 @@ logger = logging.getLogger(__name__)
 
 #: The staff member a read through the AI panel runs as (AGENTIC-UNIFY PR 1), sent by the MCP server.
 STAFF_USER_HEADER = "X-Staff-User"
-#: The catalog's `read_only` POST tools that reach the CRM (`sorento_crm_mcp/catalog.py`:
-#: crm_lookup_resolve, crm_portal_link_get). Any other write ignores the header, so it can never
-#: change who a write is attributed to.
-STAFF_READ_POST_PATHS = frozenset({"/api/v1/lookup/resolve", "/api/v1/external/portal-tokens"})
+#: The routes an identity may read: exactly the catalog's reads under /api/v1/ (GET, or `read_only`,
+#: `sorento_crm_mcp/catalog.py`), pinned by `test_staff_read_routes_equal_the_catalogs_reads_under_api_v1`.
+#: Written as `_on_staff_read_list` normalises a route template: parameters `{}`, no trailing slash.
+STAFF_READ_ROUTES = frozenset(
+    {
+        ("GET", "/api/v1/complaints-management/complaints"),
+        ("GET", "/api/v1/complaints-management/complaints/analytics"),
+        ("POST", "/api/v1/external/portal-tokens"),
+        ("GET", "/api/v1/external/sales-opportunities/customer-options"),
+        ("GET", "/api/v1/forms-management/forms"),
+        ("GET", "/api/v1/incoming-stock/by-product"),
+        ("GET", "/api/v1/incoming-stock/list"),
+        ("GET", "/api/v1/incoming-stock/shipments"),
+        ("GET", "/api/v1/inventory/stock/balance"),
+        ("GET", "/api/v1/inventory/warehouses"),
+        ("POST", "/api/v1/lookup/resolve"),
+        ("GET", "/api/v1/marketing/promotion-attachments"),
+        ("GET", "/api/v1/marketing/promotion-products"),
+        ("GET", "/api/v1/marketing/promotions"),
+        ("GET", "/api/v1/master-data/brands"),
+        ("GET", "/api/v1/master-data/certificates"),
+        ("GET", "/api/v1/master-data/product-attachments"),
+        ("GET", "/api/v1/master-data/product-categories"),
+        ("GET", "/api/v1/master-data/products"),
+        ("GET", "/api/v1/master-data/products/find"),
+        ("GET", "/api/v1/master-data/units-of-measure"),
+        ("GET", "/api/v1/order-management/orders"),
+        ("GET", "/api/v1/order-management/orders/analytics"),
+        ("GET", "/api/v1/order-management/orders/by-product"),
+        ("GET", "/api/v1/order-management/orders/debtors"),
+        ("GET", "/api/v1/order-management/outstanding-report"),
+        ("GET", "/api/v1/order-management/report-ask"),
+        ("GET", "/api/v1/order-management/sales-report"),
+        ("GET", "/api/v1/procurement/grn/summary"),
+        ("GET", "/api/v1/procurement/purchase-orders/last-cost"),
+        ("GET", "/api/v1/procurement/purchase-orders/placed"),
+        ("GET", "/api/v1/procurement/purchase-requests/by-number/{}"),
+        ("GET", "/api/v1/procurement/spo-allocations/last-receipt"),
+        ("GET", "/api/v1/project-sales/projects"),
+        ("GET", "/api/v1/project-sales/projects/{}"),
+        ("GET", "/api/v1/project-sales/projects/{}/quotations"),
+        ("GET", "/api/v1/project-sales/reports/forecast"),
+        ("GET", "/api/v1/resource-management/attachments"),
+        ("GET", "/api/v1/resource-management/attachments/current-stock-list"),
+        ("GET", "/api/v1/sales/analysis"),
+        ("GET", "/api/v1/sales/target-progress"),
+        ("GET", "/api/v1/scm/low-stock-report"),
+        ("GET", "/api/v1/sla-management/conversation-sla-tracking"),
+        ("GET", "/api/v1/sla-management/conversation-sla-tracking/dashboard"),
+        ("GET", "/api/v1/sla-management/conversation-sla-tracking/event-logs"),
+        ("GET", "/api/v1/system/tool-capabilities/summary"),
+    }
+)
 STAFF_ID_MAX_LENGTH = 64
+_ROUTE_PARAM = re.compile(r"\{[^}]+\}")
 
 
 # --------------------------------------------------------------------------- #
@@ -87,29 +138,52 @@ def _api_key_valid(api_key: Optional[str]) -> bool:
     return bool(api_key) and bool(valid) and hmac.compare_digest(str(api_key), str(valid))
 
 
-def staff_identity_header(request: Request) -> Optional[str]:
-    """The raw `X-Staff-User` value when this request may carry an identity, else None.
+def _on_staff_read_list(request: Request) -> bool:
+    """Is the route this request resolved to on `STAFF_READ_ROUTES`? The template, not the raw path,
+    so a sibling route under a listed prefix is never mistaken for a listed one."""
+    template = getattr(request.scope.get("route"), "path_format", None)
+    if not template:
+        return False
+    return (request.method.upper(), _ROUTE_PARAM.sub("{}", template).rstrip("/")) in STAFF_READ_ROUTES
 
-    The one rule for both readers of the header: this resolver, which runs before auth, and
-    `dependencies._apply_staff_identity`. A GET or HEAD, or a POST to a catalog read."""
-    raw = request.headers.get(STAFF_USER_HEADER)
-    if raw is None:
+
+def staff_identity_claimed(request: Request) -> bool:
+    """Does this request claim an identity? `X-Staff-User` on any read, or on a POST the list names.
+    Any other write ignores the header, so it can never change who a write is attributed to."""
+    if request.headers.get(STAFF_USER_HEADER) is None:
+        return False
+    return request.method.upper() in {"GET", "HEAD"} or _on_staff_read_list(request)
+
+
+def resolve_staff_identity(db: Session, request: Request) -> Optional[str]:
+    """The user a claiming request runs as, or None when the claim must be refused.
+
+    The one decision for both readers of the header: this resolver, which runs before auth, and
+    `dependencies._apply_staff_identity`. Refused: a read off the list (so a catalog tool missing
+    from it fails loudly rather than reading as act-as), a contact in the query (the panel always
+    blanks the pair; several routes overwrite the scope from the contact), and an id that is not a
+    usable person. `users.id` is a String column and older ids may not be UUIDs, so a bad id is
+    decided by the lookup.
+    """
+    if not _on_staff_read_list(request):
         return None
-    method = request.method.upper()
-    if method in {"GET", "HEAD"}:
-        return raw
-    if method == "POST" and request.url.path.rstrip("/") in STAFF_READ_POST_PATHS:
-        return raw
-    return None
-
-
-def parse_staff_id(raw: str) -> Optional[str]:
-    """The id in an `X-Staff-User` value, or None when blank or too long to be one.
-
-    No format check: `users.id` is a String column and older ids may not be UUIDs, so whether an
-    id is real is decided by looking it up."""
-    staff_id = raw.strip()
-    return staff_id if staff_id and len(staff_id) <= STAFF_ID_MAX_LENGTH else None
+    params = request.query_params
+    if (params.get("contact_id") or "").strip() or (params.get("space_id") or "").strip():
+        return None
+    staff_id = (request.headers.get(STAFF_USER_HEADER) or "").strip()
+    if not staff_id or len(staff_id) > STAFF_ID_MAX_LENGTH:
+        return None
+    row = (
+        db.query(User.id)
+        .filter(
+            User.id == staff_id,
+            User.is_trashed.is_(False),
+            User.status == "ACTIVE",
+            User.is_integration.is_(False),
+        )
+        .first()
+    )
+    return str(row[0]) if row else None
 
 
 def _resolve_user_id_and_claim(db: Session, token: str) -> Tuple[Optional[str], Optional[str]]:
@@ -288,32 +362,14 @@ def _resolve_api_key_scope(db: Session, request: Request) -> CompanyScope:
     return resolve_contact_company_scope(db, contact_id, space_id)
 
 
-def _staff_identity_scope(db: Session, request: Request, raw: str) -> CompanyScope:
+def _staff_identity_scope(db: Session, request: Request) -> CompanyScope:
     """An identity read's scope: the staff member's active company, resolved as a session's is.
 
     The claim stays None: staff sessions are opaque tokens, the active company lives on
-    `users.last_active_company_id`. This runs before auth, so it validates the id itself and
-    fails closed: a bad id, an unusable user or no grants is UNSET, never "all companies".
-    A contact pair beside the header narrows further, it never widens.
+    `users.last_active_company_id`. A refused claim or no grants is UNSET, never "all companies".
     """
-    staff_id = parse_staff_id(raw)
-    if staff_id is None:
-        return UNSET
-    usable = (
-        db.query(User.id)
-        .filter(User.id == staff_id, User.is_trashed.is_(False), User.status == "ACTIVE")
-        .first()
-    )
-    if usable is None:
-        return UNSET
-    scope = _scope_for_user(db, staff_id, None)
-    if scope is UNSET:
-        return UNSET
-    contact_id = (request.query_params.get("contact_id") or "").strip()
-    space_id = (request.query_params.get("space_id") or "").strip()
-    if contact_id and space_id:
-        return scope & resolve_contact_company_scope(db, contact_id, space_id)
-    return scope
+    staff_id = resolve_staff_identity(db, request)
+    return _scope_for_user(db, staff_id, None) if staff_id else UNSET
 
 
 def _resolve_api_key_brand_scope(db: Session, request: Request):
@@ -422,9 +478,8 @@ def resolve_company_scope(request: Request, db: Session) -> CompanyScope:
     api_key = request.headers.get("X-API-Key")
     if api_key:
         if _api_key_valid(api_key):
-            raw_staff = staff_identity_header(request)
-            if raw_staff is not None:
-                return _staff_identity_scope(db, request, raw_staff)
+            if staff_identity_claimed(request):
+                return _staff_identity_scope(db, request)
             return _resolve_api_key_scope(db, request)
         return UNSET  # invalid key - the route's own auth will 401; stay fail-closed
     token = _bearer_token(request)
