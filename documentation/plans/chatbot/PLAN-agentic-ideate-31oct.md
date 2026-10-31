@@ -1,7 +1,7 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** behaviour card filed 31 Oct 2026. Crew answered C1 and C2; Q1 to Q4 are with the owner. Slice R1 in build
-(no answer blocks it); R2 and R3 wait for the answers. Track: size M, lead pattern.
+**Status:** in build. R1 and R3b are green with kill proof on PR #2038. Owner answered Q1, Q2 and Q3 on 31 Oct; Q4 is
+being explained to the owner, built as (a) for now. R3a and R2 in build. Track: size M, lead pattern.
 UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
 
 Slices: **S1** = R1 routing. **S2** = R3 multi-turn. **S3** = R2 idea tools. They land as commits on this one lane branch.
@@ -156,25 +156,38 @@ fixed agent question.
   plus the router gate on the PR. Each label is 2 to 6 words, so a badly worded one can pull messages to the agent.
 - **Only one added tool family has been measured.** Later tools rely on their own gate run.
 
-## Questions (the answers go here)
+## Owner's answers
 
-- **Q1. Confirm before an idea is created?** Today's capture creates at once ("no draft, no review step",
-  `ideation_capture_service.py:3-4`). Every agent write proposes first (`actions.py:1-5`, `loop.py:1101`).
-  (a) confirm, same as every agent write; (b) create at once, a new direct-write path. **Rec (a):** one write path,
-  and a misread message never reaches the board. Cost: one more turn per idea.
-- **Q2. Undo after create?** The #2021 grace window and undo exist only for form actions (`actions.py:114-117`,
-  `writes.py:1481`). The CRM gateway has no idea delete (`api/v1/ideation/ideas.py`), though ss does (`embed.py:620`).
-  (a) confirm only, corrected with `crm_idea_update`, as `crm_opportunity_create` works today; (b) add a gateway
-  delete, an undo tool and a grace window. **Rec (a):** no new delete surface, and a wrong idea can still be edited.
-- **Q3. Real idea or test idea from the console?** Bot console ideas are flagged test and hidden from the board by
-  default (`lanes/ideate.py:230`). Agent writes have no test mode (no `is_test` in `writes.py`), and all agent turns
-  are console turns today. (a) real after confirm, same as opportunities and purchase requests; (b) flagged test
-  until the agent reaches WhatsApp. **Rec (a):** the person confirmed it deliberately. Cost: console trials post
-  real ideas to the board.
-- **Q4. How wide is rule R3a?** (a) any bot question (`focus.required_ask` on every lane) stays on chat; (b) only
-  idea questions. **Rec (a):** the same class as `router.py:76`, and the slot is one turn long
-  (`required_fields.py:53-54`). Cost: an analytics question in that one turn goes to the bot, and gold rows carry no
-  session state, so the eval cannot measure it.
+- **Q1, confirm before an idea is created: (a) confirm.** Same path as every agent write.
+- **Q2, undo after create: (a) confirm only.** A wrong idea is fixed with `crm_idea_update`. No delete and no undo.
+- **Q3, real or test idea from the console: (b) test.** Ideas the agent creates stay flagged test until the agent reaches
+  WhatsApp. The trigger to flip `writes.IDEA_IS_TEST` is the lane that puts the agent on WhatsApp.
+- **Q4, how wide is R3a: pending.** The owner asked what it means and crew is explaining. Built as (a) for now: any bot
+  question keeps the next reply on the bot. Narrowing to (b) later is one condition.
+
+### What Q3 changes
+
+- **Test ideas are not in the shared service's list** (`services/ideas.py:507-508`, and the embed list has no way to ask
+  for them). So `crm_ideas_list` alone could never find an idea the agent just created, and Q2's fix path would fail
+  during the whole test phase. Decision: `crm_ideas_list` also returns the ideas from this contact's executed
+  `crm_idea_create` steps. Remove that when the flag flips.
+- **A single idea can still be read and edited by id** (`embed_get_idea`, `embed_update_idea`), so `crm_idea_update` and
+  the link both work on a test idea.
+- **The reply says it is a test idea**, because the person will not find it on the board.
+- Similar ideas are read in the test lane too, so real ideas are not offered as similar during this phase.
+
+### Decisions made while writing R2
+
+- **The proposal never depends on the shared service.** The similar lookup is best effort: if ss is down or not set up,
+  the proposal still shows with no similar line, and the create fails honestly at confirm. Otherwise the hand test could
+  not show a confirm card, since copies reach no shared service (crew C2).
+- **Who may edit:** the linked user must own the idea, even a linked user who manages ideas (the board stays the place
+  for other people's ideas). A console operator acting for someone else must hold `ideation.ideas.manage`: rule R9 says
+  both people must be allowed, and the board lets a view-only user edit only their own. The write runs as the linked
+  user. The create needs `ideation.board.view` on both.
+- **`intake_ref`** is derived from the linked user and the idea's text (uuid5) rather than minted, because a step keeps no
+  private value between proposal and confirm. Proposing the same idea again lands on the same idea in ss.
+- **`raw_transcript`** is built from the fields given, because a write tool sees its arguments and not the message.
 
 ## For crew (not the owner)
 

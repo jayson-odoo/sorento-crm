@@ -93,6 +93,76 @@ No open question blocks this slice. R3a (the bot asked) is added after Q4.
 - **AC-R3b-10 [T]** Eval: the 4 paraphrased replies and the one new question (rows fu1 to fu5) all land on the right
   side when run through this rule on the Jev answers.
 
-## R2, R3a
+## R3a: a reply to the bot's own question stays on the bot
 
-Added after Q1 to Q4.
+Built as Q4 (a), any bot question. Pending the owner's final word.
+
+- **AC-R3a-1 [BE]** Given the sent `session_vars` carry `focus.required_ask` (any lane's), when the contact writes, then the
+  side is chat, reason `open_question`, with no Jev call. No key or prompt is needed to get there.
+- **AC-R3a-2 [BE]** Given a fresh, well-formed held list (`ideation.status == similar_offered`), with `is_test` true or
+  false on the pointer, then the side is chat, reason `open_question`, with no Jev call.
+- **AC-R3a-3 [BE]** A held list 24 hours old or older, or a malformed one, is not held (the same reading as
+  `_held_pointer`): the message routes normally.
+- **AC-R3a-4 [BE]** `session_vars={}` holds nothing. `session_vars=None` reads the contact's stored row. The legacy shape
+  under `variables` is read too, as `five_keys` does.
+- **AC-R3a-5 [BE]** Earlier rules still win: ineligible contact, media, and a pending proposal (reason `pending_action`).
+
+## R2: three idea tools on the agent
+
+### Journey
+
+1. A staff member with the Agent switch on, in the console, writes "I have an idea: the stock list is too long on my phone".
+2. Jev routes it to the agent. The agent fills in the fields and proposes the idea.
+3. The console shows the confirm card with the title, plus any similar ideas of theirs. Nothing has been created.
+4. They confirm. The idea is created, flagged test, and the reply gives its number, its link and the optional fields not
+   given. Or they cancel, and nothing is created.
+5. Later they write "change that idea's title to Nearest warehouse first". The agent finds it, proposes the edit, they
+   confirm, and the title changes. No delete and no undo.
+
+### Contract for the tests
+
+- In `agent/writes.py`: `CREATE_IDEA = "crm_idea_create"`, `UPDATE_IDEA = "crm_idea_update"`, `LIST_IDEAS = "crm_ideas_list"`,
+  `IDEA_IS_TEST = True`. Slug for all three: `ideation.board.view`.
+- `crm_idea_create` args: `problem` (required), `title`, `desired_outcome`, `use_cases` (list of text), `current_workaround`.
+- `crm_idea_update` args: `idea_id` (required), and the same five fields, all optional but at least one required.
+- `crm_ideas_list` args: optional `search`.
+- Labels in `TOOL_LABELS`: "submit a new idea or feature request", "change one of your ideas", "your ideas".
+
+### ACs
+
+- **AC-R2-1 [BE]** A user holding `ideation.board.view` is offered all three tools. A user without it is offered none, and
+  `propose_step` and `run_user_read` refuse them. A contact with no linked user never reaches them.
+- **AC-R2-2 [BE]** `propose_step` for `crm_idea_create` returns `proposed` and sends no create to the shared service. A missing
+  `problem` or an unknown argument is `invalid`. `is_test`, the submitter and the product are not model arguments: passing
+  one is `invalid`.
+- **AC-R2-3 [BE]** Given similar ideas in ss, the proposal's summary names up to 3 by number and title. The lookup sends the
+  LINKED user as submitter and `is_test: true`.
+- **AC-R2-4 [BE]** Given ss not configured, or the similar lookup failing, the proposal still returns `proposed` with no
+  similar line and no error.
+- **AC-R2-5 [BE]** On confirm, exactly one create reaches ss with the given fields, `submitter_crm_user_id` of the LINKED user
+  (also when an operator acts), the contact's phone, the configured product, `is_test: true`, and `intake_ref` a valid uuid
+  that is equal for the same user and text and different for different text. Two ideas in one proposal make two creates.
+- **AC-R2-6 [BE]** After confirm, the reply names the idea number, the link, the optional fields not given, and that it is a
+  test idea. The step is `done` with `result_id` the idea id.
+- **AC-R2-7 [BE]** Given ss down or not configured at confirm, the step is `failed`, the reply says plainly the idea was not
+  created, and the text carries no URL, key or id.
+- **AC-R2-8 [BE]** Cancelling a proposal sends no create.
+- **AC-R2-9 [BE]** `crm_ideas_list` returns the linked user's ss list (`mine=true`) plus the ideas from this contact's executed
+  `crm_idea_create` steps, one row per idea id, and those ids join the turn's seen ids. Steps that failed or were cancelled,
+  and another contact's steps, are not included. An ss failure returns a typed `error` with no URL or key.
+- **AC-R2-10 [BE]** `crm_idea_update`: `idea_id` must come from this turn's results. With no field given it is `invalid`. An idea
+  the linked user does not own is refused at the proposal ("You can only edit your own ideas."), even when that user holds
+  `ideation.ideas.manage`. The summary names the fields changing.
+- **AC-R2-11 [BE]** With an operator acting for someone else: an update needs the operator to hold `ideation.ideas.manage`, else
+  it is refused and nothing is sent to ss; with it, the proposal works and the PATCH runs as the linked user. A create needs
+  `ideation.board.view` on both.
+- **AC-R2-12 [BE]** On confirm of an update, one PATCH reaches ss `/embed/ideas/{id}` carrying only the changed fields in ss's
+  names (`desiredOutcome`, `useCases`, `currentWorkaround`). If the idea changed since the proposal, the step is refused and
+  no PATCH is sent. The change lines read before and after in words.
+- **AC-R2-13 [E2E]** Through `run_agent_turn` with a scripted provider and `tests/_ideation_ss_fake.py`: propose, confirm, list
+  (the new test idea is found though ss's list omits it), propose the update, confirm. The fake sees one create and one PATCH.
+- **AC-R2-14 [T]** `agent_tool_labels()` snapshot is the 15 labels: the 6 writes, "submit a new idea or feature request",
+  "change one of your ideas", the 6 reads, then "your ideas".
+- **AC-R2-15 [BE]** The bot's capture is unchanged: `tests/test_ideation_capture_turn.py` and
+  `tests/test_ideation_capture_golden_script.py` stay green, with the payload builder now shared.
+- **AC-R2-16 [T]** Eval: the gate bar in the plan, on the final labels. Crew runs the hidden gate.
