@@ -1,6 +1,6 @@
 # PLAN: reserve request/reserved emails - full per-line table, scoped link, per-CS question
 
-Status: Plan (behaviour card pending owner answer; no code yet). Track: small fix track expected (no migration, no RBAC change).
+Status: Plan (behaviour card pending owner answer; no code yet). Track: small fix track expected (no schema migration, no RBAC change; one guarded template-data migration, see card).
 
 crew-lane: RESERVE-EMAIL-FULL-TABLE
 
