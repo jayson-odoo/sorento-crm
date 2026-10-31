@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-KNOWLEDGE - ask the agent about documents uploaded in Resources (HR handbook, product knowledge)
 
-Status: BUILDING P1 (31 Oct 2026). Owner answered K1 (a), K3 (a), K4 gemini only, K5 (a), K6 two tools (~14:55).
+Status: P1 BUILT, in hand test (31 Oct 2026): reviewer READY, security re-checked over 3 rounds, browser pass + re-check PASS (PR #2036). Owner answered K1 (a), K3 (a), K4 gemini only, K5 (a), K6 two tools (~14:55).
 UAC `agentic-knowledge-acceptance-criteria.md`. Track: L (migration, permission-gated read path, new agent tools).
 Card history: v1 card, v1.1 side panel, v1.2 user guides + K6.
 
