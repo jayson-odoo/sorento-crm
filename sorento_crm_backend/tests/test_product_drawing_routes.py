@@ -689,6 +689,70 @@ def test_the_detail_is_a_404_for_someone_who_cannot_see_the_task(scene):
     assert response.status_code == 404, response.text
 
 
+def test_the_detail_admits_a_teammate_of_the_assignee_without_any_slug(scene):
+    # REL10-FIX-SECURITY: the panel's read gate is the task's visibility (My Team), the same
+    # `can_user_act_on_tracking` rule as the drawer reads (/takeover-state, /media). A teammate
+    # holding no slug at all reads it; nothing about the SLA module slugs widens or narrows it.
+    from app.models.access import TeamMember
+
+    s = scene
+    _escalate_as(s, s["owner"], s["version"], s["line"])
+    (tracker,) = trackers_for(s["db"], s["product"].id)
+    mate = _user(s["db"], "zzt Teammate")
+    s["db"].add(TeamMember(id=_uid(), team_id=s["team"]["team_ids"][1], user_id=mate))
+    s["db"].commit()
+
+    with acting(s["db"], mate, set()) as client:
+        response = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["is_assignee"] is False and response.json()["can_resolve"] is False
+
+
+@pytest.mark.parametrize(
+    "perms",
+    [
+        set(),
+        {RESOLVE, "sla_management.conversation_sla_tracking.view", "sla_management.escalation_logs.view"},
+        {"master_data.products.view", VIEW},
+    ],
+    ids=["no-slug", "sla-module-slugs", "product-and-project-slugs"],
+)
+def test_the_detail_is_a_404_for_the_requester_and_for_any_slug_off_the_task(scene, perms):
+    # The requester is told on resolve (in-app, linking to the quotation); the panel itself is
+    # the assignee's and their team chain's. Holding the SLA or product slugs does not open
+    # someone else's task: 404, never 403, so the id is not confirmed.
+    s = scene
+    _escalate_as(s, s["owner"], s["version"], s["line"])
+    (tracker,) = trackers_for(s["db"], s["product"].id)
+
+    for viewer in (s["owner"], s["stranger"]):
+        with acting(s["db"], viewer, perms) as client:
+            response = client.get(f"{SLA_BASE}/{tracker.id}/{DETAIL}")
+        assert response.status_code == 404, response.text
+
+
+def test_the_detail_is_session_only():
+    # `get_current_user`, never `get_current_user_or_api_key`: an integration key opens nothing.
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+
+    (route,) = [
+        r for r in app.routes
+        if isinstance(r, APIRoute) and r.path == f"{SLA_BASE}/{{tracking_id}}/{DETAIL}" and "GET" in r.methods
+    ]
+    calls = set()
+
+    def walk(dependant):
+        for dep in dependant.dependencies:
+            calls.add(dep.call)
+            walk(dep)
+
+    walk(route.dependant)
+    assert get_current_user in calls
+    assert get_current_user_or_api_key not in calls
+
+
 def test_the_detail_of_a_non_media_task_is_a_409(scene):
     from datetime import datetime, timedelta
 
