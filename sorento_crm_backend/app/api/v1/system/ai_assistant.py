@@ -138,8 +138,8 @@ def _resolve_window(from_: Optional[str], to: Optional[str]) -> tuple[datetime, 
     return f, t
 
 
-def _message_to_response(row: AIAssistantMessage) -> AIAssistantMessageResponse:
-    meta = row.metadata_json or {}
+def _message_to_response(row: AIAssistantMessage, read_meta: dict[str, Any] | None = None) -> AIAssistantMessageResponse:
+    meta = read_meta if read_meta is not None else row.metadata_json or {}
     suggestions = meta.get("suggestions") if isinstance(meta, dict) else []
     if not isinstance(suggestions, list):
         suggestions = []
@@ -303,7 +303,8 @@ def list_ai_assistant_messages(
 ):
     chat = AIAssistantChatService(db)
     rows = chat.list_messages(conversation_id, str(user["id"]))
-    return [_message_to_response(r) for r in rows]
+    metas = panel_service.read_metadata(db, rows, str(user["id"]))
+    return [_message_to_response(r, m) for r, m in zip(rows, metas)]
 
 
 @router.post("/ai-assistant/chat", response_model=AIAssistantConversationResponse)
@@ -339,7 +340,7 @@ def send_ai_assistant_message(
         title=conv.title,
         created_at=conv.created_at,
         updated_at=conv.updated_at,
-        messages=[_message_to_response(r) for r in rows],
+        messages=[_message_to_response(r, m) for r, m in zip(rows, panel_service.read_metadata(db, rows, str(user["id"])))],
     )
 
 

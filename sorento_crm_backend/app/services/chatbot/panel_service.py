@@ -23,7 +23,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models.ai_assistant import AIAssistantMessage
+from app.models.ai_assistant import AIAssistantConversation, AIAssistantMessage
 from app.models.chatbot_agent import AgentAction
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions as agent_actions
@@ -65,13 +65,15 @@ BUSY_REPLY = "I am still working on your earlier message in this chat. Try again
 @dataclass
 class PanelTurnResult:
     reply_text: str
-    attachments: list[dict[str, str]] = field(default_factory=list)
+    attachments: list[dict[str, Any]] = field(default_factory=list)
     quick_replies: list[str] = field(default_factory=list)
     route: str = "chat"
     turn_id: str | None = None
     status: str | None = None
     #: The console's agent dict (steps, actions, pending_action, tool_calls) on an agent turn.
     agent: dict[str, Any] | None = None
+    #: `RouteDecision.as_response()`, the shape the trace viewer's pill reads.
+    route_decision: dict[str, Any] | None = None
 
 
 def run_panel_turn(
@@ -112,10 +114,10 @@ def run_panel_turn(
         with agent_loop.single_flight(principal.key):
             result = run_turn(envelope, session_factory=SessionLocal, offload=False)
     except agent_loop.AgentBusy:
-        return PanelTurnResult(reply_text=BUSY_REPLY, route="chat", status="busy")
+        return PanelTurnResult(reply_text=BUSY_REPLY, route="chat", status="busy", route_decision=decision.as_response())
     if not result.duplicate:
         _stamp_route(db, result.turn_id, decision)
-    return _rendered(result, route="chat")
+    return _rendered(result, route="chat", decision=decision)
 
 
 def _page_context(db: Session, user_id: str, snapshot: Any) -> tuple[dict[str, Any] | None, str]:
@@ -171,6 +173,7 @@ def _run_agent_side(
 ) -> PanelTurnResult:
     """The router chose the agent: run it, and never fall back to the bot (card rule 6). A busy or
     failed agent says so in the reply."""
+    shown = decision.as_response()
     try:
         agent_loop.enforce_agent_rate_limit(principal.user_id)
         before, after = _quoted_bot_replies(db, principal.conversation_id)
@@ -179,14 +182,14 @@ def _run_agent_side(
             db, contact_respond_id=principal.key, text=text, context_before=before, context_after=after
         )
     except AppException as exc:  # the rate limit: one plain line, not an error page (AC-24)
-        return PanelTurnResult(reply_text=exc.detail["message"], route="agent", status="refused")
+        return PanelTurnResult(reply_text=exc.detail["message"], route="agent", status="refused", route_decision=shown)
     except agent_loop.AgentBusy:
-        return PanelTurnResult(reply_text=BUSY_REPLY, route="agent", status="busy")
+        return PanelTurnResult(reply_text=BUSY_REPLY, route="agent", status="busy", route_decision=shown)
     except AgentRefused:
-        return PanelTurnResult(reply_text=AGENT_FAILED_REPLY, route="agent", status="refused")
+        return PanelTurnResult(reply_text=AGENT_FAILED_REPLY, route="agent", status="refused", route_decision=shown)
     except Exception:  # noqa: BLE001 - the model, a tool or a refusal: one honest line, no bot re-run
         logger.warning("panel: routed agent turn failed for %s", principal.key, exc_info=True)
-        return PanelTurnResult(reply_text=AGENT_FAILED_REPLY, route="agent", status="failed")
+        return PanelTurnResult(reply_text=AGENT_FAILED_REPLY, route="agent", status="failed", route_decision=shown)
     _stamp_route(db, result.turn_id, decision)
     return PanelTurnResult(
         reply_text=result.reply_text,
@@ -194,6 +197,7 @@ def _run_agent_side(
         turn_id=result.turn_id,
         status=result.status,
         agent=agent_view(db, principal.key, result),
+        route_decision=shown,
     )
 
 
@@ -258,22 +262,88 @@ def _action_principal(db: Session, user_id: str, action_id: str) -> tuple[str, s
     )
 
 
+def _append_outcome(
+    db: Session, principal: staff_principal.StaffPrincipal, outcome: agent_actions.ActionOutcome
+) -> agent_actions.ActionOutcome:
+    """A decision's outcome is the thread's next assistant message, so a reload reads what a live view
+    drew (AC-18). A deleted thread, or one that is not this user's, still decided and gets no message."""
+    thread = db.get(AIAssistantConversation, principal.conversation_id)
+    if thread is not None and str(thread.user_id) == principal.user_id:
+        db.add(
+            AIAssistantMessage(
+                conversation_id=principal.conversation_id,
+                role="assistant",
+                content=outcome.reply_text,
+                metadata_json={"route": "agent", "status": outcome.status},
+            )
+        )
+        db.commit()
+    return outcome
+
+
 def confirm(db: Session, user_id: str, action_id: str) -> agent_actions.ActionOutcome:
     key, principal = _action_principal(db, user_id, action_id)
     with staff_principal.acting_as(principal):
-        return agent_actions.confirm(db, key, action_id, via=PANEL_INGRESS)
+        outcome = agent_actions.confirm(db, key, action_id, via=PANEL_INGRESS)
+    return _append_outcome(db, principal, outcome)
 
 
 def cancel(db: Session, user_id: str, action_id: str) -> agent_actions.ActionOutcome:
     key, principal = _action_principal(db, user_id, action_id)
     with staff_principal.acting_as(principal):
-        return agent_actions.cancel(db, key, action_id)
+        outcome = agent_actions.cancel(db, key, action_id)
+    return _append_outcome(db, principal, outcome)
 
 
 def withdraw(db: Session, user_id: str, action_id: str, index: int) -> agent_actions.ActionOutcome:
     key, principal = _action_principal(db, user_id, action_id)
     with staff_principal.acting_as(principal):
-        return agent_actions.withdraw(db, key, action_id, index)
+        outcome = agent_actions.withdraw(db, key, action_id, index)
+    return _append_outcome(db, principal, outcome)
+
+
+TRACE_SLUG = "system.ai_assistant_settings.view"
+
+
+def read_metadata(db: Session, rows: list[AIAssistantMessage], user_id: str) -> list[dict[str, Any]]:
+    """What each row's `metadata_json` reads as, in the rows' order. A brain reply (it has a `route`)
+    has its card read live, from the action store, one query for the thread (AC-22); and for a reader
+    without `TRACE_SLUG` only the card and the route stay, no steps, tool calls, usage, route score or
+    turn id (AC-23). A row without a `route` is the old path's and comes back as stored (AC-26)."""
+    metas = [row.metadata_json if isinstance(row.metadata_json, dict) else {} for row in rows]
+    brain = [i for i, m in enumerate(metas) if "route" in m and isinstance(m.get("agent"), dict)]
+    if not brain:
+        return _trace_strip(db, metas, user_id)
+    turn_of = {i: str(metas[i].get("chatbot_turn_id") or metas[i]["agent"].get("turn_id") or "") for i in brain}
+    live = agent_actions.actions_by_turn(db, sorted({t for t in turn_of.values() if t}), user_id)
+    pending = agent_actions.pending_action(db, f"{PANEL_KEY_PREFIX}{rows[0].conversation_id}", user_id=user_id)
+    out = list(metas)
+    for i in brain:
+        turn_id = turn_of[i]
+        agent = dict(metas[i]["agent"])
+        agent["actions"] = live.get(turn_id, [])
+        agent["pending_action"] = (
+            agent_actions.pending_dict(pending) if pending is not None and str(pending.turn_id) == turn_id else None
+        )
+        out[i] = {**metas[i], "agent": agent}
+    return _trace_strip(db, out, user_id)
+
+
+def _trace_strip(db: Session, metas: list[dict[str, Any]], user_id: str) -> list[dict[str, Any]]:
+    from app.services.user_service import UserPermissionService
+
+    if not any("route" in m for m in metas) or UserPermissionService(db).check_user_has_permission(user_id, TRACE_SLUG):
+        return metas
+    out = []
+    for m in metas:
+        if "route" not in m:
+            out.append(m)
+            continue
+        kept = {k: v for k, v in m.items() if k not in ("route_decision", "chatbot_turn_id", "agent")}
+        if isinstance(m.get("agent"), dict):
+            kept["agent"] = {k: m["agent"].get(k) for k in ("pending_action", "actions")}
+        out.append(kept)
+    return out
 
 
 def message_metadata(result: Any) -> dict[str, Any]:
@@ -284,6 +354,7 @@ def message_metadata(result: Any) -> dict[str, Any]:
         "status": result.status,
         "attachments": list(result.attachments),
         "suggestions": list(result.quick_replies),
+        **({"route_decision": result.route_decision} if getattr(result, "route_decision", None) else {}),
         **({"agent": jsonable_encoder(result.agent)} if getattr(result, "agent", None) else {}),
     }
 
@@ -311,7 +382,7 @@ def _envelope(principal: staff_principal.StaffPrincipal, user: dict[str, Any], t
     )
 
 
-def _rendered(result: Any, *, route: str) -> PanelTurnResult:
+def _rendered(result: Any, *, route: str, decision: RouteDecision | None = None) -> PanelTurnResult:
     """AC-11: the replies in order (messages answered ahead first), the files and the chips. The
     assign, comment and contact field actions have no one to act on and are dropped here."""
     actions = split_send_actions(list(result.actions or []))
@@ -327,7 +398,7 @@ def _rendered(result: Any, *, route: str) -> PanelTurnResult:
     if not texts and isinstance(reply.get("text"), str):
         texts = split_marked_message(reply["text"]) or [reply["text"]]
     attachments = [
-        {"filename": file["filename"], "url": file["url"]}
+        dict(file)
         for action in actions
         for file in _stored_attachments({"actions": [action]})
     ]
@@ -339,4 +410,5 @@ def _rendered(result: Any, *, route: str) -> PanelTurnResult:
         route=route,
         turn_id=result.turn_id,
         status=result.status,
+        route_decision=decision.as_response() if decision is not None else None,
     )

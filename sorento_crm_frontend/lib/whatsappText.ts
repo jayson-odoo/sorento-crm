@@ -118,3 +118,43 @@ export function stripWhatsAppMarkup(text: string): string {
     .map((segment) => segment.text)
     .join('');
 }
+
+export type WhatsAppBlock =
+  | { kind: 'text'; text: string }
+  | { kind: 'list'; ordered: boolean; start: number; items: string[] };
+
+/** `- `, `* `, `• `, `1. ` or `1) ` at the start of a line. The marker needs its space, so a `*bold*` line is no item. */
+const LIST_ITEM = /^(?:([-*•])|(\d+)[.)])[ \t]+(\S.*)$/;
+
+/**
+ * `text` as text and list blocks in reading order, for a screen that draws real lists. Items keep their
+ * inline markup (the inline parse, `parseWhatsAppText`, reads them); lines inside a ``` fence stay text.
+ */
+export function parseWhatsAppBlocks(text: string): WhatsAppBlock[] {
+  const blocks: WhatsAppBlock[] = [];
+  let run: string[] = [];
+  let inFence = false;
+  const flush = () => {
+    if (run.length > 0) blocks.push({ kind: 'text', text: run.join('\n') });
+    run = [];
+  };
+  for (const line of text ? text.split('\n') : []) {
+    const wasInFence = inFence;
+    if ((line.split('```').length - 1) % 2 === 1) inFence = !inFence;
+    const item = wasInFence || inFence ? null : LIST_ITEM.exec(line);
+    if (!item) {
+      run.push(line);
+      continue;
+    }
+    flush();
+    const ordered = item[2] !== undefined;
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === 'list' && last.ordered === ordered) {
+      last.items.push(item[3]);
+    } else {
+      blocks.push({ kind: 'list', ordered, start: ordered ? Number(item[2]) : 1, items: [item[3]] });
+    }
+  }
+  flush();
+  return blocks;
+}
