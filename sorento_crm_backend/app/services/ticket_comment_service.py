@@ -186,12 +186,15 @@ class TicketCommentService:
         """The ticket, or a 404 - for a missing row AND for a viewer outside its
         scope. Never a 403: that would confirm the ticket exists (same rule as
         `get_ticket_detail`)."""
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
         from app.services.sla_service import ConversationSLATrackingService
 
         service = ConversationSLATrackingService(self.db)
         tracking = service.get_tracking(tracking_id, load_event_logs=False)
-        if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        if not tracking or (
+            getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES
+            and not is_media_conversation(tracking)
+        ):
             raise handle_not_found("Conversation SLA tracking", tracking_id)
         if not service.can_user_act_on_tracking(viewer_user_id, tracking):
             raise handle_not_found("Conversation SLA tracking", tracking_id)

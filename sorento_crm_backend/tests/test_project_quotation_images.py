@@ -729,3 +729,28 @@ def test_a_product_this_company_cannot_see_is_off_catalog_not_an_invitation():
         assert cell["preview_url"] is None
         assert cell["attachment_id"] is None
         assert cell["candidate_count"] == 0
+
+
+def test_quote_media_chat_the_tile_state_is_the_viewers_own_open_ticket():
+    """B8 at the service the quotation payload reads: a colleague's open ticket is not mine.
+    (The HTTP twin, with two callers on the lines route, lives in test_product_drawing_routes.)"""
+    from app.services import product_drawing_request_service as drawing_requests
+    from .test_product_drawing_request import actor, seed_drawing_team
+
+    with blank_session() as db:
+        env = _setup(db)
+        seed_drawing_team(db)
+        from .test_product_drawing_request import quoted_product
+
+        product, version, line = quoted_product(db, env)
+        other = _user(db, "zzt Sales Two")
+        drawing_requests.escalate(
+            db, version_id=version.id, line_id=line.id, user=actor(env["owner"]), kind="drawing"
+        )
+        pid = str(product.id)
+
+        mine = drawing_requests.escalation_states_by_kind(db, [pid], requester_id=env["owner"])
+        theirs = drawing_requests.escalation_states_by_kind(db, [pid], requester_id=other)
+
+        assert mine["drawing"][pid]["tracking_id"] is not None
+        assert theirs["drawing"][pid] is None

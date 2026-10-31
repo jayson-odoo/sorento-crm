@@ -139,6 +139,7 @@ def line_images(
     db: Session,
     lines: Sequence[Any],
     frozen_versions: Optional[Set[str]] = None,
+    viewer_id: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Per line id, ``{"product_image": cell, "technical_drawing": cell}`` as the frontend reads them.
 
@@ -185,7 +186,8 @@ def line_images(
     from app.services import product_drawing_request_service as drawing_requests
 
     pdfs = _drawing_pdfs(db, product_ids)
-    escalations = drawing_requests.escalation_states_by_kind(db, product_ids)
+    # Per viewer: the tile shows the viewer's own request, never a colleague's (B8).
+    escalations = drawing_requests.escalation_states_by_kind(db, product_ids, requester_id=viewer_id)
     drawing_escalations = escalations["drawing"]
     photo_escalations = escalations["photo"]
 
@@ -248,7 +250,7 @@ def line_images(
     return cells
 
 
-def product_cells(db: Session, product_id: str) -> Dict[str, Any]:
+def product_cells(db: Session, product_id: str, viewer_id: Optional[str] = None) -> Dict[str, Any]:
     """The photo and drawing cells of a line with this product and no picks yet, candidates included.
 
     For a line that is not saved (or whose product was just changed): it has no row to read, but
@@ -262,7 +264,7 @@ def product_cells(db: Session, product_id: str) -> Dict[str, Any]:
         image_attachment_id=None,
         drawing_attachment_id=None,
     )
-    return line_images(db, [draft])["draft"]
+    return line_images(db, [draft], viewer_id=viewer_id)["draft"]
 
 
 def freeze_version_images(db: Session, version_id: str) -> int:

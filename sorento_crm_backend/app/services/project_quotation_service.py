@@ -1545,7 +1545,7 @@ def serialize_versions(
 
 
 def serialize_lines(
-    db: Session, lines: Sequence[ProjectQuotationLine]
+    db: Session, lines: Sequence[ProjectQuotationLine], viewer_id: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     # S21. The product's chosen photograph, resolved for the WHOLE table in one pass: a scope
     # runs to 52 lines and a query per row would be 52 round trips to draw one column.
@@ -1554,7 +1554,10 @@ def serialize_lines(
     # A frozen version is what the customer holds: nothing on it can be picked any more, so its
     # lines carry no candidates (and nothing is signed for a picker that cannot open).
     pictures = project_quotation_image_service.line_images(
-        db, lines, frozen_versions=frozen_version_ids(db, [line.version_id for line in lines])
+        db,
+        lines,
+        frozen_versions=frozen_version_ids(db, [line.version_id for line in lines]),
+        viewer_id=viewer_id,
     )
     no_cells: Dict[str, Any] = {}
     return [

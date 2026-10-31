@@ -131,6 +131,7 @@ def build_chat_template_router(
     chat_use_case_resolver: Optional[Callable[[Session, str], str]] = None,
     context_builder: Optional[Callable[[Session, str], dict]] = None,
     read_dependencies: Optional[list] = None,
+    send_dependencies: Optional[list] = None,
 ) -> APIRouter:
     """Reusable window-state + manual-template + smart-send routes for a chat panel.
 
@@ -140,10 +141,12 @@ def build_chat_template_router(
     supplies extra template context (portal_url / view_url) per entity.
     ``read_dependencies`` (LIST-API-PERMS) is the mounting module's permission gate for
     the two GETs, e.g. ``[Depends(require_permission("<module>.<resource>.view"))]``;
-    without it they are open to any session, as before.
+    without it they are open to any session, as before. ``send_dependencies`` is the same
+    for the two sends (template-message, send-message), e.g. a per-record scope gate.
     """
     router = APIRouter()
     read_gate = list(read_dependencies or [])
+    send_gate = list(send_dependencies or [])
 
     @router.get("/{entity_id}/conversation/window-state", dependencies=read_gate)
     def window_state(
@@ -162,7 +165,7 @@ def build_chat_template_router(
             db, identifier=identifier, respond_contact_id=respond_contact_id
         )
 
-    @router.post("/{entity_id}/conversation/template-message")
+    @router.post("/{entity_id}/conversation/template-message", dependencies=send_gate)
     def template_message(
         entity_id: str,
         body: TemplateMessageSendRequest,
@@ -252,7 +255,7 @@ def build_chat_template_router(
             context_builder=context_builder,
         )
 
-    @router.post("/{entity_id}/conversation/send-message")
+    @router.post("/{entity_id}/conversation/send-message", dependencies=send_gate)
     def send_message(
         entity_id: str,
         body: ChatMessageSendRequest,
