@@ -68,12 +68,16 @@ def test_AC_RC_10_a_bot_required_ask_round_trips_through_the_console(
     client, eligible, console_jev, stub_console_seams, monkeypatch
 ):
     result = {"status": "ask_idea", "reply_text": ASK_REPLY, "link": None, "session_vars": {"ideation": None}}
-    body1, body2, _ = _round_trip(client, eligible, console_jev, monkeypatch, result)
+    body1, body2, calls = _round_trip(client, eligible, console_jev, monkeypatch, result)
     assert ASK_REPLY in body1["reply_text"] + " ".join(body1["send_messages"])
     assert ((body1["session_vars"].get("focus") or {}).get("required_ask") or {}).get("ask") == "ideation"
     assert body2["route"]["reason"] == "open_question", body2["route"]
     assert body2["route"]["side"] == "chat"
     assert len(console_jev.calls) == 1  # no Jev call for the answering turn
+    # turn 2 reached the ideation tool as the answer to the open question
+    assert len(calls) == 2, calls
+    assert calls[1].get("ask_reply") is True, calls[1]
+    assert calls[1]["message_text"] == "the tap handle is too stiff", calls[1]
 
 
 def test_AC_RC_10_a_held_similar_list_round_trips_through_the_console(
@@ -89,7 +93,10 @@ def test_AC_RC_10_a_held_similar_list_round_trips_through_the_console(
     }
     result = {"status": "similar_offered", "reply_text": "Similar ideas: 1. A", "link": None,
               "session_vars": {"ideation": held}}
-    body1, body2, _ = _round_trip(client, eligible, console_jev, monkeypatch, result)
+    body1, body2, calls = _round_trip(client, eligible, console_jev, monkeypatch, result)
     assert (body1["session_vars"].get("ideation") or {}).get("status") == "similar_offered", body1["session_vars"]
     assert body2["route"]["reason"] == "open_question", body2["route"]
     assert len(console_jev.calls) == 1
+    # turn 2 reached the ideation tool with the user's message
+    assert len(calls) == 2, calls
+    assert calls[1]["message_text"] == "the tap handle is too stiff", calls[1]

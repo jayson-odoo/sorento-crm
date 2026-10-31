@@ -766,22 +766,34 @@ from tests.chatbot.agent.test_agent_writes_opportunity import make_world as opp_
 def _description(name):
     from app.services.chatbot.agent import writes
 
-    return writes.WRITES[name].schema["function"]["description"].lower()
+    return writes.WRITES[name].schema["function"]["description"]
 
 
-@pytest.mark.parametrize("name", [CREATE, UPDATE])
-def test_AC_RC_11_the_idea_tools_tell_the_model_not_to_invent(name):
-    text_ = _description(name)
-    assert "only" in text_ and "said" in text_ and "leave" in text_, text_
+# These pin the TEXT of the descriptions. Whether the model obeys them is a live check, not a unit test.
+CREATE_ONLY_SAID = (
+    "Use only what the user said: write a short title from their words and leave any other field out."
+)
+CREATE_PROPOSE_NOW = (
+    "As soon as you have the problem, propose it: do not ask the user to adjust or add more first."
+)
+UPDATE_ONLY_SAID = "Use only what the user said and leave other fields out."
 
 
-def test_AC_RC_11_the_create_tool_says_to_propose_as_soon_as_it_has_the_problem():
-    text_ = _description(CREATE)
-    assert "problem" in text_ and ("as soon as" in text_ or "right away" in text_ or "immediately" in text_), text_
-    assert "adjust" in text_, text_
+def test_AC_RC_11_the_create_tool_tells_the_model_to_use_only_what_the_user_said():
+    assert CREATE_ONLY_SAID in _description(CREATE), _description(CREATE)
 
 
-# ------------------------------------------------------------------ AC-RC-12 the model is told the proposal is shown
+def test_AC_RC_11_the_create_tool_tells_the_model_to_propose_as_soon_as_it_has_the_problem():
+    assert CREATE_PROPOSE_NOW in _description(CREATE), _description(CREATE)
+
+
+def test_AC_RC_11_the_update_tool_tells_the_model_to_use_only_what_the_user_said():
+    assert UPDATE_ONLY_SAID in _description(UPDATE), _description(UPDATE)
+
+
+# ------------------------------------------------------------------ AC-RC-12 the proposed message stays as it was
+
+PROPOSED_MESSAGE = "Proposed, not done. The user must confirm in a later message."
 
 
 def _proposed_message(db, w, call):
@@ -794,23 +806,19 @@ def _proposed_message(db, w, call):
 
     go(db, w, [round_of(call), capture], text_="please")
     assert seen["body"]["status"] == "proposed", seen["body"]
-    return seen["body"]["message"].lower()
+    return seen["body"]["message"]
 
 
-def test_AC_RC_12_an_idea_proposal_tells_the_model_it_is_shown_automatically(db, ss):
+def test_AC_RC_12_the_proposed_message_is_exactly_as_it_was_for_an_idea_create(db, ss):
     w = make_world(db)
-    message = _proposed_message(db, w, tc(CREATE, dict(FIELDS), "c1"))
-    assert "proposed, not done" in message
-    assert "automatically" in message and "repeat" in message, message
+    assert _proposed_message(db, w, tc(CREATE, dict(FIELDS), "c1")) == PROPOSED_MESSAGE
 
 
-def test_AC_RC_12_an_opportunity_proposal_tells_the_model_the_same(db):
+def test_AC_RC_12_the_proposed_message_is_exactly_as_it_was_for_an_opportunity_create(db):
     w = opp_world(db)
     call = tc(
         "crm_opportunity_create",
         {"title": "Showroom lights", "prospect_name": "Fake Showroom Sdn Bhd", "expected_close_date": "2026-12-01"},
         "o1",
     )
-    message = _proposed_message(db, w, call)
-    assert "proposed, not done" in message
-    assert "automatically" in message and "repeat" in message, message
+    assert _proposed_message(db, w, call) == PROPOSED_MESSAGE
