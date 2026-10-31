@@ -20,18 +20,23 @@ Names used below. **Staff** = the logged-in user the panel is answering. **Act-a
   carries the identity header. That covers catalog tools and hand-written tools alike, however deep the client call. Excluded: the routing
   hint `system/mcp-routing` (separate client, no CRM data, no such backend route).
 - **AC-3** A call that is not staff-marked never carries it, whatever headers it sent. A write tool never carries it.
-- **AC-4** A staff-marked read of a company-scoped tool with no staff id is refused, with no backend request.
+- **AC-4** A staff-marked read of any tool, company-scoped or not, with no staff id is refused, with no backend request.
+- **AC-26** A panel client with no MCP token refuses its calls instead of going out unauthenticated, because with no bearer and Enforce off the MCP server strips the staff
+  markers (`sorento_crm_mcp/auth.py:157-168`) and the call would run as act-as. The turn still answers. Tested with Enforce off (prod today) and on.
 
 ## Backend identity
 
-- **AC-5** Shared key + identity header of an active user, on a GET or HEAD, or a POST to a catalog `read_only` path: the route's
+- **AC-5** Shared key + identity header of an active user, on one of the catalog's read routes (one explicit backend list, pinned to the catalog by a test): the route's
   `current_user["id"]` is staff, `current_user["key_user_id"]` is act-as, and the integration fields and `auth_method` are unchanged.
 - **AC-6** Fails closed, never falling back to act-as: a malformed, unknown, inactive or deleted id gets 403 with code
-  `staff_identity_invalid`. So does the header with any key other than the shared `EXTERNAL_API_KEY`.
+  `staff_identity_invalid`. So does the header with any key other than the shared `EXTERNAL_API_KEY`, naming an integration user, on a read route off the list, or with a
+  non-blank contact pair (the panel always blanks the pair).
 - **AC-7** On any other write, the header is ignored: act-as and today's company scope, so attribution cannot be forged.
 - **AC-8** With no header, nothing changes: a key with no contact still reads all companies, a key with a contact pair still reads the
   contact's companies, a session is untouched.
-- **AC-9** The audit actor on an identity read stays the integration and act-as.
+- **AC-9** The audit actor on an identity read stays the integration and act-as. The backend logs the named user.
+- **AC-27** Naming a stronger user gains nothing act-as lacks. Audit logs and tickets (off the list) answer 403 with the header. On listed routes every handler check that reads the
+  user's slugs or role asks both users, including the incoming clearance gate (`services/field_access.py:624`) and the module guards (`modules/runtime/guards.py:109`).
 
 ## Permission
 
@@ -65,7 +70,7 @@ Names used below. **Staff** = the logged-in user the panel is answering. **Act-a
 - **AC-16** Company: an identity call's scope is the staff member's active company, resolved exactly as a session resolves it. Orders, stock balance
   and purchase orders return only that company's rows, in parity with the session. A superadmin is narrowed to their active company too.
 - **AC-17** No grants or a bad id: zero rows, never all companies.
-- **AC-18** Identity header plus contact pair: the intersection of the two scopes.
+- **AC-18** Identity header plus a non-blank contact pair: refused, zero rows. A blank pair is no pair.
 
 ## Record context
 
