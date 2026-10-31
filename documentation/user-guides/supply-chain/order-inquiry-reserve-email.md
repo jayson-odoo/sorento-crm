@@ -46,8 +46,9 @@ they raised. A batch of order inquiries raised by three people becomes three req
 reserved emails coming back. The other two people are never on the Cc.
 
 Order inquiries raised by the same person go together in one email, and several requests on one order
-inquiry also go together in one email. An order inquiry with nobody recorded as its raiser gets its own
-email with no raiser on the Cc.
+inquiry also go together in one email. The exception is requests from different people: each requester
+gets a separate email, so nobody is on the Cc of someone else's request. An order inquiry with nobody
+recorded as its raiser gets its own email with no raiser on the Cc.
 
 The subject says who raised the order inquiries and how the answers went, for example:
 
@@ -60,7 +61,7 @@ The subject says who raised the order inquiries and how the answers went, for ex
 
 * An email about one order inquiry opens that order inquiry.
 * An email about several opens the order inquiry list showing exactly those order inquiries, whatever
-  their state. Remove the **OI NO** filter on the list to see all order inquiries again.
+  their state. Remove the **Order inquiries** filter on the list to see all order inquiries again.
 
 ## How to manage it
 

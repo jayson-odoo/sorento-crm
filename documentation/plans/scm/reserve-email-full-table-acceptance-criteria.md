@@ -62,8 +62,9 @@ only non-zero counts in this order: `1 partial`, `1 rejected`. "line" is singula
 
 - **AC-RF-18** Subject, heading and intro match the table above.
 - **AC-RF-19** Under the table: request email `Requested by {requester} on {today}.`, reserved email
-  `Answered by {actor} on {today}.`. A request's note prints under the table as `Note ({OI}): {text}`, one
-  line per note. `{n} line(s) still to reserve.` still prints when requests in the email have open rows.
+  `Answered by {actor} on {today}.`. On the request email only, a request's note prints under the table as
+  `Note ({OI}): {text}`, one line per note. On the reserved email only, `{n} line(s) still to reserve.` still
+  prints when requests in the email have open rows.
 
 ## D. Button
 
@@ -79,6 +80,13 @@ only non-zero counts in this order: `1 partial`, `1 rejected`. "line" is singula
   filter, sort and page changes, and shows a removable filter so the user can clear it.
 - **AC-RF-24** Arriving with `inquiry_no` and no explicit `state` shows state All, so a completed OI in the
   email still appears (same rule as `?reserve=`). No UUIDs show anywhere.
+- **AC-RF-25** The `inquiry_no` filter has no 200-value cap, because the email has no OI cap: a link with 201
+  numbers returns those OIs. Other list filters keep their cap.
+- **AC-RF-26** Choosing Outstanding while `inquiry_no` or `reserve` is in the URL writes `state=outstanding`, so a
+  reload or a return from a detail page keeps it.
+- **AC-RF-27** Prev/next on an OI's detail page walks the same `inquiry_no` list the user came from.
+- **AC-RF-28** The "Send all parked" preview shows the email at the 900 px card width, as the template editor
+  does, so the table's right-hand columns are not cut off on a desktop.
 
 ## E. One email per raising CS
 
