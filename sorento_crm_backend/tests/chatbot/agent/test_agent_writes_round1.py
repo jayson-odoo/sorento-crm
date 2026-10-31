@@ -211,10 +211,11 @@ def test_r2_confirming_the_previous_proposal_in_a_turn_that_also_proposes_is_all
     first, _ = go(db, w, proposal_script([w.asks[0]]))
     old = action_row(db, first.pending_action["id"])
     captured: dict = {}
+    # AGENT-CONFIRM-GATE: the confirm comes first, in the turn's first round; then the new proposal.
     script = [
+        decide_from_view(captured),
         round_of(tc(LIST_ASKS, {}, "l1")),
         round_of(tc(UPDATE_ASK, {"ask_id": str(w.asks[1].id), "state": "done", "note": NOTE}, "u1")),
-        decide_from_view(captured),
         answer_("Done, and I prepared the next one."),
     ]
 
