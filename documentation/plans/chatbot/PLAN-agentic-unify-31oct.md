@@ -52,7 +52,8 @@ The console switch flip belongs to lane CONSOLE-SWITCH-OVERRIDE; later PRs build
 
 10. Reads: complaints, SLA tracking, projects, order analytics, find, capability. Writes: complaint close, order cancel, IT ticket. Guides
     from AGENTIC-KNOWLEDGE #2036.
-11. `crm_report_ask` staff branch (or in PR 2 if the stock and report examples need it first).
+11. `crm_report_ask` staff branch (or in PR 2 if the stock and report examples need it first). Its route is off identity today, so the
+    invoiced and unpaid gates (`services/sales/invoiced_sales.py:342,360`) ask one user. A staff path must make them ask both, or the header widens.
 
 **Then:** labelled real panel questions run through both paths; pilot; default; retire `respond()`.
 
