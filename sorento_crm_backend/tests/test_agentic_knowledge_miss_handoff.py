@@ -2,7 +2,7 @@
 
 Contract (PLAN section S4): `knowledge_service.arm_knowledge_miss_offer(db, contact_pk) -> bool`
 writes the bot's single-team offer into `respond_contacts.session_vars["open_question"]`;
-the local tool `crm_knowledge_handoff` (contact principal only, no arguments) arms it; the one
+the local tool `crm_knowledge_handoff` (contact principal only, no arguments) arms it; the escalation
 bar is never lifted: a barred contact is referred to its salesman (owner ruling W-Q2 a).
 
 Written to stand alone from S1 to S3: every name is imported inside the test, and the only S1
