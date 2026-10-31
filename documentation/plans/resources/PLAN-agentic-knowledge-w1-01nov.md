@@ -101,6 +101,19 @@ Crew ruling 1 Nov: build (b) for now, keep it a single switch (owner wording "sh
   backstop (`engine.py`, `compose.py`, `answer_bridge.py`) lets the one answer through without being edited.
   Switch off -> barred contacts get "Please refer to your salesman." and no offer is armed.
 - Staff-tier profiles (`is_staff_profile`) are never offered (unchanged rule).
+- Contract (names the tests use):
+  - `knowledge_service.KNOWLEDGE_MISS_IGNORES_ESCALATION_BAR = True` (the one switch),
+    `KNOWLEDGE_MISS_SOURCE = "knowledge_miss"`, `KNOWLEDGE_MISS_LINE = "I couldn't find that in our product documents."`.
+  - `knowledge_service.arm_knowledge_miss_offer(db, contact_pk) -> bool`: writes `respond_contacts.session_vars
+    ["open_question"]` = `pending.to_wire(team_pick ...)` (team `marketing_product`, option payload
+    `{"team": "marketing_product", "agent": "general_enquiries", "brand_code": None}`, `expects="yes_no"`,
+    `payload={"source": "knowledge_miss", "agent": "general_enquiries"}`), keeping every other session key.
+    Returns False and writes nothing when the contact is barred and the switch is off.
+  - Local agent tool `crm_knowledge_handoff` (no arguments), contact principal only, model-chosen (no word list):
+    the protocol tells the model to call it when the documents do not answer. It arms the offer; the loop then makes
+    sure the final reply carries `KNOWLEDGE_MISS_LINE` and the offer sentence (code-added, like IDEATE's note).
+  - `turn_runtime.load_profile`: barred row + switch on + the row's `session_vars.open_question.payload.source ==
+    "knowledge_miss"` -> `escalation_allowed=True`; anything else unchanged.
 
 ### S6 - ideas leave test mode (crew ruling 1 Nov, from AGENTIC-IDEATE #2038)
 
