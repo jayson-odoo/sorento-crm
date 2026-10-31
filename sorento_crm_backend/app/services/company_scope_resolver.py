@@ -25,6 +25,9 @@ Decision table (PLAN §3.9 / §3.11, four-state - see ``app/models/base.py``):
   X-API-Key + contact_id&space_id resolved     | frozenset(contact's company_ids)
   X-API-Key + contact params, contact/none     | frozenset()  (empty → 0 rows, AC-F3)
   X-API-Key, no contact params                 | None (all companies, backward-compat)
+  Shared key + X-Staff-User (a read)           | the staff member's active company, as a session
+    + contact_id&space_id                      |   intersected with the contact's companies
+    bad id, inactive, no grants                |   UNSET (fail-closed)
   Portal / public view token (header or ?token) | frozenset(contact's companies)
                                                 |   → incumbent when it has none
   no principal / public / unauth               | UNSET (fail-closed, 0 rows)
@@ -60,6 +63,14 @@ from app.models.user_session import UserSession
 
 logger = logging.getLogger(__name__)
 
+#: The staff member a read through the AI panel runs as (AGENTIC-UNIFY PR 1), sent by the MCP server.
+STAFF_USER_HEADER = "X-Staff-User"
+#: The catalog's `read_only` POST tools that reach the CRM (`sorento_crm_mcp/catalog.py`:
+#: crm_lookup_resolve, crm_portal_link_get). Any other write ignores the header, so it can never
+#: change who a write is attributed to.
+STAFF_READ_POST_PATHS = frozenset({"/api/v1/lookup/resolve", "/api/v1/external/portal-tokens"})
+STAFF_ID_MAX_LENGTH = 64
+
 
 # --------------------------------------------------------------------------- #
 # Principal extraction                                                          #
@@ -74,6 +85,31 @@ def _bearer_token(request: Request) -> Optional[str]:
 def _api_key_valid(api_key: Optional[str]) -> bool:
     valid = getattr(settings, "external_api_key", None)
     return bool(api_key) and bool(valid) and hmac.compare_digest(str(api_key), str(valid))
+
+
+def staff_identity_header(request: Request) -> Optional[str]:
+    """The raw `X-Staff-User` value when this request may carry an identity, else None.
+
+    The one rule for both readers of the header: this resolver, which runs before auth, and
+    `dependencies._apply_staff_identity`. A GET or HEAD, or a POST to a catalog read."""
+    raw = request.headers.get(STAFF_USER_HEADER)
+    if raw is None:
+        return None
+    method = request.method.upper()
+    if method in {"GET", "HEAD"}:
+        return raw
+    if method == "POST" and request.url.path.rstrip("/") in STAFF_READ_POST_PATHS:
+        return raw
+    return None
+
+
+def parse_staff_id(raw: str) -> Optional[str]:
+    """The id in an `X-Staff-User` value, or None when blank or too long to be one.
+
+    No format check: `users.id` is a String column and older ids may not be UUIDs, so whether an
+    id is real is decided by looking it up."""
+    staff_id = raw.strip()
+    return staff_id if staff_id and len(staff_id) <= STAFF_ID_MAX_LENGTH else None
 
 
 def _resolve_user_id_and_claim(db: Session, token: str) -> Tuple[Optional[str], Optional[str]]:
@@ -252,6 +288,34 @@ def _resolve_api_key_scope(db: Session, request: Request) -> CompanyScope:
     return resolve_contact_company_scope(db, contact_id, space_id)
 
 
+def _staff_identity_scope(db: Session, request: Request, raw: str) -> CompanyScope:
+    """An identity read's scope: the staff member's active company, resolved as a session's is.
+
+    The claim stays None: staff sessions are opaque tokens, the active company lives on
+    `users.last_active_company_id`. This runs before auth, so it validates the id itself and
+    fails closed: a bad id, an unusable user or no grants is UNSET, never "all companies".
+    A contact pair beside the header narrows further, it never widens.
+    """
+    staff_id = parse_staff_id(raw)
+    if staff_id is None:
+        return UNSET
+    usable = (
+        db.query(User.id)
+        .filter(User.id == staff_id, User.is_trashed.is_(False), User.status == "ACTIVE")
+        .first()
+    )
+    if usable is None:
+        return UNSET
+    scope = _scope_for_user(db, staff_id, None)
+    if scope is UNSET:
+        return UNSET
+    contact_id = (request.query_params.get("contact_id") or "").strip()
+    space_id = (request.query_params.get("space_id") or "").strip()
+    if contact_id and space_id:
+        return scope & resolve_contact_company_scope(db, contact_id, space_id)
+    return scope
+
+
 def _resolve_api_key_brand_scope(db: Session, request: Request):
     """CONTACT-BRAND-SCOPE: the calling contact's accessible brands, or None (unscoped).
 
@@ -358,6 +422,9 @@ def resolve_company_scope(request: Request, db: Session) -> CompanyScope:
     api_key = request.headers.get("X-API-Key")
     if api_key:
         if _api_key_valid(api_key):
+            raw_staff = staff_identity_header(request)
+            if raw_staff is not None:
+                return _staff_identity_scope(db, request, raw_staff)
             return _resolve_api_key_scope(db, request)
         return UNSET  # invalid key - the route's own auth will 401; stay fail-closed
     token = _bearer_token(request)

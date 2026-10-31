@@ -140,6 +140,47 @@ def _stamp_integration_actor(request: Request, db: Session, user: dict) -> None:
     )
 
 
+def _apply_staff_identity(request: Request, db: Session, api_key: str, key_user: dict) -> dict:
+    """The principal of an API-key call: the act-as user, or on an identity read the staff member.
+
+    AGENTIC-UNIFY PR 1: the MCP server names the staff member the AI panel is answering in
+    `X-Staff-User`, so every reader of ``current_user["id"]`` (own scope, field gates, handler
+    checks) applies to them. ``key_user_id`` keeps the act-as user: the permission gates below
+    require both to hold a slug, so the header can only narrow what the key reads.
+
+    Only the shared key may claim an identity, and a claim that does not resolve to a usable user
+    is refused, never downgraded to act-as. A write ignores the header
+    (``staff_identity_header``), so attribution cannot be forged. Attribution stays on
+    ``key_user``: the audit actor is stamped before this runs, and ``get_actor_user_id`` reads
+    ``request.state.real_user``.
+    """
+    from app.services.company_scope_resolver import (
+        _api_key_valid,
+        parse_staff_id,
+        staff_identity_header,
+    )
+
+    raw = staff_identity_header(request)
+    if raw is None:
+        return key_user
+    staff_id = parse_staff_id(raw)
+    staff = _load_user_dict_from_db(db, staff_id) if staff_id and _api_key_valid(api_key) else None
+    if not staff or staff.get("status") != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "staff_identity_invalid", "message": "Staff identity is not valid"},
+        )
+    request.state.real_user = key_user
+    return {
+        **staff,
+        "integration_id": key_user.get("integration_id"),
+        "integration_name": key_user.get("integration_name"),
+        "integration_type": key_user.get("integration_type"),
+        "auth_method": key_user.get("auth_method"),
+        "key_user_id": key_user["id"],
+    }
+
+
 def _resolve_session_to_user(token: str, request: Request, db: Session) -> dict:
     """Resolve an opaque staff session token to a user dict, sliding the session.
 
@@ -509,8 +550,9 @@ def require_session_or_api_key_permission(permission_slug: str):
         db: Session = Depends(get_db),
     ) -> dict:
         if current_user.get("auth_method") in {"api_key", "integration_api_key"}:
+            # A picker stays open to any staff member on an identity read: only the key is asked.
             if not UserPermissionService(db).check_user_has_permission(
-                current_user["id"], permission_slug
+                current_user.get("key_user_id") or current_user["id"], permission_slug
             ):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -521,10 +563,17 @@ def require_session_or_api_key_permission(permission_slug: str):
     return _require
 
 
+def _users_to_gate(current_user: dict) -> list[str]:
+    """Who must hold a slug: the caller, plus on an identity read the key's act-as user."""
+    key_user_id = current_user.get("key_user_id")
+    return [current_user["id"], key_user_id] if key_user_id else [current_user["id"]]
+
+
 def require_permission_with_api_key(permission_slug: str):
     """
     Same as require_permission but allows X-API-Key (with act-as user) for automation.
-    The permission is still enforced against the resolved (act-as) user.
+    The permission is still enforced against the resolved (act-as) user, and on an identity read
+    against the staff member as well (``_apply_staff_identity``).
 
     Primarily for read endpoints. It is also used on a small set of AI-assistant
     write actions (complaint close, PR approve/reject) where execution runs as the
@@ -544,7 +593,7 @@ def require_permission_with_api_key(permission_slug: str):
         db: Session = Depends(get_db),
     ) -> dict:
         service = UserPermissionService(db)
-        if not service.check_user_has_permission(current_user["id"], permission_slug):
+        if not all(service.check_user_has_permission(u, permission_slug) for u in _users_to_gate(current_user)):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission required: {permission_slug}",
@@ -575,17 +624,25 @@ def require_permission_with_api_key(permission_slug: str):
 
 
 def require_any_permission_with_api_key(permission_slugs: List[str]):
-    """Like require_any_permission but uses get_current_user_or_api_key (read/automation only)."""
+    """Like require_any_permission but uses get_current_user_or_api_key (read/automation only).
+
+    On an identity read the staff member and the act-as user must share one of the slugs. The
+    superadmin/admin shortcut is per user: it never lifts the other one.
+    """
 
     def _require(
         current_user: dict = Depends(get_current_user_or_api_key),
         db: Session = Depends(get_db),
     ) -> dict:
         service = UserPermissionService(db)
-        uid = current_user["id"]
-        if service.get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
+        gated = [
+            uid
+            for uid in _users_to_gate(current_user)
+            if not (service.get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"})
+        ]
+        if not gated:
             return current_user
-        user_slugs = service.get_user_permission_slugs(uid)
+        user_slugs = set.intersection(*(set(service.get_user_permission_slugs(uid)) for uid in gated))
         if getattr(settings, "module_guard_strict", False):
             from app.modules.runtime.installer import (
                 DEFAULT_TENANT_ID,
@@ -619,6 +676,26 @@ def require_any_permission_with_api_key(permission_slugs: List[str]):
     return _require
 
 
+def require_staff_read_permission(*permission_slugs: str):
+    """For a route with no slug of its own: on an identity read the staff member needs one of
+    these. A session and a plain key pass through as they always did (AGENTIC-UNIFY AC-13)."""
+
+    def _require(
+        current_user: dict = Depends(get_current_user_or_api_key),
+        db: Session = Depends(get_db),
+    ) -> dict:
+        if current_user.get("key_user_id"):
+            service = UserPermissionService(db)
+            if not any(service.check_user_has_permission(current_user["id"], s) for s in permission_slugs):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"One of these permissions required: {', '.join(permission_slugs)}",
+                )
+        return current_user
+
+    return _require
+
+
 async def get_external_api_user(
     request: Request,
     api_key: Optional[str] = Depends(get_api_key),
@@ -646,7 +723,7 @@ async def get_external_api_user(
 
     user = resolve_integration_principal(db, api_key)
     _stamp_integration_actor(request, db, user)
-    return user
+    return _apply_staff_identity(request, db, api_key, user)
 
 
 async def get_current_user_or_api_key(
@@ -686,6 +763,7 @@ async def get_current_user_or_api_key(
 
         user = resolve_integration_principal(db, api_key)
         _stamp_integration_actor(request, db, user)
+        user = _apply_staff_identity(request, db, api_key, user)
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)

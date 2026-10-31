@@ -282,6 +282,19 @@ def _probe_client(db) -> TestClient:
     def ext_integration(user=Depends(require_external_permission("integration.zzt_thing"))):
         return {"ok": True}
 
+    from app.api.v1.external.permissions import require_external_permission_for_path
+
+    @r.get("/zzt/ext-path/{entity}")
+    def ext_path(
+        entity: str,
+        user=Depends(
+            require_external_permission_for_path(
+                {"thing": "zzt.thing.view", "int": "integration.zzt_thing"}, param="entity"
+            )
+        ),
+    ):
+        return {"ok": True}
+
     probe = FastAPI()
     probe.include_router(
         r,
@@ -940,3 +953,35 @@ def test_ac12_portal_link_route_is_gated_on_the_staffs_real_slug(env):
     refused = env.client.post(PORTAL_LINK, json={}, headers=env.ident(nothing))
     assert ok.status_code != 403, f"holder of {PORTAL_SLUG} must pass the gate, got {ok.status_code}"
     assert refused.status_code == 403, f"a holder of nothing got {refused.status_code}"
+
+
+# =========================================================================== #
+# AC-12  require_external_permission_for_path with the identity header        #
+# =========================================================================== #
+def test_ac12_for_path_real_slug_needs_both_users(env, probe):
+    path = "/api/v1/zzt/ext-path/thing"
+    assert _perm_status(env, probe, path, ["zzt.thing.view"], ["zzt.thing.view"], actas_roles=()) == 200
+    assert _perm_status(env, probe, path, [], ["zzt.thing.view"], actas_roles=()) == 403, "staff lacks the slug"
+    assert _perm_status(env, probe, path, ["zzt.thing.view"], [], actas_roles=()) == 403, "act-as lacks it"
+
+
+def test_ac12_for_path_integration_slug_is_checked_on_actas_only(env, probe):
+    path = "/api/v1/zzt/ext-path/int"
+    assert _perm_status(env, probe, path, [], ["integration.zzt_thing"], actas_roles=()) == 200
+    assert _perm_status(env, probe, path, [], [], actas_roles=()) == 403
+
+
+# =========================================================================== #
+# STAFF_READ_POST_PATHS is pinned against the catalog                         #
+# =========================================================================== #
+def test_staff_read_post_paths_equal_the_catalogs_read_only_post_paths():
+    from app.services.company_scope_resolver import STAFF_READ_POST_PATHS
+
+    expected = {
+        s.path.rstrip("/")
+        for s in _catalog()
+        if s.method == "POST" and s.read_only and s.path.startswith("/api/v1/")
+    }
+    assert {p.rstrip("/") for p in STAFF_READ_POST_PATHS} == expected, (
+        "STAFF_READ_POST_PATHS must be exactly the catalog's read_only POST paths under /api/v1/"
+    )

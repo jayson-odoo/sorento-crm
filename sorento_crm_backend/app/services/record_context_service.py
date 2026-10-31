@@ -28,6 +28,7 @@ from app.models.audit import AuditLog
 from app.models.complaints import Complaint
 from app.models.procurement import PurchaseRequestHeader, StockInquiry
 from app.models.sla import ConversationSLATracking, SLAPolicyTier
+from app.services import own_scope
 from app.services.error_handler import AppException
 from app.services.submission_status import APPEALED_LABEL
 
@@ -37,23 +38,27 @@ MALAYSIA_TZ = timezone(timedelta(hours=8))
 # Approval-decision statuses that an approval-gated record can reach.
 _APPROVAL_STATUSES = ("approved", "rejected")
 
-# View permission required per entity type. None => any authenticated user.
-# Centralized here so the HTTP route AND the bubble pre-route agree.
-_VIEW_PERMISSION: dict[str, Optional[str]] = {
-    "complaint": "complaint_management.complaints.view",
-    "stock_inquiry": None,
-    "purchase_request": None,
-    "sponsorship_form": None,
-}
+def can_read_record_context(
+    db: Session, permissions: Any, user_id: str, entity_type: str, entity_id: str
+) -> bool:
+    """May this user read this record's facts? The rule of their own screens.
 
+    Centralized here so the HTTP route AND the bubble pre-route agree. ``view`` reads any record
+    of the kind (superadmin and admin pass by role), ``view_own`` only their own, by the
+    request-form rule of ``own_scope``, re-checked because the record id comes from the client.
+    An unknown entity type passes: the assembler still 400s on assemble.
 
-def record_context_view_permission(entity_type: str) -> Optional[str]:
-    """Return the view-permission slug required for an entity type.
-
-    ``None`` means any authenticated user may read the record context. Unknown
-    entity types also return ``None`` (the assembler still 400s on assemble).
+    ``permissions`` is the caller's ``UserPermissionService``.
     """
-    return _VIEW_PERMISSION.get(entity_type)
+    slugs = own_scope.REQUEST_KINDS.get(entity_type)
+    if slugs is None:
+        return True
+    view, view_own = slugs
+    if permissions.check_user_has_permission(user_id, view):
+        return True
+    if not permissions.check_user_has_permission(user_id, view_own):
+        return False
+    return own_scope.request_in_scope(db, entity_type, entity_id, own_scope.me(db, user_id))
 
 
 def _to_kl_iso(dt: Any) -> Optional[str]:

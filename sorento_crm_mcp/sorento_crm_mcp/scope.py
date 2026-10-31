@@ -10,20 +10,34 @@ The in-app staff AI assistant has no contact and opts out explicitly with `X-MCP
 (set by the backend's `MCPRuntimeClient(staff=True)`, only at the assistant's own call sites). The
 header only matters on an authenticated request, and a caller holding the token already holds the
 key that reads every company, so the opt-out grants nothing new.
+
+AGENTIC-UNIFY PR 1: a staff-marked read runs as the staff member, not the key's act-as user. The
+assistant names them in `X-MCP-Staff-User`, a scoped read without that id is refused, and
+`CRMClient.request` forwards the id to the CRM as `X-Staff-User` (`forwarded_staff_id`).
 """
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator
+
+from mcp.server.lowlevel.server import request_ctx
 
 logger = logging.getLogger(__name__)
 
 SCOPE_PARAMS = ("contact_id", "space_id")
 STAFF_HEADER = "x-mcp-scope"
 STAFF_VALUE = "staff"
-# The staff user the assistant is answering, when the backend knows it. Logged only.
+# The staff user the assistant is answering. A scoped read needs it, and it reaches the CRM as
+# CRM_STAFF_HEADER (`forwarded_staff_id`).
 STAFF_USER_HEADER = "x-mcp-staff-user"
+CRM_STAFF_HEADER = "X-Staff-User"
+
+# True while a compiled catalog READ tool is talking to the CRM. Everything else leaves it False, so
+# a hand-written tool (the writes in `record_actions.py`, `ideation.py`) never carries the identity.
+_serving_read_tool: ContextVar[bool] = ContextVar("serving_read_tool", default=False)
 
 
 def is_scoped(spec: Any) -> bool:
@@ -41,6 +55,36 @@ def is_staff_request(ctx: Any) -> bool:
     if headers is None:
         return False
     return str(headers.get(STAFF_HEADER) or "").strip().lower() == STAFF_VALUE
+
+
+def _staff_user_id(headers: Any) -> str:
+    return str(headers.get(STAFF_USER_HEADER) or "").strip() if headers is not None else ""
+
+
+@contextmanager
+def serving_tool(spec: Any) -> Iterator[None]:
+    """Around one compiled tool's CRM calls: says whether the tool is a read, by the same catalog
+    rule as the staff opt-out, so `CRMClient.request` need not guess it from the HTTP method."""
+    token = _serving_read_tool.set(staff_may_skip(spec))
+    try:
+        yield
+    finally:
+        _serving_read_tool.reset(token)
+
+
+def forwarded_staff_id() -> str | None:
+    """The id `CRMClient.request` sends as `X-Staff-User`, or None.
+
+    Read from the library's request contextvar, so a helper with no `ctx`, however deep in the
+    tool, is covered. Only the assistant's `X-MCP-Staff-User`, only beside `X-MCP-Scope: staff`,
+    only during a read tool. An inbound `X-Staff-User` is never looked at, and `auth.py` has already
+    stripped the two `x-mcp-*` headers from a caller that did not prove it holds the token."""
+    if not _serving_read_tool.get():
+        return None
+    headers = getattr(getattr(request_ctx.get(None), "request", None), "headers", None)
+    if headers is None or str(headers.get(STAFF_HEADER) or "").strip().lower() != STAFF_VALUE:
+        return None
+    return _staff_user_id(headers) or None
 
 
 def _present(value: Any) -> bool:
@@ -62,17 +106,28 @@ def _missing_scope(query: dict[str, Any] | None, body: Any) -> list[str]:
 def check_scope(spec: Any, query: dict[str, Any] | None, body: Any, ctx: Any) -> str | None:
     """The one scope check every catalog tool call runs (`server._compile_tool`).
 
-    Returns the refusal to answer with, or None to go ahead. A staff opt-out that skipped a
-    refusal is logged (tool, staff user id) so the follow-up that scopes the assistant to the
-    staff user's own companies has the call data."""
+    Returns the refusal to answer with, or None to go ahead. A staff-marked read of a scoped tool
+    with no staff id is refused: it could only run as the key's act-as user, across every company.
+    A staff opt-out that skipped a contact refusal is logged (tool, staff user id)."""
     staff = is_staff_request(ctx)
-    if staff and staff_may_skip(spec) and is_scoped(spec) and _missing_scope(query, body):
-        headers = _request_headers(ctx)
-        logger.info(
-            "staff-scope MCP call without a contact: tool=%s staff_user=%s",
-            spec.name,
-            str(headers.get(STAFF_USER_HEADER) or "-").strip()[:64] if headers is not None else "-",
-        )
+    if staff and staff_may_skip(spec) and is_scoped(spec):
+        staff_user = _staff_user_id(_request_headers(ctx))
+        if not staff_user:
+            return json.dumps(
+                {
+                    "error": "scope_required",
+                    "detail": f"Tool '{spec.name}' reads company-owned data and needs the staff member's id.",
+                    "missing": [STAFF_USER_HEADER],
+                    "data": [],
+                    "total": 0,
+                }
+            )
+        if _missing_scope(query, body):
+            logger.info(
+                "staff-scope MCP call without a contact: tool=%s staff_user=%s",
+                spec.name,
+                staff_user[:64],
+            )
     return scope_refusal(spec, query, body, staff=staff)
 
 

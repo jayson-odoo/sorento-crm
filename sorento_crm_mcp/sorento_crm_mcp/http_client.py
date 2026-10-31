@@ -9,6 +9,7 @@ from typing import Any, Mapping, MutableMapping
 
 import httpx
 
+from sorento_crm_mcp.scope import CRM_STAFF_HEADER, forwarded_staff_id
 from sorento_crm_mcp.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,10 @@ class CRMClient:
         }
         if tool_name:
             call_headers["X-Tool-Name"] = tool_name
+        # A staff-marked read runs as the staff member (AGENTIC-UNIFY PR 1).
+        staff_id = forwarded_staff_id()
+        if staff_id:
+            call_headers[CRM_STAFF_HEADER] = staff_id
 
         started = time.perf_counter()
         logger.info(

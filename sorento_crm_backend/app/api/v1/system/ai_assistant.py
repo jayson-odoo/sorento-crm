@@ -252,11 +252,11 @@ def test_ai_assistant_model(
 
 @router.get("/ai-assistant/tools", response_model=list[str])
 def list_ai_assistant_tools(
-    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    current_user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
     chat = AIAssistantChatService(db)
-    return chat.list_mcp_tools()
+    return chat.list_mcp_tools(current_user["id"])
 
 
 @router.get("/ai-assistant/greeting", response_model=GreetingResponse)
