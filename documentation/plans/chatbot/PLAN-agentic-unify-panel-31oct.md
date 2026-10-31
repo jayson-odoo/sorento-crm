@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY panel, the staff principal on the chatbot brain
 
-Status: live-turn audit done 31 Oct 2026, waiting on the owner's Q1-Q3 below. PR 3 of 4, after the console PR. Full pipeline, size L.
+Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC next. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
 
 Behaviour: `CARD-agentic-unify-v2-31oct.md` and its owner table (on branch `crew/agentic-unify`, #2048). Its section 2 (test path) was overruled by the owner: a panel turn is live, with no WhatsApp send. This plan replaces that section.
 
@@ -29,7 +29,7 @@ Audited 31 rows: keep 8, skip 13, redirect to the user 6, owner decision 4.
 
 `run_turn` executes no action itself; callers do (`CHAT/inbox_queue.py:716-745`). The panel renders `send_message` and `send_attachments`, and drops `assign_conversation`, `add_comment`, `update_contact_fields`.
 
-## Owner questions
+## Owner questions, all answered (a)
 
 **Q1. A staff member's panel question escalates. Who gets it, and how?** It must reach a real person (owner ruling). The draw is a round-robin member of the topic's team, or a named person.
 (a) SLA task with no contact: the assignee gets it in My Pending with the SLA clock and an in-app notification (`S/sla_service.py:4406, 4507-4556`), WhatsApp off for this kind. Needs a new branch: `create_tracking` refuses with no contact, though the column is nullable and form rows already have none (`A/models/sla.py:107, 127`).
