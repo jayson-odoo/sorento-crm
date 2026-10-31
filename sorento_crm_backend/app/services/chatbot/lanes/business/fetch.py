@@ -1642,18 +1642,45 @@ PORTAL_LINK_COPY = {
     "stock_inquiry": "portal_link_stock_inquiry",
     "purchase_request": "portal_link_purchase_request",
     "sponsorship_form": "portal_link_sponsorship_form",
+    "price_tag_request": "portal_link_price_tag_request",
 }
 
 
 def portal_submission_type(parse_output: dict[str, Any]) -> str | None:
     """The portal tab a portal_link ask names, or None. A code the portal cannot deep-link
-    (`portal_service.SUPPORTED_TYPES`) is the parser guessing and names no form."""
-    from app.services.portal_service import SUPPORTED_TYPES
+    (`portal_service.LINK_TYPES`: the four generic forms plus the price tag request form,
+    CHATBOT-FAIL-TRIAGE AC-3) is the parser guessing and names no form."""
+    from app.services.portal_service import LINK_TYPES
 
     if parse_output.get("domain_hint") != "portal_link":
         return None
     form = parse_output.get("portal_form")
-    return form if isinstance(form, str) and form in SUPPORTED_TYPES else None
+    return form if isinstance(form, str) and form in LINK_TYPES else None
+
+
+#: CHATBOT-FAIL-TRIAGE AC-3 (review round 2 security nit): a portal link ask for a form the
+#: contact is not granted. MS / ZH in `label_catalog`.
+FORM_NOT_AVAILABLE_MESSAGE = "That form is not available on your account."
+
+
+def portal_form_granted(db: Any, contact_respond_id: Any, space_id: Any, submission_type: str) -> bool:
+    """Is `submission_type` a form the portal shows this contact? The portal's own gate
+    (`portal_form_visibility_service.resolve_visible_form_types`, which the price tag tab
+    403s on, `public/portal_price_tag._assert_visible`), so the chat never hands a link to
+    a tab that would refuse it. Fails closed (review round 3): a contact the resolver
+    cannot place on exactly one row is granted nothing."""
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    from app.services.portal_form_visibility_service import resolve_visible_form_types
+
+    respond_id = jsc.js_string(contact_respond_id or "").strip()
+    contact_pk = (
+        resolve_contact_with_null_workspace_fallback(
+            db, contact_id=respond_id, space_id=(jsc.js_string(space_id).strip() or None) if space_id else None
+        )
+        if respond_id
+        else None
+    )
+    return bool(contact_pk) and submission_type in resolve_visible_form_types(db, str(contact_pk))
 
 
 def _extract_envelope(j: Any) -> dict[str, Any]:

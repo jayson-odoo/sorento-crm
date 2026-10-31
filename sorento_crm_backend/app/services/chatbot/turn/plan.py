@@ -50,6 +50,10 @@ class Trace:
     # escalation_context` already validates a TYPED company name through, so a tapped
     # number and a typed word route through one seam rather than two.
     company: str | None = None
+    # CHATBOT-FAIL-TRIAGE review rounds 3-4: the AGENT of the pair a picked option names
+    # (the topic question's `payload.pair_agent`), else None, beside `team` for the same
+    # reason. One reader, `engine._run_escalation_arm`: the lane draws that pair first.
+    agent: str | None = None
     # What an ANSWERED outstanding question (contract 38, 39) decided: `{kind, scope,
     # detail}`. It lives beside `lane` and `team` for the same reason they do - the
     # Plan's own field set is the contract (AC-1528) - and it has exactly one reader,

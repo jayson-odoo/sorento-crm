@@ -831,7 +831,8 @@ class TestIdeateBranchCallsMcpTool:
 
         assert result.branch_kind is None
         assert result.delegate is None
-        assert result.reply["text"] == parser_mod.PARSER_ERROR_REPLY
+        from tests.chatbot import fail_triage_texts as FT
+        FT.assert_no_banned_text(result.reply["text"])
 
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "failed"

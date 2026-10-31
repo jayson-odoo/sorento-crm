@@ -226,9 +226,25 @@ MOCK_PARSER_OUTPUT = {
     "escalation": {"is_escalation_confirmation": False, "company_pick": None},
 }
 
-# The sentence a failed turn hands back. Imported from the CORE copy module, never from
-# `app/services/chatbot/` - scripts are not on the import-boundary allowlist (AC-002).
-from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY as ERROR_REPLY
+# The sentences a failed turn hands back (CHATBOT-FAIL-TRIAGE: one per failure reason, the
+# old generic apology kept so an older server still counts). Imported from the CORE copy
+# module, never from `app/services/chatbot/` - scripts are not on the import-boundary
+# allowlist (AC-002).
+from app.services.chatbot_reply_copy import (
+    CHATBOT_REPLY_AI_DID_NOT_ANSWER,
+    CHATBOT_REPLY_PREVIOUS_STILL_RUNNING,
+    CHATBOT_REPLY_TURN_FAILED,
+    CHATBOT_TURN_ERROR_REPLY,
+)
+
+ERROR_REPLIES = frozenset(
+    {
+        CHATBOT_TURN_ERROR_REPLY,
+        CHATBOT_REPLY_AI_DID_NOT_ANSWER,
+        CHATBOT_REPLY_TURN_FAILED,
+        CHATBOT_REPLY_PREVIOUS_STILL_RUNNING,
+    }
+)
 
 QUESTIONS = [
     "price for SRTPTFE1315",  # master_products - the same real code MOCK_PARSER_OUTPUT names
@@ -543,7 +559,7 @@ def _send(session: Any, url: str, headers: dict[str, str], envelope: dict[str, A
     # A FAILED turn is a successful CALL - the endpoint answers 200 and hands back the
     # error reply for the caller to send. The load gate has to count that as an error or
     # it grades the error path and calls it green.
-    failed = reply.strip() == ERROR_REPLY
+    failed = reply.strip() in ERROR_REPLIES
     return TurnOutcome(
         contact,
         index,

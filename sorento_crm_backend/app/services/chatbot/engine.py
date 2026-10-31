@@ -35,6 +35,7 @@ from dataclasses import dataclass, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator, Mapping
 
+from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,14 @@ from app.config import settings
 from app.models.base import set_brand_scope, set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services import llm_cassette
+from app.services.chatbot_reply_copy import (
+    CHATBOT_REPLY_AI_DID_NOT_ANSWER,
+    CHATBOT_REPLY_ESCALATION_FAILED,
+    CHATBOT_REPLY_ESCALATION_FAILED_NO_TEAM,
+    CHATBOT_REPLY_FALLBACK_OFFER,
+    CHATBOT_REPLY_PREVIOUS_STILL_RUNNING,
+    CHATBOT_REPLY_TURN_FAILED,
+)
 from app.services.reports.ask import SALES_CHANNELS
 from app.services.chatbot import direct_ingress, dispatch, inbox_queue, jsc, llm_call, media_intake, send_order, trace as trace_mod
 from app.services.chatbot import user_turn as user_turn_mod
@@ -140,7 +149,12 @@ _ASK_BRANCH_KINDS: frozenset[str] = frozenset(
 # when the settings singleton does not exist yet.
 _UNSET: Any = object()
 
-GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
+# CHATBOT-FAIL-TRIAGE: the reply of a failed turn that has no more specific words.
+GENERIC_ERROR_REPLY = CHATBOT_REPLY_TURN_FAILED
+
+# AC-1h: how long the first message waits before it re-reads a contact Respond has not
+# committed yet.
+CONTACT_REREAD_WAIT_SECONDS = 1.0
 
 # AC-703. The queue the offloaded turn runs on, classified `fast` in `worker.QUEUES`: a
 # customer is watching "typing...", so it must never queue behind a 39-minute import.
@@ -1898,7 +1912,15 @@ def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | No
         get_referenced_state,
     )
 
-    state = get_for_contact(db, respond_io_id=respond_io_id)
+    try:
+        state = get_for_contact(db, respond_io_id=respond_io_id)
+    except HTTPException as missing:
+        # CHATBOT-FAIL-TRIAGE AC-1h: a first message can land before Respond's contact row
+        # commits. One re-read after a short wait; still missing, the turn fails as before.
+        if missing.status_code != 404:
+            raise
+        time.sleep(CONTACT_REREAD_WAIT_SECONDS)
+        state = get_for_contact(db, respond_io_id=respond_io_id)
     if reply_to_id is not None:
         state = {
             **state,
@@ -2532,7 +2554,7 @@ def _answer_claimed(
                 error=message,
                 records=turn_trace.persisted(),
             )
-        return _failed_result(turn_id, stage[0], message, actions, False)
+        return _failed_result(turn_id, stage[0], message, actions, False, reply_text=_failure_reply(exc))
 
 
 # --------------------------------------------------------------------------- #
@@ -2968,8 +2990,18 @@ def _localize_result(result: TurnResult, session_factory: SessionFactory, dry_ru
         reply = dict(result.reply)
         if isinstance(reply.get("text"), str):
             reply["text"] = localizer.reply(reply["text"])
+        if isinstance(reply.get("quick_replies"), str):
+            reply["quick_replies"] = localizer.quick_replies(reply["quick_replies"])
+
+        def said(action: dict[str, Any]) -> dict[str, Any]:
+            out = {**action, "text": localizer.reply(action["text"])}
+            if isinstance(action.get("quick_replies"), str):
+                # CHATBOT-FAIL-TRIAGE B3: the taps read in the reply's language too.
+                out["quick_replies"] = localizer.quick_replies(action["quick_replies"])
+            return out
+
         actions = [
-            {**a, "text": localizer.reply(a["text"])}
+            said(a)
             if isinstance(a, dict) and a.get("kind") == "send_message" and isinstance(a.get("text"), str)
             else a
             for a in (result.actions or [])
@@ -3763,7 +3795,7 @@ def _run_turn(
                     error=message,
                     records=turn_trace.persisted(),
                 )
-            failed = _failed_result(turn_id, stage[0], message, actions, dry_run)
+            failed = _failed_result(turn_id, stage[0], message, actions, dry_run, reply_text=_failure_reply(exc))
             if earlier_actions:
                 # The earlier-sent messages were answered on their own rows; their
                 # replies still go out, ahead of this turn's error reply.
@@ -3876,12 +3908,14 @@ def _run_on_worker(envelope: Envelope, *, session_factory: SessionFactory) -> Tu
                 envelope,
                 session_factory,
                 "the offloaded turn finished without returning a turn",
+                reply_text=GENERIC_ERROR_REPLY,
             )
         if state in ("failed", "stopped", "canceled"):
             return _worker_failed(
                 envelope,
                 session_factory,
                 f"the offloaded turn {state}: {(snapshot.get('exc_info') or '')[:300]}",
+                reply_text=GENERIC_ERROR_REPLY,
             )
         if time.monotonic() >= deadline:
             # STOP the job before answering. Left running, the worker finishes the turn
@@ -3902,9 +3936,17 @@ def _run_on_worker(envelope: Envelope, *, session_factory: SessionFactory) -> Tu
 
 
 def _worker_failed(
-    envelope: Envelope, session_factory: SessionFactory, message: str
+    envelope: Envelope,
+    session_factory: SessionFactory,
+    message: str,
+    *,
+    reply_text: str = CHATBOT_REPLY_PREVIOUS_STILL_RUNNING,
 ) -> TurnResult:
-    """The caller still gets today's error reply when the offloaded turn does not answer.
+    """The caller still gets an honest reply when the offloaded turn does not answer.
+
+    CHATBOT-FAIL-TRIAGE R4: H-QUEUE ("I was still answering your previous message") is the
+    queue-wait TIMEOUT's sentence only; a job that finished without a turn or crashed is an
+    error on this turn, so those callers pass H-ERROR (`GENERIC_ERROR_REPLY`).
 
     The turn id is read back off the row the WORKER inserted, so the operator opening the
     trace screen lands on the turn that actually ran rather than on a job id that means
@@ -3948,7 +3990,7 @@ def _worker_failed(
     except Exception:  # noqa: BLE001 - the reply matters more than the id
         logger.warning("chatbot offload: could not close the turn row", exc_info=True)
     logger.error("chatbot offload failed: %s", message)
-    return _failed_result(turn_id, "queued", message, [], envelope.dry_run)
+    return _failed_result(turn_id, "queued", message, [], envelope.dry_run, reply_text=reply_text)
 
 
 def _fanout_domain_hint(domains: list[Any], entities: Any) -> Any:
@@ -5396,11 +5438,7 @@ def _run_stages_body(  # noqa: PLR0915
             message,
             actions,
             dry_run,
-            reply_text=(
-                llm_call.RATE_LIMITED_REPLY
-                if getattr(exc, "rate_limited", False)
-                else GENERIC_ERROR_REPLY
-            ),
+            reply_text=CHATBOT_REPLY_AI_DID_NOT_ANSWER,
         )
 
     # Chatbot memory lane A (contract section 3, Q5 ruling): the recall re-parse
@@ -8563,6 +8601,12 @@ def _run_stages_body(  # noqa: PLR0915
                 ctx=ctx,
                 item=item,
                 branch_kind=branch_kind,
+                reply_text=turn_compose.fetch_failed_text(
+                    [s.domain for s in fetch_plan.fetch],
+                    compatible_entities or verdict.get("entities") or [],
+                    policy,
+                    label_catalog.resolve(db, item.get("reply_language") or "en", dry_run=dry_run),
+                ),
             )
             _close_turn(
                 db,
@@ -8715,6 +8759,8 @@ def _run_stages_body(  # noqa: PLR0915
             remembered_before=remembered_before,
             contact_respond_id=contact_respond_id,
             recalled=recalled,
+            accepted_team=plan.trace.team,
+            accepted_agent=plan.trace.agent,
         )
 
     if branch_kind == "low_signal" and completes_here:
@@ -10150,14 +10196,18 @@ def _run_casual_lane(
         except casual.ClarifierRateLimited as exc:
             # PR #1247 round 6, ruling 3: a rate limit that never cleared is one plain
             # sentence, never the provider's text. The row keeps the real reason.
+            # CHATBOT-FAIL-TRIAGE AC-1b: and the reply is the canned offer, not a "busy" line.
             failed = f"{type(exc).__name__}: {exc}"
-            text = llm_call.RATE_LIMITED_REPLY
+            reply_language = _failed_clarifier_language(user_turn, fallback, remembered_before, parsed_language, item)
+            text = CHATBOT_REPLY_FALLBACK_OFFER.get(reply_language or "en", CHATBOT_REPLY_FALLBACK_OFFER["en"])
         except Exception as exc:  # noqa: BLE001 - a provider error or an unreadable answer
             # AC-MEM086 (owner ruling Q10): the dealer never reads exception text. The
             # row and the trace keep the real reason; the dealer gets the turn's own
-            # apology. n8n's `sub-error-logger` interpolation is retired here.
+            # canned offer (CHATBOT-FAIL-TRIAGE AC-1b). n8n's `sub-error-logger`
+            # interpolation is retired here.
             failed = f"{type(exc).__name__}: {exc}"
-            text = GENERIC_ERROR_REPLY
+            reply_language = _failed_clarifier_language(user_turn, fallback, remembered_before, parsed_language, item)
+            text = CHATBOT_REPLY_FALLBACK_OFFER.get(reply_language or "en", CHATBOT_REPLY_FALLBACK_OFFER["en"])
     if clarifier_calls and not dry_run:
         # LIVE turns only, like the parser's row (`_record_parser_usage`, D14). Telemetry never
         # fails the customer's turn: opening the session can raise too, so the whole write is
@@ -10420,6 +10470,8 @@ def _run_escalation_arm(
     remembered_before: dict[str, Any] | None = None,
     contact_respond_id: str | None = None,
     recalled: list[dict[str, Any]] | None = None,
+    accepted_team: str | None = None,
+    accepted_agent: str | None = None,
 ) -> TurnResult:
     """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
 
@@ -10428,7 +10480,7 @@ def _run_escalation_arm(
     owns its own unit of work: the round-robin cursor and the SLA row must not roll back
     with the turn's routing transaction, because a person has already been told.
 
-    A lane failure is a FAILED turn at `looked_up` with today's generic reply and NO
+    A lane failure is a FAILED turn at `looked_up` with the escalation-failed reply and NO
     partial assignment - the lane returns its whole action list or raises before returning
     any of it, so "assigned but no SLA row" is not a state this can produce.
     """
@@ -10437,7 +10489,16 @@ def _run_escalation_arm(
     # turn's named product, else the one the previous turn left in focus; a topic reset
     # or a newer product already replaced it). The lane reads its brand off the product
     # row. On the lane's item only: the row keeps the route-turn item it always had.
-    lane_item = {**item, "focus_products": _focus_products(state)}
+    lane_item = {
+        **item,
+        "focus_products": _focus_products(state),
+        # CHATBOT-FAIL-TRIAGE AC-7a/7b: the topic the escalation routes by (this turn's
+        # domain, else the one the focus holds from earlier turns) and the team an
+        # accepted offer named; `lanes/escalation._route_pair` reads both.
+        "topic_domains": _escalation_topics(verdict, state),
+        "accepted_team": accepted_team,
+        "accepted_agent": accepted_agent,
+    }
     # CHAT-INBOX-QUEUE (IQ-27): the lane commits an SLA row and a round-robin draw it cannot
     # undo, so on the inbox drain the turn gives way to an earlier-sent message HERE.
     inbox_queue.checkpoint(turn_id)
@@ -10473,7 +10534,41 @@ def _run_escalation_arm(
                 records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": actions},
             )
-        return _failed_result(turn_id, "looked_up", message, actions, dry_run)
+        from app.services.chatbot.lanes.escalation import NoReachableTeam, topic_teams
+        from app.services.chatbot.tail.outcome import pretty_team
+
+        # CHATBOT-FAIL-TRIAGE AC-1d / AC-7d (R6): the reply names the OFFERED team - the
+        # item's own, else the one the draw was for, else this turn's routing - and goes out
+        # in the contact's language (`_localize_result` reads the item's language). S1:
+        # a drawn or routed team is named only when it is a topic-map team; no reachable
+        # pair, a parser free string, or no team at all gets the neutral sentence.
+        routed = ((jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("routing")) or {}
+        mapped = topic_teams()
+        team = None if isinstance(exc, NoReachableTeam) else lane_item.get("team") or next(
+            (
+                t
+                for t in (
+                    getattr(exc, "escalation_team", None),
+                    routed.get("suggested_team"),
+                    ((verdict or {}).get("routing") or {}).get("suggested_team"),
+                )
+                if t in mapped
+            ),
+            None,
+        )
+        return _failed_result(
+            turn_id,
+            "looked_up",
+            message,
+            actions,
+            dry_run,
+            item=lane_item,
+            reply_text=(
+                CHATBOT_REPLY_ESCALATION_FAILED.format(team=pretty_team(team))
+                if team
+                else CHATBOT_REPLY_ESCALATION_FAILED_NO_TEAM
+            ),
+        )
 
     arm = fragment.get("arm")
     clarify = fragment.get("clarify")
@@ -10629,6 +10724,19 @@ def _run_escalation_arm(
     )
 
 
+def _escalation_topics(verdict: dict[str, Any] | None, state: Any) -> list[str]:
+    """The domains an escalation's topic is read from, in order: this turn's own domain,
+    then the ones the focus carries from earlier turns (CHATBOT-FAIL-TRIAGE AC-7b: a "Yes",
+    a "9" or an "Eta" names no topic of its own)."""
+    out: list[str] = []
+    own = (verdict or {}).get("domain_hint")
+    focus = getattr(state, "focus", None)
+    for domain in [own, *(getattr(focus, "domains", None) or [])]:
+        if isinstance(domain, str) and domain and domain not in out:
+            out.append(domain)
+    return out
+
+
 def _seal_send(action: dict[str, Any], sealed: dict[str, Any]) -> dict[str, Any]:
     """Fill a `send_message`'s sealed halves from the tail's reply. Others pass through."""
     if action.get("kind") != "send_message":
@@ -10730,6 +10838,12 @@ def _stamp_item(access: dict, branch_kind: str, tier_stamp: dict) -> dict[str, A
     return item
 
 
+def _failure_reply(exc: BaseException) -> str:
+    """What a turn that raised tells the contact: the AI service did not answer when the
+    parser's own error escaped (config or key missing), else the plain error sentence."""
+    return CHATBOT_REPLY_AI_DID_NOT_ANSWER if isinstance(exc, parser.ParserError) else GENERIC_ERROR_REPLY
+
+
 def _failed_result(
     turn_id: str,
     stage: str,
@@ -10742,10 +10856,12 @@ def _failed_result(
     branch_kind: str | None = None,
     reply_text: str = GENERIC_ERROR_REPLY,
 ) -> TurnResult:
-    """A failed turn still hands the caller today's error reply to send (AC-105, AC-107).
+    """A failed turn still hands the caller an error reply to send (AC-105, AC-107).
 
-    `reply_text` is that reply unless the caller knows better: a parser call refused by
-    a rate limit on every attempt says `llm_call.RATE_LIMITED_REPLY` (PR #1247 round 6).
+    `reply_text` is `GENERIC_ERROR_REPLY` unless the caller knows better: a parser that did
+    not answer, a previous turn still running, an escalation that could not be made each
+    say their own (CHATBOT-FAIL-TRIAGE). The generic apology and the rate limit sentence
+    are never sent.
 
     `quick_replies` is null, never `[]`: AC-507's contract is `quick_reply` is n8n's
     comma-joined string or null, and a failed turn offered none.
@@ -11127,6 +11243,21 @@ def _ask_localizer(ask: Any, db: Session, item: Mapping[str, Any], *, dry_run: b
     """CHAT-LANGUAGE: the localizer a question prints with: its stored offer text and its short
     header read in the turn's language (the stored text stays English). English reads nothing."""
     return label_catalog.resolve(db, item.get("reply_language") or "en", dry_run=dry_run)
+
+
+def _failed_clarifier_language(
+    user_turn: Any,
+    fallback: Any,
+    remembered_before: Mapping[str, Any] | None,
+    parsed: Any,
+    item: Mapping[str, Any] | None,
+) -> str | None:
+    """CHATBOT-FAIL-TRIAGE R3: the canned offer a failed clarifier sends is in the contact's
+    language. The fallback's own rule when it was built (no clarifier reading to add), else
+    the language this turn's item already chose."""
+    if fallback is not None:
+        return _fallback_language(user_turn, fallback, remembered_before, None, parsed)
+    return (item or {}).get("reply_language")
 
 
 def _fallback_language(
@@ -11848,7 +11979,12 @@ def _question_offered(
             routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
             return {
                 "team": jsc.get(row, "team"),
-                "agent": jsc.get(routing, "suggested_agent"),
+                # CHATBOT-FAIL-TRIAGE AC-7c: a topic option names its own pair's agent.
+                "agent": jsc.get(row, "agent") or jsc.get(routing, "suggested_agent"),
+                # Review round 4: and only THAT agent is the pair a pick accepts
+                # (`turn/apply._answer_offer` -> `plan.trace.agent`); the routing agent
+                # above may be the code default fill and never draws first.
+                "pair_agent": jsc.get(row, "agent") or None,
                 "brand_code": jsc.get(values.get("gate"), "routing_brand"),
             }
         if kind == "company":

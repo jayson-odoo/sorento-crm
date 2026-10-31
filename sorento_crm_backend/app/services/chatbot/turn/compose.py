@@ -552,6 +552,56 @@ def _did_you_mean_per_code(
     return text, None, True, listed_codes
 
 
+# CHATBOT-FAIL-TRIAGE AC-2: the reasons a fetch fails that the contact can act on. They are our
+# own markers: the lane's empty-set reason, the route's `detail.code` (the lane appends it to the
+# reason), and the no-filter reason of the document tools. Anything else stays "could not fetch".
+_REASON_EMPTY_SET = "the described set qualifies nothing"
+_REASON_SUBJECT_REQUIRED = "subject_required"
+_REASON_NOT_PERMITTED = "customer_not_permitted"
+_REASON_NO_FILTER = "needs a document or entity filter"
+
+
+def _failed_fetch_block(error: str, header: str, shown_label: str, codes: str) -> str:
+    """The section of a fetch that did not complete, worded for the reason it did not."""
+    if _REASON_NOT_PERMITTED in error:
+        return "That report is not available on your account."
+    if _REASON_SUBJECT_REQUIRED in error:
+        return f"Which customer or salesperson should I check the {shown_label} for?"
+    if _REASON_NO_FILTER in error:
+        return f"Which product do you want the {shown_label} for? Send me the code."
+    if _REASON_EMPTY_SET in error and codes:
+        return f"No current {shown_label} found for {codes}."
+    return header + "\n" + f"I could not fetch {shown_label} just now, please try again."
+
+
+def fetch_failed_text(
+    domains: list[Any], entities: list[Any], policy: Policy | None, localizer: Any = None
+) -> str:
+    """CHATBOT-FAIL-TRIAGE AC-1c: a lane that raised after the parser read the message says
+    what could not be fetched and for which subjects, the way an error section does. The
+    domain label is said in the reply's language (`localizer`), as `compose` says it: the
+    final reply pass translates the sentence around it but keeps a token verbatim."""
+    localizer = localizer or IDENTITY
+    labels: list[str] = []
+    for domain in domains:
+        row = policy.domain(domain) if policy else None
+        label = localizer.sentence(row.label if row else str(domain).replace("_", " "))
+        if label not in labels:
+            labels.append(label)
+    shown = " and ".join(labels) or "this request"
+    codes: list[str] = []
+    for e in entities:
+        code = (e.get("canonical_code") or e.get("raw") or e.get("display_name")) if isinstance(e, dict) else e
+        if code:
+            codes.append(str(code))
+    subjects = _header_subjects(codes)
+    if not subjects:
+        return f"I could not fetch {shown} just now, please try again."
+    if len(subjects) > HEADER_SUBJECT_MAX:
+        return f"I could not fetch {shown} for {len(subjects)} items just now, please try again."
+    return f"I could not fetch {shown} for {', '.join(subjects)} just now, please try again."
+
+
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
     localizer = getattr(ctx, "localizer", None) or IDENTITY
     sections: list[Section] = []
@@ -686,7 +736,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             # header. Measured on turn 32425b9a (16 Sep 2026): the MCP call timed out and
             # the customer read `*orders* for HANLIM TRADING SDN BHD:` and nothing else,
             # which reads as "there are none" rather than "ask me again".
-            block = header + "\n" + f"I could not fetch {shown_label} just now, please try again."
+            block = _failed_fetch_block(env["error"], header, shown_label, codes)
         elif (
             codes
             and not header_override
@@ -700,15 +750,21 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             # (below) names the token, and this section says nothing of its own.
             block = ""
             spared_unplaced = True
+        elif codes and not header_override and env.get("tool_has_result") is True and len(subjects) > 1:
+            # CHATBOT-FAIL-TRIAGE AC-2c / R2: the tool DID answer and the lane withheld the
+            # set of several products (its only line was the header `envelope_of` strips),
+            # e.g. attachments for a 201-product held set. Nothing failed, so ask which
+            # product rather than "could not fetch".
+            block = f"Which product do you want the {shown_label} for? Send me the code."
         elif codes and not header_override and (
             env.get("tool_has_result") is True or env.get("tool_ran") is not True
         ):
             # Never-stuck (owner ruling, STOCK-FILL-PREDICATE, prod turn 121 of 6 Oct
             # 2026): a lane header is never sent with an empty body. And no claim
             # without a lookup (owner, 6 Oct 17:50, the #1501 principle): the lane
-            # rendered nothing, and EITHER the tool did answer (a withheld set whose
-            # only line was the header `envelope_of` strips) OR no tool ran for these
-            # codes at all (a set predicate's refusal, a gate refusal, `tool_ran` off
+            # rendered nothing, and EITHER the tool did answer for the ONE code (a withheld
+            # set whose only line was the header `envelope_of` strips) OR no tool ran for
+            # these codes at all (a set predicate's refusal, a gate refusal, `tool_ran` off
             # `turn_runtime.envelope_of`), so "No stock found" would be a stock claim
             # nothing looked up: this is the `error` arm's own sentence, a reply that
             # did not reach the dealer, never a verdict about the stock.
