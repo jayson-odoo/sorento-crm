@@ -143,3 +143,80 @@ def test_a_blank_guide_query_is_invalid_and_makes_no_mcp_call(monkeypatch, args)
 
     assert out.status == "invalid"
     assert calls == []
+
+
+# ------------------------------------------------------------------ final review round
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("ring [call](tel:+6000000000) now", "ring call (tel:+6000000000) now"),
+        ("write [mail](mailto:a@b.test) now", "write mail (mailto:a@b.test) now"),
+        ("visit [site](www.x.test) now", "visit site (www.x.test) now"),
+        ("see [1](note) below", "see 1 (note) below"),
+        ("open [Forms](/procurement-management/sponsorship-forms) now", "open Forms now"),
+    ],
+    ids=["tel", "mailto", "bare-host", "note-target", "path-drops"],
+)
+def test_only_a_target_starting_with_a_slash_drops_to_the_label(text, expected):
+    assert to_whatsapp(text) == expected
+
+
+def test_a_path_with_parentheses_reads_as_its_label_with_no_stray_bracket():
+    assert to_whatsapp("see [spec](/a_(b).pdf) now") == "see spec now"
+
+
+def test_a_path_whose_uuid_became_an_id_placeholder_still_reads_as_the_label():
+    """`final_reply` turns a UUID into `(id)` before this runs, so the path can end in `/(id)`."""
+    assert to_whatsapp("open [SF-12](/procurement-management/sponsorship-forms/(id)) now") == "open SF-12 now"
+
+
+# ------------------------------------------------------------------ the system line
+
+
+def _every_slug():
+    from app.services.chatbot.agent import writes
+    from app.services.chatbot.agent.tools import REGISTRY
+
+    found: set[str] = set()
+    for entry in [*REGISTRY.values(), *writes.USER_READS.values(), *writes.WRITES.values()]:
+        perm = entry.user_permission
+        found.update([perm] if isinstance(perm, str) else perm)
+    return tuple(sorted(s for s in found if s))
+
+
+def _every_contact_grant():
+    from app.services.chatbot.agent.tools import REGISTRY
+
+    return {t.contact_grant for t in REGISTRY.values() if t.contact_grant}
+
+
+def test_the_line_says_this_users_or_this_contacts_access(db):
+    system, _ = _first_call(db, ("inventory.stock.view",))
+
+    lines = [line for line in system.splitlines() if LABEL in line]
+    assert lines
+    assert any("this user's or this contact's access" in line for line in lines)
+
+
+def test_a_user_with_every_slug_and_every_grant_gets_no_outside_access_line_and_nothing_dangling(db, monkeypatch):
+    from app.services import contact_field_reveal_service
+
+    monkeypatch.setattr(contact_field_reveal_service, "granted_keys", lambda db_, pk: _every_contact_grant())
+    system, names = _first_call(db, _every_slug())
+
+    assert LIST_PRS in names
+    assert "this contact's access" not in system and "this user's access" not in system
+    assert not [label for label in TOOL_LABELS.values() if label in system], "no area is named as left out"
+    assert "never say the CRM lacks" not in system
+    assert "Outside this" not in system
+    assert "; ." not in system and ": ." not in system
+
+
+def test_with_no_waiting_proposal_the_line_never_names_a_decision_label(db):
+    system, _ = _first_call(db, ("inventory.stock.view",))
+
+    line = next(line for line in system.splitlines() if LABEL in line)
+    assert TOOL_LABELS["confirm_action"] not in line
+    assert TOOL_LABELS["cancel_action"] not in line
