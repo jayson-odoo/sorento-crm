@@ -87,9 +87,16 @@ The people chatting decide nothing here. No screen changes, so Phase 1 (frontend
   same reasons as today.
 - **AC-R3b-9 [BE]** The flag is read whatever `session_vars` the console sends, `{}` included: the console keeps `{}` for
   a contact whose turns have all been on the agent, because an agent turn returns `session_vars: null`
-  (`useChatbotConsole.ts:131`, `:242`). So `{}` does not switch this rule off.
+  (`useChatbotConsole.ts`). So `{}` does not switch this rule off.
 - **AC-R3b-10 [T]** Eval: the 4 paraphrased replies and the one new question (rows fu1 to fu5) all land on the right
   side when run through this rule on the Jev answers.
+- **AC-R3b-11 [BE]** New conversation ends the flag (#2051 AC-13, "starts both sides afresh"). Given the contact's latest done turn
+  is a flagged agent turn, when `POST /system/chatbot/agent/conversation/new` has started a newer conversation, then routing is
+  exactly as without the flag: under the floor goes to chat with `low_confidence`. Without a newer conversation the rule still applies
+  (AC-R3b-3, -4). A flagged turn whose envelope names no conversation is not honoured.
+- **AC-R3b-12 [BE]** A forced turn counts as the agent asking: a turn through `POST /system/chatbot/console/turn` with `force_agent: true`
+  whose answer sets `asked_back`, then a reply with Jev answering chat under the floor, routes agent with `agent_asked`. Chat at or
+  above the floor routes chat with `classified`.
 
 ## R3a: a reply to the bot's own question stays on the bot
 

@@ -314,6 +314,7 @@ Owner rule: no sorry or busy bot replies. The live check showed `IDEATION_CAPTUR
 
 ### Accepted, not changed
 
+- The bot holds a required ask, the operator forces a turn with the Agent toggle, and the agent asks back: the reply goes to the bot (`open_question`), because an agent turn returns no session and the console keeps the bot's ask. So the agent's question goes unanswered. Earlier rules win (AC-R3b-7), and only the console's toggle can reach this state; WhatsApp has no toggle. Fixing it would mean ordering the two askers, for an operator-only case.
 - With the longer label, a limit sentence naming the idea create plus another tool reads like three items (`loop.py:477`, `:1075` join labels with commas). Rare, and the meaning survives.
 
 - The agent's own text repeats the proposal, and the card shows it again. Cosmetic. The fix was tried and reverted: see AC-RC-12.
@@ -328,7 +329,8 @@ Owner rule: no sorry or busy bot replies. The live check showed `IDEATION_CAPTUR
 - Chat confirm is decided by the model alone (`loop.py:525`); the server only refuses a same-turn confirm. An injected model can
   confirm a waiting proposal on any later message.
 - A pending proposal is checked before the daily cap (`router.py:74`, `:83`), so a chain of proposals stays on the agent over the
-  cap. `/agent/turn` (`api/v1/system/chatbot.py:713`) has no daily cap, only the rate limit.
+  cap. A forced console turn (`force_agent`, #2051) skips the router, so it is not blocked by the cap, though it counts toward it.
+- With #2055 a typed yes is only honoured in the turn's first model round. If the model calls another tool first, such as `crm_ideas_list`, it can no longer confirm, and nothing in code stops it writing "Done". Review scripted this: the user read "Done, your idea is logged", the action stayed `proposed`, and no create happened. The buttons stay and a second yes works. Every write has this, not only ideas. How often a real model does it is unmeasured. Reported to crew.
 - `crm_opportunity_create`'s proposal shows only title, target and close date (`writes.py:601`), so an `expected_amount` or another agent's
   `sales_agent_id` is stored without appearing on the proposal or the Done line. The model's own text is the only cover.
 - Under impersonation, `run_as_user` records the target as `real_user_id` (`writes.py:148-155`), so the real admin is missing from
