@@ -133,6 +133,9 @@ QUEUES = (
     # reason; the relative order of every other queue is unchanged.
     ('chat', 'fast'),
     ('project_docs', 'batch'),
+    # AGENTIC-KNOWLEDGE: reading an uploaded document for the AI (up to 300 pages, OCR). Minutes of work nobody
+    # watches, and it must not queue in front of `media`, which a chatbot turn is waiting on.
+    ('knowledge', 'batch'),
     ('flyer_read', 'batch'),
     # `analytics` (chat analytics CA-2): the nightly topic labeller, queued by the
     # scheduler at 02:15 Malaysia. Minutes of model calls nobody waits on: batch.

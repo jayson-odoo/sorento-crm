@@ -216,6 +216,7 @@ def _queue_ai_read(db, attachment) -> None:
         knowledge_service.queue_read(db, attachment)
     except Exception:  # noqa: BLE001
         logger.exception("Could not queue the AI read for %s", getattr(attachment, "id", None))
+        db.rollback()  # a failed commit leaves the session unusable until rolled back
 
 
 def _enrich_uploaded_by_user(db, attachment) -> Optional[dict]:
@@ -1894,8 +1895,20 @@ def read_attachment_again(
     """Queue the AI's reading of this file again (AGENTIC-KNOWLEDGE)."""
     from app.services import knowledge_service
 
+    from app.services import rate_limit
+
     validate_uuid_path(attachment_id, resource="Attachment")
     attachment = AttachmentService(db).get_attachment(attachment_id)
+    reason = knowledge_service.read_block_reason(db, attachment)
+    if reason:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=reason)
+    limit = rate_limit.hit("knowledge_ai_read", str(current_user["id"]), limit=20, window_seconds=60)
+    if not limit.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many read requests. Try again shortly.",
+            headers={"Retry-After": str(limit.retry_after_seconds)},
+        )
     knowledge_service.queue_read(db, attachment)
     db.refresh(attachment)
     return {"ai_read_status": attachment.ai_read_status}

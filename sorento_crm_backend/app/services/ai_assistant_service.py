@@ -2433,9 +2433,10 @@ class AIAssistantChatService:
         system = self._resolve_prompt("agent_system")
         if "USER GUIDE PROTOCOL" not in system:
             system = system.rstrip() + "\n\n" + self._resolve_prompt("synthesizer")
-        from app.services.knowledge_service import with_knowledge_protocol
+        if "crm_knowledge_search" in bound_tool_names:  # the paragraph only where the tool is bound
+            from app.services.knowledge_service import with_knowledge_protocol
 
-        system = with_knowledge_protocol(system)
+            system = with_knowledge_protocol(system)
         source_context = "\n".join(
             [f"- {s.get('title')}: {str(s.get('why_selected') or '')[:200]}" for s in sources]
         )

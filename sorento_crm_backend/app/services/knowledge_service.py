@@ -54,8 +54,19 @@ KNOWLEDGE_SIMILARITY_FLOOR = 0.5
 CHUNK_SIZE = 900
 CHUNK_OVERLAP = 120
 EMBED_BATCH = 100
-QUEUE = "media"
+#: Its own queue (batch role in worker.QUEUES): a 300-page OCR read must not sit in front of a
+#: chatbot media turn on `media`, which a customer is waiting on.
+QUEUE = "knowledge"
 JOB_TIMEOUT = 1800
+#: A queued/processing read older than this is treated as lost (a bit above JOB_TIMEOUT), so Read again may retry it.
+STALE_AFTER_SECONDS = 1900
+#: Hard limits on one file, so a huge or hostile upload cannot pin the worker or run up the OCR bill.
+MAX_PAGES = 300
+MAX_OCR_PAGES = 100
+MAX_DOCX_XML_BYTES = 20 * 1024 * 1024
+#: Largest page (width x height in pt^2) rendered for OCR; about A1. A bigger page is treated as having no text.
+MAX_PAGE_AREA_PT2 = 4_000_000
+QUERY_EMBED_TIMEOUT_SECONDS = 10
 MAX_TOP_K = 20
 ERROR_MAX_CHARS = 500
 READ_QUEUED_ERROR = "The read could not be queued. Try Read again."
@@ -94,15 +105,26 @@ def extract_pdf_pages(content: bytes, *, ocr: Callable[[bytes, int], str]) -> li
     try:
         if document.needs_pass:
             raise ValueError("The PDF is password protected.")
-        pages: list[Page] = []
-        for index in range(len(document)):
-            number = index + 1
-            page = document[index]
+        if len(document) > MAX_PAGES:
+            raise ValueError(f"This PDF has more than {MAX_PAGES} pages, which is the maximum the AI reads.")
+        texts: list[str] = []
+        needs_ocr: list[bool] = []
+        for page in document:
             text = (page.get_text() or "").strip()
-            if len(text) >= OCR_TEXT_MIN_CHARS:
+            texts.append(text)
+            small_enough = page.rect.width * page.rect.height <= MAX_PAGE_AREA_PT2
+            needs_ocr.append(len(text) < OCR_TEXT_MIN_CHARS and small_enough)
+        if sum(needs_ocr) > MAX_OCR_PAGES:
+            raise ValueError(
+                f"This PDF has more than {MAX_OCR_PAGES} scanned pages, which is the maximum the AI reads."
+            )
+        pages: list[Page] = []
+        for index, text in enumerate(texts):
+            number = index + 1
+            if not needs_ocr[index]:
                 pages.append(Page(number, None, text))
                 continue
-            png = page.get_pixmap(dpi=150).tobytes("png")
+            png = document[index].get_pixmap(dpi=150).tobytes("png")
             read = (ocr(png, number) or "").strip()
             pages.append(Page(number, None, read or text, ocr=True))
         return pages
@@ -114,7 +136,11 @@ def extract_docx_sections(content: bytes) -> list[Page]:
     """Paragraphs of word/document.xml in order. Each Heading 1 / Heading 2 starts a new section;
     the section number is the page and the heading is kept. Text before the first heading is section 1."""
     with zipfile.ZipFile(io.BytesIO(content)) as z:
-        root = ET.fromstring(z.read("word/document.xml"))
+        with z.open("word/document.xml") as part:
+            xml = part.read(MAX_DOCX_XML_BYTES + 1)  # bounded read: the declared size can lie
+    if len(xml) > MAX_DOCX_XML_BYTES:
+        raise ValueError("This document is too large for the AI to read.")
+    root = ET.fromstring(xml)
     sections: list[Page] = []
     current: Optional[Page] = None
     for para in root.iter(f"{_W}p"):
@@ -211,10 +237,10 @@ def _default_ocr(db: Session) -> Callable[[bytes, int], str]:
     return read
 
 
-def _default_embed(db: Session) -> Callable[[list[str]], list[list[float]]]:
+def _default_embed(db: Session, timeout: Optional[float] = None) -> Callable[[list[str]], list[list[float]]]:
     from app.services.embedding_settings import embed_search_texts
 
-    return lambda texts: embed_search_texts(texts, KNOWLEDGE_MODEL, db=db)
+    return lambda texts: embed_search_texts(texts, KNOWLEDGE_MODEL, db=db, timeout=timeout)
 
 
 def _enqueue(attachment_id: str) -> None:
@@ -235,9 +261,13 @@ def _readable_error(exc: Exception) -> str:
     return text[:ERROR_MAX_CHARS]
 
 
+def _now() -> datetime:
+    return datetime.utcnow()
+
+
 def _finish(db: Session, attachment, status: str, **fields: Any) -> None:
     attachment.ai_read_status = status
-    attachment.ai_read_at = datetime.utcnow()
+    attachment.ai_read_at = _now()
     attachment.ai_read_pages = fields.get("pages")
     attachment.ai_read_ocr_pages = fields.get("ocr_pages")
     attachment.ai_read_cost_usd = fields.get("cost")
@@ -269,7 +299,9 @@ def read_attachment(
         if ext not in ("pdf", "docx"):
             _finish(db, attachment, "unsupported")
             return
+        started_hash = attachment.file_hash
         attachment.ai_read_status = "processing"
+        attachment.ai_read_at = _now()
         db.commit()
         try:
             content = (fetch or _default_fetch)(attachment)
@@ -288,57 +320,37 @@ def read_attachment(
             if len(vectors) != len(texts):
                 raise ValueError("The embedding service returned the wrong number of vectors.")
         except Exception as exc:  # noqa: BLE001 - the row records it, the queue survives
-            logger.warning("knowledge read failed for %s: %s", attachment_id, exc)
-            _finish(db, attachment, "failed", error=_readable_error(exc))
+            error = _readable_error(exc)
+            logger.warning("knowledge read failed for %s: %s", attachment_id, error)
+            _finish(db, attachment, "failed", error=error)
+            return
+
+        # A replace upload during the read changed the file: what was read is stale, so write nothing.
+        # The replace queued its own read.
+        db.refresh(attachment)
+        if attachment.file_hash != started_hash:
+            logger.info("knowledge read for %s dropped: the file changed while it was read", attachment_id)
             return
 
         ocr_pages = sum(1 for p in pages if p.ocr)
         source_id = str(attachment.id)
         source_hash = hashlib.sha256("\n".join(texts).encode()).hexdigest()
-        try:
-            for old in db.query(EmbeddingDocument).filter(
-                EmbeddingDocument.source_type == KNOWLEDGE_SOURCE, EmbeddingDocument.source_id == source_id
-            ):
-                db.delete(old)
-            db.flush()  # the unique (source_type, source_id) index needs the delete first
-            doc = EmbeddingDocument(
-                source_type=KNOWLEDGE_SOURCE,
-                source_id=source_id,
-                title=(attachment.original_filename or "")[:255],
-                body_text="\n\n".join(texts),
-                metadata_json={"attachment_id": source_id},
-                source_hash=source_hash,
-                company_id=attachment.company_id,
-                is_active=True,
-            )
-            db.add(doc)
-            db.flush()
-            for chunk, vector in zip(chunks, vectors):
-                db.add(
-                    EmbeddingChunk(
-                        document_id=doc.id,
-                        source_type=KNOWLEDGE_SOURCE,
-                        source_id=source_id,
-                        chunk_index=chunk.index,
-                        chunk_text=chunk.text,
-                        chunk_hash=hashlib.sha256(f"{source_id}:{chunk.index}:{chunk.text}".encode()).hexdigest(),
-                        embedding=vector,
-                        model_name=KNOWLEDGE_MODEL,
-                        model_version=KNOWLEDGE_MODEL_VERSION,
-                        embedding_provider=KNOWLEDGE_PROVIDER,
-                        source_hash=source_hash,
-                        metadata_json={"attachment_id": source_id, "page": chunk.page, "heading": chunk.heading},
-                        company_id=attachment.company_id,
-                        is_current=True,
-                    )
-                )
-            db.flush()
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("knowledge write failed for %s", attachment_id)
-            db.rollback()
+        company_id = attachment.company_id
+        written = False
+        error = ""
+        for _attempt in range(2):  # a second read racing us may add its document first: replace it once
+            try:
+                _replace_rows(db, source_id, attachment.original_filename, company_id, source_hash, chunks, vectors)
+                written = True
+                break
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                error = _readable_error(exc)
+        if not written:
+            logger.error("knowledge write failed for %s: %s", attachment_id, error)
             attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
             if attachment is not None:
-                _finish(db, attachment, "failed", error=_readable_error(exc))
+                _finish(db, attachment, "failed", error="The reading could not be saved. Try Read again.")
             return
         _finish(
             db,
@@ -348,6 +360,79 @@ def read_attachment(
             ocr_pages=ocr_pages,
             cost=OCR_COST_PER_PAGE_USD * ocr_pages,
         )
+
+
+def _replace_rows(db: Session, source_id: str, filename: Optional[str], company_id, source_hash: str, chunks, vectors) -> None:
+    """Delete the file's knowledge document (and chunks) and write the new ones, in the open transaction."""
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+
+    for old in db.query(EmbeddingDocument).filter(
+        EmbeddingDocument.source_type == KNOWLEDGE_SOURCE, EmbeddingDocument.source_id == source_id
+    ):
+        db.delete(old)
+    db.flush()  # the unique (source_type, source_id) index needs the delete first
+    doc = EmbeddingDocument(
+        source_type=KNOWLEDGE_SOURCE,
+        source_id=source_id,
+        title=(filename or "")[:255],
+        body_text="\n\n".join(c.text for c in chunks),
+        metadata_json={"attachment_id": source_id},
+        source_hash=source_hash,
+        company_id=company_id,
+        is_active=True,
+    )
+    db.add(doc)
+    db.flush()
+    for chunk, vector in zip(chunks, vectors):
+        db.add(
+            EmbeddingChunk(
+                document_id=doc.id,
+                source_type=KNOWLEDGE_SOURCE,
+                source_id=source_id,
+                chunk_index=chunk.index,
+                chunk_text=chunk.text,
+                chunk_hash=hashlib.sha256(f"{source_id}:{chunk.index}:{chunk.text}".encode()).hexdigest(),
+                embedding=vector,
+                model_name=KNOWLEDGE_MODEL,
+                model_version=KNOWLEDGE_MODEL_VERSION,
+                embedding_provider=KNOWLEDGE_PROVIDER,
+                source_hash=source_hash,
+                metadata_json={"attachment_id": source_id, "page": chunk.page, "heading": chunk.heading},
+                company_id=company_id,
+                is_current=True,
+            )
+        )
+    db.flush()
+
+
+def drop_knowledge(db: Session, attachment_ids: list[str]) -> None:
+    """Remove what the AI read of these files (document and chunks). The caller commits."""
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+
+    ids = [str(i) for i in attachment_ids if i]
+    if not ids:
+        return
+    db.query(EmbeddingChunk).filter(
+        EmbeddingChunk.source_type == KNOWLEDGE_SOURCE, EmbeddingChunk.source_id.in_(ids)
+    ).delete(synchronize_session=False)
+    db.query(EmbeddingDocument).filter(
+        EmbeddingDocument.source_type == KNOWLEDGE_SOURCE, EmbeddingDocument.source_id.in_(ids)
+    ).delete(synchronize_session=False)
+
+
+def move_company(db: Session, attachment_ids: list[str], company_id: Optional[str]) -> None:
+    """A file changed company: its knowledge document and chunks follow. The caller commits."""
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+
+    ids = [str(i) for i in attachment_ids if i]
+    if not ids:
+        return
+    db.query(EmbeddingChunk).filter(
+        EmbeddingChunk.source_type == KNOWLEDGE_SOURCE, EmbeddingChunk.source_id.in_(ids)
+    ).update({EmbeddingChunk.company_id: company_id}, synchronize_session=False)
+    db.query(EmbeddingDocument).filter(
+        EmbeddingDocument.source_type == KNOWLEDGE_SOURCE, EmbeddingDocument.source_id.in_(ids)
+    ).update({EmbeddingDocument.company_id: company_id}, synchronize_session=False)
 
 
 # ---------------------------------------------------------------- queueing
@@ -365,30 +450,49 @@ def queue_read(db: Session, attachment) -> bool:
         return False
     attachment.ai_read_status = "queued"
     attachment.ai_read_error = None
+    attachment.ai_read_at = _now()
     db.commit()
     return _enqueue_or_fail(db, attachment)
+
+
+def read_block_reason(db: Session, attachment) -> Optional[str]:
+    """Why Read again must not queue this file now (a sentence for the user), or None."""
+    from app.models.resources import AttachmentType
+
+    audience = None
+    if getattr(attachment, "attachment_type_id", None):
+        audience = db.query(AttachmentType.ai_audience).filter(AttachmentType.id == attachment.attachment_type_id).scalar()
+    if audience not in READABLE_AUDIENCES:
+        return "The AI does not read files of this type."
+    at = attachment.ai_read_at
+    if attachment.ai_read_status in ("queued", "processing") and at is not None:
+        if (_now() - at).total_seconds() < STALE_AFTER_SECONDS:
+            return "This file is already being read."
+    return None
 
 
 def queue_type_files(db: Session, attachment_type_id: str) -> int:
     """A type just turned on: queue its files never read or failed, at most MAX_REQUEUE_PER_SAVE."""
     from app.models.resources import Attachment
 
-    rows = (
-        db.query(Attachment)
-        .filter(
-            Attachment.attachment_type_id == attachment_type_id,
-            Attachment.is_deleted.is_(False),
-            (Attachment.ai_read_status.is_(None)) | (Attachment.ai_read_status == "failed"),
+    with company_scope(db, None):  # the type is company-less: its files in every company are read
+        rows = (
+            db.query(Attachment)
+            .filter(
+                Attachment.attachment_type_id == attachment_type_id,
+                Attachment.is_deleted.is_(False),
+                (Attachment.ai_read_status.is_(None)) | (Attachment.ai_read_status == "failed"),
+            )
+            .order_by(Attachment.created_at)
+            .limit(MAX_REQUEUE_PER_SAVE)
+            .all()
         )
-        .order_by(Attachment.created_at)
-        .limit(MAX_REQUEUE_PER_SAVE)
-        .all()
-    )
-    for row in rows:
-        row.ai_read_status = "queued"
-        row.ai_read_error = None
-    db.commit()
-    return sum(1 for row in rows if _enqueue_or_fail(db, row))
+        for row in rows:
+            row.ai_read_status = "queued"
+            row.ai_read_error = None
+            row.ai_read_at = _now()
+        db.commit()
+        return sum(1 for row in rows if _enqueue_or_fail(db, row))
 
 
 def _enqueue_or_fail(db: Session, attachment) -> bool:
@@ -433,9 +537,9 @@ def search(
 
     top_k = max(1, min(int(top_k or 5), MAX_TOP_K))
     try:
-        vector = (embed or _default_embed(db))([query])[0]
+        vector = (embed or _default_embed(db, QUERY_EMBED_TIMEOUT_SECONDS))([query])[0]
     except Exception as exc:  # noqa: BLE001
-        logger.warning("knowledge: query embedding failed: %s", exc)
+        logger.warning("knowledge: query embedding failed: %s", _readable_error(exc))
         return {"status": "error", "passages": [], "handoff_teams": []}
 
     distance = EmbeddingChunk.embedding.cosine_distance(vector)

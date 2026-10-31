@@ -324,7 +324,31 @@ def user_may_use(db: Any, ctx: Any, tool: ToolDef) -> bool:
         return bool(searchable_kinds(db, ctx, list(KIND_SLUGS))[0])
     if tool.name == GUIDES:
         return True
-    return _permitted(db, ctx.user_id, tool.user_permission)
+    if not _permitted(db, ctx.user_id, tool.user_permission):
+        return False
+    if tool.name == KNOWLEDGE:
+        return _operator_may_read(db, ctx, tool.user_permission)
+    return True
+
+
+def _operator_may_read(db: Any, ctx: Any, slug: str) -> bool:
+    """The console operator acting for the linked user must hold the slug too (when there is one)."""
+    operator = getattr(ctx, "operator_user_id", None)
+    return not operator or _permitted(db, operator, slug)
+
+
+def trace_safe(name: str, data: Any) -> Any:
+    """`data` in the form a stored trace may keep: `crm_knowledge_search` passages lose their text
+    (company documents), keeping document, page and heading. Other tools are returned unchanged.
+    The live result the model reads is never mutated."""
+    if name != KNOWLEDGE or not isinstance(data, dict):
+        return data
+    out = dict(data)
+    out["passages"] = [
+        {k: v for k, v in p.items() if k != "text"} if isinstance(p, dict) else p
+        for p in data.get("passages") or []
+    ]
+    return out
 
 
 def searchable_kinds(db: Any, ctx: Any, requested: list[str]) -> tuple[list[str], list[str]]:
@@ -810,6 +834,8 @@ def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
     query = args.get("query")
     if not isinstance(query, str) or not query.strip():
         return ToolResult("invalid", message="query must be the question, as text.")
+    if not _operator_may_read(db, ctx, REGISTRY[KNOWLEDGE].user_permission):
+        return ToolResult("denied", message=f"{KNOWLEDGE} is outside this operator's access.")
     try:
         found = knowledge_service.search(db, user_id=ctx.user_id, query=query.strip())
     except Exception:  # noqa: BLE001 - a tool failure is a result the model can work around

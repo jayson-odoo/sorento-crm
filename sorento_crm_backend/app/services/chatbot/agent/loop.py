@@ -693,7 +693,7 @@ class _WrappedProvider:
         )
 
 
-def _system_prompt(db, user_name: str) -> str:
+def _system_prompt(db, user_name: str, tool_names: Any = ()) -> str:
     from app.services import ai_prompt_registry
 
     text = ai_prompt_registry.get_prompt(db, PROMPT_KEY).text
@@ -703,7 +703,9 @@ def _system_prompt(db, user_name: str) -> str:
 
     if "USER GUIDE PROTOCOL" not in text:
         text = text.rstrip() + "\n\n" + ai_prompt_registry._synthesizer_fallback()
-    text = knowledge_service.with_knowledge_protocol(text)
+    # The knowledge paragraph only where the tool is offered this turn.
+    if knowledge_service.KNOWLEDGE_TOOL in tool_names:
+        text = knowledge_service.with_knowledge_protocol(text)
     today = datetime.now(timezone.utc).date().isoformat()
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
@@ -967,7 +969,8 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         if operator_user_id and str(operator_user_id) != str(ctx.user_id):
             ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
         waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
-        system = _system_prompt(db, ctx.user_name)
+        offered = permitted_tools(db, ctx)
+        system = _system_prompt(db, ctx.user_name, {t.name for t in offered})
         if waiting is not None:
             system = f"{system}\n\n{waiting_line(waiting)}"
         messages: list[dict] = [{"role": "system", "content": system}]
@@ -975,7 +978,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         if waiting is not None:
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
         messages.append({"role": "user", "content": text})
-        schemas = tool_schemas(permitted_tools(db, ctx), catalog)
+        schemas = tool_schemas(offered, catalog)
         schemas += [r.schema for r in writes.permitted_user_reads(db, ctx)]
         schemas += [w.schema for w in writes.permitted_writes(db, ctx)]
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):

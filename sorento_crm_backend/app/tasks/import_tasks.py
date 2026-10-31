@@ -634,6 +634,7 @@ def _queue_ai_read(db, attachment) -> None:
         knowledge_service.queue_read(db, attachment)
     except Exception:  # noqa: BLE001
         logger.warning("Could not queue the AI read for %s", getattr(attachment, "id", None), exc_info=True)
+        db.rollback()  # the next file of the import must not hit PendingRollbackError
 
 
 def process_attachment_bulk_import(
