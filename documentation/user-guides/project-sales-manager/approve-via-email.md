@@ -18,7 +18,7 @@ An email with the approval link. The link is **token-based**, **one-time use**, 
 ## What happens after
 
 * **Approved:** the request / form proceeds downstream (e.g. purchase requests are visible to purchasing for fulfilment).
-* **Rejected:** the rep edits and re-submits, the admin reviews again and clicks **Change to pending approval** then **Send for approval** to issue a fresh link.
+* **Rejected:** the rep edits and sends it again (status **Appealed**), the admin reviews again and clicks **Change to pending approval** then **Send for approval** to issue a fresh link.
 
 ## If the link is missing or expired
 

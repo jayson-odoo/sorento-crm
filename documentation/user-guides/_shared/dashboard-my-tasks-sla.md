@@ -18,6 +18,7 @@ Moves the task up to the next tier and reassigns it per the SLA policy. Asks you
 
 **[Resolve](#guide_target=dashboard.sla-tasks.resolve)** - *(My Pending, conversation tasks)*
 Marks the task resolved: stops the SLA clock and closes the conversation in Respond.io. Asks you to confirm - **this cannot be undone**.
+A product drawing or photo request (raised from a quotation line) opens its own side panel instead, with **Resolve ticket**; see [Answer a drawing or photo request](../marketing/answer-a-drawing-or-photo-request.md).
 
 **[Extend](#guide_target=dashboard.sla-tasks.extend)** - *(My Pending, when you are the assignee)*
 Pushes the resolution deadline out - either by a number of **working days** or to a **specific date** (it respects the holiday calendar). A **reason** is required; you'll see a live preview of the new due date before confirming. Resets the reminder cycle.

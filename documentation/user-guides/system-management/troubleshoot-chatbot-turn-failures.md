@@ -171,6 +171,11 @@ deliberate dry run are marked this way automatically - you do not need to rememb
 anything yourself, and you can safely open, expand, and even attempt to retry a test turn without
 any risk of a real WhatsApp message going out.
 
+The one exception is **Agent mode** in the Chatbot Console. Its turns are also marked **test**
+(nothing goes out on WhatsApp), but a change you **confirm** there is real: it is saved, it is
+audited, and approving or rejecting a purchase request notifies the requester and the dealer
+contact. See [Chatbot Console - test the bot and use Agent mode](chatbot-console-agent-mode.md).
+
 ## Settings that change what the bot answers itself
 
 These are now on-screen settings rather than backend-only switches - see

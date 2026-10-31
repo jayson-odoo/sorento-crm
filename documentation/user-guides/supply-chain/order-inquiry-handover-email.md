@@ -31,6 +31,13 @@ location: `OI: SO397450 , SO397460`.
    page](order-inquiry-documents.md). When the mail covers more than one sales order, the link
    opens the first order inquiry named in it.
 
+**ITEM CODE with a description.** For a product whose **Show SO line description in OI
+email** switch is on (product form, **Specifications** tab), **ITEM CODE** reads
+`<code> - <description>`, where the description is the sales order line's own description from
+AutoCount. This applies to the email, the send/resend preview and the Excel copy. The bare code
+prints when the description is blank or the same as the code. On a product switch, each side
+follows its own product's switch.
+
 There is no REMARK column. The numbers say what moved, and the red headline lists the
 actions in the mail.
 

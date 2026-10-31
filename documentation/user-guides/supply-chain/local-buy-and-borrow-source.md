@@ -38,6 +38,10 @@ the order inquiry this line has raised, as a link that lands straight on that ro
 inquiry, scrolled into view and highlighted the same way; a line with no live order inquiry row
 reads a dash.
 
+A sortable **Description** column shows the sales order line's own description from AutoCount
+(the same text is a read-only **Description** column on the sales order's lines, right after
+**Product**). Older sales orders show it only after they have been pushed again from AutoCount.
+
 ## Stock that already landed for this line
 
 When goods bought specifically for a sales-order line have already been received, the board
