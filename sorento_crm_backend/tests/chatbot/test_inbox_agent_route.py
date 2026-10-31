@@ -243,6 +243,8 @@ def test_ac_w21_the_failure_line_is_fixed_not_the_exception_text(world, seams):
 
     _drive(world, seams, label="fail2")
 
+    assert len(seams.agent_calls) == 1 and seams.bot_calls == []
+    assert seams.sent[0]["actions"][0]["kind"] == "send_message"
     assert "12345" not in json.dumps(seams.sent[0]["actions"])
 
 
