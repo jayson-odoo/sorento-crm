@@ -848,8 +848,11 @@ def test_ac_rf_25_inquiry_no_has_no_200_value_cap_other_filters_keep_theirs(sn):
     repeated = client.get(HEADERS_URL, params=[("state", "all")] + [("inquiry_no", n) for n in numbers])
     assert repeated.status_code == 200, repeated.text
     # Another filter on the same route keeps its cap.
-    capped = client.get(HEADERS_URL, params={"raised_by": ",".join(_uid() for _ in range(201))})
+    capped = client.get(
+        HEADERS_URL, params=[("state", "all")] + [("raised_by", _uid()) for _ in range(201)]
+    )
     assert capped.status_code == 422, capped.text
+    assert "at most 200 values" in capped.text, capped.text
 
 
 # --------------------------------------------------------------------------------- #
