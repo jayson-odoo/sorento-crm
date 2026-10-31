@@ -309,7 +309,12 @@ def get_media_request(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """What the side panel shows for a product drawing or photo task."""
+    """What the side panel shows for a product drawing or photo task.
+
+    No permission dependency on purpose: the assignee reads it with no slug (My pending tasks),
+    so the gate is the task's visibility (`can_user_act_on_tracking`: assignee, their team
+    chain, admin), answered 404 inside `media_request_detail`. Session only.
+    """
     from app.services import product_drawing_request_service as drawing_requests
     from app.services.error_handler import handle_not_found
     from app.services.user_service import UserPermissionService

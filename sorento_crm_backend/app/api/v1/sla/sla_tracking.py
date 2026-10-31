@@ -73,6 +73,11 @@ SOURCE_TYPE_READERS = {
     "workflow_submission": ["workflow_forms.submissions.view"],
     "price_tag_request": ["dealer_kit.price_tag_requests.view"],
     "sample_request": ["projects.sample_requests.view"],
+    # A quotation line's drawing or photo request is keyed on a product, and the product page
+    # has no SLA tab: like a conversation ticket, it is read by the SLA module alone (its side
+    # panel is GET /form-sla-tracking/{id}/media-request, scoped to the task's team chain).
+    "product_drawing": [],
+    "product_photo": [],
 }
 
 

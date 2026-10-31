@@ -99,6 +99,10 @@ BORN_AFTER_THE_MOVE = frozenset({
     # SR-CORE (#1718, migration sr_0001_sample_requests): born straight into `projects`.
     "sample_requests",
     "sample_request_lines",
+    # QUOTE-CUSTOMER-AMEND (#1984, migration qca1_0001_amendment_requests): the customer's
+    # suggested quantities and prices on an issue, born straight into `projects`.
+    "quotation_amendment_requests",
+    "quotation_amendment_request_rows",
 })
 
 
