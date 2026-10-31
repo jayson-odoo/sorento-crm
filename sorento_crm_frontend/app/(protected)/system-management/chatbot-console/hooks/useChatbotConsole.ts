@@ -400,7 +400,6 @@ export function useChatbotConsole() {
     enabled: Boolean(contactId),
     retry: false,
     gcTime: 0,
-    refetchOnWindowFocus: false,
   });
   useEffect(() => {
     if (contactId && sessionVars) writeSession(contactId, runId, sessionVars);
