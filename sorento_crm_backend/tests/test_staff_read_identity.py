@@ -40,6 +40,7 @@ from app.dependencies import (
     get_current_user_or_api_key,
     require_any_permission_with_api_key,
     require_permission_with_api_key,
+    require_session_or_api_key_permission,
 )
 from app.models.base import UNSET, get_company_scope
 from app.models.company import Company, UserCompany
@@ -304,6 +305,25 @@ def _probe_client(db) -> TestClient:
     def modguard(user=Depends(get_current_user_or_api_key)):
         return {"ok": True}
 
+    @r.get("/zzt/picker")
+    def picker(user=Depends(require_session_or_api_key_permission("zzt.pick.view"))):
+        return {"ok": True}
+
+    @r.get("/zzt/ext-off/{entity}")
+    def ext_off(
+        entity: str,
+        user=Depends(require_external_permission_for_path({"thing": "zzt.thing.view"}, param="entity")),
+    ):
+        return {"ok": True}
+
+    @r.get("/zzt/permmod")
+    def permmod(user=Depends(require_permission_with_api_key("order_management.orders.view"))):
+        return {"ok": True}
+
+    @r.get("/zzt/modguard", dependencies=[Depends(require_module_enabled_with_api_key("order"))])
+    def modguard(user=Depends(get_current_user_or_api_key)):
+        return {"ok": True}
+
     @r.get("/zzt/ext-path/{entity}")
     def ext_path(
         entity: str,
@@ -332,29 +352,17 @@ PROBE_READS = [
     ("GET", "/api/v1/zzt/any"),
     ("GET", "/api/v1/zzt/ext"),
     ("GET", "/api/v1/zzt/ext-integration"),
-    ("GET", "/api/v1/zzt/ext-path/{}"),
+    ("GET", "/api/v1/zzt/picker"),
     ("GET", "/api/v1/zzt/permmod"),
     ("GET", "/api/v1/zzt/modguard"),
 ]
 #: `/api/v1/zzt/offlist` is deliberately never added: a read route off the list.
 
 
-def _route_entry(sample, method, path):
-    """One STAFF_READ_ROUTES entry in whatever shape the backend constant uses."""
-    if isinstance(sample, tuple):
-        return (method, path)
-    return f"{method} {path}"
-
-
 def _patch_staff_read_routes(monkeypatch, entries):
     from app.services import company_scope_resolver as resolver
 
-    current = getattr(resolver, "STAFF_READ_ROUTES", None)
-    if current is None:  # before the constant exists the probes are plain GETs
-        return
-    sample = next(iter(current), None)
-    extra = {_route_entry(sample, m, p) for m, p in entries}
-    monkeypatch.setattr(resolver, "STAFF_READ_ROUTES", frozenset(set(current) | extra))
+    monkeypatch.setattr(resolver, "STAFF_READ_ROUTES", frozenset(set(resolver.STAFF_READ_ROUTES) | set(entries)))
 
 
 @pytest.fixture()
@@ -638,8 +646,18 @@ PICKERS = [
 @pytest.mark.parametrize("method,path", PICKERS)
 def test_ac14_pickers_are_open_to_staff_holding_nothing(env, method, path):
     staff = mk_user(env.db, "nothing")
-    resp = env.client.request(method, path, headers=env.ident(staff))
-    expected = 422 if method == "POST" else 200  # lookup/resolve with no body is a validation error
+    body = None
+    if method == "POST":  # lookup/resolve: a real set and a real keyword
+        from app.models.lookup import LookupOption, LookupSet
+
+        lookup_set = LookupSet(set_key="zzt_region", name="ZZT Region", is_active=True)
+        env.db.add(lookup_set)
+        env.db.flush()
+        env.db.add(LookupOption(set_id=lookup_set.id, value="north", label="North", is_active=True))
+        env.db.flush()
+        body = {"set_key": "zzt_region", "raw": "North"}
+    resp = env.client.request(method, path, headers=env.ident(staff), json=body)
+    expected = 200
     assert resp.status_code == expected, f"{path}: {resp.status_code} {resp.text[:200]}"
 
 
@@ -958,6 +976,7 @@ ALLOW_OPEN = {
     "crm_inventory_warehouses_list": "open picker: warehouses",
     "crm_lookup_resolve": "open picker: dropdown keyword resolve",
     "crm_system_tool_capabilities_summary": "open: tool capabilities",
+    "crm_sales_opportunity_customer_options": "contact-only: 422 with no pair, and the header refuses a pair",
 }
 
 
@@ -994,6 +1013,9 @@ def test_ac22_every_catalog_read_is_refused_to_a_staff_member_holding_nothing(en
         resp = env.client.request(spec.method, url, headers=env.ident(staff))
         if resp.status_code != 403:
             open_tools.append(f"{spec.name} {spec.method} {spec.path} -> {resp.status_code}")
+        elif INVALID_CODE in resp.text:
+            # refused as an unlisted route, not for want of a slug: the list is missing this tool
+            open_tools.append(f"{spec.name} {spec.method} {spec.path} -> 403 {INVALID_CODE} (not on STAFF_READ_ROUTES)")
     assert not open_tools, (
         "AC-22: these catalog reads answered a staff member who holds nothing; gate them or add them "
         "to ALLOW_OPEN with a reason:\n  " + "\n  ".join(open_tools)
@@ -1044,22 +1066,6 @@ def test_ac12_portal_link_route_is_gated_on_the_staffs_real_slug(env):
 
 
 # =========================================================================== #
-# AC-12  require_external_permission_for_path with the identity header        #
-# =========================================================================== #
-def test_ac12_for_path_real_slug_needs_both_users(env, probe):
-    path = "/api/v1/zzt/ext-path/thing"
-    assert _perm_status(env, probe, path, ["zzt.thing.view"], ["zzt.thing.view"], actas_roles=()) == 200
-    assert _perm_status(env, probe, path, [], ["zzt.thing.view"], actas_roles=()) == 403, "staff lacks the slug"
-    assert _perm_status(env, probe, path, ["zzt.thing.view"], [], actas_roles=()) == 403, "act-as lacks it"
-
-
-def test_ac12_for_path_integration_slug_is_checked_on_actas_only(env, probe):
-    path = "/api/v1/zzt/ext-path/int"
-    assert _perm_status(env, probe, path, [], ["integration.zzt_thing"], actas_roles=()) == 200
-    assert _perm_status(env, probe, path, [], [], actas_roles=()) == 403
-
-
-# =========================================================================== #
 # STAFF_READ_ROUTES is pinned against the catalog                             #
 # =========================================================================== #
 def _norm_route(method: str, path: str) -> tuple[str, str]:
@@ -1074,10 +1080,7 @@ def test_staff_read_routes_equal_the_catalogs_reads_under_api_v1():
         for s in _catalog()
         if (s.method == "GET" or s.read_only) and s.path.startswith("/api/v1/")
     }
-    actual = set()
-    for entry in STAFF_READ_ROUTES:
-        method, path = entry if isinstance(entry, tuple) else entry.split(None, 1)
-        actual.add(_norm_route(method, path))
+    actual = {_norm_route(method, path) for method, path in STAFF_READ_ROUTES}
     assert actual == expected, (
         f"STAFF_READ_ROUTES must be exactly the catalog reads under /api/v1/: "
         f"missing {sorted(expected - actual)}, stray {sorted(actual - expected)}"
@@ -1275,6 +1278,18 @@ def test_ac27_project_field_gate_needs_the_slug_on_both_users(env):
     assert detail.status_code == 200 and detail.json()["customer_phone"] is None
 
 
+def test_ac27_project_field_gate_needs_the_slug_on_the_staff_member_too(env):
+    """The other direction: act-as holds the slug, the named staff member lacks it."""
+    env.use_actas(perms=["projects.projects.view", "order_management.customers.view"])
+    project = _project_with_a_customer(env, "0312345678")
+    staff = mk_user(env.db, "staff", perms=["projects.projects.view"], companies=[SORENTO], last_active=SORENTO)
+    path = "/api/v1/project-sales/projects/"
+    identity = env.client.get(path, params={"limit": 100}, headers=env.ident(staff))
+    assert _listed_phone(identity, project.id) is None, "staff lacks the slug: the field stays gated"
+    detail = env.client.get(f"{path}{project.id}", headers=env.ident(staff))
+    assert detail.status_code == 200 and detail.json()["customer_phone"] is None
+
+
 def test_ac27_project_field_gate_opens_when_both_users_hold_the_slug(env):
     both = ["projects.projects.view", "order_management.customers.view"]
     env.use_actas(perms=both)
@@ -1291,6 +1306,9 @@ def test_ac27_current_stock_list_does_not_widen_to_a_named_superadmins_grants(en
     from tests._mc_lookup_seed import attachment_type, product, product_attachment
 
     env.use_actas(perms=["inventory.stock.view"])
+    # act-as is granted BOTH companies: an implementation that passes act-as as the actor widens
+    env.db.add_all([UserCompany(user_id=env.actas, company_id=c) for c in (env.co_a, env.co_b)])
+    env.db.flush()
     kind = attachment_type(env.db, name="Stock List")
     shared = Attachment(
         id=uid(), original_filename="ZZT-stock.pdf", stored_filename="ZZT-stock.pdf",
@@ -1328,3 +1346,37 @@ def test_ac27_the_invoiced_and_unpaid_gates_ask_both_users(env, fn, slug):
     gate(env.db, {"id": staff, "key_user_id": holding})  # both hold it: passes
     with pytest.raises(AppException):
         gate(env.db, {"id": lacking, "key_user_id": holding})
+
+
+def test_ac14_customer_options_is_contact_only_both_halves(env):
+    path = "/api/v1/external/sales-opportunities/customer-options"
+    staff = mk_user(env.db, "staff", perms=["sales.opportunities.view"], companies=[SORENTO], last_active=SORENTO)
+    assert env.client.get(path, headers=env.ident(staff)).status_code == 422, "no pair: validation error"
+    rid, space = mk_contact_in(env.db, [SORENTO])
+    paired = env.client.get(path, params={"contact_id": rid, "space_id": space}, headers=env.ident(staff))
+    assert paired.status_code == 403 and INVALID_CODE in paired.text, "a pair with the header is refused"
+
+
+# =========================================================================== #
+# AC-6  a contact pair in the BODY; AC-11/14  the session-or-key picker gate  #
+# =========================================================================== #
+def test_ac6_a_contact_pair_in_the_body_with_the_header_is_403_and_mints_nothing(env):
+    from app.models.portal import PortalToken
+
+    env.use_actas(perms=[PORTAL_SLUG])
+    staff = mk_user(env.db, "staff", perms=[PORTAL_SLUG])
+    rid, space = mk_contact_in(env.db, [SORENTO])
+    before = env.db.query(PortalToken).count()
+    resp = env.client.post(PORTAL_LINK, json={"contact_id": rid, "space_id": space}, headers=env.ident(staff))
+    assert resp.status_code == 403, f"AC-6: body pair with the header got {resp.status_code}"
+    assert INVALID_CODE in resp.text
+    assert env.db.query(PortalToken).count() == before, "no token row may be minted"
+
+
+def test_session_or_key_picker_gate_asks_both_users_on_an_identity_read(env, probe):
+    path = "/api/v1/zzt/picker"
+    assert _perm_status(env, probe, path, ["zzt.pick.view"], ["zzt.pick.view"], actas_roles=()) == 200
+    assert _perm_status(env, probe, path, ["zzt.pick.view"], [], actas_roles=()) == 403, (
+        "staff holds the slug but act-as lacks it: the header can only narrow"
+    )
+    assert _perm_status(env, probe, path, [], ["zzt.pick.view"], actas_roles=()) == 403
