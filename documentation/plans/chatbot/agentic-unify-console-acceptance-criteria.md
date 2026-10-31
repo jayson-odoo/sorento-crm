@@ -9,29 +9,29 @@ Contract: section (a) of `CARD-agentic-unify-31oct.md` and the Console tabs of `
 - **AC-1** The console has no tabs. One thread shows chat and agent turns in the order they happened.
 - **AC-2** Every reply shows the route pill: Chat or Agent. Opened, it shows reason, score, model and time, as `RoutePill` does today.
 - **AC-3** A turn that went to the agent shows, inside its bubble, the steps and reasoning that the Agent tab shows today, including the steps of a turn the router chose.
-- **AC-4** A proposal shows its before and after with Confirm and Cancel in the thread. After Confirm it shows the countdown and Undo where the action has grace, then the outcome. It behaves as on the Agent tab today, using the same endpoints.
+- **AC-4** A proposal shows its before and after with Confirm and Cancel in the thread, straight after the turn that made it, including a slow media follow-up routed to the agent. After Confirm it shows the countdown and Undo where the action has grace, then the outcome. It behaves as on the Agent tab today, using the same endpoints.
 - **AC-5** Everything the Bot tab has stays: attachments, voice, paste, reply-to, copy, retry, trace link, prompt version, quick replies.
 - **AC-6** An agent turn also has a trace link. Bubbles in a thread have unique keys, even when a busy or failed agent reply has no turn id.
 
 ## Forcing the agent
 
-- **AC-7** The composer has an Agent toggle. When on, the next message goes to the agent, and the toggle then switches itself off.
+- **AC-7** The composer has an Agent toggle. When on, the next message goes to the agent, and the toggle then switches itself off. That covers a typed message and a quick-reply chip; a voice note or attachment turns it off and goes to the bot.
 - **AC-8** The toggle is disabled while an attachment is present, because media always goes to the bot. `POST /system/chatbot/console/turn` with `force_agent: true` and media answers 422.
 - **AC-9** A forced turn goes through `POST /system/chatbot/console/turn` with `force_agent: true`. It skips the router, so no Jev call is made. Its reply has the same shape as any other turn, and its pill reads Agent with the reason "Forced".
 - **AC-10** A forced turn is not blocked by the daily cap and is counted against it, as today.
-- **AC-11** For a contact the agent may not run for, a forced turn returns the refusal as reply text, like a routed turn. It is not a 409.
-- **AC-12** `POST /system/chatbot/agent/turn` is removed. Confirm, cancel and withdraw stay as they are.
+- **AC-11** For a contact the agent may not run for, a forced turn returns the refusal as reply text, like a routed turn, in words that name the reason (`AGENT_REFUSAL_MESSAGES`). It is not a 409.
+- **AC-12** `POST /system/chatbot/agent/turn` and `GET /system/chatbot/agent/conversation` are removed; `GET /console/thread` replaces the read. Confirm, cancel and withdraw stay as they are.
 
 ## New conversation and reload
 
-- **AC-13** One "New conversation" button starts both sides afresh: a new run for the bot and a new agent conversation.
-- **AC-14** After a reload the thread is back for that contact, in order: this run's bot turns and this agent conversation's turns, each with its pill, steps and write cards. A waiting proposal can still be confirmed, and a running countdown still shows.
+- **AC-13** One "New conversation" button starts both sides afresh: a new run for the bot and a new agent conversation. A proposal still waiting is cancelled, so a later "yes" cannot confirm a change no longer on screen.
+- **AC-14** After a reload the thread is back for that contact, in order: this run's bot turns and this agent conversation's turns, each with its pill, steps, write cards and sent files. A media turn shows its caption, never a blank bubble, and a turn still in progress adds no "(no reply)" line. A waiting proposal can still be confirmed, and a running countdown still shows. A loading skeleton shows until the read lands, and a message sent before it lands loses nothing.
 - **AC-15** The read returns only this contact's turns from this run and this agent conversation, never live WhatsApp turns or another run's. It is gated by `system.chat_history.view`, like the rest of the console, and is paginated within the list-limit guard if it takes a limit.
-- **AC-16** Switching contact shows that contact's thread.
+- **AC-16** Switching contact shows that contact's thread. A reply still in flight for the first contact never lands in the second's thread or stored session.
 
 ## Memory
 
-- **AC-17** An agent turn sees the recent bot replies of the same thread. A question that follows a bot answer, then routed to the agent, can use that answer. Asserted on what the provider receives.
+- **AC-17** An agent turn sees the recent bot replies of the same thread. A question that follows a bot answer, then routed to the agent, can use that answer. Asserted on what the provider receives. These replies and the customer text with them never enter the system role (rule R10): they go as a data message, so they cannot forge instructions or an approval.
 - **AC-18** The bot's input is unchanged: its parser and memory do not read agent turns. Pinned, because a change there needs a prompt gate.
 - **AC-19** Bot replies shown to the agent are bounded, and counted within its existing input budget.
 
