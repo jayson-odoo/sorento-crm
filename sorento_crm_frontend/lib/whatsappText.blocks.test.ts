@@ -145,3 +145,20 @@ describe('parseWhatsAppBlocks: printed numbers, item lines, marker width (review
     expect(blocks).toEqual([text(fenced)]);
   });
 });
+
+// AGENTIC-UNIFY PR 3, review round 2: fence kill gaps.
+describe('parseWhatsAppBlocks: a fence marker on the line keeps it out of a list (review round 2)', () => {
+  it('reads an item holding a whole inline fence as text', () => {
+    const blocks = parseWhatsAppBlocks('- run ```ls``` now');
+    expect(blocks.some((b) => b.kind === 'list')).toBe(false);
+    expect(blocks).toEqual([text('- run ```ls``` now')]);
+  });
+
+  it('does not fold a fence opening under an item into that item', () => {
+    const blocks = parseWhatsAppBlocks('1. a\n```\nx\n```');
+    const lists = blocks.filter((b) => b.kind === 'list') as { items: { text: string }[] }[];
+    expect(lists).toHaveLength(1);
+    expect(lists[0].items.map((i) => i.text)).toEqual(['a']);
+    expect(blocks.some((b) => b.kind === 'text' && b.text.includes('```'))).toBe(true);
+  });
+});

@@ -1223,3 +1223,194 @@ class TestStaffRevealIsAskedOfBothUsers:
         report = [s for s in sent if s["fn"] == "generate_low_stock_report"]
         assert report, f"no report job was queued: {sent}"
         assert report[0]["include_supplier"] is expect_supplier
+
+
+# =========================================================================== #
+# Review round 2: two more reaches of a customer's name, and two kill gaps
+# =========================================================================== #
+#
+# A delivery order number prints its debtor's name (the resolver's "(NAME)" and the order read's heading),
+# and the casual lane resolves words on its own: both are customer data behind a slug.
+
+from app.models.order import Order  # noqa: E402
+from app.models.user import SystemSetting  # noqa: E402
+from app.services.ai_assistant_service import MCPRuntimeClient  # noqa: E402
+from app.services.chatbot.lanes import casual as casual_mod  # noqa: E402
+from tests.chatbot.test_panel_screen_reads import seed_parked_withdrawable  # noqa: E402
+
+DEBTOR_1, DEBTOR_2 = "ZZT SECRET DEBTOR ONE", "ZZT SECRET DEBTOR TWO"
+
+
+def _seed_dos(session_factory, staff: Staff) -> str:
+    stem = "ZZTDO" + unique_code()[:5].upper().replace("-", "")
+    db = session_factory()
+    db.add(Order(id=str(uuid.uuid4()), order_number=stem + "01", debtor_name=DEBTOR_1, company_id=staff.company_a))
+    db.add(Order(id=str(uuid.uuid4()), order_number=stem + "02", debtor_name=DEBTOR_2, company_id=staff.company_a))
+    db.commit()
+    return stem
+
+
+def _do_ask(world, raw: str, code: str | None, hint: str):
+    world.parser_output = _parser_output(
+        intent_hint="check_order", domain_hint="order", user_goal="status",
+        entities=[{"raw": raw, "hint": hint, "canonical_code": code, "current_message": True, "confident": True}],
+    )
+
+
+class TestDeliveryOrderNumbersNameNoDebtor:
+    @pytest.mark.parametrize("hint", ["order", "customer_order"])
+    @pytest.mark.parametrize("shape", ["exact", "prefix"])
+    def test_a_chat_user_with_no_orders_view_is_shown_no_debtor_name(
+        self, session_factory, monkeypatch, staff, grants, world, real_access, hint, shape
+    ):
+        grants.add(AGENT)
+        stem = _seed_dos(session_factory, staff)
+        raw = stem + "01" if shape == "exact" else stem
+        _do_ask(world, raw, raw if shape == "exact" else None, hint)
+
+        reply = run_panel(session_factory, monkeypatch, staff, f"status of {raw}").reply_text
+
+        assert "SECRET DEBTOR" not in reply, reply
+
+    @pytest.mark.parametrize("shape", ["http_error", "raises"])
+    def test_a_refused_order_read_does_not_fall_back_to_the_debtor_name(
+        self, session_factory, monkeypatch, staff, grants, world, real_access, shape
+    ):
+        grants.add(AGENT)
+        stem = _seed_dos(session_factory, staff)
+
+        def refused(self, name, arguments):
+            world.mcp.append({"name": name, "args": dict(arguments or {}), "staff": self.staff, "staff_user_id": self.staff_user_id})
+            if shape == "raises":
+                raise RuntimeError("HTTP 403 One of these permissions required: order_management.orders.view")
+            return json.dumps({"status_code": 403, "detail": "Permission required: order_management.orders.view", "http_error": True})
+
+        monkeypatch.setattr(MCPRuntimeClient, "call_tool", refused)
+        _do_ask(world, stem + "01", stem + "01", "order")
+
+        reply = run_panel(session_factory, monkeypatch, staff, f"status of {stem}01").reply_text
+
+        assert [c for c in world.mcp if "orders_list" in c["name"]], "control: the order read was never tried"
+        assert "SECRET DEBTOR" not in reply, reply
+
+    @pytest.mark.parametrize("shape", ["exact", "prefix"])
+    def test_control_an_orders_view_holder_is_shown_the_name(
+        self, session_factory, monkeypatch, staff, grants, world, real_access, shape
+    ):
+        grants.update({AGENT, ORDERS_VIEW})
+        stem = _seed_dos(session_factory, staff)
+        raw = stem + "01" if shape == "exact" else stem
+        _do_ask(world, raw, raw if shape == "exact" else None, "order")
+
+        reply = run_panel(session_factory, monkeypatch, staff, f"status of {raw}").reply_text
+
+        assert "SECRET DEBTOR" in reply, reply
+
+
+class TestCasualLaneNamesNoCustomer:
+    def _seed(self, session_factory, staff, monkeypatch):
+        tok = "ZZTCAS" + unique_code()[:5].upper().replace("-", "")
+        db = session_factory()
+        cust = Customer(id=str(uuid.uuid4()), customer_code=f"{tok}CODE", customer_name=f"{tok} ALPHA SDN BHD", company_id=staff.company_a)
+        db.add(cust)
+        db.add(Order(id=str(uuid.uuid4()), order_number=tok + "01", debtor_name=f"{tok} SECRET DEBTOR", customer_id=cust.id, company_id=staff.company_a))
+        if db.query(SystemSetting).first() is None:
+            db.add(SystemSetting(chatbot_completed_lanes=["low_signal"]))
+        db.commit()
+        prompts: list[str] = []
+        monkeypatch.setattr(casual_mod, "resolve_clarifier_config", lambda db, **_: object())
+
+        def fake_clarifier(config, prompt):
+            prompts.append(prompt)
+            return '{"response": "stubbed clarifier reply", "quick_reply": null}'
+
+        monkeypatch.setattr(casual_mod, "call_clarifier", fake_clarifier)
+        return tok, prompts
+
+    def _ask(self, session_factory, monkeypatch, staff, world, tok, word):
+        world.parser_output = _parser_output(
+            message_type="casual", domain_hint=None, intent_hint=None, user_goal="chat",
+            entities=[{"raw": word, "hint": None, "canonical_code": None, "current_message": True, "confident": True}],
+        )
+        run_panel(session_factory, monkeypatch, staff, f"hello about {word}")
+
+    @pytest.mark.parametrize("word", ["SECRET DEBTOR", "CODE"])
+    def test_a_chat_user_with_no_customer_slug_has_no_customer_in_the_clarifier_prompt(
+        self, session_factory, monkeypatch, staff, grants, world, real_access, word
+    ):
+        grants.add(AGENT)
+        tok, prompts = self._seed(session_factory, staff, monkeypatch)
+        self._ask(session_factory, monkeypatch, staff, world, tok, tok if word == "CODE" else f"{tok} {word}")
+
+        assert prompts, "control: the casual lane never built a prompt"
+        for prompt in prompts:
+            assert tok not in prompt, prompt[:400]
+            assert '"entity_type":"customer' not in prompt.replace(" ", ""), prompt[:400]
+
+    def test_control_a_customers_view_holder_does_get_the_customer_in_the_prompt(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        grants.update({AGENT, CUSTOMERS_VIEW})
+        tok, prompts = self._seed(session_factory, staff, monkeypatch)
+        self._ask(session_factory, monkeypatch, staff, world, tok, tok)
+
+        assert prompts and any(f"{tok}CODE" in p for p in prompts), prompts
+
+
+# --------------------------------------------------------------------------- #
+# Kill gaps
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("impersonating", [True, False])
+def test_an_undo_names_the_admin_as_the_real_user_when_impersonating(
+    session_factory, monkeypatch, staff, grants, note_write, clear_overrides, impersonating
+):
+    import app.api.v1.sla.form_actions as form_actions
+    from app.audit_context import get_actor
+
+    grants.add(NOTE_SLUG)
+    seen: list[dict[str, Any]] = []
+
+    def spy(action_id, current_user, db):
+        actor = get_actor(db)
+        seen.append({"actor": getattr(actor, "user_id", None), "real": getattr(actor, "real_user_id", None)})
+
+    action_id, _t, _m = seed_parked_withdrawable(session_factory, staff, monkeypatch)
+    monkeypatch.setattr(form_actions, "cancel_form_action", spy)
+    admin = seed_staff(session_factory)
+    client = client_for(session_factory, staff.user_id, real_user_id=admin.user_id if impersonating else None)
+
+    resp = client.post(f"{PANEL_ACTIONS}/{action_id}/steps/0/withdraw", json={})
+
+    assert resp.status_code == 200, resp.text
+    assert seen and seen[0]["actor"] == staff.user_id
+    assert seen[0]["real"] == (admin.user_id if impersonating else staff.user_id), seen
+
+
+def test_a_task_open_in_the_focus_keeps_the_page_line_off_the_parser_alone(
+    session_factory, monkeypatch, staff, grants, world, jev, inquiry
+):
+    """Only `open_question` is set (a stock task owes a quantity); no pick or offer is pending."""
+    grants.add(VIEW)
+    snap = snapshot(inquiry)
+    run_chat(session_factory, monkeypatch, staff, world, jev, snap)  # control: with nothing open the line is there
+    assert parse_block(world.blocks[0])[0] is not None
+    world.blocks.clear()
+    other = new_thread(session_factory, staff)
+    db = session_factory()
+    conv = db.get(AIAssistantConversation, other.conv_id)
+    conv.session_vars = {
+        "focus": {"customers": [], "tasks": [{
+            "kind": "stock_qty", "domain": "stock", "status": "open", "opened_at_turn": 1, "touched_at_turn": 1,
+            "slots": [{"key": "a", "label": "ZZTCODE1", "value": None}], "not_checked": [],
+        }]},
+        "open_question": None, "ideation": None, "access_levels": [], "contains_flyer": False,
+    }
+    db.commit()
+    world.parser_output = _parser_output(message_type="casual", entities=[])
+
+    run_panel(session_factory, monkeypatch, other, "what is this", page_snapshot=snap)
+
+    assert world.blocks, "the parser never ran"
+    assert not [l for l in world.blocks[0].splitlines() if l.startswith("Current page")]

@@ -136,4 +136,34 @@ describe('TeamPendingList', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Reassign$/i }));
     await waitFor(() => expect(screen.getByText('Reassign task')).toBeInTheDocument());
   });
+
+  // AGENTIC-UNIFY PR 3, review round 2: the label the Reassign dialog names a task by.
+  describe('task label', () => {
+    function openReassign(over: Partial<TeamPendingItem>) {
+      useTeamPendingSLA.mockReturnValue({
+        data: { data: [{ ...row, ...over }], total: 1, page: 1, limit: 50, empty: false },
+        isLoading: false,
+        isFetching: false,
+        refetch: vi.fn(),
+      });
+      render(<TeamPendingList />);
+      fireEvent.click(screen.getByRole('button', { name: /^Reassign$/i }));
+    }
+
+    it('names a panel escalation with no reference "Task", never its marker', async () => {
+      openReassign({ source_entity_type: 'panel_escalation', reference: null, is_form_sla: false });
+      await waitFor(() => expect(screen.getByText('Hand off Task to a colleague.')).toBeInTheDocument());
+      expect(screen.queryByText(/panel_escalation/)).not.toBeInTheDocument();
+    });
+
+    it('keeps the type of a form row with no reference', async () => {
+      openReassign({ source_entity_type: 'complaint', reference: null });
+      await waitFor(() => expect(screen.getByText('Hand off complaint to a colleague.')).toBeInTheDocument());
+    });
+
+    it('shows the reference when the row has one', async () => {
+      openReassign({ source_entity_type: 'panel_escalation', reference: 'ESC-0042' });
+      await waitFor(() => expect(screen.getByText('Hand off ESC-0042 to a colleague.')).toBeInTheDocument());
+    });
+  });
 });
