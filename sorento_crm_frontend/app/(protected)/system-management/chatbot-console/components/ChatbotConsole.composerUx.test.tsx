@@ -26,7 +26,13 @@ vi.mock('../services/chatbotConsoleService', () => ({
   postConsoleTurn: (...args: unknown[]) => postConsoleTurn(...args),
   getConsolePromptVersions: (...args: unknown[]) => getConsolePromptVersions(...args),
   getConsoleMediaStatus: (...args: unknown[]) => getConsoleMediaStatus(...args),
+  getConsoleThread: vi.fn().mockResolvedValue({ turns: [], pending_action: null }),
 }));
+
+vi.mock('../services/agentConsoleService', async () => {
+  const actual = await vi.importActual<typeof import('../services/agentConsoleService')>('../services/agentConsoleService');
+  return { ...actual, newAgentConversation: vi.fn().mockResolvedValue({ conversation_id: 'cv-new' }) };
+});
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: (...args: unknown[]) => toastSuccess(...args), error: (...args: unknown[]) => toastError(...args) },
@@ -556,7 +562,7 @@ describe('review round: quote on the follow-up and Retry, reset hygiene, never-l
     expect(postConsoleTurn.mock.calls[2][0]).toMatchObject({ media: { kind: 'image' }, reply_to: QUOTE });
   });
 
-  it('Reset drops the quote and the staged image', async () => {
+  it('New conversation drops the quote and the staged image', async () => {
     postConsoleTurn.mockResolvedValueOnce(turn('t1', 'Which one?'));
     renderConsole();
     await send('any WC?');
@@ -565,9 +571,10 @@ describe('review round: quote on the follow-up and Retry, reset hygiene, never-l
     fireEvent.paste(textarea(), { clipboardData: { files: [png()] } });
     await screen.findByTestId('chatbot-console-staged');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
     await waitFor(() => expect(screen.queryByTestId('chatbot-console-reply-to')).not.toBeInTheDocument());
-    expect(screen.queryByTestId('chatbot-console-staged')).not.toBeInTheDocument();
+    // The staged file is cleared by the run-change effect, one render after the quote bar goes with the messages.
+    await waitFor(() => expect(screen.queryByTestId('chatbot-console-staged')).not.toBeInTheDocument());
   });
 
   it('a clip finished while another turn is in flight stages instead of vanishing', async () => {

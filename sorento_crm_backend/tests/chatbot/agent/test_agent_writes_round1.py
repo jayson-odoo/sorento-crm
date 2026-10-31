@@ -211,10 +211,11 @@ def test_r2_confirming_the_previous_proposal_in_a_turn_that_also_proposes_is_all
     first, _ = go(db, w, proposal_script([w.asks[0]]))
     old = action_row(db, first.pending_action["id"])
     captured: dict = {}
+    # AGENT-CONFIRM-GATE: the confirm comes first, in the turn's first round; then the new proposal.
     script = [
+        decide_from_view(captured),
         round_of(tc(LIST_ASKS, {}, "l1")),
         round_of(tc(UPDATE_ASK, {"ask_id": str(w.asks[1].id), "state": "done", "note": NOTE}, "u1")),
-        decide_from_view(captured),
         answer_("Done, and I prepared the next one."),
     ]
 
@@ -575,7 +576,7 @@ def test_r1_an_operator_with_the_slug_cancels_and_is_recorded_as_the_decider(con
     assert ask_now(db, w.asks[0].id).state == "open"
 
 
-def test_r3_the_pending_proposal_on_the_conversation_read_is_filtered_by_user(console, session_factory):
+def test_r3_the_pending_proposal_on_the_thread_read_is_filtered_by_user(console, session_factory):
     from app.services.chatbot.agent import actions
 
     db = session_factory()
@@ -587,9 +588,9 @@ def test_r3_the_pending_proposal_on_the_conversation_read_is_filtered_by_user(co
         steps=[{"tool": UPDATE_ASK, "args": {}, "before": {}, "summary": "FOREIGN-MARKER"}],
     )
     assert foreign.user_id != w.user_id
-    url = "/api/v1/system/chatbot/agent/conversation"
+    url = "/api/v1/system/chatbot/console/thread"
 
-    hidden = console.get(url, params={"contact_respond_id": w.respond_id})
+    hidden = console.get(url, params={"contact_respond_id": w.respond_id, "run_id": "ZZT-run-1"})
     assert hidden.status_code == 200, hidden.text
     assert hidden.json()["pending_action"] is None
 
@@ -597,7 +598,7 @@ def test_r3_the_pending_proposal_on_the_conversation_read_is_filtered_by_user(co
         db, ctx, conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()),
         steps=[{"tool": UPDATE_ASK, "args": {}, "before": {}, "summary": "MINE-MARKER"}],
     )
-    shown = console.get(url, params={"contact_respond_id": w.respond_id}).json()["pending_action"]
+    shown = console.get(url, params={"contact_respond_id": w.respond_id, "run_id": "ZZT-run-1"}).json()["pending_action"]
     assert shown is not None and shown["id"] == str(mine.id)
 
 

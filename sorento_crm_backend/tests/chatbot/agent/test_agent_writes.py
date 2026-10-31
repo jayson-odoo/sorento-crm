@@ -695,7 +695,8 @@ def test_13_confirming_an_unstored_proposal_in_its_own_turn_writes_nothing(db):
     result, _ = run_turn(db, w, script)
 
     confirms = [c for c in result.tool_calls if c["name"] == CONFIRM_ACTION]
-    assert confirms and confirms[0]["status"] == "invalid"
+    # AGENT-CONFIRM-GATE: a confirm after the first round is refused before same_turn is reached.
+    assert confirms and confirms[0]["status"] == "denied"
     assert ask_now(db, ask.id).state == "open"
     rows = action_rows(db, w.respond_id)
     assert len(rows) == 1 and rows[0].status == "proposed"
