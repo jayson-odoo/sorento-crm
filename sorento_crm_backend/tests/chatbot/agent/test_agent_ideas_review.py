@@ -754,3 +754,63 @@ def test_AC_RC_9_a_hundred_thousand_characters_of_markdown_link_openers_finish_i
     started = time.monotonic()
     _clean(text)
     assert time.monotonic() - started < 1.0
+
+
+# ================================================================== console pass round
+
+from tests.chatbot.agent.test_agent_writes_opportunity import make_world as opp_world  # noqa: E402
+
+# ------------------------------------------------------------------ AC-RC-11 the model is told not to invent
+
+
+def _description(name):
+    from app.services.chatbot.agent import writes
+
+    return writes.WRITES[name].schema["function"]["description"].lower()
+
+
+@pytest.mark.parametrize("name", [CREATE, UPDATE])
+def test_AC_RC_11_the_idea_tools_tell_the_model_not_to_invent(name):
+    text_ = _description(name)
+    assert "only" in text_ and "said" in text_ and "leave" in text_, text_
+
+
+def test_AC_RC_11_the_create_tool_says_to_propose_as_soon_as_it_has_the_problem():
+    text_ = _description(CREATE)
+    assert "problem" in text_ and ("as soon as" in text_ or "right away" in text_ or "immediately" in text_), text_
+    assert "adjust" in text_, text_
+
+
+# ------------------------------------------------------------------ AC-RC-12 the model is told the proposal is shown
+
+
+def _proposed_message(db, w, call):
+    seen = {}
+
+    def capture(messages, tools):
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        seen["body"] = json.loads(tool_msgs[-1]["content"])
+        return answer_("Prepared.")
+
+    go(db, w, [round_of(call), capture], text_="please")
+    assert seen["body"]["status"] == "proposed", seen["body"]
+    return seen["body"]["message"].lower()
+
+
+def test_AC_RC_12_an_idea_proposal_tells_the_model_it_is_shown_automatically(db, ss):
+    w = make_world(db)
+    message = _proposed_message(db, w, tc(CREATE, dict(FIELDS), "c1"))
+    assert "proposed, not done" in message
+    assert "automatically" in message and "repeat" in message, message
+
+
+def test_AC_RC_12_an_opportunity_proposal_tells_the_model_the_same(db):
+    w = opp_world(db)
+    call = tc(
+        "crm_opportunity_create",
+        {"title": "Showroom lights", "prospect_name": "Fake Showroom Sdn Bhd", "expected_close_date": "2026-12-01"},
+        "o1",
+    )
+    message = _proposed_message(db, w, call)
+    assert "proposed, not done" in message
+    assert "automatically" in message and "repeat" in message, message
