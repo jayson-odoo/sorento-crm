@@ -121,3 +121,166 @@ def test_repo_committed_at_reads_git_history():
     when = mod._repo_committed_at(mod.GUIDES_DIR / "README.md")
     # Shallow CI checkouts still have the HEAD commit, so this is never None in a clone.
     assert when is not None and when.tzinfo is not None
+
+
+# --- DOCS-SYNC-AUTO (PLAN-docs-sync-auto-31oct): validation + resilient push ---
+
+
+def _fake_guides(mod, monkeypatch, tmp_path, pages):
+    """Point the module at a temp guides dir holding `pages` {relpath: text}."""
+    root = tmp_path / "user-guides"
+    root.mkdir()
+    (root / "README.md").write_text("# Overview\n\nhi\n")
+    for rel, text in pages.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    monkeypatch.setattr(mod, "GUIDES_DIR", root)
+    monkeypatch.setattr(mod, "STATE_FILE", root / ".outline-sync.json")
+    return root
+
+
+def test_repo_guides_validate_clean():
+    mod = _load_module()
+    assert mod.validate_guides() == []
+
+
+def test_every_published_title_fits_outline_limit():
+    mod = _load_module()
+    for md in mod.discover_files():
+        rel = mod.relpath(md)
+        if rel.split("/")[0] in mod.HELD_FOLDERS:
+            continue
+        title = mod.first_h1_or_filename(md)
+        assert len(title) <= mod.MAX_TITLE_LEN, (rel, len(title))
+
+
+def test_check_fails_on_long_title(monkeypatch, tmp_path):
+    mod = _load_module()
+    _fake_guides(mod, monkeypatch, tmp_path, {"warehouse/x.md": "# " + "a" * 101 + "\n"})
+    problems = mod.validate_guides()
+    assert any("warehouse/x.md" in p and "101 characters" in p for p in problems)
+    with pytest.raises(SystemExit):
+        mod.check(None)
+
+
+def test_check_fails_on_unmapped_folder_and_bad_layout(monkeypatch, tmp_path):
+    mod = _load_module()
+    _fake_guides(
+        mod,
+        monkeypatch,
+        tmp_path,
+        {"brand-new/x.md": "# X\n", "warehouse/deep/y.md": "# Y\n"},
+    )
+    problems = "\n".join(mod.validate_guides())
+    assert "brand-new/: guide folder is not mapped" in problems
+    assert "warehouse/deep/y.md: unexpected layout" in problems
+
+
+def test_check_ignores_held_folder(monkeypatch, tmp_path):
+    mod = _load_module()
+    _fake_guides(mod, monkeypatch, tmp_path, {"commercial/x.md": "# " + "a" * 150 + "\n"})
+    assert mod.validate_guides() == []
+
+
+def test_check_runs_without_requests_installed():
+    """The PR gate runs `check` on a bare python3: no third-party import at module load."""
+    import subprocess
+
+    code = (
+        "import sys, builtins\n"
+        "real = builtins.__import__\n"
+        "def guard(name, *a, **k):\n"
+        "    if name.split('.')[0] in ('requests', 'dotenv'):\n"
+        "        raise ImportError(name)\n"
+        "    return real(name, *a, **k)\n"
+        "builtins.__import__ = guard\n"
+        f"sys.argv = ['x', 'check']\n"
+        f"exec(compile(open({str(_SCRIPT)!r}).read(), 'script', 'exec'), {{'__name__': '__main__', '__file__': {str(_SCRIPT)!r}}})\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "OK:" in proc.stdout
+
+
+class _FakeOutline:
+    def __init__(self, existing=(), fail_titles=()):
+        self.docs = [dict(d) for d in existing]
+        self.fail_titles = set(fail_titles)
+        self.n = 0
+
+    def _maybe_fail(self, title):
+        if title in self.fail_titles:
+            raise RuntimeError("documents.update -> 400 Document title must be 100 characters or less")
+
+    def list_documents(self, _cid):
+        return list(self.docs)
+
+    def create_document(self, title, text, collection_id, parent_id=None, publish=True):
+        self._maybe_fail(title)
+        self.n += 1
+        doc = {"id": f"id-{self.n}", "title": title, "parentDocumentId": parent_id}
+        self.docs.append(doc)
+        return doc
+
+    def update_document(self, doc_id, title, text):
+        self._maybe_fail(title)
+        return {"id": doc_id, "title": title}
+
+
+def test_push_continues_past_a_bad_page_and_fails_at_the_end(monkeypatch, tmp_path, capsys):
+    import json
+
+    mod = _load_module()
+    root = _fake_guides(
+        mod,
+        monkeypatch,
+        tmp_path,
+        {"warehouse/a.md": "# Bad\n", "warehouse/b.md": "# Good\n", "sla/c.md": "# Also good\n"},
+    )
+    fake = _FakeOutline(fail_titles={"Bad"})
+    monkeypatch.setattr(mod, "load_env", lambda: ("http://x", "t", "cid"))
+    monkeypatch.setattr(mod, "Outline", lambda **_k: fake)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.push(None)
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "1 page(s) FAILED" in out and "warehouse/a.md" in out
+    state = json.loads((root / ".outline-sync.json").read_text())
+    # The pages after the bad one still published and their ids were saved.
+    assert "warehouse/b.md" in state and "sla/c.md" in state
+    assert "warehouse/a.md" not in state
+
+
+def test_push_skips_children_of_a_failed_parent(monkeypatch, tmp_path, capsys):
+    mod = _load_module()
+    _fake_guides(mod, monkeypatch, tmp_path, {"warehouse/a.md": "# A\n", "sla/c.md": "# C\n"})
+    fake = _FakeOutline(fail_titles={mod.PARENT_TITLES["warehouse"]})
+    monkeypatch.setattr(mod, "load_env", lambda: ("http://x", "t", "cid"))
+    monkeypatch.setattr(mod, "Outline", lambda **_k: fake)
+    with pytest.raises(SystemExit):
+        mod.push(None)
+    out = capsys.readouterr().out
+    assert "warehouse/__parent__" in out
+    assert "warehouse/a.md: not pushed, its parent" in out
+    assert any(d["title"] == "C" for d in fake.docs)
+
+
+def test_pull_learns_ids_by_title_instead_of_duplicating(monkeypatch, tmp_path):
+    mod = _load_module()
+    _fake_guides(mod, monkeypatch, tmp_path, {"warehouse/a.md": "# Page A\n"})
+    parent = mod.PARENT_TITLES["warehouse"]
+    docs = [
+        {"id": "p1", "title": parent, "parentDocumentId": None},
+        {"id": "c1", "title": "Page A", "parentDocumentId": "p1"},
+        {"id": "c2", "title": "Only in Outline", "parentDocumentId": "p1"},
+    ]
+    state = {}
+    learnt = mod.learn_state_by_title(state, docs)
+    assert state == {"warehouse/__parent__": "p1", "warehouse/a.md": "c1"}
+    assert sorted(learnt) == ["warehouse/__parent__", "warehouse/a.md"]
+    # A saved id is never overridden.
+    state2 = {"warehouse/a.md": "other"}
+    mod.learn_state_by_title(state2, docs)
+    assert state2["warehouse/a.md"] == "other"
