@@ -2,7 +2,28 @@
 
 Create, edit, view, and delete individual products from the product catalogue. For bulk create/update from Excel, use the [product master upload](../purchasing/upload-product-master.md) instead.
 
-Open **[Product Management → Products → All Products](/master-data-management/products)** (URL: `/master-data-management/products`). The page is titled **Products**.
+Open **[Products → Products → All Products](/master-data-management/products)** (URL: `/master-data-management/products`). The page is titled **Products**.
+
+## Who can do what
+
+Each action needs its own permission (set on the role under **Manage users and roles**). If you
+do not have it, the button is simply not shown.
+
+| Action | Permission |
+|---|---|
+| See the list and open a product | **View Products** |
+| **Create product** | **Add Products** |
+| **Edit**, and the Variants tab actions (**Set parent** / **Change parent**, **Unlink**, **Reset to auto**, **Add variant**, remove a variant), **Import barcodes**, **Extract photos from catalogue**, bulk **Chat search** | **Edit Products** |
+| **Download template**, **Import** | **Import Products** |
+| Row **Delete product** | **Delete Products** |
+| Bulk **Delete** | **Delete Products** |
+
+Opening the edit or create page by its link without the permission shows *You don't have access
+to this page*. On a promotion line, changing a product's list price also needs **Edit
+Products**.
+
+A product (or product set) that is on any project quotation cannot be deleted: *This product is
+on quotation PRJQ-..., so it cannot be deleted.*
 
 ## The list
 
@@ -12,7 +33,7 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
 * **Filters** (popover) - **Category** (default **All categories**), **Brand** (default **All brands**), **Status** (**All status** / **Active** / **Inactive**). **Clear Filters** resets them.
 * **Advanced filters** (toolbar, **More** menu) - opens the list-query builder for column-level conditions on any product field, including **Reorder Planning** (below).
 * **Export** - downloads the current filtered/searched list to `products_export.xlsx`.
-* Clicking a row opens that product's detail page. Per-row icons: **Edit**, **Duplicate**, **Delete**.
+* Clicking a row opens that product's detail page. The row's menu has **Delete product** (only if you may delete products).
 
 > A banner "Showing only the products from a recent "products discontinued" notification." appears when you arrive via a discontinued-products notification deep link. Click **Clear filter** to see all products again. If your discontinued subscription covers only some brands, the link opens on just those brands (`brand_id` alongside the batch): a link naming several brands leaves the **Brand** dropdown on **All brands** while its own filter narrows the grid, a link naming one selects that brand in the dropdown, and **Clear filter** drops the batch and the brand filter together.
 
@@ -43,6 +64,7 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
    * **Warranty (Months)** - optional, ≥ 0.
    * **Serial Tracking** - switch; *Track individual serial numbers.*
    * **Batch Tracking** - switch; *Track batches with expiry dates.*
+   * **Show SO line description in OI email** - switch. When on, the order inquiry email to purchasing prints this product's item code with the sales order line's own description from AutoCount (`CODE - description`). See [Order inquiry handover email](../supply-chain/order-inquiry-handover-email.md).
    * **Reorder Level** (default 10) and **Reorder Quantity** (default 50) - integers, ≥ 0.
 
    **Suppliers** - link suppliers to this product (lead time, minimum order quantity, primary supplier).
@@ -52,13 +74,13 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
 
 ## Edit a product
 
-Open a product, then **Edit** (or the **Edit** icon on the list row). The same tabbed form opens with values loaded. **Product Code** is read-only in edit mode. Save with **Update Product**. Use the prev/next record pager to walk through the filtered list without returning to the table.
+Open a product, then **Edit**. The same tabbed form opens with values loaded. **Product Code** is read-only in edit mode. Save with **Update Product**. Use the prev/next record pager to walk through the filtered list without returning to the table.
 
 ## View a product
 
 The detail page (`/master-data-management/products/{id}`) shows the product name as the title, a **Quick Info** sidebar (including **List Price**), and these tabs:
 
-* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, **Tracking Flags** (including **Discontinued: Yes/No**), then **Combos** (the catalogue packages this product is sold as, each with its own optional cover picture) and **Sold with** (the packages it is a part of, read-only). See [Catalogue packages on price tags](../marketing/price-tag-packages.md).
+* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, **Tracking Flags** (including **Discontinued: Yes/No** and **SO line description in OI email: Yes/No**), then **Combos** (the catalogue packages this product is sold as, each with its own optional cover picture) and **Sold with** (the packages it is a part of, read-only). See [Catalogue packages on price tags](../marketing/price-tag-packages.md).
 * **Stock** - on-hand / reserved / available by warehouse.
 * **Purchase History** - past purchases of this product.
 * **Attachments** - files linked to this product.

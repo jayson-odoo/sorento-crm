@@ -73,8 +73,9 @@ you are on **Lines**, a **List** / **Schedule** toggle sits above the grid. Ther
 until" line on the page any more - the cut-off date that used to show there now lives inside the
 **Auto link all...** dialog.
 
-The **Lines** view opens on **To confirm**: every row CS has raised that you have not yet signed
-off. See "Confirming a row" below for what that means and how it works.
+The **Lines** view opens on **To order**: every row CS has raised that is not yet ordered,
+reserved or rejected. Since 30 Oct rows confirm themselves, so you no longer sign off each row;
+see "To order and Done: rows confirm themselves" below.
 
 ### Stage cards
 
@@ -93,10 +94,10 @@ sales order line has been cancelled (see "A row on a cancelled line" below) drop
 only - if it already holds a purchase order or shipping order link, it still counts in
 **Purchased** or **Incoming**.
 
-A fourth tile, **To confirm**, sits beside the three stage cards. It shows how many rows are
-still waiting on your sign-off; click it to return to the To confirm view from anywhere else on
-the page. Click it a second time to leave that filter, the same as pressing **Buy**,
-**Purchased** or **Incoming** a second time. See "Confirming a row" below.
+A fourth tile, **To order**, sits beside the three stage cards. It shows how many rows are
+still waiting for a purchase order, shipping order or reserve; click it to return to the To order
+view from anywhere else on the page. Click it a second time to leave that filter, the same as pressing **Buy**,
+**Purchased** or **Incoming** a second time. See "To order and Done: rows confirm themselves" below.
 
 ### Month tabs
 
@@ -106,7 +107,7 @@ that has rows, with the row count in brackets, **All** first. Click a tab to nar
 ### Filters and search
 
 Click **Filters** to open the popover: **Location**, **Agent**, **SO month**, **PO number**,
-**SPO number**, **Linked**, **Confirmed**, **Supplier**, **Project**, **Raised by**, **Raised on**.
+**SPO number**, **Linked**, **Done** (the status filter: **To order** / **Done** / **Rejected** / **All**), **Supplier**, **Project**, **Raised by**, **Raised on**.
 **Clear filters** resets every one of them. On a short screen the popover's own content scrolls,
 so every field stays reachable even when there isn't room to show them all at once.
 
@@ -121,9 +122,8 @@ date - a re-confirm cancels the earlier row and raises a new one, so the date yo
 too. Hover the icon for **Previously raised**, listing each earlier raise with its time and who
 confirmed it, newest first. A row raised for the first time shows no icon.
 
-**Confirmed** is the sign-off filter: **To confirm**, **Confirmed**, **Changed**, **Rejected**,
-**All**. **To confirm** is what the page opens on; see "Confirming a row" below for what each
-value means.
+The status filter offers **To order**, **Done**, **Rejected** and **All**. **To order** is what
+the page opens on; see "To order and Done: rows confirm themselves" below.
 
 The search box uses multi-word narrowing: typing several words splits them on spaces and finds
 rows matching ALL of them. For example, typing `SO366990 SRTWT6801` finds only rows on sales order
@@ -157,8 +157,8 @@ The PO and SPO on a row follow AutoCount's own linkage: the purchase order line 
 for that sales order line, and the shipping order that purchase order line became, whatever state
 the document is in, open, closed or already received. There is nothing to click for this to
 happen. This runs as soon as AutoCount's purchase order or shipping order reaches the CRM, when a
-row is raised or confirmed, and first on every **Auto link all...**. A row still on **To confirm**
-gets the link as a draft, the same as any other draft link. Confirming a purchase order and
+row is raised or confirmed, and first on every **Auto link all...**. A live link that covers the
+row's full quantity turns it **Done** on its own. Confirming a purchase order and
 **Auto link all...** never move a link AutoCount states. If AutoCount covers only part of the
 row's quantity, the normal automatic linking on this page covers the rest.
 
@@ -210,9 +210,8 @@ Nothing needs deciding on either row - the old one is just kept for the record, 
 reads as a plain buy. See [Sales order changes after planning](sales-order-changes.md) for how
 this comes about on the Fulfilment Planning board.
 
-A used row lands on **To confirm** once, the moment it becomes used - whether that happens on a
-replan or because a sheet re-upload rebuilds it. See "Confirming a row" below for what confirming
-it does.
+A used row is **Done** on its own the moment it becomes used - whether that happens on a replan
+or because a sheet re-upload rebuilds it. There is nothing to confirm.
 
 A row **Included with** another item (a "supplied with" companion, like a seat cover that ships
 inside its pedestal and cistern) carries no Was of its own, so its Qty cell's (i) lists each of
@@ -240,10 +239,10 @@ cancelled line shows both.
 * If it already holds a purchase order or shipping order link, that link is left alone and the
   row still counts in **Purchased** or **Incoming** - the system does not decide whether to keep
   or drop that link; that stays purchasing's call.
-* The row lands on **To confirm** once, so purchasing sees it. Ticking it and pressing
-  **Confirm** means "seen": the row itself is not cancelled, it stays on the list, still greyed
-  and still tagged `cancelled`, and simply leaves **To confirm**. Nothing about its quantity,
-  links or state changes.
+* With no live link the row is **Done** on its own (nothing to order). With a live link it stays
+  **To order** until purchasing decides: **Confirm** marks it Done (keep the order), or remove the
+  link. Either way the row is not cancelled; it stays on the list, greyed and tagged
+  `cancelled`.
 
 ### When AutoCount's linkage overrides this page
 
@@ -295,10 +294,9 @@ to AutoCount's own document.
   above.
 * **Do I need to cancel the PO linked to it?** No. The system leaves any purchase order or
   shipping order link exactly as it is; whether to cancel or reuse it is your call.
-* **Why did To confirm suddenly fill up?** The first time this change went live, every existing
-  row on a cancelled line and every existing used row landed on **To confirm** once, so purchasing
-  could see them and sign off. Tick **Select all N records** and press **Confirm (N)** to clear
-  them in one go; after that, only the rows that newly become cancelled or used arrive there.
+* **Why did To order change size on 30 Oct?** That day every existing row was worked out again by
+  the automatic rule: rows with full live cover became **Done**, and rows that had been confirmed
+  by hand only as "read" but were never ordered went back to **To order**.
 
 ### Ticking rows and Actions
 
@@ -333,43 +331,45 @@ wrong pick to correct by hand. Once you have placed or linked the documents dire
 AutoCount, the linkage reaches this page on its own within a minute; **Upload purchase orders**
 and **Auto link all...** are there for re-syncing a whole file or the whole list in one go.
 
-### Confirming a row
+### To order and Done: rows confirm themselves
 
-Once a row's link reads right, tick it and press the page's primary **Confirm (N)** button -
-disabled until at least one row is ticked. To confirm many rows at once, tick lines one by one,
-or tick the header to select the page and take **Select all N records** to reach every row
-matching your current filters, not only the ones on screen, before pressing **Confirm (N)**. A
-dialog states the count; press **Confirm** to write it.
+Since 30 Oct you do not confirm order inquiry rows one by one. Each row's status keeps itself
+right:
 
-A confirmed row leaves **To confirm** without a reload, and the **To confirm** tile's count drops
-to match. Rejected rows, and a row whose own state is cancelled, are skipped even if ticked, and
-the toast tells you how many rows were confirmed and how many were skipped. Only confirmed rows
-are counted by reorder planning - a row still on **To confirm**, or one that has come back as
-**Changed**, is left out until you confirm it.
+* **Done** - the row's full quantity is covered by a live purchase order line, shipping order
+  allocation or reserve, or the row is rejected, actioned, information only, or `used`. A
+  companion row follows its host row.
+* **To order** - not covered yet. A part-covered row reads **To order · N left** (N is the
+  quantity still to order).
+* **Rejected** - rejected.
 
-A **used** row and a row on a cancelled line (see "A row already covered by stock" and "A row on
-a cancelled line" above) are ticked and confirmed the same way as any other row - their checkbox
-is enabled. These are not "cancelled rows" in the sense above: confirming one only marks it seen
-and does not touch its state, quantity or links.
+A link counts only while it is live: a cancelled purchase order line or a retired shipping order
+allocation does not cover anything. An order inquiry is **Completed** when every row is Done, so
+**Outstanding** on the Documents view shows only what is still to order.
 
-If CS changes a line you already confirmed - its quantity or delivery date - the row comes back
-onto **To confirm** marked **Changed**, showing what it was and what it is now. Confirm it again
-once you are happy with the new figures.
+A row on a **cancelled** sales order line with no live link is Done (there is nothing to order).
+With a live link it stays **To order** until you decide it by hand (below).
 
-The first time this confirm step went live, rows that had already come in from the order inquiry
-sheet Excel started out already confirmed; only rows raised from Fulfilment Planning needed your
-first confirm.
+**Reorder planning** counts only **To order** rows, and only their uncovered quantity. A Done row,
+automatic or manual, adds nothing.
 
-### Unconfirming a row
+### Overriding a row by hand: Confirm and Unconfirm
 
-Took on a row by mistake, or want to hold it until a reconfirm CS has not actually made yet? Tick
-**Confirmed** or **Changed** rows and open **Actions → Unconfirm** to put them back on **To
-confirm**. The confirmer's name and time are cleared, no email goes out, and a plain **Confirm**
-reverses it. A row still on **To confirm**, or one already **Rejected** or cancelled, is skipped
-even if ticked, and the toast counts how many rows went back and how many were skipped.
-**Unconfirm** needs the same permission as **Confirm**.
+The two buttons are still there for the cases the automatic rule cannot see:
 
-An unconfirmed row is not counted by reorder planning until it is confirmed again.
+* **Confirm (N)** makes the ticked rows **Done** even with no purchase order (for example, you
+  ordered it outside the system). Tick rows, or tick the header and take **Select all N records**,
+  then press **Confirm (N)** and **Confirm** in the dialog.
+* **Actions → Unconfirm** puts ticked rows back to **To order** even though they are covered (for
+  example, the link is wrong and you want it to count for reorder planning again).
+
+A manual decision shows as **Done · manual** or **To order · manual**, with who did it and when.
+It sticks until the opposite button is pressed. Unconfirm also gives way when a **new** link
+arrives, and either one is cleared when CS amends the line or the row is rejected. Rejected rows
+and cancelled rows are skipped even if ticked; the toast counts what was done and what was
+skipped. **Unconfirm** needs the same permission as **Confirm**, and no email goes out for either.
+
+If CS changes a line's quantity or date, the row is worked out again from its live links.
 
 ### Schedule view
 
@@ -467,9 +467,8 @@ that writes nothing.
   line, never the upload.
 * **The upload never creates a sales order or a sales order line**, and never writes a location
   onto one. AutoCount owns the order book.
-* **A row the sheet raises onto a line that is already cancelled** lands on **To confirm**
-  straight away instead of starting confirmed, the same as a fresh used row does - see
-  "A row on a cancelled line" above.
+* **A row the sheet raises onto a line that is already cancelled** follows the cancelled-line
+  rule - see "A row on a cancelled line" above.
 * **A line that already carries an order inquiry is skipped**, whoever raised it. So
   re-uploading the same sheet writes nothing new: every row comes back under **Already
   raised**, except that a corrected delivery date still fixes a migrated row's date and the
@@ -493,7 +492,7 @@ CS has acted on a line, re-uploading the sheet later (after a rollback, for exam
 
 * **A line whose delivery already arrived** comes back exactly as it was: the sheet's row for
   that delivery is raised as the greyed **used** row again, carrying its received document,
-  rather than skipped or raised plain, and it lands on **To confirm** again for you to sign off.
+  rather than skipped or raised plain, and it is **Done** on its own.
   CS's own fresh row for the line is not re-raised by the upload itself; that is the plan's own
   doing, not the sheet's.
 * **A line CS has since confirmed a different quantity or date for** comes back already settled
@@ -563,12 +562,8 @@ left alone.
 ### Where the rows appear
 
 Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**, then
-switch to **Lines**. An ordinary migrated row is confirmed the moment it is raised, so it will not
-show on the **Lines** view's default **To confirm** filter - set the **Confirmed** filter to
-**Confirmed** or **All** to find it.
-The two exceptions land on **To confirm** instead, needing your sign-off: a row rebuilt as
-**used** (see "A row already covered by stock" above), and a row landing on a line that is
-already cancelled (see "A row on a cancelled line" above). Each row carries the quantity, delivery
+switch to **Lines**. A migrated row shows **Done** when it is already covered (or **used**) and
+**To order** otherwise; set the status filter to **All** to see every row. Each row carries the quantity, delivery
 date and stock location the sheet stated, the instruction it was raised with, and the note naming
 the file it came from.
 

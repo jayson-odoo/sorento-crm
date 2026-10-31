@@ -71,6 +71,5 @@ tests/test_sla_assignee_team_derivation.py
 tests/test_smart_chat_send.py
 tests/test_suggest_date_and_attachment.py
 tests/test_suggest_neighbours.py
-tests/test_sync_user_guides_guard.py
 tests/test_team_hierarchy_and_round_robin.py
 tests/test_ticket_intake.py

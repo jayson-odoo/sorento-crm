@@ -149,9 +149,11 @@ def test_portal_link_send_is_logged(fails):
     client = MagicMock()
     client.send_message.side_effect = _Boom() if fails else (lambda *a, **k: {"id": "m1"})
 
-    with patch.object(mod, "RespondClient", return_value=client), patch(
+    with patch.object(mod, "RespondClient") as client_cls, patch(
         "app.services.integration_service.log_respond_send"
     ) as log:
+        # The link goes out through the contact's own workspace client.
+        client_cls.for_contact_id.return_value = client
         if fails:
             with pytest.raises(Exception):
                 svc.send_link_via_respond_io("c1", "364817")

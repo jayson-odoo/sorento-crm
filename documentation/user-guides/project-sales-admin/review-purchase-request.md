@@ -42,7 +42,7 @@ Opening the emailed link takes the manager to a token-protected approve page whe
 ## After approval / rejection
 
 * **Approved:** the status flips to **Approved** and a notification is sent to the rep through Respond.io (WhatsApp). The request is now actionable downstream (purchasing, etc.).
-* **Rejected:** the status flips to **Rejected**. The rep is notified and can edit and re-submit. You can re-issue an approval link by clicking **Change to pending approval** again, then **Send for approval**.
+* **Rejected:** the status flips to **Rejected**. The rep is notified and can edit and send it again; it then reads **Appealed**. You can re-issue an approval link by clicking **Change to pending approval** again, then **Send for approval**.
 
 ## Other actions on the toolbar
 
