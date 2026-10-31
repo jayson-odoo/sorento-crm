@@ -92,7 +92,7 @@ export function ParkedSendDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-4xl">
+      <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {ready ? (

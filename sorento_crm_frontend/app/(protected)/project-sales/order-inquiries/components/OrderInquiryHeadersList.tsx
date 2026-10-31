@@ -146,13 +146,16 @@ export function OrderInquiryHeadersList() {
     pageSize: Number(searchParams.get('limit') ?? '25'),
   });
 
+  // Outstanding stays implicit unless an email's OI list or a reserve status widens the default.
+  const stateInUrl = stateFilter !== 'outstanding' || Boolean(reserveFilter || inquiryNoFilter);
+
   // URL-synced (AC-HL-03): a reload or a shared link opens on the same toggle, sort,
   // search and page. `replace`, not `push` - turning a dial is not a place to go back to.
   useEffect(() => {
     const next = new URLSearchParams();
     // Outstanding is the default only when nothing widens the default view: with an email's
     // OI list or a reserve status in the URL it is written, so a reload keeps the choice.
-    if (stateFilter !== 'outstanding' || reserveFilter || inquiryNoFilter) next.set('state', stateFilter);
+    if (stateInUrl) next.set('state', stateFilter);
     if (searchQuery) next.set('query', searchQuery);
     const sort = sorting[0];
     if (sort && (sort.id !== 'raised_at' || sort.desc)) {
@@ -171,6 +174,7 @@ export function OrderInquiryHeadersList() {
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
   }, [
     stateFilter,
+    stateInUrl,
     searchQuery,
     sorting,
     pagination.pageIndex,
@@ -296,7 +300,7 @@ export function OrderInquiryHeadersList() {
     const base = buildDetailSearch(
         { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
         {
-          state: stateFilter !== 'outstanding' ? stateFilter : undefined,
+          state: stateInUrl ? stateFilter : undefined,
           raised_by: raisedByFilter || undefined,
           reserve: reserveFilter || undefined,
           inquiry_no: inquiryNoFilter || undefined,
@@ -312,6 +316,7 @@ export function OrderInquiryHeadersList() {
     pagination.pageSize,
     sorting,
     searchQuery,
+    stateInUrl,
     stateFilter,
     raisedByFilter,
     agentFilter,
