@@ -894,10 +894,11 @@ def _search_in_scope(db: Any, ctx: Any, query: str) -> dict:
 
     previous = get_company_scope(db)
     scope = previous
-    if is_contact_principal(ctx):
-        # No person to narrow by: the contact's own scope (on the session) and its access codes decide.
-        return knowledge_service.search_for_contact(db, access_codes=ctx.access_codes, query=query)
-    for person in writes.people(ctx):
+    contact = is_contact_principal(ctx)
+    # A contact principal has no user of its own: only the console operator (when there is one) narrows.
+    operator = getattr(ctx, "operator_user_id", None)
+    persons = ([str(operator)] if operator else []) if contact else writes.people(ctx)
+    for person in persons:
         own = company_scope_resolver._scope_for_user(db, person, None)
         if scope is None:  # the contact is unrestricted: the person's scope is the bound
             scope = own
@@ -909,6 +910,8 @@ def _search_in_scope(db: Any, ctx: Any, query: str) -> dict:
             scope = frozenset(scope) & frozenset(own)
     set_company_scope(db, scope)
     try:
+        if contact:
+            return knowledge_service.search_for_contact(db, access_codes=ctx.access_codes, query=query)
         return knowledge_service.search(db, user_id=ctx.user_id, query=query)
     finally:
         set_company_scope(db, previous)

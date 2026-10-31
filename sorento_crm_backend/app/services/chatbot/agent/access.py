@@ -60,6 +60,7 @@ def eligible_contact(db, contact_respond_id: str):
     from app.models.access import RespondContact
     from app.models.base import company_scope
     from app.models.user import User, UserStatus
+    from app.services import chatbot_allowed_service
 
     with company_scope(db, None):
         contact = (
@@ -70,7 +71,8 @@ def eligible_contact(db, contact_respond_id: str):
         )
         if contact is None:
             return None, None, "contact_not_found"
-        if not contact.chatbot_allowed:
+        # As the bot: EVERY row sharing the id must allow AI replies (a namesake row cannot be undone).
+        if not chatbot_allowed_service.is_allowed(db, contact_respond_id):
             return contact, None, "ai_replies_off"
         if not contact.chatbot_agent_enabled:
             return contact, None, "switch_off"
@@ -103,12 +105,13 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         raise AgentRefused(refusal)
     pk = str(contact.id)
     principal = "user" if user is not None else "contact"
+    ambiguous = user is None and _row_count(db, contact_respond_id) > 1
     user_id = str(user.id) if user is not None else ""
     user_name = (user.name or "") if user is not None else ""
 
     space_id = default_space_id(db)
     try:
-        grants = frozenset(str(k) for k in granted_keys(db, pk))
+        grants = frozenset(str(k) for k in granted_keys(db, pk)) if not ambiguous else frozenset()
     except Exception:  # noqa: BLE001 - fail closed: no grant means no restricted field
         logger.warning("agent: field-reveal lookup failed for %s", contact_respond_id, exc_info=True)
         grants = frozenset()
@@ -137,10 +140,11 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         user_id=user_id,
         user_name=user_name,
         grants=grants,
-        stock_allowed=getattr(contact, "chatbot_stock_allowed", True) is not False,
+        # An ambiguous contact (one respond.io id on several rows) fails closed, as `load_profile` does.
+        stock_allowed=getattr(contact, "chatbot_stock_allowed", True) is not False and not ambiguous,
         brand_scope=None if brand_scope is None else frozenset(str(b) for b in brand_scope),
         principal=principal,
-        access_codes=_active_access_codes(db, pk) if principal == "contact" else frozenset(),
+        access_codes=_active_access_codes(db, pk) if principal == "contact" and not ambiguous else frozenset(),
     )
     if principal == "contact":
         return dataclasses.replace(ctx, tool_names=tuple(t.name for t in permitted_tools(db, ctx)))
@@ -150,6 +154,14 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
     return dataclasses.replace(
         ctx, tool_names=tuple(t.name for t in permitted_tools(db, ctx)), arg_permissions=tuple(held)
     )
+
+
+def _row_count(db, contact_respond_id: str) -> int:
+    from app.models.access import RespondContact
+    from app.models.base import company_scope
+
+    with company_scope(db, None):
+        return db.query(RespondContact).filter(RespondContact.respond_io_id == contact_respond_id).count()
 
 
 def _active_access_codes(db, contact_pk: str) -> frozenset[str]:
@@ -188,5 +200,7 @@ def grants_hash(ctx: AgentContext) -> str:
         ",".join(sorted(ctx.tool_names)),
         scope,
         ",".join(sorted(ctx.arg_permissions)),
+        ctx.principal,
+        ",".join(sorted(ctx.access_codes)),
     ]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()

@@ -8,6 +8,9 @@ a user slug. Postgres only, through the blank schema; every test seeds its own c
 """
 from __future__ import annotations
 
+import json
+import uuid
+
 import pytest
 
 from tests._pg_fixture import blank_session, unique_code
@@ -593,3 +596,194 @@ def test_ac_w10_a_switch_off_contact_is_still_refused(db, monkeypatch):
     )
 
     assert (decision.side, decision.reason) == ("chat", "not_eligible:switch_off")
+
+
+# ================================================================ FIX ROUND 1 (security / review findings)
+
+
+def _second_row(db, respond_id, **cols):
+    """A second respond_contacts row sharing the respond.io id (a namesake)."""
+    import json as _json
+    import uuid as _uuid
+
+    from sqlalchemy import text as _text
+
+    pk = str(_uuid.uuid4())
+    values = {"allowed": True, "agent": True, "esc": True, **cols}
+    db.execute(
+        _text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, chatbot_allowed, "
+            "chatbot_agent_enabled, escalation_allowed) "
+            "VALUES (:id, :cid, :phone, CAST(:sv AS jsonb), :allowed, :agent, :esc)"
+        ),
+        {"id": pk, "cid": respond_id, "phone": "+6002" + _uuid.uuid4().hex[:8], "sv": _json.dumps({}),
+         "allowed": values["allowed"], "agent": values["agent"], "esc": values["esc"]},
+    )
+    db.flush()
+    return pk
+
+
+def test_fr1_f1_a_namesake_row_with_ai_replies_off_refuses_the_agent(db):
+    from app.services.chatbot.agent.access import eligible_contact
+
+    contact = seed_contact(db)
+    assert eligible_contact(db, contact["respond_id"])[2] is None  # control
+    _second_row(db, contact["respond_id"], allowed=False)
+
+    assert eligible_contact(db, contact["respond_id"])[2] == "ai_replies_off"
+
+
+def test_fr1_f1_an_ambiguous_contact_principal_fails_closed(db):
+    from app.services.chatbot.agent.access import build_context
+    from app.services.contact_field_reveal_service import set_granted_keys
+
+    contact = seed_contact(db)
+    set_granted_keys(db, contact["pk"], ["inventory.sellable"], actor_id=None, commit=False)
+    _give_codes(db, contact["pk"], active=("dealer",))
+    single = build_context(db, contact["respond_id"])
+    assert single.stock_allowed is True and single.grants and single.access_codes  # control
+
+    _second_row(db, contact["respond_id"])
+    ctx = build_context(db, contact["respond_id"])
+
+    assert ctx.principal == "contact"
+    assert ctx.stock_allowed is False
+    assert ctx.grants == frozenset()
+    assert ctx.access_codes == frozenset()
+
+
+def test_fr1_f1_arming_refuses_when_any_namesake_row_is_barred(db):
+    from sqlalchemy import text as _text
+
+    from app.services import knowledge_service
+
+    contact = seed_contact(db)
+    assert knowledge_service.arm_knowledge_miss_offer(db, contact["pk"]) is True  # control
+    db.execute(_text("UPDATE respond_contacts SET session_vars = '{}'::jsonb WHERE id = :i"), {"i": contact["pk"]})
+    _second_row(db, contact["respond_id"], esc=False)
+
+    assert knowledge_service.arm_knowledge_miss_offer(db, contact["pk"]) is False
+    sv = db.execute(_text("SELECT session_vars FROM respond_contacts WHERE id = :i"), {"i": contact["pk"]}).scalar()
+    assert not (sv or {}).get("open_question")
+
+
+def test_fr1_f6_a_code_change_changes_the_grants_hash():
+    import dataclasses
+
+    from app.services.chatbot.agent.access import grants_hash
+
+    base = _contact_ctx(codes=("dealer",))
+    assert grants_hash(base) == grants_hash(_contact_ctx(codes=("dealer",)))  # control
+    assert grants_hash(base) != grants_hash(_contact_ctx(codes=("dealer", "end_user")))
+    assert grants_hash(base) != grants_hash(dataclasses.replace(base, principal="user"))
+
+
+def test_fr1_f8_a_contact_prompt_has_no_staff_protocol_and_no_user_access_line(db):
+    from app.services.chatbot.agent.loop import _system_prompt
+
+    prompt = _system_prompt(db, "", ("crm_knowledge_search", "crm_knowledge_handoff"), principal="contact")
+
+    assert "KNOWLEDGE PROTOCOL" not in prompt
+    assert "USER GUIDE PROTOCOL" not in prompt
+    assert "Outside this user" not in prompt
+    assert "crm_knowledge_handoff" in prompt  # control: the contact paragraph is there
+    user_prompt = _system_prompt(db, "Ann", ("crm_knowledge_search",), principal="user")
+    assert "KNOWLEDGE PROTOCOL" in user_prompt  # control: a user still gets it
+
+
+def _scripted(*results):
+    class Provider:
+        def __init__(self):
+            self.calls = []
+
+        def chat(self, messages, *, tools=None, **kw):
+            self.calls.append({"messages": [dict(m) for m in messages], "tools": [t["function"]["name"] for t in tools or []]})
+            return results[min(len(self.calls), len(results)) - 1]
+
+    return Provider()
+
+
+def _asks(*calls):
+    from app.services.llm_provider import ChatResult
+
+    return ChatResult(content="", prompt_tokens=10, completion_tokens=1, total_tokens=11, tool_calls=list(calls))
+
+
+def _says(text):
+    return _asks({"id": "ans", "name": "answer", "arguments": {"text": text, "figures": [], "not_found": [], "not_checked": []}})
+
+
+def test_fr1_f2_a_contact_naming_a_user_read_or_cancel_is_denied_and_no_action_changes(db):
+    from app.models.chatbot_agent import AgentAction
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = seed_contact(db)
+    staff = seed_user(db, contact_pk=None, slugs=())
+    action = AgentAction(
+        id=str(uuid.uuid4()), conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()),
+        contact_respond_id=contact["respond_id"], user_id=staff, status="proposed",
+        steps=[{"tool": "crm_customer_ask_update", "summary": "Mark SRT-1 done", "status": "proposed"}],
+    )
+    db.add(action)
+    db.flush()
+    provider = _scripted(
+        _asks({"id": "c1", "name": "crm_agent_actions_recent", "arguments": {}},
+              {"id": "c2", "name": "cancel_action", "arguments": {"action_id": str(action.id)}}),
+        _says("Done."),
+    )
+
+    result = run_agent_turn(db, contact_respond_id=contact["respond_id"], text="hello", provider=provider,
+                            mcp_call=forbidden_call, catalog={}, is_test=False)
+
+    statuses = {c["name"]: c["status"] for c in result.tool_calls}
+    assert statuses.get("crm_agent_actions_recent") == "denied"
+    assert statuses.get("cancel_action") == "denied"
+    db.refresh(action)
+    assert action.status == "proposed"
+
+
+def test_fr1_f2_a_chat_cancel_needs_the_linked_user_to_own_the_action(db):
+    from app.models.chatbot_agent import AgentAction
+    from app.services.chatbot.agent import actions
+
+    contact = seed_contact(db)
+    staff = seed_user(db, contact_pk=None, slugs=())
+    action = AgentAction(
+        id=str(uuid.uuid4()), conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()),
+        contact_respond_id=contact["respond_id"], user_id=staff, status="proposed",
+        steps=[{"tool": "crm_customer_ask_update", "summary": "x", "status": "proposed"}],
+    )
+    db.add(action)
+    db.flush()
+
+    with pytest.raises(actions.ActionRefused):
+        actions.cancel(db, contact["respond_id"], str(action.id))
+    db.refresh(action)
+    assert action.status == "proposed"
+
+
+def test_fr1_f3_a_staff_users_pending_action_does_not_reach_a_contact_turn_or_the_router(db, monkeypatch):
+    from app.models.chatbot_agent import AgentAction
+    from app.services.chatbot.agent.loop import run_agent_turn
+    from app.services.chatbot.router import decide_route
+
+    _fake_jev(monkeypatch)
+    contact = seed_contact(db)
+    staff = seed_user(db, contact_pk=None, slugs=())
+    action = AgentAction(
+        id=str(uuid.uuid4()), conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()),
+        contact_respond_id=contact["respond_id"], user_id=staff, status="proposed",
+        steps=[{"tool": "crm_customer_ask_update", "summary": "ZZT Mark SRT-1 done", "status": "proposed"}],
+    )
+    db.add(action)
+    db.flush()
+
+    decision = decide_route(db, contact_respond_id=contact["respond_id"], text="hello", session_vars=None, has_media=False)
+    assert decision.reason != "pending_action"
+
+    provider = _scripted(_says("Hello."))
+    run_agent_turn(db, contact_respond_id=contact["respond_id"], text="hi", provider=provider,
+                   mcp_call=forbidden_call, catalog={}, is_test=False)
+    sent = json.dumps(provider.calls[0]["messages"]) + json.dumps(provider.calls[0]["tools"])
+    assert "ZZT Mark SRT-1" not in sent
+    assert "confirm_action" not in provider.calls[0]["tools"]

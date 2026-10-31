@@ -371,6 +371,11 @@ def test_agent_dispatch_keeps_the_operator_check_when_an_operator_drives_the_tur
     set_company_scope(db, None)
     outsider = seed_reader(db, slugs=("inventory.stock.view",))
     reader = seed_reader(db)
+    # The operator's own company scope narrows the read (FR1 F4), so the reader holds the file's company.
+    from app.models.company import UserCompany
+
+    db.add(UserCompany(user_id=reader, company_id=SORENTO_COMPANY_ID))
+    db.flush()
     base = _contact_ctx()
 
     denied = _dispatch_knowledge(db, dataclasses.replace(base, operator_user_id=outsider))
@@ -379,3 +384,29 @@ def test_agent_dispatch_keeps_the_operator_check_when_an_operator_drives_the_tur
     assert denied.status == "denied"
     assert allowed.status == "ok", allowed.message
     assert [p["text"] for p in allowed.data["passages"]] == ["dealer warranty terms"]
+
+
+# ---------------------------------------------------------------- FIX ROUND 1: the operator narrows the scope
+
+
+def test_fr1_f4_an_operator_scoped_to_a_does_not_read_a_company_b_passage_for_a_contact(db, monkeypatch):
+    import dataclasses
+
+    from app.models.company import UserCompany
+    from app.services import knowledge_service
+
+    company_b = seed_company(db, "B")
+    operator = seed_reader(db)
+    db.add(UserCompany(user_id=operator, company_id=SORENTO_COMPANY_ID))
+    db.flush()
+    monkeypatch.setattr(knowledge_service, "_default_embed", lambda db_, timeout=None: query_embed)
+    _file(db, "dealer", ["dealer"], "company B dealer passage", company_id=company_b)
+    set_company_scope(db, frozenset({SORENTO_COMPANY_ID, company_b}))  # the contact is mapped to both
+    base = _contact_ctx()
+
+    without_operator = _dispatch_knowledge(db, base)
+    with_operator = _dispatch_knowledge(db, dataclasses.replace(base, operator_user_id=operator))
+
+    assert [p["text"] for p in without_operator.data["passages"]] == ["company B dealer passage"]  # control
+    assert with_operator.status in ("ok", "empty"), with_operator.message
+    assert (with_operator.data or {}).get("passages", []) == []

@@ -313,6 +313,14 @@ def _finish(
 
 def cancel(db, contact_respond_id: str, action_id: str, *, operator_user_id: str | None = None) -> ActionOutcome:
     action = _load(db, contact_respond_id, action_id)
+    if not operator_user_id:
+        # The chat path: only the linked user whose action it is (a contact principal has no user).
+        try:
+            ctx = build_context(db, contact_respond_id)
+        except AgentRefused:
+            raise ActionRefused("entry_refused")
+        if str(ctx.user_id) != str(action.user_id):
+            raise ActionRefused("entry_refused")
     if operator_user_id:
         # A console operator may cancel for the linked user only while that is still who the action is for,
         # and only when they could have confirmed at least one step themselves.
