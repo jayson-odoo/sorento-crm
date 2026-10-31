@@ -106,5 +106,6 @@ def test_a_tags_price_tag_description_reaches_the_export():
 
         assert row["price_tag_description"] == _DESCRIPTION
         assert row["currency"] == "MYR"
-        own_parts = row["own_parts"]
-        assert own_parts is None or isinstance(own_parts, list)
+        # A live row always carries the list (empty for a bare product), so
+        # `None` here would mean the field was dropped again.
+        assert isinstance(row["own_parts"], list)
