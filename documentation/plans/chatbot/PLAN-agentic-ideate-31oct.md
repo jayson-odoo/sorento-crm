@@ -69,10 +69,13 @@ Measured gap: `router.py:76` does NOT keep a bot capture on chat. `pending_of` r
 similar list on `ideation` (`ideation_capture_service.py:375`).
 
 - **a. The bot asked:** `focus.required_ask` set, or `ideation.status == similar_offered`, routes to chat (see Q4).
-- **b. The agent asked:** the `answer` tool gets a new `asked_back` flag, stored on the turn. The next turn stays on
-  the agent, for one turn only, as the bot's slot does. Needed because all 3 replies to the agent's "what is the idea?"
-  fall under the floor and would land on the bot (see Eval). It also fixes every other clarifying question
-  the agent asks today.
+- **b. The agent asked:** the `answer` tool gets a new `asked_back` flag, stored on the turn. On the next message Jev
+  still runs, but only a confident chat answer (at or above the floor) takes it to the bot; anything else stays on the
+  agent. So a new question still wins, as it does on the bot's own ask (`required_fields.py:47-48`). In the check, all
+  3 replies to "what is the idea?" sit under the floor and stay on the agent, and "SRTWB888 stock" asked at that point
+  scores chat 0.98 and goes to the bot. A pure state rule would send that one to the agent, which has no forms or files.
+  The flag lasts one turn and one hour, so a reply days later routes normally. Every Jev failure still goes to chat. It
+  also fixes every other clarifying question the agent asks today.
 - **c. A proposal is waiting:** already goes to the agent (`router.py:70`), before the daily cap (`:80`).
 
 ### R4. What does not change
